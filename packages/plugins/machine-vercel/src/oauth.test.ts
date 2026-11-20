@@ -434,14 +434,15 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
         expires_in: 3600,
       },
     });
-    const result = await h.runtime.refresh(h.mutation);
+    const legacy = credentials({ ...signedIn, projectChoiceTeamId: teamId });
+    const result = await h.runtime.refresh({ ...h.mutation, stagedCredentials: legacy.store });
     expect(result).toMatchObject({
       status: 'connected',
       providerIdentity: { accountId: 'user_subject', organizationId: teamId },
     });
     expect(result).toHaveProperty(
       'expiresAt',
-      Number(h.staged.values.get('expiresAtMs')),
+      Number(legacy.values.get('expiresAtMs')),
     );
     expect(h.requests).toHaveLength(1);
     expect(Object.fromEntries(form(h.requests[0]))).toEqual({
@@ -449,11 +450,12 @@ describe('Sign in with Vercel (public PKCE client on the daemon)', () => {
       client_id: clientId,
       refresh_token: 'refresh-private',
     });
-    expect(Object.fromEntries(h.staged.values)).toMatchObject({
+    expect(Object.fromEntries(legacy.values)).toMatchObject({
       token: 'access-rotated-private',
       refreshToken: 'refresh-rotated-private',
       oauthClientId: clientId,
     });
+    expect(legacy.values.has('projectChoiceTeamId')).toBe(false);
     expect(JSON.stringify(result)).not.toMatch(/private/u);
   });
 
@@ -585,6 +587,7 @@ describe('Sign in with Vercel: granted team, project and re-consent', () => {
     expect(await h.mode.reconcile!(h.authentication)).toMatchObject({ status: 'connected', displayName: 'Example site',
       providerIdentity: { accountId: 'user_subject', organizationId: teamId } });
     expect(paths(h).at(-1)).toBe(`/v9/projects/${projectId}`);
+    expect(h.staged.values.has('projectChoiceTeamId')).toBe(false);
   });
 
   it('connects without a project when the person skips the optional choice, offering it once', async () => {
@@ -595,6 +598,7 @@ describe('Sign in with Vercel: granted team, project and re-consent', () => {
     const before = h.requests.length;
     expect(await h.mode.reconcile!(h.authentication)).toMatchObject({ status: 'connected', providerIdentity: { organizationId: teamId } });
     expect(paths(h).slice(before)).toEqual([`/v2/teams/${teamId}`]);
+    expect(h.staged.values.has('projectChoiceTeamId')).toBe(false);
   });
 
   it('reports Vercel\'s scope refusal on a signed-in account as updated permissions to reconnect for', async () => {

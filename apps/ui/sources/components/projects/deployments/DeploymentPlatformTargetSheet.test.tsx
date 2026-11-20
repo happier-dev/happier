@@ -807,6 +807,153 @@ it('uses the sole Pages account and prepares one repository branch and normalize
   }
 });
 
+it.each(['vercel', 'pages'] as const)('opens the %s existing-project choices through its mounted Resource and read Action', async provider => {
+  await homes.reset();
+  const isVercel = provider === 'vercel';
+  const plugin = isVercel ? await import('../../../../../../packages/plugins/deploy-vercel/src/index')
+    : await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
+  const { formatQualifiedPluginActionId } = await import('@happier-dev/protocol/plugins/actions/qualifiedActionId');
+  const { createPluginHttpFixture } = await import('@happier-dev/plugin-sdk/testing');
+  const { isPluginError } = await import('@happier-dev/plugin-sdk/errors');
+  const accountId = 'options-owner';
+  const providerAccountId = isVercel ? 'team_captured' : 'pages-account';
+  const account = { service: isVercel ? { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }
+    : { pluginId: plugin.manifest.id, localId: 'cloudflare' }, accountId: 'connected-profile' };
+  const installationId = 'project-options-installation';
+  const projectField = isVercel ? 'projectId' : 'preparedNative.projectName';
+  const target = plugin.manifest.contributes.deploymentTargets?.find(entry => entry.id === (isVercel ? 'runtime' : 'pages'));
+  if (!target || target.role !== 'runtime') throw new Error('Expected the runtime target declaration');
+  // Vercel names are from the successful Action capture. Vendor envelopes use the provider test fixtures' shapes.
+  const projects = (isVercel ? ['qa-sweep-177-traffic-1118', 'qa-sweep-176-r4-observe-1118', 'qa-fid-1115-acme-site',
+    'happier-qa-deploy', 'v0-react-native-design'] : ['saved-pages']).map((name, index) => ({ id: `project-${index}`, name }));
+  const httpReads: URL[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    const url = new URL(request.url);
+    httpReads.push(url);
+    const team = { id: providerAccountId, name: 'Selected connection', slug: 'selected-connection' };
+    const body = isVercel ? (url.pathname === `/v2/teams/${providerAccountId}` ? team
+      : { projects: projects.map(project => ({ ...project, accountId: providerAccountId })), pagination: { next: null } })
+      : { success: true, result: url.pathname.endsWith('/accounts') ? [team] : projects, result_info: { page: 1, total_pages: 1 } };
+    return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(body)) };
+  } });
+  let redactResult = (value: JsonValue): JsonValue => value;
+  if (isVercel) {
+    const { vercelOAuthMode } = await import('../../../../../../packages/plugins/machine-vercel/src/oauth');
+    const { manifest } = await import('../../../../../../packages/plugins/machine-vercel/src/index');
+    const { createConnectedAccountCredentialRedaction } = await import('../../../../../../packages/cli-common/src/connectedAccounts/credentialRedaction');
+    const { redactPluginInvocationResultData } = await import('@happier-dev/cli-common/plugins/registration');
+    const descriptor = manifest.contributes.connectedAccountDescriptors?.find(entry => entry.id === account.service.localId);
+    const mode = descriptor?.authentication.modes.find(entry => entry.id === 'oauth');
+    if (!mode) throw new Error('Expected the Vercel OAuth mode declaration');
+    const signal = new AbortController().signal;
+    const values = { teamId: providerAccountId };
+    // The person is at the optional project prompt and chooses to skip it.
+    const staged = new Map([['token', 'oauth-fixture-access-token'], ['subject', 'provider-user'],
+      ['expiresAtMs', String(Date.now() + 60_000)], ['projectChoiceTeamId', providerAccountId]]);
+    const attempt = { kind: 'connect' as const, attemptId: 'vercel-sign-in' };
+    expect(await vercelOAuthMode.reconcile!({
+      plugin: { id: account.service.pluginId, version: manifest.version },
+      contribution: { id: account.service.localId, qualifiedId: `${account.service.pluginId}/${account.service.localId}` },
+      service: account.service, surface: 'background', invokedAtMs: Date.now(), attempt, signal,
+      services: { http } as Parameters<NonNullable<typeof vercelOAuthMode.reconcile>>[0]['services'],
+      configuration: { target: { kind: 'attempt', attemptId: attempt.attemptId, service: account.service, modeId: 'oauth' },
+        revision: 'selected-team', values, async getSecret() { return null; } },
+      attemptCredentials: { async get(key) { return staged.get(key) ?? null; },
+        async set(key, value) { staged.set(key, value); }, async delete(key) { staged.delete(key); } },
+    })).toMatchObject({ status: 'connected' });
+    const custody = createConnectedAccountCredentialRedaction({ mode, configuration: values,
+      credential: { v: 1, values: Object.fromEntries(staged) } });
+    // Mimic the host boundary's exact redaction of the materialized Team ID.
+    if (!custody.readPublicValues().includes(providerAccountId)) {
+      redactResult = result => redactPluginInvocationResultData(result, value => value === providerAccountId ? '[REDACTED]' : value);
+    }
+  }
+  const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { http,
+    connectedAccounts: {
+      async getBinding(purpose) { return { purpose, service: account.service, account,
+        target: { kind: 'account', displayName: 'Selected connection' } }; },
+      async materialize() { return { kind: 'environment', env: { VERCEL_TEAM_ID: providerAccountId } }; },
+    },
+  } });
+  const serverId = await homes.addHome({ name: provider, serverUrl: `https://${provider}-project-options.test`,
+    serverIdentityId: `srv_${(isVercel ? 'e' : 'f').repeat(32)}`, accountId, currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: plugin.activateAccount, accountLifetime: context.accountLifetime, publishProjection: true });
+  const qualified = (localId: string) => buildQualifiedPluginContributionKey({ pluginId: plugin.manifest.id, localId });
+  const receiverProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+    familiesById: { inputTypes: { family: 'inputTypes', entriesById: Object.fromEntries(
+      (plugin.manifest.contributes.inputTypes ?? []).map(definition => [qualified(definition.id), {
+        id: qualified(definition.id), pluginId: plugin.manifest.id, pluginVersion: plugin.manifest.version, definition,
+      }]),
+    ) } },
+    resourcesById: Object.fromEntries((plugin.manifest.contributes.resources ?? [])
+      .filter(resource => resource.source === 'dynamic')
+      .map(resource => [qualified(resource.id), { pluginId: plugin.manifest.id, id: resource.id, resourceKind: resource.kind,
+        scope: resource.scope, execution: resource.execution, accountRuntimeDeclared: true }])),
+  });
+  receiverRpc.call.mockImplementation(async request => {
+    expect(request.method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+    return { protocolVersion: 1, projection: receiverProjection };
+  });
+  const machineId = 'project-options-controller';
+  const projectRequests: unknown[] = [];
+  try {
+    await publishMachineInventoryForTest(context, [createMachineFixture({ id: machineId, installationId, activeAt: Date.now(), access: {
+      custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready',
+    } })]);
+    await answerExternalActionAccountForHome(homes, serverId, { actionId: 'action.options.resolve', machineId,
+      installationId, tokenEpoch: 0,
+      failure: result => isPluginError(result) ? { errorCode: result.code, error: result.message } : null,
+      execute: async raw => {
+        const input = getActionSpec('action.options.resolve').inputSchema.parse(raw);
+        if (input.fieldPath === projectField) projectRequests.push(input);
+        const runtime = kit.registration('resources', isVercel ? 'target-options' : 'pages-target-options');
+        if (!runtime) throw new Error('Expected the declared project options Resource');
+        try {
+          const bytes = await runtime.read(createTestResourceInvocationContext({
+            query: input, readAction: async (ref, payload) => {
+              try { return { ok: true, result: redactResult(await kit.invokeAction(ref.localId, payload)) }; }
+              catch (error) {
+                if (isPluginError(error)) return { ok: false, errorCode: error.code, error: error.message };
+                throw error;
+              }
+            },
+          }));
+          return getActionSpec('action.options.resolve').outputSchema!.parse({
+            actionId: input.actionId ?? null, fieldPath: input.fieldPath ?? null, optionsSourceId: input.optionsSourceId ?? null,
+            ...JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)),
+          });
+        } catch (error) {
+          if (isPluginError(error)) return error;
+          throw error;
+        }
+      } });
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { definition: { kind: 'repository' }, projectSourceId: '' },
+      ownerAccountId: accountId, lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
+      initialTargetKey: qualified(target.id) }));
+    await waitForHomeGovernance(() => expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1));
+    await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account', account }, null));
+    await waitForHomeGovernance(() => {
+      const row = screen.root.findAllByType(ActionInputFields).find(node => node.props.fields[0]?.path === projectField);
+      expect(row?.props.resolveFieldOptions.state?.(row.props.fields[0]), screen.getTextContent()).toMatchObject({ status: 'ready',
+        options: projects.map(project => ({ value: isVercel ? project.id : project.name, label: project.name })) });
+    });
+    expect(projectRequests).toEqual([expect.objectContaining({ actionId: formatQualifiedPluginActionId({ pluginId: plugin.manifest.id, localId: target.actions.inspect }),
+      fieldPath: projectField, draftInput: expect.objectContaining({ providerAccountId, credentialRef: account,
+        credentialPrincipal: expect.objectContaining({ kind: 'account', accountId, target: { kind: 'account', account } }) }) })]);
+    expect(projectRequests[0]).not.toHaveProperty('cursor');
+    expect(httpReads.filter(url => url.pathname.endsWith('/projects')).map(url => url.pathname + url.search)).toEqual([
+      isVercel ? `/v10/projects?teamId=${providerAccountId}` : `/client/v4/accounts/${providerAccountId}/pages/projects`,
+    ]);
+  } finally {
+    await installed.dispose();
+    await kit.dispose();
+    context.dispose();
+  }
+});
+
 it('explains why a stored Compose Environment under a repository Project cannot use a platform', async () => {
   const { manifest, activateAccount } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
   const { manifest: vercel, activateAccount: activateVercel } = await import('../../../../../../packages/plugins/deploy-vercel/src/index');

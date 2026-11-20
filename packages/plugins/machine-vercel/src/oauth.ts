@@ -536,7 +536,12 @@ export const vercelOAuthMode: Extract<
         && await context.attemptCredentials.get(projectChoiceKey, { signal }) !== scope.teamId) {
         const offered = await offerProject(context, token, scope.teamId, null, signal);
         if (offered?.status === 'configurationRequired') return offered;
-        return signedIn(offered ?? checked, identity);
+        if (offered) return signedIn(offered, identity);
+      }
+      if (checked.status === 'connected') {
+        // The prompt used the public Team ID as attempt state. Leaving it in
+        // credential custody would redact that Team in later Action results.
+        await context.attemptCredentials.delete(projectChoiceKey, { signal });
       }
       return signedIn(checked, identity);
     } catch (error) {
@@ -617,6 +622,7 @@ export async function refreshVercelOAuth(
     );
     await context.stagedCredentials.set('token', grant.token, { signal });
     await stage(context.stagedCredentials, grant, clientId, null, signal);
+    await context.stagedCredentials.delete(projectChoiceKey, { signal });
     const scope = scopeOf(context);
     return {
       status: 'connected',
