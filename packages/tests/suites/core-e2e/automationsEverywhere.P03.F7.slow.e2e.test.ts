@@ -1,21 +1,18 @@
 import { createServer, type Server } from 'node:http';
-import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
-import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { applyTrustedLocalPluginFixture } from '../../src/testkit/externalSessionLiveLifecycleFixture';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchSessionV2 } from '../../src/testkit/sessions';
-import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents, FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS } from '../../src/testkit/fakeClaude';
-import { waitFor } from '../../src/testkit/timing';
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 
 describe('Shared approval profiles: contributed target admission', () => {
   let fixture: TeamSetupFFixture | undefined;
@@ -105,22 +102,8 @@ describe('Shared approval profiles: contributed target admission', () => {
     const input = { action, input: {} };
     // The Session's real MCP host owns daemon placement and caller provenance.
     // A test-process Account executor has no local daemon or native turn.
-    async function invoke() {
-      const requestId = randomUUID();
-      const sent = await actor.execute('session.message.send', { sessionId: session.sessionId,
-        message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId: 'action.invoke', input })}`, reply: 'none' });
-      expect(sent.ok, JSON.stringify(sent)).toBe(true);
-      if (!sent.ok) throw new Error(sent.errorCode);
-      expect(SessionMessageSendResultV1Schema.parse(sent.result).status).toMatch(/^(?:accepted|alreadyAccepted)$/);
-      let outcome: unknown;
-      await waitFor(async () => {
-        const event = (await readFakeClaudeLogEvents(agent.logPath)).find(row =>
-          row.type === 'session_mcp_action_result' && row.requestId === requestId);
-        outcome = event?.result;
-        return event !== undefined;
-      }, { timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, context: 'Contributed profile native MCP admission' });
-      return ActionExecuteResultSchema.parse(outcome);
-    }
+    const invoke = () => fixture!.executeSessionMcpAction(actor,
+      { sessionId: session.sessionId, logPath: agent.logPath }, 'action.invoke', input);
     async function pickProfile(approvalProfileId: string) {
       const stored = await fetchSessionV2(fixture!.server.baseUrl, actor.credentials.token, session.sessionId);
       expect(await actor.executeAsPerson('session.approval_profile.set', { sessionId: session.sessionId,

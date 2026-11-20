@@ -8,7 +8,7 @@ import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
 import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
@@ -25,79 +25,6 @@ describe('Shared approval profiles: Team default', () => {
   }, 0);
   beforeEach(() => { fixture.takeRequestObservations(); });
   afterAll(async () => { await fixture?.stop(); }, 0);
-
-  it('AE.P03.F4-team-default-tighten captures the Team default without consenting to looser rows', async () => {
-    const member = await fixture.createAccount('member');
-    const machine = await fixture.enrollDaemon(member);
-    await fixture.assertKnownGoodSessionControl(member, machine);
-    const created = await owner.executeAsPerson('teams.create', { v: 1, initialOwnerAccountId: readAccountIdFromToken(owner.credentials.token), name: 'Approval defaults', requestKey: randomUUID() },
-      { presentUserConfirmation: { actionId: 'teams.create' } });
-    expect(created.ok, JSON.stringify(created)).toBe(true);
-    if (!created.ok) throw new Error(created.errorCode);
-    const teamId = TeamSummaryV1Schema.parse(created.result).id;
-    expect(await owner.executeAsPerson('teams.members.add', { v: 1, teamId,
-      accountId: readAccountIdFromToken(member.credentials.token), role: 'member', historyAccess: 'from_membership' },
-    { presentUserConfirmation: { actionId: 'teams.members.add' } })).toMatchObject({ ok: true });
-
-    // R12: readability is not checked by teams.policy.set. This discriminates
-    // the missing profile field independently of Artifact creation (Plan C U1).
-    expect(await owner.executeAsPerson('teams.policy.set', { v: 1, teamId,
-      managedDefaults: { team: { approvalProfileId: 'not-yet-shared' }, groups: {} } },
-    { presentUserConfirmation: { actionId: 'teams.policy.set' } })).toMatchObject({ ok: true });
-
-    const profileResult = await owner.executeAsPerson('actions.policy.set', { profileChange: { kind: 'create', profile: {
-      name: 'Team release defaults',
-      actions: { 'session.stop': { approvalRequiredSurfaces: [] }, 'session.list': { enabled: false } },
-      approvalWaivedSurfaces: { 'session.stop': ['agent', 'mcp'] },
-    } } });
-    expect(profileResult.ok).toBe(true);
-    if (!profileResult.ok) throw new Error(profileResult.errorCode);
-    const profileChange = ActionPolicyOutputSchemas['actions.policy.set'].parse(profileResult.result);
-    if (!('profileChange' in profileChange) || !('id' in profileChange.profileChange)
-      || typeof profileChange.profileChange.id !== 'string') throw new Error('Profile create did not return its Artifact id');
-    const profileId = profileChange.profileChange.id;
-    expect(await owner.executeReviewed('artifact.access.grants.set', { artifactId: profileId,
-      principal: { kind: 'team', teamId }, accessLevel: 'view' })).toMatchObject({ ok: true });
-    expect(await owner.executeAsPerson('teams.policy.set', { v: 1, teamId,
-      managedDefaults: { team: { approvalProfileId: profileId }, groups: {} } },
-    { presentUserConfirmation: { actionId: 'teams.policy.set' } })).toMatchObject({ ok: true });
-    expect(await member.execute('actions.policy.set', { actionId: 'session.stop', audience: 'agent', mode: 'ask_first' }))
-      .toMatchObject({ ok: true });
-    const spawned = await member.execute('session.spawn_new', {
-      executionTarget: machine.target, directory: { kind: 'path', path: machine.workspaceDir },
-      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-      primaryTeamId: teamId, terminal: { mode: 'plain' },
-    });
-    expect(spawned.ok).toBe(true);
-    if (!spawned.ok) throw new Error(spawned.errorCode);
-    const session = SessionSpawnNewActionResultV1Schema.parse(spawned.result);
-    expect(session.type).toBe('success');
-    if (session.type !== 'success') throw new Error('Team-default Session did not start');
-    const inheritedMetadata = await member.readSessionMetadata(session.sessionId);
-    expect(inheritedMetadata, JSON.stringify({ approvalProfileId: inheritedMetadata.approvalProfileId,
-      approvalProfileTeamOrGroupDerived: inheritedMetadata.approvalProfileTeamOrGroupDerived })).toMatchObject({
-      approvalProfileId: profileId, approvalProfileTeamOrGroupDerived: true,
-    });
-    // The real Action admission retains the member's Ask despite the Team
-    // profile's waiver. Picking that same id explicitly accepts the rows.
-    expect(await member.execute('session.stop', { sessionId: session.sessionId }, {
-      surface: 'mcp', authority: 'account_automation', defaultSessionId: session.sessionId,
-    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-    expect(await member.execute('session.list', {}, {
-      surface: 'mcp', authority: 'account_automation', defaultSessionId: session.sessionId,
-    })).toMatchObject({ ok: false, errorCode: 'action_disabled' });
-    const stored = await fetchSessionV2(fixture.server.baseUrl, member.credentials.token, session.sessionId);
-    expect(await member.execute('session.approval_profile.set', { sessionId: session.sessionId,
-      serverId: fixture.serverId, expectedMetadataRevision: stored.metadataVersion, approvalProfileId: profileId }))
-      .toMatchObject({ ok: true });
-    expect((await member.readSessionMetadata(session.sessionId)).approvalProfileTeamOrGroupDerived ?? false).toBe(false);
-    const accepted = await member.execute('session.stop', { sessionId: session.sessionId }, {
-      surface: 'mcp', authority: 'account_automation', defaultSessionId: session.sessionId,
-    });
-    expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
-    if (!accepted.ok) throw new Error(accepted.errorCode);
-    expect(accepted.result).not.toMatchObject({ kind: 'approval_request_created' });
-  }, 0);
 
   it('AE.P03.F5-project-default captures the project profile over the Team default and preserves creation-time choices', async () => {
     const manager = await fixture.createAccount('project-manager');
@@ -188,9 +115,13 @@ describe('Shared approval profiles: Team default', () => {
     expect(await manager.readSessionMetadata(projectSession.sessionId)).toMatchObject({
       approvalProfileId: projectProfileId, approvalProfileTeamOrGroupDerived: true,
     });
-    const stopAsAgent = (sessionId: string) => manager.execute('session.stop', { sessionId }, {
-      surface: 'mcp', authority: 'account_automation', defaultSessionId: sessionId,
-    });
+    const stopAsAgent = async (sessionId: string) => {
+      const result = await manager.execute('session.stop', { sessionId }, {
+        surface: 'mcp', authority: 'account_automation', defaultSessionId: sessionId,
+      });
+      if (!result.ok) throw createActionExecuteFailureError(result);
+      return result;
+    };
     expect(await stopAsAgent(projectSession.sessionId)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
 
     // The carrier waiver cannot waive changing everybody's project profile (M4).

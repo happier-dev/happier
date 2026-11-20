@@ -7,13 +7,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
-import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
-import { createIsolatedFakeClaudeControlShim, readFakeClaudeLogEvents, FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS } from '../../src/testkit/fakeClaude';
-import { waitFor } from '../../src/testkit/timing';
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 
 describe('Shared approval profiles: native continuation', () => {
   let fixture: TeamSetupFFixture;
@@ -77,22 +75,8 @@ describe('Shared approval profiles: native continuation', () => {
     expect(sourceMetadata).toMatchObject({
       approvalProfileId: profileId, approvalProfileTeamOrGroupDerived: true,
     });
-    async function executeFromSource(actionId: ActionId, input: unknown) {
-      const requestId = randomUUID();
-      const sent = await member.execute('session.message.send', { sessionId: source.sessionId,
-        message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId, input })}`, reply: 'none' });
-      expect(sent.ok, JSON.stringify(sent)).toBe(true);
-      if (!sent.ok) throw new Error(sent.errorCode);
-      expect(SessionMessageSendResultV1Schema.parse(sent.result).status).toMatch(/^(?:accepted|alreadyAccepted)$/);
-      let outcome: unknown;
-      await waitFor(async () => {
-        const event = (await readFakeClaudeLogEvents(agent.logPath)).find(row =>
-          row.type === 'session_mcp_action_result' && row.requestId === requestId);
-        outcome = event?.result;
-        return event !== undefined;
-      }, { timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, context: 'Native profile Action admission' });
-      return ActionExecuteResultSchema.parse(outcome);
-    }
+    const executeFromSource = (actionId: ActionId, input: unknown) => fixture.executeSessionMcpAction(member,
+      { sessionId: source.sessionId, logPath: agent.logPath }, actionId, input);
     const updatedAtMs = Date.now();
     for (const continuation of [
       { sourceContext: { v: 1, kind: 'session_replay', sourceSessionId: source.sessionId, forkPoint: { type: 'latest' } } },

@@ -1,13 +1,19 @@
 import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
   ConnectedAccountCatalogRowMutationResponseV1Schema, sealConnectedAccountCatalogContentV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { randomUUID } from 'node:crypto';
+
 import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ActionExecuteResultSchema, ActionOperationAcceptedResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1, AutomationActionAdmitRequestV1Schema } from '../../../protocol/src/automations/automationActionOccurrenceV1';
-import { FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, fakeClaudeFixturePath } from './fakeClaude';
+import { FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, fakeClaudeFixturePath, readFakeClaudeLogEvents } from './fakeClaude';
 import type { RecordedHttpProxyRequest } from './httpRequestRecordingProxy';
 import { startProjectDaemonFixture } from './daemon/projectDaemon';
 import { runCliJson } from './uiE2e/cliJson';
 import { readDecryptedSessionMetadataV2 } from './sessionHandoffMetadata';
+import { waitFor } from './timing';
 import { waitForAssistantMessageContaining } from './providers/scenarios/sessionRuntime';
 
 /** Team setup extends the canonical project journey startup with fake-Agent
@@ -91,8 +97,55 @@ export async function startTeamSetupFFixture(params: Readonly<{
       }
     }
 
+    async function assertSessionAgentOutput(account: Awaited<ReturnType<typeof createAccount>>, sessionId: string,
+      requiredSubstring = 'FAKE_CLAUDE_OK_') {
+      const sessionCrypto = await readDecryptedSessionMetadataV2({ baseUrl: server.baseUrl,
+        token: account.auth.token, sessionId, machineKeys: [account.auth.accountMachineKey] });
+      if (!sessionCrypto.selectedSecret) throw new Error('F Session content key unavailable');
+      await waitForAssistantMessageContaining({ baseUrl: server.baseUrl, token: account.auth.token,
+        sessionId, secret: sessionCrypto.selectedSecret,
+        encryptionVariant: sessionCrypto.selectedUsesDataKeyVariant ? 'dataKey' : 'legacy',
+        requiredSubstring, timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
+    }
+
     return { ...core,
-      createAccount, enrollDaemon, assertKnownGoodMachineControl,
+      createAccount, enrollDaemon, assertKnownGoodMachineControl, assertSessionAgentOutput,
+      /** The real vendor process reaches its native MCP host; the test supplies no caller authority. */
+      async executeSessionMcpAction(account: Awaited<ReturnType<typeof createAccount>>,
+        session: Readonly<{ sessionId: string; logPath: string }>, actionId: ActionId, input: unknown) {
+        const requestId = randomUUID();
+        const sent = await account.execute('session.message.send', { sessionId: session.sessionId,
+          message: `SESSION_MCP_ACTION_JSON:${JSON.stringify({ requestId, actionId, input })}`, reply: 'none' });
+        if (!sent.ok) throw createActionExecuteFailureError(sent);
+        const admission = SessionMessageSendResultV1Schema.parse(sent.result);
+        if (admission.status !== 'accepted' && admission.status !== 'alreadyAccepted') {
+          throw new Error(`Native MCP Agent turn was not admitted (${JSON.stringify(admission)})`);
+        }
+        let outcome: unknown;
+        await waitFor(async () => {
+          const event = (await readFakeClaudeLogEvents(session.logPath)).find(row =>
+            row.type === 'session_mcp_action_result' && row.requestId === requestId);
+          outcome = event?.result;
+          return event !== undefined;
+        }, { timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, context: 'Native Session MCP Action result' });
+        const executed = ActionExecuteResultSchema.parse(outcome);
+        if (!executed.ok) return executed;
+        const receipt = ActionOperationAcceptedResultSchema.safeParse(executed.result);
+        if (!receipt.success) return executed;
+        // Native finite Actions return admission; their existing exact operation read owns completion.
+        const observed = await account.execute('action.operations.get', { serverId,
+          machineId: receipt.data.machineId, operationId: receipt.data.operationId, waitForTerminal: true });
+        if (!observed.ok) throw createActionExecuteFailureError(observed);
+        const found = ActionOperationGetV1ResponseSchema.parse(observed.result);
+        if (found.kind !== 'found') throw new Error('Native MCP Action operation was not found');
+        const operation = found.operation;
+        if (operation.state === 'failed' && operation.error) {
+          return ActionExecuteResultSchema.parse({ ok: false, ...operation.error });
+        }
+        if (operation.state === 'cancelled') return { ok: false as const, errorCode: 'cancelled', error: 'cancelled' };
+        if (operation.state !== 'succeeded') throw new Error(`Native MCP Action operation did not settle (${operation.state})`);
+        return { ...executed, result: operation.result };
+      },
       async assertKnownGoodSessionControl(account: Awaited<ReturnType<typeof createAccount>>,
         machine: Parameters<typeof core.assertKnownGoodSessionControl>[1],
         agent?: Readonly<{ target: NonNullable<Parameters<typeof core.assertKnownGoodSessionControl>[2]>;
@@ -106,13 +159,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
         if (admission.status !== 'accepted' && admission.status !== 'alreadyAccepted') {
           throw new Error(`F baseline Agent turn was not admitted (${JSON.stringify(admission)})`);
         }
-        const sessionCrypto = await readDecryptedSessionMetadataV2({ baseUrl: server.baseUrl,
-          token: account.auth.token, sessionId: control.sessionId, machineKeys: [account.auth.accountMachineKey] });
-        if (!sessionCrypto.selectedSecret) throw new Error('F baseline Session content key unavailable');
-        await waitForAssistantMessageContaining({ baseUrl: server.baseUrl, token: account.auth.token,
-          sessionId: control.sessionId, secret: sessionCrypto.selectedSecret,
-          encryptionVariant: sessionCrypto.selectedUsesDataKeyVariant ? 'dataKey' : 'legacy',
-          requiredSubstring: agent?.assistantSubstring ?? 'FAKE_CLAUDE_OK_', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
+        await assertSessionAgentOutput(account, control.sessionId, agent?.assistantSubstring);
         return control;
       },
       createSessionFromArgv(machine: Awaited<ReturnType<typeof enrollDaemon>>, args: string[], label: string) {
