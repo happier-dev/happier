@@ -740,6 +740,7 @@ async function createSeededSpawnedSession(args: Readonly<{
           ...(params.placementOrigin ? { placementOrigin: params.placementOrigin } : {}),
           ...replayMetadata,
           ...connectedServiceChildLaunch.metadata,
+          ...(params.sessionCreationCorrespondence ? { sessionCreationCorrespondenceV1: params.sessionCreationCorrespondence } : {}),
           ...(typeof params.profileId === 'string' ? { profileId: params.profileId } : {}),
           ...(params.directoryKind === 'managed' ? { sessionDirectoryV1: { v: 1, kind: 'managed' } } : {}),
           ...(isWorker ? { work: {

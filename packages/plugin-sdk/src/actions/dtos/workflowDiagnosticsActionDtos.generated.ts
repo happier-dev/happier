@@ -1181,7 +1181,6 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -1217,7 +1216,6 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -1395,7 +1393,6 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -1431,7 +1428,6 @@ export type WorkflowDiagnosticsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;

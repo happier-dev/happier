@@ -124,6 +124,18 @@ export type SessionAuthoringActionInputById = {
                     workspaceId: string;
                     machineId: string;
                     rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
                 };
                 page: 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'memory' | 'overview' | 'scripts' | 'services';
                 purpose?: 'session' | undefined;
@@ -447,6 +459,18 @@ export type SessionAuthoringActionInputById = {
                     serverId: string;
                     workspaceId: string;
                     machineId: string;
+                    rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
                     rootPath: string;
                 };
                 page: 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'memory' | 'overview' | 'scripts' | 'services';

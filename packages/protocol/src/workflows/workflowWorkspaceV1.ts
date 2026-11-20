@@ -117,6 +117,9 @@ export const WorkflowAcceptedWorkspaceTargetV1Schema = lazyZodSchema(() => z.str
   originalCommittedRevision: z.optional(WorkflowCommittedRevisionV1Schema),
 }));
 export type WorkflowAcceptedWorkspaceTargetV1 = z.infer<typeof WorkflowAcceptedWorkspaceTargetV1Schema>;
+export type WorkflowAcceptedWorkspaceTargetPreparation =
+  | Readonly<{ ok: true; workspaceTarget: WorkflowAcceptedWorkspaceTargetV1 }>
+  | Readonly<{ ok: false; code: 'workspace_unavailable' | 'workspace_conflict' | 'committed_revision_unavailable' | 'workflow_in_place_not_available' }>;
 
 export const WorkflowWorkspaceCreationIntentV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('git_worktree'),

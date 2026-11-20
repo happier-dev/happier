@@ -71,6 +71,28 @@ describe('Session spawn defaults at admission', () => {
       approvalProfileTeamOrGroupDerived: approvalProfileId === undefined });
   });
 
+  it.each(['authored', 'workflow'] as const)('keeps an in-place Session outside controller isolation policy (%s)', async origin => {
+    const executionTarget = { serverId: 'home', machineId: 'controller' };
+    const sessionPlacement = { kind: 'in_place' as const, workspace: {
+      v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'project-checkout',
+      managedId: 'guest', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/project',
+    } };
+    const sandbox = { provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: 'development-preset' };
+    const choice = { kind: 'sandbox' as const, configuredSandboxId: 'development', lifecycle: 'fresh' as const };
+    const resolved = await resolveSessionSpawnManagedDefaults({
+      executionTarget, agentTarget: target, ...(origin === 'authored' ? { sessionPlacement } : {}),
+    }, {
+      agentId: 'codex', accountSettings: {}, organizationPolicy: { status: 'absent' },
+      openedMachineMetadata: { isolationPolicyV1: {
+        configuredSandboxes: { development: sandbox },
+        workKinds: { sessions: choice, botsChannels: choice, automationsWorkflows: choice },
+      } },
+      ...(origin === 'workflow' ? { admittedWorkflowPlacement: sessionPlacement } : {}),
+      readTeam: async () => team(), readHome: async () => ({ homeDefaults: null }),
+    });
+    expect(resolved.resolveIsolation()).toBeNull();
+  });
+
   it('uses explicit Session placement without switching to Workflow policy', async () => {
     const configured = { provisioner: { pluginId: 'example.sandbox', localId: 'sandbox' }, presetId: 'development-preset' };
     const input = { executionTarget: { serverId: 'home', machineId: 'machine' }, agentTarget: target,
@@ -212,6 +234,8 @@ describe('Session spawn defaults at admission', () => {
   it.each([
     { name: 'cross-Account signed spawn uses only acting Account settings and credentials', surface: 'mcp' as const, layer: 'requester', permission: 'read-only', modelId: 'member-model' },
     { name: 'admitted requester retains private For me above public defaults', surface: 'mcp' as const, layer: 'requester-project', permission: 'safe-yolo', modelId: 'personal-project-model' },
+    { name: 'in-place signed spawn opens the accepted guest root', surface: 'mcp' as const, layer: 'in-place', permission: 'read-only', modelId: 'member-model' },
+    { name: 'in-place signed spawn refuses a changed guest root', surface: 'mcp' as const, layer: 'in-place-changed', permission: 'read-only', modelId: 'member-model' },
     { name: 'unadmitted cross-Account request refuses', surface: 'mcp' as const, layer: 'unadmitted', permission: 'read-only', modelId: 'member-model' },
     { name: 'retired requester snapshot refuses', surface: 'mcp' as const, layer: 'retired', permission: 'read-only', modelId: 'member-model' },
     { name: 'MCP Team defaults', surface: 'mcp' as const, layer: 'team', permission: 'safe-yolo', modelId: 'team-model' },
@@ -239,11 +263,17 @@ describe('Session spawn defaults at admission', () => {
     { name: 'isolated Machine refuses malformed native sandbox policy', surface: 'mcp' as const, layer: 'isolated-invalid-policy', permission: 'safe-yolo', modelId: 'team-model' },
   ])('$name', async testCase => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'requester' })).toString('base64url')}.signature`;
-    const crossAccount = ['requester', 'requester-project', 'unadmitted', 'retired'].includes(testCase.layer);
+    const inPlace = testCase.layer.startsWith('in-place');
+    const crossAccount = inPlace || ['requester', 'requester-project', 'unadmitted', 'retired'].includes(testCase.layer);
     const custodianToken = `e30.${Buffer.from(JSON.stringify({ sub: 'custodian' })).toString('base64url')}.signature`;
     const reads: string[] = [];
     let settingsReads = 0;
     const launched: SpawnDaemonSessionRequest[] = [];
+    const preparedDirectories: unknown[] = [];
+    const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home',
+      workspaceId: 'accepted-folder', managedId: 'attached-workspace',
+      controller: { machineId: 'machine', installationId: 'installation' }, rootPath: '/only-in-guest/work' };
+
     const settings = accountSettingsParse({ memoryUpkeepInNewBots: false,
       ...(testCase.layer === 'approval-machine' || testCase.layer === 'approval-null'
         ? { actionsSettingsV1: { v: 1, actions: {}, machineApprovalProfiles: { machine: 'custom:machine-profile' } } } : {}),
@@ -303,7 +333,7 @@ describe('Session spawn defaults at admission', () => {
           ] }),
         } } } };
       }
-      if (testCase.layer === 'requester-project' && String(url).endsWith('/v1/account/encryption')) {
+      if ((inPlace || testCase.layer === 'requester-project') && String(url).endsWith('/v1/account/encryption')) {
         expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
         return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
       }
@@ -312,6 +342,17 @@ describe('Session spawn defaults at admission', () => {
       throw new Error(`Unexpected Home read: ${url}`);
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      if (inPlace && String(url).endsWith('/v1/account/project-rows/read')) {
+        const key = { kind: 'workspace-ref' as const, serverId: 'home', id: workspace.workspaceId };
+        expect(body).toEqual({ key });
+        expect(config?.headers?.Authorization).toBe(`Bearer ${token}`);
+        const cipher = createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes: n => new Uint8Array(n) });
+        return { status: 200, data: { status: 'present', row: { key, revision: 1, content: cipher.seal({ key, value: {
+          v: 2, kind: 'managed', id: workspace.workspaceId, serverId: workspace.serverId,
+          managedId: workspace.managedId, controller: workspace.controller, rootPath: workspace.rootPath, createdAtMs: 1,
+        } }) } } };
+      }
+
       if (testCase.layer === 'requester-project' && String(url).endsWith('/v1/account/project-rows/read')) {
         const key = { kind: 'project-session-defaults' as const, serverId: 'home', projectKey: 'personal-project' };
         expect(body).toEqual({ key });
@@ -352,7 +393,10 @@ describe('Session spawn defaults at admission', () => {
       sessionSpawnDirectTargetTransport: { machineId: 'machine', readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1,
         metadata: testCase.layer.startsWith('isolated') ? { isolationV1: { environment: 'managed-guest', provisionerId: 'example.machine/guest' },
           ...(testCase.layer === 'isolated-invalid-policy' ? { isolationPolicyV1: { agentNativeSandboxEnabled: 'yes' } } : {}) } : {} }),
-        prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+        prepare: async request => {
+          preparedDirectories.push(request.directory);
+          return { ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null };
+        },
         spawnedSession: { spawn: async request => { launched.push(request); return { type: 'success', sessionId: 'created',
           sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } }; },
         resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) } },
@@ -405,6 +449,8 @@ describe('Session spawn defaults at admission', () => {
     const executor = createCliActionExecutor(invocationParams);
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: `defaults-${testCase.layer}`,
       executionTarget: { serverId: 'home', machineId: 'machine' }, directory: { kind: 'path', path: '/tmp' }, agentTarget: target,
+      ...(inPlace ? { sessionPlacement: { kind: 'in_place', workspace: testCase.layer === 'in-place-changed'
+        ? { ...workspace, rootPath: '/only-in-guest/other-checkout' } : workspace } } : {}),
       ...(testCase.layer === 'approval-null' ? { approvalProfileId: null } : {}),
       ...(testCase.layer === 'requester-project' ? { projectContext: { projectRef: { serverId: 'home', projectKey: 'personal-project' } } } : {}),
       ...('project' in testCase ? { projectContext: { sourceRef: { serverId: 'home', sourceId: 'selected' } } } : {}),
@@ -467,6 +513,21 @@ describe('Session spawn defaults at admission', () => {
       return;
     }
     const result = await spawn;
+    if (testCase.layer === 'in-place-changed') {
+      expect(result).toMatchObject({ type: 'error', code: 'target_unavailable' });
+      expect(launched).toEqual([]);
+      expect(preparedDirectories).toEqual([]);
+      return;
+    }
+    if (testCase.layer === 'in-place') {
+      expect(launched, JSON.stringify(result)).toHaveLength(1);
+      expect(preparedDirectories).toEqual([{ kind: 'managed' }]);
+      expect(launched[0]).toMatchObject({
+        managedTargetPlacement: { managedId: workspace.managedId, workspaceRoot: workspace.rootPath },
+      });
+      expect(launched[0]).not.toHaveProperty('projectFiles');
+      return;
+    }
     if (testCase.layer === 'isolated-explicit') {
       expect(SessionSpawnNewResultV1Schema.parse(result)).toMatchObject({ type: 'error', code: 'target_unavailable', retryable: false,
         failureCause: { nativeErrorReason: 'not_available_in_sandbox_type' } });

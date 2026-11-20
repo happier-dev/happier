@@ -2,7 +2,7 @@ import * as zMini from '../../zodRuntimePolicy.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
-import { WorkspaceAddressV1Schema } from '../../workspaces/workspaceRefV1.js';
+import { WorkspaceAddressV2Schema } from '../../workspaces/workspaceRefV1.js';
 import { PROJECT_PAGES } from '../../workspaces/projectPagesV1.js';
 import { WorkspaceAnchorV1Schema, WorkspaceAnchorSourceV1Schema } from '../../workspace/anchors/v1.js';
 import { PluginContributionIdentityV1Schema } from '../contributionIdentity.js';
@@ -16,7 +16,7 @@ const OriginFileAnchorV1Schema = lazyZodSchema(() => z.union(WorkspaceAnchorV1Sc
 export const PluginUiNewSessionSeedOriginV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('project'),
   accountId: z.string().check(z.trim(), z.minLength(1)),
-  workspace: WorkspaceAddressV1Schema,
+  workspace: WorkspaceAddressV2Schema,
   page: z.enum(PROJECT_PAGES),
   /** Omitted by incumbent setup/discussion seeds; ordinary New session is never setup evidence. */
   purpose: z.optional(z.literal('session')),

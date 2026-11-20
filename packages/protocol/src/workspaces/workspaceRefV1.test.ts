@@ -14,6 +14,7 @@ describe('workspaceRefV1', () => {
     expect(WorkspaceAddressV2Schema.parse(native)).toEqual(native);
     expect(WorkspaceAddressV1Schema.safeParse(native).success).toBe(false);
     expect(WorkspaceAddressV2Schema.safeParse({ ...native, machineId: 'controller' }).success).toBe(false);
+    expect(WorkspaceAddressV2Schema.safeParse({ ...native, machineId: undefined }).success).toBe(false);
     expect(WorkspaceAddressV2Schema.safeParse({ ...machine, kind: 'managed' }).success).toBe(false);
     expect(WorkspaceAddressV2Schema.safeParse({ ...native, controller: { machineId: 'controller' } }).success).toBe(false);
   });

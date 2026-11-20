@@ -2,6 +2,7 @@ import { artifactSavedByFromActionContextV1 } from '../../artifacts/artifactBina
 import { isConfirmedActionWriteRefusal } from './actionFailureEnvelope.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import type { SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
+import { readSessionPlacementProjectFilesV1 } from '../../sessions/creation/sessionPlacementSelectionV1.js';
 import type { ActionAutomationWaitV1, ActionAutomationCancelV1, ActionAutomationRunObservationV1 } from './actionAutomationAdmission.js';
 import { isTerminalAutomationRunStateV3 } from '../../automations/automationRunStateV3.js';
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
@@ -35,7 +36,7 @@ import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostReviewedChildOperationV1 } from './deploymentRoleChild.js';
 import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
-import type { WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
+import type { WorkflowAcceptedWorkspaceTargetPreparation, WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import type { MachineSetupApplyInputV1, MachineSetupUpdatesRolloutInputV1 } from '../../machines/managed/actionsV1.js';
 import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { resolveWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionResolverV1.js';
@@ -549,9 +550,8 @@ export type WorkflowAccountRunActionDeps = Readonly<{
     directory: string;
   }>, readAgentStartContext: () => ReturnType<typeof resolveActionAgentStartContextV1>) => Promise<Pick<Parameters<typeof materializeWorkflowAcceptedSnapshotV1>[0], 'roleSelection' | 'effects'>>;
   assertCurrent?: () => void;
-  prepareWorkspace?: (input: Readonly<{ projectTarget: NonNullable<WorkflowMachineTarget['project']>; definition: WorkflowDefinitionV1 }>) => Promise<
-    Readonly<{ ok: true; workspaceTarget: ReturnType<typeof WorkflowAcceptedSnapshotV1Schema.parse>['workspaceTarget'] }>
-    | Readonly<{ ok: false; code: 'workspace_unavailable' | 'workspace_conflict' | 'committed_revision_unavailable' }>>;
+  prepareWorkspace?: (input: Readonly<{ projectTarget: NonNullable<WorkflowMachineTarget['project']>; definition: WorkflowDefinitionV1 }>) =>
+    Promise<WorkflowAcceptedWorkspaceTargetPreparation>;
   restoreWorkspace?: (workspace: NonNullable<WorkflowProgressEnvelopeV1['workspace']>) => Promise<
     Readonly<{ ok: true }> | Readonly<{ ok: false; code: 'workflow_workspace_restore_unavailable' | 'workflow_workspace_restore_failed' }>>;
   observeRecovery?: (input: WorkflowInvocationRecoveryObservationInput) => Promise<WorkflowInvocationRecoveryEvidence>;
@@ -1391,8 +1391,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
       ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
       errorCode: preparedWorkspace.code,
     });
-    const projectFiles = preparedWorkspace.workspaceTarget.sessionPlacement?.projectFiles
-      ?? preparedWorkspace.workspaceTarget.projectFiles ?? input.managedProjectFiles;
+    const { projectFiles } = readSessionPlacementProjectFilesV1(preparedWorkspace.workspaceTarget.sessionPlacement,
+      preparedWorkspace.workspaceTarget.projectFiles ?? input.managedProjectFiles);
     const controller = currentControllerAuthorization(args, combined !== undefined);
     materialization = { ...materialization, effects: { ...materialization.effects,
       admitSessionAuthority: async target => {

@@ -11,7 +11,8 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { useActiveServerAccountScope, useWorkspaceRefs } from '@/sync/domains/state/storage';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { resolveProjectCheckoutWorkspaceRef } from '@/sync/domains/workspaces/workspaceRefs';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { buildProjectNewSessionOrigin, readProjectSelectedRouteResource, type ProjectPageV1 } from './detail/projectRouteState';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
@@ -37,8 +38,8 @@ export function useProjectNewSessionAction(input: Readonly<{
             activeDetailsKey: details?.activeTabKey, activeDetailsKind: selected?.kind, activeDetailsResource: selected?.resource,
             rightOpen: scope?.right.isOpen, rightTabId: scope?.right.activeTabId, selectedDestination: scope?.right.selectedDestination };
     });
-    const target = { serverId: input.workspaceRef.serverId, machineId: input.workspaceRef.machineId, rootPath: input.activeRootPath };
     const checkout = resolveProjectCheckoutWorkspaceRef(workspaceRefs, input.workspaceRef, input.activeRootPath);
+    const target = workspaceScopeFromProject(checkout ?? input.workspaceRef, input.activeRootPath);
     const page = input.page ?? resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
     const selectedCompanion = pane.scopeState.selectedDestination;
     const companion = pane.scopeState.rightOpen
@@ -48,7 +49,7 @@ export function useProjectNewSessionAction(input: Readonly<{
         const current = paneContext?.getSnapshot().state.scopes[pane.scopeId]?.details;
         const details = current ? buildDetailsWorkspaceStateView(current) : null;
         return accountScope && checkout ? buildProjectNewSessionOrigin({ scope: accountScope,
-            workspace: workspaceAddressFromRefV1(checkout), page, routeParams,
+            workspace: workspaceAddressFromRefV2(checkout), page, routeParams,
             resource: details?.tabs.length ? readProjectSelectedRouteResource(details) ?? null : undefined,
             ...(companion ? { companion } : {}),
         }) : null;

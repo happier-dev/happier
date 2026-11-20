@@ -31,6 +31,20 @@ const context = {
 } as const;
 
 describe('workflow project target', () => {
+    it('keeps in-place selection exact and drops it when selecting another folder', () => {
+        const workspace = {
+            v: 2, kind: 'managed', serverId: 'server-1', workspaceId: 'ws-managed', managedId: 'managed-1',
+            rootPath: '/guest/repo', controller: { machineId: 'machine-1', installationId: 'installation' },
+        } as const;
+        const placement = { kind: 'in_place', workspace } as const;
+        const current = { machineId: 'machine-1', workspaceRefId: workspace.workspaceId, directory: workspace.rootPath };
+        expect(setWorkflowProjectSessionPlacement(current, placement, workspace.serverId)).toEqual({
+            ...current, sessionPlacement: placement,
+        });
+        expect(setWorkflowProjectDirectory({
+            ...context, current: { ...current, sessionPlacement: placement }, directory: '/home/dev/other',
+        })).toEqual({ machineId: 'machine-1', directory: '/home/dev/other', workspaceRefId: 'ws-other' });
+    });
     it('retains saved Session placement when editing the project folder', () => {
         const sessionPlacement = { kind: 'preset' as const, homeId: 'server-1', presetId: 'preset-1' };
         expect(setWorkflowProjectDirectory({ ...context,

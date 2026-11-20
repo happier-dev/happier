@@ -4,7 +4,7 @@ import type {
   WorkflowWorkspaceDescriptorV1,
   WorkflowWorkspaceResolutionV1,
   WorkflowWorkspaceSelection,
-  WorkflowAcceptedWorkspaceTargetV1,
+  WorkflowAcceptedWorkspaceTargetPreparation,
   WorkflowProjectTargetV1,
 } from '@happier-dev/protocol/workflows';
 import type { WorkflowDefinitionV1, WorkflowProgressEnvelopeV1, WorkflowStep, WorkflowWorkspaceProgressV1 } from '@happier-dev/protocol';
@@ -40,10 +40,6 @@ export type WorkflowWorkspaceRestoreResult = Readonly<{ ok: true }> | Readonly<{
   ok: false;
   code: 'workflow_workspace_restore_unavailable' | 'workflow_workspace_restore_failed';
 }>;
-
-export type WorkflowAcceptedWorkspaceTargetPreparation =
-  | Readonly<{ ok: true; workspaceTarget: WorkflowAcceptedWorkspaceTargetV1 }>
-  | Readonly<{ ok: false; code: 'workspace_unavailable' | 'workspace_conflict' | 'committed_revision_unavailable' }>;
 
 type Dependencies = Readonly<{
   resolveProducerWorkspace?: (producer: WorkflowAuthoredProducerRef) => Promise<WorkflowWorkspaceSource | null>;
@@ -203,6 +199,9 @@ export async function prepareWorkflowAcceptedWorkspaceTarget(input: Readonly<{
   }> | null>;
   pathIsDirectory?: (path: string) => Promise<boolean>;
 }>): Promise<WorkflowAcceptedWorkspaceTargetPreparation> {
+  if (input.projectTarget.sessionPlacement?.kind === 'in_place') {
+    return { ok: false, code: 'workflow_in_place_not_available' };
+  }
   const normalizedTarget = normalizeWorkflowProjectTarget({
     projectTarget: input.projectTarget,
     env: input.env,

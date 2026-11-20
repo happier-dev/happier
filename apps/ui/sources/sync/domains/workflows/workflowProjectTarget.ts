@@ -119,13 +119,16 @@ export function setWorkflowProjectDirectory(input: Readonly<{
             serverId: input.serverId,
             workspaceRefs: input.workspaceRefs,
         });
-    return withWorkspaceRefId({ machineId: input.current.machineId, directory: input.directory,
-        ...(isWorkflowProjectTarget(input.current) && input.current.sessionPlacement !== undefined
-            ? { sessionPlacement: input.current.sessionPlacement.projectFilesSource?.target.machineId === input.current.machineId
-                ? { ...input.current.sessionPlacement, projectFilesSource: {
-                    ...input.current.sessionPlacement.projectFilesSource, directory: input.directory,
-                } } : input.current.sessionPlacement } : {}),
-    }, workspaceRefId);
+    const previous = isWorkflowProjectTarget(input.current) ? input.current.sessionPlacement : undefined;
+    const target = { machineId: input.current.machineId, directory: input.directory };
+    if (previous?.kind === 'in_place') {
+        return withWorkspaceRefId(sameProject ? { ...target, sessionPlacement: previous } : target, workspaceRefId);
+    }
+    const source = previous?.projectFilesSource;
+    const sessionPlacement = previous && source?.target.machineId === input.current.machineId
+        ? { ...previous, projectFilesSource: { ...source, directory: input.directory } }
+        : previous;
+    return withWorkspaceRefId({ ...target, ...(sessionPlacement ? { sessionPlacement } : {}) }, workspaceRefId);
 }
 
 /**
@@ -137,7 +140,7 @@ export function setWorkflowProjectSessionPlacement(current: WorkflowAuthoringTar
     if (!isWorkflowProjectTarget(current)) return current;
     const { sessionPlacement: previous, ...rest } = current;
     if (placement === undefined) return previous === undefined ? current : rest;
-    return { ...rest, sessionPlacement: sourceServerId && !placement.projectFilesSource
+    return { ...rest, sessionPlacement: placement.kind !== 'in_place' && sourceServerId && !placement.projectFilesSource
         ? { ...placement, projectFilesSource: {
             target: { serverId: sourceServerId, machineId: current.machineId }, directory: current.directory,
         } } : placement };

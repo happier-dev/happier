@@ -25,6 +25,19 @@ function existingDraft(overrides: Partial<NewSessionDraft> = {}): NewSessionDraf
 }
 
 describe('applyNewSessionDraftSeedV1', () => {
+    it('seeds the accepted guest Project as an in-place launch through its controller', () => {
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'guest-ref',
+            managedId: 'guest', rootPath: '/repo', controller: { machineId: 'controller', installationId: 'install' } };
+        const seeded = applyNewSessionDraftSeedV1({
+            seed: { placement: { kind: 'exactTarget', serverId: 'home', machineId: 'controller', directory: '/repo' },
+                origin: { kind: 'project', purpose: 'session', accountId: 'account', workspace, page: 'overview' } },
+            existingDraft: null, updatedAt: 1,
+        });
+        expect(seeded).toMatchObject({ sessionPlacement: { kind: 'in_place', workspace },
+            executionTarget: { kind: 'machine', target: { serverId: 'home', machineId: 'controller' } },
+            selectedPath: '/repo' });
+    });
+
     it('seeds prompt, profile and placement onto an existing draft without dropping its other selections', () => {
         const seeded = applyNewSessionDraftSeedV1({
             seed: {

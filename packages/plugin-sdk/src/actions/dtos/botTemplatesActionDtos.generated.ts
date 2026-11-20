@@ -472,6 +472,20 @@ export type BotTemplatesActionInputById = {
             };
             isolationOverride?: 'directly' | undefined;
             sessionPlacement?: undefined | {
+                kind: 'in_place';
+                workspace: {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                };
+            } | {
                 kind: 'machine';
                 target: {
                     serverId: string;
@@ -673,6 +687,18 @@ export type BotTemplatesActionInputById = {
                     serverId: string;
                     workspaceId: string;
                     machineId: string;
+                    rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
                     rootPath: string;
                 };
                 page: 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'memory' | 'overview' | 'scripts' | 'services';
@@ -1814,7 +1840,6 @@ export type BotTemplatesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -1850,7 +1875,6 @@ export type BotTemplatesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -3204,7 +3228,6 @@ export type BotTemplatesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -3240,7 +3263,6 @@ export type BotTemplatesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;

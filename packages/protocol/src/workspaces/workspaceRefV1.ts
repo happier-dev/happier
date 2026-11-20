@@ -88,7 +88,7 @@ export const WorkspaceAddressV1Schema = lazyZodSchema(() => z.strictObject({
 export type WorkspaceAddressV1 = z.infer<typeof WorkspaceAddressV1Schema>;
 /** Native list addresses retain guest identity and controller installation; V1 remains Machine-only. */
 export const ManagedWorkspaceAddressV2Schema = lazyZodSchema(() => z.strictObject({
-  v: z.literal(2), kind: z.literal('managed'), machineId: z.optional(z.never()),
+  v: z.literal(2), kind: z.literal('managed'),
   serverId: LookupNonEmptyStringSchema, workspaceId: LookupNonEmptyStringSchema,
   managedId: LookupNonEmptyStringSchema,
   controller: z.strictObject({ machineId: LookupNonEmptyStringSchema, installationId: LookupNonEmptyStringSchema }),

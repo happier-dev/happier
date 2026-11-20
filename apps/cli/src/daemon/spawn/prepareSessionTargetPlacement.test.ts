@@ -281,6 +281,26 @@ describe('Session placement on a managed target at spawn', () => {
         expect(custody.requests[0]!.lifetime.aborted).toBe(true);
     });
 
+    it.skipIf(process.platform === 'win32')('restores Files at the guest checkout after a controller restart', async () => {
+        const custody = fakeCustody();
+        const socketPath = createSessionHolderSocketPath();
+        const sessionId = 'reattached-in-place';
+        const release = await restoreSessionTargetRelay({ request: { managedId: 'row-1' }, sessionKey: 'reattach-native',
+            requesterAccountId: 'owner', holderVersion: 'v', committedSessionId: sessionId, socketPath,
+            openManagedSessionTarget: custody.open, readTrustedCallerPid: () => process.pid,
+            workspace: { sessionId, primarySocketPath: '/guest/primary.sock',
+                roots: { hostRoot: '/guest/project', targetRoot: '/guest/project' } } });
+        try {
+            expect(resolveSessionTargetWorkspaceTransfer(sessionId)?.workspace).toEqual({
+                hostRoot: '/guest/project', targetRoot: '/guest/project',
+            });
+        } finally {
+            release?.();
+        }
+        expect(resolveSessionTargetWorkspaceTransfer(sessionId)).toBeNull();
+        await expect.poll(() => existsSync(socketPath)).toBe(false);
+    });
+
     it.skipIf(process.platform === 'win32')('a restarted daemon serves a reattached runner\'s relay again at its holder-directory address, under its own authority', async () => {
         const custody = fakeCustody();
         const socketPath = createSessionHolderSocketPath();
@@ -295,8 +315,9 @@ describe('Session placement on a managed target at spawn', () => {
             managedId: 'row-1', controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/project' };
         const baseline = { entries: [] };
         const release = await restoreSessionTargetRelay({ ...request, committedSessionId: 'reattached-project-files', socketPath,
-            projectFiles: { sessionId: 'reattached-project-files', primarySocketPath: '/guest/primary.sock',
-                origin: { sourceWorkspace, targetWorkspace }, readBaseline: async () => baseline } });
+            workspace: { sessionId: 'reattached-project-files', primarySocketPath: '/guest/primary.sock',
+                roots: { hostRoot: sourceWorkspace.rootPath, targetRoot: targetWorkspace.rootPath },
+                readBaseline: async () => baseline } });
         expect(release).toBeTypeOf('function');
         expect(custody.requests[0]!.committedSessionId).toBe('reattached-project-files');
         expect(resolveSessionTargetWorkspaceTransfer('reattached-project-files')).toMatchObject({

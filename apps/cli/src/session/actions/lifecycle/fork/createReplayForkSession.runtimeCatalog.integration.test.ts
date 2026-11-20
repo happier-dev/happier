@@ -1,11 +1,18 @@
+import { createServer } from 'node:http';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { ForkBackendResolution, ForkSpawnSession } from './forkLifecycleTypes';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
+import { withCliApiToken } from '@/auth/cliApiToken';
+import { createForkSessionLifecycleActionHandler } from '../createForkSessionLifecycleActionHandler';
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { ForkSurfaceV1 } from '@happier-dev/agents';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { deriveSessionCreationTagV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 const getOrCreateSessionByTagMock = vi.fn();
+const fetchSessionByIdCompatMock = vi.fn();
 const resolveReplaySeedDraftMock = vi.fn();
 const archiveSessionOnceInactiveMock = vi.fn();
 const fetchSessionOrganizationPlacementMock = vi.fn();
@@ -20,6 +27,7 @@ vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
 vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>(),
   getOrCreateSessionByTag: (...args: unknown[]) => getOrCreateSessionByTagMock(...args),
+  fetchSessionByIdCompat: (...args: unknown[]) => fetchSessionByIdCompatMock(...args),
   fetchSessionOrganizationPlacement: (...args: unknown[]) => fetchSessionOrganizationPlacementMock(...args),
 }));
 
@@ -74,6 +82,30 @@ function createBuiltInForkResolution(): ForkBackendResolution {
     replayFlavor: 'codex',
     metadataOverlay: {},
   };
+}
+
+async function withReplayHome<T>(machineId: string, run: () => Promise<T>): Promise<T> {
+  const server = createServer((request, response) => {
+    let body: object;
+    if (request.method === 'GET' && request.url === `/v1/access-keys/child-session/${machineId}`) {
+      body = { accessKey: 'fixture-key' };
+    } else if (request.method === 'POST' && request.url === '/v2/sessions/lookup-by-tags') {
+      body = { sessions: [] };
+    } else {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('Expected a loopback listener');
+    return await runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, run);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 }
 
 describe('createReplayForkSession', () => {
@@ -194,6 +226,98 @@ describe('createReplayForkSession', () => {
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
+  it('launches a replay fork in the same guest checkout and retains the address for the child', async () => {
+    const inPlaceWorkspace = {
+      v: 2, kind: 'managed', serverId: 'home', managedId: 'guest', workspaceId: 'workspace',
+      controller: { machineId: 'controller', installationId: 'install' }, rootPath: '/guest/shared',
+    } as const;
+    const parentTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'test', creationKey: 'parent' });
+    const spawnSession = vi.fn<ForkSpawnSession>().mockResolvedValue({ type: 'success', sessionId: 'child-session' });
+    const resolveReplayChildLaunch = vi.fn().mockResolvedValue({ directory: '/controller/shared' });
+    const result = await withReplayHome('controller', () => createReplayForkSession({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {
+        machineId: 'controller',
+        sessionDirectoryV1: { v: 1, kind: 'managed' },
+        sessionCreationCorrespondenceV1: { v: 1, sessionCreationTag: parentTag, recipe: {
+          execution: { machineId: 'controller', directory: { kind: 'managed' } },
+          organization: { folderId: null, tagIds: [] },
+          agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+          modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null,
+          configuration: null, connectedServices: null, capabilitySelection: null, transcriptStorage: null,
+          terminal: null, agentSessionStartupInstructionsMarkerV1: null, checkout: null, inPlaceWorkspace,
+        } },
+      },
+      directory: '/guest/shared',
+      effectiveCutoffSeqInclusive: 3,
+      spawnNonce: 'fork-in-place',
+      forkPointType: 'latest',
+      replaySummaryRunner: null,
+      replayMaxSeedChars: undefined,
+      maxTextChars: undefined,
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: { metadata: {}, spawn: {} },
+      forkSurface: { resolveReplayChildLaunch },
+      spawnSession,
+    }));
+
+    expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
+    expect(resolveReplayChildLaunch).not.toHaveBeenCalled();
+    expect(spawnSession.mock.calls[0]?.[0]).toMatchObject({
+      directoryKind: 'managed',
+      managedTargetPlacement: { managedId: 'guest', workspaceRoot: '/guest/shared' },
+      sessionCreationCorrespondence: { recipe: { inPlaceWorkspace } },
+    });
+    expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty('managedDirectorySeed');
+    const childTag = spawnSession.mock.calls[0]?.[0]?.sessionCreationTag;
+    expect(childTag).not.toBe(parentTag);
+    expect(getOrCreateSessionByTagMock).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        sessionCreationCorrespondenceV1: expect.objectContaining({ sessionCreationTag: childTag, recipe: expect.objectContaining({ inPlaceWorkspace }) }),
+      }),
+    }));
+  });
+
+  it('refuses a legacy native fork for an in-place guest without invoking its provider hook', async () => {
+    const inPlaceWorkspace = {
+      v: 2, kind: 'managed', serverId: 'home', managedId: 'guest', workspaceId: 'workspace',
+      controller: { machineId: 'controller', installationId: 'install' }, rootPath: '/guest/shared',
+    } as const;
+    const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'test', creationKey: 'parent' });
+    fetchSessionByIdCompatMock.mockResolvedValueOnce({
+      id: 'parent-session', seq: 3, encryptionMode: 'plain', metadata: JSON.stringify({
+        flavor: 'gemini', path: '/guest/shared', machineId: 'controller',
+        sessionDirectoryV1: { v: 1, kind: 'managed' },
+        sessionCreationCorrespondenceV1: buildSessionCreationCorrespondence({
+          identity: { sessionCreationTag },
+          recipe: {
+            execution: { machineId: 'controller', directory: { kind: 'managed' } },
+            organization: { folderId: null, tagIds: [] },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.gemini', localId: 'gemini' } },
+            inPlaceWorkspace,
+          },
+        }),
+      }),
+    });
+    const providerFork = vi.fn<NonNullable<ForkSurfaceV1['fork']>>().mockResolvedValue(null);
+    const spawnSession = vi.fn<ForkSpawnSession>();
+    const handler = createForkSessionLifecycleActionHandler({
+      sessionHostBridge: getSessionHostBridge(),
+      resolveExecutionSurfaces: async () => ({
+        terminalRuntime: null, externalSession: null, attach: null, handoff: null,
+        fork: { fork: providerFork }, checkpoint: null,
+      }),
+      handlers: { spawnSession, stopSession: async () => false },
+    });
+    const result = await withCliApiToken(`hap_v1_123e4567-e89b-42d3-a456-426614174000_${'A'.repeat(43)}`, () => handler({
+      v: 1, parentSessionId: 'parent-session', forkPoint: { type: 'latest' }, strategy: 'native',
+    }));
+    expect(result).toMatchObject({ ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+    expect(providerFork).not.toHaveBeenCalled();
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
   it('uses the caller spawn nonce as the replay child tag', async () => {
     const spawnSession = vi.fn<ForkSpawnSession>()
       .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
@@ -231,7 +355,7 @@ describe('createReplayForkSession', () => {
     const spawnSession = vi.fn<ForkSpawnSession>()
       .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
 
-    await createReplayForkSession({
+    await withReplayHome('machine-a', () => createReplayForkSession({
       credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
       parentSessionId: 'parent-session',
       parentMetadata: { machineId: 'machine-a' },
@@ -259,7 +383,7 @@ describe('createReplayForkSession', () => {
       },
       forkSurface: null,
       spawnSession,
-    });
+    }));
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-a' }));
   });

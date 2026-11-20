@@ -318,6 +318,24 @@ describe('resolveWorkflowWorkspace', () => {
     if (prepared.ok) expect(WorkflowAcceptedWorkspaceTargetV1Schema.parse(prepared.workspaceTarget)).toEqual(prepared.workspaceTarget);
   });
 
+  it('refuses in-place admission before reading a same-path controller folder', async () => {
+    const workspace = {
+      v: 2, kind: 'managed', serverId: 'server-1', workspaceId: 'guest-ref', managedId: 'guest-id',
+      controller: { machineId: 'machine-1', installationId: 'controller-installation' }, rootPath: '/repo',
+    } as const;
+    const pathIsDirectory = vi.fn(async () => true);
+    const inspectLocation = vi.fn(async () => ({ inspection: { rootPath: workspace.rootPath } }));
+    const result = await prepareWorkflowAcceptedWorkspaceTarget({
+      projectTarget: { machineId: 'machine-1', directory: workspace.rootPath,
+        sessionPlacement: { kind: 'in_place', workspace } },
+      definition: { version: 1, inputs: [], defaults: {}, blocks: [] },
+      pathIsDirectory, inspectLocation,
+    });
+    expect(result).toEqual({ ok: false, code: 'workflow_in_place_not_available' });
+    expect(pathIsDirectory).not.toHaveBeenCalled();
+    expect(inspectLocation).not.toHaveBeenCalled();
+  });
+
   it('freezes the canonical nested project directory and original committed revision before admission', async () => {
     const inspectLocation = vi.fn(async () => ({
       inspection: {

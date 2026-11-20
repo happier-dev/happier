@@ -142,14 +142,15 @@ function ProjectSetupSessionReturnCard(
 function useProjectSetupDraftTarget(origin: PluginUiNewSessionSeedOriginV1) {
   const scripts = useProjectAuthoringReturn(origin);
   const { binding } = useServerCredentialAccountScopeBinding(origin.workspace.serverId);
-  const machine = useServerScopedMachine(origin.workspace.serverId, origin.workspace.machineId);
+  const machineId = origin.workspace.kind === 'managed' ? origin.workspace.controller.machineId : origin.workspace.machineId;
+  const machine = useServerScopedMachine(origin.workspace.serverId, machineId);
   if (scripts.destination.kind !== 'ready'
     && (!binding?.isCurrent() || binding.accountId !== origin.accountId)) return null;
   return {
     project: scripts.destination.kind === 'ready'
       ? resolveWorkspaceRefDisplayName(scripts.destination.workspaceRef)
       : resolveWorkspacePathBasenameV1(origin.workspace.rootPath) ?? origin.workspace.rootPath,
-    machine: machine ? getMachineSentenceName(machine) : origin.workspace.machineId,
+    machine: machine ? getMachineSentenceName(machine) : machineId,
   };
 }
 

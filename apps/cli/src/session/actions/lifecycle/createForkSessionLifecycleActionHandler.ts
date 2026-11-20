@@ -23,6 +23,7 @@ import { attemptAcpLatestFork } from './fork/attemptAcpLatestFork';
 import { attemptNativeForkOpen } from './fork/attemptNativeForkOpen';
 import { attemptProviderNativeFork } from './fork/attemptProviderNativeFork';
 import { createReplayForkSession } from './fork/createReplayForkSession';
+import { readForkWorkspacePlacement } from './fork/prepareManagedForkDirectory';
 import type { ForkLifecycleResult } from './fork/forkLifecycleTypes';
 import { readReplayTextLimitFromEnv } from '@/session/replay/readReplayTextLimitFromEnv';
 import type {
@@ -183,6 +184,8 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
         // the effective-source rule, and a mismatched or absent agent target
         // already threw above.
         const providerBoundFork = isProviderBoundSessionMetadata(parentMetadata);
+        // A guest path is usable only through the child launch owner.
+        const inPlaceFork = readForkWorkspacePlacement(parentMetadata)?.recipe.inPlaceWorkspace !== undefined;
         if (
             providerBoundFork
             && requestedStrategy !== 'auto'
@@ -260,6 +263,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             // through to Replay, which the user did not choose.
             const genericNativeIntent = requestedStrategy === 'auto' || requestedStrategy === 'native';
             const shouldAttemptAcpForkLatest =
+                !inPlaceFork &&
                 !providerBoundFork &&
                 (genericNativeIntent || requestedStrategy === 'acp_fork_latest') &&
                 forkPoint.type === 'latest' &&
@@ -300,14 +304,14 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             const maxTextChars = readReplayTextLimitFromEnv();
             const resolveExecutionSurfaces = params.resolveExecutionSurfaces
                 ?? params.sessionHostBridge.resolveExecutionSurfaces.bind(params.sessionHostBridge);
-            const forkSurface = (await resolveExecutionSurfaces(
+            const forkSurface = inPlaceFork ? null : (await resolveExecutionSurfaces(
                 forkBackendResolution.backendTargetV2.backendId,
             )).fork;
 
             // An agent-owned fork surface can implement both native and ACP
             // modes. Route ACP-backed sessions directly to the ACP lifecycle so
             // one surface invocation has one authoritative persisted strategy.
-            if (!providerBoundFork && !(genericNativeIntent && shouldAttemptAcpForkLatest)) {
+            if (!inPlaceFork && !providerBoundFork && !(genericNativeIntent && shouldAttemptAcpForkLatest)) {
                 const providerNativeFork = await attemptProviderNativeFork({
                     requestedStrategy,
                     credentials,

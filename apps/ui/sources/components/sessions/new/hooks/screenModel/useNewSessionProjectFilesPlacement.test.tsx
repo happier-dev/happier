@@ -6,6 +6,29 @@ import { ManagedCreationSelectionV1Schema } from '@happier-dev/protocol/machines
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 describe('Project files authoring in the current placement', () => {
+    it('keeps a hydrated guest checkout only while its Machine and folder are selected', async () => {
+        const workspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'guest-ref',
+            managedId: 'guest', rootPath: '/repo', controller: { machineId: 'controller', installationId: 'install' } };
+        const hydratedPlacement = { kind: 'in_place' as const, workspace };
+        let selectedPath = '/repo';
+        let machineId = 'controller';
+        const hook = await renderHook(() => useNewSessionProjectFilesPlacement({
+            draftKey: 'project', selectedPath,
+            executionTarget: { kind: 'machine', target: { serverId: 'home', machineId } },
+            managedMachineSelection: null, hydratedPlacement,
+        }));
+        expect(hook.getCurrent().sessionPlacement).toEqual(hydratedPlacement);
+        expect(hook.getCurrent().projectFilesOutcome).toEqual({ origin: 'default', placementKind: 'in_place' });
+        selectedPath = '/other';
+        await hook.rerender();
+        expect(hook.getCurrent().sessionPlacement).toBeUndefined();
+        selectedPath = '/repo';
+        machineId = 'other';
+        await hook.rerender();
+        expect(hook.getCurrent().sessionPlacement).toBeUndefined();
+        await hook.unmount();
+    });
+
     it('keeps the chosen method and its Included policy when restoring a draft', async () => {
         const policy = { v: 1 as const, selection: 'all_files' as const,
             extraIgnorePatterns: ['private/**'], extraIncludePatterns: ['build/result.txt'] };

@@ -5,7 +5,7 @@ import { invokeReviewedProjectOpen } from '@/workspaces/activation/invokeReviewe
 import { buildSessionProjectFilesSourceOpenInputV1, needsEnrolledSessionProjectFilesOpenV1,
   SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
-import type { SessionPlacementSelectionV1, SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
+import { readSessionPlacementProjectFilesV1, type SessionPlacementSelectionV1, type SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { buildWorkspaceSyncMaterializationOpenInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import type { ManagedWorkspaceRefV2, WorkspaceAddressV1, WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -95,8 +95,8 @@ export async function prepareEnrolledSessionProjectFiles(input: Readonly<{
   if (!input.invokeReviewedChild) return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
   const open = (request: OpenProjectInputV1, role: string) => invokeReviewedProjectOpen({ request, role,
     invokeReviewedChild: input.invokeReviewedChild, signal: input.signal });
-  const resolved = await resolveSessionProjectFiles({ ...input,
-    projectFiles: input.placement?.projectFiles ?? input.projectFiles ?? { kind: 'copy_once' } });
+  const { projectFiles = { kind: 'copy_once' } } = readSessionPlacementProjectFilesV1(input.placement, input.projectFiles);
+  const resolved = await resolveSessionProjectFiles({ ...input, projectFiles });
   if (!resolved.ok) return resolved;
   const choice = resolved.projectFiles;
   if (choice.kind === 'git_clone') {

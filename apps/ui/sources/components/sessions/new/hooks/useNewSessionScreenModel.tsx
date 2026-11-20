@@ -4,6 +4,7 @@ import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hoo
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { RuntimeDescriptorV1Schema } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { readSessionPlacementProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { projectAccountManagedSessionDefaults } from '@/sync/ops/teams/managedSessionDefaults';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { normalizeSessionConfigOptionValueId } from '@/sync/domains/sessionControl/configOptionsControl';
@@ -1259,8 +1260,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         persistedPlacementExplicit: persistedDraft?.placementExplicit,
         persistedManagedMachineSelection: persistedTargetMatches ? persistedDraft?.managedMachineSelection : null,
         requestedManagedMachineSelection: tempSessionData?.managedMachineSelection,
-        persistedProjectFilesSource: hydratedTempAuthoringDraft?.sessionPlacement?.projectFilesSource
-            ?? hydratedPersistedAuthoringDraft?.sessionPlacement?.projectFilesSource,
+        persistedProjectFilesSource: readSessionPlacementProjectFilesV1(hydratedTempAuthoringDraft?.sessionPlacement).projectFilesSource
+            ?? readSessionPlacementProjectFilesV1(hydratedPersistedAuthoringDraft?.sessionPlacement).projectFilesSource,
         persistedExecutionTarget: hydratedTempAuthoringDraft?.executionTarget ?? hydratedPersistedAuthoringDraft?.executionTarget ?? undefined,
         executionTargetRequestKey: hydratedTempAuthoringDraft?.executionTarget !== undefined || tempSessionData?.managedMachineSelection
             ? (typeof dataId === 'string' ? dataId : null)
@@ -2965,6 +2966,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }, [approvalProfileDraftKey]);
     const projectFilesPlacement = useNewSessionProjectFilesPlacement({
         draftKey: approvalProfileDraftKey,
+        selectedPath,
         executionTarget,
         managedMachineSelection,
         hydratedPlacement: hydratedTempAuthoringDraft?.sessionPlacement ?? hydratedPersistedContentAuthoringDraft?.sessionPlacement,

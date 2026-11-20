@@ -38,6 +38,23 @@ describe('authoring-memory envelopes', () => {
     expect(AuthoringMemoryPrivatePayloadV1Schema.safeParse({ key, value: { machineId: 'machine-one' } }).success).toBe(false);
     expect(AuthoringMemoryPrivatePayloadV1Schema.safeParse({ key: 'workflowProject:', value }).success).toBe(false);
   });
+  it('round-trips a native Workflow workspace through strict JSON authoring memory', () => {
+    const key = 'workflowProject:00000000-0000-4000-8000-000000000005';
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-checkout', managedId: 'guest',
+      controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/guest/repo' };
+    const value = { machineId: 'controller', directory: workspace.rootPath,
+      sessionPlacement: { kind: 'in_place', workspace } };
+    const parsed = assertAuthoringMemoryValueForKeyV1(key, value);
+    expect(parsed).toStrictEqual(value);
+    const envelope = AuthoringMemoryContentV1Schema.parse({ t: 'plain', v: parsed });
+    expect(envelope).toEqual({ t: 'plain', v: value });
+    expect(assertAuthoringMemoryContentForModeV1(JSON.parse(JSON.stringify(envelope)), 'plain', key))
+      .toEqual(envelope);
+    for (const machineId of ['controller', undefined]) {
+      expect(() => assertAuthoringMemoryValueForKeyV1(key, { ...value,
+        sessionPlacement: { ...value.sessionPlacement, workspace: { ...workspace, machineId } } })).toThrow();
+    }
+  });
   it('admits qualified Project recency and rejects invalid timestamps and noncanonical identities', () => {
     const key = 'projectLastOpened:home%3Aone:project%2Fone';
     expect(buildProjectLastOpenedMemoryKeyV1({ serverId: 'home:one', projectKey: 'project/one' })).toBe(key);

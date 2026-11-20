@@ -384,7 +384,8 @@ export async function executeSpawnSessionRequest(
             return prepared;
         }
 
-        options = { ...options, profileId: prepared.profileId };
+        options = { ...options, profileId: prepared.profileId,
+            ...(prepared.managedTargetPlacement ? { managedTargetPlacement: prepared.managedTargetPlacement } : {}) };
         let profilesSnapshot: Awaited<ReturnType<typeof readAccountLaunchProfiles>> | undefined;
         if (options.profileId) {
             try {
@@ -1186,10 +1187,14 @@ export async function executeSpawnSessionRequest(
             const managedPurposes = managedPurposeBindings.map(
                 (binding) => binding.purpose,
             );
+            const retainedRecipe = launchSessionAttachPayload?.snapshot?.ownerMetadata?.system
+                ?.sessionCreationCorrespondenceV1?.recipe;
+            const inPlaceWorkspace = retainedRecipe?.inPlaceWorkspace
+                ?? effectiveOptionsForSpawn.sessionCreationCorrespondence?.recipe.inPlaceWorkspace;
             const projectFiles = resolveProjectFilesForManagedLaunch({
+                inPlaceWorkspace,
                 placement: effectiveOptionsForSpawn.managedTargetPlacement?.projectFiles,
-                recipe: launchSessionAttachPayload?.snapshot?.ownerMetadata?.system
-                    ?.sessionCreationCorrespondenceV1?.recipe.projectFiles,
+                recipe: retainedRecipe?.projectFiles,
             });
             const projectFilesGitAccount = projectFiles?.kind === 'git_clone'
                 ? projectFiles.gitAccount
@@ -1584,8 +1589,9 @@ export async function executeSpawnSessionRequest(
                         materializedRoot: connectedServiceAuth?.targetMaterializedRoot ?? null,
                         requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,
                         agentCommand: spawnEnvironment.agentCliLaunchSpec?.command ?? null,
-                        workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
-                        projectFiles: { selection: projectFiles!,
+                        workspace: { hostRoot: inPlaceWorkspace?.rootPath ?? effectiveOptionsForSpawn.directory,
+                            targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
+                        ...(projectFiles === null ? {} : { projectFiles: { selection: projectFiles,
                             activeServerDir: configuration.activeServerDir,
                             ...(effectiveOptionsForSpawn.projectSetupOperation
                                 ? { onProgress: effectiveOptionsForSpawn.projectSetupOperation.operationProgress.update } : {}),
@@ -1619,13 +1625,13 @@ export async function executeSpawnSessionRequest(
                                         cloneAccountSelection.owner,
                                 }
                                 : appliedPluginRuntimeLease.registry,
-                                includeHostingProviders: projectFiles?.kind === 'git_clone' }) },
+                                includeHostingProviders: projectFiles?.kind === 'git_clone' }) } }),
                         agentCliInstall: { env: params.processEnv ?? process.env },
                         signal: sessionTarget.signal });
                     sessionTargetWorkspace = launch.workspace;
                     if (!sessionTargetOrigin && committedLaunchSession
                         && !managedPlacement.projectFilesSource && !managedPlacement.projectFilesSourceWorkspace
-                        && (!projectFiles || projectFiles.kind === 'copy_once')) {
+                        && (projectFiles === undefined || projectFiles?.kind === 'copy_once')) {
                         const bootstrap = requesterRuntime?.bootstrap;
                         sessionTargetOrigin = await retainImplicitManagedProjectFilesOrigin({ credentials: params.credentials,
                             recipe: committedRecipe, workspace: launch.workspace,

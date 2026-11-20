@@ -147,10 +147,11 @@ export async function attemptNativeForkOpen(params: Readonly<{
         target = Object.freeze(resolved);
     }
 
+    const managedDirectory = prepareManagedForkDirectory(params);
     const nativeForkSource: NativeForkSource = Object.freeze({
         sessionId: params.parentSessionId,
         providerSessionId,
-        cwd: params.directory,
+        cwd: managedDirectory?.sessionCreationCorrespondence?.recipe.inPlaceWorkspace?.rootPath ?? params.directory,
         ...(target ? { target } : {}),
     });
     const inheritedForkOverrides = createConnectedServiceForkLaunchContext({
@@ -166,7 +167,7 @@ export async function attemptNativeForkOpen(params: Readonly<{
         nativeForkSource,
         ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
         ...inheritedForkOverrides.spawn,
-        ...prepareManagedForkDirectory(params),
+        ...managedDirectory,
     } satisfies SpawnSessionOptions);
 
     if (result.type === 'error') {

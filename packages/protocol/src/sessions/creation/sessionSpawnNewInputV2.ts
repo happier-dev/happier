@@ -144,6 +144,7 @@ function refineSessionPlacementSpawn(input: {
   executionTarget?: SessionExecutionTargetV1;
   sessionPlacement?: z.infer<typeof SessionPlacementSelectionV1Schema>;
   managedCreation?: unknown;
+  managedTargetPlacement?: unknown;
 }, context: z.core.$RefinementCtx): void {
   const placement = input.sessionPlacement;
   if (placement?.kind === 'machine' && input.executionTarget
@@ -152,6 +153,11 @@ function refineSessionPlacementSpawn(input: {
   }
   if (placement?.kind === 'managed' && input.managedCreation === undefined) {
     context.addIssue({ code: 'custom', path: ['sessionPlacement'], message: 'Managed placement requires this Session managed creation' });
+  }
+  if (placement?.kind === 'in_place' && (input.managedCreation !== undefined || input.managedTargetPlacement !== undefined
+    || input.executionTarget && (placement.workspace.serverId !== input.executionTarget.serverId
+      || placement.workspace.controller.machineId !== input.executionTarget.machineId))) {
+    context.addIssue({ code: 'custom', path: ['sessionPlacement'], message: 'In-place placement requires its Project controller and no competing managed target' });
   }
 }
 

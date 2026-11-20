@@ -45,7 +45,9 @@ export async function createReplayForkSession(params: Readonly<{
     spawnSession: ForkSpawnSession;
     deps?: SessionLifecycleMachineDeps;
 }>): Promise<ForkLifecycleResult> {
-    const replayForkContinuation = params.forkSurface?.resolveReplayChildLaunch
+    const managedForkDirectory = prepareManagedForkDirectory(params);
+    const inPlaceForkDirectory = managedForkDirectory?.sessionCreationCorrespondence?.recipe.inPlaceWorkspace ? managedForkDirectory : null;
+    const replayForkContinuation = !inPlaceForkDirectory && params.forkSurface?.resolveReplayChildLaunch
         ? await params.forkSurface.resolveReplayChildLaunch({
             parentSessionId: params.parentSessionId,
             parentMetadata:
@@ -62,7 +64,6 @@ export async function createReplayForkSession(params: Readonly<{
         'fork.replayLaunch.sessionStateUpdates',
     );
     const replayChildDirectory = replayForkContinuation?.directory ?? params.directory;
-    const managedForkDirectory = prepareManagedForkDirectory(params);
     const replayRuntimeDescriptorV1 = readRuntimeDescriptorV1FromMetadata(replayLaunchMetadata) ?? undefined;
     const connectedServiceForkLaunchContext = createConnectedServiceForkLaunchContext({
         inherited: params.inheritedForkOverrides,
@@ -70,7 +71,7 @@ export async function createReplayForkSession(params: Readonly<{
     const inheritedForkOverrides = connectedServiceForkLaunchContext.inherited;
     const recipeResult = await buildReplaySeededSpawnRecipe({
         credentials: params.credentials,
-        cwd: params.directory,
+        cwd: inPlaceForkDirectory?.directory ?? params.directory,
         source: {
             sourceSessionId: params.parentSessionId,
             // "Latest" is resolved ONCE, by the fork lifecycle, and this is that
@@ -125,7 +126,12 @@ export async function createReplayForkSession(params: Readonly<{
         const created = await createSpawnedSession({
             credentials: params.credentials,
             directory: managedForkDirectory?.directory ?? replayChildDirectory,
-            ...(managedForkDirectory ? { directoryKind: 'managed', sessionCreationTag: managedForkDirectory.sessionCreationTag } : {}),
+            ...(managedForkDirectory ? {
+                directoryKind: 'managed',
+                sessionCreationTag: managedForkDirectory.sessionCreationTag,
+                sessionCreationCorrespondence: managedForkDirectory.sessionCreationCorrespondence,
+                managedTargetPlacement: managedForkDirectory.managedTargetPlacement,
+            } : {}),
             backendTarget: params.forkBackendResolution.backendTargetV2,
             ...(parentMachineId ? { machineId: parentMachineId } : {}),
             approvedNewDirectoryCreation: true,

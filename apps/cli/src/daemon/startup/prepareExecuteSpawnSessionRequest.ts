@@ -79,6 +79,7 @@ export type PreparedExecuteSpawnSessionRequest = Readonly<{
     SpawnSessionOptions,
     | 'directory'
     | 'directoryKind'
+    | 'managedTargetPlacement'
     | 'sessionCreationTag'
     | 'sessionId'
     | 'existingSessionId'
@@ -188,6 +189,7 @@ export async function prepareExecuteSpawnSessionRequest(
     const { directory, directoryKind, sessionCreationTag } = resolvePreparedSessionDirectory({
         options, normalizedExistingSessionId, ownerMetadata, existingSessionWorkspacePath,
     });
+    const retainedWorkspace = ownerMetadata?.system?.sessionCreationCorrespondenceV1?.recipe.inPlaceWorkspace;
     let persistedProviderResumeState: ReturnType<typeof readPersistedProviderResumeState>;
     const attachSnapshot = sessionAttachPayload?.snapshot;
     const persistedMetadata = ownerMetadata && attachSnapshot
@@ -380,7 +382,10 @@ export async function prepareExecuteSpawnSessionRequest(
         memoryHighBytes: resolveSessionMemoryCeilingBytes(effectiveSessionAttachPayload?.snapshot?.metadata,
             resources?.status === 'ready' ? resources.policy.guard : undefined),
         directory,
-        directoryKind,
+        directoryKind: retainedWorkspace ? 'managed' : directoryKind,
+        ...(retainedWorkspace ? { managedTargetPlacement: {
+            managedId: retainedWorkspace.managedId, workspaceRoot: retainedWorkspace.rootPath,
+        } } : {}),
         ...(sessionCreationTag ? { sessionCreationTag } : {}),
         sessionId,
         existingSessionId,

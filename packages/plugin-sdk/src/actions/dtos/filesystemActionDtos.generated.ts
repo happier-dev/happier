@@ -156,7 +156,6 @@ export type FilesystemActionInputById = {
                     installationId: string;
                 };
                 managedId: string;
-                machineId?: undefined;
             };
             directory: string;
         };

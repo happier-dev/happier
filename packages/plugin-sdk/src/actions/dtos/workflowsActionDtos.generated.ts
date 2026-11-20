@@ -2225,7 +2225,6 @@ export type WorkflowsActionInputById = {
                         installationId: string;
                     };
                     rootPath: string;
-                    machineId?: undefined;
                 };
                 installationId: string;
                 projectKey: string;
@@ -2261,7 +2260,6 @@ export type WorkflowsActionInputById = {
                         installationId: string;
                     };
                     rootPath: string;
-                    machineId?: undefined;
                 };
                 installationId: string;
                 projectKey: string;
@@ -2340,7 +2338,6 @@ export type WorkflowsActionInputById = {
                         installationId: string;
                     };
                     rootPath: string;
-                    machineId?: undefined;
                 };
                 installationId: string;
                 projectKey: string;
@@ -2376,7 +2373,6 @@ export type WorkflowsActionInputById = {
                         installationId: string;
                     };
                     rootPath: string;
-                    machineId?: undefined;
                 };
                 installationId: string;
                 projectKey: string;
@@ -2568,7 +2564,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -2604,7 +2599,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -2782,7 +2776,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -2818,7 +2811,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -3111,7 +3103,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -3147,7 +3138,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -3332,7 +3322,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -3368,7 +3357,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -3956,7 +3944,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -3992,7 +3979,6 @@ export type WorkflowsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -4039,6 +4025,20 @@ export type WorkflowsActionInputById = {
             directory: string;
             workspaceRefId?: string | undefined;
             sessionPlacement?: undefined | {
+                kind: 'in_place';
+                workspace: {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                };
+            } | {
                 kind: 'machine';
                 target: {
                     serverId: string;
@@ -4311,7 +4311,6 @@ export type WorkflowsActionInputById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         };
                         installationId: string;
                         projectKey: string;
@@ -4347,7 +4346,6 @@ export type WorkflowsActionInputById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         };
                         installationId: string;
                         projectKey: string;
@@ -4522,7 +4520,6 @@ export type WorkflowsActionInputById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         };
                         installationId: string;
                         projectKey: string;
@@ -4558,7 +4555,6 @@ export type WorkflowsActionInputById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         };
                         installationId: string;
                         projectKey: string;
@@ -5228,7 +5224,6 @@ export type WorkflowsActionInputById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         };
                         installationId: string;
                         projectKey: string;
@@ -5264,7 +5259,6 @@ export type WorkflowsActionInputById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         };
                         installationId: string;
                         projectKey: string;
@@ -5303,6 +5297,20 @@ export type WorkflowsActionInputById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -6952,6 +6960,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -7391,6 +7413,20 @@ export type WorkflowsActionResultById = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: 'in_place';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: 'machine';
                         target: {
                             serverId: string;
@@ -7899,6 +7935,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -8444,6 +8494,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -10180,6 +10244,20 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -12002,6 +12080,20 @@ export type WorkflowsActionResultById = {
                     };
                 };
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -12977,6 +13069,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -13416,6 +13522,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -13854,6 +13974,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -14293,6 +14427,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -14732,6 +14880,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -15175,6 +15337,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -15613,6 +15789,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -16051,6 +16241,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -17822,6 +18026,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -18940,6 +19158,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -21224,7 +21456,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -21260,7 +21491,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -21432,6 +21662,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -21628,6 +21872,20 @@ export type WorkflowsActionResultById = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: 'in_place';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: 'machine';
                         target: {
                             serverId: string;
@@ -22717,7 +22975,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -22753,7 +23010,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -23411,7 +23667,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -23447,7 +23702,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -23619,6 +23873,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -23815,6 +24083,20 @@ export type WorkflowsActionResultById = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: 'in_place';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: 'machine';
                         target: {
                             serverId: string;
@@ -24904,7 +25186,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -24940,7 +25221,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -25256,7 +25536,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -25292,7 +25571,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -25464,6 +25742,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -25660,6 +25952,20 @@ export type WorkflowsActionResultById = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: 'in_place';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: 'machine';
                         target: {
                             serverId: string;
@@ -26749,7 +27055,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -26785,7 +27090,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -27105,7 +27409,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -27141,7 +27444,6 @@ export type WorkflowsActionResultById = {
                                 installationId: string;
                             };
                             rootPath: string;
-                            machineId?: undefined;
                         }) & JsonValue;
                         installationId: string;
                         projectKey: string;
@@ -27313,6 +27615,20 @@ export type WorkflowsActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;
@@ -27509,6 +27825,20 @@ export type WorkflowsActionResultById = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: 'in_place';
+                        workspace: {
+                            v: 2;
+                            kind: 'managed';
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: 'machine';
                         target: {
                             serverId: string;
@@ -28598,7 +28928,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -28634,7 +28963,6 @@ export type WorkflowsActionResultById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             }) & JsonValue;
                             installationId: string;
                             projectKey: string;
@@ -29882,7 +30210,6 @@ type WorkflowsActionDefinition3 = {
                     installationId: string;
                 };
                 rootPath: string;
-                machineId?: undefined;
             }) & JsonValue;
             installationId: string;
             projectKey: string;
@@ -29918,7 +30245,6 @@ type WorkflowsActionDefinition3 = {
                     installationId: string;
                 };
                 rootPath: string;
-                machineId?: undefined;
             }) & JsonValue;
             installationId: string;
             projectKey: string;

@@ -3835,7 +3835,6 @@ export type InventoryActionResultById = {
                 installationId: string;
             };
             rootPath: string;
-            machineId?: undefined;
         };
         directory: string;
         setup: 'approvalRequired' | 'failed' | 'notRequired' | 'prepared';

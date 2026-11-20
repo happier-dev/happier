@@ -6673,6 +6673,20 @@ export type IntentStartActionResultById = {
                 directory: string;
                 workspaceRefId?: string | undefined;
                 sessionPlacement?: undefined | {
+                    kind: 'in_place';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     kind: 'machine';
                     target: {
                         serverId: string;

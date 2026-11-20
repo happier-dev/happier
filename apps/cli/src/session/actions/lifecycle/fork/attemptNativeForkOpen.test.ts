@@ -101,6 +101,36 @@ describe('attemptNativeForkOpen', () => {
         expect(request?.directory).not.toBe('/source-managed-allocation');
     });
 
+    it('passes the retained guest checkout to the native child launch without a controller copy', async () => {
+        const sourceTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'parent-in-place' });
+        const inPlaceWorkspace = { v: 2, kind: 'managed', serverId: 'home', managedId: 'guest', workspaceId: 'workspace',
+            controller: { machineId: 'a', installationId: 'install' }, rootPath: '/guest/repo' } as const;
+        const correspondence = SessionCreationCorrespondenceV1Schema.parse({ v: 1, sessionCreationTag: sourceTag, recipe: {
+            execution: { machineId: 'a', directory: { kind: 'managed' } }, organization: { folderId: null, tagIds: [] },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.grok', localId: 'grok' } },
+            modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null, configuration: null,
+            connectedServices: null, capabilitySelection: null, transcriptStorage: null, terminal: null,
+            agentSessionStartupInstructionsMarkerV1: null, checkout: null, inPlaceWorkspace,
+        } });
+        const spawnSession = vi.fn<ForkSpawnSession>(async () => ({ type: 'error', errorCode: 'INVALID_REQUEST', errorMessage: 'Boundary rejection' }));
+        await attemptNativeForkOpen({
+            credentials, parentSessionId: 'host-parent',
+            parentMetadata: { ...parentMetadata, nativeResumeIdentityV1: { v: 1, vendorResumeId: 'provider-parent' },
+                sessionDirectoryV1: { v: 1, kind: 'managed' }, sessionCreationCorrespondenceV1: correspondence },
+            directory: '/controller/runner', forkPoint: { type: 'latest' }, targetSeqInclusive: 9, effectiveCutoffSeqInclusive: 9,
+            spawnNonce: 'fork:in-place-native', forkBackendResolution, inheritedForkOverrides: { spawn: {}, metadata: {} },
+            spawnSession, stopSession: vi.fn(),
+        });
+        const request = spawnSession.mock.calls[0]?.[0];
+        expect(request).toMatchObject({
+            managedTargetPlacement: { managedId: 'guest', workspaceRoot: '/guest/repo' },
+            nativeForkSource: { cwd: '/guest/repo' },
+            sessionCreationCorrespondence: { recipe: { inPlaceWorkspace } },
+        });
+        expect(request).not.toHaveProperty('managedDirectorySeed');
+        expect(request?.sessionCreationTag).not.toBe(sourceTag);
+    });
+
     it('hydrates one exact point checkpoint and passes it to the child spawn without pre-forking', async () => {
         const persistedCheckpoint = SessionTurnProviderCheckpointV1Schema.parse({
             kind: 'grok_prompt_index',

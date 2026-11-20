@@ -25,7 +25,6 @@ import type { ResolvedSessionProjectFilesV1 as SessionProjectFilesV1 } from '@ha
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import type { WorkspaceContentPolicyV1 } from '@happier-dev/protocol';
 import type { WorkspaceAddressV1, WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import type { SessionProjectFilesOriginV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 
@@ -193,7 +192,8 @@ export async function restoreSessionTargetRelay(input: SessionTargetAuthorityReq
     socketPath: string;
     readTrustedCallerPid(): number | null;
     onRestored?(target: ManagedSessionTarget): void;
-    projectFiles?: Readonly<{ sessionId: string; primarySocketPath: string; origin: SessionProjectFilesOriginV1;
+    workspace?: Readonly<{ sessionId: string; primarySocketPath: string;
+        roots: Readonly<{ hostRoot: string; targetRoot: string }>;
         readBaseline?(signal: AbortSignal): Promise<WorkspaceManifest | null> }>;
 }>): Promise<(() => void) | null> {
     if (!isSessionHolderSocketPath(input.socketPath)) return null;
@@ -202,14 +202,13 @@ export async function restoreSessionTargetRelay(input: SessionTargetAuthorityReq
         const target = await openSessionTargetAuthority(input, lifetime.signal);
         if (!target) return null;
         await serveSessionTargetRelay({ operations: target, lifetime: lifetime.signal, readTrustedCallerPid: input.readTrustedCallerPid, socketPath: input.socketPath });
-        if (input.projectFiles) {
-            const { sessionId, primarySocketPath, origin } = input.projectFiles;
-            const baseline = input.projectFiles.readBaseline
-                ? await input.projectFiles.readBaseline(lifetime.signal) : origin.baseline ?? null;
+        if (input.workspace) {
+            const { sessionId, primarySocketPath, roots, readBaseline } = input.workspace;
+            const baseline = await readBaseline?.(lifetime.signal);
             registerSessionTargetWorkspace({ sessionId, lifetime: lifetime.signal, primarySocketPath,
                 target: { id: target.id, lifetime: target.lifetime, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
                     exec: command => target.exec(command, lifetime.signal), openChannel: argv => target.openChannel(argv, lifetime.signal) },
-                workspace: { hostRoot: origin.sourceWorkspace.rootPath, targetRoot: origin.targetWorkspace.rootPath },
+                workspace: roots,
                 ...(baseline ? { baseline } : {}) });
         }
         input.onRestored?.(target);

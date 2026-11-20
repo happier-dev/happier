@@ -396,6 +396,20 @@ export type SessionSpawnNewInputV2 = {
     };
     isolationOverride?: 'directly' | undefined;
     sessionPlacement?: undefined | {
+        kind: 'in_place';
+        workspace: {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
+    } | {
         kind: 'machine';
         target: {
             serverId: string;
@@ -597,6 +611,18 @@ export type SessionSpawnNewInputV2 = {
             serverId: string;
             workspaceId: string;
             machineId: string;
+            rootPath: string;
+            kind?: undefined;
+        } | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
             rootPath: string;
         };
         page: 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'memory' | 'overview' | 'scripts' | 'services';
@@ -1738,7 +1764,6 @@ export type SessionSpawnNewInputV2 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -1774,7 +1799,6 @@ export type SessionSpawnNewInputV2 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -3094,7 +3118,6 @@ export type SessionSpawnNewInputV2 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -3130,7 +3153,6 @@ export type SessionSpawnNewInputV2 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -8731,6 +8753,20 @@ export type SessionServerStartSpawnDraftV1 = {
         unlistedTools?: 'ask' | 'deny' | undefined;
     };
     sessionPlacement?: undefined | {
+        kind: 'in_place';
+        workspace: {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
+    } | {
         kind: 'machine';
         target: {
             serverId: string;
@@ -9371,7 +9407,6 @@ export type SessionServerStartSpawnDraftV1 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -9407,7 +9442,6 @@ export type SessionServerStartSpawnDraftV1 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -10727,7 +10761,6 @@ export type SessionServerStartSpawnDraftV1 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -10763,7 +10796,6 @@ export type SessionServerStartSpawnDraftV1 = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     }) & JsonValue;
                     installationId: string;
                     projectKey: string;
@@ -18294,6 +18326,20 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: "in_place";
+                        workspace: {
+                            v: 2;
+                            kind: "managed";
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: "machine";
                         target: {
                             serverId: string;
@@ -19513,6 +19559,20 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: "in_place";
+                        workspace: {
+                            v: 2;
+                            kind: "managed";
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: "machine";
                         target: {
                             serverId: string;
@@ -20786,6 +20846,20 @@ export type WorkflowAcceptedAuthorizationV1 = {
                     directory: string;
                     workspaceRefId?: string | undefined;
                     sessionPlacement?: undefined | {
+                        kind: "in_place";
+                        workspace: {
+                            v: 2;
+                            kind: "managed";
+                            serverId: string;
+                            workspaceId: string;
+                            managedId: string;
+                            controller: {
+                                machineId: string;
+                                installationId: string;
+                            };
+                            rootPath: string;
+                        };
+                    } | {
                         kind: "machine";
                         target: {
                             serverId: string;

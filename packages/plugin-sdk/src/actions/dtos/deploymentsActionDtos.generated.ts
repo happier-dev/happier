@@ -888,6 +888,20 @@ export type DeploymentsActionInputById = {
             };
             configuration?: unknown;
             sessionPlacement?: undefined | {
+                kind: 'in_place';
+                workspace: {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                };
+            } | {
                 kind: 'machine';
                 target: {
                     serverId: string;
@@ -1531,7 +1545,6 @@ export type DeploymentsActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -1567,7 +1580,6 @@ export type DeploymentsActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -2921,7 +2933,6 @@ export type DeploymentsActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -2957,7 +2968,6 @@ export type DeploymentsActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;

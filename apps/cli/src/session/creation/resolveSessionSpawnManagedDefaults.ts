@@ -50,11 +50,12 @@ export function resolveSessionSpawnIsolation(
   context?: ActionExecutorContext,
   admittedWorkflowPlacement?: SessionPlacementSelectionV1,
 ): SessionSpawnIsolationDecision | null {
+  const selectedPlacement = admittedWorkflowPlacement ?? input.sessionPlacement;
+  if (selectedPlacement?.kind === 'in_place') return null;
   let policy: MachineIsolationPolicyV1 | null;
   try { policy = readMachineIsolationPolicyV1(openedMetadata ?? {}); }
   catch { return isolationUnavailable('machine_isolation_policy_unreadable'); }
   if (input.sourceContext || input.configuration?.providerSessionResume) return null;
-  const selectedPlacement = admittedWorkflowPlacement ?? input.sessionPlacement;
   const selectedSandbox = selectedPlacement?.kind === 'machine' ? selectedPlacement.configuredSandbox : undefined;
   if (!policy) return selectedSandbox ? isolationUnavailable('machine_isolation_sandbox_unavailable') : null;
   const binding = context?.externalActionExecutionAuthorization?.binding;

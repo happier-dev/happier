@@ -182,6 +182,10 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
         ? { serverId: placement.serverId, machineId: placement.machineId }
         : null;
     const directory = input.seed.directoryIntent?.kind === 'path' ? input.seed.directoryIntent.path : placement?.directory;
+    const origin = input.seed.origin;
+    const workspace = origin?.purpose === 'session' ? origin.workspace : undefined;
+    const inPlaceWorkspace = workspace?.kind === 'managed' && workspace.serverId === exactTarget?.serverId
+        && workspace.controller.machineId === exactTarget.machineId && workspace.rootPath === directory ? workspace : undefined;
 
     return {
         ...base,
@@ -212,6 +216,7 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
                 placementExplicit: true,
                 executionTarget: { kind: 'machine' as const, target: exactTarget },
             }),
+        ...(inPlaceWorkspace ? { sessionPlacement: { kind: 'in_place' as const, workspace: inPlaceWorkspace } } : {}),
         ...(directory === undefined ? {} : { selectedPath: directory }),
         ...(input.seed.directoryIntent?.kind === 'managed' ? { directoryKind: 'managed' as const }
             : directory === undefined ? {} : { directoryKind: undefined }),

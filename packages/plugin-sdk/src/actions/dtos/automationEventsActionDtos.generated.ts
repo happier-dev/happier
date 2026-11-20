@@ -108,7 +108,6 @@ export type AutomationEventsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -144,7 +143,6 @@ export type AutomationEventsActionInputById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     };
                     installationId: string;
                     projectKey: string;
@@ -324,7 +322,6 @@ export type AutomationEventsActionResultById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     } & {
                         readonly [key: string]: JsonValue;
                     });
@@ -364,7 +361,6 @@ export type AutomationEventsActionResultById = {
                             installationId: string;
                         };
                         rootPath: string;
-                        machineId?: undefined;
                     } & {
                         readonly [key: string]: JsonValue;
                     });

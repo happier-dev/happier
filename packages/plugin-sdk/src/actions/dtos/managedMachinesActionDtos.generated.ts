@@ -296,6 +296,20 @@ export type ManagedMachinesActionInputById = {
             };
             configuration?: unknown;
             sessionPlacement?: undefined | {
+                kind: 'in_place';
+                workspace: {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                };
+            } | {
                 kind: 'machine';
                 target: {
                     serverId: string;
@@ -1621,6 +1635,18 @@ export type ManagedMachinesActionInputById = {
                     workspaceId: string;
                     machineId: string;
                     rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
                 };
                 page: 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'memory' | 'overview' | 'scripts' | 'services';
                 purpose?: 'session' | undefined;
@@ -1896,7 +1922,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -1932,7 +1957,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -3286,7 +3310,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -3322,7 +3345,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -3938,6 +3960,20 @@ export type ManagedMachinesActionInputById = {
             };
             configuration?: unknown;
             sessionPlacement?: undefined | {
+                kind: 'in_place';
+                workspace: {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
+                };
+            } | {
                 kind: 'machine';
                 target: {
                     serverId: string;
@@ -5263,6 +5299,18 @@ export type ManagedMachinesActionInputById = {
                     workspaceId: string;
                     machineId: string;
                     rootPath: string;
+                    kind?: undefined;
+                } | {
+                    v: 2;
+                    kind: 'managed';
+                    serverId: string;
+                    workspaceId: string;
+                    managedId: string;
+                    controller: {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    rootPath: string;
                 };
                 page: 'changes' | 'code' | 'context' | 'defaults' | 'deployments' | 'memory' | 'overview' | 'scripts' | 'services';
                 purpose?: 'session' | undefined;
@@ -5538,7 +5586,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -5574,7 +5621,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -6928,7 +6974,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -6964,7 +7009,6 @@ export type ManagedMachinesActionInputById = {
                                     installationId: string;
                                 };
                                 rootPath: string;
-                                machineId?: undefined;
                             };
                             installationId: string;
                             projectKey: string;
@@ -17172,6 +17216,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -17381,6 +17439,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -17590,6 +17662,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -17791,6 +17877,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -19321,6 +19421,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -21173,6 +21287,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -21382,6 +21510,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -21591,6 +21733,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -21792,6 +21948,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -23322,6 +23492,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -27954,6 +28138,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -28163,6 +28361,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -28372,6 +28584,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -28573,6 +28799,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -30103,6 +30343,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -31955,6 +32209,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -32164,6 +32432,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -32373,6 +32655,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -32574,6 +32870,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -34104,6 +34414,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -45588,6 +45912,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -45797,6 +46135,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -46006,6 +46358,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -46207,6 +46573,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -47737,6 +48117,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -49589,6 +49983,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -49798,6 +50206,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -50007,6 +50429,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -50208,6 +50644,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -51738,6 +52188,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -54395,6 +54859,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -54604,6 +55082,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -54813,6 +55305,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -55014,6 +55520,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -56544,6 +57064,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -58396,6 +58930,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -58605,6 +59153,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -58814,6 +59376,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -59015,6 +59591,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -60545,6 +61135,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -63129,6 +63733,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -63338,6 +63956,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -63547,6 +64179,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -63748,6 +64394,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -65278,6 +65938,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -67130,6 +67804,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -67339,6 +68027,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -67548,6 +68250,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -67749,6 +68465,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;
@@ -69279,6 +70009,20 @@ export type ManagedMachinesActionResultById = {
                         directory: string;
                         workspaceRefId?: string | undefined;
                         sessionPlacement?: undefined | {
+                            kind: 'in_place';
+                            workspace: {
+                                v: 2;
+                                kind: 'managed';
+                                serverId: string;
+                                workspaceId: string;
+                                managedId: string;
+                                controller: {
+                                    machineId: string;
+                                    installationId: string;
+                                };
+                                rootPath: string;
+                            };
+                        } | {
                             kind: 'machine';
                             target: {
                                 serverId: string;

@@ -258,10 +258,12 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     if (!machine.enrolledMachineId) {
                         throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
                     }
-                    const selectedProjectFiles = agentStart.sessionPlacement?.projectFiles ?? projectFiles;
+                    const sessionPlacement = agentStart.sessionPlacement;
+                    const selectedProjectFiles = sessionPlacement?.kind === 'in_place' ? undefined
+                        : sessionPlacement?.projectFiles ?? projectFiles;
                     const result = await executeSessionStart({ ...agentStart,
-                        ...(selectedProjectFiles ? { sessionPlacement: {
-                            ...(agentStart.sessionPlacement ?? { kind: 'managed' as const }), projectFiles: selectedProjectFiles,
+                        ...(selectedProjectFiles && sessionPlacement?.kind !== 'in_place' ? { sessionPlacement: {
+                            ...(sessionPlacement ?? { kind: 'managed' as const }), projectFiles: selectedProjectFiles,
                         } } : {}),
                         executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },

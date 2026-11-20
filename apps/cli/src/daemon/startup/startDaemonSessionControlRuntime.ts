@@ -3123,16 +3123,19 @@ export async function startDaemonSessionControlRuntime(
                 ? attached.metadata?.sessionCreationCorrespondenceV1 : undefined);
               const recipe = parsed.success ? parsed.data.recipe : undefined;
               const origin = recipe?.projectFilesOrigin;
+              const inPlaceWorkspace = recipe?.inPlaceWorkspace;
+              const roots = inPlaceWorkspace
+                ? { hostRoot: inPlaceWorkspace.rootPath, targetRoot: inPlaceWorkspace.rootPath }
+                : origin ? { hostRoot: origin.sourceWorkspace.rootPath, targetRoot: origin.targetWorkspace.rootPath } : null;
               return await restoreSessionTargetRelay({ ...request, committedSessionId: sessionId, socketPath,
                 onRestored: target => {
                   tracked.sessionProviderTarget = target;
                 },
-                ...(origin ? { projectFiles: { sessionId, primarySocketPath: held.socketPath, origin,
-                  readBaseline: async signal => origin.targetWorkspace.kind === 'managed' && origin.contentPolicyDigest
+                ...(roots ? { workspace: { sessionId, primarySocketPath: held.socketPath, roots,
+                  ...(origin ? { readBaseline: async signal => origin.targetWorkspace.kind === 'managed' && origin.contentPolicyDigest
                     ? await params.resolveManagedProjectFilesBaseline?.()?.({ sessionId, targetWorkspace: origin.targetWorkspace, credentials,
-                      signal,
-                      contentPolicyDigest: origin.contentPolicyDigest }) ?? null
-                    : origin.baseline ?? null } } : {}),
+                      signal, contentPolicyDigest: origin.contentPolicyDigest }) ?? null
+                    : origin.baseline ?? null } : {}) } } : {}),
                 // The runner (or its session host) this daemon reattached, read live.
                 readTrustedCallerPid: () => tracked.sessionRunnerPid ?? tracked.pid });
             }));

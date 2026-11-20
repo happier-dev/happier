@@ -19,7 +19,7 @@ import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionParticipantV1.js';
 import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
-import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../../workspaces/workspaceRefV1.js';
+import { ManagedWorkspaceAddressV2Schema, WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../../workspaces/workspaceRefV1.js';
 import { ResolvedSessionProjectFilesV1Schema } from '../../machines/machineIsolationV1.js';
 import { SessionProjectFilesSourceV1Schema } from './sessionProjectFilesSourceV1.js';
 import { WorkspaceManifestSchema } from '../../workspaces/manifestSchema.js';
@@ -59,6 +59,8 @@ const createSessionCreationImmutableRecipeSchema = () => z.strictObject({
   memoryEnabled: z.optional(z.boolean()),
   promptStack: z.optional(SessionPromptStackV1Schema),
   managedCreation: z.optional(SessionManagedCreationV1Schema),
+  /** Accepted guest checkout for a Session that runs in place. */
+  inPlaceWorkspace: z.optional(ManagedWorkspaceAddressV2Schema),
   projectFiles: z.optional(ResolvedSessionProjectFilesV1Schema),
   projectFilesSource: z.optional(SessionProjectFilesSourceV1Schema),
   projectFilesOrigin: z.optional(SessionProjectFilesOriginV1Schema),

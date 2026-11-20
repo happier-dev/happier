@@ -2,6 +2,8 @@ import * as React from 'react';
 import type { SessionPlacementSelectionV1, SessionProjectFilesSourceV1, SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { SessionAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraft';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 export type NewSessionProjectFilesOutcome = Readonly<{
     placementKind: SessionPlacementSelectionV1['kind'] | null;
@@ -12,6 +14,7 @@ export type NewSessionProjectFilesOutcome = Readonly<{
 /** Project files is part of the current placement, never an independent preference. */
 export function useNewSessionProjectFilesPlacement(input: Readonly<{
     draftKey: string;
+    selectedPath?: string;
     executionTarget: SessionAuthoringDraft['executionTarget'];
     managedMachineSelection: Pick<ManagedMachineSelectionDraft, 'selection'> | null;
     hydratedPlacement?: SessionPlacementSelectionV1;
@@ -25,7 +28,7 @@ export function useNewSessionProjectFilesPlacement(input: Readonly<{
     const selectedPreset = input.managedMachineSelection?.selection.kind === 'preset'
         ? input.managedMachineSelection.selection : null;
     const machine = input.executionTarget?.kind === 'machine' ? input.executionTarget.target : null;
-    const placement = React.useMemo<SessionPlacementSelectionV1 | undefined>(() => selectedPreset
+    const placement = React.useMemo<Exclude<SessionPlacementSelectionV1, { kind: 'in_place' }> | undefined>(() => selectedPreset
         ? { kind: 'preset', homeId: selectedPreset.homeId, presetId: selectedPreset.id }
         : input.managedMachineSelection ? { kind: 'managed' }
             : machine ? { kind: 'machine', target: machine } : undefined,
@@ -35,18 +38,23 @@ export function useNewSessionProjectFilesPlacement(input: Readonly<{
         : placement?.kind === 'machine' ? JSON.stringify([input.draftKey, placement.kind, placement.target.serverId, placement.target.machineId])
             : placement ? JSON.stringify([input.draftKey, placement.kind]) : null;
     const hydrated = input.hydratedPlacement;
+    const inPlace = hydrated?.kind === 'in_place' && placement?.kind === 'machine' && input.selectedPath
+        && areServerProfileIdentifiersEquivalent(placement.target.serverId, hydrated.workspace.serverId)
+        && placement.target.machineId === hydrated.workspace.controller.machineId
+        && normalizeWorkspaceRootPathV1(input.selectedPath) === normalizeWorkspaceRootPathV1(hydrated.workspace.rootPath)
+        ? hydrated : undefined;
     const matchingHydrated = placement?.kind === 'preset' && hydrated?.kind === 'preset'
         ? placement.homeId === hydrated.homeId && placement.presetId === hydrated.presetId ? hydrated : undefined
         : placement?.kind === 'machine' && hydrated?.kind === 'machine'
             && placement.target.serverId === hydrated.target.serverId && placement.target.machineId === hydrated.target.machineId
             ? hydrated : placement?.kind === 'managed' && hydrated?.kind === 'managed' ? hydrated : undefined;
     const [edit, setEdit] = React.useState<Readonly<{ key: string | null; value: SessionProjectFilesV1 | undefined }> | null>(null);
-    const projectFilesOverride = edit?.key === placementKey ? edit.value : matchingHydrated?.projectFiles;
+    const projectFilesOverride = inPlace ? undefined : edit?.key === placementKey ? edit.value : matchingHydrated?.projectFiles;
     const onProjectFilesChange = React.useCallback((value: SessionProjectFilesV1 | undefined) => {
         setEdit({ key: placementKey, value });
     }, [placementKey]);
     const sessionPlacement = React.useMemo(() => {
-        if (!placement) return undefined;
+        if (!placement || inPlace) return undefined;
         const source = input.projectFilesSource ?? (placement.kind === 'machine' ? undefined : matchingHydrated?.projectFilesSource);
         const base = { ...(matchingHydrated ?? placement), ...(source ? { projectFilesSource: source } : {}) };
         if (projectFilesOverride === undefined) {
@@ -55,12 +63,12 @@ export function useNewSessionProjectFilesPlacement(input: Readonly<{
             return rest;
         }
         return { ...base, projectFiles: projectFilesOverride };
-    }, [input.projectFilesSource, matchingHydrated, placement, projectFilesOverride]);
+    }, [inPlace, input.projectFilesSource, matchingHydrated, placement, projectFilesOverride]);
     const projectFilesOutcome = React.useMemo<NewSessionProjectFilesOutcome>(() => ({
-        placementKind: placement?.kind ?? null,
+        placementKind: inPlace?.kind ?? placement?.kind ?? null,
         ...(sessionPlacement?.projectFilesSource ? { source: sessionPlacement.projectFilesSource } : {}),
         ...(projectFilesOverride === undefined ? { origin: 'default' as const }
             : { origin: 'override' as const, choice: projectFilesOverride }),
-    }), [placement?.kind, projectFilesOverride, sessionPlacement?.projectFilesSource]);
-    return { sessionPlacement, projectFilesOverride, projectFilesOutcome, onProjectFilesChange };
+    }), [inPlace?.kind, placement?.kind, projectFilesOverride, sessionPlacement?.projectFilesSource]);
+    return { sessionPlacement: inPlace ?? sessionPlacement, projectFilesOverride, projectFilesOutcome, onProjectFilesChange };
 }

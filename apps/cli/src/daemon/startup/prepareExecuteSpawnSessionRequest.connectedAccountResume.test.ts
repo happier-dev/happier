@@ -1,3 +1,4 @@
+import { buildSessionCreationCorrespondence } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -30,6 +31,37 @@ describe('connected-account session creation → inactive resume admission', () 
     network.fetchSessionByIdCompat.mockReset();
     network.fetchAccountEncryptionCurrentness.mockReset().mockResolvedValue({
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+    });
+  });
+
+  it('restores the admitted guest target on a sparse inactive resume', async () => {
+    const inPlaceWorkspace = { v: 2 as const, kind: 'managed' as const, serverId: 'home', workspaceId: 'guest-ref',
+      managedId: 'guest', rootPath: '/guest/project', controller: { machineId: 'machine-connected', installationId: 'install' } };
+    const correspondence = buildSessionCreationCorrespondence({
+      identity: { callerCreationNamespace: 'user', creationKey: 'managed-project' },
+      recipe: { execution: { machineId: 'machine-connected', directory: { kind: 'managed' } },
+        organization: { folderId: null, tagIds: [] }, inPlaceWorkspace,
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } },
+    });
+    const { metadata } = createSessionMetadata({
+      flavor: 'codex', machineId: 'machine-connected', directory: '/controller/session-scratch', startedBy: 'daemon',
+      runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} },
+      launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: {} }),
+    });
+    const currentMetadata = { ...metadata, sessionCreationCorrespondenceV1: correspondence };
+    const owner = createSessionOwnerMetadataV1({ metadata: currentMetadata });
+    if (!owner.ok) throw new Error('Invalid resume fixture metadata');
+    network.fetchSessionByIdCompat.mockResolvedValue({ id: 'in-place-resume', active: false, seq: 1, encryptionMode: 'plain',
+      metadataVersion: 1, agentStateVersion: 0, agentState: null, dataEncryptionKey: null, metadataLayoutVersion: 1,
+      metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: currentMetadata })),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata),
+    });
+    expect(await prepareExecuteSpawnSessionRequest({
+      request: { credentials: { token: 'synthetic-owner', encryption: null }, options: {
+        directory: '/controller/session-scratch', existingSessionId: 'in-place-resume',
+      } }, validateEnvVarRecordStrict,
+    })).toMatchObject({ directory: '/controller/session-scratch', directoryKind: 'managed',
+      managedTargetPlacement: { managedId: 'guest', workspaceRoot: '/guest/project' },
     });
   });
 

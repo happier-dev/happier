@@ -12,6 +12,7 @@ import { applyMachineSetupBeforeAgent } from '@/machines/setup/applyMachineSetup
 import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
+import { readSessionPlacementProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { prepareSessionAgentReadiness } from './prepareSessionAgentReadiness';
 import { prepareEnrolledSessionProjectFiles, resolveSessionProjectFiles } from './prepareEnrolledSessionProjectFiles';
 import { needsEnrolledSessionProjectFilesOpenV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
@@ -308,13 +309,13 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           result: { type: 'error' as const, code: 'target_unavailable' as const, retryable: false },
         };
       }
-      if (needsEnrolledSessionProjectFilesOpenV1({
-        placement: params.sessionSpawnBirthContext?.sessionPlacement ?? input.sessionPlacement,
+      const placement = params.sessionSpawnBirthContext?.sessionPlacement ?? input.sessionPlacement;
+      if (placement?.kind === 'in_place' || needsEnrolledSessionProjectFilesOpenV1({
+        placement,
         projectFiles: params.sessionSpawnBirthContext?.projectFiles, executionTarget: input.executionTarget,
       })
         || !needsSessionCreationDirectoryApprovalPreflightV1(input)) {
-        // A worktree is materialized by the SCM owner, not by the raw
-        // directory-creation authorization path.
+        // The managed target or Project files owner supplies the execution directory.
         return { type: 'not_required' as const };
       }
 
@@ -423,7 +424,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       originRunId,
       signal,
       } = input;
-      const managedTargetPlacement = authoredManagedTargetPlacement;
+      let managedTargetPlacement = authoredManagedTargetPlacement;
       const managedCreation = authoredManagedCreation;
       const onboardingInput = continuation?.hostOnboarding
         ? buildHostOnboardingInput(continuation.hostOnboarding) : null;
@@ -449,7 +450,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       }
       const birthContext = params.sessionSpawnBirthContext;
       const sessionPlacement = birthContext?.sessionPlacement ?? input.sessionPlacement;
-      const effectiveProjectFiles = sessionPlacement?.projectFiles ?? birthContext?.projectFiles;
+      const { projectFiles: effectiveProjectFiles, projectFilesSource } = readSessionPlacementProjectFilesV1(
+        sessionPlacement, birthContext?.projectFiles,
+      );
+      const inPlaceWorkspace = sessionPlacement?.kind === 'in_place' ? sessionPlacement.workspace : undefined;
       const sessionCreationTag = birthContext?.sessionCreationTag ?? requestedSessionCreationTag;
       let initialSessionRolesV1 = birthContext?.initialSessionRolesV1 ?? requestedInitialSessionRolesV1;
       let configurationSnapshot = requestedConfigurationSnapshot;
@@ -549,6 +553,29 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       if (!isCurrentSessionSpawnExecutionTarget(executionTarget,
         birthContext?.sessionPlacement?.kind === 'machine' ? birthContext.sessionPlacement.target : undefined)) {
         return { type: 'error', code: 'target_unavailable', retryable: false };
+      }
+      if (inPlaceWorkspace) {
+        const authorization = context?.externalActionExecutionAuthorization;
+        const installationId = context?.machineAdmission?.installationId ?? params.externalActionMachineInstallationId;
+        if (!isSameActionHomeId(inPlaceWorkspace.serverId) || inPlaceWorkspace.controller.machineId !== executionTarget.machineId
+          || inPlaceWorkspace.controller.installationId !== installationId) {
+          return { type: 'error', code: 'target_unavailable', retryable: false };
+        }
+        const requester = readRequesterAccountActionContext(authorization);
+        if (externalRequest && !requester) {
+          return { type: 'error', code: 'target_unavailable', retryable: false };
+        }
+        const runtime = requester ? {
+          credentials: requester.credentials, serverId: inPlaceWorkspace.serverId, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+          sessionCustody: { serverId: inPlaceWorkspace.serverId, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+            accountId: requester.authorization.binding.accountId, isCurrent: () => requester.isCurrent() },
+        } : { credentials: params.credentials, serverId: inPlaceWorkspace.serverId, serverHttpBaseUrl: machineReferenceServerUrl };
+        const { readAcceptedManagedWorkspaceRef } = await import('@/workspaces/acceptedManagedWorkspace');
+        const accepted = await readAcceptedManagedWorkspaceRef(runtime, inPlaceWorkspace, signal ?? new AbortController().signal)
+          .catch(() => null);
+        if (signal?.aborted) return { type: 'error', code: 'cancelled', retryable: true };
+        if (!accepted) return { type: 'error', code: 'target_unavailable', retryable: false };
+        managedTargetPlacement = { managedId: accepted.ref.managedId, workspaceRoot: accepted.ref.rootPath };
       }
       if (managedCreation) {
         // The retained resource is a private preset fact. A public read may
@@ -869,8 +896,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         projectFiles: effectiveProjectFiles, executionTarget });
       // The captured source path belongs to its Machine. Only the target owner
       // selects the new execution root, including a policy-selected sandbox.
-      const targetDirectoryIntent = prepareProjectFiles ? { kind: 'managed' as const } : directory;
-      const targetPreparation: SessionSpawnTargetPreparation = context?.sessionCreationPreparedTarget
+      const targetDirectoryIntent = inPlaceWorkspace || prepareProjectFiles ? { kind: 'managed' as const } : directory;
+      const targetPreparation: SessionSpawnTargetPreparation = !inPlaceWorkspace && context?.sessionCreationPreparedTarget
         ? { ok: true, preparedTarget: context.sessionCreationPreparedTarget }
         : await prepareSessionSpawnTarget({
           executionTarget,
@@ -988,8 +1015,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             approvalProfileTeamOrGroupDerived: selectedApprovalProfileTeamOrGroupDerived ?? false } : {}),
           ...(promptStack !== undefined ? { promptStack } : {}),
           ...(managedCreation ? { managedCreation } : {}),
+          ...(inPlaceWorkspace ? { inPlaceWorkspace } : {}),
           ...(effectiveProjectFiles && isResolvedSessionProjectFilesV1(effectiveProjectFiles) ? { projectFiles: effectiveProjectFiles } : {}),
-          ...(sessionPlacement?.projectFilesSource ? { projectFilesSource: sessionPlacement.projectFilesSource } : {}),
+          ...(projectFilesSource ? { projectFilesSource } : {}),
           ...(discussionParticipant ? { discussionParticipant } : {}),
           ...(secretReferenceOverlay ? { secretReferenceOverlay } : {}),
           ...(onboardingInput && checkoutCreationDraft ? { checkoutCreationDraft } : {}),
@@ -1074,7 +1102,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         }) : undefined;
         if (resolvedProjectFiles && !resolvedProjectFiles.ok) throw createActionExecuteFailureError(resolvedProjectFiles);
         const concreteProjectFiles = resolvedProjectFiles?.projectFiles;
-        const projectFilesSource = sessionPlacement?.projectFilesSource;
         const openedSource = acquired && sessionPlacement && projectFilesSource && concreteProjectFiles?.kind !== 'git_clone'
           ? await prepareSessionProjectFilesSource({ placement: sessionPlacement,
               invokeReviewedChild: context?.hostReviewedChild?.invoke, ...(signal ? { signal } : {}) })
@@ -1171,7 +1198,6 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
                 ? recipeResult.recipe.metadata.forkV1 : {}),
               filesNotCopied,
             } } : {}),
-            sessionCreationCorrespondenceV1: correspondence,
           },
           sourceRecipe: {
             sourceSessionId: sourceContext.sourceSessionId,

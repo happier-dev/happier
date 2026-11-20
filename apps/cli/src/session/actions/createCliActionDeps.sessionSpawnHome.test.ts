@@ -19,6 +19,28 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 
 describe('Session spawn Home admission', () => {
   afterEach(() => vi.restoreAllMocks());
+  it('does not preflight a Project guest directory on the controller', async () => {
+    const controller = { machineId: 'target-machine', installationId: 'installation' };
+    const signal = new AbortController().signal;
+    const rpc = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new Error('Controller directory read'));
+    const credentials = { token: 'fixture-owner', encryption: null };
+    const deps = createCliActionDeps({
+      credentials, token: credentials.token, sessionId: 'cli', mode: 'plain', ctx: null,
+      serverId: 'portable-home', serverIdentityId: 'portable-home', serverHttpBaseUrl: 'https://home.test',
+    });
+    const input = SessionSpawnNewInputV2Schema.parse({
+      creationKey: 'guest-project-session', executionTarget: { serverId: 'portable-home', machineId: controller.machineId },
+      directory: { kind: 'path', path: '/guest/project' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      sessionPlacement: { kind: 'in_place', workspace: {
+        v: 2, kind: 'managed', serverId: 'portable-home', workspaceId: 'retained-project',
+        managedId: 'guest', controller, rootPath: '/guest/project',
+      } },
+    });
+    await expect(deps.sessionSpawnNewDirectoryApprovalPreflight!({ input, signal })).resolves.toEqual({ type: 'not_required' });
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
   it('refuses an unsigned foreign bound spawn with secret Setup before Account HTTP or native effects', async () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'controller-account' })).toString('base64url')}.signature`;
     // Home HTTP and Machine RPC are the boundaries. Keep spawn parsing,
