@@ -642,7 +642,11 @@ export function buildCommandPaletteCommands(
         const kind = operation?.owner === 'voiceSettingsOperation' ? operation.options?.[0] : undefined;
         const speechModels = kind?.startsWith('stt_') ? t('settingsVoice.local.models.sttGroupTitle')
           : kind?.startsWith('tts_') ? t('settingsVoice.local.models.ttsGroupTitle') : undefined;
-        const title = [ref.title ?? t(ref.titleKey), catalogPage && t(catalogPage.titleKey), speechModels]
+        const controlTitle = ref.title ?? t(ref.titleKey);
+        const operationTitle = kind === 'tts_preview'
+          ? t('settingsVoice.realtimeProviders.catalog.preview', { voice: controlTitle })
+          : controlTitle;
+        const title = [operationTitle, catalogPage && t(catalogPage.titleKey), speechModels]
           .filter(Boolean).join(' · ');
         cmds.push({
           id: `setting-operation:${ref.anchor}`, title, icon: 'gear',

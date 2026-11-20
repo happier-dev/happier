@@ -926,6 +926,7 @@ describe('buildCommandPaletteCommands', () => {
       ['voiceDictation.readiness', 'voiceConversations.readiness'],
       ['voiceDictation.sttRemoveModel', 'voiceConversations.sttRemoveModel'],
       ['voiceDictation.sttUpdateModel', 'voiceConversations.sttUpdateModel', 'voiceConversations.ttsUpdateModel'],
+      ['voiceConversations.ttsPreview', 'voiceConversations.ttsCatalog'],
     ]) {
       const rows = commands.filter(command => anchors.some(anchor => command.id === `setting-operation:${anchor}`));
       expect(rows).toHaveLength(anchors.length);
