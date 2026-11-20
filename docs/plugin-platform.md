@@ -11474,15 +11474,24 @@ provider acknowledgement when it has the exact grant ID. A redeemed grant or a
 definitive late acknowledgement can settle the same receipt.
 
 Check uses the existing quota refresh request and fetches inventory without
-redeeming another grant. A fresh observation can settle the exact held grant. A
-matching available grant establishes that it was still unused at the time of
-the read. A later provider acknowledgement can confirm the debit on the same
-receipt. A missing grant confirms use while its recorded availability window is
-still open and the read accounts for every
-available grant. Expired grants may simply be unavailable. An aggregate-only
-attempt or an inventory read that failed leaves the receipt uncertain. Unsettled
-receipts hold manual and automatic attempts for the profile. Once the owner
-settles the receipt, later attempts use the normal admission rules.
+redeeming another grant. While the original provider request is outstanding, an
+available-grant observation cannot release its unknown receipt or the profile's
+hold. A definitive provider answer settles the attempt. Otherwise, only a fresh
+inventory read started after the original provider request has ended can settle
+an uncertain receipt. A matching available grant establishes remaining
+availability, not proof of no earlier debit for a multi-use grant; a redeemed
+grant establishes use. A complete inventory that omits the exact grant
+establishes that it is no longer available, but elapsed expiry alone cannot prove
+that it expired unused. Failed or incomplete inventory leaves uncertainty intact.
+The same receipt owner handles Check, ordinary quota ticks and remote refreshes;
+none of these paths replays the consume.
+
+Unsettled receipts hold manual and automatic attempts for the profile in this
+daemon. The unknown-receipt hold lives in the daemon's memory, so a daemon restart,
+or a daemon of the same Account on another Machine, does not have it, and a person
+who approves a second reset there can spend another of their own credits. There
+is no durable receipt or cross-Machine coordination. These are 0.3 development
+source contracts; loaded-runtime verification follows the next daemon reload.
 
 Inventory status and count remain the sole action authority. Optional
 `recoveryCreditDetails` supplies saved quantities, applicability and reasons to the

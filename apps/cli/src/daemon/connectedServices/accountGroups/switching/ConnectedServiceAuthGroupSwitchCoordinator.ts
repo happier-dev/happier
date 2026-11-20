@@ -968,8 +968,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator<
                 });
                 await reconsider(reset.receipt);
                 if (policyResult) break;
-                if (!selected.selected && ((!reset.ok && reset.errorCode === 'connected_service_quota_recovery_credit_not_available')
-                    || reset.receipt?.status === 'not_available')) continue;
+                // Only a definitive refusal can advance to another reset candidate.
+                if (!selected.selected
+                    && !reset.ok && reset.errorCode === 'connected_service_quota_recovery_credit_not_available') continue;
                 break;
             }
         }

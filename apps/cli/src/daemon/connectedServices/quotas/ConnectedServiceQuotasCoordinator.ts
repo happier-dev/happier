@@ -811,10 +811,19 @@ type RecoveryCreditConsumeInput = Readonly<{
   automaticResetContext?: AutomaticQuotaResetContext;
   consumeRequest?: Readonly<{ idempotencyKey: string; providerCreditId?: string }>;
 }>;
+type RecoveryCreditConsumeAttempt = {
+  providerRequestEnded: boolean;
+  grantExpiresAtMs: number | null | undefined;
+};
 type RecoveryCreditConsumeRecord = Readonly<{
   result: ConnectedServiceQuotaRecoveryCreditConsumeResult;
-  grantExpiresAtMs?: number | null;
+  pendingAttempt?: RecoveryCreditConsumeAttempt;
 }>;
+
+function isDefinitiveRecoveryCreditRefusal(result: ConnectedServiceQuotaRecoveryCreditConsumeResult): boolean {
+  return !result.ok && (result.errorCode === 'connected_service_quota_recovery_credit_not_available'
+    || result.errorCode === 'connected_service_quota_recovery_credit_nothing_to_reset');
+}
 type RecoveryCreditConsumeInFlight = Readonly<{
   promise: Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult>;
   automaticProviderLimitIds: readonly string[] | undefined;
@@ -1534,8 +1543,7 @@ export class ConnectedServiceQuotasCoordinator {
         && [...pendingTargets].every((target) => callerTargets.has(target));
     // A definitive refusal for another selector or target proves no debit.
     // Re-enter the same owner for this intent; spent or uncertain receipts stay shared.
-    if ((!sameSelector || !sameTargets) && (result.receipt?.status === 'not_available'
-      || result.receipt?.status === 'nothing_to_reset')) {
+    if ((!sameSelector || !sameTargets) && isDefinitiveRecoveryCreditRefusal(result)) {
       return await this.consumeAvailableRecoveryCreditForProfile(input);
     }
     return result;
@@ -1552,8 +1560,8 @@ export class ConnectedServiceQuotasCoordinator {
     const runtime = this.qualifiedConnectedAccountRuntime;
     if (!service || !profileId || !runtime?.listAccounts) return unavailable('unavailable');
     const profileLedgerPrefix = `${input.serviceId}\u0000${profileId}\u0000`;
-    // A changed quota timestamp cannot resolve an uncertain debit. Retain the
-    // hold in the existing coordinator-lifetime receipt owner.
+    // This hold belongs to the issuing daemon. After a restart or on another Machine,
+    // ordinary admission relies on fresh provider inventory and meter authority.
     for (const [key, { result }] of this.recoveryCreditConsumeResultsByKey) {
       if (key.startsWith(profileLedgerPrefix) && result.receipt?.status === 'unknown_after_timeout') return result;
     }
@@ -1649,22 +1657,18 @@ export class ConnectedServiceQuotasCoordinator {
         if (result.receipt) this.recoveryCreditConsumeResultsByKey.set(ledgerKey, { result });
         return result;
       }
-      const outcomeUnknown = { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+      const outcomeUnknown = { ok: false as const, errorCode: 'outcome_unknown',
+        error: 'Could not confirm the usage reset. The hold lasts only for the lifetime of the daemon that issued it. After a restart or on another Machine, fresh provider inventory and meters decide whether a reset is available.' };
+      const attempt: RecoveryCreditConsumeAttempt = { providerRequestEnded: false, grantExpiresAtMs: credit?.expiresAtMs };
       let lateResult: ConnectedServiceQuotaRecoveryCreditConsumeResult | undefined;
-      const withLateResult = (observed: ConnectedServiceQuotaRecoveryCreditConsumeResult | undefined) => {
-        const status = observed?.receipt?.status;
-        if (status === 'unknown_after_timeout') return lateResult ?? observed;
-        // Inventory can show the grant still available while the debit is finishing.
-        // An automatic refusal may also have left no stored receipt.
-        if (lateResult?.ok && (!observed || status === 'not_available')) return lateResult;
-        return observed;
-      };
+      let inventorySettlement: ConnectedServiceQuotaRecoveryCreditConsumeResult | undefined;
       const refreshAfterAttempt = async (
         accountMode: 'plain' | 'e2ee',
         expectedCredentialRevision: string,
         receipt: ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
         signal?: AbortSignal,
       ): Promise<ConnectedServiceQuotaRecoveryCreditConsumeResult> => {
+        const providerRequestEndedBeforeRead = attempt.providerRequestEnded;
         const refreshed = await this.invokeQualifiedAccountQuota({
           profile, accountMode,
           expectedCredentialRevision,
@@ -1673,12 +1677,9 @@ export class ConnectedServiceQuotasCoordinator {
         });
         signal?.throwIfAborted();
         if (!refreshed?.result || !refreshed.basis.isCurrent()) return { ...unavailable('refresh_unavailable'), receipt };
-        if (receipt.status === 'unknown_after_timeout') {
-          const status = this.readExactRecoveryCreditDisposition(receipt, refreshed.result.recoveryCredits, credit?.expiresAtMs);
-          if (status) {
-            receipt = { ...receipt, status };
-            pendingReceipt = receipt;
-          }
+        if (receipt.status === 'unknown_after_timeout' && providerRequestEndedBeforeRead) {
+          inventorySettlement = this.settleRecoveryCreditFromInventory(receipt, refreshed.result.recoveryCredits, attempt.grantExpiresAtMs);
+          if (inventorySettlement?.receipt) receipt = pendingReceipt = inventorySettlement.receipt;
         }
         const snapshot = buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
           profile: refreshed.profile, quota: refreshed.result, staleAfterMs: this.polledQuotaStaleAfterMs,
@@ -1731,13 +1732,11 @@ export class ConnectedServiceQuotasCoordinator {
               ...request,
               ...(!input.consumeRequest ? { providerLimitIds: input.automaticResetContext?.providerLimitIds ?? [] } : {}),
             }, onLateResult: status => {
-              const receipt = { ...request, status };
-              lateResult = this.settledRecoveryCreditConsumeResult(receipt);
+              if (status === 'unknown_after_timeout') return;
+              lateResult = this.settledRecoveryCreditConsumeResult({ ...request, status });
               const stored = this.recoveryCreditConsumeResultsByKey.get(ledgerKey)?.result;
-              const result = withLateResult(stored);
-              const settlingOriginal = this.recoveryCreditConsumeInFlightByKey.get(ledgerKey)?.promise === admittedSettlement;
-              if (result && result !== stored && !settlingOriginal) {
-                this.recoveryCreditConsumeResultsByKey.set(ledgerKey, { result });
+              if (stored?.receipt?.status === 'unknown_after_timeout') {
+                this.recoveryCreditConsumeResultsByKey.set(ledgerKey, { result: lateResult });
               }
             } },
             expectedCredentialRevision: observed.basis.credentialRevision,
@@ -1750,7 +1749,7 @@ export class ConnectedServiceQuotasCoordinator {
               pendingReceipt = { ...request, status: 'unknown_after_timeout' };
             },
             signal: controller.signal,
-          });
+          }).finally(() => { attempt.providerRequestEnded = true; });
           controller.signal.throwIfAborted();
           if (!consumed.result) return unavailable('unavailable');
           receipt = { ...request, status: consumed.result.status };
@@ -1779,6 +1778,10 @@ export class ConnectedServiceQuotasCoordinator {
       };
       const promise = Promise.race([consume(), timeout]).then(async result => {
         const receipt = result.receipt;
+        if (receipt?.status === 'not_available' || receipt?.status === 'nothing_to_reset') {
+          // The original provider reply owns the debit disposition even if quota publication failed.
+          return this.settledRecoveryCreditConsumeResult(receipt);
+        }
         if (receipt?.status !== 'unknown_after_timeout') return result;
         const unknown = { ...outcomeUnknown, receipt };
         if (!receipt.providerCreditId || !attemptAccountMode) return unknown;
@@ -1787,8 +1790,10 @@ export class ConnectedServiceQuotasCoordinator {
           // A lost acknowledgement gets one qualified read under the existing quota
           // acquisition budget, including after the consume's signal has expired.
           const refreshed = await refreshAfterAttempt(attemptAccountMode, observed.basis.credentialRevision, receipt);
+          if (inventorySettlement?.ok === false) return inventorySettlement;
           return refreshed.receipt?.status === 'unknown_after_timeout' ? unknown : refreshed;
         } catch {
+          if (inventorySettlement?.ok === false) return inventorySettlement;
           return pendingReceipt && pendingReceipt.status !== 'unknown_after_timeout'
             ? { ...unavailable('refresh_unavailable'), receipt: pendingReceipt }
             : unknown;
@@ -1802,11 +1807,10 @@ export class ConnectedServiceQuotasCoordinator {
       });
       try {
         const observedResult = await promise;
-        const result = withLateResult(observedResult) ?? observedResult;
-        const automaticNoEffect = !input.consumeRequest
-          && (result.receipt?.status === 'not_available' || result.receipt?.status === 'nothing_to_reset');
-        if (result.receipt && !automaticNoEffect) {
-          this.recoveryCreditConsumeResultsByKey.set(ledgerKey, { result, grantExpiresAtMs: credit?.expiresAtMs });
+        const result = lateResult ?? observedResult;
+        if (result.receipt && (input.consumeRequest || !isDefinitiveRecoveryCreditRefusal(result))) {
+          this.recoveryCreditConsumeResultsByKey.set(ledgerKey, { result,
+            ...(result.receipt.status === 'unknown_after_timeout' ? { pendingAttempt: attempt } : {}) });
         }
         return result;
       } finally {
@@ -1831,35 +1835,53 @@ export class ConnectedServiceQuotasCoordinator {
     return { ok: false, errorCode, error: errorCode, receipt };
   }
 
-  private settleRecoveryCreditsFromFreshQuota(
-    profile: QualifiedConnectedAccountProfileV4,
-    inventory: NonNullable<ProviderAccountUsageSnapshotV1['recoveryCredits']>,
-  ): void {
+  private completedRecoveryCreditAttempts(profile: QualifiedConnectedAccountProfileV4) {
     const serviceId = buildQualifiedPluginContributionKey(profile.ref.service);
     const profileLedgerPrefix = `${serviceId}\u0000${profile.ref.accountId}\u0000`;
-    for (const [key, { result, grantExpiresAtMs }] of this.recoveryCreditConsumeResultsByKey) {
-      const receipt = result.receipt;
-      if (!key.startsWith(profileLedgerPrefix) || receipt?.status !== 'unknown_after_timeout') continue;
-      const status = this.readExactRecoveryCreditDisposition(receipt, inventory, grantExpiresAtMs);
-      if (status) this.recoveryCreditConsumeResultsByKey.set(key, {
-        result: this.settledRecoveryCreditConsumeResult({ ...receipt, status }),
-      });
+    const completed: [string, RecoveryCreditConsumeRecord][] = [];
+    for (const [key, record] of this.recoveryCreditConsumeResultsByKey) {
+      if (key.startsWith(profileLedgerPrefix) && record.pendingAttempt?.providerRequestEnded) completed.push([key, record]);
+    }
+    return completed;
+  }
+
+  private settleRecoveryCreditsFromFreshQuota(
+    completed: ReadonlyArray<readonly [string, RecoveryCreditConsumeRecord]>,
+    inventory: NonNullable<ProviderAccountUsageSnapshotV1['recoveryCredits']>,
+  ): void {
+    for (const [key, record] of completed) {
+      const receipt = record.result.receipt;
+      // A definitive late reply or another fresh read may have settled it while this read was pending.
+      if (!receipt || this.recoveryCreditConsumeResultsByKey.get(key) !== record) continue;
+      const result = this.settleRecoveryCreditFromInventory(receipt, inventory, record.pendingAttempt?.grantExpiresAtMs);
+      if (result) this.recoveryCreditConsumeResultsByKey.set(key, { result });
     }
   }
 
-  private readExactRecoveryCreditDisposition(
+  private settleRecoveryCreditFromInventory(
     receipt: ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
     inventory: ProviderAccountUsageSnapshotV1['recoveryCredits'],
     grantExpiresAtMs: number | null | undefined,
-  ): 'already_consumed' | 'not_available' | undefined {
+  ): ConnectedServiceQuotaRecoveryCreditConsumeResult | undefined {
     if (!receipt.providerCreditId || !inventory) return undefined;
     const credit = inventory.credits.find(candidate => candidate.id === receipt.providerCreditId);
-    if (credit?.status === 'redeemed') return 'already_consumed';
-    if (credit?.status === 'available' || credit?.status === 'expired') return 'not_available';
+    const goneBeforeExpiry = !credit && (grantExpiresAtMs === null
+      || (grantExpiresAtMs !== undefined && grantExpiresAtMs > this.now()));
     // An incomplete list cannot identify which exact grants remain.
-    if (credit || inventory.availableCount > inventory.credits.filter(candidate => candidate.id && candidate.status === 'available').length) return undefined;
-    return grantExpiresAtMs === null || (grantExpiresAtMs !== undefined && grantExpiresAtMs > this.now())
-      ? 'already_consumed' : 'not_available';
+    if (!credit && inventory.availableCount > inventory.credits.filter(candidate => candidate.id && candidate.status === 'available').length) return undefined;
+    if (credit?.status === 'redeemed' || goneBeforeExpiry) {
+      return this.settledRecoveryCreditConsumeResult({ ...receipt, status: 'already_consumed' });
+    }
+    if (credit && credit.status !== 'available' && credit.status !== 'expired') return undefined;
+    // Inventory shows availability, but cannot distinguish partial use or expiry from a debit.
+    return {
+      ok: false,
+      errorCode: 'outcome_unknown',
+      error: credit?.status === 'available'
+        ? 'The recovery credit still appears available. Its use by the original reset could not be confirmed.'
+        : 'The recovery credit is no longer available. Its use by the original reset could not be confirmed.',
+      receipt: { ...receipt, status: 'not_available' },
+    };
   }
 
   public async consumeRecoveryCreditForProfile(input: Readonly<{
@@ -4112,6 +4134,8 @@ export class ConnectedServiceQuotasCoordinator {
       'credentialRevision' | 'credentialConfigurationRevision' | 'isCurrent'> | undefined;
     let providerDeferred: Error | undefined;
     try {
+      // Only attempts already ended when this acquisition starts can use its inventory.
+      const completedRecoveryCreditAttempts = this.completedRecoveryCreditAttempts(profile);
       const invocation = await invokeQuota({
         runtime: runtime.establishedRuntimeOwner,
         profile: input.profile,
@@ -4151,7 +4175,7 @@ export class ConnectedServiceQuotasCoordinator {
       });
       if (invocation.basis.isCurrent()) {
         this.failureStateByBindingKey.delete(key);
-        if (invocation.result?.recoveryCredits) this.settleRecoveryCreditsFromFreshQuota(profile, invocation.result.recoveryCredits);
+        if (invocation.result?.recoveryCredits) this.settleRecoveryCreditsFromFreshQuota(completedRecoveryCreditAttempts, invocation.result.recoveryCredits);
       }
       return { ...invocation, profile, usageIdentity };
     } catch (error) {

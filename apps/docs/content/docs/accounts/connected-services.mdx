@@ -744,10 +744,17 @@ pool. A reset for another window cannot authorize automatic spending.
 
 If Happier could not confirm a reset, the request may already have used a credit.
 Use **Check** to request fresh account usage and credit inventory. Checking never
-applies another reset. The next update can show whether the same grant remains
-available, was used, or may have expired. Until the daemon can settle the receipt,
-further manual and automatic resets for that account stay on hold. Availability,
-expiry and grant quantities come from Claude. Applying a reset is irreversible and leaves the ordinary weekly reset
+applies another reset. Seeing the grant still available cannot settle the outcome
+while the original request is running. After that request ends, a fresh read can
+confirm that the grant remains available or is no longer available. A missing
+grant may have been used or expired; its expiry time alone does not prove which.
+Until the daemon can settle the receipt, further manual and automatic resets for
+that account stay on hold in that daemon.
+
+The hold lives only in that daemon's memory. A restart, or using another Machine
+with the same Happier Account, loses that hold; approving another reset there can
+spend another of your own credits. Availability, expiry and grant quantities come
+from Claude. Applying a reset is irreversible and leaves the ordinary weekly reset
 schedule unchanged. See
 [Claude's limit-reset guidance](https://support.claude.com/en/articles/17007452-what-is-a-limit-reset).
 

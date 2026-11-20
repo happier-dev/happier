@@ -838,7 +838,8 @@ describe('ConnectedServiceAuthGroupSwitchCoordinator', () => {
       applyGeneration: async () => { throw new Error('must not continue without fresh usable evidence'); },
       consumeAvailableRecoveryCreditForProfile: async ({ profileId }) => {
         attempts.push(profileId);
-        return { ok: false, errorCode: 'connected_service_quota_recovery_credit_timeout', error: 'timeout' };
+        return { ok: false, errorCode: 'outcome_unknown', error: 'Could not confirm the usage reset',
+          receipt: { status: 'not_available', idempotencyKey: 'unconfirmed-reset' } };
       },
     });
     await expect(coordinator.switchAfterClassifiedFailure({
