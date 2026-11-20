@@ -4066,6 +4066,53 @@ describe('the table sheet', () => {
     }
   });
 
+  // MACH-UI-GAPS-1120 (design judge round 18, Isolation → Sandboxes at 1440): the rows' marks stood 16 px in from the
+  // sheet's own "Add a sandbox" glyph. A table on a section's sheet takes that sheet's content edge, adding no inset.
+  it("stands a page list on a section sheet on that sheet's content edge, with no inset of its own", () => {
+    const view = mount({
+      presentation: 'list', scroll: 'page', grouped: false, detail: 'none',
+      anatomy: { ...anatomy, peek: undefined },
+      enclosingSheet: {},
+    });
+    try {
+      view.measure(1440);
+      const sheet = sheetAround(view, 'a')!;
+      let insetPx = 0;
+      for (let node: HTMLElement | null = view.query('collection:stage'); node !== null && node !== sheet; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        insetPx += Number.parseFloat(style.marginLeft || '0') + Number.parseFloat(style.paddingLeft || '0');
+      }
+      expect(insetPx).toBe(0);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // MACH-UI-GAPS-1120 (round 18, Presets at 1440): the table's sheet sat 8 px under the page's purpose line. Under the
+  // page's own header a table sheet is the page's first group: it keeps the group pause (DESIGN.md "Shell grid"; UI
+  // refinements "first-group gap 28 with no band padding"), grouped or not. A toolbar header keeps its table close.
+  it.each([
+    { shape: 'ungrouped table under the page header (Presets)', grouped: false, header: <Text>Presets</Text>, leadPx: HAPPIER_PAGE_METRICS.sectionGapPx },
+    { shape: 'grouped table under the page header', grouped: true, header: <Text>Presets</Text>, leadPx: HAPPIER_PAGE_METRICS.sectionGapPx },
+    { shape: 'table under its toolbar', grouped: true, header: () => <Text>All runs</Text>, leadPx: 0 },
+  ])('stands a page $shape at its first-group lead', ({ grouped, header, leadPx }) => {
+    const view = mount({ presentation: 'list', scroll: 'page', grouped, detail: 'none', header });
+    try {
+      view.measure(1440);
+      const sheet = sheetAround(view, 'a')!;
+      const stage = view.query('collection:stage')!;
+      let drawnLeadPx = 0;
+      for (let node: HTMLElement | null = sheet; node !== null; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        drawnLeadPx += Number.parseFloat(style.marginTop || '0') + Number.parseFloat(style.paddingTop || '0');
+        if (node === stage) break;
+      }
+      expect(drawnLeadPx).toBe(leadPx);
+    } finally {
+      view.unmount();
+    }
+  });
+
   it("closes the table's last row on the sheet's edge: no hairline of its own there", () => {
     const view = mount({ presentation: 'table', detail: 'none', grouped: false });
     try {

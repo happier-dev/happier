@@ -3329,8 +3329,15 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const pageColumnEdgePx = useHappierColumnEdgePx();
   const detailColumnEdgePx = pushedPage ? pageColumnEdgePx : 0;
   // A standalone page table has the page sheet edge even when it recomposes as a list, and so does every table in its
-  // sheet. A nested sheet already owns that edge (for example the configurator's size table).
-  const stageOnSheetEdge = pageSections || sheetTable || (pageScroll && presentation === 'table' && palette !== null && enclosingPageSheet === null);
+  // sheet. A section's sheet already owns that edge (the configurator's size table, a Machine's Sandboxes list): the
+  // rows share its content edge with the section's own rows and actions (MACH-UI-GAPS-1120).
+  const stageOnSheetEdge = enclosingPageSheet === null
+    && (pageSections || sheetTable || (pageScroll && presentation === 'table' && palette !== null));
+  // Under the page's own header (its title and purpose), the table's sheet is the page's first group: it keeps the group
+  // pause, as a titled first group did before groups became the sheet's bands (DESIGN.md "Shell grid"; UI refinements
+  // "first-group gap 28", MACH-UI-GAPS-1120). A toolbar header keeps its table close: its controls belong to it.
+  const sheetUnderPageHeader = sheetShown && stageOnSheetEdge && pageScroll && !pushedPage
+    && props.header != null && typeof props.header !== 'function';
 
   // The open item stays marked in the list or on its card while its detail is open anywhere: in the split, pushed,
   // in the host details pane, or wherever the caller shows it (`detail: 'none'`).
@@ -3421,7 +3428,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         <PageColumn maxWidthPx={pageColumnMaxWidthPx}>
         <View ref={stageRef} testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
           style={[pageScroll ? pageStageStyle : rootStyle,
-            stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null]}>
+            stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null,
+            sheetUnderPageHeader ? { paddingTop: HAPPIER_PAGE_METRICS.sectionGapPx } : null]}>
         <driver.AnimatedView value={progress} tracks={fadeTracks} style={pageScroll ? pageStageRowStyle : stageStyle}>
             <View
               testID={props.listTestID}
