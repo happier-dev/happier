@@ -102,7 +102,7 @@ describe('managed resource persistence and input contracts', () => {
     expect(ManagedMachineV1Schema.safeParse({ ...legacy,
       preset: { ...legacy.preset, contentEncryptionMode: 'e2ee' } }).success).toBe(false);
   });
-  it('keeps one-off enrollment identity explicit while preset identity stays inside its opaque override', () => {
+  it('requires one-off enrollment identity and accepts presets with or without a sealed override', () => {
     const oneOff = { selection: { kind: 'one-off', homeId: row.homeId, launch: row.launch, controller: row.controller,
       retention: row.retention, wakeOnAcceptedMessage: false } };
     expect(ManagedAcquireInputV1Schema.safeParse(oneOff).success).toBe(false);
@@ -112,7 +112,7 @@ describe('managed resource persistence and input contracts', () => {
 
     const preset = { selection: { kind: 'preset', homeId: row.homeId, id: 'preset', revision: 1 }, controller: row.controller,
       retention: row.retention, wakeOnAcceptedMessage: false };
-    expect(ManagedAcquireInputV1Schema.safeParse(preset).success).toBe(false);
+    expect(ManagedAcquireInputV1Schema.parse(preset)).toEqual(preset);
     expect(ManagedAcquireInputV1Schema.parse({ ...preset, presetContentOverride }))
       .not.toHaveProperty('enrollmentIdentity');
     expect(ManagedAcquireInputV1Schema.safeParse({ ...preset, presetContentOverride, enrollmentIdentity }).success).toBe(false);
