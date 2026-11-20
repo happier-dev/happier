@@ -330,8 +330,8 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
                 || nextWrite.status !== existing.status || nextWrite.staleAfterMs !== existing.staleAfterMs
                 || clearsRefreshRequest || advancesFailure) {
                 publishUsageRecordChange(params.client, { accountId: params.accountId, recordId: params.recordId,
-                    ...(historyChanged ? { dayStartAtMs: Math.floor(nextWrite.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
-                        historyFromAtMs: nextWrite.fetchedAt } : {}) });
+                    ...(historyChanged ? { dayStartAtMs: Math.floor(nextFetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS,
+                        historyFromAtMs: nextFetchedAt } : {}) });
             }
             return "written";
         }
