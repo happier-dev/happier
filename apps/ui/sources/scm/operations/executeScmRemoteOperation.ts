@@ -17,6 +17,7 @@ import type { ScmPushRejectPolicy } from '@/scm/settings/preferences';
 import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import {
     SCM_OPERATION_ERROR_CODES,
     type ScmOperationErrorCode,
@@ -50,6 +51,7 @@ type ScmRemoteOperationLockResult =
 export async function executeScmRemoteOperation(input: Readonly<{
     kind: ScmRemoteOperationKind;
     repoPath: string | null;
+    workspace?: WorkspaceScopeBase['workspace'];
     scmSnapshot: ScmWorkingSnapshot | null;
     scmWriteEnabled: boolean;
     scmCommitStrategy: ScmCommitStrategy;
@@ -110,6 +112,7 @@ export async function executeScmRemoteOperation(input: Readonly<{
         snapshot: input.scmSnapshot,
         commitStrategy: input.scmCommitStrategy,
         remotePolicy: input.policy,
+        workspace: input.workspace,
     });
     if (!preflight.allowed) {
         trackBlockedScmOperation({

@@ -32,6 +32,7 @@ export async function executeWorkspaceScmRemoteOperation(input: Readonly<{
     await executeScmRemoteOperation({
         kind: input.kind,
         repoPath: input.scope.rootPath,
+        workspace: input.scope.workspace,
         scmSnapshot: input.scmSnapshot,
         scmWriteEnabled: input.scmWriteEnabled,
         scmCommitStrategy: input.scmCommitStrategy,
@@ -54,6 +55,8 @@ export async function executeWorkspaceScmRemoteOperation(input: Readonly<{
         },
         executeRemoteOperation: async (operation, remoteTarget, call) => {
             const options = { serverId: input.scope.serverId, workspace: input.scope.workspace, ...call };
+            const usePushTarget = !input.scope.workspace || !!input.scmSnapshot?.branch.upstream
+                || input.policy?.pushMode === 'force_with_lease';
             return operation === 'fetch'
                 ? await machineScmRemoteFetch(input.scope.machineId, {
                     cwd: input.scope.rootPath,
@@ -68,8 +71,7 @@ export async function executeWorkspaceScmRemoteOperation(input: Readonly<{
                     }, options)
                     : await machineScmRemotePush(input.scope.machineId, {
                         cwd: input.scope.rootPath,
-                        remote: remoteTarget.remote,
-                        branch: remoteTarget.branch ?? undefined,
+                        ...(usePushTarget ? { remote: remoteTarget.remote, branch: remoteTarget.branch ?? undefined } : {}),
                         ...input.policy,
                     }, options);
         },

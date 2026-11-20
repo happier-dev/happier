@@ -627,6 +627,18 @@ export type ScmGitActionInputById = {
         expectedRemoteOid?: string | undefined;
         remote?: string | undefined;
         branch?: string | undefined;
+        workspace?: undefined | {
+            v: 2;
+            kind: 'managed';
+            serverId: string;
+            workspaceId: string;
+            managedId: string;
+            controller: {
+                machineId: string;
+                installationId: string;
+            };
+            rootPath: string;
+        };
     };
     readonly "scm.remote.publish": {
         cwd?: string | undefined;

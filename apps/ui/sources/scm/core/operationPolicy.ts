@@ -1,4 +1,5 @@
 import type { ScmOperationState, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import { isAtomicCommitStrategy } from '@/scm/settings/commitStrategy';
@@ -55,6 +56,7 @@ export function evaluateScmOperationPreflight(input: {
     sourceRef?: string | null;
     operation?: ScmOperationState['kind'] | null;
     remotePolicy?: ScmRemotePolicy;
+    workspace?: WorkspaceScopeBase['workspace'];
 }): ScmOperationPreflightResult {
     const {
         intent,
@@ -131,7 +133,9 @@ export function evaluateScmOperationPreflight(input: {
             snapshot: mapUiSnapshotToRemotePolicySnapshot(snapshot),
             hasExplicitTarget: hasInferredTarget,
             policy: {
-                requireUpstreamWhenNoExplicitTarget: true,
+                // A managed Project's source is admitted by the Push Action.
+                requireUpstreamWhenNoExplicitTarget: intent !== 'push' || !input.workspace
+                    || input.remotePolicy?.pushMode === 'force_with_lease',
                 requireActiveHead: policy.changeSetModel === 'working-copy',
                 blockPushOnConflicts: true,
                 blockPushWhenBehind: policy.changeSetModel === 'index' && input.remotePolicy?.pushMode !== 'force_with_lease',

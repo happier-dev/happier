@@ -14149,6 +14149,14 @@ retains the effective choice, and enrolled copies retain their original workspac
 addresses for reviewed return. Native managed workspaces use a closed V2 reference
 rather than adding optional native locators to Machine V1 references: old readers
 must reject an unsupported target instead of treating its guest path as a host path.
+
+Unreleased 0.3 managed Project Push carries its exact V2 workspace address in
+the existing Push Action. Matching UI, Protocol, SDK, and daemon readers consume
+the optional address. Earlier strict development readers can reject it.
+Omitting it preserves the Machine Push contract. The controller uses the
+confirmed Project repository source to select connected-account credentials.
+A missing Project repository source returns the typed `connect_repository`
+next action.
 Return review consumes the existing SCM comparison owner and carries file-content
 changes only; Git internals/history and ignored files remain in the sandbox.
 The current SCM selection returns excluded paths separately from copied content,

@@ -14,7 +14,7 @@ import type { ScmCapabilities } from '@happier-dev/protocol/scm';
 import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 import type { ResolvedSessionPullRequestBindingInputV1 } from '@/session/actions/createCliActionDeps';
 import { createTargetedActionRpcRequestV1, ManagedWorkspaceScmRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
-import type { ScmCommitCreateActionInput } from '@happier-dev/protocol/actions/scmGitActionSpecs';
+import type { ScmCommitCreateActionInput, ScmRemotePushActionInput } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { resolveFilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { resolveCwd } from '@/scm/runtime';
@@ -222,7 +222,8 @@ export function createSessionBoundScmAction(
     if (machineInventory && context.externalActionTarget?.kind !== 'machine') {
       return { ok: false, errorCode: 'machine_not_selected', error: 'machine_not_selected' };
     }
-    const workspace = actionId === 'scm.commit.create' ? (inputRecord as ScmCommitCreateActionInput).workspace : undefined;
+    const workspace = actionId === 'scm.commit.create' || actionId === 'scm.remote.push'
+      ? (inputRecord as ScmCommitCreateActionInput | ScmRemotePushActionInput).workspace : undefined;
     const target = context.externalActionTarget;
     if (workspace && (target?.kind !== 'machine' || target.machineId !== workspace.controller.machineId
       || context.actionCaller?.kind === 'session' || context.rpcSessionAuthorization
@@ -237,8 +238,8 @@ export function createSessionBoundScmAction(
       const selectedTarget = context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined;
       const root = workspace?.rootPath ?? sessionRoot ?? selectedTarget?.project?.directory;
       const [{ bindScmActionToSessionWorkspace }, { tryAcquireAuthoritativePluginRuntimeRegistryLease }, { executeCapturedMachineAction }] = await Promise.all([import("@/scm/actions/placement"), import("@/plugins/runtime/reload/runtimeLease"), import("@/api/machine/capturedMachineAction")]);
-      const { workspace: _workspace, ...commitInput } = selectedInput;
-      const scmInput = workspace ? commitInput : selectedInput;
+      const { workspace: _workspace, ...nativeInput } = selectedInput;
+      const scmInput = workspace ? nativeInput : selectedInput;
       const sessionInput = root && context.defaultSessionId && context.actionCaller?.kind === 'session'
         ? bindScmActionToSessionWorkspace(actionId, scmInput, root, context.defaultSessionId) : scmInput;
       const inputRecord = root && !machineInventory && actionId !== 'scm.repository.clone' && sessionInput.cwd === undefined

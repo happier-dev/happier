@@ -53,6 +53,22 @@ describe('SCM mutation transport outcomes', () => {
             .toEqual([RPC_METHODS.SCM_BACKEND_DESCRIBE, RPC_METHODS.SCM_COMMIT_CREATE]
                 .map(method => ({ method, target: workspace, machineId: 'controller' })));
     });
+    it('returns the managed Project source recovery from the exact Push admission', async () => {
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'remote-project', managedId: 'guest',
+            controller: { machineId: 'controller', installationId: 'installation' }, rootPath: '/repo' } as const;
+        const outcome = { v: 1, kind: 'needs_input', errorCode: 'REMOTE_AUTH_REQUIRED',
+            nextActions: [{ kind: 'connect_repository' }] } as const;
+        rpc.mockResolvedValue({ success: false, errorCode: outcome.errorCode, outcome });
+
+        const result = await machineScmRemotePush('controller', { cwd: workspace.rootPath }, { serverId, workspace });
+        expect(result).toMatchObject({ success: false, outcome });
+        expect(rpc).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            method: RPC_METHODS.SCM_REMOTE_PUSH,
+            machineId: workspace.controller.machineId,
+            payload: { v: 1, kind: 'targeted_action_rpc', target: workspace,
+                input: { cwd: workspace.rootPath, outcomeVersion: 1 } },
+        }));
+    });
     it('returns the guest commit when the controller has a different repository at the same path', async () => {
         const { searchWorkspaceCommits } = await import('@/scm/search/searchWorkspaceCommits');
         const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'remote-project', managedId: 'guest',

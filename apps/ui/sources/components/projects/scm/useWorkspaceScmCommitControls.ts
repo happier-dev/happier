@@ -89,10 +89,11 @@ export function useWorkspaceScmCommitControls(scope: WorkspaceScopeBase) {
             intent: 'push',
             scmWriteEnabled,
             sessionPath: scope.rootPath,
+            workspace: scope.workspace,
             snapshot,
             commitStrategy: scmCommitStrategy,
         });
-    }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
+    }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, scope.workspace, snapshot]);
     const commitAllowed = commitPreflight.allowed;
     const commitBlockedMessage = commitPreflight.allowed ? null : commitPreflight.message;
     const handleClearSelection = React.useCallback(() => {

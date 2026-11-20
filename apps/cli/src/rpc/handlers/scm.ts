@@ -289,7 +289,7 @@ export function registerScmHandlers(
                 const wrapped = request && typeof request === 'object' && 'kind' in request
                     && request.kind === 'targeted_action_rpc';
                 const handledPush = method === RPC_METHODS.SCM_REMOTE_PUSH;
-                const managed = wrapped && unwrapTarget && (supportsManagedWorkspaceScmRpcMethod(method) || handledPush)
+                const managed = wrapped && unwrapTarget && supportsManagedWorkspaceScmRpcMethod(method)
                     ? ManagedWorkspaceScmRpcRequestV1Schema.safeParse(request).data : undefined;
                 if (managed && (!deps?.selectWorkspaceSource || managed.target.controller.machineId !== deps.machineId)) {
                     return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };

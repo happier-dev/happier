@@ -164,6 +164,11 @@ const ScmCommitCreateActionInputSchema = lazyZodSchema(() => z.safeExtend(scm.Sc
 }));
 export type ScmCommitCreateActionInput = z.infer<typeof ScmCommitCreateActionInputSchema>;
 
+const ScmRemotePushActionInputSchema = lazyZodSchema(() => z.safeExtend(scm.ScmRemoteRequestSchema, {
+  workspace: z.optional(ManagedWorkspaceAddressV2Schema),
+}));
+export type ScmRemotePushActionInput = z.infer<typeof ScmRemotePushActionInputSchema>;
+
 const SessionScmStatusInputSchema = lazyZodSchema(() => z.extend(scm.ScmStatusSnapshotRequestSchema, {
   sessionId: z.optional(SessionTargetV1Schema),
 }));
@@ -987,7 +992,7 @@ const SCM_GIT_ACTION_SPECS_PREFIX: readonly [
 ] as const);
 
 const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
-  ScmActionSpecDefinition<'scm.remote.push', typeof scm.ScmRemoteRequestSchema, typeof scm.ScmRemoteResponseSchema>,
+  ScmActionSpecDefinition<'scm.remote.push', typeof ScmRemotePushActionInputSchema, typeof scm.ScmRemoteResponseSchema>,
   ScmActionSpecDefinition<'scm.remote.publish', typeof branches.ScmRemotePublishRequestSchema, typeof branches.ScmRemotePublishResponseSchema>,
   ScmActionSpecDefinition<'scm.stash.list', typeof stash.ScmStashListRequestSchema, typeof stash.ScmStashListResponseSchema>,
   ScmActionSpecDefinition<'scm.stash.show', typeof stash.ScmStashShowRequestSchema, typeof stash.ScmStashShowResponseSchema>,
@@ -1017,7 +1022,7 @@ const SCM_GIT_ACTION_SPECS_REMOTE_AND_REVIEW: readonly [
     bindings: { rpcMethod: 'scm.remote.push' },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'external', localRepository: 'write',
-    inputSchema: scm.ScmRemoteRequestSchema,
+    inputSchema: ScmRemotePushActionInputSchema,
     outputSchema: scm.ScmRemoteResponseSchema,
     inputHints: {
       title: 'Remote push',
@@ -2165,7 +2170,8 @@ export function isScmLocalRepositoryReadRpcMethod(method: string): boolean {
 
 /** The managed workspace carries its exact placement through these RPCs. */
 export function supportsManagedWorkspaceScmRpcMethod(method: string): boolean {
-  return method === RPC_METHODS.SCM_COMMIT_CREATE || isScmLocalRepositoryReadRpcMethod(method);
+  return method === RPC_METHODS.SCM_COMMIT_CREATE || method === RPC_METHODS.SCM_REMOTE_PUSH
+    || isScmLocalRepositoryReadRpcMethod(method);
 }
 
 /** A projection of `localRepository` on the declaration owner: any read or write that runs as the folder's owner. */

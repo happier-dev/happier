@@ -140,10 +140,11 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             intent: 'push',
             scmWriteEnabled,
             sessionPath: scope.rootPath,
+            workspace: scope.workspace,
             snapshot,
             commitStrategy: scmCommitStrategy,
         });
-    }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, snapshot]);
+    }, [scmCommitStrategy, scmWriteEnabled, scope.rootPath, scope.workspace, snapshot]);
     const leaseTarget = resolveForceWithLeaseTarget(snapshot);
     const forceWithLeasePreflight = evaluateScmOperationPreflight({
         intent: 'push', scmWriteEnabled, sessionPath: scope.rootPath, snapshot,

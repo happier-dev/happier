@@ -47,9 +47,9 @@ const pushInput = () => ({
     ...input(), kind: 'push' as const, scmSnapshot: snapshot, scmWriteEnabled: true,
     scmPushRejectPolicy: 'prompt_fetch' as const,
 });
-const outcomeLine = () => selectScmWriteOperation({
-    inFlight: storage.getState().getWorkspaceScmInFlightOperation(scope),
-    log: storage.getState().getWorkspaceScmOperationLog(scope), machineReachable: true,
+const outcomeLine = (target = scope) => selectScmWriteOperation({
+    inFlight: storage.getState().getWorkspaceScmInFlightOperation(target),
+    log: storage.getState().getWorkspaceScmOperationLog(target), machineReachable: true,
 });
 
 describe('workspace SCM public write outcomes', () => {
@@ -154,6 +154,27 @@ describe('workspace SCM public write outcomes', () => {
         push.mockResolvedValue({ success: false, outcome });
         await executeWorkspaceScmRemoteOperation(pushInput());
         expect(outcomeLine()).toMatchObject({ phase: outcome.kind, outcome });
+    });
+    it('gets Connect a repository from Project admission when the guest has no upstream', async () => {
+        const target = { ...scope, workspace: { v: 2 as const, kind: 'managed' as const, serverId: scope.serverId,
+            workspaceId: 'guest-checkout', managedId: 'guest', rootPath: scope.rootPath,
+            controller: { machineId: scope.machineId, installationId: 'installation' } } };
+        const outcome: ScmOperationOutcome = { v: 1, kind: 'needs_input', errorCode: 'REMOTE_AUTH_REQUIRED',
+            nextActions: [{ kind: 'connect_repository' }] };
+        push.mockResolvedValue({ success: false, outcome });
+        const noUpstream = { ...snapshot, branch: { ...snapshot.branch, upstream: null },
+            capabilities: { ...snapshot.capabilities, changeSetModel: 'index' as const } };
+
+        await executeWorkspaceScmRemoteOperation({ ...pushInput(), scmSnapshot: noUpstream });
+        expect(push).not.toHaveBeenCalled();
+        vi.mocked(Modal.alert).mockClear();
+
+        await executeWorkspaceScmRemoteOperation({ ...pushInput(), scope: target, scmSnapshot: noUpstream });
+        expect(push).toHaveBeenCalledWith(scope.machineId, { cwd: scope.rootPath }, expect.objectContaining({
+            serverId: scope.serverId, workspace: target.workspace,
+        }));
+        expect(outcomeLine(target)).toMatchObject({ phase: 'needs_input', outcome });
+        expect(Modal.alert).not.toHaveBeenCalled();
     });
     it('uses the observed upstream identity for a workspace force-with-lease push and preserves typed rejection', async () => {
         // The Git producer classifies a stale force lease as non-fast-forward,
