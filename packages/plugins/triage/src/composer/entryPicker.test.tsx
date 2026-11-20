@@ -11,7 +11,7 @@ import type {
     ComposerAttachmentViewV1,
     ComposerSnapshotV1,
     ComposerTransactionV1,
-} from '@happier-dev/plugin-ui';
+} from '@happier-dev/plugin-sdk/ui';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,

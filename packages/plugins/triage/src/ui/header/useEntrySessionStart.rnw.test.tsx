@@ -13,7 +13,7 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { PluginTargetedContributionSelectionV1, PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol';
+import type { PluginTargetedContributionSelectionV1, PluginUiTargetedContributionOperationV1 } from '@happier-dev/protocol/plugins/ui/targetedContributions';
 
 import {
     TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,

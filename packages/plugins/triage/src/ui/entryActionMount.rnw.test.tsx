@@ -9,8 +9,8 @@ import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
 import { createTriageRunConfiguredActionHandler } from '../actions/configuredActionRun.js';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
+import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/plugin-sdk/sessions';
 import type {
-    PluginUiSessionServerStartDraftV1,
     PluginUiTargetedContributionContributorV1,
     PluginUiTargetedContributionOperationV1,
     PluginUiTargetedContributionTargetV1,
@@ -221,7 +221,7 @@ const SETTLED_DRAFT = Object.freeze({
     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
     directory: { kind: 'path', path: '/workspaces/example' },
     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.claude', localId: 'claude' } },
-} as const) satisfies PluginUiSessionServerStartDraftV1;
+} as const) satisfies SessionServerStartSpawnDraftV1;
 
 function configuredInstance(): TriageConfiguredSourceInstanceV1 {
     return TriageConfiguredSourceInstanceV1Schema.parse({
@@ -510,7 +510,7 @@ let draftSeeds: unknown[] = [];
 /** Seeds handed to the host-owned New Session authoring surface. */
 let newSessionSeeds: unknown[] = [];
 
-async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ available: boolean }> = false, chooseDraft?: (signal: AbortSignal) => Promise<PluginUiSessionServerStartDraftV1 | null>,
+async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ available: boolean }> = false, chooseDraft?: (signal: AbortSignal) => Promise<SessionServerStartSpawnDraftV1 | null>,
     page?: Readonly<{ launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; opens?: PluginUiTestkitOpenSurfaceInput[] }>): Promise<PluginUiTestkit> {
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;

@@ -6,7 +6,7 @@ import { administerTriageAction, readTriageActionsForSurface } from './actionsCa
 import { TriageAdministerActionInputV1Schema } from './actionsCatalogProtocol.js';
 import { runTriageConfiguredHandoffV1 } from '../sessions/configuredActionRun.js';
 import { TriageSessionHandoffInputV1Schema, TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
-import type { PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
+import type { OpenNewSessionRequest } from '@happier-dev/plugin-sdk/ui';
 import type { JsonValue, PluginContributionRef } from '@happier-dev/plugin-sdk';
 import { testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.test-support.js';
 
@@ -104,11 +104,11 @@ describe('Save as this action’s default', () => {
         expect(f.profiles.get(first.profileId!)).toMatchObject({ checkout: 'reuse_workspace',
             placement: { fixed: { serverId: 'home', machineId: 'machine' }, directoryIntent: { kind: 'managed' } } });
 
-        const seeds: PluginUiNewSessionSeedV1[] = [];
+        const seeds: OpenNewSessionRequest[] = [];
         const host = {
             version: () => ({ methods: ['openNewSession'] }),
             context: async () => ({ accountScope: { serverId: 'home', accountId: 'account-a' } }),
-            openNewSession: async (seed: PluginUiNewSessionSeedV1) => { seeds.push(seed); },
+            openNewSession: async (seed: OpenNewSessionRequest) => { seeds.push(seed); },
             executeAction: async (id: string | PluginContributionRef, raw: JsonValue) => {
                 if (typeof id !== 'string' && id.pluginId === TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1.pluginId
                     && id.localId === TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1.localId) {

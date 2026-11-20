@@ -5,8 +5,8 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type { PluginUiDataClient } from '@happier-dev/plugin-ui/data';
+import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/plugin-sdk/sessions';
 import type {
-    PluginUiSessionServerStartDraftV1,
     PluginUiContextEnrichmentV1,
     PluginUiTargetedContributionContributorV1,
     PluginUiTargetedContributionOperationV1,
@@ -648,7 +648,7 @@ async function mountShell(
                                 identity: { pluginId: 'happier.test.agent', localId: 'agent' },
                             },
                             directory: { kind: 'path', path: '/workspaces/example' },
-                        } satisfies PluginUiSessionServerStartDraftV1,
+                        } satisfies SessionServerStartSpawnDraftV1,
                     } as never;
                 },
                 readComposer: async ({ ref }) => {

@@ -35,7 +35,7 @@ import { createPluginActionInvocation } from '@happier-dev/protocol/plugins/acti
 import { TriageLinkEntryToSessionInputV1Schema } from '../actions/sessionLinksProtocol.js';
 import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/agentBackendInventory';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { OpenNewSessionOptions, PluginUiActionExecutionOptions, PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
+import type { OpenNewSessionOptions, OpenNewSessionRequest, PluginUiActionExecutionOptions } from '@happier-dev/plugin-sdk/ui';
 
 type TestAccountActionContext = PluginAccountActionContext & Readonly<{ ui: PluginClientActionUi }>;
 
@@ -343,13 +343,13 @@ describe('configured action execution through the shared Session owner', () => {
             send: [{ status: 'accepted', localId: 'investigation-input' }] });
         const starts = preference === 'fixed' || preference === 'project';
         const spawnAttempts: JsonValue[] = [];
-        const seeds: PluginUiNewSessionSeedV1[] = [];
+        const seeds: OpenNewSessionRequest[] = [];
         // Only host Action RPC and UI navigation are substituted. The builtin catalog,
         // evidence admission, configured handoff and Session start owners stay real.
         const host = {
             version: () => ({ methods: composer ? ['openNewSession'] : [] }),
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
-            ...(composer ? { openNewSession: async (seed: PluginUiNewSessionSeedV1) => { seeds.push(seed); } } : {}),
+            ...(composer ? { openNewSession: async (seed: OpenNewSessionRequest) => { seeds.push(seed); } } : {}),
             executeAction: async (id: string, value: JsonValue) => {
                 if (triageBoundaryActionId(id) === 'actions/read-v1') return preference === 'ask' || preference === 'fixed'
                     ? { ...builtinCatalog, actions: builtinCatalog.actions.map(action => action.actionId === 'investigate'
@@ -422,10 +422,10 @@ describe('configured action execution through the shared Session owner', () => {
         const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: { pluginId: 'happier.example.agent', localId: 'example' } };
         const targetKey = buildAgentTargetKeyV2(agentTarget);
         const invoker = createTestkitActionInvoker({ spawn: [spawnSuccess()], send: [{ status: 'accepted', localId: 'investigation-input' }] });
-        const seeds: PluginUiNewSessionSeedV1[] = [];
+        const seeds: OpenNewSessionRequest[] = [];
         const host = {
             version: () => ({ methods: ['openNewSession'] }),
-            openNewSession: async (seed: PluginUiNewSessionSeedV1) => { seeds.push(seed); },
+            openNewSession: async (seed: OpenNewSessionRequest) => { seeds.push(seed); },
             context: async () => ({ accountScope: { serverId: 'server-a', accountId: 'account-a' } }),
             executeAction: async (id: string, value: JsonValue) => {
                 if (triageBoundaryActionId(id) === 'actions/read-v1') return { ...catalog, actions: [{ ...action, profileId: 'saved-profile' }] };
