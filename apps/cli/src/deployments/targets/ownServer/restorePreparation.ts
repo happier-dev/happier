@@ -1,11 +1,7 @@
-import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
-import type { OwnServerNativeRestorePrepareReceipt } from './nativeRestore';
+import type { DeploymentRestorePreparationV1 } from '@happier-dev/deployments/contracts/v1';
 
 /** Nonsecret native evidence retained by the existing prepare Action operation. */
-export type OwnServerRestorePreparationForHost = Readonly<{
-    prepared: OwnServerNativeRestorePrepareReceipt;
-    configuration: DeploymentBackupConfigurationV1;
-}>;
+export type OwnServerRestorePreparationForHost = DeploymentRestorePreparationV1;
 
 /** The shape is owned by the deployment protocol, where the restore sheet reads the same evidence. */
 export { DeploymentRestorePreparationV1Schema as OwnServerRestorePreparationForHostSchema } from '@happier-dev/deployments/contracts/v1';

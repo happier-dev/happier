@@ -53,7 +53,7 @@ export async function executeDeploymentBackupConfigurationNativeForHost(input: D
             ...(input.intent === 'rekeyAndSave' ? { prepareSuccessorDestination: (nativeSignal: AbortSignal) => host.prepareDestination({
                 environment: input.environment, configuration: input.configuration, context: input.context, intent: 'save', signal: nativeSignal }) } : {}) },
         async native => ({ test: input.intent === 'rekeyAndSave'
-            ? await addDeploymentBackupRepositoryKeyV1({ environmentId: input.environment.environment.id, operationId, ...native,
+            ? await addDeploymentBackupRepositoryKeyV1({ environmentId: input.environment.environment.id, ...native,
                 successorAccess: native.successorAccess ?? (() => { throw new PluginError({ code: 'operation_unavailable', message: 'Backup re-key custody is unavailable' }); })() })
             : await testDeploymentBackupDestinationV1({ environmentId: input.environment.environment.id,
                 operationId, ...native, initializeIfMissing: input.intent === 'initializeAndSave' }),
