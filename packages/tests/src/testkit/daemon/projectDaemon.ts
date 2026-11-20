@@ -17,6 +17,12 @@ import { decodeStoredCredentials, type Settings } from '../../../../../apps/cli/
 import { createCliActionExecutorFromCredentials } from '../../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { observeSessionSocketEvents } from '../../../../../apps/cli/src/session/transport/socket/sessionSocketAgentState';
 import { consumeDeferredCliApprovalResult } from '../../../../../apps/cli/src/session/actions/approvals/deferredResult';
+import { acquireRequesterAccountEncryptionCurrentness, sameRequesterAccountEncryptionCurrentness } from '../../../../../apps/cli/src/api/client/accountEncryptionCurrentnessObservation';
+import { runWithServerHttpBaseUrl } from '../../../../../apps/cli/src/api/client/serverHttpBaseUrl';
+import { bootstrapAccountSettingsContext } from '../../../../../apps/cli/src/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createRequesterAccountSettingsPublication } from '../../../../../apps/cli/src/settings/accountSettings/requesterAccountSettingsPublication';
+import { createInvocationSavedSecretOperationContextV1 } from '../../../../../apps/cli/src/settings/secrets/savedSecretOperationContext';
+import { createSnapshotActionSettingsProvider } from '../../../../../apps/cli/src/settings/actionsSettingsProvider';
 import { createTestAuth, createTestTerminalAuth } from '../auth';
 import { buildTestAccountCliAuthCredentials } from '../cliAuth';
 import { fetchJson } from '../http';
@@ -101,84 +107,139 @@ export async function startProjectDaemonFixture(params: Readonly<{
       const terminal = await createTestTerminalAuth(server.baseUrl, auth);
       const credentials = decodeStoredCredentials(buildTestAccountCliAuthCredentials({ auth: terminal, mode: 'dataKey' }));
       if (!credentials) throw new Error('Project Account terminal credentials unavailable');
-      // This process retains CLI executors across Actions. Like a live CLI host,
-      // it must consume pushed Automation rows authored by the person client.
-      await new Promise<void>((resolve, reject) => {
-        accountObservers.push(observeSessionSocketEvents({ token: credentials.token,
-          serverUrl: actionServerApiUrl, scope: 'user' }, { onConnected: resolve, onError: reject }));
-      });
-      const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
-        serverId, serverIdentityId: serverId, serverApiUrl: actionServerApiUrl });
-      const execute = (actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) =>
-        executor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
-          actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
-          actionRequestId: randomUUID(), ...context });
-      /** Retain the real CLI waiter while a person answers its Inbox Ask. */
-      async function executeWithApproval(actionId: ActionId, input: unknown,
-        onApprovalRequested: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['onApprovalRequested']>,
-        context: Partial<ActionExecutorContext> = {}) {
-        const lifetime = new AbortController();
-        const signal = context.signal ? AbortSignal.any([context.signal, lifetime.signal]) : lifetime.signal;
-        const liveExecutor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
-          serverId, serverIdentityId: serverId, serverApiUrl: actionServerApiUrl, onApprovalRequested,
-        }).bindInvocation(signal, { actionId, signal, surface: 'cli' });
-        try {
-          return await liveExecutor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
-            actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
-            actionRequestId: randomUUID(), ...context, signal });
-        } finally { lifetime.abort(); }
-      }
-      const account = { name, auth, credentials,
-        uiCredentials: buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' }),
-        replayApprovedApprovalRequest(artifactId: string) {
-          return executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' });
-        },
-        readSessionMetadata(sessionId: string) {
-          return fetchSessionMetadataV2({ baseUrl: server.baseUrl, token: auth.token, sessionId,
-            machineKeys: [auth.accountMachineKey] });
-        },
-        async executeViaVoiceSpawn(input: unknown) {
-          const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
-            addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed });
-          try { return await ui.executeVoiceSpawn(input, randomUUID()); }
-          finally { await ui.close(); }
-        },
-        execute,
-        executeWithApproval,
-        /** This fixture person approves the real Inbox request through the UI
-         * person client, as in the app; the terminal credential is automation
-         * and never a reviewer (isApprovalDecisionReviewerBindingV1). The retained
-         * execution, including any child Ask, supplies the final typed result. */
-        async executeReviewed(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
-          const approve = async (artifactId: string, signal: AbortSignal) =>
-            await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }, { signal });
-          const result = await executeWithApproval(actionId, input, approve, context);
-          return await consumeDeferredCliApprovalResult(result, {
-            onApprovalRequested: approve,
-            execute,
-            token: credentials.token,
-            serverHttpBaseUrl: actionServerApiUrl,
-            context: { signal: context.signal },
-          });
-        },
-        async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {},
-          presentation?: Readonly<{ action: PluginContributionIdentityV1; machineId: string }>) {
-          const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
-            addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed,
-            ...(presentation ? { presentedMachineAction: { action: presentation.action,
-                target: { serverIdentityId: serverId, machineId: presentation.machineId } } } : {}) });
-          try {
-            if (presentation) {
-              await waitFor(ui.isPresentedMachineActionReady,
-                { context: `presented Machine Action ${presentation.action.pluginId}/${presentation.action.localId}` });
-            }
-            return await ui.executeConfirmed(actionId, input, { ...context, surface: 'ui', authority: 'present_user',
-              actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: serverId,
-              actionRequestId: randomUUID() });
-          } finally { await ui.close(); }
-        },
+      let live = true;
+      const disposals: (() => void | Promise<void>)[] = [];
+      const dispose = async () => {
+        if (!live) return;
+        live = false;
+        const errors: unknown[] = [];
+        for (const close of disposals.reverse()) {
+          try { await close(); } catch (error) { errors.push(error); }
+        }
+        if (errors.length) throw new AggregateError(errors, 'Project Account cleanup failed');
       };
-      return account;
+      accountObservers.push({ dispose });
+      try {
+        const accountId = readAccountIdFromToken(credentials.token);
+        if (!accountId) throw new Error('Project Account terminal credential omitted its Account ID');
+        const observation = acquireRequesterAccountEncryptionCurrentness({ accountId,
+          token: credentials.token, serverBaseUrl: actionServerApiUrl });
+        disposals.push(() => observation.dispose());
+        const currentness = await observation.readWitness();
+        const snapshot = await runWithServerHttpBaseUrl(actionServerApiUrl, () => bootstrapAccountSettingsContext({
+          credentials, mode: 'blocking', publication: 'invocation', allowCacheFallback: false,
+          expectedAccountEncryptionMode: currentness.mode, minSettingsVersion: currentness.settingsVersion,
+          honorAccountSettingsModeEnv: false,
+        }));
+        const savedSecretOperationContext = runWithServerHttpBaseUrl(actionServerApiUrl,
+          () => createInvocationSavedSecretOperationContextV1({ credentials, snapshot,
+            serverHttpBaseUrl: actionServerApiUrl, isCurrent: async signal => {
+              if (!live || signal?.aborted) return false;
+              if (observation.isCurrent(currentness)) return true;
+              const observed = await observation.read(signal);
+              return live && !signal?.aborted && sameRequesterAccountEncryptionCurrentness(observed, currentness);
+            } }));
+        disposals.push(async () => { savedSecretOperationContext.withdrawCatalog(); await savedSecretOperationContext.isCurrent(); });
+        const settingsPublication = createRequesterAccountSettingsPublication({ observation, currentness,
+          operationContext: savedSecretOperationContext });
+        disposals.push(() => settingsPublication.dispose());
+        const actionsSettingsProvider = createSnapshotActionSettingsProvider(() => {
+          const current = savedSecretOperationContext.readSnapshot();
+          if (!current) throw new Error('Project Account settings lifetime retired');
+          return current;
+        }, savedSecretOperationContext);
+        const ensureSettingsCurrent = async (signal?: AbortSignal) => {
+          if (!await settingsPublication.ensureCurrent(signal)) throw new Error('Project Account settings unavailable');
+        };
+        // The held Account publication above and this Automation observer consume
+        // real pushes independently of whichever person UI is currently focused.
+        await new Promise<void>((resolve, reject) => {
+          const automationObserver = observeSessionSocketEvents({ token: credentials.token,
+            serverUrl: actionServerApiUrl, scope: 'user' }, { onConnected: resolve, onError: reject });
+          disposals.push(() => automationObserver.dispose());
+        });
+        const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+          serverId, serverIdentityId: serverId, serverApiUrl: actionServerApiUrl,
+          actionsSettingsProvider, savedSecretOperationContext });
+        const execute = async (actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) => {
+          await ensureSettingsCurrent(context.signal);
+          return await executor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
+            actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
+            actionRequestId: randomUUID(), ...context });
+        };
+        /** Retain the real CLI waiter while a person answers its Inbox Ask. */
+        async function executeWithApproval(actionId: ActionId, input: unknown,
+          onApprovalRequested: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['onApprovalRequested']>,
+          context: Partial<ActionExecutorContext> = {}) {
+          await ensureSettingsCurrent(context.signal);
+          const lifetime = new AbortController();
+          const signal = context.signal ? AbortSignal.any([context.signal, lifetime.signal]) : lifetime.signal;
+          const liveExecutor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+            serverId, serverIdentityId: serverId, serverApiUrl: actionServerApiUrl, onApprovalRequested,
+            actionsSettingsProvider, savedSecretOperationContext,
+          }).bindInvocation(signal, { actionId, signal, surface: 'cli' });
+          try {
+            return await liveExecutor.execute(actionId, input, { surface: 'cli', authority: 'present_user',
+              actionCaller: { kind: 'host' }, serverId, serverIdentityId: serverId,
+              actionRequestId: randomUUID(), ...context, signal });
+          } finally { lifetime.abort(); }
+        }
+        const account = { name, auth, credentials,
+          uiCredentials: buildTestAccountCliAuthCredentials({ auth, mode: 'dataKey' }),
+          async replayApprovedApprovalRequest(artifactId: string) {
+            await ensureSettingsCurrent();
+            return await executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' });
+          },
+          readSessionMetadata(sessionId: string) {
+            return fetchSessionMetadataV2({ baseUrl: server.baseUrl, token: auth.token, sessionId,
+              machineKeys: [auth.accountMachineKey] });
+          },
+          async executeViaVoiceSpawn(input: unknown) {
+            const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
+              addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed });
+            try { return await ui.executeVoiceSpawn(input, randomUUID()); }
+            finally { await ui.close(); }
+          },
+          execute,
+          executeWithApproval,
+          /** This fixture person approves the real Inbox request through the UI
+           * person client, as in the app; the terminal credential is automation
+           * and never a reviewer (isApprovalDecisionReviewerBindingV1). The retained
+           * execution, including any child Ask, supplies the final typed result. */
+          async executeReviewed(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {}) {
+            const approve = async (artifactId: string, signal: AbortSignal) =>
+              await account.executeAsPerson('approval.request.decide', { artifactId, decision: 'approve' }, { signal });
+            const result = await executeWithApproval(actionId, input, approve, context);
+            return await consumeDeferredCliApprovalResult(result, {
+              onApprovalRequested: approve,
+              execute,
+              token: credentials.token,
+              serverHttpBaseUrl: actionServerApiUrl,
+              context: { signal: context.signal },
+            });
+          },
+          async executeAsPerson(actionId: ActionId, input: unknown, context: Partial<ActionExecutorContext> = {},
+            presentation?: Readonly<{ action: PluginContributionIdentityV1; machineId: string }>) {
+            const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
+              addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed,
+              ...(presentation ? { presentedMachineAction: { action: presentation.action,
+                  target: { serverIdentityId: serverId, machineId: presentation.machineId } } } : {}) });
+            try {
+              if (presentation) {
+                await waitFor(ui.isPresentedMachineActionReady,
+                  { context: `presented Machine Action ${presentation.action.pluginId}/${presentation.action.localId}` });
+              }
+              return await ui.executeConfirmed(actionId, input, { ...context, surface: 'ui', authority: 'present_user',
+                actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: serverId,
+                actionRequestId: randomUUID() });
+            } finally { await ui.close(); }
+          },
+        };
+        return account;
+      } catch (error) {
+        try { await dispose(); } catch (cleanupError) { throw new AggregateError([error, cleanupError], 'Project Account setup and cleanup failed'); }
+        throw error;
+      }
     }
     return { server, serverId, sourceOptions, actionServerApiUrl, requestProxy, createAccount,
       // Public fixture CA only; native guests install it through ordinary OS trust.
