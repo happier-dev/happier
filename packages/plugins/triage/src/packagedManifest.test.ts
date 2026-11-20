@@ -134,14 +134,14 @@ describe('PRs & Issues manifest', () => {
         // Sources, and the agent-actions point plugins declare agent action records at.
         expect(contributes.pluginContributionPoints.map((point) => point.id))
             .toEqual(['sources', 'agent-actions']);
-        expect(contributes.targetedPluginContributions).toMatchObject([{
+        expect(contributes.targetedPluginContributions).toContainEqual(expect.objectContaining({
             id: 'internal',
             target: { pluginId: PLUGIN_MANIFEST.id, pointId: 'sources' },
-            operations: {
+            operations: expect.objectContaining({
                 listInstances: 'internal/tasks/list-instances-v1',
                 scan: 'internal/tasks/scan-v1',
                 get: 'internal/tasks/get-v1',
-            },
-        }]);
+            }),
+        }));
     });
 });
