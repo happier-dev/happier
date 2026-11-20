@@ -5,6 +5,7 @@ import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -88,11 +89,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     // Embedded, the view is a step on its host's column (like the scanner and link entry beside
     // it): copy, the QR and the actions start at the column's edge under the host's heading, the
     // QR stands on the pane without a card, and the other ways in are quiet text actions.
-    embeddedSectionLead: {
-        marginTop: 0,
-        marginBottom: 0,
-        textAlign: 'left',
-    },
     embeddedNoticeCard: {
         marginBottom: theme.space.s16,
     },
@@ -382,8 +378,18 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                 {/* Embedded, the step's own heading says what to do with the code (Approve from a device you use). Signing
                     in, it stays through Approved: the code's check and pill say it, so nothing above them moves. Adding a
                     Home, the outcome line says what changed (the Home was added; the focused one did not change). */}
-                {embedded && (pendingCode || pairing.phase === 'ready' || (approvedCode !== null && props.entryIntent === 'enter_home')) ? null : (
-                    <Text style={[styles.sectionLead, embedded ? styles.embeddedSectionLead : null]}>
+                {embedded && (pendingCode || pairing.phase === 'ready' || (approvedCode !== null && props.entryIntent === 'enter_home')) ? null : embedded ? (
+                    // On the step a state that is not the code (a failure, a disabled way) is the door-width notice line.
+                    <SurfaceStateCard
+                        testID="restore-requester-status"
+                        size="line"
+                        lineLayout="notice"
+                        kind={presentation.activity ? 'loading' : presentation.liveRegion === 'assertive' ? 'warning' : 'empty'}
+                        title={t(presentation.primaryTranslationKey)}
+                        accessibilitySemantics={presentation.liveRegion === 'assertive' ? 'alert' : 'status'}
+                    />
+                ) : (
+                    <Text style={styles.sectionLead}>
                         {t(pendingCode ? 'connect.showRequesterQrInstructions' : presentation.primaryTranslationKey)}
                     </Text>
                 )}

@@ -7,7 +7,7 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import type { IconName } from '@/components/ui/icons/Icon';
+import { ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
@@ -16,6 +16,9 @@ import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 const DOCS_URL = 'https://docs.happier.dev';
 const GITHUB_URL = 'https://github.com/happier-dev/happier';
 const DISCORD_URL = 'https://discord.gg/W6Pb8KuHfg';
+/** The corner wells, their glyph at the ways row's glyph-to-well ratio (20 in 44). */
+const FOOTER_WELL_PX = 32;
+const FOOTER_GLYPH_PX = ICON_SIZE.xs;
 /** The links sit about 10 px apart; each hit area reaches half of it sideways. */
 const LINK_HIT_REACH = { left: 5, right: 5 } as const;
 
@@ -28,9 +31,10 @@ export type WelcomeFooterLinksProps = Readonly<{
 type FooterLink = Readonly<{ key: string; label: string; accessibilityLabel: string; icon: IconName; open: () => void }>;
 
 /**
- * Welcome-step-only footer (direction A, lab `final/shots/open-*-welcome-*`): on a computer a quiet line of links in
- * the bottom-left corner with their marks as small round wells under it; on a phone one centred row under the
- * column. Help and community only, so a focused Home never appears to select the sign-in destination.
+ * Welcome-step-only footer (direction A, lab `final/shots/open-*-welcome-*`): on a computer the links' marks as small
+ * round wells in the bottom-left corner, each named by its tooltip (owner 2026-11-20: no captions above them); on a
+ * phone one centred row of words under the column. Help and community only, so a focused Home never appears to select
+ * the sign-in destination.
  */
 export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: WelcomeFooterLinksProps) {
     const styles = stylesheet;
@@ -44,14 +48,9 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
         { key: 'discord', label: t('welcome.welcomeFooterDiscord'), accessibilityLabel: t('welcome.welcomeFooterDiscordLabel'), icon: 'discord-logo', open: openDiscord },
     ];
     const line = (
-        <View style={isMobile ? styles.lineMobile : styles.line} testID="welcome-footer-docs">
-            {links.map((link, index) => (
-                <React.Fragment key={link.key}>
-                    {index > 0 && !isMobile ? <Text style={styles.dot}>·</Text> : null}
-                    <FooterTextLink link={link} />
-                </React.Fragment>
-            ))}
-            {isMobile ? props.trailing : null}
+        <View style={styles.lineMobile} testID="welcome-footer-docs">
+            {links.map((link) => <FooterTextLink key={link.key} link={link} />)}
+            {props.trailing}
         </View>
     );
     return (
@@ -59,12 +58,12 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
             {isMobile ? line : (
                 <View style={styles.rowDesktop}>
                     <View style={styles.groupDesktop}>
-                        {line}
-                        <View style={styles.wells}>
+                        <View style={styles.wells} testID="welcome-footer-docs">
                             {links.map((link) => (
                                 <IconButton key={link.key} testID={`welcome-footer-${link.key}-action`}
                                     accessibilityRole="link" accessibilityLabel={link.accessibilityLabel}
-                                    tooltip={link.accessibilityLabel} iconName={link.icon} size={32} variant="outlined"
+                                    tooltip={link.accessibilityLabel} iconName={link.icon} size={FOOTER_WELL_PX}
+                                    iconSize={FOOTER_GLYPH_PX} variant="outlined"
                                     onPress={link.open} />
                             ))}
                         </View>
@@ -118,11 +117,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-start',
         gap: theme.space.s8,
     },
-    line: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-    },
     lineMobile: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -132,10 +126,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     wells: {
         flexDirection: 'row',
         gap: theme.space.s8,
-    },
-    dot: {
-        ...Typography.variant('body'),
-        color: theme.colors.text.tertiary,
     },
     trailingDesktop: {
         alignSelf: 'flex-end',

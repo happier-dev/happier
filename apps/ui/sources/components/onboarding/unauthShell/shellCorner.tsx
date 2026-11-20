@@ -1,5 +1,7 @@
 import * as React from 'react';
 
+import type { RelayRetentionDisclosureModel } from './RelayRetentionDisclosure';
+
 export type ShellCornerDoor = Readonly<{
   testID: string;
   label: string;
@@ -34,4 +36,34 @@ export function useShellCornerDoor(door: ShellCornerDoor | null): boolean {
     return () => slot(null);
   }, [interactive, slot, testID, label]);
   return slot !== null && door !== null;
+}
+
+/** The Home's data-retention line, which a computer's shell stands in the page's bottom-right corner. */
+export type ShellCornerNote = Readonly<{ disclosure: RelayRetentionDisclosureModel; onRetry?: () => void }>;
+
+type ShellCornerNoteSlot = (note: ShellCornerNote | null) => void;
+
+/** The page's bottom-right corner on a computer, provided by `WorkflowPanel`; absent on a phone. */
+export const ShellCornerNoteContext = React.createContext<ShellCornerNoteSlot | null>(null);
+
+/**
+ * The welcome hands its retention line to the shell's bottom-right corner on a computer (owner 2026-11-20: it crowded
+ * the centre above the planet); returns whether the shell placed it, so the step keeps it in its column otherwise.
+ */
+export function useShellCornerNote(note: ShellCornerNote | null): boolean {
+  const slot = React.useContext(ShellCornerNoteContext);
+  const onRetry = React.useRef(note?.onRetry);
+  onRetry.current = note?.onRetry;
+  const kind = note?.disclosure.kind ?? null;
+  const summary = note?.disclosure.kind === 'summary' ? note.disclosure.summary : null;
+  const retryable = note?.onRetry !== undefined;
+  useIsomorphicLayoutEffect(() => {
+    if (!slot || kind === null) return undefined;
+    slot({
+      disclosure: kind === 'summary' ? { kind, summary: summary ?? '' } : { kind: 'unreadable' },
+      onRetry: retryable ? () => onRetry.current?.() : undefined,
+    });
+    return () => slot(null);
+  }, [kind, retryable, slot, summary]);
+  return slot !== null && note !== null;
 }

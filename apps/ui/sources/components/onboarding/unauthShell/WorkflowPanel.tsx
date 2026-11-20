@@ -13,7 +13,8 @@ import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBa
 import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
 import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TEST_ID, useStepBackSlot, WIDE_STEP_COLUMN_PX, WideStepColumnContext } from './stepBack';
-import { ShellCornerContext, type ShellCornerDoor } from './shellCorner';
+import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
+import { ShellCornerContext, ShellCornerNoteContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
 /** The wordmark's corner (lab direction A): 24 px tall, 24 px in from a phone's side and 20 px down. */
@@ -49,6 +50,8 @@ const WORKFLOW_DESKTOP_HORIZONTAL_GUTTER = 64;
 const DESKTOP_WORDMARK_INSET_PX = 40;
 /** A computer's wordmark sits 52 px down, its centre on the corner pill's (lab direction A). */
 const DESKTOP_WORDMARK_TOP_PX = 52;
+/** A computer's wordmark is a size up from a phone's (lab direction A: 26 px against 24). */
+const DESKTOP_WORDMARK_HEIGHT_PX = 26;
 const CORNER_PILL_HEIGHT_PX = 40;
 const DESKTOP_PANE_BOTTOM_PADDING_PX = 28;
 const STEP_TRANSITION_FILL_STYLE: ViewStyle = {
@@ -95,7 +98,7 @@ export type WorkflowPanelProps = Readonly<{
  * All colors come from theme tokens; the workflow pane respects light/dark.
  */
 export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPanelProps) {
-    useUnistyles();
+    const { theme } = useUnistyles();
     const safeAreaInsets = useSafeAreaInsets();
     const styles = stylesheet;
     const isMobile = props.variant === 'mobile';
@@ -117,6 +120,9 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // The welcome's "Run your own Home" door, in the page's top-right corner on a computer (lab direction A).
     const [cornerDoor, setCornerDoor] = React.useState<ShellCornerDoor | null>(null);
     const cornerSlot = isMobile ? null : setCornerDoor;
+    // The welcome's retention line, in the page's bottom-right corner on a computer (owner 2026-11-20).
+    const [cornerNote, setCornerNote] = React.useState<ShellCornerNote | null>(null);
+    const cornerNoteSlot = isMobile ? null : setCornerNote;
     const pane = React.useRef<View>(null);
     const readWebChrome = React.useCallback(() => {
         const root = pane.current;
@@ -196,7 +202,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     ]}
                     pointerEvents="box-none"
                 >
-                    <BrandWordmark height={WORDMARK_HEIGHT_PX} />
+                    <BrandWordmark height={isMobile ? WORDMARK_HEIGHT_PX : DESKTOP_WORDMARK_HEIGHT_PX} />
                 </View>
             ) : null}
             {backSlot && isFullBleed ? (
@@ -232,10 +238,12 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             {cornerDoor ? (
                 <View testID="unauth-shell-corner" style={styles.cornerDoor} pointerEvents="box-none">
                     <WelcomeActionCard testID={cornerDoor.testID} title={cornerDoor.label} presentation="pill"
-                        iconName="hard-drives" disabled={!cornerDoor.onPress} onPress={() => cornerDoor.onPress?.()} />
+                        iconName="hard-drives" trailingIconName="caret-right"
+                        disabled={!cornerDoor.onPress} onPress={() => cornerDoor.onPress?.()} />
                 </View>
             ) : null}
             <ShellCornerContext.Provider value={cornerSlot}>
+            <ShellCornerNoteContext.Provider value={cornerNoteSlot}>
             <StepBackContext.Provider value={backSlot}>
             <WideStepColumnContext.Provider value={isMobile ? null : claimWideColumn}>
             <ScrollView
@@ -307,7 +315,21 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <View testID="unauth-shell-welcome-footer" style={styles.desktopFooterCorner}>
                                 <WelcomeFooterLinks
                                     variant="desktop"
-                                    trailing={props.footerAccessory}
+                                    trailing={cornerNote || props.footerAccessory ? (
+                                        <View style={styles.cornerNote}>
+                                            {cornerNote ? (
+                                                // It stands over the planet's limb, so it reads on the corner pill's surface.
+                                                <View style={[styles.cornerNoteSurface, {
+                                                    backgroundColor: theme.colors.surface.base,
+                                                    borderColor: theme.colors.border.default,
+                                                }]}>
+                                                    <RelayRetentionDisclosure testID="welcome-retention"
+                                                        disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
+                                                </View>
+                                            ) : null}
+                                            {props.footerAccessory}
+                                        </View>
+                                    ) : undefined}
                                 />
                             </View>
                         </>
@@ -354,12 +376,13 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             </ScrollView>
             </WideStepColumnContext.Provider>
             </StepBackContext.Provider>
+            </ShellCornerNoteContext.Provider>
             </ShellCornerContext.Provider>
         </View>
     );
 });
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     paneOuter: {
         flex: 1,
         minHeight: 0,
@@ -435,11 +458,25 @@ const stylesheet = StyleSheet.create(() => ({
         top: DESKTOP_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + 16,
         left: DESKTOP_WORDMARK_INSET_PX,
     },
+    // The retention line on the bottom-right corner grid, right-aligned beside the footer's own control.
+    cornerNote: {
+        maxWidth: 320,
+        alignItems: 'flex-end',
+        gap: theme.space.s8,
+    },
+    cornerNoteSurface: {
+        borderWidth: StyleSheet.hairlineWidth,
+        borderRadius: theme.borderRadius.lg,
+        paddingVertical: theme.space.s8,
+        paddingHorizontal: theme.space.s12,
+    },
     cornerDoor: {
         position: 'absolute',
         zIndex: 1,
         top: DESKTOP_WORDMARK_TOP_PX + (WORDMARK_HEIGHT_PX - CORNER_PILL_HEIGHT_PX) / 2,
         right: 32,
+        // A long Home address truncates in its middle inside this width instead of reaching the column.
+        maxWidth: 360,
     },
     mobileWordmark: {
         position: 'absolute',

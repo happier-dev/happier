@@ -9,6 +9,7 @@ import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { isValidThemeProfileColorValue } from '@/theme/profiles/themeProfileColorValidation';
@@ -35,6 +36,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
      */
     presentation?: 'card' | 'button' | 'link' | 'row' | 'pill';
     iconName?: IconName;
+    /** A pill that opens a choice ends with its chevron (the corner "Run your own Home" / a Home's address). */
+    trailingIconName?: IconName;
     /**
      * A provider's own connect colour, exactly as its Home projected it
      * (teams-lane-03/01 §10.2). It sits behind the provider's mark, the way a
@@ -154,10 +157,18 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                         </Text>
                     ) : (
                     <View testID={`${props.testID}-text`} style={button ? styles.buttonText : styles.textBlock}>
-                        <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : pill ? styles.pillTitle : styles.title, { color: foreground }]}>{props.title}</Text>
+                        {pill ? (
+                            // A pill is one line: a long title (a Home's address) gives up its middle, never wraps.
+                            <MiddleEllipsisText testID={`${props.testID}-title`} value={props.title} style={[styles.pillTitle, { color: foreground }]} />
+                        ) : (
+                            <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : styles.title, { color: foreground }]}>{props.title}</Text>
+                        )}
                         {props.subtitle && !row && !pill ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
                     </View>
                     )}
+                    {pill && props.trailingIconName ? (
+                        <Icon testID={`${props.testID}-trailing`} name={props.trailingIconName} size={14} color={theme.colors.text.secondary} />
+                    ) : null}
                     {!button && pending ? <ActivitySpinner color={foreground} /> : !button && !link && props.iconName ? (
                         <View
                             testID={accent ? `${props.testID}-accent` : undefined}
@@ -239,7 +250,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingVertical: 0,
         paddingHorizontal: theme.space.s16,
     },
-    pillTitle: { ...Typography.variant('label') },
+    // The welcome's one body size (owner 2026-11-20): a pill's words read at the doors' subtitle size.
+    pillTitle: { ...Typography.variant('body') },
     pillHit: { alignSelf: 'center' },
     link: { paddingHorizontal: 0, paddingVertical: theme.space.s8, borderWidth: 0 },
     linkLineFrame: { minHeight: 0, justifyContent: 'center' },

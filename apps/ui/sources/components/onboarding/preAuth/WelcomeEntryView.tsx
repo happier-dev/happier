@@ -10,7 +10,7 @@ import { Typography } from '@/constants/Typography';
 
 import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
-import { useShellCornerDoor } from '@/components/onboarding/unauthShell/shellCorner';
+import { useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
 import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { t } from '@/text';
 
@@ -67,6 +67,10 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     const selfHostingInCorner = useShellCornerDoor(model.selfHosting ? {
         testID: model.selfHosting.display.testID, label: model.selfHosting.display.title, onPress: interaction?.onSelfHosting,
     } : null);
+    // A computer's shell stands the retention line in its bottom-right corner; a phone keeps it under the trust line.
+    const retentionInCorner = useShellCornerNote(model.retention
+        ? { disclosure: model.retention, onRetry: interaction?.onRetryRetention }
+        : null);
     const hasWays = model.quietWays.length > 0 || waysLeading != null;
     // A greeting says "Loading" as one quiet line in the reserved place under the trust line, where the retention
     // summary later stands; only a notice that asks for something takes the slot above the doors.
@@ -103,9 +107,10 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                 testID={`organization-policy-${model.policy.field}`} supportUrl={interaction?.policySupportUrl} /> :
                 model.policy?.kind === 'invalid' ? <OrganizationPolicyInvalidHelp interactive={Boolean(interaction)} /> : null}
             {model.signupNotice ? (
-                <Text testID="welcome-signup-disabled" style={[styles.statusText, styles.signupDisabledNotice]}>
-                    {model.signupNotice}
-                </Text>
+                <View style={styles.signupDisabledNotice}>
+                    <SurfaceStateCard testID="welcome-signup-disabled" size="line" lineLayout="notice" kind="unavailable"
+                        title={model.signupNotice} accessibilitySemantics="status" />
+                </View>
             ) : null}
             <WelcomeActionList admission={interaction?.admission ?? inertAdmission}>
                 <View style={styles.actionStack}>
@@ -134,7 +139,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                         <View style={styles.trust}>
                             <Text testID="welcome-trust" style={styles.trustText}>{model.trust}</Text>
                             <View style={styles.retention}>
-                                {quietLoading.length > 0 ? quietLoading.map(renderNotice) : model.retention ? (
+                                {quietLoading.length > 0 ? quietLoading.map(renderNotice) : model.retention && !retentionInCorner ? (
                                     <RelayRetentionDisclosure testID="welcome-retention"
                                         disclosure={{ ...model.retention, retry: interaction?.onRetryRetention }} />
                                 ) : null}
@@ -296,15 +301,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         minHeight: 56,
         paddingTop: theme.space.s16,
     },
-    statusText: {
-        ...Typography.default(),
-        fontSize: 14,
-        lineHeight: 20,
-        color: theme.colors.text.secondary,
-    },
+    // At the doors' width, like every welcome notice.
     signupDisabledNotice: {
-        textAlign: 'center',
-        maxWidth: 440,
+        width: '100%',
+        maxWidth: WELCOME_DOOR_WIDTH_PX,
         alignSelf: 'center',
     },
 }));
