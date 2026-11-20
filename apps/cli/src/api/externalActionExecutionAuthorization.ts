@@ -898,12 +898,6 @@ export function readOriginalAccountRequesterOperation(params: Readonly<{
   });
 }
 
-export function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;
-export function dispatchOriginalAccountAction(input: OriginalAccountActionInput): Promise<ActionExecuteResult>;
-/** Original Account/terminal delivery enters Home before a retained guest can accept it.
- * Session input names its existing publisher custody; Machine targets retain
- * the incumbent disclosure and signed-requester-context admission.
- */
 /** The reader's own Home header read and Artifact opener supply Environment collector pins. */
 function createTelemetryCollectorKeyPinPorts(input: Readonly<{ homeUrl: string; headers: Readonly<Record<string, string>>;
   credentials: StoredCredentials; serverIdentityId: string; signal?: AbortSignal }>): TelemetryCollectorKeyPinPortsV1 {
@@ -926,6 +920,12 @@ function createTelemetryCollectorKeyPinPorts(input: Readonly<{ homeUrl: string; 
   };
 }
 
+export function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;
+export function dispatchOriginalAccountAction(input: OriginalAccountActionInput): Promise<ActionExecuteResult>;
+/** Original Account/terminal delivery enters Home before a retained guest can accept it.
+ * Session input names its existing publisher custody; Machine targets retain
+ * the incumbent disclosure and signed-requester-context admission.
+ */
 export async function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>): Promise<ActionExecuteResult | null> {
   // Preparation cannot start the effect; delivery owns evidence after submission.
   const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({

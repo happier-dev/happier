@@ -122,7 +122,6 @@ function projectActionMachine(source: (Pick<MachinePublishedRowV1, 'id' | 'kind'
     return projection.success ? { ...projection.data, installationPublicKey: readMachineInstallationPublicKey(source?.installationPublicKey) } : null;
 }
 
-/** Account discovery has content; validate the canonical identity projection. */
 /** The reader's own Home header read and Artifact opener supply Environment collector pins. */
 function createTelemetryCollectorKeyPinPorts(account: LazyActionAccountContext, signal?: AbortSignal): TelemetryCollectorKeyPinPortsV1 {
     return {
@@ -142,6 +141,7 @@ function createTelemetryCollectorKeyPinPorts(account: LazyActionAccountContext, 
     };
 }
 
+/** Account discovery has content; validate the canonical identity projection. */
 export async function readOriginalAccountActionMachine(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
     const readTransport = account.readTransport;
     if (!readTransport) return null;
