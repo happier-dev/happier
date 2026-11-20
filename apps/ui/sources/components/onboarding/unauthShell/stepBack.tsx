@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
@@ -41,6 +42,7 @@ export function StepRowBackButton(props: Readonly<{ onPress: () => void }>) {
   return (
     <IconButton
       testID={UNAUTH_BACK_TEST_ID}
+      nativeID={Platform.OS === 'web' ? undefined : UNAUTH_BACK_TEST_ID}
       accessibilityLabel={t('common.back')}
       tooltip={t('common.back')}
       iconName="caret-left"

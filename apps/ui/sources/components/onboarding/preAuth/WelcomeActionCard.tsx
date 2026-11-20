@@ -209,6 +209,7 @@ export const WelcomeWayButton = React.memo(function WelcomeWayButton(props: Read
     return (
         <IconButton
             testID={props.testID}
+            nativeID={Platform.OS === 'web' ? undefined : props.testID}
             accessibilityLabel={props.title}
             accessibilityHint={props.subtitle}
             tooltip={props.title}

@@ -5,6 +5,8 @@ import type { SkImage } from '@shopify/react-native-skia';
 import { expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { UNAUTH_BACK_TEST_ID } from '@/components/onboarding/unauthShell/BackChevron';
+import { StepRowBackButton } from '@/components/onboarding/unauthShell/stepBack';
 
 import { readNativeStepAnchor } from './capturePressedElement.native';
 import { freezeStepLayer } from './freezeLayer.native';
@@ -69,7 +71,7 @@ it.each([false, true])('selects the native presentation in layout order (capture
     const current = { stage: null as Stage | null };
     function NativeHostFixture() {
         current.stage = useStepMotionStage();
-        return null;
+        return <StepRowBackButton onPress={() => {}} />;
     }
     const screen = await renderScreen(<StepMotionStage><NativeHostFixture /></StepMotionStage>);
     const stage = current.stage;
@@ -114,11 +116,13 @@ it.each([false, true])('selects the native presentation in layout order (capture
         expect(dispose).toHaveBeenCalledTimes(early ? 0 : 1);
 
         if (early) {
-            const detachBack = stage.attach({ ...layer(), key: 'method', backTestID: 'method-back' });
+            const detachBack = stage.attach({ ...layer(), key: 'method', backTestID: UNAUTH_BACK_TEST_ID });
             const app = screen.findAll(node => typeof node.props.onTouchStart === 'function')[0];
             expect(app?.props.onTouchStart).toBeTypeOf('function');
+            const control = screen.findAllHostsByTestId(UNAUTH_BACK_TEST_ID)[0];
+            // Fabric projects the native view's nativeID to the event target's public id.
             const back = {
-                target: { id: 'method-back' },
+                target: { id: control?.props.nativeID },
                 nativeEvent: { pageX: 24, pageY: 200 },
             } as unknown as GestureResponderEvent;
             await act(async () => {

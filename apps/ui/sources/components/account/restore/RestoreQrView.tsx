@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ScrollView } from 'react-native';
+import { Platform, View, ScrollView } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
@@ -33,6 +33,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { STEP_ROW_BUTTON_PX, StepRowBackButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
 
+const RESTORE_MANUAL_TEST_ID = 'restore-open-manual';
 
 const stylesheet = StyleSheet.create((theme) => ({
     scrollView: {
@@ -428,7 +429,8 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             const leading = <>
                                 {rowBack ? <StepRowBackButton onPress={() => { void reversePairing.cancel(); rowBack(); }} /> : null}
                                 <IconButton
-                                    testID="restore-open-manual"
+                                    testID={RESTORE_MANUAL_TEST_ID}
+                                    nativeID={Platform.OS === 'web' ? undefined : RESTORE_MANUAL_TEST_ID}
                                     accessibilityLabel={t('connect.secretKeyInputLabel')}
                                     tooltip={t('connect.secretKeyInputLabel')}
                                     iconName="key"
@@ -512,7 +514,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     ) : null}
                     <View style={styles.footerButton}>
                         <RoundButton
-                            testID="restore-open-manual"
+                            testID={RESTORE_MANUAL_TEST_ID}
                             size="normal"
                             title={t('connect.restoreWithSecretKeyInstead')}
                             display="inverted"

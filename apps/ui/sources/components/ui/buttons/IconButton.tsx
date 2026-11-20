@@ -116,6 +116,7 @@ export type IconButtonGlyph =
 
 export function IconButton(props: Readonly<{
     testID?: string;
+    nativeID?: string;
     /** Required: icon-only controls must always announce their action. */
     accessibilityLabel: string;
     /** What the press will do beyond its name ("Coding work already started keeps running"). */
@@ -316,6 +317,7 @@ export function IconButton(props: Readonly<{
     return (
         <HappierPressable
             testID={props.testID}
+            nativeID={props.nativeID}
             accessibilityRole={props.accessibilityRole}
             accessibilityLabel={props.accessibilityLabel}
             accessibilityHint={props.disabled === true && props.disabledReason ? props.disabledReason : props.accessibilityHint}
