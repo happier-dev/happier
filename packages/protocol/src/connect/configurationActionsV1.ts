@@ -12,13 +12,13 @@ import {
 import { ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema, ConnectedServiceBindingSelectionV2Schema } from './connectedServiceBindings.js';
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '../sessions/work/state/sessionWorkStateRpc.js';
 import { ConnectedAccountRevokeCommandV1Schema, ConnectedAccountRevokeResponseV1Schema, ConnectedAccountRevokedResponseV1Schema,
-  ConnectedAccountControlTargetSchema, ConnectedAccountConfigurationTargetSchema, ConnectedAccountConnectionTestResultSchema } from './connectedAccountDaemonRpcV1.js';
+  ConnectedAccountControlTargetSchema, ConnectedAccountConfigurationTargetSchema, ConnectedAccountConnectionTestResultSchema, ConnectedAccountServiceDescriptionActionResponseSchema } from './connectedAccountDaemonRpcV1.js';
 import { ConnectedAccountAuthenticationCommandSchemas } from './connectedAccountDaemonRpcV1.js';
 import { ConnectedServiceCredentialRevisionV1Schema } from './connectedServiceSchemas.js';
 import { ConnectedAccountServiceConfigurationEntryV1Schema } from '../account/settings/connectedAccountServiceConfigurationsV1.js';
 import { PluginConnectedAccountAuthenticationModeV2Schema } from './pluginConnectedAccountAuthenticationV2.js';
 import { ConnectedMetadataCleanupV1Schema } from './connectedAccountPresentationSchemasV1.js';
-import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1, CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from './configurationActionIdsV1.js';
 import { ConnectedServiceQuotaGetInputV1Schema, ConnectedServiceQuotaGetResultV1Schema } from './providerAccountUsageHistorySchemasV1.js';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, ConnectedServicePoolSelectionGetResponseV1Schema } from './connectedServicePoolSelection.js';
 import { QualifiedAcknowledgementSubjectSchema, QualifiedConnectedEntityRefSchema } from './connectedAccountPresentationSchemasV1.js';
@@ -30,7 +30,7 @@ import { QualifiedConnectedAccountProfileV4Schema, QualifiedConnectedAccountGrou
 import { ConnectedAccountUiProjectionEntryV1Schema } from './connectedAccountUiProjectionV1.js';
 import { ProviderGatewayContributionV1Schema } from '../providers/gatewayContributionsV1.js';
 import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings/savedSecretReferenceV1.js';
-export { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 } from './configurationActionIdsV1.js';
+export { CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1, CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from './configurationActionIdsV1.js';
 export { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION } from './configurationActionIdsV1.js';
 
 export const ConnectedServiceConfigurationActionIdV1Schema = lazyZodSchema(() => z.enum(CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1));
@@ -74,7 +74,10 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
     /** Convert on edit: replace this exact existing credential with one held by its Saved Secret record. */
     expectedCredentialRevision: z.optional(ConnectedServiceCredentialRevisionV1Schema),
   }),
-  'connectedServices.catalog.list': z.strictObject({ refresh: z.optional(z.boolean()) }),
+  [CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1]: lazyZodSchema(() => z.union([
+    z.strictObject({ refresh: z.optional(z.boolean()) }),
+    z.strictObject({ machineId: z.string().check(z.trim(), z.minLength(1)), service: QualifiedConnectedAccountGroupRefSchema.shape.service }),
+  ])),
   'connectedServices.configuration.get': lazyZodSchema(() => z.union([ConfigurationTarget, AccountConfigurationTarget, AttemptConfigurationTarget])),
   'connectedServices.configuration.replace': lazyZodSchema(() => z.union([
     (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ConfigurationTarget, { ...ConfigurationReplacement.shape,
@@ -129,6 +132,15 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
   'connectedServices.labels.reset': z.strictObject({ subject: QualifiedConnectedEntityRefSchema }),
   'connectedServices.acknowledgements.reset': z.strictObject({ subject: QualifiedAcknowledgementSubjectSchema }),
 } as const;
+const ConnectedServiceSetupCatalogSchema = lazyZodSchema(() => z.strictObject({
+  status: z.enum(['ready', 'partial', 'unavailable']),
+  services: z.array(z.strictObject({ service: QualifiedConnectedAccountGroupRefSchema.shape.service,
+    descriptor: z.nullable(ConnectedAccountUiProjectionEntryV1Schema), canAdd: z.boolean(), reason: z.nullable(z.string()),
+  })),
+  gateways: z.array(ProviderGatewayContributionV1Schema),
+}));
+export type ConnectedServiceSetupCatalog = z.infer<typeof ConnectedServiceSetupCatalogSchema>;
+
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
   ...CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_OUTPUT_SCHEMAS,
   'connectedServices.accounts.credentials.save': z.strictObject({ applied: z.literal(true), account: asProtocolZod(QualifiedConnectedAccountRefSchema) }),
@@ -138,13 +150,10 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 = {
     source: z.strictObject({ completeness: z.literal('complete'), observedAtMs: z.nullable(z.number().check(z.int(), z.nonnegative())) }),
     healthBasis: z.literal('credentials'),
   })),
-  'connectedServices.catalog.list': lazyZodSchema(() => z.strictObject({
-    status: z.enum(['ready', 'partial', 'unavailable']),
-    services: z.array(z.strictObject({ service: QualifiedConnectedAccountGroupRefSchema.shape.service,
-      descriptor: z.nullable(ConnectedAccountUiProjectionEntryV1Schema), canAdd: z.boolean(), reason: z.nullable(z.string()),
-    })),
-    gateways: z.array(ProviderGatewayContributionV1Schema),
-  })),
+  [CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1]: lazyZodSchema(() => z.union([
+    ConnectedServiceSetupCatalogSchema,
+    ConnectedAccountServiceDescriptionActionResponseSchema,
+  ])),
   'connectedServices.configuration.get': z.strictObject({ target: ConnectedAccountConfigurationTargetSchema,
     mode: PluginConnectedAccountAuthenticationModeV2Schema, configuration: ConfigurationView }),
   'connectedServices.configuration.replace': z.extend(Success, { revision: z.string().check(z.minLength(1), z.maxLength(256)) }),

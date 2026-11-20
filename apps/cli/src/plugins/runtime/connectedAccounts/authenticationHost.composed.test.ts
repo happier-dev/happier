@@ -5,8 +5,8 @@ import { PLUGIN_MANIFEST as MUSE_MANIFEST } from '@happier-dev/plugins-muse/mani
 import { PLUGIN_MANIFEST as GEMINI_MANIFEST } from '@happier-dev/plugins-gemini/manifest';
 import * as undici from 'undici';
 import { expect, it, vi } from 'vitest';
-import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
-import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
+import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1, CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 import type { ActionId } from '@happier-dev/protocol';
 import { createPortableConnectedAccountAuthenticationHttpFixture } from '@/testkit/connectedAccountAuthentication';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -37,6 +37,10 @@ it('agrees with begin admission when the catalog lists daemon-only Slack authent
     const machineId = 'slack-authentication-machine';
     const native = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
         expect(request.machineId).toBe(machineId);
+        if (request.method === CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD) {
+            expect(request.request).toEqual({ v: 1, machineId, command: { operation: 'describeService', service, requiredOperation: 'account_list' } });
+            return { status: 'unavailable', code: 'connected_account_peer_operation_admission_unavailable' };
+        }
         return { status: 'awaitingManual', attemptId: 'native-slack-attempt' };
     });
     try {
@@ -47,9 +51,11 @@ it('agrees with begin admission when the catalog lists daemon-only Slack authent
             const context = { surface: 'cli' as const, actionRequestId: randomUUID() };
             expect(await executor.execute('connectedServices.authentication.beginConnect', { service, modeId: 'bot-tokens' }, context))
                 .toMatchObject({ ok: true, result: { status: 'unavailable', code: 'connected_account_authentication_mode_unavailable' } });
-            const catalog = await executor.execute('connectedServices.catalog.list', {}, context);
+            const catalog = await executor.execute(CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1, {}, context);
             if (!catalog.ok) throw new Error(catalog.errorCode);
-            const services = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.catalog.list'].parse(catalog.result).services;
+            const setup = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1[CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1].parse(catalog.result);
+            if (!('services' in setup)) throw new Error('Expected the Account setup catalog');
+            const { services } = setup;
             expect(services.find(entry => entry.service.pluginId === service.pluginId && entry.service.localId === service.localId))
                 .toMatchObject({ service, canAdd: false, reason: 'connected_account_authentication_mode_unavailable',
                     descriptor: { authentication: { modes: expect.arrayContaining([expect.objectContaining({ id: 'bot-tokens' })]) } } });
@@ -60,6 +66,16 @@ it('agrees with begin admission when the catalog lists daemon-only Slack authent
             expect(await executor.execute('connectedServices.authentication.beginConnect', { service, modeId: 'bot-tokens', machineId }, context))
                 .toMatchObject({ ok: true, result: { status: 'awaitingManual', attemptId: 'native-slack-attempt' } });
             expect(native).toHaveBeenCalledOnce();
+
+            // Match the physical local daemon. A native description must still
+            // enter the same Home admission as a UI request to that Machine.
+            const local = createCliActionExecutorFromCredentials({ credentials: fixture.credentials,
+                pluginActionExecutionOwner: 'current_process',
+                machineActionDirectTargetTransport: { machineId, invoke: async () => {
+                    throw new Error('Selected-Machine description bypassed Home admission');
+                } } });
+            expect(await local.execute(CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1, { machineId, service }, context))
+                .toEqual({ ok: true, result: { status: 'unavailable', code: 'connected_account_peer_operation_admission_unavailable' } });
         });
     } finally { native.mockRestore(); await fixture.close(); }
 });

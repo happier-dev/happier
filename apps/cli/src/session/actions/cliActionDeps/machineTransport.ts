@@ -24,7 +24,7 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import type { callExactMachineRpc, callMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
@@ -135,6 +135,9 @@ export function createCliMachineActionTransport(
     // Session folder preflight selects native requester custody. An owner
     // Workflow's local Action context carries no receiving Machine admission.
     RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    // Native account descriptions use the daemon custodian’s Account. Enter
+    // Home's custodian-only route even when the selected daemon is local.
+    CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
     // Native browser stores belong to the OS user. Always spend authenticated
     // Machine ingress so a shared-Machine Use requester cannot bypass Manage locally.
     RPC_METHODS.DAEMON_BROWSER_PROFILE_LOGIN_SOURCES,

@@ -8,8 +8,8 @@ import type { QualifiedAcknowledgementSubject, QualifiedConnectedEntityRef } fro
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from './qualifiedConnectedAccountsV4QueryCodec.js';
 import { buildQualifiedConnectedAccountGroupMutationRequestV4 } from './qualifiedConnectedAccountGroupRequestsV4.js';
 import { QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, sameQualifiedConnectedAccountGroupRef, type QualifiedConnectedAccountGroupRef } from './qualifiedConnectedAccountsV4.js';
-import { assertConnectedAccountOperationTransportV1, ConnectedAccountDaemonCommandSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, ConnectedAccountRevokeResponseV1Schema, type ConnectedAccountDaemonCommand, type ConnectedAccountDaemonControlCommand, type ConnectedAccountDaemonControlResponse } from './connectedAccountDaemonRpcV1.js';
-import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION } from './configurationActionIdsV1.js';
+import { assertConnectedAccountOperationTransportV1, buildConnectedAccountListDescriptionCommand, ConnectedAccountDaemonCommandSchema, ConnectedAccountAttemptResponseSchema, ConnectedAccountDaemonControlResponseSchema, ConnectedAccountRevokeResponseV1Schema, type ConnectedAccountDaemonCommand, type ConnectedAccountDaemonControlCommand, type ConnectedAccountDaemonControlResponse } from './connectedAccountDaemonRpcV1.js';
+import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION, CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from './configurationActionIdsV1.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { PluginDiagnosticDataV1Schema } from '../daemon/pluginContributionIntrospection.js';
 import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
@@ -22,6 +22,7 @@ import {
   reorderConnectedServicePoolMembersV1,
   type ConnectedAccountSavedSecretCleanupV1,
   type ConnectedServiceConfigurationActionIdV1,
+  type ConnectedServiceSetupCatalog,
 } from './configurationActionsV1.js';
 import type { ConnectedServiceQuotaGetInputV1 } from './providerAccountUsageHistory.js';
 import type { ConnectedServicePoolSelectionGetRequestV1 } from './connectedServicePoolSelection.js';
@@ -59,7 +60,7 @@ export type ConnectedAccountPurposeMutationIntentV1 = (purposeBindings: Qualifie
   legacySettings: AgentConnectedAccountDefaultSettings) => ConnectedAccountPurposeMutationV1 | null;
 export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   /** Held descriptors by default; explicit refresh invalidates existing demanded projections only. */
-  readSetupCatalog?(input: Readonly<{ refresh?: boolean }>): Promise<ReturnType<(typeof outputs)['connectedServices.catalog.list']['parse']>>;
+  readSetupCatalog?(input: Readonly<{ refresh?: boolean }>): Promise<ConnectedServiceSetupCatalog>;
   configurationCatalog?: ConnectedServiceConfigurationCatalogHostV1;
   /** Fresh Account-mode admission and the canonical credential envelope codec; no Machine or provider access. */
   sealAccountCredential?(payload: ReturnType<typeof projectQualifiedConnectedAccountCredentialPlaintextV1>): Promise<StoredJsonContentEnvelope>;
@@ -334,8 +335,17 @@ export async function executeConnectedServiceConfigurationActionV1(
       });
       return outputs[actionId].parse({ accounts, pools, source: { completeness: 'complete', observedAtMs: 'timestamp' in raw ? profile.timestamp : null }, healthBasis: 'credentials' });
     }
-    case 'connectedServices.catalog.list': {
+    case CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1: {
       const selection = inputs[actionId].parse(input);
+      if ('machineId' in selection) {
+        if (!host.controlCommand) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        const result = await host.controlCommand(selection.machineId, buildConnectedAccountListDescriptionCommand(selection.service));
+        host.assertCurrent();
+        // Keep the owner's typed refusal while excluding opaque RPC diagnostics from Action observations.
+        const unavailable = typeof result === 'object' && result !== null
+          && 'status' in result && result.status === 'unavailable' && 'code' in result;
+        return outputs[actionId].parse(unavailable ? { status: 'unavailable', code: result.code } : result);
+      }
       if (!host.readSetupCatalog) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       const result = await host.readSetupCatalog(selection);
       host.assertCurrent();

@@ -4603,7 +4603,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `connectedServices.catalog.list`
 
-**List connected-service setup choices** — Read admitted services, sign-in methods, gateway contributions and unavailable prerequisites without starting setup. Explicit refresh retries demanded projections; returned facts may still be loading.
+**List connected-service setup choices** — List Account setup choices or describe one qualified service on an exact Machine. For Machine description, select the Machine from inventory and copy the service identity from the Account catalog. The description includes available native sign-in modes, saved account profiles or a typed refusal. Explicit Account refresh retries demanded projections.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `none` result; `deferred` flow.
@@ -4614,6 +4614,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `refresh` (boolean): Retry demanded projection reads
+- `machineId` (select): Machine for the selected service
+- `service` (json): Qualified service from the Account catalog
 
 ## `connectedServices.configuration.get`
 

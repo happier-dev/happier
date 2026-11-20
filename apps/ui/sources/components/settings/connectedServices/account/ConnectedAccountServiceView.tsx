@@ -5,8 +5,10 @@ import { Redirect, useLocalSearchParams, useNavigation } from '@/components/appS
 
 import type {
     BuiltInLegacyConnectedAccountOperation} from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
-import type {
-    ConnectedAccountPeerOperationTransport} from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import {
+    buildConnectedAccountListDescriptionCommand,
+    type ConnectedAccountPeerOperationTransport,
+} from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import type {
     PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import type {
@@ -788,14 +790,10 @@ const ConnectedAccountServiceController = React.memo(
             serverId,
             machineId,
             ...(expectedActiveServer ? { expectedActiveServer } : {}),
-            command: {
-                operation: 'describeService',
-                service: {
-                    pluginId: servicePluginId,
-                    localId: serviceLocalId,
-                },
-                requiredOperation: 'account_list',
-            },
+            command: buildConnectedAccountListDescriptionCommand({
+                pluginId: servicePluginId,
+                localId: serviceLocalId,
+            }),
             signal,
             requestId,
         });

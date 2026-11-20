@@ -1,4 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '../../connect/configurationActionIdsV1.js';
 import type { ActionInputFieldHint, PreNormalizedActionSpec } from '../actionSpecs.js';
 import { redactObservationInputPaths } from './observationRedaction.js';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs, CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
@@ -50,10 +51,12 @@ function createConnectedServiceConfigurationActionSpecs() {
     title: 'Test connection', description: 'Check the exact connected account with its service-provided no-usage probe. Services without a probe return a plain unsupported reason.',
     bindings: { mcpToolName: 'connected_services_accounts_test_connection' }, inputSchema: inputs['connectedServices.accounts.testConnection'], outputSchema: outputs['connectedServices.accounts.testConnection'],
     inputHints: { fields: [{ path: 'account', title: 'Qualified account', widget: 'json', required: true }, { path: 'machineId', title: 'Selected Machine when native execution is required', widget: 'text' }] } },
-  { ...common, id: 'connectedServices.catalog.list', approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read',
-    title: 'List connected-service setup choices', description: 'Read admitted services, sign-in methods, gateway contributions and unavailable prerequisites without starting setup. Explicit refresh retries demanded projections; returned facts may still be loading.',
-    bindings: { mcpToolName: 'connected_services_catalog_list' }, inputSchema: inputs['connectedServices.catalog.list'], outputSchema: outputs['connectedServices.catalog.list'], inputHints: { fields: [
+  { ...common, id: CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1, approval: { result: 'none' }, safety: 'safe', sideEffectClass: 'read',
+    title: 'List connected-service setup choices', description: 'List Account setup choices or describe one qualified service on an exact Machine. For Machine description, select the Machine from inventory and copy the service identity from the Account catalog. The description includes available native sign-in modes, saved account profiles or a typed refusal. Explicit Account refresh retries demanded projections.',
+    bindings: { mcpToolName: 'connected_services_catalog_list' }, inputSchema: inputs[CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1], outputSchema: outputs[CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1], inputHints: { fields: [
       { path: 'refresh', title: 'Retry demanded projection reads', widget: 'boolean' },
+      { path: 'machineId', title: 'Machine for the selected service', widget: 'select', optionsSourceId: 'sessions.spawn.machines.available' },
+      { path: 'service', title: 'Qualified service from the Account catalog', widget: 'json' },
     ] } },
   { ...authentication, id: 'connectedServices.authentication.beginConnect', approval: {result: 'required'}, title: 'Connect account', description: 'Begin the exact service authentication mode for this Account, with a Machine when the mode requires native execution. Human OAuth, device and credential steps stay on their live continuation.',
     executionPlacementForInput: input => inputs['connectedServices.authentication.beginConnect'].parse(input).machineId ? 'machine' : 'account',

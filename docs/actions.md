@@ -5355,6 +5355,13 @@ used by the Connected Services Retry controls; it adds no background demand.
 The immediate result reports held facts while reacquisition completes. The CLI
 reads its current admitted in-process registry directly.
 
+In 0.3 development, give `{ machineId, service: { pluginId, localId } }` to
+describe one service. Select the exact Machine from the Machine inventory and
+copy the qualified service from the Account catalog. The existing custodian-only
+Machine route returns the service descriptor and sign-in modes, peer-operation
+availability and saved account profiles, or the owner's typed refusal.
+The Action excludes opaque daemon diagnostics and credential contents.
+
 `providers.gateways.choose` is a non-mutating declaration choice. An exact
 qualified contribution key selects only a matching candidate; a service/purpose
 can narrow the candidates. Omission selects a sole candidate, while multiple

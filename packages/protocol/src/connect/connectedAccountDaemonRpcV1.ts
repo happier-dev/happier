@@ -424,10 +424,14 @@ export const ConnectedAccountRevokedResponseV1Schema = lazyZodSchema(() => z.str
     remoteStatus: z.enum(['remoteRevoked', 'remoteUnsupported', 'remoteNotAttempted']),
   }));
 
+const ConnectedAccountControlConflictResponseSchema = lazyZodSchema(() =>
+  z.strictObject({ status: z.literal('conflict'), code: BoundedIdentitySchema }));
+const ConnectedAccountControlUnavailableResponseSchema = lazyZodSchema(() =>
+  z.strictObject({ status: z.literal('unavailable'), code: BoundedIdentitySchema, diagnostic: z.optional(z.unknown()) }));
+
 export const ConnectedAccountRevokeResponseV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
-  z.strictObject({ status: z.literal('conflict'), code: BoundedIdentitySchema }),
-  // The same producer cause slot as the attempt response's `unavailable`.
-  z.strictObject({ status: z.literal('unavailable'), code: BoundedIdentitySchema, diagnostic: z.optional(z.unknown()) }),
+  ConnectedAccountControlConflictResponseSchema,
+  ConnectedAccountControlUnavailableResponseSchema,
   ConnectedAccountRevokedResponseV1Schema,
   z.strictObject({
     status: z.literal('removalReviewRequired'),
@@ -453,22 +457,36 @@ export const ConnectedAccountPendingAttemptsResponseSchema = lazyZodSchema(() =>
       })),
     }));
 
+const ConnectedAccountServiceDescribedResponseSchema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('described'),
+  service: asProtocolZod(ConnectedAccountServiceIdentityV1Schema),
+  descriptor: PluginConnectedAccountDescriptorContributionV2Schema,
+  occurrenceId: BoundedIdentitySchema,
+  sourceCustody: ConnectedAccountSourceCustodyV1Schema,
+  // Relayed from the same server list as the V4 accounts response, which is
+  // bounded at its writer rather than in the projection it produces.
+  accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
+  operationTransport:
+    z.optional(ConnectedAccountPeerOperationTransportSchema),
+}));
+
+export const ConnectedAccountServiceDescriptionActionResponseSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  ConnectedAccountServiceDescribedResponseSchema,
+  ConnectedAccountControlConflictResponseSchema,
+  z.omit(ConnectedAccountControlUnavailableResponseSchema, { diagnostic: true }),
+]));
+
+export function buildConnectedAccountListDescriptionCommand(
+  service: Extract<ConnectedAccountDaemonControlCommand, { operation: 'describeService' }>['service'],
+) {
+  return { operation: 'describeService', service, requiredOperation: 'account_list' } as const;
+}
+
 export const ConnectedAccountDaemonControlResponseSchema =
   lazyZodSchema(() => z.discriminatedUnion('status', [
     z.strictObject({ status: z.literal('connectionTested'), result: ConnectedAccountConnectionTestResultSchema }),
     ConnectedAccountPendingAttemptsResponseSchema,
-    z.strictObject({
-      status: z.literal('described'),
-      service: asProtocolZod(ConnectedAccountServiceIdentityV1Schema),
-      descriptor: PluginConnectedAccountDescriptorContributionV2Schema,
-      occurrenceId: BoundedIdentitySchema,
-      sourceCustody: ConnectedAccountSourceCustodyV1Schema,
-      // Relayed from the same server list as the V4 accounts response, which is
-      // bounded at its writer rather than in the projection it produces.
-      accounts: z.array(QualifiedConnectedAccountProfileV4Schema),
-      operationTransport:
-        z.optional(ConnectedAccountPeerOperationTransportSchema),
-    }),
+    ConnectedAccountServiceDescribedResponseSchema,
     z.strictObject({
       status: z.literal('configuration'),
       target: ConnectedAccountConfigurationTargetSchema,

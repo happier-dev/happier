@@ -1,6 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { Linking } from 'react-native';
 import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
+import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
+import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc/errors';
+import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { createUiConnectedServiceAction } from './connectedServiceActionDeps';
@@ -67,16 +71,97 @@ it('retries demanded connected-service projections through the same catalog Acti
   const executor = createDefaultActionExecutor();
   try {
     const context = { surface: 'mcp' as const, authority: 'account_automation' as const, serverId: scope.serverId };
-    expect(await executor.execute('connectedServices.catalog.list', {}, context)).toMatchObject({ ok: true });
+    expect(await executor.execute(CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1, {}, context)).toMatchObject({ ok: true });
     expect(local.readRevision()).toBe(before);
-    expect(await executor.execute('connectedServices.catalog.list', { refresh: true }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute(CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1, { refresh: true }, context)).toMatchObject({ ok: true });
     expect(local.readRevision()).toBe(before + 1);
     expect(foreign.readRevision()).toBe(foreignBefore);
     const controller = new AbortController();
     controller.abort();
-    await expect(executor.execute('connectedServices.catalog.list', { refresh: true }, { ...context, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(executor.execute(CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1, { refresh: true }, { ...context, signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
     expect(local.readRevision()).toBe(before + 1);
   } finally { storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
+});
+
+
+const catalogService = { pluginId: 'acme.accounts', localId: 'work' };
+const catalogMachineId = 'catalog-selected-machine';
+const describedService = {
+  status: 'described', service: catalogService, occurrenceId: 'selected-occurrence',
+  descriptor: { id: 'work', title: 'Work', authentication: { defaultModeId: 'manual', modes: [{
+    id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+    fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }],
+  }] } },
+  sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'npm' },
+  operationTransport: { kind: 'v4' },
+  accounts: [{
+    ref: { service: catalogService, accountId: 'work-account' }, status: 'connected', authenticationModeId: 'manual',
+    configurationReady: true, configurationRevision: null, revisionSemantics: 'legacy_unfenced',
+    credentialRevision: null, scopes: [],
+  }],
+};
+
+async function readMachineCatalogAtHome(outcome: 'described' | 'shared' | 'native-unavailable') {
+  const bridge = await loadSyncSingletonForTests();
+  const previous = storage.getState();
+  const accountId = `catalog-${outcome}`;
+  const http = createHomeHubArtifactHttpBoundary(accountId);
+  const owned = createPlainMachineRowFixture({ id: catalogMachineId, accountId });
+  const row = outcome === 'shared' ? { ...owned, access: { ...owned.access, role: 'manage' as const,
+    custodian: { accountId: 'different-account', displayName: 'Machine custodian' } } } : owned;
+  const outgoing: SocketRpcRequestPayload[] = [];
+  const connection = await restoreServerAccountForTest({ accountId, serverUrl: `https://${accountId}.test`,
+    configureSocket: socket => {
+      configureConnectedServerSocketBoundary(socket);
+      vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+      vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: SocketRpcRequestPayload) => {
+        if (!event.includes('rpc')) return { ok: true };
+        outgoing.push(payload);
+        // The real Home custodian restriction is covered by the server socket suite.
+        if (outcome === 'shared') return { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: RPC_ERROR_MESSAGES.FORBIDDEN };
+        return { ok: true, result: outcome === 'described' ? describedService : {
+          status: 'unavailable', code: 'connected_account_peer_operation_admission_unavailable',
+          diagnostic: { credential: 'synthetic-secret-value' },
+        } };
+      });
+    },
+    request: async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/machines') return Response.json([row]);
+      if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id => id === row.id ? row : null);
+      if (path === `/v1/machines/${row.id}`) return Response.json({ machine: row });
+      return http.request(url, init);
+    },
+  });
+  const scope = { serverId: connection.home.id, accountId };
+  storage.setState({ profileScope: scope, profile: AccountProfileSchema.parse({ id: accountId }) });
+  try {
+    const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+    const result = await createDefaultActionExecutor().execute(CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1,
+      { machineId: catalogMachineId, service: catalogService },
+      { surface: 'mcp', authority: 'account_automation', serverId: scope.serverId });
+    return { result, outgoing };
+  } finally { storage.setState(previous, true); await connection.dispose(); bridge.dispose(); }
+}
+
+it('describes a qualified service and saved account profiles on the Account’s exact Machine through the catalog Action', async () => {
+  const { result, outgoing } = await readMachineCatalogAtHome('described');
+  expect(result).toEqual({ ok: true, result: describedService });
+  expect(outgoing.map(({ method, params }) => ({ method, params }))).toEqual([{
+    method: `${catalogMachineId}:${CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD}`,
+    params: { v: 1, machineId: catalogMachineId, command: { operation: 'describeService', service: catalogService, requiredOperation: 'account_list' } },
+  }]);
+});
+
+it('preserves the Home refusal without service details when the catalog Action selects a shared Machine', async () => {
+  const { result } = await readMachineCatalogAtHome('shared');
+  expect(result).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+  expect(result).not.toHaveProperty('result');
+});
+
+it('returns a typed native refusal without opaque diagnostics in the catalog Action result', async () => {
+  const { result } = await readMachineCatalogAtHome('native-unavailable');
+  expect(result).toEqual({ ok: true, result: { status: 'unavailable', code: 'connected_account_peer_operation_admission_unavailable' } });
 });
 
 it.each(['ready', 'first-row'] as const)('sets and clears a monthly subscription price through the captured keyless Account transport from %s', async initial => {

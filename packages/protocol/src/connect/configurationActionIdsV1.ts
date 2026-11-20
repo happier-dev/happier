@@ -14,6 +14,8 @@ export const CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION = {
 export const CONNECTED_SUBSCRIPTION_PRICE_SET_ACTION_ID_V1 = 'connectedServices.subscription.price.set' as const;
 export const CONNECTED_SERVICES_ACCOUNTS_LIST_ACTION_ID_V1 = 'connectedServices.accounts.list' as const;
 
+export const CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 = 'connectedServices.catalog.list' as const;
+
 /** Closed configuration vocabulary, independent of payload and Account encryption schemas. */
 export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
   ...Object.values(CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION),
@@ -24,7 +26,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_IDS_V1 = [
   CONNECTED_SUBSCRIPTION_PRICE_SET_ACTION_ID_V1,
   CONNECTED_SERVICES_ACCOUNTS_LIST_ACTION_ID_V1,
   'connectedServices.accounts.credentials.save',
-  'connectedServices.catalog.list',
+  CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1,
   'connectedServices.accounts.testConnection',
   'connectedServices.accounts.rename',
   'connectedServices.accounts.revoke',

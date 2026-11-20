@@ -1,3 +1,4 @@
+import { buildConnectedAccountListDescriptionCommand } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { resolveConnectedAccountAuthenticationModeMachineRequirement } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { projectConnectedAccountFailure } from '@happier-dev/cli-common/connectedAccounts';
@@ -139,8 +140,7 @@ export function createUiConnectedAccountAuthenticationHost(account: LazyActionAc
                 const support = requiresBrowser ? readBrowserSignInMachineSupport(machineId) : 'supported';
                 if (support !== 'supported') return { description: unavailable(support), accountAuthenticationModes };
             }
-            const description = await nativeControl(machineId, { operation: 'describeService', service,
-                requiredOperation: 'account_list' });
+            const description = await nativeControl(machineId, buildConnectedAccountListDescriptionCommand(service));
             return { description, accountAuthenticationModes: description.status === 'described'
                 && !description.descriptor.authentication.account
                 ? { status: 'available', modeIds: Object.freeze([]) } : accountAuthenticationModes };
