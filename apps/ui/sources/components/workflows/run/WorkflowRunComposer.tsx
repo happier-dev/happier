@@ -644,6 +644,12 @@ export function WorkflowRunComposer(
       .filter(Boolean)
       .join(' · ');
   }, [props.definition, props.preview, props.workflowName]);
+  // A caller without a description passes the step names; the summary already says the route, so the lead
+  // keeps only a real description.
+  const stepNamesPreview = React.useMemo(
+    () => props.definition?.blocks.map((block) => workflowBlockReferenceLabel(block)).join('\n'),
+    [props.definition],
+  );
   // The identity lead names the workflow; the fixed chip identifies its saved definition.
   const workflowLabel = [
     t('workflows.start.workflow'),
@@ -994,7 +1000,7 @@ export function WorkflowRunComposer(
             {/* Hosted, the workflow's chip is its identity and the chip's popover previews it (description,
                 steps, inputs); a second header above the composer would repeat it (owner 08). */}
             {props.definition && props.workflowName && !composerHosted ? <WorkflowStartDetailsLead
-              name={props.workflowName} description={main === null ? undefined : props.preview} summary={summary}
+              name={props.workflowName} description={main === null || props.preview === stepNamesPreview ? undefined : props.preview} summary={summary}
               source={workflowSource === 'artifact' ? t('workflows.start.library')
                 : workflowSource === 'builtin' ? t('workflows.start.builtin')
                   : workflowSource === 'plugin' ? t('workflows.plugins.fromPlugins') : undefined}

@@ -22,6 +22,8 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
+import { Text } from '@/components/ui/text/Text';
 
 const appliedHome = vi.hoisted(() => ({ serverId: 'server-a', serverUrl: 'https://server-a.example' }));
 
@@ -194,6 +196,19 @@ describe('workflow composer admission', () => {
         expect(screen.getTextContent()).toContain('workflows.start.asksFor');
         expect(screen.findByTestId('workflow-run-inputs-review-where')).not.toBeNull();
         await screen.unmount();
+    });
+    it('says the route once: a description that is only the step names stays out of the lead', async () => {
+        const definition = createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS });
+        const stepNames = definition.blocks.map((block) => workflowBlockReferenceLabel(block)).join('\n');
+        const lead = async (preview: string) => {
+            const screen = await renderScreen(<WorkflowRunComposer inputs={inputs} values={{}} definition={definition}
+                workflowName="Prepare the release" preview={preview} onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+            const text = screen.findByTestId('workflow-start-lead')?.findAllByType(Text).map((node) => node.props.children).flat().join('|') ?? '';
+            await screen.unmount();
+            return text;
+        };
+        expect(await lead(stepNames)).not.toContain(stepNames);
+        expect(await lead('Changelog, issue checks and tests before a release.')).toContain('Changelog, issue checks and tests before a release.');
     });
     it.each([
         ['80fbf0c7-2af4-4314-9776-59100c92f362', 'workflows.start.library'],

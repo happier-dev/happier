@@ -193,10 +193,11 @@ type RunRowDisplay = Readonly<{
 }>;
 
 const styles = StyleSheet.create((theme) => ({
+  // The mark and the time share the name's one line, as the Workflows rows' end does at one line.
   end: {
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-    gap: theme.space.s4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
   },
   when: {
     color: theme.colors.text.tertiary,

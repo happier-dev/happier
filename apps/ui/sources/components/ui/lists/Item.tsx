@@ -1916,7 +1916,7 @@ function ItemRow(props: ItemProps & Readonly<{
                     // A status mark carries its own word ("● Failed"): it stands on its own when the line has no text.
                     if (!subtitle) {
                         const markSlotHeight = pageRowMetrics?.subtitle.lineHeight ?? ITEM_SUBTITLE_TEXT_METRICS[resolvedIconDensity].lineHeight;
-                        return <View style={[styles.subtitleMarkSlot, { height: markSlotHeight }]}>{subtitleLeading}</View>;
+                        return <View style={[styles.subtitleMarkSlot, { minHeight: markSlotHeight }]}>{subtitleLeading}</View>;
                     }
                     // If subtitle is a ReactNode (not string), render as-is.
                     // This enables richer subtitle layouts (e.g. inline glyphs).
@@ -1969,7 +1969,7 @@ function ItemRow(props: ItemProps & Readonly<{
                         const markSlotHeight = pageRowMetrics?.subtitle.lineHeight ?? ITEM_SUBTITLE_TEXT_METRICS[resolvedIconDensity].lineHeight;
                         return (
                             <View style={styles.subtitleMarkRow}>
-                                <View style={[styles.subtitleMarkSlot, { height: markSlotHeight }]}>
+                                <View style={[styles.subtitleMarkSlot, { minHeight: markSlotHeight }]}>
                                     {subtitleLeading}
                                 </View>
                                 <View style={styles.inlineMarkText}>

@@ -230,7 +230,8 @@ export function resolveManagedMachineWorkStatus(facts: Pick<Extract<WorkStatusIn
 
 /** Semantic tokens only; the shared status renderer owns their drawing. */
 function statusGlyph(state: string, bucket: WorkStatusBucket, tone: WorkStatusTone): WorkStatusPresentation['glyph'] {
-    if (tone === 'danger') return 'failure';
+    // A seen failure turns quiet ink but keeps its shape: it never reads as a finished check.
+    if (tone === 'danger' || state === 'failed' || state === 'dispatch_failed') return 'failure';
     if (state === 'permission_required') return 'review';
     if (state === 'usage_limited') return 'waiting';
     if (state === 'stopped' || state === 'cancelled') return 'pause';
@@ -241,6 +242,8 @@ function statusGlyph(state: string, bucket: WorkStatusBucket, tone: WorkStatusTo
     if (bucket === 'needs_you') return 'attention';
     if (bucket === 'working') return 'refresh';
     if (bucket === 'offline') return 'unavailable';
+    // Settled work that asks for a look (interrupted, expired, an uncertain outcome) carries the alert mark.
+    if (tone === 'attention') return 'failure';
     if (bucket === 'finished') return 'check';
     return undefined;
 }

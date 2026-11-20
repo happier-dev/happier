@@ -15,6 +15,19 @@ import { ManagedOpaquePresetMachineV1Schema } from '@happier-dev/protocol/machin
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 describe('resolveWorkStatusTone', () => {
+    it('keeps a failure or an interrupted outcome off the finished check glyph', () => {
+        // A failure the person has seen is quiet ink, but it is still drawn as a failure, never as a finished check.
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { state: 'failed', failureUnseen: false, word: 'Failed' } }))
+            .toMatchObject({ tone: 'neutral', glyph: 'failure' });
+        // Interrupted and an uncertain outcome ask for a look: they carry the alert mark, not a blank slot or a check.
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { state: 'interrupted', word: 'Interrupted' } }).glyph)
+            .toBe('failure');
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { state: 'outcome_uncertain', word: 'Outcome uncertain' } }).glyph)
+            .toBe('failure');
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { state: 'succeeded', word: 'Completed' } }).glyph)
+            .toBe('check');
+    });
+
     it('names an opaque enrolled Machine during its submitted start without private launch data', () => {
         const controller = { machineId: 'controller', installationId: 'installation' };
         const managed = ManagedOpaquePresetMachineV1Schema.parse({
