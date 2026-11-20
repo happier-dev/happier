@@ -75,7 +75,7 @@ function planetPresentation(layer, time) {
 }
 
 // The glyph planet (first-open lab, Home's Horizon): each cell takes a glyph from the light ramp by how much light
-// it holds, in the planet's own ink, over a faint wash of its body colour; the halo keeps its glyphs a little softer.
+// it holds, in the planet's own ink, over a faint wash of its body colour. The halo uses the dot lattice alone.
 // The intensity's `dim` is the whole planet's opacity. A phone keeps a sparse share of cells, each nudged and dimmed.
 export const glyphRampChars = '.\u00b7:-=+*%#@';
 export const glyphRampFirstTile = 21 + glyphDotRadii.length;
@@ -126,7 +126,7 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
     const perCell = 1 + Math.ceil(cell[0] / dpr / latticePitch) * Math.ceil(cell[1] / dpr / latticePitch);
     const reuseCells = reuse && previous.cells.rampGlyph.length === size * perCell;
     const cells = reuseCells ? previous.cells : { light: new Float32Array(size), ink: new Uint8Array(size * 3), base: new Float32Array(size), wash: new Float32Array(size),
-        inside: new Uint8Array(size), rampAt: new Uint16Array(size * perCell * 2), rampGlyph: new Uint8Array(size * perCell), rampRgba: new Uint8Array(size * perCell * 4), ramp: 0 };
+        rampAt: new Uint16Array(size * perCell * 2), rampGlyph: new Uint8Array(size * perCell), rampRgba: new Uint8Array(size * perCell * 4), ramp: 0 };
     rgba.fill(0);
     cells.light.fill(0);
     cells.wash.fill(0);
@@ -169,12 +169,7 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
             const sides = inside ? 1 : ((fx < 0 ? halo.left : halo.right) * fx * fx + (fy < 0 ? halo.top : halo.bottom) * fy * fy) / (distance * distance || 1);
             const amount = shade.light * sides;
             if (amount < 0.04) continue;
-            glyphInk(shade.rgb, theme, palette.background, ink);
             const base = decoded * appearance * foot;
-            cells.light[n] = amount;
-            cells.inside[n] = inside ? 1 : 0;
-            cells.base[n] = base;
-            cells.ink.set(ink, n * 3);
             // The lattice: dots on a fixed 4 px pitch, each lit when the cell's light passes its ordered dither.
             const peak = Math.max(shade.rgb[0], shade.rgb[1], shade.rgb[2]);
             for (let c = 0; c < 3; c++) dot[c] = theme === 'light' ? Math.round(clamp(peak - (peak - shade.rgb[c]) * 1.4, 0, 255)) : shade.rgb[c];
@@ -188,6 +183,11 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
                     }
                 }
             }
+            if (!inside) continue;
+            glyphInk(shade.rgb, theme, palette.background, ink);
+            cells.light[n] = amount;
+            cells.base[n] = base;
+            cells.ink.set(ink, n * 3);
             const level = Math.floor(amount ** 1.6 * 10.999);
             if (level < 1) continue;
             let px = (i + 0.5) * cell[0], py = (j + 0.5) * cell[1], keep = 1;
@@ -197,7 +197,7 @@ function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, sof
                 py += (cellHash(i + 11, j + 5) - 0.5) * 0.22 * cell[1];
                 keep = 0.45 + 0.55 * cellHash(i + 19, j + 2);
             }
-            const alpha = Math.round(255 * clamp(base * keep * (inside ? 1 : 0.8)));
+            const alpha = Math.round(255 * clamp(base * keep));
             if (alpha > 0) add(px, py, glyphRampFirstTile + level - 1, ink, alpha);
         }
     }
@@ -249,7 +249,7 @@ function samplePlanet(out, grid, layer, time, theme, palette, previous) {
         if (cellHash(i + 31, j + 7) >= 0.42) continue;
         const local = cellHash(i + 9, j + 2) < 0.35 ? step : 0;
         const digit = Math.floor(cellHash(i + local * 7 + 3, j - local * 13) * 10);
-        const alpha = fadeBetween(amount, 0.05, 0.35) * (cells.inside[n] ? 0.55 : 0.8) * cells.base[n] * opacity;
+        const alpha = fadeBetween(amount, 0.05, 0.35) * 0.55 * cells.base[n] * opacity;
         ink[0] = cells.ink[n * 3]; ink[1] = cells.ink[n * 3 + 1]; ink[2] = cells.ink[n * 3 + 2];
         if (alpha >= 0.012) writeSprite(out, (i + 0.5) * cell[0], (j + 0.5) * cell[1], glyphPlanetDigitFirstTile + digit, ink, alpha);
     }

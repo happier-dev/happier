@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { glyphFrame, planetGlyphLayer, travellerGlyphLayer, frontGlyphLayer, markGlyphLayer } from './glyph-scene.mjs';
-import { horizonPlanetGeometry } from './planet-placement.mjs';
+import { glyphFrame, glyphLatticeTile, glyphPlanetDigitFirstTile, planetGlyphLayer, travellerGlyphLayer, frontGlyphLayer, markGlyphLayer } from './glyph-scene.mjs';
+import { horizonPlanetGeometry, welcomePlanetPose } from './planet-placement.mjs';
 
 const view = { w: 390, h: 844 };
 const render = (layers, time = 0) => glyphFrame({ view, dpr: 1.5, theme: 'dark', layers }, { time });
@@ -118,6 +118,27 @@ test('the Home planet is the glyph planet: light-ramp cells over a faint wash, s
     for (const [key, alpha] of alphas(full)) if (quietAlpha.has(key)) { q += quietAlpha.get(key); f += alpha; }
     assert.ok(f > 0 && Math.abs(q / f - 0.42) < 0.03, `Quiet/Full opacity ${q / f}`);
     assert.equal([...frameAt('full', false).sprites.glyph].filter(isDigit).length, 0);
+});
+
+test('Welcome and Approve keep body digits inside the limb and draw the halo only with dots', () => {
+    const pane = { width: 1224, height: 765 };
+    for (const state of ['welcome', 'deep']) {
+        const geometry = welcomePlanetPose(state, pane);
+        for (const time of [0, 2]) {
+            const { sprites } = glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: 2, theme: 'dark',
+                layers: [planetGlyphLayer({ geometry, intensity: 'quiet', digits: true })] }, { time });
+            const haloTiles = new Set();
+            let digits = 0;
+            for (const [index, glyph] of sprites.glyph.entries()) {
+                const x = sprites.at[index * 2] / 2;
+                const y = sprites.at[index * 2 + 1] / 2;
+                if (Math.hypot(x - geometry.cx, y - geometry.cy) >= geometry.R) haloTiles.add(glyph);
+                else if (glyph >= glyphPlanetDigitFirstTile && glyph < glyphPlanetDigitFirstTile + 10) digits++;
+            }
+            assert.ok(digits > 0, `${state} keeps digits in the planet body`);
+            assert.deepEqual([...haloTiles].sort((a, b) => a - b), [glyphLatticeTile], `${state} halo tiles at ${time}s`);
+        }
+    }
 });
 
 test('the Home field is patchy, gives way around the planet and follows the intensity strength', async () => {
