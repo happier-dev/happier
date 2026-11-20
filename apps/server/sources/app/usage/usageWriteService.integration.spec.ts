@@ -359,8 +359,8 @@ describe("usageWriteService", () => {
             expect(result.series?.map((bucket) => bucket.tokens.total)).toEqual([30]);
             expect(result.breakdowns?.session?.map((entry) => [entry.key, entry.tokens.total])).toEqual([[session.id, 30]]);
         }
-        expect((await query({ sources: ['claude-native'] })).totals.tokens.total).toBeNull();
-        expect((await queryUsageAnalytics(otherAccount.id, UsageAnalyticsQueryRequestSchema.parse({}))).totals.tokens.total).toBeNull();
+        expect((await query({ sources: ['claude-native'] })).totals.tokens.total).toBe(0);
+        expect((await queryUsageAnalytics(otherAccount.id, UsageAnalyticsQueryRequestSchema.parse({}))).totals.tokens.total).toBe(0);
 
         for (const extra of [
             { subject: { ...subject, sourceRootKey: 'other-root' }, modelId: 'A', total: 40, inference: 'opaque-inference-one' },
@@ -380,7 +380,7 @@ describe("usageWriteService", () => {
         expect((await query({ machineIds: ['runtime-native-machine'] })).totals.tokens.total).toBe(90);
         expect((await query({ machineIds: ['runtime-native-other-machine'] })).totals.tokens.total).toBe(50);
         expect((await query({ sessionIds: [session.id] })).totals.tokens.total).toBe(30);
-        expect((await query({ sessionIds: [session.id], sources: ['claude-native'] })).totals.tokens.total).toBeNull();
+        expect((await query({ sessionIds: [session.id], sources: ['claude-native'] })).totals.tokens.total).toBe(0);
 
         // A replay disagreement must remain visible even on Session/model/source
         // reads; filtering the evidence first would silently hide it.
