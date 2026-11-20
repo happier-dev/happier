@@ -18,6 +18,7 @@ import { createDaemonPluginChangeService } from '@/plugins/daemon/changeService'
 import { createDaemonPathPluginChangePreparer } from '@/plugins/daemon/pathChangePreparer';
 import { startPluginDevelopmentSourceObserver } from '@/plugins/authoring/sourceObserver';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 
 import { executePluginDevLoopAction } from './actions';
 import { createCliApprovalActionDeps } from '@/session/actions/approvals/cliActionDeps';
@@ -107,10 +108,27 @@ describe('executePluginDevLoopAction', () => {
     })).resolves.toEqual({ ok: false, kind: 'plugins_dev_unregister', diagnostics: [{ code: 'root_missing', message: 'Missing root' }] });
   });
 
-  it('retains the daemon prepare failure cause in approval preparation', async () => {
-    const failureCause = { phase: 'plugins.change.prepare', errorClass: 'Error' as const,
-      errorCode: 'plugin_change_superseded', httpStatus: null };
-    daemonControl.request.mockResolvedValueOnce({ kind: 'failed', code: 'plugin_change_failed', details: { failureCause } });
+  const failureCause = { phase: 'plugins.change.prepare', errorClass: 'Error' as const,
+    errorCode: 'plugin_change_superseded', httpStatus: null };
+  const registryRequirement = { registryOrigin: 'https://registry.example.test',
+    packageName: '@acme/dev-loop', registryProfileId: null };
+
+  it.each([
+    {
+      name: 'failure cause',
+      input: { path: '/workspace/plugin', dev: true },
+      daemonResult: { kind: 'failed', code: 'plugin_change_failed', details: { failureCause } },
+      failure: { errorCode: 'plugin_change_failed', failureCause },
+    },
+    {
+      name: 'registry profile requirement',
+      input: { source: { kind: 'marketplace', sourceId: 'catalog-1', pluginId: 'acme.dev-loop',
+        version: '1.0.0', packageName: registryRequirement.packageName } },
+      daemonResult: { kind: 'registryProfileRequired', ...registryRequirement },
+      failure: { errorCode: 'plugin_registry_profile_required', details: registryRequirement },
+    },
+  ])('retains the daemon $name in install approval preparation', async ({ input, daemonResult, failure }) => {
+    daemonControl.request.mockResolvedValueOnce(daemonResult);
     const deps = createCliApprovalActionDeps({}, {
       approvalsStore: null,
       managedMachineReferences: async () => { throw new Error('Unexpected Machine lookup'); },
@@ -119,13 +137,12 @@ describe('executePluginDevLoopAction', () => {
       readRecord: value => value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown> : {},
       resolvePluginInstallWorkspaceRoot: async () => undefined,
-      resolvePluginInstallRegistry: async () => ({ ok: true, registry: null }),
+      resolvePluginInstallRegistry: async () => ({ ok: true, registry: createCliRegistryHostV1() }),
     });
     if (!deps.buildApprovalPreview) throw new Error('Expected approval preview owner');
-    const input = { path: '/workspace/plugin', dev: true };
     await expect(deps.buildApprovalPreview({ actionId: 'plugins.install',
       input, context: { surface: 'cli' }, defaultPreview: { actionId: 'plugins.install', actionArgs: input, summary: 'Install plugin' },
-    })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_change_failed', failureCause });
+    })).resolves.toMatchObject({ ok: false, ...failure });
   });
 
   it.each(['prepare', 'adopt'] as const)('retains the daemon %s failure cause in the install Action', async (phase) => {

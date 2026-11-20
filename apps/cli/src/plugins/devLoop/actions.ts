@@ -152,6 +152,7 @@ function projectInstallChangeFailure(
     outcome: 'failed' as const,
     errorCode: failure.code,
     error: failure.message || fallbackMessage,
+    ...(change.kind === 'registryProfileRequired' ? { details: failure.details } : {}),
     ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
     change,
     diagnostics: [{ code: failure.code, message: failure.message || fallbackMessage,
