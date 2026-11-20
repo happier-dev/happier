@@ -5625,6 +5625,10 @@ describe('mounted managed configurator', () => {
     });
     const controller = { machineId: 'host', installationId: 'installation' };
     await publishPresetEditorDeclaration(serverId, PluginPortableReleaseManifestV1Schema.parse(modalManifest));
+    const { MODAL_ACCOUNT_ID } = await import('../../../../../../../packages/plugins/machine-modal/src/machine/connectedAccount');
+    harness.answer(serverId, 'GET /v4/connect/qualified/accounts', {
+      body: { service: { pluginId: modalManifest.id, localId: MODAL_ACCOUNT_ID }, accounts: [] },
+    });
     await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({
             id: controller.machineId,
@@ -5818,7 +5822,7 @@ describe('mounted managed configurator', () => {
     );
     const timeoutField = 'managed-config.field:timeoutMs';
     await waitForHomeGovernance(() =>
-      expect(screen.findByTestId(timeoutField)).not.toBeNull(),
+      expect(screen.findByTestId(timeoutField), screen.getTextContent()).not.toBeNull(),
     );
     const keep = screen.tree.findAll(
       (node) =>
@@ -7236,15 +7240,11 @@ describe('mounted managed configurator', () => {
         provisioner={buildQualifiedPluginContributionKey(
           provisioner.contribution,
         )}
+        initialController={defaultController}
       />,
     );
-    // The Home's one controller ("Build host") is preselected, so its choices load without a controller pick.
     await waitForHomeGovernance(() =>
-      expect(
-        screen.tree.findAll(
-          (node) => node.props.testID === 'managed-config.sizes:small',
-        ).length,
-      ).toBeGreaterThan(0),
+      expect(screen.findByTestId('managed-config.sizes:small'), screen.getTextContent()).not.toBeNull(),
     );
     await act(async () => screen.pressByTestId('managed-config.sizes:small'));
     expect(
@@ -7277,6 +7277,9 @@ describe('mounted managed configurator', () => {
     expect(
       screen.findByTestId('managed-config.receipt:secondary-note'),
     ).not.toBeNull();
+    await publishPresetEditorDeclaration(serverId, createMachineProvisionerEditorManifestFixture({
+      pluginId: provisioner.contribution.pluginId, descriptor: provisioner.descriptor,
+    }));
     const saved = {
       id: 'saved',
       homeId: 'srv_compute',
@@ -7294,7 +7297,10 @@ describe('mounted managed configurator', () => {
     harness.answer(serverId, '/v1/machines/presets/create', {
       body: { kind: 'saved', preset: createPlainManagedMachinePresetFixture(saved) },
     });
-    await act(async () => screen.pressByTestId('managed-config.save-preset'));
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('managed-config.save-preset')?.props.disabled, screen.getTextContent()).toBe(false),
+    );
+    await screen.pressByTestIdAsync('managed-config.save-preset');
     await waitForHomeGovernance(() =>
       expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(
         1,
