@@ -26,6 +26,7 @@ async function measureManagedRows<T>(read: () => Promise<T>) {
     let largestIdSet = 0;
     let managedQueries = 0;
     let sessionPointReads = 0;
+    let machineRoleReads = 0;
     let controllerPresenceQueries = 0;
     let controllerPresenceRows = 0;
     const controllerPresenceIds = new Set<string>();
@@ -55,6 +56,7 @@ async function measureManagedRows<T>(read: () => Promise<T>) {
                             && Reflect.get(select, 'active') === true && Reflect.get(select, 'installationId') === true
                             && !('grants' in select);
                         if (readsControllerPresence) controllerPresenceQueries += 1;
+                        if (key === 'machine' && select && typeof select === 'object' && 'grants' in select) machineRoleReads += 1;
                         if (key === 'managedMachine') managedQueries += 1;
                         if (key === 'session' && method === 'findUnique') sessionPointReads += 1;
                         const result: unknown = await Reflect.apply(call, model, args);
@@ -87,7 +89,7 @@ async function measureManagedRows<T>(read: () => Promise<T>) {
     const originalSnapshot = prismaStorage.withSqliteReadSnapshot;
     const snapshot = vi.spyOn(prismaStorage, 'withSqliteReadSnapshot').mockImplementation((reader, options) =>
         originalSnapshot(tx => reader(observe(tx)), options));
-    try { return { value: await read(), rows, machineRows, candidateQueries, largestIdSet, managedQueries, sessionPointReads,
+    try { return { value: await read(), rows, machineRows, candidateQueries, largestIdSet, managedQueries, sessionPointReads, machineRoleReads,
         controllerPresenceQueries, controllerPresenceRows, controllerPresenceIds: [...controllerPresenceIds] }; }
     finally { snapshot.mockRestore(); db.$transaction = original; }
 }
@@ -259,6 +261,49 @@ describe('managed query selection on disposable databases', () => {
         expect(moved.value.targets).toHaveLength(2);
         expect(moved.sessionPointReads).toBe(0);
         expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).pendingActivationManagedTarget).toEqual(retained);
+    });
+
+    it('loads assigned wake eligibility once across many queued runs on a managed fleet', async () => {
+        const { homeId, custodian, controller, row, launch } = await createCreatorFixture();
+        const guestIds = Array.from({ length: 110 }, () => randomUUID());
+        await db.machine.createMany({ data: guestIds.map(id => ({
+            id, accountId: custodian.id, metadata: encodePlainMachineStoredContent({}),
+        })) });
+        const boundState = {
+            creationState: 'active' as const, allocation: 'bound' as const, wakeOnAcceptedMessage: true,
+            resource: { contributionRef: launch.provider, schemaVersion: 1, value: {} },
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+        };
+        await db.managedMachine.update({ where: { id: row.id }, data: { ...boundState, enrolledMachineId: guestIds[0] } });
+        for (const ids of portableQueryChunks({ values: guestIds.slice(1), bindingsPerValue: 14 })) {
+            await db.managedMachine.createMany({ data: ids.map(enrolledMachineId => ({
+                ...boundState, enrolledMachineId, homeId, custodianAccountId: custodian.id,
+                controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
+                admittedActionRequestId: randomUUID(), admittedInput: {}, launch, retention: { kind: 'until-delete' },
+            })) });
+        }
+        const automation = await db.automation.create({ data: { accountId: custodian.id,
+            name: 'Queued managed fleet assignments', templateCiphertext: '{}' } });
+        const now = new Date();
+        const assignments = Array.from({ length: 120 }, (_, index) => ({
+            runId: randomUUID(), machineId: guestIds[index % 10],
+        }));
+        for (const chunk of portableQueryChunks({ values: assignments, bindingsPerValue: 9 })) {
+            await db.automationRun.createMany({ data: chunk.map(({ runId }) => ({
+                id: runId, accountId: custodian.id, state: 'queued', originKind: 'automation', automationId: automation.id,
+                causeKind: 'manual', causeOccurredAt: now, scheduledAt: now, dueAt: now,
+            })) });
+        }
+        await db.automationRunAssignment.createMany({ data: assignments });
+        const result = await measureManagedRows(() => readManagedWakeTargets({ actorAccountId: custodian.id,
+            request: { homeId, controller: { machineId: controller.id, installationId: controller.installationId! } } }));
+        expect(result.value.targets.flatMap(target => target.origin.kind === 'workflow-assignment'
+            ? [{ runId: target.origin.runId, machineId: target.enrolledMachineId }]
+            : [])).toEqual(expect.arrayContaining(assignments));
+        expect(result.value.targets).toHaveLength(assignments.length);
+        console.info('managed-assignment-wake-counts', JSON.stringify({ fleet: guestIds.length,
+            targets: result.value.targets.length, machineRoleReads: result.machineRoleReads, machineRows: result.machineRows }));
+        expect(result.machineRoleReads).toBe(1);
     });
 
     it('selects only one preset history and one enrolled association while enforcing creator access', async () => {

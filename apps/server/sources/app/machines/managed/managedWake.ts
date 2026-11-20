@@ -31,7 +31,7 @@ import type { PendingActivationHoldReasonV1 } from '@happier-dev/protocol/sessio
 import { resolveManagedFiniteWakeControllerV1, resolveManagedMachineRuntimeV1, resolveManagedWakeAvailabilityV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { isMachineReachableV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { serializeMachinePresence } from '@/app/machines/machineSerialization';
-import { hasManagedWakeAuthority, readManagedWakeTargetBindingInTx } from './managedWakeBinding';
+import { hasManagedWakeAuthority, readManagedWakeTargetBindingInTx, readManagedWakeTargetBindingsInTx } from './managedWakeBinding';
 import { readManagedWakeSessionsInTx, readPendingManagedWakeTargetsInTx, readPendingManagedWakeInputTarget } from './managedWakePlacement';
 
 type FiniteWakePreparation = Readonly<{ kind: 'not-needed' | 'ready'; isCurrent(): Promise<boolean> }>
@@ -177,18 +177,34 @@ export async function prepareManagedFiniteActionWake(input: Readonly<{
     finally { input.signal.removeEventListener('abort', cancel); }
 }
 
-export async function resolveManagedWakeTargetInTx(tx: Tx, input: Readonly<{
+type ManagedWakeTargetInput = Readonly<{
     actorAccountId: string; machineId: string; origin: ManagedWakeTargetV1['origin'];
     requireAcceptedInputWake?: boolean;
     requireInspection?: boolean;
     /** Internal projection of the verified original finite Action, never request JSON. */
     finiteActionId?: string;
-}>): Promise<ManagedWakeTargetV1 | undefined> {
-    const binding = await readManagedWakeTargetBindingInTx(tx, input);
+}>;
+
+function projectManagedWakeTarget(input: ManagedWakeTargetInput,
+    binding: Awaited<ReturnType<typeof readManagedWakeTargetBindingInTx>>): ManagedWakeTargetV1 | undefined {
     if (input.requireInspection && !binding?.inspectionRequired) return undefined;
     if (input.requireAcceptedInputWake && !(binding?.inspectionRequired && binding.wakeOnAcceptedMessage)) return undefined;
     return binding && hasManagedWakeAuthority(binding.controllerRole, binding.wakeOnAcceptedMessage, input.origin.kind, input.finiteActionId)
         ? ManagedWakeTargetV1Schema.parse({ ...binding.binding, origin: input.origin }) : undefined;
+}
+
+export async function resolveManagedWakeTargetInTx(tx: Tx, input: ManagedWakeTargetInput): Promise<ManagedWakeTargetV1 | undefined> {
+    return projectManagedWakeTarget(input, await readManagedWakeTargetBindingInTx(tx, input));
+}
+
+/** One binding read for the queued assignments being recovered or published. */
+async function resolveAssignedManagedWakeTargetsInTx(tx: Tx, inputs: readonly ManagedWakeTargetInput[]) {
+    const bindings = await readManagedWakeTargetBindingsInTx(tx, inputs);
+    return inputs.flatMap((input, index) => {
+        const binding = bindings[index];
+        const target = projectManagedWakeTarget(input, binding);
+        return target ? [{ target, controllerAccountId: binding?.controllerAccountId }] : [];
+    });
 }
 
 /** Same binding and power-role owner as wake admission; this read cannot arm or start anything. */
@@ -213,18 +229,18 @@ export async function publishManagedWakeChangeInTx(tx: Tx, target: ManagedWakeTa
 export async function publishManagedRunWakeInTx(tx: Tx, input: Readonly<{ accountId: string; runId: string; cursor: AccountChangePublication }>): Promise<void> {
     const run = await tx.automationRun.findUnique({ where: { id: input.runId }, include: { assignments: true } });
     if (!run || run.accountId !== input.accountId || run.state !== 'queued' || run.claimedByMachineId !== null) return;
-    for (const assignment of run.assignments) {
-        const target = await resolveManagedWakeTargetInTx(tx, { actorAccountId: input.accountId, machineId: assignment.machineId,
-            origin: { kind: 'workflow-assignment', runId: run.id, revision: run.revision, assignment: { machineId: assignment.machineId } } });
-        if (target && !target.controller) {
-            await publishManagedWakeChangeInTx(tx, target, input.accountId);
-        }
-        if (target?.controller) {
-            const controllerBinding = target.controller;
-            const controller = await tx.machine.findUniqueOrThrow({ where: { id: controllerBinding.machineId }, select: { accountId: true } });
-            const cursor = await publishManagedWakeChangeInTx(tx, target, controller.accountId);
-            afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({ accountId: controller.accountId,
-                machineId: controllerBinding.machineId, run, cursor: cursor.resolveCursor(), managedWakeTargetV1: target }));
+    const targets = await resolveAssignedManagedWakeTargetsInTx(tx, run.assignments.map(({ machineId }) => ({
+        actorAccountId: run.accountId, machineId,
+        origin: { kind: 'workflow-assignment', runId: run.id, revision: run.revision, assignment: { machineId } },
+    })));
+    for (const { target, controllerAccountId } of targets) {
+        if (!target.controller) {
+            await publishManagedWakeChangeInTx(tx, target, run.accountId);
+        } else if (controllerAccountId) {
+            const cursor = await publishManagedWakeChangeInTx(tx, target, controllerAccountId);
+            const { machineId } = target.controller;
+            afterTx(tx, () => emitAutomationRunUpdatedToMachineOnly({ accountId: controllerAccountId,
+                machineId, run, cursor: cursor.resolveCursor(), managedWakeTargetV1: target }));
         }
     }
 }
@@ -432,12 +448,13 @@ export async function readManagedWakeTargets(input: Readonly<{
                 for (const run of await readAssignedRuns(accountIds, guestIds)) runs.set(run.id, run);
             }
         }
-        for (const run of runs.values()) for (const assignment of run.assignments) {
-            if (!machineIds.has(assignment.machineId)) continue;
-            const target = await resolveManagedWakeTargetInTx(tx, { actorAccountId: run.accountId, machineId: assignment.machineId,
-                origin: { kind: 'workflow-assignment', runId: run.id, revision: run.revision, assignment: { machineId: assignment.machineId } } });
-            if (target) targets.push(target);
+        const assignments: ManagedWakeTargetInput[] = [];
+        for (const run of runs.values()) for (const { machineId } of run.assignments) {
+            if (!machineIds.has(machineId)) continue;
+            assignments.push({ actorAccountId: run.accountId, machineId,
+                origin: { kind: 'workflow-assignment', runId: run.id, revision: run.revision, assignment: { machineId } } });
         }
-        return { targets: targets.filter(target => candidateIds.has(target.managedId)) };
+        const assigned = await resolveAssignedManagedWakeTargetsInTx(tx, assignments);
+        return { targets: [...targets, ...assigned.map(({ target }) => target)].filter(target => candidateIds.has(target.managedId)) };
     });
 }
