@@ -768,14 +768,20 @@ transition, and identifies fields available only for new Sessions. Workflow
 reuse applies its own policy to the shared map and input builders.
 
 `planExistingSessionChanges` turns pending edits into ordered stages grouped
-by Action and operands. Capability edits carry one Skill or MCP server item
-per Action and preserve other overrides. Bulk Compose applies staged permission
+by Action and operands. Bulk Compose keeps other pending fields when the Agent
+choice changes. The Skills/MCP preview uses each recipient's effective Agent,
+including a staged Agent switch. Capability edits run after the transition stage,
+carry one Skill or MCP server item per Action and preserve other overrides. Bulk Compose applies staged permission
 through its settings Action even when the draft is empty. An Agent switch
 carries the staged model in the transition selection. A target that keeps its
 Agent gets the staged model through the model Action. Message delivery runs
 after the settings stages. A target that fails a stage or has a non-accepted
 transition is filtered out of later stages. The planner returns intent and
-skipped targets. The [Action executor](actions.md) owns admission and effects.
+skipped targets. Retry plans the submitted intent again for only the failed
+addresses, using current target facts so a completed Agent switch is recognized.
+The [Action executor](actions.md) owns admission and effects. Bulk Compose
+submits through its own-UI confirmed path. Send supplies confirmation, and any
+required UI confirmation stays inline without creating an approval Artifact.
 
 ## Compatibility
 

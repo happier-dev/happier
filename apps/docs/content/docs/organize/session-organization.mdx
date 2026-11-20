@@ -256,18 +256,25 @@ requires the **Send to session** option on the Transcript settings screen.
 Use **To** to review the recipients. A chip shows **Mixed** when the selected
 sessions have different values. Leave the chip alone to keep each session's
 choice. The composer offers choices the selected sessions can share. Change
-skills and MCP servers one item at a time. Each session keeps its other
-overrides.
+skills and MCP servers one item at a time, even when the sessions will run
+different Agents. Each session keeps its other overrides.
 
-Chip edits stay in the draft until you press **Send**. You can leave the message
-empty to apply settings alone. If your server enables Agent switching, changing
-the Agent keeps the same session and transcript. See
+Chip edits stay in the draft until you press **Send**. Leave the message empty
+to apply just the settings. Sending from your own UI confirms the changes
+without creating an approval item. If your server enables Agent switching,
+choosing another Agent keeps the same session and transcript and leaves your
+other staged settings in the draft. See
 [Continue with another Agent](/sessions/continue-with-another-agent) for how a
 switch carries context forward.
 
-Each session gets its own result as the work progresses. Use **Retry failed**
-to retry eligible failures together, or **Retry** on an individual row. Sessions
-that already succeeded are left out of the retry.
+In **Runs through**, **Its own sign-in** is unavailable if switching from a
+connected account would break continuity for that Agent.
+
+Each session gets its own result as the work progresses. Failures appear first
+with a reason. Sessions with nothing to apply show **No change** under
+**Skipped**. Use **Retry failed** to retry just the failed rows, including a
+session that switched Agents before a later step failed. Use **Retry** for a
+single row.
 
 Attachments and plugin composer controls are unavailable in this flow. If your
 sessions span several Homes, switch to each Home and send to its sessions
