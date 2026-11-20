@@ -33,10 +33,13 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
   ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ActionOperationGetActionInputV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
@@ -44,7 +47,7 @@ import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStore
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2,
-  ActionOperationGetV2RequestSchema, ActionOperationCancelV1RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
+  ActionOperationGetV1ResponseSchema, ActionOperationGetV2RequestSchema, ActionOperationCancelV1RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 installDisconnectedServerSocketBoundary();
@@ -69,6 +72,7 @@ const shared = vi.hoisted(() => ({
   /** The device class the platform adapter reports; unset keeps the real one. */
   device: null as 'phone' | null,
   operationRead: vi.fn(),
+  requesterOperationReads: [] as Array<ReturnType<typeof ActionOperationGetActionInputV1Schema.parse>>,
   actionSettings: {} as Record<string, { approvalRequiredSurfaces: Array<'ui'> }>,
   navigate: vi.fn(),
 }));
@@ -145,6 +149,7 @@ const { paneUiState } = await import('@/sync/domains/state/filePaneUiState');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { actionOperationStore } =
   await import('@/sync/domains/actionOperations/actionOperationStore');
+const { publishActionOperationObservation } = await import('@/sync/domains/actionOperations/actionOperationRuntime');
 const sessionParts = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority');
 const previous = storage.getState();
 const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-1', encryptionMode: 'plain' });
@@ -159,6 +164,7 @@ afterEach(async () => {
   terminalScopes.clear();
   shared.trustMutations = [];
   shared.operationRead.mockReset();
+  shared.requesterOperationReads = [];
   await connection?.dispose();
   connection = null;
   disposeExecutor?.();
@@ -422,11 +428,16 @@ async function render(
         const syncAdmission = request.envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(actionId, request.envelope.input) : undefined;
         const requestId = request.envelope.requestId;
         if (!requestId) throw new Error('Project Action fixture requires a request ID');
-        return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'scripts-body-root', binding: {
+        const requesterOperationRead = actionId === ACTION_OPERATION_GET_ACTION_ID_V1
+          && request.envelope.v === 2 && request.envelope.requesterOperationRead;
+        return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'scripts-body-root',
+          ...(requesterOperationRead ? { requesterOperationReadInstallationPublicKey: encodeBase64(installationKeys.publicKey, 'base64url') } : {}), binding: {
           accountId: 'account-1', authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: workspace.serverId,
           machineId: machine.id, installationId: machine.installationId, custodianAccountId: 'account-1', accountEncryptionMode: 'plain',
           actionId, requestId: request.envelope.requestId, target: request.envelope.target,
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+          ...(requesterOperationRead ? { requesterOperationRead: true,
+            machineRuntimeDemand: request.envelope.v === 2 ? request.envelope.machineRuntimeDemand : undefined } : {}),
           ...(syncAdmission ? { workspaceSyncAdmission: {
             relationshipId: syncAdmission.relationshipId ?? deriveWorkspaceSyncRelationshipId(requestId),
             sourceWorkspaceRefId: syncAdmission.sourceWorkspaceRefId,
@@ -440,6 +451,29 @@ async function render(
         const actionId = ActionIdSchema.parse(decodeURIComponent(action[1]!));
         const body: unknown = JSON.parse(String(init?.body));
         const root = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+        if (actionId === ACTION_OPERATION_GET_ACTION_ID_V1 && root.success
+          && root.data.envelope.v === 2 && root.data.envelope.requesterOperationRead) {
+          const { envelope, executionAuthorization, machineId } = root.data;
+          const material = openManagedControllerActionCodecV1({ authorization: executionAuthorization,
+            machineId, installationId: 'test-installation', serverIdentityId: workspace.serverId,
+            installationPrivateKey: installationKeys.secretKey });
+          const binding = { actionId, requestId: envelope.requestId, target: envelope.target,
+            accountId: 'account-1', serverIdentityId: workspace.serverId, authentication: { kind: 'account' as const, tokenEpoch: 0 } };
+          const opened = material && openExternalActionRequestV2({ envelope, binding, material,
+            projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
+          if (!material || !opened) throw new Error('Expected an installed requester operation read');
+          const input = ActionOperationGetActionInputV1Schema.parse(opened.input);
+          expect(input).toMatchObject({ serverId: workspace.serverId, machineId });
+          shared.requesterOperationReads.push(input);
+          const { serverId, machineId: _target, ...payload } = input;
+          const result = ActionOperationGetV1ResponseSchema.parse(await shared.operationRead({
+            serverId, machineId, method: ACTION_OPERATION_RPC_METHODS_V2.get, payload,
+          }));
+          return Response.json(prepareExternalActionResponseV2({ binding, request: envelope, material,
+            executedMachineId: machineId, randomBytes: nacl.randomBytes,
+            execution: { ok: true, result },
+          }).response);
+        }
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse(root.success ? root.data.envelope : body);
         const spec = getActionSpec(actionId);
         if (!spec.outputSchema) throw new Error('Project Action fixture requires an output schema');
@@ -1359,8 +1393,10 @@ describe('ProjectScriptsBody runs', () => {
     expect(screen.findByTestId('scripts.setup.review')).toBeNull();
     await act(async () => {
       await screen.pressByTestIdAsync('scripts.script:test.run');
-      actionOperationStore.mergeSnapshots({
+      publishActionOperationObservation({
         serverId: workspace.serverId,
+        machineId: held.scope.machineId,
+        observation: 'available',
         snapshots: [held],
       });
     });
@@ -1391,6 +1427,9 @@ describe('ProjectScriptsBody runs', () => {
       shared.calls.filter((call) => call.actionId === 'projects.script.run'),
     ).toHaveLength(1);
     // "Until it changes" (chosen; This time is the default) is the person's own grant for this Project's exact effect.
+    await vi.waitFor(() => expect(shared.requesterOperationReads).toContainEqual({
+      serverId: workspace.serverId, machineId: held.scope.machineId, operationId: held.operationId, refreshSetupReview: true,
+    }));
     await vi.waitFor(() => expect(shared.trustMutations).toEqual([
       expect.objectContaining({
         project: { serverId: workspace.serverId, projectId: 'w1' },
@@ -2270,7 +2309,9 @@ describe('ProjectScriptsBody setup review on a phone', () => {
       detection,
       importCandidates: [],
     };
-    actionOperationStore.mergeSnapshots({ serverId: workspace.serverId, snapshots: [hold()] });
+    const pending = hold();
+    publishActionOperationObservation({ serverId: workspace.serverId, machineId: pending.scope.machineId,
+      observation: 'available', snapshots: [pending] });
   };
 
   it('keeps the Setup card to the waiting state and pushes the review as its own page with a pinned footer', async () => {
@@ -2314,9 +2355,6 @@ describe('ProjectScriptsBody setup review on a phone', () => {
     await act(async () => { await screen.pressByTestIdAsync('scripts.setup.reviewPage.scope:untilChanged'); });
     await act(async () => { await screen.pressByTestIdAsync('scripts.setup.reviewPage.run'); });
     await vi.waitFor(() => expect(shared.trustMutations).toEqual([expect.objectContaining({ content: { t: 'plain', v: expect.objectContaining({ reviewedEffectDigest: hash }) } })]));
-    await act(async () => {
-      actionOperationStore.mergeSnapshots({ serverId: workspace.serverId, snapshots: [{ ...hold(), revision: 3, setupReview: undefined, state: 'succeeded' } as never] });
-    });
     await vi.waitFor(() => expect(screen.findByTestId('scripts.setup.reviewPage')).toBeNull());
   });
 
