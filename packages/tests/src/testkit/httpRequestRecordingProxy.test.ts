@@ -4,11 +4,11 @@ import { createServer } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { connect, type Socket } from 'node:net';
 import { networkInterfaces } from 'node:os';
-import { gzipSync } from 'node:zlib';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { startHttpRequestRecordingProxy } from './httpRequestRecordingProxy';
+import { RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES, startHttpRequestRecordingProxy } from './httpRequestRecordingProxy';
 import { withTimeoutMs } from './timing/withTimeout';
 import { createEphemeralTlsServerFixture } from './tls/ephemeralTlsServerFixture.mjs';
 
@@ -84,6 +84,61 @@ describe('startHttpRequestRecordingProxy', () => {
       upgraded?.destroy();
       await proxy.stop();
       for (const socket of targetSockets) socket.destroy();
+      await closeServer(target);
+    }
+  });
+
+  it.each(['br', 'gzip'])('captures decoded %s response text while forwarding its encoded bytes', async (encoding) => {
+    const payload = { message: 'Captured response: 😀 '.repeat(128) };
+    const text = JSON.stringify(payload);
+    const encoded = encoding === 'br' ? brotliCompressSync(text) : gzipSync(text);
+    const target = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'content-encoding': encoding,
+        'content-length': encoded.length });
+      res.end(encoded);
+    });
+    await listen(target);
+    const address = target.address();
+    if (!address || typeof address !== 'object') throw new Error('target server did not bind');
+    const proxy = await startHttpRequestRecordingProxy({
+      targetBaseUrl: `http://127.0.0.1:${address.port}`, captureResponseBody: true,
+    });
+    try {
+      const response = await fetch(`${proxy.baseUrl}/v3/automations/query`, {
+        headers: { 'accept-encoding': encoding },
+      });
+      expect(response.headers.get('content-encoding')).toBe(encoding);
+      expect(await response.json()).toEqual(payload);
+      const entry = proxy.entries()[0];
+      expect(entry).toMatchObject({ responseBodyWireBytes: encoded.length, responseContentEncoding: encoding,
+        responseBody: { complete: true, truncated: false } });
+      expect(JSON.parse(entry!.responseBody!.text)).toEqual(payload);
+    } finally {
+      await proxy.stop();
+      await closeServer(target);
+    }
+  });
+
+  it('keeps the existing capture bound after decompression without truncating the forwarded response', async () => {
+    const text = 'x'.repeat(RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES + 1);
+    const encoded = gzipSync(text);
+    const target = createServer((_req, res) => {
+      res.writeHead(200, { 'content-encoding': 'gzip', 'content-length': encoded.length });
+      res.end(encoded);
+    });
+    await listen(target);
+    const address = target.address();
+    if (!address || typeof address !== 'object') throw new Error('target server did not bind');
+    const proxy = await startHttpRequestRecordingProxy({
+      targetBaseUrl: `http://127.0.0.1:${address.port}`, captureResponseBody: true,
+    });
+    try {
+      const response = await fetch(`${proxy.baseUrl}/expanded`);
+      expect((await response.text()) === text).toBe(true);
+      expect(proxy.entries()[0]).toMatchObject({ responseBodyWireBytes: encoded.length,
+        responseBody: { complete: false, truncated: true, text: '' }, error: expect.any(String) });
+    } finally {
+      await proxy.stop();
       await closeServer(target);
     }
   });

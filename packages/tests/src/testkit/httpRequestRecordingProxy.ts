@@ -2,6 +2,7 @@ import { once } from 'node:events';
 import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createServer as createHttpsServer } from 'node:https';
 import { connect, type Socket } from 'node:net';
+import { brotliDecompressSync, gunzipSync } from 'node:zlib';
 
 export const RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES = 256 * 1024;
 
@@ -28,7 +29,7 @@ export type RecordedHttpProxyRequest = Readonly<{
     truncated: boolean;
     complete: boolean;
   }> | null;
-  /** Upstream response bytes, retained only when `captureResponseBody` is enabled. */
+  /** Decoded upstream response text; byteLength counts encoded bytes. Capture is opt-in. */
   responseBody: Readonly<{
     text: string;
     byteLength: number;
@@ -118,7 +119,7 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
   /** Opt in to the observed endpoint's body bound when the default capture would truncate it. */
   requestBodyMaxBytes?: number;
   /**
-   * Retain the upstream response bytes each proxied request observed. Off by default so
+   * Retain decoded upstream response text each proxied request observed. Off by default so
    * ordinary proxy use keeps streaming responses without buffering credential material.
    */
   captureResponseBody?: boolean;
@@ -240,8 +241,24 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
       body.truncated = body.byteLength > RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES;
     });
     upstreamRes.once('end', () => {
-      body.text = Buffer.concat(bodyChunks).toString('utf8');
-      body.complete = true;
+      const encoding = entry.responseContentEncoding?.trim().toLowerCase();
+      // A truncated compressed stream cannot be decoded. The original body still
+      // streams to the caller unchanged, and the capture remains incomplete.
+      if (body.truncated && (encoding === 'br' || encoding === 'gzip')) return;
+      try {
+        const captured = Buffer.concat(bodyChunks);
+        const options = { maxOutputLength: RECORDED_HTTP_PROXY_REQUEST_BODY_MAX_BYTES };
+        const decoded = encoding === 'br' ? brotliDecompressSync(captured, options)
+          : encoding === 'gzip' ? gunzipSync(captured, options) : captured;
+        body.text = decoded.toString('utf8');
+        body.complete = true;
+      } catch (error) {
+        // Capture failures must not interrupt or alter the real forwarded response.
+        entry.error = error instanceof Error ? error.message : String(error);
+        if (error instanceof Error && 'code' in error && error.code === 'ERR_BUFFER_TOO_LARGE') {
+          body.truncated = true;
+        }
+      }
     });
   };
 

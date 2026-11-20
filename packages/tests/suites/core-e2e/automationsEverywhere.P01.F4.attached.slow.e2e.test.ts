@@ -365,12 +365,18 @@ describe('Automations everywhere: selected attached summaries', () => {
     expect(olderReferenceRun.status).toBe(200);
     const olderOccurrence = AutomationActionAdmitResultV1Schema.parse(olderReferenceRun.data).results[0];
     if (!olderOccurrence || olderOccurrence.kind === 'skipped') throw new Error('Older admitted consent occurrence missing');
-    await waitFor(async () => {
-      const result = await reader.execute('workflow.run.get', { runId: olderOccurrence.runId });
-      expect(result.ok, JSON.stringify(result)).toBe(true);
-      if (!result.ok) throw new Error(result.errorCode);
-      return WorkflowRunGetResultV1Schema.parse(result.result).run.state === 'succeeded';
-    }, { context: 'Older consent reference actually executes its new Run', failFast: true });
+    // Admission precedes accepted content. Observe completion through the public
+    // Run summary before requiring its frozen execution detail.
+    const olderCompletion = await reader.execute('workflow.run.wait', { runId: olderOccurrence.runId });
+    expect(olderCompletion, JSON.stringify(olderCompletion)).toMatchObject({ ok: true,
+      result: { observation: 'terminal', run: { id: olderOccurrence.runId, state: 'succeeded' } } });
+    const olderDetail = await reader.execute('workflow.run.get', { runId: olderOccurrence.runId });
+    expect(olderDetail.ok, JSON.stringify(olderDetail)).toBe(true);
+    if (!olderDetail.ok) throw new Error(olderDetail.errorCode);
+    expect(WorkflowRunGetResultV1Schema.parse(olderDetail.result)).toMatchObject({
+      run: { id: olderOccurrence.runId, state: 'succeeded' },
+      acceptedContext: { machineId: actorMachine.target.machineId },
+    });
     expect(await reader.execute('workflow.trigger.list', { subject: actorSubject })).toMatchObject({ ok: true,
       result: { attached: expect.arrayContaining([expect.objectContaining({ triggerId: directSource.triggerId,
         lastRun: expect.objectContaining({ id: olderOccurrence.runId }) })]) } });
@@ -398,7 +404,7 @@ describe('Automations everywhere: selected attached summaries', () => {
       machineId: machine.target.machineId, serviceId }));
     const healthSources = healthSubjects.map(createHealthCheckSourceInstanceIdV1);
     const addHealthSource = async (index: number, enabled: boolean) => {
-      const healthSaved = await owner.execute('workflow.trigger.add', {
+      const healthSaved = await owner.executeReviewed('workflow.trigger.add', {
         observationOnly: { kind: 'observationOnly' }, name: 'Private saved health source',
         trigger: { kind: 'pluginEvent', enabled,
           eventRef: HEALTH_CHECK_EVENT_REFS_V1.failed, displayLabel: 'Saved check',
