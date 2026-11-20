@@ -181,7 +181,7 @@ async function mountUsagePageWithApps(items: readonly ReturnType<typeof operand>
         until: input.until, items: [...items],
         coverage: { callCount, tokenCategoryCallCount: callCount, reportedCostCallCount: 0, lostObservations: 0, reason: null } }) });
     daemonRpc.mockImplementation(collector.answerDaemonRpc);
-    home = await serveActionHomes({
+    const mountedHome = await serveActionHomes({
       homes: [
         {
           key: 'a',
@@ -230,7 +230,8 @@ async function mountUsagePageWithApps(items: readonly ReturnType<typeof operand>
         );
       },
     });
-    const server = home.homes.a!;
+    home = mountedHome;
+    const server = mountedHome.homes.a!;
     withdrawProjection = collector.publishCommittedProjection(server.id);
     publishAppliedActiveServerSnapshot({
       serverId: server.id,
@@ -341,7 +342,7 @@ describe('Usage Sources: Agents or Your apps', () => {
     });
     expect(screen.findByTestId('usage-page.cards')?.props.accessibilityElementsHidden).not.toBe(true);
     expect(
-      home.httpRequests
+      mountedHome.httpRequests
         .filter((request) => request.path === '/v2/usage/query')
         .some((request) => JSON.stringify(request.body).includes('app_calls:')),
       'App calls never reach the Agents ledger',

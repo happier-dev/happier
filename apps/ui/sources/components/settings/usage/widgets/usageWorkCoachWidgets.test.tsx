@@ -909,10 +909,10 @@ describe('Work and Coach widget bodies', () => {
       cost: { reportedUsd: 1.23456, estimatedUsd: 0, currency: 'EUR' } };
     const estimated = { ...contribution('usd-exact', 's1', 't2'),
       cost: { reportedUsd: 0, estimatedUsd: 4.56789, currency: 'USD', costSource: 'pricing_estimate' as const } };
-    const body = (rows: readonly UsageWorkContribution[]) => <UsageSessionValueWidget {...props} query={sessionQuery}
+    const body = (rows: UsageWorkContribution[]) => <UsageSessionValueWidget {...props} query={sessionQuery}
       slice={{ ...slice, shownQuery: sessionQuery,
         accounting: { ...slice.accounting!, contributions: rows },
-        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: [...rows], evidence: [] })) }}
+        work: UsageWorkProjectionSchema.parse(allocateUsageOutcomes({ contributions: rows, evidence: [] })) }}
       id="usage_session_value" testID="value" />;
     const screen = await renderScreen(body([reported]));
     const summary = screen.findAllByType(ChartDatum).find(node => node.props.datum.label === t('usage.board.work.autopsyTitle'));

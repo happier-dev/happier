@@ -169,7 +169,7 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
         if (decision === 'detail-machine-withdrawn') {
             home.answer(serverId, '/v1/features', { body: createRootLayoutFeaturesResponse({ capabilities: {
                 serverIdentity: { serverIdentityId: 'srv_reset_approval' },
-                connectedServices: { qualifiedAccounts: { protocolVersion: 4 } },
+                connectedServices: { credentialDelete: { revisionGuard: false }, qualifiedAccounts: { protocolVersion: 4 } },
             } }) });
             const fetchedAt = Date.now();
             const staleAfterMs = 60_000;

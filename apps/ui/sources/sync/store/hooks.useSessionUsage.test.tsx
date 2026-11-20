@@ -26,7 +26,21 @@ describe('useSessionUsage context snapshot integration', () => {
         const sessionId = 'exact-home-persisted-usage';
         const latestUsage = {
             inputTokens: 30, outputTokens: 10, cacheCreation: 0, cacheRead: 0,
-            contextSize: 40, timestamp: 1_000,
+            contextSize: 40,
+            contextSnapshot: {
+                v: 1 as const,
+                modelId: null,
+                usedTokens: 40,
+                windowTokens: 100,
+                totalProcessedTokens: 40,
+                baselineTokens: null,
+                isAutoCompactEnabled: null,
+                categories: null,
+                observedAtMs: 1_000,
+                source: 'provider_turn' as const,
+            },
+            contextSnapshotStale: false,
+            timestamp: 1_000,
         };
         try {
             await setActiveServerId(activeHome.id, { scope: 'device' });
