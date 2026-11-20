@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { mkdtemp } from 'node:fs/promises';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import nacl from 'tweetnacl';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
@@ -10,9 +13,11 @@ import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/pr
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { seedCliDataKeyAuthForServer } from '../../../../../packages/tests/src/testkit/cliAuth';
 import { createDeploymentSocketHome } from '../../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createSignedAccountContentBinding } from '../../../../server/sources/testkit/accountEncryption';
 import { prepareE2eePrivateLabelForAccount } from '../../../../server/sources/testkit/privateLabelFixture';
+import { decodeMachineStoredContent } from '../../../../server/sources/storage/sessionMachineStoredContent';
 import { db } from '../../../../server/sources/storage/db';
 import { auth } from '../../../../server/sources/app/auth/auth';
 import { createMachinePreset, readMachinePresetRecipientCensus } from '../../../../server/sources/app/machines/managed/machinePresetService';
@@ -66,6 +71,27 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
         token: await auth.createToken(member.id, undefined, { kind: 'account', authority: 'present_user',
             authenticationEvidence: [{ kind: 'home_method', methodId: 'key_challenge' }] }),
         encryption: { type: 'dataKey' as const, machineKey: memberKeys.secretKey, publicKey: memberKeys.publicKey } };
+    const runRequesterAction = unprepared ? await (async () => {
+        const cliHome = await mkdtemp(join(home.baseDir, 'requester-cli-'));
+        const token = await auth.createToken(member.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        await seedCliDataKeyAuthForServer({ cliHome, serverUrl: home.baseUrl, token, machineKey: memberKeys.secretKey });
+        const sourceRuntime = fileURLToPath(new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url));
+        const entry = fileURLToPath(new URL('../../index.ts', import.meta.url));
+        return async (actionId: string, input: Record<string, unknown>) => {
+            const output = await promisify(execFile)(process.execPath, ['--conditions=happier-source', '--import', sourceRuntime,
+                entry, 'actions', 'invoke', actionId, '--input-json', JSON.stringify(input), '--yes', '--json'], {
+                env: { ...process.env, HAPPIER_HOME_DIR: cliHome, HAPPIER_SERVER_URL: home.baseUrl, HAPPIER_WEBAPP_URL: home.baseUrl },
+            }).catch((error: unknown) => {
+                if (typeof error === 'object' && error !== null && 'stdout' in error && typeof error.stdout === 'string' && error.stdout) {
+                    return { stdout: error.stdout };
+                }
+                throw error;
+            });
+            const envelope = JSON.parse(output.stdout);
+            if (!envelope.ok) throw new Error(`${actionId} failed: ${JSON.stringify({ errorCode: envelope.errorCode, error: envelope.error })}`);
+            return { ok: true, result: envelope.data };
+        };
+    })() : undefined;
     const team = await db.team.create({ data: { name: 'Member container journey' } });
     await db.teamMembership.createMany({ data: [
         { teamId: team.id, accountId: home.accountId, role: 'owner' },
@@ -157,6 +183,7 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
             }) });
         const injected = scenario === 'admin' ? fault : scenario;
         const journey = acquireEnrollmentJourneyGuest(controllerHome, { requester: owner,
+            ...(runRequesterAction ? { runRequesterAction } : {}),
             acquireInput: input, confirmWholeOperation: true, onSettled: operation => { terminal = operation; },
             native: { manifest, ...(injected === 'missing-payload-root' ? { payloadRoot: missingPayload } : {}),
                 async execute(role, body, _context, next) {
@@ -228,7 +255,7 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
             const guest = await journey.catch(error => { throw new Error(`${scenario} journey failed`, { cause: error }); });
             expect(guest.accountId).toBe(owner.accountId);
             expect(guest.token === owner.token).toBe(true);
-            const registered = await db.machine.findUniqueOrThrow({ where: { id: guest.machineId } });
+            const registered = await db.machine.findUniqueOrThrow({ where: { id: guest.machineId } }).then(decodeMachineStoredContent);
             expect(registered).toMatchObject({ accountId: owner.accountId });
             if (scenario === 'exact') {
                 if (!guest.machineEncryptionKey) throw new Error('Expected a key for the enrolled Machine');

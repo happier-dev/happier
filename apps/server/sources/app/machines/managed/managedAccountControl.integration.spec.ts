@@ -202,9 +202,9 @@ describe('Account-owned managed control without a controller', () => {
             controller: test.controller, expectedIntentRevision: test.row.intentRevision, requestId: test.row.admittedActionRequestId,
             resource: test.resource, operationId: randomUUID(), taskId: randomUUID(),
             expectedPromptKind: 'auth.approveRemoteProvisioning', answer: { approved: true } } };
-        const call = async () => {
+        const call = async (responseParams: unknown = params.params) => {
             const response = vi.fn();
-            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params }, response);
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { ...params, params: responseParams } }, response);
             return response.mock.calls[0]?.[0];
         };
         expect(await call()).toEqual({ ok: true, result: { answered: true } });
@@ -213,6 +213,7 @@ describe('Account-owned managed control without a controller', () => {
             { userId: test.other.id, authTokenKind: 'account', authAuthority: 'present_user' },
             { userId: test.owner.id, authTokenKind: 'account', authAuthority: 'account_automation' },
             { userId: test.owner.id, authTokenKind: 'terminal', authAuthority: 'present_user' },
+            { userId: test.owner.id, authTokenKind: 'terminal', authAuthority: 'account_automation', clientType: 'user-scoped' },
         ]) {
             Object.assign(caller.data!, credential);
             expect(await call()).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
@@ -223,6 +224,11 @@ describe('Account-owned managed control without a controller', () => {
         target.data.verifiedMachineInstallationId = test.controller.installationId;
         await db.managedMachine.update({ where: { id: test.row.id }, data: { admittedInput: { enrollmentAccountId: test.other.id } } });
         expect(await call()).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        Object.assign(caller.data!, { authTokenKind: 'terminal', authAuthority: 'present_user', clientType: 'user-scoped' });
+        expect(await call()).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+        await db.managedMachine.update({ where: { id: test.row.id }, data: { admittedInput: { enrollmentAccountId: test.owner.id } } });
+        expect(await call({ ...params.params, expectedPromptKind: 'ssh.trustHost', answer: { trusted: true } }))
+            .toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
         expect(effect).toHaveBeenCalledOnce();
     });
 

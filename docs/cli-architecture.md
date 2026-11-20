@@ -3751,11 +3751,21 @@ or guest credential persistence.
 
 For a non-custodian creation, the existing managed installation approval Action
 delivers the guest's terminal-pairing v3 context only to the admitted requester's
-authenticated client. The same `CAPABILITIES_INVOKE` / `tool.systemTasks/respond`
+authenticated client. To read a pending question, call `action.operations.get`
+with the controller Machine ID, operation ID, and the guest's
+`managed: { homeId, managedId }` scope. The nonsecret question and task ID are in
+`operation.domainRef.bootstrapTask`. Set `waitForTerminal: true` together with
+`includeManagedPrompt: true` to wait for the question or settlement. Copy the
+current question and task ID into `machines.managed.bootstrap.respond` and
+confirm the answer.
+
+The same `CAPABILITIES_INVOKE` / `tool.systemTasks/respond`
 transport carries a transient result, not an Action operation or task observation.
-Home checks the current creation, the requester's present-user Account token,
-controller installation and retained resource correlation once, then relays the
-purpose only over the custodian controller's authenticated Home socket. The
+Home checks the current creation, authenticated requester, controller installation
+and retained resource correlation once, then relays the purpose only over the
+custodian controller's authenticated Home socket. The requester's paired CLI
+credential can answer the terminal-pairing question. Other installation questions
+require the requester's present-user Account token. The
 controller accepts that stamp from no other ingress and makes no callback to Home;
 the live task closure
 additionally binds the managed row and operation/task/question. Both delivery and the final

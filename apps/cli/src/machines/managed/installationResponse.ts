@@ -1,6 +1,7 @@
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { respondToManagedInstallation } from '@happier-dev/protocol/machines/managed/installationResponse';
 import { unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { ActionOperationGetV1ResponseSchema, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { parseCapabilitiesInvokeResponse } from '@happier-dev/protocol/capabilities/invokeResponse';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
@@ -8,7 +9,7 @@ import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import type { StoredCredentials } from '@/persistence';
+import { hasStoredSessionCredentialProvenance, type StoredCredentials } from '@/persistence';
 import { readManagedMachineRead, openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
@@ -33,9 +34,13 @@ export function createCliManagedInstallationRespond(params: Readonly<{
                 machineId, method, request, timeoutMs: null, ...(signal ? { signal } : {}) });
         const parseResponse = (raw: unknown) => parseCapabilitiesInvokeResponse(raw)
             ?? { ok: false as const, error: { code: 'managed_response_invalid', message: 'Invalid managed installation response' } };
+        const provenance = readAuthTokenProvenance(decodeJwtPayload(params.credentials.token), { allowLegacyHome: true })?.provenance;
+        const terminalPairingAuthority = provenance?.kind === 'terminal'
+            && hasStoredSessionCredentialProvenance(params.credentials) && isPresentUserHostInvocation(context)
+            && input.purpose === 'approve' && input.prompt.kind === 'auth.approveRemoteProvisioning';
         return respondToManagedInstallation(input, context, {
             accountId, homeId: params.serverIdentityId,
-            accountAuthority: readAuthTokenProvenance(decodeJwtPayload(params.credentials.token), { allowLegacyHome: true })?.provenance.kind === 'account',
+            accountAuthority: provenance?.kind === 'account' || terminalPairingAuthority,
             assertCurrent: () => context.signal?.throwIfAborted(),
             readMachine: async (request, signal) => {
                 const read = await readManagedMachineRead({ credentials: params.credentials, serverHttpBaseUrl: params.serverUrl,

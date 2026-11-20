@@ -21,12 +21,14 @@ export async function forwardManagedInstallationResponse(input: Readonly<{
     // The controller addresses the capability call; a controller-less response has no Machine to reach.
     if (!parsed.success || !parsed.data.params.controller || input.inboundAuthorization !== undefined
         || input.method !== `${parsed.data.params.controller.machineId}:${RPC_METHODS.CAPABILITIES_INVOKE}`) return refused;
+    const purpose = readManagedInstallationPurposeV1(parsed.data.params);
     const credential = input.socket.data;
-    if (credential?.userId !== input.actorAccountId || credential.authTokenKind !== 'account'
-        || credential.authAuthority !== 'present_user') return refused;
+    if (credential?.userId !== input.actorAccountId || credential.authAuthority !== 'present_user') return refused;
+    const terminalPairing = credential.authTokenKind === 'terminal'
+        && credential.clientType === 'user-scoped' && purpose.expectedPromptKind === 'auth.approveRemoteProvisioning';
+    if (credential.authTokenKind !== 'account' && !terminalPairing) return refused;
     try {
-        const authorization = await admitManagedInstallationPurpose({ actorAccountId: input.actorAccountId,
-            purpose: readManagedInstallationPurposeV1(parsed.data.params) });
+        const authorization = await admitManagedInstallationPurpose({ actorAccountId: input.actorAccountId, purpose });
         const controller = authorization.purpose.controller;
         if (!controller) return refused;
         const matches = (target: Readonly<{ data?: Record<string, unknown> }>) => target.data?.clientType === 'machine-scoped'

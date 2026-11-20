@@ -105,6 +105,7 @@ type NativeRoleExecution = NonNullable<NativeFixtureOptions['onNativeRole']>;
 /** The only substituted system is the provisioner's native guest/process boundary. */
 export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: T, ports: Readonly<{
     requester?: Pick<Home, 'accountId' | 'token' | 'encryption'>;
+    runRequesterAction?(id: 'action.operations.get' | 'machines.managed.bootstrap.respond', input: Record<string, unknown>): Promise<unknown>;
     acquireInput?: ReturnType<typeof ManagedAcquireInputV1Schema.parse>;
     /** The provisioner and guest OS are the external boundary, never Home admission. */
     native?: Readonly<{
@@ -451,6 +452,8 @@ lines.close(); process.stdin.destroy();\n`);
             || !result.result.operation || typeof result.result.operation !== 'object' || !('operationId' in result.result.operation)
             || typeof result.result.operation.operationId !== 'string') throw new Error('Public acquire did not accept an owned operation');
         operationId = result.result.operation.operationId;
+        let requesterActionFailure: unknown;
+        let answeredTaskId: string | undefined;
         try { await expect.poll(async () => {
             const current = operations.store.get(operationScope, operationId!);
             if (!current) { observed.operation = { state: 'not_found' }; return false; }
@@ -477,21 +480,32 @@ lines.close(); process.stdin.destroy();\n`);
             if (ref?.kind === 'managedMachine' && ref.bootstrapTask?.prompt?.kind === 'auth.approveRemoteProvisioning') {
                 if (requester.accountId === controller.accountId) {
                     await getLiveSystemTasksRunnerAdapter().respond({ taskId: ref.bootstrapTask.id, answer: { approved: true } });
-                } else {
-                    const inspection = await author.execute('action.operations.get', { serverId: controller.serverId,
-                        machineId: controller.machineId, operationId,
-                        managed: { homeId: controller.serverId, managedId: ref.id }, waitForTerminal: true, includeManagedPrompt: true },
-                    { surface: 'cli', authority: 'present_user', serverId: controller.serverId, actionRequestId: randomUUID(), signal: lifetime.signal });
-                    expect(inspection).toMatchObject({ ok: true, result: { kind: 'found', operation: {
-                        operationId, domainRef: { bootstrapTask: { id: ref.bootstrapTask.id, prompt: ref.bootstrapTask.prompt } },
-                    } } });
-                    const approval = await author.execute('machines.managed.bootstrap.respond', {
-                        serverId: controller.serverId, homeId: controller.serverId, managedId: ref.id, operationId,
-                        taskId: ref.bootstrapTask.id, purpose: 'approve', approved: true, prompt: ref.bootstrapTask.prompt,
-                    }, { surface: 'cli', authority: 'present_user', serverId: controller.serverId,
-                        actionRequestId: randomUUID(), presentUserConfirmation: { actionId: 'machines.managed.bootstrap.respond' },
-                        signal: lifetime.signal });
-                    expect(approval).toMatchObject({ ok: true, result: { taskId: ref.bootstrapTask.id } });
+                } else if (answeredTaskId !== ref.bootstrapTask.id) {
+                    try {
+                        const address = { serverId: controller.serverId,
+                            machineId: controller.machineId, operationId,
+                            managed: { homeId: controller.serverId, managedId: ref.id }, waitForTerminal: true, includeManagedPrompt: true } as const;
+                        const inspection = ports.runRequesterAction ? await ports.runRequesterAction('action.operations.get', address)
+                            : await author.execute('action.operations.get', address, { surface: 'cli', authority: 'present_user',
+                                serverId: controller.serverId, actionRequestId: randomUUID(), signal: lifetime.signal });
+                        expect(inspection).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+                            operationId, domainRef: { bootstrapTask: { id: ref.bootstrapTask.id, prompt: ref.bootstrapTask.prompt } },
+                        } } });
+                        const answer = {
+                            serverId: controller.serverId, homeId: controller.serverId, managedId: ref.id, operationId,
+                            taskId: ref.bootstrapTask.id, purpose: 'approve', approved: true, prompt: ref.bootstrapTask.prompt,
+                        } as const;
+                        const approval = ports.runRequesterAction ? await ports.runRequesterAction('machines.managed.bootstrap.respond', answer)
+                            : await author.execute('machines.managed.bootstrap.respond', answer, {
+                                surface: 'cli', authority: 'present_user', serverId: controller.serverId,
+                                actionRequestId: randomUUID(), presentUserConfirmation: { actionId: 'machines.managed.bootstrap.respond' },
+                                signal: lifetime.signal });
+                        expect(approval).toMatchObject({ ok: true, result: { taskId: ref.bootstrapTask.id } });
+                        answeredTaskId = ref.bootstrapTask.id;
+                    } catch (error) {
+                        requesterActionFailure = error;
+                        return true;
+                    }
                 }
             }
             return false;
@@ -500,6 +514,7 @@ lines.close(); process.stdin.destroy();\n`);
         }, { timeout: 300_000 }).toBe(true); } catch (error) {
             throw new Error(`S0 enrollment observation: ${JSON.stringify({ nativePhase: observed.nativePhase, operation: observed.operation })}`, { cause: error });
         }
+        if (requesterActionFailure) throw requesterActionFailure;
         if (observed.terminal?.state !== 'succeeded') throw new Error(`S0 acquisition failed: ${JSON.stringify({
             error: observed.terminal?.error, nativePhase: observed.nativePhase, guestFailure: observed.guestFailure,
         })}`);
