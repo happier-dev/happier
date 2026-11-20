@@ -83,7 +83,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-function useSetupCommands(serverUrl: string | null | undefined) {
+/** The one command that joins a machine to the Home at `serverUrl`, per OS (null when no target can be built). */
+export function useMachineJoinCommands(serverUrl: string | null | undefined) {
     const target = useMachineAddHomeTargetAtUrl(serverUrl);
     return React.useMemo(() => {
         const commands = {
@@ -98,7 +99,7 @@ function useSetupCommands(serverUrl: string | null | undefined) {
 function CommandBlock(props: Readonly<{
     serverUrl?: string | null;
 }>): React.ReactElement {
-    const commands = useSetupCommands(props.serverUrl);
+    const commands = useMachineJoinCommands(props.serverUrl);
     if (!commands) return <Text>{t('common.unavailable')}</Text>;
     return <OsCommandBlock testID="machine-arrival-card-command-setup" commands={commands} />;
 }

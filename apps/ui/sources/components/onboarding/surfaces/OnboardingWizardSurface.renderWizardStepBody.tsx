@@ -5,14 +5,15 @@ import { View } from 'react-native';
 import type { AuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
 import type { AccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text, TextInput } from '@/components/ui/text/Text';
-import { t } from '@/text';
+import { Text } from '@/components/ui/text/Text';
+import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { StepFieldGroup, StepFieldHelp, StepForm } from '@/components/onboarding/unauthShell/StepFormParts';
+import { t, tLoose } from '@/text';
 
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 
-import { WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
-import { WebDesktopDownloadCta } from '@/components/onboarding/steps/webDesktop/WebDesktopDownloadCta';
-import { MachineArrivalCard } from '@/components/onboarding/detection/MachineArrivalCard';
+import { WebDesktopCommandHandoff, WebDesktopRelayHostHandoffContent } from '@/components/onboarding/steps/webDesktop/WebDesktopRelayHostHandoffContent';
+import { useMachineJoinCommands } from '@/components/onboarding/detection/MachineArrivalCard';
 import { LocalRelayAccessControlSection } from '@/components/settings/server/localControl/LocalRelayAccessControlSection';
 import { ServerReachabilityRemediationCard } from '@/components/settings/server/sections/ServerReachabilityRemediationCard';
 import type {
@@ -248,30 +249,27 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     }
 
     if (params.stepId === 'relay_enter_url') {
+        // The step's heading names the field, so the field carries that name for assistive technology only and
+        // the line under it says what happens next (the shared signed-out form anatomy).
         return (
-            <>
-                <View style={params.styles.urlBlock}>
-                    <Text
-                        nativeID={`${params.testIDPrefix}-relay-url-label`}
-                        testID={`${params.testIDPrefix}-relay-url-label`}
-                        style={params.styles.urlHint}
-                    >
-                        {t('setupOnboarding.customRelayUrlLabel')}
-                    </Text>
-                    <TextInput
+            <StepForm>
+                <StepFieldGroup>
+                    <FieldTextInput
                         testID={`${params.testIDPrefix}-relay-url-input`}
-                        placeholder={t('common.urlPlaceholder')}
-                        placeholderTextColor={params.theme.colors.text.secondary}
+                        placeholder={t('homesJourneys.homeAddressPlaceholder')}
                         autoCapitalize="none"
                         autoCorrect={false}
+                        keyboardType="url"
                         value={params.urlDraft}
                         onChangeText={params.onUrlDraftChange}
-                        style={params.styles.urlInput}
                         accessibilityLabel={t('setupOnboarding.customRelayUrlLabel')}
-                        accessibilityLabelledBy={`${params.testIDPrefix}-relay-url-label`}
                     />
-                    <Text style={params.styles.urlHint}>{t('setupOnboarding.relayCustomUrlSubtitle')}</Text>
-                </View>
+                    {params.reachabilityRemediationError ? (
+                        <StepFieldHelp tone="error">{params.reachabilityRemediationError}</StepFieldHelp>
+                    ) : (
+                        <StepFieldHelp>{t('homesJourneys.byAddressHelp')}</StepFieldHelp>
+                    )}
+                </StepFieldGroup>
                 {params.reachabilityRemediation ? (
                     <ServerReachabilityRemediationCard
                         remediation={params.reachabilityRemediation}
@@ -279,29 +277,13 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                         onAction={params.onReachabilityRemediationAction}
                     />
                 ) : null}
-                {params.reachabilityRemediationError ? (
-                    <Text
-                        accessibilityRole="alert"
-                        accessibilityLiveRegion="assertive"
-                        style={params.styles.urlHint}
-                    >
-                        {params.reachabilityRemediationError}
-                    </Text>
-                ) : null}
-            </>
+            </StepForm>
         );
     }
 
     if (params.stepId === 'background_service_handoff') {
         return (
-            <View testID={`${params.testIDPrefix}-background-service-handoff`} style={params.styles.urlBlock}>
-                <MachineArrivalCard
-                    mode="instructional"
-                    testID={`${params.testIDPrefix}-background-service-arrival`}
-                    serverUrl={params.relaySelectionServerUrl ?? ''}
-                />
-                <WebDesktopDownloadCta testIDPrefix={`${params.testIDPrefix}-background-service-desktop-app`} />
-            </View>
+            <BackgroundServiceHandoff testIDPrefix={params.testIDPrefix} serverUrl={params.relaySelectionServerUrl ?? ''} />
         );
     }
 
@@ -546,4 +528,17 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     }
 
     return null;
+}
+
+/** "Connect this computer" from a browser: the join command for this Home, or the desktop app (lab direction A). */
+function BackgroundServiceHandoff(props: Readonly<{ testIDPrefix: string; serverUrl: string }>) {
+    const commands = useMachineJoinCommands(props.serverUrl);
+    return (
+        <WebDesktopCommandHandoff
+            testID={`${props.testIDPrefix}-background-service-handoff`}
+            commandTestID={`${props.testIDPrefix}-background-service-arrival`}
+            commands={commands}
+            help={tLoose('setupOnboarding.machineArrival.detectedAfterSignIn')}
+        />
+    );
 }

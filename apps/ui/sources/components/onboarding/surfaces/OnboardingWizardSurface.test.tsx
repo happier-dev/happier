@@ -44,23 +44,6 @@ const desktopHostMockState = vi.hoisted(() => ({
     kind: 'tauri' as 'tauri' | 'electron' | null,
 }));
 
-function directChildTestIDs(node: { props: { children?: React.ReactNode } } | null | undefined): string[] {
-    return React.Children.toArray(node?.props.children)
-        .map((child) => {
-            if (!React.isValidElement<{ testID?: string; testIDPrefix?: string }>(child)) {
-                return null;
-            }
-            if (typeof child.props.testID === 'string') {
-                return child.props.testID;
-            }
-            if (typeof child.props.testIDPrefix === 'string') {
-                return `${child.props.testIDPrefix}-download-cta`;
-            }
-            return null;
-        })
-        .filter((testID): testID is string => typeof testID === 'string');
-}
-
 function findAllInCurrentWizardBodyByType(screen: Readonly<{
     findByTestId: (testID: string) => ReactTestInstance | null;
     findAllByType: (type: never) => ReactTestInstance[];
@@ -2151,13 +2134,9 @@ describe('OnboardingWizardSurface', () => {
         await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard-background-service-handoff')).not.toBeNull());
         const backgroundServiceHandoff = screen.findByTestId('onboarding-wizard-background-service-handoff');
         expect(backgroundServiceHandoff).not.toBeNull();
-        expect(directChildTestIDs(backgroundServiceHandoff).slice(0, 2)).toEqual([
-            'onboarding-wizard-background-service-arrival',
-            'onboarding-wizard-background-service-desktop-app-download-cta',
-        ]);
         expect(screen.findByTestId('onboarding-wizard-background-service-arrival')).not.toBeNull();
         expect(screen.findByTestId('machine-arrival-card-status')).toBeNull();
-        expect(screen.findByTestId('onboarding-wizard-background-service-desktop-app-download-cta')).not.toBeNull();
+        expect(screen.findByTestId('onboarding-wizard-background-service-handoff-download-desktop')).not.toBeNull();
         expect(screen.getTextContent()).toContain('setupOnboarding.machineArrival.detectedAfterSignIn');
         expect(screen.findByTestId('onboarding-wizard-lost-access')).toBeNull();
 

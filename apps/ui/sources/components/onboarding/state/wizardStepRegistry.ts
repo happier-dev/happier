@@ -73,8 +73,8 @@ const wizardStepRegistryEntries = [
     },
     {
         id: 'background_service_handoff',
-        titleKey: 'sessionGettingStarted.steps.openSetup.title',
-        subtitleKey: 'sessionGettingStarted.steps.openSetup.description',
+        titleKey: 'setupOnboarding.connectComputerTitle',
+        subtitleKey: 'setupOnboarding.connectComputerSubtitle',
         kind: 'choice',
         surface: 'onboarding',
         canSkip: true,
@@ -173,8 +173,8 @@ const wizardStepRegistryEntries = [
     },
     {
         id: 'host_relay_local',
-        titleKey: 'settings.localRelayRuntime.title',
-        subtitleKey: 'settings.localRelayRuntime.footer',
+        titleKey: 'setupOnboarding.hostHereTitle',
+        subtitleKey: 'setupOnboarding.hostHereSubtitle',
         kind: 'setup',
         surface: 'onboarding',
         canSkip: false,
