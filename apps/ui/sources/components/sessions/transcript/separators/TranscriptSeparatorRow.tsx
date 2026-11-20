@@ -48,13 +48,13 @@ export function TranscriptSeparatorRow(props: Readonly<{
   // The rule spans the reply column every message row uses, so its ends meet the text edges.
   const layoutMaxWidth = useLayoutMaxWidth();
   const rowWidthStyle = { maxWidth: padding === 'none' ? layoutMaxWidth : layoutMaxWidth - 2 * SEPARATOR_INSET };
-  const lineStyle = [styles.line, unread ? styles.lineUnread : null, { backgroundColor: unread ? theme.colors.text.link : theme.colors.border.default }];
+  const lineStyle = [styles.line, unread ? styles.lineUnread : null, { backgroundColor: unread ? theme.colors.text.primary : theme.colors.border.default }];
   const chipContent = (
     <>
       {props.iconName ? <Icon name={props.iconName} size={14} color={theme.colors.text.secondary} /> : null}
       <View style={styles.textStack}>
         {props.titleContent ?? (
-          <Text testID={props.titleTestID} style={[styles.title, { color: unread ? theme.colors.text.link : theme.colors.text.primary }]} numberOfLines={1}>
+          <Text testID={props.titleTestID} style={[styles.title, { color: theme.colors.text.primary }]} numberOfLines={1}>
             {props.title}
           </Text>
         )}
@@ -152,7 +152,7 @@ const styles = StyleSheet.create((_theme) => ({
     height: 1,
     opacity: 0.8,
   },
-  // The unread ink is a full-strength link colour; at hairline weight it reads as a rule, not a link.
+  // The unread ink is full-strength primary ink; at hairline weight it reads as a rule beside its word.
   lineUnread: {
     opacity: 0.55,
   },
