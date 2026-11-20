@@ -21,7 +21,7 @@ const restLight = lightForReveal(1);
 const glyphPitch = [8, 16];
 export const glyphDigitStepS = 2;
 
-export const planetGlyphLayer = (options) => ({ kind: 'planet', ...options });
+export const planetGlyphLayer = (options) => ({ kind: 'planet', ...options, intensity: options.intensity ?? 'full' });
 export const markGlyphLayer = (options) => ({ kind: 'mark', ...options });
 export const travellerGlyphLayer = (options) => ({ kind: 'traveller', ...options });
 export const frontGlyphLayer = (options) => ({ kind: 'front', ...options });

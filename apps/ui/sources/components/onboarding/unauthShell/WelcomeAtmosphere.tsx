@@ -120,7 +120,6 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
     if (!geometry) return [];
     const planet = planetGlyphLayer({
       geometry,
-      intensity: 'quiet',
       digits: true,
       soft: props.phone,
     });

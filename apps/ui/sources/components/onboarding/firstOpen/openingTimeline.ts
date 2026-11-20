@@ -220,7 +220,7 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
             const glow = impactSeconds >= 0 ? 0.5 * Math.exp(-impactSeconds / 0.12) : 0;
             layers.push(planetGlyphLayer({
                 geometry: { ...rest, cx, cy: cy + dy, R, glow: (rest.glow ?? 1) + glow },
-                intensity: 'full', digits: true, assemble: { startS: 1.55, durationS: 2.38 - 1.55 },
+                digits: true, assemble: { startS: 1.55, durationS: 2.38 - 1.55 },
             }));
         }
         for (const bucket of buckets) bucket.offset = 0;

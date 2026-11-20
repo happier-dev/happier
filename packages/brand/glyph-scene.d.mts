@@ -9,7 +9,8 @@ export type PlanetIntensity = 'quiet' | 'calm' | 'full';
 type Timing = Readonly<{ startS?: number; durationS: number }>;
 export type PlanetGlyphOptions = Readonly<{
     geometry: GlyphPlanetGeometry;
-    intensity: PlanetIntensity;
+    /** Full-colour lab ink by default. Preference-backed surfaces can supply their selected intensity. */
+    intensity?: PlanetIntensity;
     digits: boolean;
     /** Visible digit cadence. Defaults to the scene clock for callers that choreograph their own digits. */
     digitTimeS?: number;
@@ -52,7 +53,7 @@ export type FrontGlyphOptions = Readonly<{
     climbProgress?: number;
     cover?: GlyphInk;
 }>;
-export type PlanetGlyphLayer = PlanetGlyphOptions & { kind: 'planet' };
+export type PlanetGlyphLayer = PlanetGlyphOptions & Readonly<{ kind: 'planet'; intensity: PlanetIntensity }>;
 export type MarkGlyphLayer = MarkGlyphOptions & { kind: 'mark' };
 export type TravellerGlyphLayer = TravellerGlyphOptions & { kind: 'traveller' };
 export type FrontGlyphLayer = FrontGlyphOptions & { kind: 'front' };

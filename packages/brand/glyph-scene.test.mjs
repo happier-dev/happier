@@ -29,6 +29,19 @@ test('a settled planet is byte equal to the static frame at its selected intensi
     assert.deepEqual(render([planetGlyphLayer(planet)]), render([planetGlyphLayer({ ...planet, settle: { durationS: 2 } })], 2));
 });
 
+test('the default planet ink is full-colour across signed-out poses', () => {
+    const pane = { width: view.w, height: view.h };
+    for (const pose of ['welcome', 'deep', 'night', 'sheet', 'welcomeDim']) {
+        const geometry = welcomePlanetPose(pose, pane, { phone: true });
+        const options = { geometry, digits: true, soft: true };
+        const full = render([planetGlyphLayer({ ...options, intensity: 'full' })]);
+        const quiet = render([planetGlyphLayer({ ...options, intensity: 'quiet' })]);
+        assert.notDeepEqual(full, quiet, `${pose} distinguishes Full from Quiet`);
+        const firstOpen = render([planetGlyphLayer(options)]);
+        assert.deepEqual(firstOpen, full, `${pose} keeps the lab pose in full-colour ink`);
+    }
+});
+
 test('the Loading front decodes into the same planet at its selected intensity', () => {
     const geometry = horizonPlanetGeometry({ width: 390, height: 844 }, { phone: true, composerTop: 290 });
     const layer = planetGlyphLayer({ geometry, intensity: 'full', digits: true });
