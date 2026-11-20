@@ -1,62 +1,67 @@
 import { Platform } from 'react-native';
 import type { PopoverWindowRect } from './_types';
 
+/** Read the actual DOM geometry during layout when a browser ref already has it. */
+export function measureDomRectInWindow(candidate: any): PopoverWindowRect | null {
+    try {
+        let el: any = null;
+        let current: any = candidate;
+        const visited = new Set<any>();
+        while (current && !visited.has(current)) {
+            visited.add(current);
+
+            if (typeof current?.getBoundingClientRect === 'function') {
+                el = current;
+                break;
+            }
+
+            const scrollable = current?.getScrollableNode?.();
+            if (scrollable && typeof scrollable.getBoundingClientRect === 'function') {
+                el = scrollable;
+                break;
+            }
+
+            if (typeof current?.getNode === 'function') {
+                current = current.getNode();
+                continue;
+            }
+            if (typeof current?.getHostNode === 'function') {
+                current = current.getHostNode();
+                continue;
+            }
+            if (typeof current?.getDOMNode === 'function') {
+                current = current.getDOMNode();
+                continue;
+            }
+
+            break;
+        }
+        if (!el || typeof el.getBoundingClientRect !== 'function') return null;
+        const rect = el.getBoundingClientRect();
+        const x = rect?.left ?? rect?.x;
+        const y = rect?.top ?? rect?.y;
+        const width = rect?.width;
+        const height = rect?.height;
+        if (![x, y, width, height].every(n => Number.isFinite(n))) return null;
+        // Treat 0x0 rects as invalid: on iOS (and occasionally RN-web), refs can report 0x0
+        // for a frame while layout settles. Using these values causes menus to overlap the
+        // trigger and prevents subsequent recomputes from correcting placement.
+        if (width <= 0 || height <= 0) return null;
+        return { x, y, width, height };
+    } catch {
+        return null;
+    }
+}
+
 export function measureInWindow(node: any): Promise<PopoverWindowRect | null> {
     return new Promise(resolve => {
         try {
             if (!node) return resolve(null);
 
-            const measureDomRect = (candidate: any): PopoverWindowRect | null => {
-                let el: any = null;
-                let current: any = candidate;
-                const visited = new Set<any>();
-                while (current && !visited.has(current)) {
-                    visited.add(current);
-
-                    if (typeof current?.getBoundingClientRect === 'function') {
-                        el = current;
-                        break;
-                    }
-
-                    const scrollable = current?.getScrollableNode?.();
-                    if (scrollable && typeof scrollable.getBoundingClientRect === 'function') {
-                        el = scrollable;
-                        break;
-                    }
-
-                    if (typeof current?.getNode === 'function') {
-                        current = current.getNode();
-                        continue;
-                    }
-                    if (typeof current?.getHostNode === 'function') {
-                        current = current.getHostNode();
-                        continue;
-                    }
-                    if (typeof current?.getDOMNode === 'function') {
-                        current = current.getDOMNode();
-                        continue;
-                    }
-
-                    break;
-                }
-                if (!el || typeof el.getBoundingClientRect !== 'function') return null;
-                const rect = el.getBoundingClientRect();
-                const x = rect?.left ?? rect?.x;
-                const y = rect?.top ?? rect?.y;
-                const width = rect?.width;
-                const height = rect?.height;
-                if (![x, y, width, height].every(n => Number.isFinite(n))) return null;
-                // Treat 0x0 rects as invalid: on iOS (and occasionally RN-web), refs can report 0x0
-                // for a frame while layout settles. Using these values causes menus to overlap the
-                // trigger and prevents subsequent recomputes from correcting placement.
-                if (width <= 0 || height <= 0) return null;
-                return { x, y, width, height };
-            };
-
             // On web, prefer DOM measurement. It's synchronous and avoids cases where
             // RN-web's `measureInWindow` returns invalid values or never calls back.
             if (Platform.OS === 'web') {
-                const rect = measureDomRect(node);
+                const rect = measureDomRectInWindow(node);
                 if (rect) return resolve(rect);
             }
 
@@ -93,7 +98,7 @@ export function measureInWindow(node: any): Promise<PopoverWindowRect | null> {
                 node.measureInWindow((x: number, y: number, width: number, height: number) => {
                     if (![x, y, width, height].every(n => Number.isFinite(n)) || width <= 0 || height <= 0) {
                         if (Platform.OS === 'web') {
-                            const rect = measureDomRect(node);
+                            const rect = measureDomRectInWindow(node);
                             if (rect) return resolve(rect);
                         }
                         return resolve(null);
@@ -113,7 +118,7 @@ export function measureInWindow(node: any): Promise<PopoverWindowRect | null> {
                 return;
             }
 
-            if (Platform.OS === 'web') return resolve(measureDomRect(node));
+            if (Platform.OS === 'web') return resolve(measureDomRectInWindow(node));
 
             resolve(null);
         } catch {

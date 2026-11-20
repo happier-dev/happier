@@ -59,6 +59,8 @@ export function useFloatingScrimFrost(): boolean {
  * light dim, never a flat dark overlay. `dim` asks for the dim alone; Reduce Transparency, Blur Off and a device
  * without a native blur also get the dim alone. Callers own placement, motion and touches.
  */
+const WEB_NO_POINTER_EVENTS = { pointerEvents: 'none' } as const;
+
 export const FloatingScrim = React.memo(function FloatingScrim(
   props: Readonly<{
     style?: StyleProp<ViewStyle>;
@@ -76,8 +78,8 @@ export const FloatingScrim = React.memo(function FloatingScrim(
     return (
       <View
         testID={props.testID}
-        pointerEvents="none"
-        style={[props.style, paint]}
+        // React Native Web reads pointer events from the style (its prop is deprecated there).
+        style={[props.style, paint, WEB_NO_POINTER_EVENTS]}
       />
     );
   }

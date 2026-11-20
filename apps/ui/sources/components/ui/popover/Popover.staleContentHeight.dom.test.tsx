@@ -80,7 +80,7 @@ describe('Popover first placement of a long menu', () => {
       );
     }
     const visibleOverlaps: string[] = [];
-    const publications: { visible: boolean }[] = [];
+    const publications: { visible: boolean; bound?: string; top?: string; measurements: number }[] = [];
     const sample = () => {
       const panel = document.querySelector<HTMLElement>('[id^="popover-"]');
       if (!panel || panel.style.opacity !== '1') return;
@@ -94,13 +94,19 @@ describe('Popover first placement of a long menu', () => {
     try {
       await act(async () => {
         root.render(<React.Profiler id="popover" onRender={() => {
-          publications.push({ visible: document.querySelector<HTMLElement>('[id^="popover-"]')?.style.opacity === '1' });
+          const panel = document.querySelector<HTMLElement>('[id^="popover-"]');
+          publications.push({
+            visible: panel?.style.opacity === '1',
+            bound: panel?.querySelector<HTMLElement>('[data-max]')?.dataset.max,
+            top: panel?.style.top,
+            measurements: contentMeasurements,
+          });
         }}><Harness /></React.Profiler>);
       });
       // Mount, placement publication, then the constrained content measurement.
       // Measuring under the initial window bound must not buy a separate commit.
       expect(publications.some(publication => publication.visible)).toBe(true);
-      expect(publications.findIndex(publication => publication.visible) + 1).toBeLessThanOrEqual(3);
+      expect(publications.findIndex(publication => publication.visible) + 1, JSON.stringify(publications)).toBeLessThanOrEqual(3);
       expect(contentMeasurements).toBe(1);
       sample();
       for (let frame = 0; frame < 20; frame++) {

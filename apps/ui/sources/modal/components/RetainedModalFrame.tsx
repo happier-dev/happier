@@ -50,7 +50,7 @@ export type RetainedPlacement<TArgs> = Readonly<{
     /** A web shell still presents this body, including an outgoing transition's slot. */
     hasPlacement: boolean;
     /** The element a presentation shell renders where the body appears. */
-    mount: (args: TArgs) => React.ReactElement;
+    mount: (args: TArgs, publishArgsRef?: React.Ref<(args: TArgs) => void>) => React.ReactElement;
     /** The one mounted body; render it at a position that outlives every shell. `null` off the web DOM. */
     body: React.ReactNode;
 }>;
@@ -88,18 +88,26 @@ export function useRetainedPlacement<TArgs>(
         host.addEventListener('focusout', onFocusOut);
         return () => host.removeEventListener('focusout', onFocusOut);
     }, [host]);
-    const publish = React.useCallback((next: Placement<TArgs>) => setPlacement(previous => {
+    const lastPublication = React.useRef<Placement<TArgs> | null>(null);
+    const publish = React.useCallback((next: Placement<TArgs>) => {
+        const previous = lastPublication.current;
         const args = retainDeep(previous?.args, next.args);
-        return retainShallow(previous ?? undefined, { ...next, args });
-    }), []);
+        const publication = retainShallow(previous ?? undefined, { ...next, args });
+        if (publication === previous) return;
+        lastPublication.current = publication;
+        setPlacement(publication);
+    }, []);
     // With a DOM host the slot never renders the body, so it stays the same element while the body changes.
     const retireWithoutShell = React.useRef(false);
     retireWithoutShell.current = options?.retireWithoutShell === true;
-    // Decided at the next render, after any shell mounting in the same commit has claimed the host.
-    const retire = React.useCallback(() => setPlacement(previous =>
-        owner.current === null && retireWithoutShell.current ? null : previous), []);
-    const mount = React.useCallback((args: TArgs) => host
-        ? <RetainedPlacementSlot host={host} owner={owner} args={args} publish={publish} retire={retire} />
+    const retire = React.useCallback(() => {
+        if (!retireWithoutShell.current || lastPublication.current === null) return;
+        lastPublication.current = null;
+        setPlacement(null);
+    }, []);
+    const mount = React.useCallback<RetainedPlacement<TArgs>['mount']>((args, publishArgsRef) => host
+        ? <RetainedPlacementSlot host={host} owner={owner} args={args}
+            publishArgsRef={publishArgsRef} publish={publish} retire={retire} />
         : <>{render(args)}</>, [host, publish, retire, host ? null : render]);
     if (!host) return { mount, body: null, hasPlacement: false };
     // The portal's React parent and target never change. Only its DOM host moves between shells.
@@ -165,6 +173,7 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
     host: HTMLDivElement;
     owner: React.MutableRefObject<object | null>;
     args: TArgs;
+    publishArgsRef?: React.Ref<(args: TArgs) => void>;
     publish: (placement: Placement<TArgs>) => void;
     retire: () => void;
 }>) {
@@ -211,12 +220,14 @@ function RetainedPlacementSlot<TArgs>(props: Readonly<{
         };
     }, [host, owner, token, retire]);
     React.useLayoutEffect(() => { shellDismissRef.current = shellDismiss; }, [shellDismiss]);
-    React.useLayoutEffect(() => {
+    const publishArgs = React.useCallback((nextArgs: TArgs) => {
         if (owner.current !== token) return;
-        publish({ args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
+        publish({ args: nextArgs, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
             planes, onFloatingSheet, onPhonePanel, pushStack, pushedView });
-    }, [owner, token, publish, args, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
+    }, [owner, token, publish, viewport, inside, modalId, escape, portal, dismiss, scroll, contained, onSheet, focus, region,
         planes, onFloatingSheet, onPhonePanel, pushStack, pushedView]);
+    React.useImperativeHandle(props.publishArgsRef, () => publishArgs, [publishArgs]);
+    React.useLayoutEffect(() => publishArgs(args), [args, publishArgs]);
     return <div ref={slot} style={{ display: 'contents' }} />;
 }
 

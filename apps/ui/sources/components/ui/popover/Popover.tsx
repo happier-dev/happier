@@ -23,7 +23,7 @@ import { useNativeBackLayerDescendant } from '@/components/ui/overlays/NativeBac
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { useRetainedPlacement } from '@/modal/components/RetainedModalFrame';
+import { useRetainedPlacement, type RetainedPlacement } from '@/modal/components/RetainedModalFrame';
 import type {
     PopoverAnchor,
     PopoverBackdropEffect,
@@ -36,7 +36,7 @@ import type {
     PopoverWindowRect,
     ResolvedPopoverPlacement,
 } from './_types';
-import { getFallbackBoundaryRect, measureInWindow, measureLayoutRelativeTo } from './measure';
+import { getFallbackBoundaryRect, measureDomRectInWindow, measureInWindow, measureLayoutRelativeTo } from './measure';
 import { useWebPopoverContentMeasure } from './useWebPopoverContentMeasure';
 import { resolvePortalRelativeAnchorRect } from './resolvePortalRelativeAnchor';
 import { PopoverBackdrop } from './backdrop';
@@ -433,7 +433,7 @@ type PopoverBodyIsolation = 'portal' | 'dialog' | 'none';
 type PopoverBodyArgs = Readonly<{ renderProps: PopoverRenderProps; isolation: PopoverBodyIsolation }>;
 type PopoverShellProps = (PopoverProps extends infer Variant ? Variant extends unknown ? Omit<Variant, 'children'> : never : never) & Readonly<{
     /** The one mounted body, presented in this shell. */
-    renderBody: (args: PopoverBodyArgs) => React.ReactElement;
+    renderBody: RetainedPlacement<PopoverBodyArgs>['mount'];
     /** Private notification from the existing shell presence owner. */
     onPresentationAbsent: () => void;
 }>;
@@ -1165,13 +1165,27 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
     // The edge margin is the gutter the box actually carries: a caller's `containerStyle` padding can
     // narrow it (the composer's pickers zero it), and the clamp then keeps the visible surface the full
     // margin from the window edge itself instead of assuming the gutter is there.
-    const horizontalGutter = React.useMemo(() => {
+    const verticalPlacementGutter = React.useMemo(() => {
         // A phone panel's boundary already stands its gutter in from the screen's sides; its box carries none.
-        if (spansPhone || (computed.placement !== 'top' && computed.placement !== 'bottom')) return 0;
+        if (spansPhone) return 0;
         const carried = resolvePaddingEdges([{ paddingHorizontal: edgeInsets.horizontal }, containerStyle]);
         return Math.max(0, Math.min(edgeInsets.horizontal, carried.left, carried.right));
-    }, [computed.placement, containerStyle, edgeInsets.horizontal, spansPhone]);
-    const contentMaxWidth = Math.max(0, computed.maxWidth - horizontalGutter * 2);
+    }, [containerStyle, edgeInsets.horizontal, spansPhone]);
+    const horizontalGutterFor = React.useCallback((placement: PopoverLayoutProps['placement']) =>
+        placement === 'top' || placement === 'bottom' ? verticalPlacementGutter : 0, [verticalPlacementGutter]);
+    const horizontalGutter = horizontalGutterFor(computed.placement);
+    const bodyArgsForLayout = React.useCallback((layout: PopoverLayoutProps): PopoverBodyArgs => {
+        const gutter = horizontalGutterFor(layout.placement);
+        return {
+            renderProps: { ...layout, maxWidth: Math.max(0, layout.maxWidth - gutter * 2), requestClose,
+                ...(phone ? { pushesSubmenus: true } : {}) },
+            isolation: shouldPortalWeb ? 'portal' : 'none',
+        };
+    }, [horizontalGutterFor, requestClose, phone, shouldPortalWeb]);
+    const publishBodyArgsRef = React.useRef<((args: PopoverBodyArgs) => void) | null>(null);
+    const publishPlacedBody = useEventCallback((layout: PopoverLayoutProps) => {
+        publishBodyArgsRef.current?.(bodyArgsForLayout(layout));
+    });
     // A side popover's box carries the vertical edge padding as a transparent gutter (`paddingStyle`): a submenu
     // (start-aligned) puts its surface, not that gutter, on its row's top edge.
     const sideVerticalGutter = React.useMemo(() => {
@@ -1346,10 +1360,11 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
             }
 
             if (!anchorRect && resolvedAnchorMode === 'view') {
-                anchorRect = await measureInWindow(anchorNode);
+                anchorRect = Platform.OS === 'web' ? measureDomRectInWindow(anchorNode) : null;
+                anchorRect ??= await measureInWindow(anchorNode);
             }
 
-            const boundaryRectRaw = await (async () => {
+            const measureNativePortalBoundary = async () => {
                 // IMPORTANT: Keep anchor + boundary in the same coordinate space.
                 // If we position using portal-root-relative anchor coords (measureLayout), then using
                 // a window-relative boundary (measureInWindow) can clamp the menu off-screen.
@@ -1391,8 +1406,13 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                     }
                 }
 
-                return boundaryNode ? measureInWindow(boundaryNode) : Promise.resolve(null);
-            })();
+                return boundaryNode ? measureInWindow(boundaryNode) : null;
+            };
+            const boundaryRectRaw = portalRootNode
+                ? await measureNativePortalBoundary()
+                : boundaryNode
+                    ? ((Platform.OS === 'web' ? measureDomRectInWindow(boundaryNode) : null) ?? await measureInWindow(boundaryNode))
+                    : null;
 
             if (!isMountedRef.current) return false;
             if (!anchorRect) return false;
@@ -1585,6 +1605,9 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
                 maxHeight: nextMaxHeight,
                 maxWidth: nextMaxWidth,
             };
+            // The retained portal must commit these bounds with the shell so the layout effect measures
+            // the right content on the first pass.
+            if (shouldPortalWeb) publishPlacedBody(nextComputed);
             setComputed((prev) => arePopoverRenderPropsEqual(prev, nextComputed) ? prev : nextComputed);
             setAnchorRectState((prev) => areWindowRectsEqual(prev, anchorRect) ? prev : anchorRect);
             setBoundaryRectState((prev) => areWindowRectsEqual(prev, effectiveBoundaryRect) ? prev : effectiveBoundaryRect);
@@ -1640,7 +1663,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         } else {
             scheduleFrame(() => { void measureWithRetries(0); });
         }
-    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, closeForHiddenAnchor, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, spansPhone, safeAreaTop, props.placementMinSpace, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
+    }, [anchorAlignVerticalOnPortal, anchorRef, anchorRectFromProp, bottomChromeClearance, boundaryRef, closeForHiddenAnchor, edgeInsets.horizontal, edgeInsets.top, edgeInsets.bottom, gap, keyboardBottomInsetProp, maxHeightCap, maxWidthCap, open, preferredRoom, placement, props.clearanceRef, props.horizontalBoundaryRef, props.fit, props.flip, spansPhone, safeAreaTop, props.placementMinSpace, publishPlacedBody, resolvedAnchorMode, shouldPortalNative, shouldPortalWeb, topBottomLayoutOnPortal, sizesToAnchorExplicitly, windowHeight, windowWidth, portalTarget]);
 
     React.useLayoutEffect(() => {
         if (!open) return;
@@ -2316,14 +2339,15 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
     // The popover is a floating layer opened over its anchor's surface, never in that surface's flow.
     // On a phone the popover spans the screen, so a submenu opened inside it pushes in place (`AnchoredPhonePushHost`).
     const renderedChildren = React.useMemo(() => {
-        const renderProps = { ...computed, maxWidth: contentMaxWidth, requestClose, ...(phone ? { pushesSubmenus: true } : {}) };
-        const body = renderBody({ renderProps, isolation: shouldPortalWeb ? 'portal' : 'none' });
+        const args = bodyArgsForLayout(computed);
+        const { renderProps } = args;
+        const body = renderBody(args, shouldPortalWeb ? publishBodyArgsRef : undefined);
         return <GlassOpenedLayer>
             <FloatingOverlayPhonePanelContext.Provider value={spansPhone}>
                 {phone ? <AnchoredPhonePushHost renderProps={renderProps}>{body}</AnchoredPhonePushHost> : body}
             </FloatingOverlayPhonePanelContext.Provider>
         </GlassOpenedLayer>;
-    }, [renderBody, computed, contentMaxWidth, phone, spansPhone, requestClose, shouldPortalWeb]);
+    }, [renderBody, computed, bodyArgsForLayout, phone, spansPhone, shouldPortalWeb]);
     const content = (
         <EscapeLayerProvider layer={escapeLayer}>
             <PopoverBackdrop
