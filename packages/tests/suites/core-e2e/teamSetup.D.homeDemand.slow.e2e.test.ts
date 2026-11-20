@@ -133,7 +133,8 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
   if (!beforeDismiss.ok) throw new Error(`Home layout unavailable (${beforeDismiss.errorCode})`);
   const beforeHidden = HomeHubLayoutResultSchema.parse(beforeDismiss.result).hiddenSetupStepIds;
   await screen.pressByTestIdAsync(`${offerTestId(latest.id)}.dismiss`);
-  await vi.waitFor(() => expect(screen.findByTestId(offerTestId(latest.id))).toBeNull());
+  await waitFor(() => screen.findByTestId(offerTestId(latest.id)) === null,
+    { context: 'Home setup tile dismissal persisted through PostgreSQL' });
   for (const team of teams) expect(screen.findByTestId(offerTestId(team.id))).toBeNull();
   const hidden = await ui.execute('home.hub.layout.get', {}, context);
   expect(hidden.ok).toBe(true);
