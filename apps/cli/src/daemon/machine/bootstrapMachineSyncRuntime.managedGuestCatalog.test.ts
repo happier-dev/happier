@@ -17,8 +17,13 @@ import { createApiMachineTransportFixture } from '@/testkit/apiMachineTransport'
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from './bootstrapMachineSyncRuntime';
 
-it('uses the Home-enrolled Lima controller for the Connected Account launch catalog', async () => {
-    const machineId = 'lima-guest';
+it.each([
+    { label: 'plain Lima process enrollment', opaque: false, nativeProcess: false, sameCustodian: true, usesController: true },
+    { label: 'opaque Coder native process enrollment', opaque: true, nativeProcess: true, sameCustodian: true, usesController: true },
+    { label: 'opaque enrollment without process placement', opaque: true, nativeProcess: false, sameCustodian: true, usesController: false },
+    { label: 'opaque native process enrollment with a foreign custodian', opaque: true, nativeProcess: true, sameCustodian: false, usesController: false },
+])('resolves the Home-enrolled Connected Account catalog for $label', async ({ opaque, nativeProcess, sameCustodian, usesController }) => {
+    const machineId = 'guest';
     const controllerMachineId = 'controller';
     const homeId = 'home';
     const accountId = 'owner';
@@ -28,14 +33,19 @@ it('uses the Home-enrolled Lima controller for the Connected Account launch cata
     } };
     const provider = { pluginId: 'happier.machine.lima', localId: 'lima' };
     const managed = ManagedMachineV1Schema.parse({
-        id: 'managed-lima', homeId, custodianAccountId: accountId, enrollmentAccountId: accountId,
+        id: 'managed-guest', homeId, custodianAccountId: sameCustodian ? accountId : 'other-account', enrollmentAccountId: accountId,
         enrolledMachineId: machineId, controller: { machineId: controllerMachineId, installationId: 'controller-installation' },
-        enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
-        launch: { provider, name: 'Lima', schemaVersion: 1, choices: {} },
-        resource: { contributionRef: provider, schemaVersion: 1, value: {} },
+        ...(opaque ? { preset: { id: 'coder-preset', revision: 0, contentEncryptionMode: 'e2ee' } } : {
+            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+            launch: { provider, name: 'Lima', schemaVersion: 1, choices: {} },
+            resource: { contributionRef: provider, schemaVersion: 1, value: {} },
+        }),
         allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now',
         intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     });
+    const read = opaque ? { machine: managed, presetContent: {
+        content: { t: 'encrypted', c: Buffer.alloc(64).toString('base64') }, recipientEnvelope: null,
+    } } : managed;
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
         controller: pluginReloadController, coldStart: true,
         plugins: [{
@@ -84,15 +94,17 @@ it('uses the Home-enrolled Lima controller for the Connected Account launch cata
     app.post<{ Body: (typeof managedLookups)[number] }>(managedMachineActionEndpointPathV1('machines.managed.list'), async request => {
         expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
         managedLookups.push(request.body);
-        return { machines: request.body.enrolledMachineId === machineId ? [managed] : [] };
+        return { machines: request.body.enrolledMachineId === machineId ? [read] : [] };
     });
     const restoreHttp = installAxiosFastifyAdapter({ app, origin });
     const rpc = vi.spyOn(machineRpc, 'callExactMachineRpc');
     try {
         const controller = await boot(controllerMachineId, controllerObserve);
         runtimes.push(controller);
+        vi.stubEnv('HAPPIER_MANAGED_GUEST_PROCESS', nativeProcess ? '1' : undefined);
         const guest = await boot(machineId, guestObserve);
         runtimes.push(guest);
+        vi.unstubAllEnvs();
         const controllerServices = controller.providerOperationsProducer!.machineServices;
         const guestServices = guest.providerOperationsProducer!.machineServices;
         rpc.mockImplementation(async request => {
@@ -103,6 +115,13 @@ it('uses the Home-enrolled Lima controller for the Connected Account launch cata
             loadedAtMs: Date.now(), settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
         const request = { machineId, agentTargetKey: 'agent:happier.agent.codex/codex', connectedAccountTarget: target, sourceCatalog: true };
         expect(managedLookups).toEqual([]);
+        if (!usesController) {
+            await expect(guestServices.projectModels(request)).resolves.toMatchObject({
+                status: 'error', error: { code: 'provider_catalog_unavailable' },
+            });
+            expect(rpc).not.toHaveBeenCalled();
+            return;
+        }
         await expect(guestServices.projectModels(request)).resolves.toMatchObject({
             status: 'success', groups: expect.arrayContaining([expect.objectContaining({
                 catalogObserved: true, rows: expect.arrayContaining([expect.objectContaining({
@@ -113,6 +132,7 @@ it('uses the Home-enrolled Lima controller for the Connected Account launch cata
         expect(guestObserve).not.toHaveBeenCalled();
         expect(managedLookups).toEqual([{ homeId, enrolledMachineId: machineId }, { homeId, enrolledMachineId: controllerMachineId }]);
     } finally {
+        vi.unstubAllEnvs();
         await Promise.all(runtimes.map(runtime => retireMachineSyncRuntimeAttempt(runtime)));
         resetActiveAccountSettingsSnapshotForTests();
         rpc.mockRestore();

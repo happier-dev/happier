@@ -16,6 +16,13 @@ import { normalizeRemoteReleaseArch, normalizeRemoteReleaseOs } from '../../syst
 type NativeCarrier = Extract<ManagedBootstrapCarrierV1, { kind: 'native' }>;
 type NativeGuestHome = NonNullable<NativeCarrier['guestHome']>;
 
+export const MANAGED_GUEST_PROCESS_ENV = 'HAPPIER_MANAGED_GUEST_PROCESS';
+
+/** Pass the applied launch placement to the daemon, including across detached startup. */
+export function buildManagedNativeGuestDaemonCommand(input: Parameters<typeof buildRemoteHappierInvocationCommand>[0]): string {
+    return `exec env ${MANAGED_GUEST_PROCESS_ENV}=1 ${buildRemoteHappierInvocationCommand(input)}`;
+}
+
 /** Enrollment and retained Start use the same namespace. */
 export function buildManagedNativeGuestCommand(command: string, guestHome?: Pick<NativeGuestHome, 'homeDir' | 'happyHomeDir'>): string {
     return guestHome
@@ -29,12 +36,12 @@ export async function startManagedNativeGuestDaemon(input: Readonly<{
     guestHome?: NativeGuestHome; signal?: AbortSignal; timeoutMs?: number;
 }>): Promise<void> {
     input.signal?.throwIfAborted();
-    const detachedCommand = `exec env ${buildRemoteHappierInvocationCommand({ binaryPath: input.binaryPath,
-        args: ['daemon', 'start', '--json'], channel: input.channel })}`;
+    const detachedCommand = buildManagedNativeGuestDaemonCommand({ binaryPath: input.binaryPath,
+        args: ['daemon', 'start', '--json'], channel: input.channel });
     const configured = await input.native.exec({
         command: buildManagedNativeGuestCommand(input.guestHome
-            ? `exec env ${buildRemoteHappierInvocationCommand({ binaryPath: input.binaryPath,
-                args: ['daemon', 'start-sync'], channel: input.channel })}` : detachedCommand, input.guestHome),
+            ? buildManagedNativeGuestDaemonCommand({ binaryPath: input.binaryPath,
+                args: ['daemon', 'start-sync'], channel: input.channel }) : detachedCommand, input.guestHome),
         signal: input.signal, timeoutMs: input.timeoutMs,
         ...(input.guestHome ? { processConfig: {
             environment: { HOME: input.guestHome.homeDir, HAPPIER_HOME_DIR: input.guestHome.happyHomeDir },

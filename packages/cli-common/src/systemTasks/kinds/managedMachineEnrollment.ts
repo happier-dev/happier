@@ -30,7 +30,7 @@ import { readLocalServerProfileIdentity } from '../executors/serverProfileScope.
 import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExecutorFromTextRunner.js';
 import type { InteractiveSystemTaskPromptRequest } from '../interactiveTaskKinds.js';
 import { readManagedSshTrustedHostKey } from './sshHostTrustResolution.js';
-import { buildManagedNativeGuestCommand, probeManagedNativeGuestPlatform, resolveManagedNativeGuestStartup, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
+import { buildManagedNativeGuestCommand, buildManagedNativeGuestDaemonCommand, probeManagedNativeGuestPlatform, resolveManagedNativeGuestStartup, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 import { GuestServiceFailureFactsV1Schema, readGuestCliFailureOutput } from '@happier-dev/protocol/ssh/commandFailure';
@@ -309,8 +309,9 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     const runCommand = async (step: 'install' | 'restart', process: boolean) => {
       const args = process ? ['daemon', 'restart', '--json']
         : ['daemon', 'service', step, ...(dedicatedIdentity ? ['--mode=user'] : []), '--json'];
+      const invocation = { binaryPath, args, channel: configuration.channel };
       const updated = await payloadExec({
-        command: buildRemoteHappierInvocationCommand({ binaryPath, args, channel: configuration.channel }),
+        command: process && nativeGuestHome ? buildManagedNativeGuestDaemonCommand(invocation) : buildRemoteHappierInvocationCommand(invocation),
         signal: input.signal,
         timeoutMs: resolveLocalHappierCommandTimeoutMs(args),
       });

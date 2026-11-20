@@ -3309,6 +3309,12 @@ endpoint, policy, and usage controls remain current through their existing owner
 
 ## Model catalogs, visibility, and stale references
 
+In 0.3 development, a managed native guest process can use its controller's
+Connected Account catalog. Machines supplies the process placement at daemon
+launch. The catalog then uses the exact Home enrollment to select a controller
+custodied by the same Account. This also works for an opaque Machine preset
+whose private enrollment identity is sealed.
+
 In 0.3 development, `providers.models.list` reads current model metadata without
 refreshing a managed source. The existing `providers.models.refresh` Action also
 accepts an exact connection operand to refresh its declared sources. That operand

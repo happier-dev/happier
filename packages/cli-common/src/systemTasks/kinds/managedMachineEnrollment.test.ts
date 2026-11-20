@@ -216,11 +216,18 @@ describe('portable managed enrollment', () => {
     expect(result).toEqual({ machineId: 'same-machine' });
     expect(rowReads).toBe(1);
     expect(installed).toBe(replacePayload ? 1 : 0);
-    if (replacePayload) return;
-    expect(commands).toHaveLength(1);
-    expect(commands[0]?.signal).toBe(controller.signal);
-    expect(commands[0]?.processConfig).toMatchObject({ environment: { HOME: guestHome.homeDir, HAPPIER_HOME_DIR: guestHome.happyHomeDir },
-      detachedDaemonStartArgv: ['sh', '-c', expect.stringContaining("'daemon' 'start' '--json'")] });
-    expect(commands[0]?.command).toContain("'daemon' 'start-sync'");
+    const configured = commands.find(request => request.processConfig);
+    expect(configured?.signal).toBe(controller.signal);
+    expect(configured?.processConfig?.environment).toMatchObject({ HOME: guestHome.homeDir, HAPPIER_HOME_DIR: guestHome.happyHomeDir });
+    expect(configured?.processConfig?.detachedDaemonStartArgv[2]).toContain("'daemon' 'start' '--json'");
+    expect(configured?.processConfig?.detachedDaemonStartArgv[2]).toContain('HAPPIER_MANAGED_GUEST_PROCESS=1');
+    expect(configured?.command).toContain("'daemon' 'start-sync'");
+    expect(configured?.command).toContain('HAPPIER_MANAGED_GUEST_PROCESS=1');
+    if (replacePayload) {
+      const restart = commands.find(request => request.command.includes("'daemon' 'restart'"));
+      expect(restart?.command).toContain('HAPPIER_MANAGED_GUEST_PROCESS=1');
+    } else {
+      expect(commands).toHaveLength(1);
+    }
   });
 });
