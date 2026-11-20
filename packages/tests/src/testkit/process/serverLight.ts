@@ -288,6 +288,8 @@ export type StartedServer = {
   dataDir: string;
   /** The connection selected by this fixture, including disposable database isolation. */
   databaseUrl?: string;
+  /** Source guest payload prepared for this Home and available on the fixture controller. */
+  guestCliPayloadRoot?: string;
   proc: SpawnedProcess;
   stop: () => Promise<void>;
 };
@@ -933,11 +935,13 @@ export async function startServerLight(params: {
       removeTailListeners();
       if (exitHandler) proc.child.off('exit', exitHandler);
 
+      const guestCliPayloadRoot = preparedSourceLaunch?.env?.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT;
       return {
         baseUrl,
         port,
         dataDir,
         ...(env.DATABASE_URL ? { databaseUrl: env.DATABASE_URL } : {}),
+        ...(guestCliPayloadRoot ? { guestCliPayloadRoot } : {}),
         proc,
         stop: async () => {
           await proc.stop();
