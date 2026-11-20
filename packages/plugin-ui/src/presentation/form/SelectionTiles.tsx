@@ -80,6 +80,12 @@ export type HappierSelectionTileOption<T extends string, I extends string = stri
    * recommended target); the other options keep the grid beneath it. Sheet cells ignore it.
    */
   span?: 'row';
+  /**
+   * A tile that does something rather than being chosen (Deploy → Where's "More platforms" opens Plugins): a button
+   * among the choices, with no selection mark and a dashed edge. It is never selected, and the group's arrow keys and
+   * Space pass it by; Enter and a press run it.
+   */
+  action?: () => void;
 }>;
 
 /** The resolved colours of a tile group. */
@@ -364,6 +370,8 @@ function handleToggle<T extends string, I extends string>(props: HappierChoiceSe
   props.onChange(id);
 }
 
+const DASHED_EDGE = { borderStyle: 'dashed' } as const;
+
 function pressOpacity(disabled: boolean, pressed: boolean): number {
   return disabled ? 0.5 : (pressed ? HAPPIER_PRESS_FEEDBACK_V1.opacitySubtle : 1);
 }
@@ -383,17 +391,19 @@ function useChoiceTilesKeyboard<T extends string, I extends string>(props: Happi
   const localization = useOptionalHappierUiLocalization();
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const single = props.selectionMode !== 'multiple';
+  // An action tile is a button of its own, never one of the choices the arrows move between.
+  const choices = props.options.map((option) => (option.action === undefined ? option : { ...option, disabled: true }));
   const selectedEnabledIndex = single
-    ? props.options.findIndex((option) => option.disabled !== true && option.id === props.value)
+    ? choices.findIndex((option) => option.disabled !== true && option.id === props.value)
     : -1;
   const focusableIndex = selectedEnabledIndex >= 0
     ? selectedEnabledIndex
-    : props.options.findIndex((option) => option.disabled !== true);
+    : choices.findIndex((option) => option.disabled !== true);
 
   return (index: number): Record<string, unknown> | null => {
     if (Platform.OS !== 'web') return null;
     const option = props.options[index];
-    if (!option) return null;
+    if (!option || option.action !== undefined) return null;
     return {
       ref: (node: TileFocusHandle) => {
         if (node) {
@@ -419,7 +429,7 @@ function useChoiceTilesKeyboard<T extends string, I extends string>(props: Happi
         const rovingKey = key === 'ArrowDown' ? 'ArrowRight' : key === 'ArrowUp' ? 'ArrowLeft' : key;
         if (rovingKey !== 'ArrowRight' && rovingKey !== 'ArrowLeft' && rovingKey !== 'Home' && rovingKey !== 'End') return;
         const nextIndex = resolveHappierTabKeySelection({
-          tabs: props.options,
+          tabs: choices,
           currentIndex: index,
           key: rovingKey,
           rtl: vertical ? false : rtl,
@@ -508,7 +518,8 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
       : props.previewAspectRatio ? { aspectRatio: props.previewAspectRatio, minHeight: 0 } : null;
   const showLabels = props.labels !== 'hidden';
   const renderTile = (option: HappierSelectionTileOption<T, I>, index: number, onHeight?: (key: string, height: number) => void): ReactElement => {
-        const selected = isSelected(props, option.id);
+        const action = option.action;
+        const selected = action === undefined && isSelected(props, option.id);
         const disabled = option.disabled === true;
         const label = props.renderText({ role: 'visualLabel', text: option.title, selected, compact: false, numberOfLines: props.labelLines ?? 2 });
         const tileFrame = [styles.visualTile, fill ? styles.visualTileFill : null, columnBasis];
@@ -519,18 +530,20 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
             {...tileKeyboardProps(index)}
             {...(onHeight === undefined || accessory ? {} : { onLayout: (event: { nativeEvent: { layout: { height: number } } }) => onHeight(option.id, event.nativeEvent.layout.height) })}
             testID={option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined)}
-            accessibilityRole={selectionAccessibilityRole}
+            accessibilityRole={action === undefined ? selectionAccessibilityRole : 'button'}
             accessibilityLabel={option.title}
-            accessibilityState={props.selectionMode === 'multiple'
+            accessibilityState={action !== undefined ? { disabled }
+              : props.selectionMode === 'multiple'
               ? { checked: selected, disabled }
               : { checked: selected, selected, disabled }}
             // React Native Web drops `accessibilityState`; the ARIA alias carries the
-            // radio/checkbox state to the browser.
-            aria-checked={selected}
+            // radio/checkbox state to the browser (an action tile has none).
+            aria-checked={action === undefined ? selected : undefined}
             disabled={disabled}
             onPress={() => {
               if (disabled) return;
-              handleToggle(props, option.id);
+              if (action !== undefined) action();
+              else handleToggle(props, option.id);
             }}
             style={({ pressed }) => [
               ...(accessory ? [styles.visualTileBody] : tileFrame),
@@ -539,7 +552,7 @@ function VisualSelectionTiles<T extends string, I extends string>(props: Happier
           >
             {/* The ring sits on an outer frame with a gap so it reads as a selection, not a border. */}
             <View style={[styles.visualRing, selected ? styles.visualRingSelected : null]}>
-              <View style={[styles.visualPreview, fill && !measuredPreview ? styles.visualPreviewFill : null, previewAspect, option.previewEdge === 'dashed' ? styles.visualPreviewDashed : null]} pointerEvents="none">
+              <View style={[styles.visualPreview, fill && !measuredPreview ? styles.visualPreviewFill : null, previewAspect, option.previewEdge === 'dashed' || option.action !== undefined ? styles.visualPreviewDashed : null]} pointerEvents="none">
                 {option.preview ?? null}
               </View>
             </View>
@@ -1077,7 +1090,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
   const anySubtitle = props.options.some((option) => typeof option.subtitle === 'string' && option.subtitle.trim().length > 0);
 
   const renderTile = (option: HappierSelectionTileOption<T, I>, index: number, onHeight?: (key: string, height: number) => void): ReactElement => {
-        const selected = isSelected(props, option.id);
+        const action = option.action;
+        const selected = action === undefined && isSelected(props, option.id);
         const disabled = option.disabled === true;
         const glyph: HappierSelectionTileGlyph<I> | null = option.icon
           ? { kind: 'icon', name: option.icon }
@@ -1103,7 +1117,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
         // A choice's mark keeps the tile's top end beside a trailing footer (option F): the footer stands under it, so
         // an operation ("…") never pushes the check off the corner.
         const markBeside = trailing && props.selectionMark !== 'outline';
-        const selectionMark = sheet && !(selected && props.selectionMode === 'multiple')
+        const selectionMark = action !== undefined ? null : sheet && !(selected && props.selectionMode === 'multiple')
           ? <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />
           : props.selectionMark === 'outline' ? null
           // A single choice shows every card's mark: an empty ring that becomes the filled check (option F),
@@ -1136,6 +1150,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               compact ? styles.tileFrameCompact : null,
               ownWidthStyle,
               { borderColor },
+              // An action among the choices draws a dashed edge, the add slot's (lab jdF-where).
+              action !== undefined ? DASHED_EDGE : null,
               trailing ? styles.tileTrailing : null,
               markBeside ? styles.tileMarkBeside : null,
             ]}
@@ -1147,19 +1163,21 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               // Sheet cells meet edge to edge; separate tiles reach half the gap between them.
               hitReach={sheet ? 0 : gap / 2}
               testID={tileTestID}
-              accessibilityRole={selectionAccessibilityRole}
+              accessibilityRole={action === undefined ? selectionAccessibilityRole : 'button'}
               // The badge is visible text that qualifies the choice ("Recommended"), so it is part of the name too.
               accessibilityLabel={[option.title, option.badge ?? null, hasSubtitle ? option.subtitle : null, option.status ?? null, option.footerLabel ?? null].filter(Boolean).join(', ')}
-              accessibilityState={props.selectionMode === 'multiple'
+              accessibilityState={action !== undefined ? { disabled }
+                : props.selectionMode === 'multiple'
                 ? { checked: selected, disabled }
                 : { checked: selected, selected, disabled }}
-              aria-checked={selected}
+              aria-checked={action === undefined ? selected : undefined}
               disabled={disabled}
               onPress={() => {
                 if (disabled) {
                   return;
                 }
-                handleToggle(props, option.id);
+                if (action !== undefined) action();
+                else handleToggle(props, option.id);
               }}
               style={({ pressed }) => [
                 styles.tilePressable,
@@ -1235,7 +1253,7 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 {/* The mark is part of the choice: pressing it chooses, as the rest of the card does; the card's own
                     press target carries its name, state and keyboard. */}
                 <Pressable {...hover} accessible={false} focusable={false} tabIndex={-1} aria-hidden disabled={disabled}
-                  onPress={() => { if (!disabled) handleToggle(props, option.id); }} style={{ opacity: pressOpacity(disabled, false) }}>
+                  onPress={() => { if (disabled) return; if (action !== undefined) action(); else handleToggle(props, option.id); }} style={{ opacity: pressOpacity(disabled, false) }}>
                   {selectionMark}
                 </Pressable>
                 {footer}

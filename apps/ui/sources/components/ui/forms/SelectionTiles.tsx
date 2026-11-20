@@ -65,6 +65,8 @@ export interface SelectionTile<T extends string> {
     testID?: string;
     /** Card tiles: take the whole row (the choice a group leads with); the others keep the grid beneath it. */
     span?: 'row';
+    /** A tile that does something rather than being chosen: a button among the choices, never selected (shared owner). */
+    action?: () => void;
 }
 
 export type SelectionTileFooterRenderer<T extends string> = (params: Readonly<{

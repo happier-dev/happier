@@ -419,6 +419,12 @@ export const DeploymentEnvironmentDraft = React.memo(
     };
 
     const platformStatus = platforms.state.status;
+    // Turning on a plugin happens in Plugins; a hosted flow steps aside first. A tile that goes there is an action
+    // among the choices, never one of them (DESIGN-ACCEPT-2 M1, lab jdF-where).
+    const openPlugins = () => {
+        if (stepped) props.onDiscard();
+        router.push(PLUGINS_APP_ROUTE);
+    };
     const targetTiles: Array<SelectionTile<string>> = [
       { id: OWN_SERVER_TARGET, icon: 'hard-drives', title: t('projects.deployments.platformLink.onMachine'),
         subtitle: t('projects.deployments.whereDescription') },
@@ -434,7 +440,7 @@ export const DeploymentEnvironmentDraft = React.memo(
         : platformStatus === 'failed'
           ? [{ id: RETRY_TILE, icon: 'cube', title: t('projects.deployments.platformLink.failed'), subtitle: t('common.retry') } satisfies SelectionTile<string>]
           : platformTargets.length === 0
-            ? [{ id: PLUGINS_TILE, icon: 'cube', title: t('projects.deployments.platformLink.usePlatform'),
+            ? [{ id: PLUGINS_TILE, icon: 'cube', action: openPlugins, title: t('projects.deployments.platformLink.usePlatform'),
                 subtitle: t('projects.deployments.platformLink.emptyBody') } satisfies SelectionTile<string>]
             : []),
     ];
@@ -454,18 +460,12 @@ export const DeploymentEnvironmentDraft = React.memo(
           subtitle: [recommendationReason, tile.subtitle].filter(Boolean).join('\n') } : {}),
         ...(tile.id === leadId ? { span: 'row' as const } : {}),
       })),
-      { id: PLUGINS_TILE, icon: 'plus', title: t('newApp.deploy.morePlatforms'), subtitle: t('newApp.deploy.morePlatformsBody') },
+      { id: PLUGINS_TILE, icon: 'plus', action: openPlugins, title: t('newApp.deploy.morePlatforms'), subtitle: t('newApp.deploy.morePlatformsBody') },
     ] : targetTiles;
     // A platform the definition can't use leaves the grid for one muted list with the one shared reason (whereM).
     const unusablePlatforms = stepped ? platformTargets.filter(target => !recommendation.offeredTargetIds.includes(target.key)) : [];
     const chooseTarget = (next: string | null) => {
       if (next === null || next === LOADING_TILE) return;
-      if (next === PLUGINS_TILE) {
-        // Turning on a plugin happens in Plugins; a hosted flow steps aside first.
-        if (stepped) props.onDiscard();
-        router.push(PLUGINS_APP_ROUTE);
-        return;
-      }
       if (next === RETRY_TILE) { platforms.retry(); return; }
       setTargetKey(next);
     };

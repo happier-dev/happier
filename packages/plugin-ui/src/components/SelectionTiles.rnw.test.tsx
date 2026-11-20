@@ -239,6 +239,32 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  // DESIGN-ACCEPT-2 M1: Deploy → Where's "More platforms" opens Plugins, yet drew as a radio tile with an empty circle. A
+  // tile that does something is a button among the choices: no selection mark, a dashed edge, never chosen, and the
+  // radio group's arrows pass it by.
+  it('draws an action tile among the choices as a button the selection and arrow keys never reach', async () => {
+    const onChange = vi.fn();
+    const openPlugins = vi.fn();
+    const mount = mountTiles(<HappierSelectionTiles variant="card" accessibilityLabel="Where" value="b" onChange={onChange}
+      colors={TILE_COLORS} testIdPrefix="where" renderText={({ text }) => <span>{text}</span>}
+      renderGlyph={({ glyph }) => <span data-testid={`glyph:${glyph.kind}`} />}
+      options={[{ id: 'a', title: 'On a Machine' }, { id: 'b', title: 'Cloudflare Pages' },
+        { id: 'more', title: 'More platforms', action: openPlugins }]} />);
+    try {
+      const more = mount.container.querySelector<HTMLElement>('[data-testid="where:more"]')!;
+      expect(more.getAttribute('role')).toBe('button');
+      expect(more.hasAttribute('aria-checked')).toBe(false);
+      // The radio group holds only the choices.
+      expect(radios(mount.container).map((radio) => radio.textContent)).toEqual(['On a Machine', 'Cloudflare Pages']);
+      await act(async () => { more.click(); });
+      expect(openPlugins).toHaveBeenCalledTimes(1);
+      expect(onChange).not.toHaveBeenCalled();
+      // From the last choice the arrow wraps to the first, past the action.
+      await pressKey(radios(mount.container)[1]!, 'ArrowRight');
+      expect(onChange).toHaveBeenLastCalledWith('a');
+    } finally { mount.unmount(); }
+  });
+
   it('marks a picture card by its outline alone and says its status where the check stood', () => {
     // Theme slots (lab A1, finding 4): the ring alone marks the chosen slot; "Showing now" is a quiet fact of the card.
     const mount = mountTiles(<HappierSelectionTiles variant="card" selectionMark="outline" density="compact" accessibilityLabel="Modes"
