@@ -755,9 +755,14 @@ describe('Artifacts browser recovery', () => {
     });
 
     it('shows wide list headings for the actual anatomy and retains row operations when narrowed', async () => {
+        const served = await serveActionHomes({
+            homes: [{ key: 'owner', serverUrl: 'https://artifact-list-view.test', accountId: 'owner' }],
+            route: () => undefined,
+        });
+        disposeHome = served.dispose;
         const screen = await renderRows([artifactFixture('document')]);
         await screen.pressByTestIdAsync('artifacts:view:list');
-        expect(screen.getTextContent()).toContain('artifacts.browser.kindLabel');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('artifacts.browser.kindLabel'));
         expect(screen.getTextContent()).toContain('artifacts.browser.sourceLabel');
         await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:collection:stage'), 'onLayout', {
             nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 800 } },
@@ -790,7 +795,7 @@ describe('Artifacts browser recovery', () => {
             vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
             vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
             const screen = await renderRows([artifactFixture('document')]);
-            expect(screen.findAll(node => node.props.testIDPrefix === 'artifacts:view')[0]?.props.activeTabId).toBe(presentation);
+            expect(screen.findHostByTestId(`artifacts:view:${presentation}`)?.props.accessibilityState?.selected).toBe(true);
             await screen.unmount();
             vi.restoreAllMocks();
         }
@@ -816,12 +821,12 @@ describe('Artifacts browser recovery', () => {
         const screen = await renderRows([artifactFixture('document')]);
         const countLine = screen.findByTestId('artifacts:header:countLine');
         expect(countLine).not.toBeNull();
-        expect(countLine?.findAll(node => node.props.testIDPrefix === 'artifacts:view')).toHaveLength(1);
+        expect(countLine?.findAll(node => typeof node.type === 'string' && node.props.testID === 'artifacts:view:list')).toHaveLength(1);
         await screen.pressByTestIdAsync('artifacts:search:toggle');
         await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('artifacts:search'), 'onChangeText', 'zzz'); });
         expect(screen.findByTestId('artifacts:noMatch')).not.toBeNull();
         // Nothing to switch between: no switch, so no row of its own above the empty line.
-        expect(screen.findAll(node => node.props.testIDPrefix === 'artifacts:view')).toHaveLength(0);
+        expect(screen.findHostByTestId('artifacts:view:list')).toBeNull();
     });
 
     it('keeps the kind and order chips on a phone, as on a desktop, and no second copy of them in the title (owner O5)', async () => {
@@ -864,13 +869,18 @@ describe('Artifacts browser recovery', () => {
     });
 
     it('draws the phone Folders toolbar as one compact row: kind · icon-only New folder · view (lab c-art Tp)', async () => {
+        const served = await serveActionHomes({
+            homes: [{ key: 'owner', serverUrl: 'https://artifact-folders-view.test', accountId: 'owner' }],
+            route: () => undefined,
+        });
+        disposeHome = served.dispose;
         const viewport = { width: 390, height: 844, scale: 1, fontScale: 1 };
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue(viewport);
         vi.spyOn(ReactNative.Dimensions, 'get').mockReturnValue(viewport);
         const screen = await renderRows([artifactFixture('document')]);
         await screen.pressByTestIdAsync('artifacts:view:folders');
         expect(screen.findByTestId('artifacts:kind')).not.toBeNull();
-        expect(screen.findByTestId('artifacts:sort')).toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('artifacts:sort')).toBeNull());
         const newFolder = screen.findByTestId('artifacts:folders:new');
         expect(newFolder).not.toBeNull();
         // The glyph alone, named for assistive technology; no visible label beside it.
