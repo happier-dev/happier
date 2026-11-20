@@ -1462,6 +1462,11 @@ observable even when the base quota fingerprint matches. The server keeps the
 envelope sealed. A newly retained point wakes the affected history and day
 summary readers.
 
+The qualified quota scheduler uses clock-only background rereads locally for
+pool evaluation. They produce no Home observation or day-summary write once the
+scheduler has published the same material. Explicit Refresh still publishes its
+acknowledgement, and changes in quota, status or reset boundaries still publish.
+
 The key-holding B reader derives page-consumed `pageFacts` before publishing to
 the Usage Resource. It retains every earlier-curve point/exclusion, ended-window
 result and witnessed reset, plus the latest reset witness. The Resource does not

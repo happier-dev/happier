@@ -3763,6 +3763,7 @@ export class ConnectedServiceQuotasCoordinator {
 
   private async persistQualifiedConnectedAccountQuota(input: Readonly<{
     signal?: AbortSignal;
+    backgroundObservation?: boolean;
     accountMode: 'e2ee' | 'plain';
     profile: QualifiedConnectedAccountProfileV4;
     snapshot: ProviderAccountUsageSnapshotV1;
@@ -3822,6 +3823,9 @@ export class ConnectedServiceQuotasCoordinator {
       minFreshnessMs: this.quotaPersistenceMinFreshnessMs,
     });
     if (!decision.persist) return decision.reason === 'unchanged_fresh';
+    // A quiet background reread refreshes switch evaluation locally. Old
+    // observation clocks alone do not change the published allowance.
+    if (input.backgroundObservation && decision.reason === 'freshness_refresh') return true;
     const write = {
       source: {
         ref: input.profile.ref,
@@ -4702,6 +4706,7 @@ export class ConnectedServiceQuotasCoordinator {
         if (observedProbeAt > input.now) nextProbeAt = observedProbeAt;
         const written = await this.persistQualifiedConnectedAccountQuota({
           signal: input.signal,
+          backgroundObservation: !pendingRefresh,
           accountMode: input.accountMode,
           profile,
           snapshot,

@@ -2720,16 +2720,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount++;' : ''}
           return {
             ${recoveryMode === 'discovery_no_facet' || recoveryMode === 'discovery_unavailable' ? "recoveryCredits: { availableCount: 99, credits: [] }, recoveryCreditDetails: { injected: { remainingCount: 99, appliesToProviderLimitIds: [] } }," : ''}
-            observedAtMs: ${recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : recoveryMode.startsWith('persistence_unchanged_') ? `${now - 70_000} + (quotaReadCount > 11 ? 1 : 0)` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : now},
+            observedAtMs: ${recoveryMode === 'usage_notice_requester' ? '++quotaReadCount === 1 ? 500000 : 600000' : recoveryMode.startsWith('persistence_unchanged_') ? `${now - 70_000} + (quotaReadCount - 1) * 60_000` : refreshReconcilesDebit ? `${now} + (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') === 'refresh' ? ${recoveryMode === 'manual_reconcile_refresh_expired' ? 1_500 : 500} : 0)` : now},
             ${accountMode === 'e2ee' ? `subscription: ${JSON.stringify(failedSubscription)},` : ''}
             limits: [{
               ${recoveryMode === 'quota_all_unavailable' ? "status: 'unavailable'," : ''}
               id: ${JSON.stringify(recoveryMode === 'quota_family' ? 'codex_spark:primary' : 'monthly')},
               ${recoveryMode === 'quota_family' ? "providerLimitId: 'codex_spark'," : ''}
-              used: ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount > 11 ? 30 : 25' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 40 : 70' : 'consumed ? 0 : 25'},
-              remaining: ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount > 11 ? 70 : 75' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 60 : 30' : 'consumed ? 100 : 75'},
+              used: ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount > 2 ? 30 : 25' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 40 : 70' : 'consumed ? 0 : 25'},
+              remaining: ${recoveryMode.startsWith('persistence_unchanged_') ? 'quotaReadCount > 2 ? 70 : 75' : recoveryMode === 'usage_notice_requester' ? 'quotaReadCount === 1 ? 60 : 30' : 'consumed ? 100 : 75'},
               resetsAtMs: ${recoveryMode === 'usage_notice_requester' ? '1000000, windowDurationMs: 1000000'
-                : ['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active'].includes(recoveryMode) ? now + 3_600_000 : now + 60_000}
+                : ['deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active'].includes(recoveryMode)
+                  || recoveryMode.startsWith('persistence_unchanged_') ? now + 3_600_000 : now + 60_000}
             }]
           };
         },`}
@@ -3458,14 +3459,14 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       }
       if (recoveryMode.startsWith('persistence_unchanged_')) {
         expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
-        // Connection/cursor recovery re-observes quotas without a user Refresh
-        // marker, which independently requires a server acknowledgement write.
-        for (let index = 0; index < 10; index++) {
-          coordinator.invalidateInventory({ resetQuotaSchedule: true });
-          await coordinator.tickOnce();
-        }
+        // A background reread advances only the observation clock. A user
+        // Refresh marker independently requires a server acknowledgement.
+        now += 60_000;
+        coordinator.invalidateInventory({ resetQuotaSchedule: true });
+        await coordinator.tickOnce();
         expect(writeProviderAccountUsage).toHaveBeenCalledTimes(1);
         // A genuinely new provider reading changes the meter once.
+        now += 60_000;
         coordinator.invalidateInventory({ resetQuotaSchedule: true });
         await coordinator.tickOnce();
         expect(writeProviderAccountUsage).toHaveBeenCalledTimes(2);
