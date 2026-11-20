@@ -1039,14 +1039,14 @@ async function mountShell(
             authorPlugin: { id: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, version: '0.0.0' },
             ...(options.subPath === undefined ? {} : { subPath: options.subPath }),
             ...(options.launchInput === undefined ? {} : { launchInput: options.launchInput }),
-            // The semantic host's RenderContext omits its activity snapshot;
-            // supply this genuine host boundary fact for mounted-action cases.
+            // The semantic host omits activity. This page is presented unless
+            // a test explicitly marks its surface hidden.
             surface: (context) => {
                 const entry = (options.resource ? resourceSurface : renderShellSurface)(
                     { ...context,
                         ...(options.deliveredLaunch === undefined ? {} : { launchInput: options.deliveredLaunch.current }),
                         ...(pageLaunch === undefined ? {} : { launch: pageLaunch }),
-                        activity: { active: options.activeSurface === true } });
+                        activity: { active: options.activeSurface ?? true } });
                 return options.accountData === true
                     ? React.cloneElement(entry as unknown as React.ReactElement<{ dataClient?: PluginUiDataClient }>,
                         { dataClient: harnessDataClient(harness) })
