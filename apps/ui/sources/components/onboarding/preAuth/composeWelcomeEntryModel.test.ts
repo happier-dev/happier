@@ -58,7 +58,7 @@ describe('composeWelcomeEntryModel', () => {
         });
 
         expect(model.actions.map((row) => row.action.kind)).toEqual([
-            'authenticate', 'scan_or_paste_home', 'authenticate', 'choose_home',
+            'authenticate', 'scan_or_paste_home',
         ]);
         expect(model.actions.filter((row) => row.emphasis === 'primary')).toHaveLength(1);
         expect(model.notice).toEqual({ kind: 'service_loading', serviceName: 'Happier', hasUsableHomeMethods: true });
@@ -169,6 +169,7 @@ describe('composeWelcomeEntryModel', () => {
             method('key_challenge', 'login', 'keyed'),
             method('email', 'login', 'keyless'),
             method('email', 'provision', 'keyless'),
+            method('github', 'login', 'keyless'),
         ];
         const navigation = { changeHome: true, selectService: false, scanOrPasteHome: true, createPersonalHome: false };
         const compose = (input: Partial<Parameters<typeof composeWelcomeEntryModel>[0]>) => composeWelcomeEntryModel({
@@ -189,14 +190,33 @@ describe('composeWelcomeEntryModel', () => {
             return [loginDoor ? `login:${name}` : name, row.emphasis];
         });
 
-        it('first time: First time here leads, Login is its outlined peer and carries the key, the rest stay quiet', () => {
-            expect(shape(compose({ userHistory: 'first_time' }))).toEqual([
+        it('offers only New here and Login on the first screen of a Home with one-tap account creation', () => {
+            const emailSignup = method('email', 'provision', 'keyless');
+            const input = {
+                userHistory: 'first_time',
+                homeMethods: [emailSignup, ...homeMethods.filter((row) => row.action.id !== 'provision' || row.method.id !== 'email')],
+                allowedNavigation: { ...navigation, selectService: true },
+            } as const;
+            const entry = compose(input);
+            expect(shape(entry)).toEqual([
                 ['new_here', 'primary'],
                 ['login:scan_or_paste_home', 'secondary'],
+            ]);
+            expect(entry.actions[0]?.action).toMatchObject({ request: { execution: { kind: 'generated_key' } } });
+
+            expect(shape(compose({ ...input, context: { kind: 'restore' } }))).toEqual([
                 ['email:login', 'tertiary'],
+                ['github:login', 'tertiary'],
                 ['email:provision', 'tertiary'],
                 ['choose_home', 'tertiary'],
+                ['choose_sign_in_service', 'tertiary'],
+                ['key_challenge:provision', 'tertiary'],
             ]);
+        });
+
+        it('leaves GitHub directly available when the Home has no one-tap provisioning method', () => {
+            const model = compose({ userHistory: 'first_time', homeMethods: [method('github', 'login', 'keyless')] });
+            expect(shape(model)[0]).toEqual(['github:login', 'primary']);
         });
 
         it('returning with email last time: Login leads with email, First time follows, email is not listed twice', () => {
@@ -205,6 +225,7 @@ describe('composeWelcomeEntryModel', () => {
                 ['login:email:login', 'primary'],
                 ['new_here', 'secondary'],
                 ['key_challenge:login', 'tertiary'],
+                ['github:login', 'tertiary'],
                 ['email:provision', 'tertiary'],
                 ['scan_or_paste_home', 'tertiary'],
                 ['choose_home', 'tertiary'],
@@ -225,6 +246,7 @@ describe('composeWelcomeEntryModel', () => {
                 ['login:scan_or_paste_home', 'primary'],
                 ['new_here', 'secondary'],
                 ['email:login', 'tertiary'],
+                ['github:login', 'tertiary'],
                 ['email:provision', 'tertiary'],
                 ['choose_home', 'tertiary'],
             ];
@@ -232,7 +254,7 @@ describe('composeWelcomeEntryModel', () => {
         });
 
         it('returning with a method this Home no longer offers: Login falls back to the server order, not marked as last time', () => {
-            const model = compose({ lastSignInMethodId: 'github' });
+            const model = compose({ lastSignInMethodId: 'google' });
             expect(shape(model)[0]).toEqual(['login:key_challenge:login', 'primary']);
             expect(model.actions[0]?.action).toMatchObject({ labelRole: 'login', lastUsed: false });
         });

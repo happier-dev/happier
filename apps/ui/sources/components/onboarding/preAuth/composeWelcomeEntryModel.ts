@@ -201,10 +201,13 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     const homeDirect = input.homeMethods.filter((row) => row.action.id !== 'provision');
     const serviceMethods = withoutSameServerDuplicates(input);
     const actions: WelcomeAction[] = [];
-    // Only one card may carry the generic "new here" invitation. A Home that
-    // enables a second provisioning method offers a genuinely different
-    // journey, and two identically labelled cards would be unchoosable.
-    const [primaryProvision, ...remainingProvision] = homeProvision;
+    const isRestore = input.context.kind === 'restore';
+    const firstTime = input.userHistory === 'first_time';
+    const oneTapProvision = firstTime && (input.context.kind === 'home' || isRestore)
+        ? homeProvision.find((row) => row.execution.kind === 'generated_key')
+        : undefined;
+    const primaryProvision = oneTapProvision ?? homeProvision[0];
+    const remainingProvision = homeProvision.filter((row) => row !== primaryProvision);
     const newHereService = primaryProvision
         ? undefined
         : serviceMethods.find((row) => row.action.id === 'provision');
@@ -229,16 +232,18 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         ...(newHereService ? [methodAction(newHereService, 'new_here')] : []),
     ];
 
-    const isRestore = input.context.kind === 'restore';
     if (isRestore) {
         actions.push(...homeDirect.filter((row) => row.execution.kind !== 'key_entry').map((row) => methodAction(row)));
         actions.push(...withoutProvision(serviceMethods).map((row) => methodAction(row)));
+        actions.push(...remainingProvision.map((row) => methodAction(row)));
+        if (oneTapProvision && pairingDoor && input.target.kind !== 'none') actions.push(...changeHome);
         if (input.allowedNavigation.selectService) actions.push({ kind: 'choose_sign_in_service' });
         const newAccount = primaryProvision ?? newHereService;
         if (newAccount) actions.push({ kind: 'authenticate', request: newAccount, labelRole: 'new_account' });
-    } else if (input.userHistory === 'first_time') {
-        // The two ways to begin lead: an account here, or a Home of your own. Login is their peer;
-        // signing in some other way, and every way to point elsewhere, follows quietly.
+    } else if (oneTapProvision && pairingDoor) {
+        actions.push(methodAction(oneTapProvision, 'new_here'), pairingLogin);
+    } else if (firstTime) {
+        // Service-backed and sign-in-only Homes need to show their actual ways in.
         actions.push(...newHere, ...createPersonalHome);
         const login = actions.length > 0 && pairingDoor ? pairingLogin : undefined;
         if (login) actions.push(login);
@@ -278,7 +283,6 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     ));
     const dominantActionId = 'dominantActionId' in input.context ? input.context.dominantActionId : null;
     const { placement } = input;
-    const firstTime = input.userHistory === 'first_time';
     const hasHome = placement?.hasHome ?? false;
     const chooseHomeDestination = hasHome ? 'picker' : 'direct';
     const canChooseHome = !placement || hasHome || placement.canConnectDirectly;
