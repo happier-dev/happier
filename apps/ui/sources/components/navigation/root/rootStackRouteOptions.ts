@@ -172,11 +172,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
                 headerBackTitle: back,
             },
             // Titled like its Settings route and catalog entry: one title for the Homes page.
-            server: {
-                headerShown: true,
-                headerTitle: t('settings.servers'),
-                headerBackTitle: back,
-            },
+            // `/server` either forwards a legacy link at once or is Home recovery, a step that heads itself.
+            server: hiddenHeader,
             // The phone's Account & Homes page: the desktop account/Home popover's content.
             accountHomes: {
                 headerShown: true,
@@ -294,6 +291,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         'join/[token]': options.hiddenHeader,
         // An older account QR's answer is a signed-out step; it heads itself.
         account: options.hiddenHeader,
+        // A Source setup link heads itself: a signed-out step, or the Sources page with its own Back.
+        'projects/setup': options.hiddenHeader,
         'terminal/connect': options.hiddenHeader,
         'terminal/index': options.hiddenHeader,
         'scan/terminal': options.hiddenHeader,

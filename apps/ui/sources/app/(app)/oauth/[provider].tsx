@@ -1985,12 +1985,11 @@ function OAuthProviderReturnBody() {
         );
     }
 
+    // The recovery flow is its own signed-out step (it frames itself with the Home it signs in to).
     if (homeOAuthRetry) return (
-        <AuthRouteStepFrame testID="oauth-external-retry" title={t('setupOnboarding.resumeIntentTitle')} onBack={() => setHomeOAuthRetry(null)}>
-            <HomeRecoveryAuthenticationFlow profileRef={homeOAuthRetry.profileRef} returnTo={homeOAuthRetry.returnTo}
-                retryOAuth={homeOAuthRetry} onAuthenticated={() => resolvePostAuthLanding({ replace: router.replace, returnTo: homeOAuthRetry.returnTo })}
-                onBack={() => setHomeOAuthRetry(null)} />
-        </AuthRouteStepFrame>
+        <HomeRecoveryAuthenticationFlow profileRef={homeOAuthRetry.profileRef} returnTo={homeOAuthRetry.returnTo}
+            retryOAuth={homeOAuthRetry} onAuthenticated={() => resolvePostAuthLanding({ replace: router.replace, returnTo: homeOAuthRetry.returnTo })}
+            onBack={() => setHomeOAuthRetry(null)} />
     );
 
     if (externalFailure) return (

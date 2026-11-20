@@ -14,7 +14,10 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { HomeCredentialUnreadableCard, UnknownHomeStateCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { openAddHome } from '@/components/homes/add/openAddHome';
+import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -83,20 +86,35 @@ function ProjectSourceSetupEntry(props: Readonly<{
   const binding = credentials.binding;
   if (selection && binding) return <CollectionDraftTitleScope><ProjectSourcesCollection scope={binding.scope} lifetime={binding} selectedSourceId={selection.sourceId} /></CollectionDraftTitleScope>;
   const resolution = credentials.resolution;
-  let content: React.ReactNode;
+  // A setup link opened without its Source in reach is one honest signed-out step (lab direction A "/projects/setup"),
+  // the same states the Team link uses for its Home: not on this device, its saved sign-in unreadable, loading, gone.
+  const leave = () => router.replace('/');
   if (target.kind === 'unknown_home' || (target.kind === 'resolved' && resolution.kind === 'unknown_home')) {
-    content = <UnknownHomeStateCard testID="project-source-setup-unknown-home" />;
-  } else if (target.kind === 'resolved' && resolution.kind === 'unavailable') {
-    content = <HomeCredentialUnreadableCard serverId={target.serverId} testID="project-source-setup-unreadable" />;
-  } else if (target.kind === 'acquisition_failed') {
-    content = <SurfaceStateCard kind="unavailable" title={t('teams.join.unknownHomeTitle')}
-      reason={t('teams.join.unknownHomeBody')} action={{ label: t('common.retry'), onPress: target.retry }} />;
-  } else if (target.kind === 'acquiring' || (target.kind === 'resolved' && (resolution.kind === 'resolving' || recovery !== null))) {
-    content = <SurfaceStateCard kind="loading" title={t('projects.sources.loading')} />;
-  } else {
-    content = <SurfaceStateCard kind="unavailable" title={t('projects.sources.unavailable')} />;
+    return <AuthRouteStepFrame testID="project-source-setup-unknown-home" status onBack={leave}
+      mark={<StepMark iconName="folder" />} title={t('teams.join.unknownHomeTitle')} subtitle={t('teams.join.unknownHomeBody')}
+      primary={{ testID: 'project-source-setup-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}>{null}</AuthRouteStepFrame>;
   }
-  return <ItemList testID="projects.sources.setup.target">{content}</ItemList>;
+  if (target.kind === 'resolved' && resolution.kind === 'unavailable') {
+    const serverId = target.serverId;
+    return <AuthRouteStepFrame testID="project-source-setup-unreadable" status onBack={leave}
+      mark={<StepMark iconName="device-mobile" />} title={t('homeGovernance.credentialUnreadableTitle')}
+      subtitle={t('homeGovernance.credentialUnreadableBody')}
+      primary={{ testID: 'project-source-setup-retry', label: t('homeGovernance.retry'), onPress: () => retryServerCredentialAccountScope(serverId), iconName: null }}>{null}</AuthRouteStepFrame>;
+  }
+  if (target.kind === 'acquisition_failed') {
+    return <AuthRouteStepFrame testID="project-source-setup-unreachable-home" status onBack={leave}
+      mark={<StepMark iconName="folder" />} title={t('teams.join.unknownHomeTitle')} subtitle={t('teams.join.unknownHomeBody')}
+      primary={{ testID: 'project-source-setup-retry-home', label: t('common.retry'), onPress: target.retry, iconName: null }}
+      secondary={{ testID: 'project-source-setup-add-home', label: t('server.addServerTitle'), onPress: () => openAddHome(router) }}>{null}</AuthRouteStepFrame>;
+  }
+  if (target.kind === 'acquiring' || (target.kind === 'resolved' && (resolution.kind === 'resolving' || recovery !== null))) {
+    return <AuthRouteStepFrame testID="projects.sources.setup.target" onBack={leave} mark={<StepMark iconName="folder" />}
+      title={t('projects.sources.loading')}>
+      <SurfaceStateCard size="line" lineLayout="notice" kind="loading" title={t('projects.sources.loading')} />
+    </AuthRouteStepFrame>;
+  }
+  return <AuthRouteStepFrame testID="projects.sources.setup.target" status onBack={leave} mark={<StepMark iconName="folder" />}
+    title={t('projects.sources.unavailable')} subtitle={t('projects.sources.unavailableBody')}>{null}</AuthRouteStepFrame>;
 }
 
 const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(

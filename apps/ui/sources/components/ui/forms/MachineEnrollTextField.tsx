@@ -7,8 +7,9 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 const styles = StyleSheet.create((theme) => ({
+    // Label → field → its line, 6 px apart: the one form rhythm (first-open plan "6 / 16 / 24").
     container: {
-        gap: theme.space.s8,
+        gap: theme.space.s6,
     },
     label: {
         ...Typography.default('semiBold'),

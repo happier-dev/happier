@@ -12,6 +12,7 @@ import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 
 import type { RemoteSshChecklistCopy } from './copy';
 import { remoteSshChecklistStyles } from './styles';
+import { StepForm } from '@/components/onboarding/unauthShell/StepFormParts';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 
 export type RemoteSshChecklistCredentialsPhaseProps = Readonly<{
@@ -67,7 +68,8 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
     ), []);
 
     return (
-        <View testID={props.testID} style={styles.root}>
+        // The step's fields in its 420 px form column (lab direction A "New host"), groups 16 px apart.
+        <StepForm testID={props.testID}>
             {props.remoteHostsCount > 0 ? (
                 <View style={styles.sectionBlock}>
                     <DropdownMenu
@@ -99,7 +101,7 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                     <>
                     <SshCredentialsFields
                         testIDPrefix={props.testID ? `${props.testID}-ssh` : 'remote-ssh-checklist-ssh'}
-                        layoutVariant="form"
+                        layoutVariant="step"
                         value={props.draft}
                         onChange={props.onChangeDraft}
                         supportedAuthModes={props.supportedAuthModes}
@@ -146,6 +148,6 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
                     ) : null}
                 </>
             )}
-        </View>
+        </StepForm>
     );
 });

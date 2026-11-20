@@ -13,6 +13,9 @@ import { useDeviceType } from '@/utils/platform/responsive';
 
 export type SshAuthMode = 'agent' | 'keyfile' | 'password';
 
+/** The step form's port field: four digits and room to read them (lab direction A "New host"). */
+const SSH_STEP_PORT_WIDTH_PX = 80;
+
 export type SshCredentialsDraft = Readonly<{
     username: string;
     host: string;
@@ -43,7 +46,11 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
     value: SshCredentialsDraft;
     supportedAuthModes?: ReadonlyArray<SshAuthMode>;
     disabled?: boolean;
-    layoutVariant?: 'settings' | 'form';
+    /**
+     * `settings`: grouped rows; `form`: Host · User · Port on one line (Add a machine, lab add-flows M3); `step`: a
+     * signed-out step's form (lab direction A "New host"): Address and an 80 px Port on one line, Sign in as beneath.
+     */
+    layoutVariant?: 'settings' | 'form' | 'step';
     onChange: (next: SshCredentialsDraft) => void;
     onChooseIdentityFile?: () => void;
     afterAuthGroups?: React.ReactNode;
@@ -58,7 +65,8 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
     const resolveTestID = (suffix: keyof NonNullable<typeof testIDs> | string) => `${props.testIDPrefix}-${suffix}`;
     const space = theme.space ?? lightTheme.space;
     const layoutVariant = props.layoutVariant ?? 'settings';
-    const isFormLayout = layoutVariant === 'form';
+    const isFormLayout = layoutVariant === 'form' || layoutVariant === 'step';
+    const stepLayout = layoutVariant === 'step';
     // A phone recomposes the line: the address takes its own row, sign-in user and port share the next (lab add/sshp).
     const narrowForm = useDeviceType() === 'phone';
     const supportedAuthModes = props.supportedAuthModes ?? DEFAULT_SSH_AUTH_MODES;
@@ -210,7 +218,49 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
 
     return (
         <>
-            {isFormLayout ? (
+            {stepLayout ? (
+                // Address and Port share a line on one baseline, the port a fixed 80 px; who to sign in as beneath.
+                <View style={{ gap: space.s16 }}>
+                    <View style={{ flexDirection: 'row', gap: space.s10, alignItems: 'flex-start' }}>
+                        <View style={{ flex: 1, minWidth: 0 }}>
+                            <MachineEnrollTextField
+                                testID={testIDs.sshHost ?? resolveTestID('sshHostInput')}
+                                label={t('settings.machineEnrollRemoteSshHostLabel')}
+                                placeholder={t('settings.machineEnrollRemoteSshHostPlaceholder')}
+                                value={value.host}
+                                editable={!formDisabled}
+                                autoCapitalize="none"
+                                onChangeText={handleHostChange}
+                            />
+                        </View>
+                        <View style={{ width: SSH_STEP_PORT_WIDTH_PX }}>
+                            <MachineEnrollTextField
+                                testID={testIDs.sshPort ?? resolveTestID('sshPortInput')}
+                                label={t('settings.machineEnrollRemoteSshPortLabel')}
+                                placeholder={t('settings.machineEnrollRemoteSshPortPlaceholder')}
+                                value={value.port}
+                                editable={!formDisabled}
+                                keyboardType="number-pad"
+                                autoCapitalize="none"
+                                onChangeText={handlePortChange}
+                            />
+                        </View>
+                    </View>
+                    <MachineEnrollTextField
+                        testID={testIDs.sshUsername ?? resolveTestID('sshUsernameInput')}
+                        label={t('settings.machineEnrollRemoteSshUsernameLabel')}
+                        placeholder={t('settings.machineEnrollRemoteSshUsernamePlaceholder')}
+                        value={value.username}
+                        editable={!formDisabled}
+                        autoCapitalize="none"
+                        onChangeText={(nextUsername) => {
+                            updateValue({
+                                username: nextUsername.trim(),
+                            });
+                        }}
+                    />
+                </View>
+            ) : isFormLayout ? (
                 // Host · User · Port on one line (lab `add-flows` M3).
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: space.s8 }}>
                     <View style={{ flexGrow: 2, flexBasis: narrowForm ? '100%' : 180, minWidth: 0 }}>

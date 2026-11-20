@@ -1,3 +1,4 @@
+import { useOptionalAuth } from '@/auth/context/AuthContext';
 import { WorkspaceRouteEntry } from '@/components/appShell/workspace/createWorkspaceRouteEntry';
 import { ProjectSourcesScreen } from '@/components/projects/sources/ProjectSourcesScreen';
 
@@ -5,4 +6,8 @@ import { ProjectSourcesScreen } from '@/components/projects/sources/ProjectSourc
 function ProjectSourceSetupBody() { return <ProjectSourcesScreen setupLink />; }
 
 export { ProjectSourceSetupBody as WorkspaceRouteBody };
-export default function RouteEntry() { return <WorkspaceRouteEntry Body={ProjectSourceSetupBody} />; }
+export default function RouteEntry() {
+    // Signed out, a setup link is one step of the welcome shell (its states draw their own frame), not a workspace page.
+    const signedIn = useOptionalAuth()?.isAuthenticated === true;
+    return signedIn ? <WorkspaceRouteEntry Body={ProjectSourceSetupBody} /> : <ProjectSourceSetupBody />;
+}

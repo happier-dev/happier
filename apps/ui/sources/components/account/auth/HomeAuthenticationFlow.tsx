@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { AccountCredentialJourney } from './AccountCredentialJourney';
 import { useRouter } from 'expo-router';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
@@ -16,7 +18,8 @@ import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginF
 import { EmailPasswordAuthPanel } from '@/components/account/auth/emailPassword/EmailPasswordAuthPanel';
 import { completeEmailPasswordAuthentication } from '@/components/account/auth/emailPassword/completeEmailPasswordAuthentication';
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
-import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { WelcomeActionCard, WelcomeWayButton } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeDestinationNotice';
 import { useExactHomeArrival } from '@/components/account/auth/useExactHomeDestination';
@@ -71,6 +74,11 @@ type HomeAuthenticationFlowProps = Readonly<{
     onBack: () => void;
     /** `false`: the hosting step's own back control leaves the method list, so the list draws no Back card. */
     showBackAction?: boolean;
+    /**
+     * `doorAndWays`: a signed-out step's chooser (lab direction A "Sign in to … again"): the first method as the step's
+     * door, the others as round ways behind a centred "or". `cards` (default): one card per method.
+     */
+    methodsLayout?: 'cards' | 'doorAndWays';
 }>;
 
 export function HomeAuthenticationFlow(props: HomeAuthenticationFlowProps): React.ReactElement {
@@ -287,6 +295,35 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
         </WelcomeActionList>, 'email-password-back');
     }
 
+    const methodPresentation = (homeAction: HomeAuthenticationAction) => {
+        const providerName = homeAction.method.presentation?.displayName ?? getAuthProvider(homeAction.method.id)?.displayName ?? homeAction.method.id;
+        return describeHomeAuthenticationAction({ execution: homeAction.execution, providerName });
+    };
+    if (props.methodsLayout === 'doorAndWays' && !chosenAction && props.actions.length > 0) {
+        const [door, ...ways] = props.actions;
+        const doorPresentation = methodPresentation(door!);
+        return showMethod('methods', <WelcomeActionList admission={admission}>
+            <View style={styles.doorAndWays}>
+                <WelcomeActionCard testID={homeActionTestId(door!)} title={doorPresentation.title} primary
+                    subtitle={doorPresentation.description} iconName={doorPresentation.iconName}
+                    accentColor={door!.method.presentation?.connectButtonColor} onPress={() => runHomeAction(door!)} />
+                {ways.length > 0 ? (
+                    <>
+                        <StepOrDivider label={t('common.or')} />
+                        <View style={styles.waysRow}>
+                            {ways.map((homeAction) => {
+                                const presentation = methodPresentation(homeAction);
+                                return <WelcomeWayButton key={homeActionTestId(homeAction)} testID={homeActionTestId(homeAction)}
+                                    title={presentation.title} subtitle={presentation.description} iconName={presentation.iconName}
+                                    onPress={() => runHomeAction(homeAction)} />;
+                            })}
+                        </View>
+                    </>
+                ) : null}
+            </View>
+        </WelcomeActionList>);
+    }
+
     return showMethod('methods', <WelcomeActionList admission={admission}>
         {props.actions.map((homeAction) => {
             const { method, execution } = homeAction;
@@ -304,3 +341,19 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
         )}
     </WelcomeActionList>, props.showBackAction === false ? undefined : 'home-auth-back');
 }
+
+const styles = StyleSheet.create((theme) => ({
+    // The door at the doors' width, then the ways a section below it (lab direction A).
+    doorAndWays: {
+        width: '100%',
+        maxWidth: 380,
+        alignSelf: 'center',
+        gap: theme.space.s24,
+    },
+    waysRow: {
+        flexDirection: 'row',
+        alignSelf: 'center',
+        justifyContent: 'center',
+        gap: theme.space.s20,
+    },
+}));

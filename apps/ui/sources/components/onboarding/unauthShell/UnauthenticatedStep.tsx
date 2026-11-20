@@ -197,10 +197,10 @@ function LeaveStepFooter(props: Readonly<{ children?: React.ReactNode; leave: St
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+  // The shell's pane sets the column's width (the step column, or the wide one a choice step claims).
   root: {
     flex: 1,
     width: '100%',
-    maxWidth: 560,
     alignSelf: 'center',
     justifyContent: 'flex-start',
     gap: theme.space.s24,
