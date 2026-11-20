@@ -7,7 +7,6 @@ import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalPro
 import { refreshActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
 import { readHeldSessionApprovalConsents } from '@/settings/profiles/sessionApprovalConsentsCatalog';
 import { loadSessionApprovalConsentsV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentsV1';
-import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createActionExecuteFailureError, createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { apiTokenEncryptionAccessRequired } from '@/auth/apiTokenDeploymentCustody';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
