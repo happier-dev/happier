@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
@@ -12,7 +13,7 @@ export function actionResource(actionId: string): PluginDynamicResourceRuntime {
   return {
     async read(options) {
       const result = await options.readAction(ref, operands(options), { signal: options.signal });
-      if (!result.ok) throw new PluginError({ code: result.errorCode ?? 'deployment_unavailable' });
+      if (!result.ok) throw withActionFailureDiagnostic(new PluginError({ code: result.errorCode ?? 'deployment_unavailable' }), { phase: 'deployment.supabase.resource', causeKind: 'native_failure', error: result });
       return JSON.stringify(result.result);
     },
     // These provider reads are explicit manual snapshots, not a provider push
