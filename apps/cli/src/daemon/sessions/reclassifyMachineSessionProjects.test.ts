@@ -101,4 +101,20 @@ describe('machine Session Project reclassification', () => {
     await reclassify({ scopeKey: 'scope', workspaceRefs: [unrelated, ref('win', 'C:\\Work\\App')] }, opened);
     expect(home.patches.slice(3)).toEqual([{ sessionId: 'exact', projectKey: 'app' }]);
   });
+
+  it('leaves controller Sessions alone when a guest opens the same path', async () => {
+    const home = createHome([{ id: 'controller', metadata: createTestMetadata({ path: '/work/app', machineId: 'machine-a' }),
+      projectKey: null, none: true, owner: true }]);
+    const reclassify = createMachineSessionProjectReclassification({ credentials, machineId: 'machine-a',
+      resolveHomeServerId: async () => HOME, readCandidates: home.readCandidates });
+    const before = { scopeKey: 'scope', workspaceRefs: [] };
+    const opened = { scopeKey: 'scope', workspaceRefs: [{ v: 2, kind: 'managed', id: 'guest-checkout', serverId: HOME,
+      managedId: 'guest', controller: { machineId: 'machine-a', installationId: 'installation-a' },
+      rootPath: '/work/app', createdAtMs: 1 }] } satisfies Parameters<typeof reclassify>[1];
+
+    await reclassify(before, opened);
+    await reclassify(opened, before);
+    expect(home.queries).toEqual([]);
+    expect(home.patches).toEqual([]);
+  });
 });

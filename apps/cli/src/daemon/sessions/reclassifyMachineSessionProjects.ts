@@ -1,6 +1,6 @@
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { projectWorkspaceRefV1, resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { SessionListQueryV1 } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
@@ -31,7 +31,8 @@ export function createMachineSessionProjectReclassification(input: Readonly<{
 }>): (previous: CensusSnapshot, next: CensusSnapshot) => Promise<void> {
   const readCandidates = input.readCandidates ?? ((query, signal) => fetchSessionsQueryPage({
     token: input.credentials.token, query, ...(signal ? { signal } : {}) }));
-  const onMachine = (ref: WorkspaceRefV1) => ref.machineId.trim() === input.machineId;
+  const onMachine = (ref: WorkspaceRefV1) =>
+    !isManagedWorkspaceRefV2(ref) && ref.machineId.trim() === input.machineId;
   const identity = (ref: WorkspaceRefV1) => JSON.stringify([ref.serverId, ref.id]);
   return async (previous, next) => {
     if (previous.scopeKey !== next.scopeKey) return;
