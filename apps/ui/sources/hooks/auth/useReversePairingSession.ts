@@ -17,7 +17,7 @@ import {
 } from '@/sync/domains/server/adoptHomeProfile';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
-import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
+import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 import { computeHomeQrBindingProofV2, createHomeQrReverseInviteV2, deriveHomeQrBindingKeyV2, deriveHomeQrRendezvousSecretV2, type HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { enrollmentPollingBackoffMs } from '@/auth/enrollment/enrollmentPollingBackoff';
@@ -28,7 +28,8 @@ export type ReversePairingPresentation =
     | Readonly<{ phase: 'ready'; invite: HomeQrInviteV2; link: string; qrAvailable: boolean; descriptor: HomeConnectionDescriptorV1 }>
     | Readonly<{ phase: 'adding'; descriptor: HomeConnectionDescriptorV1; expiresAtMs: number }>
     | Readonly<{ phase: 'succeeded'; descriptor: HomeConnectionDescriptorV1; profileId: string }>
-    | Readonly<{ phase: 'expired' | 'invalid' | 'update_required'; descriptor?: HomeConnectionDescriptorV1 }>
+    | Readonly<{ phase: 'expired'; descriptor: HomeConnectionDescriptorV1; renew: boolean }>
+    | Readonly<{ phase: 'invalid' | 'update_required'; descriptor?: HomeConnectionDescriptorV1 }>
     | Readonly<{
         phase: 'retryable_error';
         descriptor?: HomeConnectionDescriptorV1;
@@ -219,7 +220,7 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
             const { signal } = attempt.controller;
             while (isCurrent(attempt)) {
                 if (Date.now() >= expiresAtMs) {
-                    publish(attempt, { phase: 'expired', descriptor });
+                    publish(attempt, { phase: 'expired', descriptor, renew: true });
                     return;
                 }
                 if (!isRuntimeActive()) {
@@ -265,11 +266,14 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
             });
             if (!isCurrent(attempt)) return;
             if (!result.ok) {
-                publish(attempt, {
-                    phase: result.reason === 'expired' ? 'expired' : result.reason === 'cancelled' ? 'retryable_error' : 'invalid',
-                    descriptor,
-                    ...(result.reason === 'cancelled' ? { partialCommit: null } : {}),
-                } as ReversePairingPresentation);
+                if (result.reason === 'expired') {
+                    // An early server refusal keeps the explicit recovery instead of registering in a loop.
+                    publish(attempt, { phase: 'expired', descriptor, renew: Date.now() >= expiresAtMs });
+                } else {
+                    publish(attempt, result.reason === 'cancelled'
+                        ? { phase: 'retryable_error', descriptor, partialCommit: null }
+                        : { phase: 'invalid', descriptor });
+                }
                 return;
             }
             // The authenticated Home has now returned a sealed response bound to this
@@ -345,6 +349,17 @@ export function useReversePairingSession(params: Readonly<{ enabled: boolean; ta
         startedRef.current = true;
         void start();
     }, [params.enabled, start]);
+
+    const renewExpired = presentation.phase === 'expired' && presentation.renew;
+    React.useEffect(() => {
+        if (!params.enabled || !renewExpired) return;
+        const renewWhenVisible = () => {
+            if (isRuntimeActive()) void start();
+        };
+        const unsubscribe = subscribeToRuntimeActiveChange(renewWhenVisible);
+        renewWhenVisible();
+        return unsubscribe;
+    }, [params.enabled, renewExpired, start]);
 
     React.useEffect(() => () => {
         const attempt = attemptRef.current;

@@ -276,6 +276,33 @@ describe('RestoreQrView known-target requester QR', () => {
         expect(registerCount).toBe(2);
         expect(screen.findByTestId('restore-requester-retry')).toBeNull();
     });
+    it('replaces an invite after its deadline when the requester comes back into view', async () => {
+        const screen = await mount();
+        const oldLink = link;
+        const invite = parseHomeQrInviteDeepLink(oldLink)?.invite;
+        if (!invite) throw new Error('Expected a valid requester invite');
+        await vi.waitFor(() => expect(approvalPollSignal).not.toBeNull());
+
+        const realNow = Date.now;
+        await act(async () => {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+            document.dispatchEvent(new Event('visibilitychange'));
+            vi.spyOn(Date, 'now').mockImplementation(() => Math.max(realNow(), invite.expiresAtMs + 1));
+        });
+        expect(registerCount).toBe(1);
+
+        await act(async () => {
+            Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+            document.dispatchEvent(new Event('visibilitychange'));
+        });
+        await vi.waitFor(() => {
+            const renewed = readRenderedQrLink(screen);
+            expect(renewed).toEqual(expect.any(String));
+            expect(renewed).not.toBe(oldLink);
+            expect(parseHomeQrInviteDeepLink(renewed!)?.invite.pairId).not.toBe(invite.pairId);
+        });
+        expect(registerCount).toBe(2);
+    });
     it('opens the exact adopted Home and enters the shell for enter_home', async () => {
         await mount();
         await act(async () => poll.resolve(authorized()));
