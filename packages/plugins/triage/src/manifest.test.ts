@@ -36,6 +36,7 @@ import { TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1 } from './actions/tasksProtocol.js
 import { TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 } from './actions/savedViewsProtocol.js';
 import { TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 } from './actions/actionsCatalogProtocol.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from './actions/mountedUiProtocol.js';
+import { TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1 } from './actions/nativeFailureProtocol.js';
 import { TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 } from './composer/attachmentValue.js';
 import { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from './composer/openEntryDetails.js';
 import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollections.test-support.js';
@@ -46,6 +47,14 @@ import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
 
 describe('Triage plugin manifest', () => {
+  it('offers native failure investigation to MCP and CLI on the same answering client as Agent', () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(
+      candidate => candidate.id === TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1,
+    );
+    expect(action?.execution.target).toBe('client');
+    expect(action?.surfaces).toEqual(expect.arrayContaining(['agent', 'mcp', 'cli']));
+  });
+
   it('uses one page artifact for the PRs & Issues and Tasks app destinations', () => {
     const { views, renderers } = PLUGIN_MANIFEST.contributes.ui;
     const artifacts = [TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1].map(id => {

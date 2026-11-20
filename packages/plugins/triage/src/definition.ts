@@ -392,7 +392,7 @@ function createTriagePlugin(): TriagePlugin {
       },
       [TRIAGE_NATIVE_FAILURE_ACTION_LOCAL_ID_V1]: {
         title: 'Investigate a native failure', dangerLevel: 'safe',
-        surfaces: ['ui', 'agent', 'plugin'], placementBindings: [],
+        surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         execution: { target: 'client', client: { artifactId: 'triage-mounted-ui-action-native', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
         inputSchema: TriageNativeFailureInputV1Schema, resultSchema: TriageNativeFailureResultV1Schema,
       },
