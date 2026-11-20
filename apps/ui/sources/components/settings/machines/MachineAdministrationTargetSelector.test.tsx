@@ -190,9 +190,10 @@ describe('MachineAdministrationTargetSelector', () => {
         const option = 'header.target.picker-option:machine-b';
         const row = screen.findHostByTestId(option);
         expect(row?.props.disabled ?? row?.props.accessibilityState?.disabled ?? row?.props['aria-disabled']).toBe(true);
-        // The candidate supplies administration admission, but this fixture has no authenticated
-        // Home scope. The shared presence owner must report Unknown rather than infer Offline.
-        expect(screen.getTextContent()).toContain('common.unknown');
+        // The candidate supplies administration admission. With no authenticated Home
+        // observation, the presence owner leaves the status blank rather than inventing one.
+        expect(screen.getTextContent()).not.toContain('common.unavailable');
+        expect(screen.getTextContent()).not.toContain('common.unknown');
         expect(screen.getTextContent()).not.toContain('settingsOverview.machineOffline');
         expect(screen.getTextContent()).not.toContain('settingsProviders.detail.machineOffline');
         await screen.pressByTestIdAsync(option).catch(() => undefined);

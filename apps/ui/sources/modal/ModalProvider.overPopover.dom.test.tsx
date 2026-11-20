@@ -25,6 +25,8 @@ vi.mock('react-native-keyboard-controller', async () => {
 const { ModalProvider } = await import('./ModalProvider');
 const { Modal } = await import('./ModalManager');
 const { Popover } = await import('@/components/ui/popover/Popover');
+const { PresentationNoticeHost } = await import('@/components/sessions/presentation/PresentationNoticeHost');
+const { publishPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
 
 it('puts a global modal opened from a retained popover above it and delivers pointer events without dismissing its opener', async () => {
     const container = document.createElement('div');
@@ -49,6 +51,7 @@ it('puts a global modal opened from a retained popover above it and delivers poi
     }
     try {
         await act(async () => root.render(<Harness />));
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="rename"]')).not.toBeNull());
         await act(async () => document.querySelector('[data-testid="rename"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
         const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
         const rename = document.querySelector<HTMLElement>('[data-testid="rename"]')!;
@@ -89,6 +92,7 @@ it('puts a body-level menu opened from inside a modal above that modal', async (
     try {
         await act(async () => root.render(<ModalProvider><span /></ModalProvider>));
         await act(async () => { Modal.show({ component: Dialog }); });
+        await vi.waitFor(() => expect(document.querySelector('[data-testid="menu-action"]')).not.toBeNull());
         const action = document.querySelector<HTMLElement>('[data-testid="menu-action"]')!;
         const dialog = document.querySelector<HTMLElement>('[role="dialog"]')!;
         const popover = action.closest<HTMLElement>('[id^="popover-"]')!;
@@ -103,8 +107,6 @@ it('puts a body-level menu opened from inside a modal above that modal', async (
 });
 
 it('keeps a notice and its Undo above an open modal', async () => {
-    const { PresentationNoticeHost } = await import('@/components/sessions/presentation/PresentationNoticeHost');
-    const { publishPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
