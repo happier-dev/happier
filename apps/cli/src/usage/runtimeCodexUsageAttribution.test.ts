@@ -56,7 +56,8 @@ describe('native Codex request scope → host → ingest', () => {
                 // A later read/default plan cannot rewrite the dispatched request's fact.
                 planType = 'team';
                 emitNotification('rawResponse/completed', { threadId: 'fresh-thread', turnId: 'provider-turn-1',
-                    responseId: 'paid-response', usage: { totalTokens: 3, inputTokens: 2, cachedInputTokens: 1, outputTokens: 1 } });
+                    responseId: 'paid-response', usage: { totalTokens: 3, inputTokens: 2, cachedInputTokens: 1, outputTokens: 1,
+                        reasoningOutputTokens: 0, cacheWriteInputTokens: 0 } });
                 await vi.waitFor(() => expect(posted).toHaveLength(1));
                 expect(UsageEventIngestRequestSchema.parse(posted[0])).toMatchObject({
                     turnId: 'host-paid-turn', scope: 'turn_delta', isCumulative: false,

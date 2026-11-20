@@ -20,7 +20,8 @@ describe('native accounting capture custody', () => {
             await writeFile(join(sessions, 'rollout.jsonl'), JSON.stringify({
                 type: 'token_usage_record', timestamp: '2026-10-31T00:00:00.000Z',
                 payload: { thread_id: 'native-codex', response_id: 'priced-response', model: 'gpt-5',
-                    usage: { input_tokens: 10, output_tokens: 5, cached_input_tokens: 3, reasoning_output_tokens: 2 } },
+                    usage: { input_tokens: 10, output_tokens: 5, cached_input_tokens: 3,
+                            reasoning_output_tokens: 2, cache_write_input_tokens: 0 } },
             }) + '\n');
             const source = { kind: 'codexHome', home: 'user', homePath: directory } as const;
             const request = { source, signal: new AbortController().signal,

@@ -1,5 +1,5 @@
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
-import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, estimateUsageModelCost, buildConnectedServiceCredentialRecord,
+import { DEFAULT_PUBLIC_PROFILE_POLICY_V1, buildConnectedServiceCredentialRecord,
     normalizeUsageQuery, resolveUsagePageAggregation,
     UsageAnalyticsQueryRequestSchema, UsageEventIngestRequestSchema, usageQueryToAnalyticsRequest } from '@happier-dev/protocol';
 import type { AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
@@ -287,13 +287,16 @@ describe('native usage producer → ingest → query', () => {
         const result = await querySession({ breakdowns: ['model', 'source', 'session'] });
         expect(result.totals.tokens.total).toBe(100);
         expect(result.costPresentation?.effectiveUsd).toBeCloseTo(0.12, 10);
-        expect(result.contributions?.find(row => row.cost.reportedUsd > 0)?.tokens.total).toBe(0);
+        expect(result.contributions).toContainEqual(expect.objectContaining({
+            cost: expect.objectContaining({ reportedUsd: 0.12 }),
+            tokens: expect.objectContaining({ total: null }),
+        }));
         const finalDay = await querySession({ dateRange: { startMs: Date.UTC(2026, 6, 2), endMs: Date.UTC(2026, 6, 3) } });
         expect(finalDay.costPresentation).toBeUndefined();
         expect(finalDay.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'reported', amountUsd: 0.12 })]));
         if (earlierTokens === 100) {
             const priced = await querySession({ costMode: 'api_equivalent' });
-            expect(priced.totals.cost.apiEquivalentUsd).toBeCloseTo(estimateUsageModelCost(modelId, assistant!.tokens, bundledUsageModelPriceCatalog)!.total, 10);
+            expect(priced.totals.cost.apiEquivalentUsd ?? null).toBeNull();
         }
     });
 });

@@ -96,7 +96,7 @@ describe('runtime usage attribution producer → host → ingest', () => {
             const ingest = UsageEventIngestRequestSchema.parse(posted[0]);
             expect(ingest).toMatchObject({ sessionId: 'usage-session', turnId: 'host-paid-turn',
                 projectKey: 'accepted-project', workspaceId: 'accepted-checkout', machineId: 'machine',
-                scope: 'turn_delta', tokens: { input: 10, output: 2, total: 12 } });
+                scope: 'turn_delta', tokens: { input: 10, output: 2, cacheRead: null, cacheWrite: null, total: null } });
             expect(JSON.stringify(posted)).not.toContain('/private/repository');
         } finally { unsubscribe(); await bridge.resetOrDisposeRuntime('runtime_recovery'); }
     });
