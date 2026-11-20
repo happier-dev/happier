@@ -1,4 +1,4 @@
-import type { ManagedMachineFullV1, ManagedMachineRefV1, ManagedMachineInputRuntimeV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import type { ManagedMachineFullV1, ManagedMachineRefV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ActionAdmittedExecutionV1, ActionExecutorContext, ActionExecutorDeps, ActionExecuteFailure, ActionExecuteResult, ActionMachineRuntimeDemandV1, ActionPreparedMachineTargetV1, HostReviewedChildrenPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveMachineWakeNativeIntentV1, resolveManagedMachineRuntimeV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
@@ -11,7 +11,6 @@ export type ManagedWakePreparationReads = Readonly<{
     /** The target's Home owns enrollment; null positively identifies an ordinary Machine. */
     readMachineTarget(machineId: string, context: ActionExecutorContext): Promise<Readonly<{
         reachable: boolean; managedMachineRef: ManagedMachineRefV1 | null;
-        managedInputRuntime?: ManagedMachineInputRuntimeV1 | null;
     }> | ActionExecuteFailure>;
     readSessionMachineId(target: Extract<ActionMachineRuntimeDemandV1['target'], { kind: 'session' }>,
         context: ActionExecutorContext): Promise<string | null | ActionExecuteFailure>;
@@ -55,14 +54,13 @@ export async function prepareManagedMachineWakeChildren(
     if (machineId === reads.localMachineId) return null;
     const target = await reads.readMachineTarget(machineId, request.context);
     if ('ok' in target) return target;
-    if (!target.managedMachineRef) return demand.activation === 'accepted-input' ? null : {
+    // Home owns wake after input admission.
+    if (demand.activation === 'accepted-input') return null;
+    if (!target.managedMachineRef) return {
         children: [],
         executeAdmittedAction: execution => execution.execute(execution.context,
             { machineId, ...(demand.serverId ? { serverId: demand.serverId } : {}) }),
     };
-    // The admitted input and its controller wake belong to Home, after enqueue.
-    // Caller-owned wake still prepares the original reviewed native children.
-    if (demand.activation === 'accepted-input' && target.managedInputRuntime?.acceptedInputWakeOwner === 'home') return null;
     const machine = await reads.readManagedMachine(target.managedMachineRef, request.context);
     if (machine && 'ok' in machine) return machine;
     const powerInput = machine && resolveManagedMachineRuntimeV1(machine, machineId, target.reachable).inspectionRequired
@@ -74,7 +72,7 @@ export async function prepareManagedMachineWakeChildren(
         ...(machine ? { managed: { homeId: machine.homeId, managedId: machine.id, ...(powerInput ? { powerInput } : {}) } } : {}) };
     return { children: powerInput ? [{ action: 'machines.managed.power.set', role: 'managed-wake', input: powerInput },
         ...(providerRoles?.children ?? [])] : [],
-        ...(executePrepared && demand.activation !== 'accepted-input' ? { executeAdmittedAction: (execution: ActionAdmittedExecutionV1) => executePrepared({
+        ...(executePrepared ? { executeAdmittedAction: (execution: ActionAdmittedExecutionV1) => executePrepared({
             ...execution, machineRuntime }) } : {}) };
 }
 

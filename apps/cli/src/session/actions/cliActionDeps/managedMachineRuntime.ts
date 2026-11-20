@@ -20,8 +20,7 @@ export async function readCliManagedMachineTarget(machineId: string, context: Ac
             ...(context.externalActionExecutionAuthorization ? { authorization: context.externalActionExecutionAuthorization } : {}),
             serverHttpBaseUrl: account.serverUrl, projection: 'hostFacts', machineIds: [machineId], signal: context.signal });
         if (!machine) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-        return { reachable: isMachineReachableV1({ machine }), managedMachineRef: machine.managedMachineRef,
-            ...(machine.managedInputRuntime !== undefined ? { managedInputRuntime: machine.managedInputRuntime } : {}) };
+        return { reachable: isMachineReachableV1({ machine }), managedMachineRef: machine.managedMachineRef };
     } catch {
         const code = context.signal?.aborted ? 'cancelled' : 'machine_inventory_unavailable';
         return { ok: false, errorCode: code, error: code };

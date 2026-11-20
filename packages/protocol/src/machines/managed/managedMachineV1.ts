@@ -44,8 +44,6 @@ export type ManagedAsleepWakeV1 = z.infer<typeof ManagedAsleepWakeV1Schema>;
 export const ManagedMachineInputRuntimeV1Schema = lazyDefinition(() => z.strictObject({
     nativeReady: z.boolean(),
     wakeState: z.nullable(ManagedMachineInputWakeV1Schema),
-    /** Native wake placement only; the Home Pending record retains input ownership. */
-    acceptedInputWakeOwner: z.optional(z.enum(['home', 'caller'])),
     newSessionWake: z.optional(ManagedMachineNewSessionWakeV1Schema),
     asleepWake: z.optional(ManagedAsleepWakeV1Schema),
     /** Current lifecycle only; automatic wake eligibility stays in wakeState. Older Homes omit it. */

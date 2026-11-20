@@ -97,7 +97,7 @@ describe('accepted managed input native prerequisite', () => {
             ...(power === 'cold-send-now' ? { machine: createMachineFixture({ id, active: false, activeAt: 0 }) } : {}) }),
             managedMachineRef: { homeId: 'srv_home_a', managedId: 'managed-a' },
             managedInputRuntime: ManagedMachineInputRuntimeV1Schema.parse({ nativeReady: power !== 'shared-native-unready' && observedPower === 'running',
-                wakeState: observedPower === 'stopped' ? 'asleep' : null, acceptedInputWakeOwner: controller ? 'home' : 'caller' }) }
+                wakeState: observedPower === 'stopped' ? 'asleep' : null }) }
             : createPlainMachineRowFixture({ id, accountId, machine: createMachineFixture({
             id, active: id !== 'guest-a' || guestReady, activeAt: Date.now(),
             metadata: { ...createMachineFixture().metadata!, host: 'guest', homeDir: '/Users/lume' },

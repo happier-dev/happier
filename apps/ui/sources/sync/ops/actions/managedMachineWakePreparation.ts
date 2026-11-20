@@ -68,7 +68,7 @@ export function createUiManagedMachineWakeReads(account: LazyActionAccountContex
                 }
                 account.assertCurrent();
                 return { reachable: Boolean(machine && isMachineReachable(account.accountLifetime.scope, machine)),
-                    managedMachineRef, ...(machine?.managedInputRuntime !== undefined ? { managedInputRuntime: machine.managedInputRuntime } : {}) };
+                    managedMachineRef };
             } catch (error) {
                 const code = context.signal?.aborted ? 'cancelled' : 'machine_inventory_unavailable';
                 return { ok: false as const, errorCode: code, error: code,

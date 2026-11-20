@@ -5,7 +5,6 @@ import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { MachineProvisionerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { executeManagedMachineWakeThenRun, managedMachineWakePowerInput, prepareManagedMachineWakeChildren, type ManagedWakePreparationReads } from './wakeThenRun.js';
-import { ManagedMachineControllerError } from './controllerErrors.js';
 
 const asleep = ManagedMachineFullV1Schema.parse({
     id: 'managed', homeId: 'home', custodianAccountId: 'owner',
@@ -90,26 +89,8 @@ describe('explicit managed execution', () => {
         expect(resolveManagedMachineRuntimeV1({ ...machine, observation: { ...machine.observation, storage: 'lost' } }, 'guest', true).ready).toBe(false);
     });
 
-    it.each([
-        { controller: true, nativeReady: true }, { controller: true, nativeReady: false },
-        { controller: false, nativeReady: true }, { controller: false, nativeReady: false },
-    ])('leaves Home-owned accepted input without private native reads (controller: $controller, ready: $nativeReady)', async ({ controller, nativeReady }) => {
-        const machine = { ...asleep, controller: controller ? asleep.controller : undefined,
-            observation: { ...asleep.observation!, power: nativeReady ? 'running' as const : 'stopped' as const } };
-        const runtime = resolveManagedMachineRuntimeV1(machine, 'guest', true);
-        const prepared = await prepareManagedMachineWakeChildren({ actionId: 'session.message.send',
-            input: { sessionId: 'same-session', message: 'hello' }, context: { surface: 'ui' },
-            machineRuntimeDemand: { target: { kind: 'session', sessionId: 'same-session' }, activation: 'accepted-input' } }, {
-            readSessionMachineId: async () => 'guest',
-            readMachineTarget: async () => ({ reachable: true, managedMachineRef: { homeId: 'home', managedId: 'managed' },
-                managedInputRuntime: { nativeReady: runtime.ready, wakeState: runtime.wakeState, acceptedInputWakeOwner: runtime.acceptedInputWakeOwner } }),
-            // Native detail HTTP is a different authority from the recipient's Machine read.
-            readManagedMachine: async () => { throw new ManagedMachineControllerError('permission_denied'); },
-        });
-        expect(prepared).toBeNull();
-    });
 
-    it('flattens Account power and inspect into the same original Send review before any native effect', async () => {
+    it('reviews Account power and inspect together for explicit Terminal open', async () => {
         const provisioner = MachineProvisionerContributionV1Schema.parse({ id: 'vm', title: 'Compute', icon: 'cloud', resourceKind: 'compute',
             schemaVersion: 1, launchSchema: { type: 'object', properties: {}, additionalProperties: false },
             resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
@@ -119,9 +100,9 @@ describe('explicit managed execution', () => {
             optionStatus: 'current', prerequisites: [], billing: provisioner.billing, retentionCapabilities: provisioner.retention,
             retention: asleep.retention, wakeOnAcceptedMessage: false } });
         let reads = 0;
-        const prepared = await prepareManagedMachineWakeChildren({ actionId: 'session.message.send',
-            input: { sessionId: 'same-session', message: 'hello' }, context: { surface: 'agent' },
-            machineRuntimeDemand: { target: { kind: 'machine', machineId: 'guest' }, activation: 'accepted-input' } },
+        const prepared = await prepareManagedMachineWakeChildren({ actionId: 'machines.terminal.open',
+            input: { machineId: 'guest' }, context: { surface: 'agent' },
+            machineRuntimeDemand: { target: { kind: 'machine', machineId: 'guest' } } },
         { readMachineTarget: async () => ({ reachable: false, managedMachineRef: { homeId: 'home', managedId: 'managed' } }), readSessionMachineId: async () => null, readManagedMachine: async () => machine,
             readSelectedProvisioners: async () => { reads++; return [{ contribution: asleep.launch.provider,
                 occurrenceId: 'selected', acquireExecutionTarget: 'account', descriptor: provisioner }]; } });
@@ -131,9 +112,9 @@ describe('explicit managed execution', () => {
             { action: { pluginId: 'acme.compute', localId: 'power' }, role: 'power' },
         ] });
         expect(reads).toBe(1);
-        expect(await prepareManagedMachineWakeChildren({ actionId: 'session.message.send',
-            input: { sessionId: 'same-session', message: 'hello' }, context: { surface: 'agent' },
-            machineRuntimeDemand: { target: { kind: 'machine', machineId: 'guest' }, activation: 'accepted-input' } },
+        expect(await prepareManagedMachineWakeChildren({ actionId: 'machines.terminal.open',
+            input: { machineId: 'guest' }, context: { surface: 'agent' },
+            machineRuntimeDemand: { target: { kind: 'machine', machineId: 'guest' } } },
         { readMachineTarget: async () => ({ reachable: true, managedMachineRef: { homeId: 'home', managedId: 'managed' } }), readSessionMachineId: async () => null,
             readManagedMachine: async () => ({ ...machine, observation: { ...machine.observation!, power: 'running' } }),
             readSelectedProvisioners: async () => { throw new Error('Reachable running compute needs no Account catalog work'); } }))
@@ -145,13 +126,16 @@ describe('explicit managed execution', () => {
             readSelectedProvisioners: async () => { throw new Error('Passive work cannot read the Account catalog'); } })).toBeNull();
     });
 
-    it('reviews accepted-input wake without attaching a pre-acceptance finite execution continuation', async () => {
+    it('leaves managed accepted input with Home without reading native state', async () => {
+        let managedReads = 0;
         const prepared = await prepareManagedMachineWakeChildren({ actionId: 'session.message.send', input: { sessionId: 'same-session', message: 'hello' },
             context: { surface: 'agent' }, machineRuntimeDemand: { target: { kind: 'session', sessionId: 'same-session' }, activation: 'accepted-input' } },
-        { readMachineTarget: async () => ({ reachable: false, managedMachineRef: { homeId: 'home', managedId: 'managed' } }), readSessionMachineId: async () => 'guest', readManagedMachine: async () => asleep },
+        { readMachineTarget: async () => ({ reachable: false, managedMachineRef: { homeId: 'home', managedId: 'managed' } }),
+            readSessionMachineId: async () => 'guest',
+            readManagedMachine: async () => { managedReads++; return asleep; } },
         async () => ({ ok: true, result: 'must-not-run-before-ack' }));
-        expect(prepared).toMatchObject({ children: [{ action: 'machines.managed.power.set', role: 'managed-wake' }] });
-        expect(prepared).not.toHaveProperty('executeAdmittedAction');
+        expect(managedReads).toBe(0);
+        expect(prepared).toBeNull();
     });
 
     it('retains the reviewed Session Machine and exact power operand instead of following a later placement', async () => {
@@ -231,8 +215,7 @@ describe('explicit managed execution', () => {
     it('prepares exactly the paid child for an asleep original demand without executing it or consulting unattended consent', async () => {
         const targets: unknown[] = [];
         const reads: ManagedWakePreparationReads = {
-            readMachineTarget: async () => ({ reachable: false, managedMachineRef: { homeId: 'home', managedId: 'managed' },
-                managedInputRuntime: { nativeReady: false, wakeState: 'asleep', acceptedInputWakeOwner: 'home' } }),
+            readMachineTarget: async () => ({ reachable: false, managedMachineRef: { homeId: 'home', managedId: 'managed' } }),
             readSessionMachineId: async () => 'guest',
             readManagedMachine: async target => { targets.push(target); return asleep; },
         };

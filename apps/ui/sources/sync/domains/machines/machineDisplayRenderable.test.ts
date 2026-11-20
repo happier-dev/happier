@@ -66,7 +66,6 @@ describe('machine display renderables', () => {
                 nativeReady: false,
                 wakeState: 'asleep',
                 state: 'asleep',
-                acceptedInputWakeOwner: 'home',
                 newSessionWake: { kind: 'unavailable', reason: 'no_controller' },
             },
         });

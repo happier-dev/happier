@@ -70,7 +70,6 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   machineReachable = false): Readonly<{
     available: boolean; ready: boolean; wakeState: ManagedMachineInputWakeV1 | null;
     state: ManagedMachineInputWakeV1 | 'stopping' | null; inspectionRequired: boolean;
-    acceptedInputWakeOwner: 'home' | 'caller';
   }> {
   const observation = machine.observation;
   const available = machine.creationState === 'active' && machine.allocation !== 'confirmed-absent'
@@ -92,8 +91,7 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   // Current native lifecycle is presentation, independent of whether automatic wake is enabled or eligible.
   const state = stopping ? 'stopping' : starting ? 'starting'
     : nativeTarget && parked ? 'asleep' : null;
-  // Home dispatches accepted input through an assigned controller or its custodian Account daemon.
-  return { available, ready, wakeState, state, acceptedInputWakeOwner: 'home',
+  return { available, ready, wakeState, state,
     // An offline running observation may predate a vendor-side Stop. Native power owns fresh Inspect.
     inspectionRequired: wakeState === 'asleep' || !starting && !machineReachable && retainedWake && observation?.power === 'running' };
 }

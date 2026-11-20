@@ -61,7 +61,6 @@ export function serializeManagedInputRuntime(row: Pick<MachineSerializationRow, 
         const wakeState = managed.wakeOnAcceptedMessage ? runtime.wakeState : null;
         const newSessionWake = row.managedWakeAvailability ?? resolveManagedWakeAvailabilityV1(projection.controller, undefined);
         return { nativeReady: runtime.ready, wakeState, newSessionWake,
-            acceptedInputWakeOwner: runtime.acceptedInputWakeOwner,
             state: runtime.state,
             ...(runtime.state === 'asleep' ? { asleepWake: resolveManagedAsleepWakeV1(wakeState === 'asleep', newSessionWake) } : {}) };
     }

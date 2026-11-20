@@ -77,7 +77,7 @@ it.each([
     const previous = store.getState();
     // Asleep: no live presence; the Home says whether a new Session can wake it (one owner for picker and page).
     const machine = createMachineFixture({ id: 'asleep', active: false, activeAt: 1_000, isShared: false,
-        managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep', acceptedInputWakeOwner: 'home', newSessionWake: wake } });
+        managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep', newSessionWake: wake } });
     store.getState().applyMachines([machine], true, { sourceServerId: serverId,
         activityUpdates: [{ id: machine.id, active: false, activeAt: machine.activeAt }] });
     const screen = await renderScreen(<ModalProvider><MachinePageHeader target={{ machineId: machine.id,

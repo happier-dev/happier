@@ -1058,9 +1058,8 @@ Machine reads and existing Machine updates publish the recipient-safe
 is `asleep` or `starting` while **Start it for new messages** is enabled; its
 `nativeReady` factors the same runtime decision from guest connectivity. Pending
 activation combines that native qualification with the exact enrolled guest's
-existing reachability. Optional `acceptedInputWakeOwner: 'home'` routes existing
-Session input through Home Pending, including controllerless wake by a running
-custodian Account daemon. Optional `newSessionWake` comes from
+existing reachability. Home Pending owns wake for existing Session input,
+including controllerless wake by a running custodian Account daemon. Optional `newSessionWake` comes from
 `resolveManagedWakeAvailabilityV1`: finite wake requires the assigned controller's
 exact installation to be online, unrevoked and unreplaced now. It is
 `{ kind: 'available' }` or `{ kind: 'unavailable', reason: 'no_controller' | 'controller_unavailable' }`.

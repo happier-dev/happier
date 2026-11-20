@@ -71,7 +71,7 @@ it.each(['denied', 'transport', 'malformed', 'cancelled'] as const)(
     } finally { await homes.dispose(); }
 });
 
-it.each(['power', 'send'] as const)('prepares original Account %s provider roles through the default app admission before native work', async mode => {
+it.each(['power', 'send'] as const)('reviews Account %s before native work, keeping accepted-input wake with Home', async mode => {
     const manifest = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
     const unrelated = PluginPortableReleaseManifestV1Schema.parse({ ...manifest, id: 'acme.unrelated-compute' });
     const loaded: string[] = [];
@@ -98,6 +98,10 @@ it.each(['power', 'send'] as const)('prepares original Account %s provider roles
         observation: { availability: 'present', power: 'stopped', storage: 'retained', observedAt: 1 },
         reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
             retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } });
+    const actionsSettings = mode === 'send' ? setActionApprovalOverride({
+        settings: ActionsSettingsV1Schema.parse({ v: 1 }), actionId: 'session.message.send',
+        surface: 'agent', approvalRequired: true,
+    }) : ActionsSettingsV1Schema.parse({ v: 1 });
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
     const queries: unknown[] = [];
     const guest = createPlainMachineRowFixture({ id: 'guest', accountId: 'owner', machine: createMachineFixture({
@@ -107,7 +111,8 @@ it.each(['power', 'send'] as const)('prepares original Account %s provider roles
         ? Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'account-send',
             metadata: { machineId: 'guest', path: '/workspace', host: 'qa-host' } }) }) : undefined);
     const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: `https://account-${mode}-review.test`,
-        serverIdentityId: homeId, accountId: 'owner', currentAccount: true }], route: request => {
+        serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
+        settings: { actionsSettingsV1: actionsSettings } }], route: request => {
         if (request.path === '/v1/machines') return Response.json([guest]);
         if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body,
             machineId => machineId === guest.id ? guest : null);
@@ -127,8 +132,7 @@ it.each(['power', 'send'] as const)('prepares original Account %s provider roles
         replacePluginAccountAvailabilityProjection({ scope: account.accountLifetime.scope,
             snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
         const state = storage.getState();
-        state.applySettings({ ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) },
-            (state.settingsVersion ?? 0) + 1);
+        state.applySettings({ ...state.settings, actionsSettingsV1: actionsSettings }, (state.settingsVersion ?? 0) + 1);
         const prepared = await createDefaultActionExecutor().prepare(mode === 'power' ? 'machines.managed.power.set' : 'session.message.send',
             mode === 'power' ? { homeId, managedId: machine.id, when: 'now', expectedRevision: 4, intent: 'start' }
                 : { sessionId: 'account-send', message: 'Requested Send', reply: 'none' }, {
@@ -143,14 +147,20 @@ it.each(['power', 'send'] as const)('prepares original Account %s provider roles
             .toMatchObject({ kind: 'settled', result: { ok: true, result: { kind: 'approval_request_created' } } });
         const rows = artifacts.list();
         expect(rows).toHaveLength(1);
-        expect(JSON.parse(artifacts.readPlainBody(rows[0]!.id)!)).toMatchObject({ preview: { hostReviewedChildren: { children: [
-            ...(mode === 'send' ? [{ action: 'machines.managed.power.set', role: 'managed-wake' }] : []),
-            { action: { pluginId: manifest.id, localId: provisioner.actions.bootstrap }, role: 'bootstrap' },
-            { action: { pluginId: manifest.id, localId: provisioner.actions.inspect }, role: 'inspect' },
-            { action: { pluginId: manifest.id, localId: provisioner.actions.power }, role: 'power' },
-            { action: { pluginId: manifest.id, localId: bootstrapTransport.exec }, role: 'exec' },
-        ] } } });
-        expect(queries).toEqual([{ homeId, managedId: machine.id }]);
+        const approval = JSON.parse(artifacts.readPlainBody(rows[0]!.id)!);
+        if (mode === 'send') {
+            expect(approval).toMatchObject({ actionId: 'session.message.send' });
+            expect(approval.preview?.hostReviewedChildren).toBeUndefined();
+            expect(queries).toEqual([]);
+        } else {
+            expect(approval).toMatchObject({ preview: { hostReviewedChildren: { children: [
+                { action: { pluginId: manifest.id, localId: provisioner.actions.bootstrap }, role: 'bootstrap' },
+                { action: { pluginId: manifest.id, localId: provisioner.actions.inspect }, role: 'inspect' },
+                { action: { pluginId: manifest.id, localId: provisioner.actions.power }, role: 'power' },
+                { action: { pluginId: manifest.id, localId: bootstrapTransport.exec }, role: 'exec' },
+            ] } } });
+            expect(queries).toEqual([{ homeId, managedId: machine.id }]);
+        }
         // The app may reuse already-loaded declarations, but never acquire an unrelated provider.
         expect(loaded.filter(pluginId => pluginId !== manifest.id)).toEqual([]);
     } finally { await homes.dispose(); }
@@ -273,7 +283,7 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
                 sessionInputSource: { sourceSessionId: 'caller', sourceTurnId: 'turn-1', via: 'action' as const } } : {}),
             serverId: homes.homes.a!.id, expectedAccountId: 'owner', actionRequestId: 'original-read',
             externalActionTarget: send ? { kind: 'session', sessionId: 'requested-session' } : { kind: 'machine', machineId: 'guest' } });
-        if (mode === 'agent' || mode === 'required' || mode === 'agent-send') {
+        if (mode === 'agent' || mode === 'required') {
             expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'settled', result: { ok: true,
                 result: { kind: 'approval_request_created' } } });
             const rows = artifacts.list();
@@ -287,7 +297,8 @@ it.each(['agent', 'person', 'running', 'manual', 'passive', 'required', 'waived'
             expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
             expect(artifacts.list()).toHaveLength(0);
         }
-        expect(queries).toEqual(mode === 'passive' || mode === 'manual' || warmSend ? [] : [{ homeId, managedId: machine.id }]);
+        expect(queries).toEqual(mode === 'passive' || mode === 'manual' || send && mode !== 'person-send-now' && !sendAfterWake
+            ? [] : [{ homeId, managedId: machine.id }]);
         expect(inventoryRequests).toEqual(mode === 'passive' ? [] : ['/v1/machines']);
         if (mode === 'person-send-now') {
             if (prepared.kind !== 'ready') throw new Error('expected_ready_send');

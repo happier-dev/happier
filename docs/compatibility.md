@@ -13931,13 +13931,12 @@ managed-resource producer. This preserves the Home-presence coexistence contract
 above; it does not promise managed wake against an older development Home.
 
 Current development Machine reads and new/update events also publish optional
-`managedInputRuntime: { nativeReady, wakeState, acceptedInputWakeOwner?, newSessionWake?, asleepWake?, state? } | null`. The managed runtime
+`managedInputRuntime: { nativeReady, wakeState, newSessionWake?, asleepWake?, state? } | null`. The managed runtime
 owner derives native qualification independently of connectivity; existing
 guest presence still decides reachability. `wakeState` is `asleep`, `starting`
 or null and makes a wake claim only while the owner enables accepted-input
-wake. Optional `acceptedInputWakeOwner: 'home'` identifies Home Pending wake for
-existing Session input, including a controllerless resource served by a running
-custodian Account daemon. Optional `newSessionWake` is `{ kind: 'available' }` or
+wake. Home Pending owns wake for existing Session input, including a
+controllerless resource served by a running custodian Account daemon. Optional `newSessionWake` is `{ kind: 'available' }` or
 `{ kind: 'unavailable', reason: 'no_controller' | 'controller_unavailable' }`, projected from
 `resolveManagedWakeAvailabilityV1` using the assigned controller's exact installed,
 online, unrevoked and unreplaced Machine. It exposes no controller identity.
