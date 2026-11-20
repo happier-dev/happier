@@ -505,6 +505,63 @@ describe('private installed Environment secret launch transport', () => {
             .toMatchObject({ ok: true, grants: [fixture.grant] });
     });
 
+    it('prepares a managed data-only binding for a reviewed terminal root on the controller', async () => {
+        const f = await admittedTeamDelivery('plain', true, undefined, 'plugin');
+        const row = await db.deploymentEnvironment.update({ where: { id: f.payload.environmentId },
+            data: { runtimeTargetLinkId: null, buildMachineId: null } });
+        const content = await f.artifact('deployment-target-link.v1');
+        const linked = await inTx(tx => linkDeploymentTargetInTx(tx, f.owner.id, { serverId,
+            environmentId: row.id, expectedRevision: row.revision, role: 'data', machines: [],
+            source: { kind: 'plugin', contribution: { pluginId: 'happier.deploy.neon', localId: 'database' } },
+            machineId: f.controller.machineId, installationId: f.controller.installationId,
+            targetKind: 'neon', requestKey: crypto.randomUUID(), ...content }));
+        if (!linked.ok) throw new Error(linked.error);
+        const actionId = 'deployments.bindings.set';
+        const input = { serverId, environmentId: row.id, expectedRevision: linked.revision,
+            set: [{ purpose: 'dataRole', targetLinkId: linked.targetLinkId, role: 'readOnlyPassword',
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(f.resourceId), resourceRevision: f.resourceRevision } }],
+            remove: [] };
+        const body = { kind: 'clientBindings', serverId, environmentId: row.id,
+            expectedRevision: linked.revision, dataRoleTargetLinkIds: [linked.targetLinkId] };
+        const url = `/v1/deployments/environments/${row.id}/secret-launch-admission`;
+        const token = await auth.createToken(f.owner.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const signedPreparation = async (signer = f.controller) => {
+            const target = { kind: 'machine' as const, machineId: signer.machineId };
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            const authorization = await auth.mintExternalActionExecutionAuthorization({ accountId: f.owner.id, serverIdentityId: serverId,
+                authentication: { kind: 'terminal', tokenEpoch: f.owner.tokenEpoch }, actionId, machineId: signer.machineId,
+                target, requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+            return (payload = body) => ({ method: 'POST' as const, url, payload, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: authorization.token,
+                    effectActionId: actionId, target, installationId: signer.installationId, requestId: envelope.requestId,
+                    method: 'POST', path: url, body: payload, privateKey: signer.keys.secretKey }),
+            } });
+        };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const signed = await signedPreparation();
+            const prepared = await app.inject(signed());
+            expect(prepared.statusCode, prepared.body).toBe(200);
+            expect(prepared.json()).toMatchObject({ ok: true, bindingPreparation: {
+                runtimeInstallations: [], controllerInstallation: { machineId: f.controller.machineId,
+                    installationId: f.controller.installationId },
+            } });
+            const unsigned = await app.inject({ method: 'POST', url, payload: body, headers: { authorization: `Bearer ${token}` } });
+            expect(unsigned.statusCode).toBe(403);
+            const wrongMachine = await signedPreparation({ machineId: f.payload.machineId,
+                installationId: f.payload.installationId, keys: f.keys });
+            expect((await app.inject(wrongMachine())).statusCode).toBe(403);
+            const otherLink = await app.inject(signed({ ...body, dataRoleTargetLinkIds: [f.payload.targetLinkId] }));
+            expect(otherLink.statusCode).toBe(403);
+            const stale = await app.inject(signed({ ...body, expectedRevision: linked.revision - 1 }));
+            expect(stale.statusCode).toBe(409);
+            await db.teamMembership.deleteMany({ where: { teamId: f.team.id, accountId: f.owner.id } });
+            expect((await app.inject(signed())).statusCode).toBe(404);
+        }, { authentication: 'real' });
+    });
+
     it('delivers a managed data-role grant through its exact signed semantic scope', async () => {
         const f = await admittedTeamDelivery('plain', true, undefined, 'plugin');
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team.id, accountId: f.requester.id } },

@@ -2831,6 +2831,10 @@ The managed-data sheet reuses template Connect’s replacement review: each exis
 runtime variable whose value changes must be selected independently before Bind.
 A matching existing binding needs no replacement. Binding identities come from
 the shared Environment binding owner, and its revision CAS retains write authority.
+A Source manager reviews provider data-role bindings on the Environment's current
+controller. The selected managed data Link determines the credential scope, and
+the current controller installation receives its seal. A data-only Environment
+can prepare this binding before it has a runtime Link.
 The link’s optional private `data` leaf retains the native result’s engine, version
 and provider-console link. The Data card and Database page share engine naming;
 missing facts retain the target title and do not invent a console. These are

@@ -1,7 +1,7 @@
 import { z } from 'zod/mini';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema, MachineConnectorSecretGrantResultV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { readEnvironmentSecretLaunchAdmissionInTx, accessMachineConnectorSecretGrantInTx } from '@/app/deployments/environmentSecretLaunchAdmission';
 import { deploymentFailure } from '@/app/deployments/deploymentAdmission';
@@ -61,12 +61,23 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         if (request.validationError || request.params.environmentId !== request.body.environmentId) {
             return reply.code(400).send({ ok: false, error: 'deployment_invalid' });
         }
-        if ('kind' in request.body && request.authTokenKind !== 'account') {
+        // A data-only Environment has no runtime Link for the installed request
+        // shape. Home already verified the exact signed preparation for this root.
+        const managedController = 'kind' in request.body && request.authTokenKind === 'terminal'
+            && binding?.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 && request.body.dataRoleTargetLinkIds?.length
+            ? binding : undefined;
+        if ('kind' in request.body && request.authTokenKind !== 'account' && !managedController) {
             return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });
         }
         const value = await inReadSnapshot(tx => readEnvironmentSecretLaunchAdmissionInTx(tx, request.userId,
             request.body, readTeamOperationAuthenticationFromRequest(request), request.externalActionDeploymentChildAdmission,
             admittedBackup, admittedDataQuery));
+        if (managedController && value.ok) {
+            const controller = value.bindingPreparation?.controllerInstallation;
+            if (controller?.machineId !== managedController.machineId || controller.installationId !== managedController.installationId) {
+                return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });
+            }
+        }
         const status = value.ok ? 200 : value.error === 'deployment_access_denied' ? 403
             : value.error === 'deployment_conflict' ? 409 : value.error === 'deployment_invalid' ? 400 : 404;
         return reply.code(status).send(value);
