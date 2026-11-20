@@ -105,7 +105,8 @@ it.each([false, true])('executes only the candidate reviewed for a first Deploy 
 it.each([
     { target: 'own-server', changed: false }, { target: 'own-server', changed: true },
     { target: 'platform', changed: false }, { target: 'platform', changed: true },
-])('keeps the $target Teardown candidate through review (changed target revision: $changed)', async ({ target, changed }) => {
+    { target: 'own-server', changed: false, preview: true },
+])('continues the $target Teardown Ask (volume preview: $preview, changed target revision: $changed)', async ({ target, changed, preview }) => {
     const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
     const { bindPresentUserActionConfirmation } = await import('./presentUserConfirmation');
     const { DEPLOYMENT_TEARDOWN_ACTION_ID_V1: actionId } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
@@ -113,12 +114,18 @@ it.each([
     const { ExternalActionExecutionAuthorizationV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
     const { createActionAutomationPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
     const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
-    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: target, reason: 'manual' as const };
+    const volumes = [{ name: 'preview-postgres', machineId: 'controller' }];
+    const input = { serverId: 'home', environmentId: 'environment', targetLinkId: target, reason: 'manual' as const,
+        ...(preview ? { mode: 'preview' as const } : target === 'own-server'
+            ? { volumes: volumes.map(({ name }) => ({ name, disposition: 'keep' as const })), removeEnvironment: true as const }
+            : {}) };
     expect(isUiMachineOwnedAdmissionAction(actionId, input)).toBe(true);
     expect(isUiMachineOwnedAdmissionAction(actionId, { ...input, detachKeepRunning: true })).toBe(false);
     const reviewFacts = { summary: 'Remove the selected target', target, revision: 1 };
     const origin = { ...context, serverId: input.serverId, runtimeAccountId: 'owner', interactivePresentation: 'unavailable' as const,
-        externalActionTarget: { kind: 'machine' as const, machineId: 'controller' }, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
+        externalActionTarget: { kind: 'machine' as const, machineId: 'controller' }, actionsSettings: ActionsSettingsV1Schema.parse({
+            v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } },
+        }) };
     const publication = createDeploymentCandidatePublicationV1({ ...input, actionId, accountId: 'owner', serverIdentityId: input.serverId,
         requestId: 'unconfirmed', requestEnvelopeDigest: 'A'.repeat(43), source: { id: 'source', revision: 1 } });
     const candidate = { ...input, expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'original-key',
@@ -141,10 +148,12 @@ it.each([
             return { input: { ...candidate, contentArtifactId: publications === 1 ? candidate.contentArtifactId : 'new-candidate' }, preview: reviewFacts };
         },
         deploymentAction: async (_actionId, operands) => {
+            if ('mode' in operands && operands.mode === 'preview') return { ok: true, kind: 'preview', volumes };
             effects.push(operands);
             return { ok: true, environmentId: input.environmentId, revision: 2, deploymentId: 'teardown', deploymentRevision: 1, state: 'succeeded' };
         },
     } satisfies Partial<ActionExecutorDeps> as ActionExecutorDeps);
+    const confirm = vi.fn(async () => true);
     const result = await executeMachineActionAtDaemon(actionId, input, context, async (operands, digest, reviewed) => {
         const requestId = digest ? 'confirmed' : 'unconfirmed';
         const pins = projectDeploymentReviewedCandidateV1(reviewed);
@@ -159,11 +168,13 @@ it.each([
             ? bindPresentUserActionConfirmation(actionId, operands, invocation, digest, reviewed) : invocation;
         const executed = await executor.execute(actionId, operands, { ...authorizedInvocation, externalActionExecutionAuthorization });
         return executed.ok ? executed.result : executed;
-    }, async () => true);
+    }, confirm);
+    expect(confirm).toHaveBeenCalledTimes(1);
     expect(result, JSON.stringify(result)).toMatchObject(changed
-        ? { ok: false, errorCode: 'action_interactive_review_required' } : { ok: true });
-    expect(effects).toEqual(changed ? [] : [candidate]);
-    expect(publications).toBe(1);
+        ? { ok: false, errorCode: 'action_interactive_review_required' }
+        : preview ? { ok: true, result: { ok: true, kind: 'preview', volumes } } : { ok: true });
+    expect(effects).toEqual(changed || preview ? [] : [candidate]);
+    expect(publications).toBe(preview ? 0 : 1);
 });
 
 it('replays the receiving Machine’s prepared Open destination after confirmation', async () => {

@@ -71,8 +71,10 @@ export async function confirmOwnUiRefusal(actionId: ActionId, input: unknown, co
     const liveOnly = spec.approvalInputCustody === 'live_only';
     const parsed = spec.inputSchema.safeParse(!liveOnly && actionId === 'projects.open' ? review.actionArgs : input);
     if (!parsed.success) return result;
+    const operands = readRecord(parsed.data);
+    // Preview confirms the original read. No teardown Receipt has been prepared for it.
     const compactCandidate = readDeploymentRolloutSemanticInput(actionId, parsed.data)
-        || actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && !('contentArtifactId' in readRecord(parsed.data));
+        || actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && operands.mode !== 'preview' && !('contentArtifactId' in operands);
     const confirmed = await confirm({ actionId, input: liveOnly || compactCandidate ? review.actionArgs : parsed.data, context, preview: review.preview });
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled', effectAttempted: false };
     if (!confirmed) return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled', effectAttempted: false };
