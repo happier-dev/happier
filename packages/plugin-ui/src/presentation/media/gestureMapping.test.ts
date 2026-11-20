@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createLiveStreamGestureMapper } from './gestureMapping.js';
+import { createLiveStreamGestureMapper, fillViewTransform } from './gestureMapping.js';
 import { HAPPIER_GESTURE_TIMING } from './inputGesture.js';
 
 const geometry = { viewport: { width: 800, height: 400 }, content: { x: 0, y: 0, width: 800, height: 400 }, orientation: 'portrait' } as const;
@@ -89,6 +89,80 @@ describe('shared live stream gesture mapping', () => {
         simulator.map(start, { ...context('direct'), localZoom: false });
         simulator.map(move, { ...context('direct'), localZoom: false });
         expect(simulator.map(event('end', 200, 200, 60), { ...context('direct'), localZoom: false }).actions).toMatchObject([{ kind: 'pinch' }]);
+    });
+
+    describe('a passive phone viewer filling its pane', () => {
+        // A desktop-shaped page drawn whole (contain, from the top) in a phone pane: 375 × 234 of 375 × 700.
+        const viewport = { width: 375, height: 700 };
+        const content = { x: 0, y: 0, width: 375, height: 234 };
+        const fill = { viewport, content, orientation: 'portrait', mode: 'direct', localZoom: true, dragPans: true,
+            supports: () => true } as const;
+        const remote = (point: { x: number; y: number }) => ({
+            x: (point.x * viewport.width - content.x) / content.width,
+            y: (point.y * viewport.height - content.y) / content.height,
+        });
+        const tapAt = (mapper: ReturnType<typeof createLiveStreamGestureMapper>, x: number, y: number, at: number) => {
+            mapper.map(event('start', x, y, at), fill);
+            const [tap] = mapper.map(event('end', x, y, at + 30), fill).actions;
+            if (tap?.kind !== 'tap') throw new Error('expected a tap');
+            return remote(tap.point);
+        };
+
+        it('rests filling the pane height from the top-left corner', () => {
+            expect(fillViewTransform(viewport, content)).toEqual({ scale: 700 / 234, x: 0, y: 0 });
+            // A page already filling its pane (the controller sized it) has nothing to fill.
+            expect(fillViewTransform(viewport, { x: 0, y: 0, width: 375, height: 700 })).toEqual({ scale: 1, x: 0, y: 0 });
+        });
+
+        it('maps taps to the same remote point at fill, panned, and with the whole page shown', () => {
+            const scale = 700 / 234;
+            const mapper = createLiveStreamGestureMapper();
+            expect(mapper.setRestTransform(fillViewTransform(viewport, content)).transform).toEqual({ scale, x: 0, y: 0 });
+            const atFill = tapAt(mapper, 187.5, 350, 0);
+            expect(atFill.x).toBeCloseTo(187.5 / scale / 375);
+            expect(atFill.y).toBeCloseTo(0.5);
+
+            // A one-finger drag pans the picture locally and sends nothing to the page.
+            mapper.map(event('start', 300, 350, 100), fill);
+            mapper.map(event('move', 200, 350, 150), fill);
+            const panned = mapper.map(event('end', 200, 350, 160), fill);
+            expect(panned.actions).toEqual([]);
+            expect(panned.transform).toEqual({ scale, x: -100, y: 0 });
+            const afterPan = tapAt(mapper, 187.5, 350, 200);
+            expect(afterPan.x).toBeCloseTo((187.5 + 100) / scale / 375);
+            expect(afterPan.y).toBeCloseTo(0.5);
+
+            // Pinching out shows the whole page; a tap then lands where it is drawn.
+            mapper.map(event('start', 100, 350, 300, [{ x: 100, y: 350 }, { x: 300, y: 350 }]), fill);
+            const whole = mapper.map(event('move', 200, 350, 350, [{ x: 190, y: 350 }, { x: 210, y: 350 }]), fill);
+            mapper.map(event('end', 200, 350, 360), fill);
+            expect(whole.transform).toEqual({ scale: 1, x: 0, y: 0 });
+            const wholePage = tapAt(mapper, 187.5, 117, 400);
+            expect(wholePage.x).toBeCloseTo(0.5);
+            expect(wholePage.y).toBeCloseTo(0.5);
+
+            // Reset returns to the fill, not to the letterboxed whole page.
+            expect(mapper.resetZoom().transform).toEqual({ scale, x: 0, y: 0 });
+        });
+
+        it('never pans past the page into the empty pane below it', () => {
+            const mapper = createLiveStreamGestureMapper();
+            mapper.setRestTransform(fillViewTransform(viewport, content));
+            mapper.map(event('start', 200, 600, 0), fill);
+            mapper.map(event('move', 200, 100, 50), fill);
+            expect(mapper.map(event('end', 200, 100, 60), fill).transform.y).toBe(0);
+        });
+
+        it('follows a new resting fill only while the viewer has not moved the picture', () => {
+            const mapper = createLiveStreamGestureMapper();
+            mapper.setRestTransform(fillViewTransform(viewport, content));
+            const taller = { ...fill, content: { x: 0, y: 0, width: 375, height: 350 } };
+            expect(mapper.setRestTransform(fillViewTransform(viewport, taller.content)).transform).toEqual({ scale: 2, x: 0, y: 0 });
+            mapper.map(event('start', 300, 350, 0), taller);
+            mapper.map(event('move', 250, 350, 50), taller);
+            const moved = mapper.map(event('end', 250, 350, 60), taller).transform;
+            expect(mapper.setRestTransform(fillViewTransform(viewport, content)).transform).toEqual(moved);
+        });
     });
 
     it('pans zoomed content at the trackpad cursor edge and clamps the remote point to the picture', () => {

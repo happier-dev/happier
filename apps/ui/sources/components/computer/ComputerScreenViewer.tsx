@@ -15,8 +15,8 @@ import { buildBrowserStreamSidebandControl } from '@/components/browser/adapters
 import { BrowserPresenceFooter, type BrowserPresenceAgent, type BrowserPresenceCapsuleProps } from '@/components/browser/copresence/BrowserPresenceCapsule';
 import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgentCursor';
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
-import { RemoteViewerStage, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
-import { useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
+import { RemoteViewerStage, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
+import { fillViewTransform, useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
 import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
 import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
@@ -278,6 +278,8 @@ function ViewerStreamInput(props: Readonly<{
                 mode={props.controls.mode}
                 localZoom
                 zoomReset={props.controls.zoomReset}
+                restTransform={props.controls.restTransform}
+                dragPansView={props.controls.dragPansView}
                 onViewTransformChange={props.controls.onViewTransformChange}
                 renderCursor={props.controls.renderCursor}
                 renderDragTrail={props.controls.renderDragTrail}
@@ -409,6 +411,13 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
     // A shared window is a small picture: it fits down to the stage but is never drawn past its own
     // pixels, so a small window stays sharp, centred on the neutral stage, instead of being blown up.
     const pageRect = pictureUp && pictureArea ? containRect(pictureArea, frameSize, 1 / PixelRatio.get()) : null;
+    // On a phone a viewer who only watches sees the picture fill the stage (the stage owns that view). What is
+    // drawn over the picture outside the stage (the paused scrim, the Agent's cursor) follows that resting view.
+    const passive = props.presence.kind !== 'human';
+    const fillsPane = useRemoteViewerFillsPane(passive);
+    const restView = fillsPane && pageRect && viewport ? fillViewTransform(viewport, pageRect) : null;
+    const shownRect = restView && pageRect ? { x: pageRect.x * restView.scale + restView.x, y: pageRect.y * restView.scale + restView.y,
+        width: pageRect.width * restView.scale, height: pageRect.height * restView.scale } : pageRect;
     const [menuOpen, setMenuOpen] = React.useState(false);
     const onPictureChange = props.onPictureChange;
     const frameWidth = frameSize?.width;
@@ -508,6 +517,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
     ) : (
         <View style={stylesheet.fill} testID={`${testID}-${surfaceState}`}>
             <RemoteViewerStage key={stream.input?.viewerKey} viewerKey={stream.input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
+                content={pageRect} passive={passive}
                 enabled={Boolean(stream.input && viewport && pageRect && inputOpen)} testID={testID}
                 renderInput={controls => stream.input && viewport && pageRect && inputOpen ? (
                     <ViewerStreamInput input={stream.input} viewport={viewport} content={pageRect} controls={controls}
@@ -527,7 +537,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
             {surfaceState === 'stalled' ? (
                 // Only the held picture dims: the empty stage around a small window keeps its paint.
                 <View
-                    style={[stylesheet.pausedScrim, pageRect ? { left: pageRect.x, top: pageRect.y, width: pageRect.width, height: pageRect.height } : null]}
+                    style={[stylesheet.pausedScrim, shownRect ? { left: shownRect.x, top: shownRect.y, width: shownRect.width, height: shownRect.height } : null]}
                     testID={`${testID}-paused-scrim`}
                 />
             ) : null}
@@ -636,7 +646,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                 {pictureUp && props.presence.kind === 'agent' ? (
                     <BrowserAgentCursor
                         target={props.presence.target}
-                        pageRect={pageRect}
+                        pageRect={shownRect}
                         agentId={props.agent.agentId}
                         testID={`${testID}-agent-cursor`}
                     />

@@ -5,8 +5,8 @@ import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/m
 import type { BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { BrowserInputModifierV1Schema, type BrowserInputEventV1, type BrowserInteractionStateV1 } from '@happier-dev/protocol/browser/input/v1';
 
-import { RemoteViewerStage, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
-import { useRemoteViewerActions, type RemoteViewerKeyboard } from '@happier-dev/plugin-ui/presentation';
+import { RemoteViewerStage, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
+import { fillViewTransform, useRemoteViewerActions, type RemoteViewerKeyboard } from '@happier-dev/plugin-ui/presentation';
 import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
 import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
@@ -281,6 +281,8 @@ function BrowserStreamInput(props: Readonly<{
                 mode={props.controls.mode}
                 localZoom
                 zoomReset={props.controls.zoomReset}
+                restTransform={props.controls.restTransform}
+                dragPansView={props.controls.dragPansView}
                 onViewTransformChange={props.controls.onViewTransformChange}
                 renderCursor={props.controls.renderCursor}
                 renderDragTrail={props.controls.renderDragTrail}
@@ -404,13 +406,20 @@ export function BrowserStreamedTarget(props: Readonly<{
     const keyboardActions = React.useMemo(() => ({available: keyboard.available, focused: keyboard.focused,
         showKeyboard: keyboard.showKeyboard, hideKeyboard: keyboard.hideKeyboard}),
         [keyboard.available, keyboard.focused, keyboard.showKeyboard, keyboard.hideKeyboard]);
-    const letterboxed = pageRect !== null && viewport !== null
+    // On a phone a viewer who only watches sees the page fill the pane (the stage owns that view); the remote
+    // page keeps the size its controller gave it.
+    const fillsPane = useRemoteViewerFillsPane(!controlling);
+    const letterboxed = !fillsPane && pageRect !== null && viewport !== null
         && (pageRect.width < viewport.width - 1 || pageRect.height < viewport.height - 1);
     const otherViewerControls = props.humanInControl === true && !controlling;
     const onPageRectChange = props.onPageRectChange;
     React.useEffect(() => {
-        onPageRectChange?.(pageRect);
-    }, [onPageRectChange, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height, frameSize]); // eslint-disable-line react-hooks/exhaustive-deps
+        // The Agent's cursor is drawn over the page where it rests: filled on a passive phone, whole elsewhere.
+        // A viewer's own pan or pinch moves only the picture (as local zoom always has).
+        const view = fillsPane && pageRect && viewport ? fillViewTransform(viewport, pageRect) : null;
+        onPageRectChange?.(view && pageRect ? { ...pageRect, x: pageRect.x * view.scale + view.x, y: pageRect.y * view.scale + view.y,
+            width: pageRect.width * view.scale, height: pageRect.height * view.scale } : pageRect);
+    }, [onPageRectChange, fillsPane, viewport, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height, frameSize]); // eslint-disable-line react-hooks/exhaustive-deps
     React.useEffect(() => () => onPageRectChange?.(null), [onPageRectChange]);
 
     if (surfaceState === 'connecting' || (props.runtime?.connecting && !props.runtime.terminal && surfaceState === 'unavailable')) {
@@ -456,6 +465,7 @@ export function BrowserStreamedTarget(props: Readonly<{
     return (
         <View testID={`${props.testID}-${surfaceState}`} style={stylesheet.root} onLayout={onLayout}>
             <RemoteViewerStage key={input?.viewerKey} viewerKey={input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
+                content={pageRect} passive={!controlling}
                 enabled={Boolean(input && viewport && pageRect && surfaceState === 'live')}
                 testID={props.testID} renderInput={controls => input && viewport && pageRect && surfaceState === 'live' ? (
                     <BrowserStreamInput input={input} viewport={viewport} content={pageRect} controls={controls} keyboard={keyboardActions}

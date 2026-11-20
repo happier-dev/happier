@@ -7,6 +7,8 @@ export { resolveHappierThemeSurfaceStyle } from './themeSurface.js';
 // Host-only active semantic inspection; no portable registry or plugin ABI changes.
 export { beginThemeSurfaceInspection, createThemeSurfaceInspectionBinding } from './themeSurfaceInspection.js';
 export * from './index.public.js';
+// Host-only: the resting view a passive phone viewer of a Browser or Computer stream gets (the picture fills its pane).
+export { fillViewTransform } from './media/gestureMapping.js';
 // Host-only: the page count line a core main screen's head draws under its band; plugins reach the same owner
 // through `PageHeader`'s `count` (one drawing, one formatting rule).
 export { formatHappierPageCount, HappierPageCountLine, type HappierPageCountLineTextRender, type HappierPageCountPart, type HappierPageCountTone } from './layout/PageCountLine.js';

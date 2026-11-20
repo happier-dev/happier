@@ -70,6 +70,10 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
     /** Browser/computer picture zoom; simulator pinch remains remote. */
     localZoom?: boolean;
     zoomReset?: number;
+    /** Where the local view rests and Reset returns (default: the whole picture). */
+    restTransform?: HappierLiveStreamViewTransform;
+    /** A zoomed-in picture pans under one finger instead of sending a swipe (a viewer who only watches). */
+    dragPansView?: boolean;
     onViewTransformChange?: (transform: HappierLiveStreamViewTransform) => void;
     renderCursor?: (position: InputPoint) => React.ReactNode;
     renderDragTrail?: (points: readonly InputPoint[]) => React.ReactNode;
@@ -127,7 +131,8 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
         if (width > 0 && height > 0) setMeasuredViewport({ width, height });
     }, [props.viewport]);
 
-    const context = { viewport, content, orientation, mode: props.mode ?? 'direct', localZoom: props.localZoom === true, supports } as const;
+    const context = { viewport, content, orientation, mode: props.mode ?? 'direct', localZoom: props.localZoom === true,
+        dragPans: props.dragPansView === true, supports } as const;
     const latestContext = React.useRef(context);
     latestContext.current = context;
     const publishVisuals = React.useCallback((result: ReturnType<NonNullable<typeof mapperRef.current>['map']>) => {
@@ -182,6 +187,13 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
             } else { emit(action); }
         }
     }, [emit, flushMove, props.localZoom, props.mode, publishVisuals, queueMove, viewport]);
+    const restScale = props.restTransform?.scale ?? 1;
+    const restX = props.restTransform?.x ?? 0;
+    const restY = props.restTransform?.y ?? 0;
+    // Before the reset below, so a reset in the same commit returns to the new resting view.
+    React.useEffect(() => {
+        publishVisuals(mapperRef.current!.setRestTransform({ scale: restScale, x: restX, y: restY }));
+    }, [restScale, restX, restY, publishVisuals]);
     React.useEffect(() => { publishVisuals(mapperRef.current!.resetZoom()); }, [props.zoomReset, publishVisuals]);
     const handleInput = React.useCallback((phase: 'start' | 'move' | 'end' | 'cancel', event: GestureResponderEvent) => {
         if (!inputAccepted) return;

@@ -7,13 +7,15 @@ type TouchPair = readonly [Point, Point];
 type Context = HappierLiveStreamGestureGeometry & Readonly<{
     mode: HappierLiveStreamInputMode;
     localZoom: boolean;
+    /** A zoomed-in picture pans under one finger (a viewer who watches and does not drive the source). */
+    dragPans?: boolean;
     supports: (kind: HappierLiveStreamInputControlKind) => boolean;
 }>;
 type Input = Readonly<{ phase: 'start' | 'move' | 'end' | 'cancel'; point: Point; at: number; touches?: readonly Point[] }>;
 type Stroke = {
     start: Point; latest: Point; at: number; latestAt: number; pointerStart: Point; trail: Point[];
     multiStart?: TouchPair; multiLatest?: TouchPair; transformStart: HappierLiveStreamViewTransform;
-    intent?: 'pinch' | 'scroll' | 'drag' | 'move';
+    intent?: 'pinch' | 'scroll' | 'drag' | 'move' | 'pan';
     held: boolean;
 };
 
@@ -22,16 +24,39 @@ const center = (pair: TouchPair): Point => ({ x: (pair[0].x + pair[1].x) / 2, y:
 const angle = (pair: TouchPair) => Math.atan2(pair[1].y - pair[0].y, pair[1].x - pair[0].x);
 const pair = (touches?: readonly Point[]): TouchPair | undefined => touches && touches.length >= 2 ? [touches[0], touches[1]] : undefined;
 const clamp = (value: number, minimum: number, maximum: number) => Math.max(minimum, Math.min(maximum, value));
+const WHOLE_PICTURE: HappierLiveStreamViewTransform = Object.freeze({ scale: 1, x: 0, y: 0 });
+const sameTransform = (a: HappierLiveStreamViewTransform, b: HappierLiveStreamViewTransform) => a.scale === b.scale && a.x === b.x && a.y === b.y;
+/**
+ * One axis of a zoomed view. A picture that covers the pane after zooming stays over it, never panned past its own
+ * edge into the empty stage around it; a smaller one keeps the pane's own bounds.
+ */
+const boundAxis = (offset: number, scale: number, viewportSize: number, contentStart: number, contentSize: number) => (
+    contentSize * scale >= viewportSize
+        ? clamp(offset, viewportSize - (contentStart + contentSize) * scale, -contentStart * scale)
+        : clamp(offset, viewportSize * (1 - scale), 0)
+) || 0;
+
+/**
+ * The view that fills the pane with the picture, from its top-left corner: the picture's shorter side meets the
+ * pane and the rest continues past the far edges. A picture that already fills the pane is shown whole.
+ */
+export function fillViewTransform(viewport: Readonly<{ width: number; height: number }>, content: HappierLiveStreamGestureGeometry['content']): HappierLiveStreamViewTransform {
+    if (!(content.width > 0 && content.height > 0 && viewport.width > 0 && viewport.height > 0)) return WHOLE_PICTURE;
+    const scale = Math.max(viewport.width / content.width, viewport.height / content.height);
+    return scale > 1 ? { scale, x: -content.x * scale || 0, y: -content.y * scale || 0 } : WHOLE_PICTURE;
+}
 
 /** One gesture owner for direct device interaction and relative remote-desktop interaction. */
 export function createLiveStreamGestureMapper() {
     let stroke: Stroke | undefined;
     let pointer: Point = { x: 0.5, y: 0.5 };
-    let transform: HappierLiveStreamViewTransform = { scale: 1, x: 0, y: 0 };
+    let transform: HappierLiveStreamViewTransform = WHOLE_PICTURE;
+    // Where the view rests and where Reset returns: the whole picture, or the fill a passive phone viewer gets.
+    let rest: HappierLiveStreamViewTransform = WHOLE_PICTURE;
     const boundTransform = (next: HappierLiveStreamViewTransform, context: Context) => ({
         scale: next.scale,
-        x: clamp(next.x, context.viewport.width * (1 - next.scale), 0),
-        y: clamp(next.y, context.viewport.height * (1 - next.scale), 0),
+        x: boundAxis(next.x, next.scale, context.viewport.width, context.content.x, context.content.width),
+        y: boundAxis(next.y, next.scale, context.viewport.height, context.content.y, context.content.height),
     });
     const normalize = (point: Point, context: Context): Point => ({
         x: (point.x - transform.x) / transform.scale / context.viewport.width,
@@ -43,7 +68,13 @@ export function createLiveStreamGestureMapper() {
     });
     const result = (actions: HappierLiveStreamInputGesture[] = []) => ({ actions, pointer, transform, trail: stroke?.trail ?? [] });
     return {
-        resetZoom() { transform = { scale: 1, x: 0, y: 0 }; return result(); },
+        resetZoom() { transform = rest; return result(); },
+        /** A view the person has not moved follows its resting view; one they zoomed or panned stays theirs. */
+        setRestTransform(next: HappierLiveStreamViewTransform) {
+            if (sameTransform(transform, rest)) transform = next;
+            rest = next;
+            return result();
+        },
         /** Hardware hover is absolute in either touch mode. */
         hover(point: Point, context: Context) {
             const normalized = normalize(point, context);
@@ -104,6 +135,13 @@ export function createLiveStreamGestureMapper() {
                             deltaY: previousCenter.y - latestCenter.y, ...geometry });
                     }
                     current.multiLatest = multi;
+                } else if (!current.multiStart && context.mode === 'direct' && context.dragPans && current.transformStart.scale > 1) {
+                    if (!current.intent && distance(current.start, input.point) >= HAPPIER_GESTURE_TIMING.slopPx) current.intent = 'pan';
+                    if (current.intent === 'pan') {
+                        transform = boundTransform({ scale: current.transformStart.scale,
+                            x: current.transformStart.x + input.point.x - current.start.x,
+                            y: current.transformStart.y + input.point.y - current.start.y }, context);
+                    }
                 } else if (!current.multiStart && context.mode === 'trackpad') {
                     const dx = input.point.x - current.latest.x;
                     const dy = input.point.y - current.latest.y;
@@ -157,6 +195,8 @@ export function createLiveStreamGestureMapper() {
                 }]);
                 if (context.mode === 'trackpad') return result(context.supports('tap') ? [{ kind: 'tap', button: 'right', point, ...geometry }] : []);
             }
+            // A one-finger pan moved only this viewer's picture.
+            if (current.intent === 'pan') return result();
             if (context.mode === 'trackpad') {
                 // Native drivers expose one atomic drag. The client previews its path until release.
                 if (current.intent === 'drag') return result(context.supports('drag') ? [{kind: 'drag', from: current.pointerStart, to: point, durationMs, ...geometry}] : []);
