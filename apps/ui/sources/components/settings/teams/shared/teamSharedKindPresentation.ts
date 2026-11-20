@@ -1,9 +1,19 @@
 import { TEAM_SHAREABLE_RESOURCE_KINDS_V1, type TeamShareableResourceKindV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 
+import { PROJECT_SOURCES_ROUTE } from '@/components/projects/sources/projectSourceNavigation';
 import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
 import type { TranslationKeyNoParams } from '@/text';
 
-export type TeamSharedKindPresentation = Readonly<{ icon: IconName; title: TranslationKeyNoParams; order: number }>;
+export type TeamSharedKindPresentation = Readonly<{
+    icon: IconName;
+    title: TranslationKeyNoParams;
+    order: number;
+    /**
+     * Where this kind's existing share flow starts, offered as "Share a …" beside its list (lab L12-documents). A kind
+     * whose records share only from their own Share menu has none, and shows no button (TEAM-SETUP ruling 11-20).
+     */
+    share?: Readonly<{ title: 'teams.newMembers.repositories.share'; href: string }>;
+}>;
 
 /**
  * How each kind the summary owner reports reads, on the overview and on its own list. Keyed by the owner's enum,
@@ -16,7 +26,11 @@ export const TEAM_SHARED_KIND_PRESENTATION: Readonly<Record<TeamShareableResourc
     machines: { icon: 'hard-drives', title: 'teams.overview.shared.kinds.machines', order: 3 },
     machinePools: { icon: 'desktop', title: 'teams.overview.shared.kinds.machinePools', order: 4 },
     machinePresets: { icon: 'stack', title: 'teams.overview.shared.kinds.machinePresets', order: 5 },
-    projectSources: { icon: 'git-branch', title: 'teams.overview.shared.kinds.projectSources', order: 6 },
+    projectSources: {
+        icon: 'git-branch', title: 'teams.overview.shared.kinds.projectSources', order: 6,
+        // The Sources page shares a Source with a Team, as "What new members get" offers it.
+        share: { title: 'teams.newMembers.repositories.share', href: PROJECT_SOURCES_ROUTE },
+    },
     projectDocuments: { icon: 'file-text', title: 'teams.overview.shared.kinds.projectDocuments', order: 7 },
     prompts: { icon: 'note', title: 'teams.overview.shared.kinds.prompts', order: 8 },
     reviews: { icon: 'list-checks', title: 'teams.overview.shared.kinds.reviews', order: 9 },

@@ -95,18 +95,26 @@ export const TeamSharedKindScreen = React.memo(function TeamSharedKindScreen(
       title={collection?.collectionId ?? t(presentation.title)}
       description={t('teams.overview.shared.kindDescription')}
     >
-      {(context) => props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? (
-        <CollectionList context={context} icon={presentation.icon} collection={props.collection} />
-      ) : (
-        <TeamSharedKindList
-          context={context}
-          kind={props.kind}
-          icon={presentation.icon}
-        />
-      )}
+      {(context) => <TeamSharedKindBody context={context} kind={props.kind} collection={collection} />}
     </TeamSection>
   );
 });
+
+/**
+ * The list of one shared kind, without its page: the kind's own page above draws it, and on a wide layout the Team
+ * overview shows it in its details pane beside the overview (plan F §6, lab L12-documents).
+ */
+export function TeamSharedKindBody(props: Readonly<{
+  context: TeamSectionContext;
+  kind: TeamSharedListKind | typeof TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1;
+  collection: TeamSharedResourceCollectionRefV1 | null;
+}>) {
+  const { icon } = TEAM_SHARED_KIND_PRESENTATION[props.kind];
+  if (props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1) {
+    return props.collection ? <CollectionList context={props.context} icon={icon} collection={props.collection} /> : null;
+  }
+  return <TeamSharedKindList context={props.context} kind={props.kind} icon={icon} />;
+}
 
 function TeamSharedKindList(
   props: Readonly<{

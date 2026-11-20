@@ -34,6 +34,12 @@ installSettingsViewCommonModuleMocks({
   }),
 });
 
+// Whether a side pane fits is a device fact (phone or panes off); each case chooses the layout it describes.
+const detailsPane = vi.hoisted(() => ({ available: false }));
+vi.mock('@/components/appShell/panes/details/detailsPaneAvailability', () => ({
+  useDetailsPaneAvailable: () => detailsPane.available,
+}));
+
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetTeamsSnapshotsForTests } =
@@ -43,6 +49,12 @@ const { resetTeamsDirectoryEngineForTests } =
 const { resetTeamActionClientForTests } =
   await import('@/sync/ops/teams/teamActionClient');
 const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+/** The overview opens shared kinds in the app's details pane, so it mounts inside the app's pane provider. */
+function InPanes(props: React.ComponentProps<typeof TeamOverviewScreen>) {
+  return <AppPaneProvider><TeamOverviewScreen {...props} /></AppPaneProvider>;
+}
+const { t } = await import('@/text');
 const { publishHomeAccountChange } =
   await import('@/sync/runtime/orchestration/homeAccountChange');
 
@@ -80,6 +92,7 @@ beforeEach(async () => {
   await harness.reset();
   await harness.selectHomes([]);
   routerPush.mockReset();
+  detailsPane.available = false;
 });
 afterEach(() => {
   standardCleanup();
@@ -89,7 +102,7 @@ describe('Team overview: Shared with this Team', () => {
   it('commits the Team header and observed shared rows on the first return from Team Settings', async () => {
     const serverId = await addHome([{ kind: 'machines', status: 'available', count: 2 }]);
     const { TeamSettingsScreen } = await import('./TeamSettingsScreen');
-    const overview = () => <TeamOverviewScreen serverId={serverId} teamId="team-1" />;
+    const overview = () => <InPanes serverId={serverId} teamId="team-1" />;
     const screen = await renderScreen(overview());
     const sharedRow = 'team-overview-shared:machines';
     await vi.waitFor(() => expect(ids(screen)).toContain(sharedRow));
@@ -114,7 +127,7 @@ describe('Team overview: Shared with this Team', () => {
       { kind: 'savedSecrets', status: 'available', count: 0 },
     ]);
     const screen = await renderScreen(
-      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+      <InPanes serverId={serverId} teamId="team-1" />,
     );
     await vi.waitFor(() =>
       expect(ids(screen)).toContain('team-overview-shared:sessions'),
@@ -163,6 +176,41 @@ describe('Team overview: Shared with this Team', () => {
     ).toEqual([]);
   });
 
+  it('opens a kind list beside the overview where a pane fits, named with its count, and keeps shipped pages pushed', async () => {
+    detailsPane.available = true;
+    const serverId = await addHome([
+      { kind: 'machines', status: 'available', count: 2 },
+      { kind: 'projectSources', status: 'available', count: 3 },
+      { kind: 'sessions', status: 'available', count: 23 },
+    ]);
+    const screen = await renderScreen(
+      <InPanes serverId={serverId} teamId="team-1" />,
+    );
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared:machines'));
+
+    screen.pressByTestId('team-overview-shared:machines');
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-shared-kind-list'));
+    // The overview stays; the list stands beside it instead of replacing it.
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(ids(screen)).toContain('team-overview-identity');
+    expect(screen.findByTestId('team-overview-shared-pane.header.title')?.props.children)
+      .toBe(t('teams.overview.shared.kinds.machines'));
+    expect(screen.getTextContent()).toContain(t('teams.overview.summary.credentialsShared', { count: 2 }));
+
+    // Machines share from each Machine's own Share menu, so their list offers no "Share a …"; Sources start at the
+    // existing Sources page.
+    expect(ids(screen)).not.toContain('team-overview-shared-pane-share');
+    screen.pressByTestId('team-overview-shared:projectSources');
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-overview-shared-pane-share'));
+    screen.pressByTestId('team-overview-shared-pane-share');
+    expect(routerPush).toHaveBeenLastCalledWith('/projects/sources');
+
+    // Sessions keep their shipped Team page.
+    screen.pressByTestId('team-overview-shared:sessions');
+    expect(routerPush).toHaveBeenLastCalledWith(`/teams/team-1/sessions?serverId=${encodeURIComponent(serverId)}`);
+    await screen.unmount();
+  });
+
   it('says a kind could not be counted rather than showing zero, and Retry asks again', async () => {
     const serverId = await addHome([
       {
@@ -174,7 +222,7 @@ describe('Team overview: Shared with this Team', () => {
       { kind: 'projectSources', status: 'available', count: 3 },
     ]);
     const screen = await renderScreen(
-      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+      <InPanes serverId={serverId} teamId="team-1" />,
     );
     await vi.waitFor(() =>
       expect(ids(screen)).toContain('team-overview-shared-retry:machines'),
@@ -193,7 +241,7 @@ describe('Team overview: Shared with this Team', () => {
       { kind: 'credentials', status: 'available', count: 0 },
     ]);
     const screen = await renderScreen(
-      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+      <InPanes serverId={serverId} teamId="team-1" />,
     );
     await vi.waitFor(() =>
       expect(ids(screen)).toContain('team-overview-shared-empty'),
@@ -208,7 +256,7 @@ describe('Team overview: Shared with this Team', () => {
       { kind: 'sessions', status: 'available', count: 0 },
     ]);
     const screen = await renderScreen(
-      <TeamOverviewScreen serverId={serverId} teamId="team-1" />,
+      <InPanes serverId={serverId} teamId="team-1" />,
     );
     await vi.waitFor(() =>
       expect(ids(screen)).toContain('team-overview-shared-empty'),

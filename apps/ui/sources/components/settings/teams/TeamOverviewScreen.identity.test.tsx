@@ -26,10 +26,16 @@ const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
 
+const { AppPaneProvider: OverviewPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+/** The overview opens shared kinds in the app's details pane, so it mounts inside the app's pane provider. */
+function InPanes(props: React.ComponentProps<typeof TeamOverviewScreen>) {
+  return <OverviewPaneProvider><TeamOverviewScreen {...props} /></OverviewPaneProvider>;
+}
+
 const TEAM_GET_PATH = '/v1/teams/get';
 
 async function renderOverview(serverId: string) {
-    return renderScreen(<TeamOverviewScreen serverId={serverId} teamId="team-1" />);
+    return renderScreen(<InPanes serverId={serverId} teamId="team-1" />);
 }
 
 async function addHome(team: Parameters<typeof teamSummaryFixture>[0], options?: Readonly<{ credentialResourcesEnabled?: boolean }>): Promise<string> {

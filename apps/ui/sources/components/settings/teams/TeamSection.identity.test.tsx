@@ -38,6 +38,12 @@ const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/g
 const { TeamSection } = await import('./TeamSection');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 const { TeamOverviewScreen } = await import('./TeamOverviewScreen');
+
+const { AppPaneProvider: OverviewPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+/** The overview opens shared kinds in the app's details pane, so it mounts inside the app's pane provider. */
+function InPanes(props: React.ComponentProps<typeof TeamOverviewScreen>) {
+  return <OverviewPaneProvider><TeamOverviewScreen {...props} /></OverviewPaneProvider>;
+}
 const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/PageHeader');
 const { HomeAdministrationSection } = await import('../home/governance/HomeAdministrationSection');
 const { TeamMemberDetailScreen } = await import('./members/TeamMemberDetailScreen');
@@ -87,7 +93,7 @@ describe('exact Home and Team header identity', () => {
         const { target, focused } = await addHomes();
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
         expect(getActiveServerSnapshot().serverId).toBe(focused);
-        const screen = await renderScreen(<TeamOverviewScreen serverId={target} teamId="team-1" />);
+        const screen = await renderScreen(<InPanes serverId={target} teamId="team-1" />);
 
         await waitForHomeGovernance(() => expect(screen.findHostByTestId('team-overview-home')).not.toBeNull());
         expect(screen.getTextContent()).toContain('Research Home');

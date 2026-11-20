@@ -1,5 +1,13 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import {
+  TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1,
+  teamSharedResourceSummaryRowKeyV1,
+  type TeamSharedResourceSummaryRowV1,
+} from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
+import { DetailsPaneHost, type DetailsPaneContent } from '@/components/appShell/panes/details/DetailsPaneHost';
+import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { presentHomeInvitePeople, teamInvitePeopleAction } from '@/components/settings/home/governance/HomeInvitePeopleDialog';
@@ -14,6 +22,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
 import { useTeamManagerNames } from '@/hooks/teams/useTeamManagerNames';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
@@ -24,6 +33,8 @@ import { directorySourcePresentationState } from './identity/directoryAdministra
 import { useDirectoryAdministration } from './identity/useDirectoryAdministration';
 import { TeamSection } from './TeamSection';
 import { TeamSharedResourcesSection } from './TeamSharedResourcesSection';
+import { TeamSharedKindBody } from './shared/TeamSharedKindScreen';
+import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
 import { isTeamViewerSuspended, teamViewerStandingLabel } from './teamLabels';
 import { TeamOwnerRequiredNotice } from './members/TeamOwnerRequiredNotice';
@@ -283,7 +294,7 @@ const TeamAttentionSection = React.memo(function TeamAttentionSection(
  * row rather than guessed.
  */
 const TeamOverviewBody = React.memo(function TeamOverviewBody(
-  props: Readonly<{ context: TeamSectionContext }>,
+  props: Readonly<{ context: TeamSectionContext; sharedBeside?: SharedBeside }>,
 ) {
   const router = useRouter();
   const { context } = props;
@@ -366,7 +377,7 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
       {setupSteps ? (
         <TeamSetupSection context={context} steps={setupSteps} />
       ) : (
-        <TeamSharedResourcesSection context={context} />
+        <TeamSharedResourcesSection context={context} besidePage={props.sharedBeside} />
       )}
 
       <ItemGroup
@@ -494,7 +505,41 @@ export const TeamOverviewScreen = React.memo(function TeamOverviewScreen(
     teamId: string;
   }>,
 ) {
+  // A shared kind opens its list beside the overview where a pane fits (plan F §6, lab L12-documents); without one
+  // (a phone, panes off) the row pushes the kind's own page.
+  const besidePage = useDetailsPaneAvailable();
+  // The open kind belongs to the Team it was opened on; another Team on the same route body starts closed.
+  const teamKey = `${props.serverId}\u0000${props.teamId}`;
+  const [opened, setOpened] = React.useState<Readonly<{
+    teamKey: string; teamName: string; row: TeamSharedResourceSummaryRowV1;
+  }> | null>(null);
+  const current = opened?.teamKey === teamKey ? opened : null;
+  const openShared = current?.row ?? null;
+  const closeShared = React.useCallback(() => setOpened(null), []);
+  const openSharedRow = React.useCallback((row: TeamSharedResourceSummaryRowV1, teamName: string) =>
+    setOpened({ teamKey, teamName, row }), [teamKey]);
+  const sharedBeside = React.useMemo<SharedBeside | undefined>(() => besidePage ? {
+    openKey: openShared ? teamSharedResourceSummaryRowKeyV1(openShared) : null,
+    onOpen: openSharedRow,
+  } : undefined, [besidePage, openShared, openSharedRow]);
+  const router = useRouter();
+  const details = React.useMemo<DetailsPaneContent | null>(() => current && openShared ? {
+    header: {
+      title: sharedKindTitle(openShared),
+      subtitle: openShared.status === 'available'
+        ? t('teams.overview.summary.credentialsShared', { count: openShared.count })
+        : undefined,
+      lineTrailing: <TeamSharedKindShareAction row={openShared} teamName={current.teamName}
+        onOpen={(href) => router.push(href as never)} />,
+    },
+    content: <TeamSharedKindPane serverId={props.serverId} teamId={props.teamId} row={openShared} />,
+  } : null, [current, openShared, props.serverId, props.teamId, router]);
   return (
+    <DetailsPaneHost
+      testID="team-overview-shared-pane"
+      details={details}
+      onCloseDetails={closeShared}
+      main={(
     <TeamSection
       serverId={props.serverId}
       teamId={props.teamId}
@@ -503,7 +548,7 @@ export const TeamOverviewScreen = React.memo(function TeamOverviewScreen(
     >
       {(context) => (
         <>
-          {context.team.capabilities.viewTeam ? <TeamOverviewBody context={context} /> : null}
+          {context.team.capabilities.viewTeam ? <TeamOverviewBody context={context} sharedBeside={sharedBeside} /> : null}
           {isTeamViewerSuspended(context.team) ? <TeamSuspendedNotice /> : null}
           {/* Leave-only viewers retain the Team identity and self-removal without mounting
               the content's readers or ordinary member guidance. */}
@@ -513,5 +558,53 @@ export const TeamOverviewScreen = React.memo(function TeamOverviewScreen(
         </>
       )}
     </TeamSection>
+      )}
+    />
+  );
+});
+
+type SharedBeside = Readonly<{ openKey: string | null; onOpen: (row: TeamSharedResourceSummaryRowV1, teamName: string) => void }>;
+
+function sharedKindTitle(row: TeamSharedResourceSummaryRowV1): string {
+  return row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1
+    ? row.collection.collectionId
+    : t(TEAM_SHARED_KIND_PRESENTATION[row.kind].title);
+}
+
+/** The kind's existing share flow, when it has one ("Share a source with Acme"); the Team name comes from its read. */
+const TeamSharedKindShareAction = React.memo(function TeamSharedKindShareAction(props: Readonly<{
+  row: TeamSharedResourceSummaryRowV1;
+  teamName: string;
+  onOpen: (href: string) => void;
+}>) {
+  const share = props.row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? undefined
+    : TEAM_SHARED_KIND_PRESENTATION[props.row.kind].share;
+  if (!share) return null;
+  return (
+    <SectionActionButton
+      testID="team-overview-shared-pane-share"
+      icon="plus"
+      title={t(share.title, { team: props.teamName })}
+      onPress={() => props.onOpen(share.href)}
+    />
+  );
+});
+
+/** One shared kind's list in the overview's details pane; the pane header names the kind and its count. */
+const TeamSharedKindPane = React.memo(function TeamSharedKindPane(props: Readonly<{
+  serverId: string;
+  teamId: string;
+  row: TeamSharedResourceSummaryRowV1;
+}>) {
+  const { row } = props;
+  const collection = row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? row.collection : null;
+  const kind = collection ? TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 : readTeamSharedListKind(row.kind);
+  if (!kind) return null;
+  return (
+    <ItemList testID="team-overview-shared-pane-list">
+      <TeamSection serverId={props.serverId} teamId={props.teamId} presentation="embedded">
+        {(context) => <TeamSharedKindBody context={context} kind={kind} collection={collection} />}
+      </TeamSection>
+    </ItemList>
   );
 });

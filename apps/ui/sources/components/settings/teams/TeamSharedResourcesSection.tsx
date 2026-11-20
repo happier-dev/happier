@@ -46,11 +46,20 @@ function isListed(row: TeamSharedResourceSummaryRowV1): boolean {
  * summary read. It replaces the overview's Shared sessions and Workflows inventories and the Shared credentials
  * row, so nothing is listed twice. A kind opens its own list; sharing is managed at each record's owner.
  */
+/** The kinds this page lists itself (not Sessions or Credentials, which keep their shipped Team pages). */
+export function opensTeamSharedKindList(row: TeamSharedResourceSummaryRowV1): boolean {
+  return row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 || readTeamSharedListKind(row.kind) !== null;
+}
+
 export const TeamSharedResourcesSection = React.memo(
   function TeamSharedResourcesSection(
-    props: Readonly<{ context: TeamSectionContext }>,
+    props: Readonly<{
+      context: TeamSectionContext;
+      /** Wide layouts: the Team overview shows a kind's list in its details pane instead of pushing its page. */
+      besidePage?: Readonly<{ openKey: string | null; onOpen: (row: TeamSharedResourceSummaryRowV1, teamName: string) => void }>;
+    }>,
   ) {
-    const { context } = props;
+    const { context, besidePage } = props;
     const router = useRouter();
     const summary = useTeamSharedResourcesSummary({
       scope: context.scope,
@@ -59,9 +68,15 @@ export const TeamSharedResourcesSection = React.memo(
     });
     const destinationOf = React.useCallback((row: TeamSharedResourceSummaryRowV1) => kindDestination(row, context), [context]);
     const open = React.useCallback((destination: NonNullable<ReturnType<typeof kindDestination>>) => router.push(destination), [router]);
+    const openBeside = besidePage?.onOpen;
+    const onOpenRow = React.useMemo(() => openBeside ? (row: TeamSharedResourceSummaryRowV1) => {
+      if (!opensTeamSharedKindList(row)) return false;
+      openBeside(row, context.team.name);
+      return true;
+    } : undefined, [openBeside, context.team.name]);
     return (
       <TeamSharedResourcesView teamName={context.team.name} serverId={context.address.serverId} summary={summary}
-        destinationOf={destinationOf} onOpen={open} />
+        destinationOf={destinationOf} onOpen={open} onOpenRow={onOpenRow} selectedKey={besidePage?.openKey ?? null} />
     );
   },
 );
@@ -77,6 +92,10 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
     summary: TeamSharedSummaryState;
     destinationOf: (row: TeamSharedResourceSummaryRowV1) => KindDestination | null;
     onOpen: (destination: KindDestination) => void;
+    /** Opens the row's list beside the page instead; false leaves the row to `onOpen`. */
+    onOpenRow?: (row: TeamSharedResourceSummaryRowV1) => boolean;
+    /** The row whose list is open beside the page. */
+    selectedKey?: string | null;
   }>,
 ) {
     const rows = React.useMemo(
@@ -184,7 +203,11 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
               detail={String(row.count)}
               mode={destination ? 'interactive' : 'info'}
               showChevron={destination !== null}
-              onPress={destination ? () => props.onOpen(destination) : undefined}
+              selected={props.selectedKey === key}
+              onPress={destination ? () => {
+                if (props.onOpenRow?.(row)) return;
+                props.onOpen(destination);
+              } : undefined}
             />
           );
         })}
