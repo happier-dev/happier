@@ -176,6 +176,7 @@ it.each(['http', 'transport'] as const)('edits the opened round’s requested pe
     await screen.pressByTestIdAsync('review-people:save');
     expect(writes).toEqual([{ roundOrdinal: 2, reviewers: [{ principal: { kind: 'account', accountId: 'bob' }, required: false }] }]);
     expect(screen.findHostByTestId('review-people:required:account:bob')?.props.accessibilityState.checked).toBe(false);
+    expect(screen.findHostByTestId('review-people:required:account:bob')?.props['aria-checked']).toBe(false);
     fail = false;
     await screen.pressByTestIdAsync('review-people:save');
     expect(writes).toHaveLength(2);

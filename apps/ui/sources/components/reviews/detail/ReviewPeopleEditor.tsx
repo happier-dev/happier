@@ -51,6 +51,7 @@ export function ReviewPeopleEditor(props: Readonly<{
                     <Pressable testID={`review-people:required:${key}`} accessibilityRole="checkbox"
                         accessibilityLabel={`${t('reviewWalkthrough.detail.required')}: ${principal.displayName}`}
                         accessibilityState={{ checked: row.required, disabled: busy }} disabled={busy}
+                        aria-checked={row.required} aria-disabled={busy || undefined}
                         onPress={() => setDraft(current => current.map(item => sharePrincipalKey(item.principal) === key ? { ...item, required: !item.required } : item))}
                         style={styles.actions}>
                         <SelectionCheckGlyph state={row.required ? 'checked' : 'unchecked'} size="compact" />

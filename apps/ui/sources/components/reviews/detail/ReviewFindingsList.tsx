@@ -3,6 +3,8 @@ import { Pressable, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import { List } from '@happier-dev/plugin-ui/components';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 import {
   reviewFindingDecisionLabel,
@@ -13,6 +15,7 @@ import {
   reviewSeverityLabel,
 } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import {
   SegmentedTabBar,
@@ -39,6 +42,8 @@ const FILTER_ORDER: readonly DecisionFilter[] = [
   'reject',
   'defer',
 ];
+const FINDING_PAGE_LAYOUT = { estimatedRowHeight: HAPPIER_PAGE_METRICS.rowMinHeightPx };
+const findingRowKey = (row: ReviewFindingsListRow) => row.rowId;
 
 /**
  * The Review page's findings (lab `detail-findings`): one-press decision filters carrying the only counts,
@@ -97,11 +102,11 @@ export function ReviewFindingsList(
       ReviewFinding['severity'],
       ReviewFindingsListRow[]
     >();
-    for (const row of visible)
-      bySeverity.set(row.severity, [
-        ...(bySeverity.get(row.severity) ?? []),
-        row,
-      ]);
+    for (const row of visible) {
+      const group = bySeverity.get(row.severity);
+      if (group) group.push(row);
+      else bySeverity.set(row.severity, [row]);
+    }
     return [...bySeverity.entries()].sort(
       ([left], [right]) =>
         REVIEW_SEVERITY_RANK[left] - REVIEW_SEVERITY_RANK[right],
@@ -112,6 +117,7 @@ export function ReviewFindingsList(
       <Pressable testID={`review-findings:select:${row.rowId}`} accessibilityRole="checkbox"
         accessibilityLabel={row.title ?? t('runPage.review.findings')} disabled={props.selection.disabled}
         accessibilityState={{ checked: props.selection.selectedRowIds.has(row.rowId), disabled: props.selection.disabled }}
+        aria-checked={props.selection.selectedRowIds.has(row.rowId)} aria-disabled={props.selection.disabled || undefined}
         style={styles.select} onPress={() => props.selection?.onToggle(row.rowId)}>
         <SelectionCheckGlyph state={props.selection.selectedRowIds.has(row.rowId) ? 'checked' : 'unchecked'} />
       </Pressable>
@@ -135,6 +141,7 @@ export function ReviewFindingsList(
       />
       </View>
       {props.before ?? null}
+      <CorePluginUiPresentationScope>
       {groups.map(([severity, rows]) => (
         <ItemGroup
           key={severity}
@@ -143,14 +150,12 @@ export function ReviewFindingsList(
         >
           {/* One body inside the section's sheet: the shared finding rows draw their own hairlines. */}
           <View style={styles.rows}>
-            {rows.map((row, index) => (
-              <React.Fragment key={row.rowId}>
-                {renderRow(row, index > 0)}
-              </React.Fragment>
-            ))}
+            <List items={rows} keyForItem={findingRowKey} pageLayout={FINDING_PAGE_LAYOUT}
+              density="flush" renderItem={(row, index) => renderRow(row, index > 0)} />
           </View>
         </ItemGroup>
       ))}
+      </CorePluginUiPresentationScope>
       {props.after ?? null}
     </View>
   );

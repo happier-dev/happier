@@ -3,6 +3,8 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 import {
   ReviewFindingsList,
@@ -25,6 +27,61 @@ const ROWS: readonly ReviewFindingsListRow[] = [
 ];
 
 describe('ReviewFindingsList', () => {
+  it('windows ten thousand findings in the existing physical page and reaches the last finding', async () => {
+    const rows: readonly ReviewFindingsListRow[] = Array.from({ length: 10_000 }, (_, index) => ({
+      rowId: `window-${index}`, severity: 'high', decision: 'undecided',
+    }));
+    let window = { top: 0, bottom: 500 };
+    const listeners = new Set<() => void>();
+    // The physical page's viewport is the platform boundary; List keeps its real windowing logic.
+    const tracker: PluginUiScrollActivityTracker = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {},
+      subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      getWindow: () => window, measureSpan: async () => ({ top: 0 }),
+      invalidateLayout() {}, getLayoutRevision: () => 0,
+    };
+    const screen = await renderScreen(<PluginUiScrollActivityProvider tracker={tracker}>
+      <ReviewFindingsList rows={rows} renderRow={rowId => <RowProbe rowId={rowId} />} />
+    </PluginUiScrollActivityProvider>);
+    try {
+      expect(screen.findByTestId('row:window-0')).not.toBeNull();
+      expect(screen.findByTestId('row:window-9999')).toBeNull();
+      expect(screen.tree.root.findAll(node => node.type === RowProbeHost).length).toBeLessThan(rows.length);
+      await act(async () => {
+        const end = rows.length * HAPPIER_PAGE_METRICS.rowMinHeightPx;
+        window = { top: end - 500, bottom: end + 500 };
+        listeners.forEach(listener => listener());
+      });
+      expect(screen.findByTestId('row:window-9999')).not.toBeNull();
+      expect(screen.tree.root.findAll(node => node.type === RowProbeHost).length).toBeLessThan(rows.length);
+    } finally { await screen.unmount(); }
+  });
+  it('groups ten thousand loaded findings with one counting pass and one grouping pass', async () => {
+    const rows: readonly ReviewFindingsListRow[] = Array.from({ length: 10_000 }, (_, index) => ({
+      rowId: `scale-${index}`, severity: 'high', decision: 'undecided',
+    }));
+    const measuredRows = new WeakSet<object>(rows);
+    const originalIterator = Array.prototype[Symbol.iterator];
+    let rowVisits = 0;
+    // Instrument the real iterator without replacing its behavior: copying earlier groups visits
+    // these same row objects again, even though it does not reread their properties.
+    Reflect.set(Array.prototype, Symbol.iterator, function* (this: unknown[]) {
+      for (const value of originalIterator.call(this)) {
+        if (typeof value === 'object' && value !== null && measuredRows.has(value)) rowVisits += 1;
+        yield value;
+      }
+    });
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(<ReviewFindingsList rows={rows} renderRow={() => null} />);
+    } finally {
+      Reflect.set(Array.prototype, Symbol.iterator, originalIterator);
+    }
+    try {
+      expect(groupOrder(screen!)).toEqual(['high']);
+      expect(rowVisits).toBe(rows.length * 2);
+    } finally { await screen?.unmount(); }
+  });
   it('keeps selected finding identities while the person filters the list', async () => {
     function SelectedFindings() {
       const [selected, setSelected] = React.useState<ReadonlySet<string>>(new Set());
@@ -37,12 +94,15 @@ describe('ReviewFindingsList', () => {
     }
     const screen = await renderScreen(<SelectedFindings />);
     try {
+      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props['aria-checked']).toBe(false);
       await screen.pressByTestIdAsync('review-findings:select:blocker-a');
       await screen.pressByTestIdAsync('review-findings:filter:accept');
       await screen.pressByTestIdAsync('review-findings:select:blocker-b');
       await screen.pressByTestIdAsync('review-findings:filter:all');
       expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props.accessibilityState.checked).toBe(true);
       expect(screen.findHostByTestId('review-findings:select:blocker-b')?.props.accessibilityState.checked).toBe(true);
+      expect(screen.findHostByTestId('review-findings:select:blocker-a')?.props['aria-checked']).toBe(true);
+      expect(screen.findHostByTestId('review-findings:select:blocker-b')?.props['aria-checked']).toBe(true);
       expect(screen.findHostByTestId('review-findings:select:high')?.props.accessibilityState.checked).toBe(false);
     } finally { await screen.unmount(); }
   });
