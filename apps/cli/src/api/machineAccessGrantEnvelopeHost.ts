@@ -39,13 +39,12 @@ export async function prepareMachineAccessKeyEnvelopes(
   const path = `/v1/machines/${encodeURIComponent(params.machineId)}/data-key-envelopes`;
   const options = async (request: Readonly<{ method: 'GET' | 'POST' | 'PATCH'; path: string; body?: unknown }>) => {
     await assertCurrent();
-    const headers = {
-      ...(params.credentials?.token ? { Authorization: `Bearer ${params.credentials.token}` } : {}),
-      'Content-Type': 'application/json',
-      ...await params.requestHeaders?.(request),
-    };
+    const authorityHeaders = params.requestHeaders
+      ? await params.requestHeaders(request)
+      : params.credentials?.token ? { Authorization: `Bearer ${params.credentials.token}` } : {};
     await assertCurrent();
-    return { headers, timeout: configuration.sessionControlHttpTimeoutMs, signal: params.signal, validateStatus: () => true };
+    return { headers: { 'Content-Type': 'application/json', ...authorityHeaders },
+      timeout: configuration.sessionControlHttpTimeoutMs, signal: params.signal, validateStatus: () => true };
   };
   const readResponse = async (response: Readonly<{ status: number; data: unknown }>) => {
     await assertCurrent();

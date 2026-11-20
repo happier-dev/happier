@@ -92,10 +92,12 @@ describe('trusted Machine key envelope continuation', () => {
   });
 
   it('keeps Plain permission-only and uses signed request authority without client Account material', async () => {
-    vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { ...page, encryptionMode: 'plain', callerDataEncryptionKey: null, recipients: [] } });
+    vi.mocked(axios.get).mockImplementation(async (_url, options) =>
+      options?.headers?.['X-Action-Authority'] === 'signed' && options.headers.Authorization === undefined
+        ? { status: 200, data: { ...page, encryptionMode: 'plain', callerDataEncryptionKey: null, recipients: [] } }
+        : { status: 403, data: { error: 'credential_scope_denied' } });
     const requestHeaders = vi.fn(async () => ({ 'X-Action-Authority': 'signed' }));
-    expect(await prepareMachineAccessKeyEnvelopes({ ...params, credentials: undefined, requestHeaders })).toEqual({ kind: 'prepared' });
-    expect(vi.mocked(axios.get).mock.calls[0]![1]?.headers).toMatchObject({ 'X-Action-Authority': 'signed' });
+    expect(await prepareMachineAccessKeyEnvelopes({ ...params, requestHeaders })).toEqual({ kind: 'prepared' });
     expect(axios.patch).not.toHaveBeenCalled();
   });
 
@@ -183,6 +185,7 @@ describe('trusted Machine key envelope continuation', () => {
         expect(String(url).startsWith('https://home.test/')).toBe(true);
         if (!String(url).endsWith('/v1/account/encryption/currentness')) {
           expect(config?.headers).toMatchObject({ 'X-Action-Authority': 'signed' });
+          expect(config?.headers?.Authorization === undefined).toBe(true);
         }
       }
       vi.useRealTimers();
