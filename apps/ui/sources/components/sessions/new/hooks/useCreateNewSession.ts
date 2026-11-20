@@ -476,6 +476,7 @@ export function useCreateNewSession(params: Readonly<{
     authoringCommitPending?: boolean;
     /** Fresh admission of inherited Connected Account purpose defaults; explicit choices bypass in their owner. */
     requireConnectedAccountDefaultsReady?: () => void;
+    teamCredentialModelReady?: boolean;
     capabilitySelection?: SessionCapabilitySelectionV1 | null;
     windowsRemoteSessionLaunchModeOverride?: WindowsRemoteSessionLaunchMode | null;
 
@@ -702,6 +703,10 @@ export function useCreateNewSession(params: Readonly<{
         }
         let current = latestParamsRef.current;
         const createsMachineOnly = opts?.managedMachineOnly === true && !!current.managedMachineSelection;
+        if (!createsMachineOnly && current.teamCredentialModelReady === false) {
+            reportAfterCreatedSettlement({ status: 'rejected' });
+            return;
+        }
         // Launch progress is published only onto the draft this Send submitted (never a renewed host draft).
         const submittedLaunch = createSubmittedDraftLaunchPublication<NewSessionLaunchAttempt>({
             submittedDraftId: current.draftId ?? null,

@@ -15,6 +15,8 @@ import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authori
 import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { resolveSessionModelSelectionForAgentTarget } from '@/components/sessions/authoring/sessionModelSelectionValue';
+import { resolveNewSessionTeamModelRequirement, type NewSessionTeamModelCatalog } from './useNewSessionTeamCredentialModelState';
+import type { NewSessionCreateRequirement } from './newSessionCreateAdmission';
 
 type PersistedAuthoringDraftLike = Readonly<{
     agentTarget?: AgentExecutionTargetV1 | null;
@@ -220,14 +222,20 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     implicitProfileModelSelection?: SessionModelSelection | null;
     managedDefaults?: ManagedSessionDefaultsContext;
     explicitTeamCredentialModel?: TeamCredentialProviderModelSelectionV1 | null;
+    teamCredentialCatalog?: NewSessionTeamModelCatalog;
+    teamCredentialAccess?: Parameters<typeof resolveNewSessionTeamModelRequirement>[0]['restoredAccess'];
 }>): Readonly<{
     modelMode: ModelMode;
     setModelMode: React.Dispatch<React.SetStateAction<ModelMode>>;
     modelSelection: SessionModelSelection | null;
     modelSelectionV2: SessionModelSelectionV2 | null;
+    /** A catalog update can hide the choice without changing the admitted launch intent. */
+    modelSelectionForAuthoring: SessionModelSelection | null;
     modelSelectionForPersistence: SessionModelSelection | null | undefined;
     modelIsManagedDefault: boolean;
     teamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
+    teamCredentialModelIntent: TeamCredentialProviderModelSelectionV1 | null;
+    teamCredentialModelRequirement: NewSessionCreateRequirement;
     setModelSelection: (selection: SessionModelSelection | null) => void;
     setModelSelectionForBackendTarget: (backendTargetKey: string, selection: SessionModelSelection | null) => void;
     /** The layer the model came from, for the picker row's provenance. */
@@ -342,6 +350,11 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
         agentTargetKey: teamRef.agentTargetKey, modelId: teamRef.modelId,
         ...(teamRef.nativeDelivery ? { nativeDelivery: teamRef.nativeDelivery } : {}),
     } : null;
+    const teamCredentialModelRequirement = resolveNewSessionTeamModelRequirement({
+        selection: teamCredentialModel,
+        catalog: params.teamCredentialCatalog,
+        restoredAccess: !modelAuthored && explicitTeamSelection ? params.teamCredentialAccess : undefined,
+    });
 
     const setModelMode = React.useCallback<React.Dispatch<React.SetStateAction<ModelMode>>>((next) => {
         setModelState((current) => {
@@ -545,14 +558,17 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     }, [setSessionConfigOptionOverrides]);
 
     return {
-        modelMode,
+        modelMode: teamCredentialModelRequirement.ready ? modelMode : 'default',
         setModelMode,
-        modelSelection,
-        modelSelectionV2,
+        modelSelection: teamCredentialModelRequirement.ready ? modelSelection : null,
+        modelSelectionV2: teamCredentialModelRequirement.ready ? modelSelectionV2 : null,
+        modelSelectionForAuthoring: modelSelection,
         modelSelectionForPersistence,
         modelIsManagedDefault,
         modelSource: modelDecision.source,
-        teamCredentialModel,
+        teamCredentialModel: teamCredentialModelRequirement.ready ? teamCredentialModel : null,
+        teamCredentialModelIntent: teamCredentialModel,
+        teamCredentialModelRequirement,
         setModelSelection,
         setModelSelectionForBackendTarget,
         acpSessionModeId,

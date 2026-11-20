@@ -7,7 +7,7 @@ import type { ProjectKeyV1, SessionServerStartSpawnDraftV1, SessionSpawnNewInput
 import { SessionSpawnNewSelectionV2BaseSchema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewSelectionV2';
 import { readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import type { JsonValue } from '../identity.js';
-import type { PluginUiNewSessionActionDefaultV1 } from '@happier-dev/protocol/plugins/ui/client';
+import type { PluginUiNewSessionActionDefaultV1, PluginUiOpenNewSessionRequestV1 as ProtocolPluginUiOpenNewSessionRequestV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { PluginActionInputById } from '../actions/actionTypeMap.generated.js';
 import type { WorkBoardPreviewLayoutV1 as ProtocolWorkBoardPreviewLayoutV1 } from '@happier-dev/protocol/boards/workBoardArtifactV1';
@@ -364,7 +364,8 @@ export type PluginUiNewSessionSeedV1 = DeepReadonly<{
 }>;
 
 /** Input for the dedicated, navigation-owning `openNewSession` Host method. */
-export type PluginUiOpenNewSessionRequestV1 = PluginUiNewSessionSeedV1;
+export type PluginUiOpenNewSessionRequestV1 = PluginUiNewSessionSeedV1
+    & Pick<ProtocolPluginUiOpenNewSessionRequestV1, 'teamModelFromSessionId'>;
 export type PluginUiPreparedReviewWorkspaceResultV1 =
     DeepReadonly<ProtocolPluginUiPreparedReviewWorkspaceResultV1>;
 

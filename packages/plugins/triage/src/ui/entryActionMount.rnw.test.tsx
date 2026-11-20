@@ -280,6 +280,7 @@ function createHarness(options: Readonly<{
     includeSecondEntry?: boolean;
     issue?: boolean;
     involvement?: readonly ('author' | 'assignee' | 'reviewRequested')[];
+    linkedSessions?: readonly Readonly<{ sessionId: string; displayTitle: string; updatedAtMs: number }>[];
     /** The durable detail read answers `unavailable`, so the detail never becomes ready. */
     detailUnavailable?: boolean;
     comparisonRead?: () => Promise<unknown>;
@@ -400,7 +401,7 @@ function createHarness(options: Readonly<{
             return TriageReadEntryDetailResultV1Schema.parse({
                 kind: 'read',
                 instance: configuredInstance(),
-                linkedSessions: [],
+                linkedSessions: options.linkedSessions ?? [],
             });
         }
         if (action === 'projects.list') return registry;
@@ -1425,6 +1426,20 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.startRequests).toEqual([]);
         expect(newSessionSeeds).toHaveLength(1);
         expect(JSON.stringify(newSessionSeeds[0])).toContain('Fix this.');
+    }, 60_000);
+
+    it('opens a fresh Fix composer from the linked investigation', async () => {
+        const harness = createHarness({ linkedSessions: [
+            { sessionId: 'session-investigation', displayTitle: 'Investigate this failure', updatedAtMs: 3_000 },
+        ] });
+        const shell = await mountShell(harness);
+        await openTheRow(shell);
+
+        await pressAction(shell, 'Fix options');
+        await pressMenuItem(shell, 'Add instructions…');
+
+        expect(harness.startRequests).toEqual([]);
+        expect(newSessionSeeds).toEqual([expect.objectContaining({ teamModelFromSessionId: 'session-investigation' })]);
     }, 60_000);
 
     it('sends the entry to the Session the reader picks, creating none', async () => {

@@ -8,12 +8,14 @@ import { getAgentCore, type AgentId } from '@/agents/catalog/catalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 import { SessionModelSelectionV2Schema } from '@happier-dev/protocol/providers/selection/v2';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { applyTeamProjection, resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createTeamAddress } from '@/sync/domains/teams/teamAddress';
 import { teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { readManagedSessionDefaults } from '@/sync/ops/teams/managedSessionDefaults';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { t } from '@/text';
 
 import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 
@@ -26,6 +28,51 @@ function nativeSelection(agentTargetKey: string, modelId: string, updatedAt: num
 }
 
 describe('useNewSessionAgentAuthoringOptionsState', () => {
+    it('shows a Team draft choice only while the exact resource is entitled', async () => {
+        const agentTarget = AgentExecutionTargetV1Schema.parse({
+            kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' },
+        });
+        const agentTargetKey = resolveBackendTargetKeyV2(agentTarget);
+        const ref = {
+            teamId: 'team-a', resourceId: 'muse-share', expectedResourceRevision: 3,
+            deliveryMode: 'brokered', agentTargetKey, modelId: 'muse-spark-1.3-contributor',
+        } as const;
+        const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1, ref: { source: 'team_resource', ...ref } });
+        const selection = { kind: 'team_credential_provider_model', ...ref } as const;
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: ref.resourceId, teamId: ref.teamId, displayName: null, resourceRevision: 3,
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'current', sessionUsePolicy: 'personal_allowed', sourcePresentation: null,
+            providerModels: [{ selection, descriptor: { id: ref.modelId, name: 'Muse' }, application: {
+                agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
+                endpointTemplateId: 'responses', protocol: 'openai-responses',
+            }, sourceRevision: 'source-1', availability: 'available' }],
+        });
+        const props = {
+            agentType: 'pi', agentTarget, backendTargetKey: agentTargetKey,
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: { agentTarget, modelSelection },
+            explicitTeamCredentialModel: selection,
+            teamCredentialCatalog: { current: true, condition: null, resources: [resource],
+                resourceStatusByKey: new Map([[`${ref.teamId}:${ref.resourceId}`, { kind: 'current' } as const]]),
+            },
+        };
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps: props });
+        try {
+            expect(hook.getCurrent().teamCredentialModel).toEqual(selection);
+            await hook.rerender({ ...props, teamCredentialCatalog: { ...props.teamCredentialCatalog,
+                resourceStatusByKey: new Map(), resources: [],
+            } });
+            expect(hook.getCurrent().teamCredentialModel).toBeNull();
+            expect(hook.getCurrent().modelSelectionV2).toBeNull();
+            expect(hook.getCurrent()).toMatchObject({ modelSelectionForPersistence: { ref: modelSelection.ref },
+                modelSelectionForAuthoring: { ref: modelSelection.ref }, teamCredentialModelIntent: selection,
+                teamCredentialModelRequirement: { ready: false, reason: t('session.startFailure.cause.team_credential_provider_selection_not_current') },
+            });
+            await hook.rerender(props);
+            expect(hook.getCurrent().teamCredentialModel).toEqual(selection);
+        } finally { await hook.unmount(); }
+    });
+
     it('resolves Team model defaults for the Agent picked in a Project draft', async () => {
         const agentTarget = AgentExecutionTargetV1Schema.parse({
             kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },

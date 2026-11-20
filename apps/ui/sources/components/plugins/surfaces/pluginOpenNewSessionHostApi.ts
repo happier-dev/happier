@@ -31,6 +31,7 @@ function errorPayload(code: PluginUiHostApiErrorCodeV1, diagnostic: string): Plu
 
 type OpenNewSession = (params: Readonly<{
     seed: unknown;
+    teamModelSeed?: Parameters<typeof openOrdinaryNewSessionSeed>[0]['teamModelSeed'];
     pluginId: string;
     scope: ServerAccountScope;
     signal?: AbortSignal;
@@ -177,15 +178,37 @@ export function createPluginOpenNewSessionHandler(input: PluginOpenNewSessionBin
             ) {
                 return errorPayload('invalid_payload', 'prepared_review_workspace_selection_unexpected');
             }
-            const resume = async () => {
-                const outcome = await (input.openNewSession ?? openOrdinaryNewSessionSeed)({
-                    seed: settledSeed,
+            const openDraft = async (): Promise<SessionNewSessionSeedOutcome> => {
+                const { teamModelFromSessionId, ...seed } = settledSeed;
+                const scope = input.accountLifetime.scope;
+                const mayOpen = admittedRequestId ? input.accountLifetime.isCurrent : isCurrent;
+                const openSignal = admittedRequestId ? undefined : signal;
+                let teamModelSeed: Parameters<OpenNewSession>[0]['teamModelSeed'];
+                if (teamModelFromSessionId !== undefined) {
+                    const { readNewSessionTeamModelSeed } = await import('@/components/sessions/new/readNewSessionTeamModelSeed');
+                    if (!mayOpen() || openSignal?.aborted) {
+                        return mayOpen() ? { kind: 'unavailable', reason: 'aborted' } : { kind: 'stale', reason: 'host_retired' };
+                    }
+                    const source = await readNewSessionTeamModelSeed({ scope, sessionId: teamModelFromSessionId,
+                        agentTarget: seed.agentTarget, signal: openSignal, isCurrent: mayOpen,
+                    });
+                    if (!mayOpen()) return { kind: 'stale', reason: 'host_retired' };
+                    if (openSignal?.aborted) return { kind: 'unavailable', reason: 'aborted' };
+                    if (source.kind === 'unavailable') return { kind: 'unavailable', reason: 'origin_unavailable' };
+                    teamModelSeed = source.seed;
+                }
+                return (input.openNewSession ?? openOrdinaryNewSessionSeed)({
+                    seed,
+                    ...(teamModelSeed === undefined ? {} : { teamModelSeed }),
                     pluginId: input.pluginId,
-                    scope: input.accountLifetime.scope,
-                    ...(!admittedRequestId && signal ? { signal } : {}),
-                    isCurrent: admittedRequestId ? () => input.accountLifetime.isCurrent() : isCurrent,
+                    scope,
+                    ...(openSignal ? { signal: openSignal } : {}),
+                    isCurrent: mayOpen,
                     ...(input.origin === undefined ? {} : { origin: input.origin }),
                 });
+            };
+            const resume = async () => {
+                const outcome = await openDraft();
                 if (outcome.kind !== 'opened' && outcome.kind !== 'stale' && continuationAddress && admittedRequestId) {
                     actionOperationStore.retainNewSessionContinuation(continuationAddress, resume);
                     actionOperationStore.markFollowUpNeedsAttention({ ...input.accountLifetime.scope,

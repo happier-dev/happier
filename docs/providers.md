@@ -1121,6 +1121,13 @@ distinct through native launch and Session metadata; Team selections retain thei
 resource, Team, revision and delivery choice. Creation does not project V2 into an
 older carrier. The composed launcher validation for this source change is pending.
 
+In 0.3 development, a profile-free Triage Fix composer can seed its Team model
+from the linked Session. The New Session draft carries the same qualified V2
+choice and verifies it against the selected Home's current Team model catalog.
+If the resource is unavailable, the composer gives the reason and waits for
+another choice or for access to return. Team models remain scoped to the draft
+and are excluded from remembered engine selections.
+
 
 The existing `session.draft.model.set` Action accepts both retained V1 refs and
 source-qualified V2 refs in its `selection` intent. The draft keeps V2 native and

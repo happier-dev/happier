@@ -144,6 +144,7 @@ export type TriageEntrySessionStartRequestV1 = Readonly<{
     /** Read-only navigation shares placement/creation, with no prompt or checkout preparation. */
     comparisonDestination?: PluginActionInputById['session.open']['destination'];
     linkedSessionIds?: readonly string[];
+    teamModelFromSessionId?: string;
     comparisonSource?: ScmComparisonSource;
     entryRef: TriageEntryRefV1;
     display: TriageStartEntrySessionInputV1['display'];
@@ -1036,6 +1037,7 @@ export function createTriageEntrySessionStartController(
                         actionDefault: triageActionDefaultSeedV1(request.savedAction ?? action),
                         attachments: request.forgeEvidence === undefined ? [] : [buildTriageForgeEvidenceAttachmentDraftV1(request.forgeEvidence)],
                         ...(explicitAgent?.status === 'resolved' ? { agentTarget: explicitAgent.agentTarget } : {}),
+                        ...(request.teamModelFromSessionId === undefined ? {} : { teamModelFromSessionId: request.teamModelFromSessionId }),
                         ...(permissionMode === undefined ? {} : { permissionMode }),
                         checkoutIntent: checkout, placement: executionPlacement, candidates: placementCandidates,
                         signal: selectionLifetime.signal,

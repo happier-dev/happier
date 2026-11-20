@@ -3,6 +3,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { admitProjectAuthoringOrigin } from '@/components/projects/detail/projectRouteState';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import type { ComposerDraftAppendContent } from '@/components/sessions/composer/admitComposerDraftItems';
+import type { NewSessionTeamModelSeed } from './newSessionDraftSeed';
 
 export type SessionAuthoringPresentation = Pick<Parameters<typeof import('./newSessionSeedComposer').seedAndOpenNewSession>[0], 'navigateToNewSession' | 'createDraftId'> & Readonly<{
     /** The requesting surface can retire while Action admission waits. */
@@ -45,6 +46,7 @@ export async function navigateToNewSessionSeedPage(input: NewSessionSeedNavigati
 export async function openOrdinaryNewSessionSeed(params: Readonly<{
     seed: unknown;
     configurationDraft?: NewSessionDraft;
+    teamModelSeed?: NewSessionTeamModelSeed;
     sourceContextHandoff?: Parameters<typeof import('./newSessionSeedComposer').seedAndOpenNewSession>[0]['sourceContextHandoff'];
     presentation?: SessionAuthoringPresentation;
     /** Host-owned prepared media; never part of the public seed. */
@@ -67,6 +69,7 @@ export async function openOrdinaryNewSessionSeed(params: Readonly<{
             ...(params.sourceContextHandoff ? { sourceContextHandoff: params.sourceContextHandoff } : {}),
             ...(params.presentation?.createDraftId ? { createDraftId: params.presentation.createDraftId } : {}),
             ...(params.configurationDraft ? { configurationDraft: params.configurationDraft } : {}),
+            ...(params.teamModelSeed ? { teamModelSeed: params.teamModelSeed } : {}),
             ...(params.media ? { media: params.media } : {}),
             ...(params.pluginId ? { pluginId: params.pluginId } : {}),
             scope: params.scope,

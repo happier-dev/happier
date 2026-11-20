@@ -922,7 +922,10 @@ export type SessionAuthoringOpenResultV1 = z.infer<typeof SessionAuthoringOpenRe
  * selection remains no-invoke and never creates, persists, or navigates to a
  * Session draft as a side effect.
  */
-export const PluginUiOpenNewSessionRequestV1Schema = PluginUiNewSessionSeedV1Schema;
+export const PluginUiOpenNewSessionRequestV1Schema = lazyZodSchema(() => z.safeExtend(PluginUiNewSessionSeedV1Schema, {
+  /** A Session within the mounted Account. It contributes only its qualified Team model and Agent. */
+  teamModelFromSessionId: z.optional(asProtocolZod(SessionIdSchema)),
+}));
 export type PluginUiOpenNewSessionRequestV1 = z.infer<typeof PluginUiOpenNewSessionRequestV1Schema>;
 
 /**

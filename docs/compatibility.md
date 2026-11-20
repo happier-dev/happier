@@ -9919,6 +9919,15 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `openNewSession` requests may name `teamModelFromSessionId` within
+the mounted Account. The host reads the source through its existing Account
+authority and seeds its qualified Team choice into the existing draft model
+field. The destination checks current Team entitlement. Requests without the
+selector keep their existing shape. Earlier strict development readers
+require matching Protocol, SDK and UI source under the development direct cut.
+The inspected `../0.2` frontier at `24731ff73c` has no New Session Host API
+request. Draft storage and the wire epoch stay the same.
+
 Unreleased 0.3 Triage attention results and notification requests accept optional
 `reviewAttention` presentation facts, using the Protocol-owned Review subject
 kind and requested-verdict boolean. The existing V1 envelopes and nested fact

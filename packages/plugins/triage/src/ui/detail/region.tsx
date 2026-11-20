@@ -75,6 +75,7 @@ import {
 import type { TriageListDisplayRowV1 } from '../marks/pinnedRows.js';
 import {
   TriageEntryActionControls,
+  readTriageActionIntentV1,
   resolveTriageReviewPreparationV1,
   type TriageEntryActionRequestV1,
   type TriageReviewPreparationV1,
@@ -422,6 +423,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       const action = request.launchMode === undefined ? executable.action
         : applyTriageActionLaunchModeV1(executable.action, request.launchMode);
       if (action === null) return { kind: 'missing' as const };
+      const teamModelFromSessionId = action.profileId === null && readTriageActionIntentV1(action) === 'fix'
+        ? props.linkedSessionIds[0] : undefined;
       let comparisonSource;
       if (action.target.kind === 'reviewStart') {
         try { comparisonSource = await readComparison(); } catch { /* Findings-only review remains available. */ }
@@ -449,6 +452,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
         ...(props.sourceContributions === undefined ? {} : { sourceContributions: props.sourceContributions }),
         ...(comparisonSource === undefined ? {} : { comparisonSource }),
         ...(request.destinationChoice === undefined ? {} : { destinationChoice: request.destinationChoice }),
+        ...(teamModelFromSessionId === undefined ? {} : { teamModelFromSessionId }),
       };
       if (request.existingSession !== undefined) await controller.startInSession(startRequest, request.existingSession);
       else controller.start(startRequest);

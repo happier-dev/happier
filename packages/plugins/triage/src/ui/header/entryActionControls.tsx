@@ -167,7 +167,7 @@ export function resolveTriageReviewPreparationV1(input: Readonly<{
 }
 
 /** What an action does to the entry, read from its own declared target and workspace, never from its label. */
-function readTriageActionIntentV1(action: TriageActionV1): TriageActionIntentV1 {
+export function readTriageActionIntentV1(action: TriageActionV1): TriageActionIntentV1 {
   if (action.target.kind === 'reviewStart' || action.workspaceMode === 'pull_request') return 'review';
   if (action.workspaceMode === 'repository') return 'fix';
   if (action.workspaceMode === 'reference_only') return 'ask';

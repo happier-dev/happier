@@ -11,7 +11,7 @@ import { buildSessionInputForgeEvidenceAttachmentValueV1, SESSION_INPUT_FORGE_EV
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { seedNewSessionDraftV1 } from './newSessionDraftSeed';
+import { seedNewSessionDraftV1, type NewSessionTeamModelSeed } from './newSessionDraftSeed';
 import type { NewSessionComposerAttachmentSeedV1, NewSessionDraft } from '@/sync/domains/state/persistence';
 import { storeTempData, type NewSessionData } from '@/utils/sessions/tempDataStore';
 import { admitComposerDraftItems, type ComposerDraftAppendContent } from '@/components/sessions/composer/admitComposerDraftItems';
@@ -98,6 +98,8 @@ export function seedAndOpenNewSession(params: Readonly<{
     pluginId?: string;
     /** Internal same-setup projection, never part of plugin-authored wire input. */
     configurationDraft?: NewSessionDraft;
+    /** Host-resolved source intent. The mounted draft owns entitlement. */
+    teamModelSeed?: NewSessionTeamModelSeed;
     /** Host-owned prepared media, never plugin-authored seed data or a window event payload. */
     media?: ComposerDraftAppendContent;
     /** Replay remains a one-shot continuation intent, not remembered configuration. */
@@ -179,7 +181,7 @@ export function seedAndOpenNewSession(params: Readonly<{
             ...(seed.promptStack === undefined ? {} : { promptStack: seed.promptStack }),
             ...(seed.prompt === undefined ? {} : { prompt: { text: seed.prompt, mode: 'replace' as const } }),
             ...(seed.profileId === undefined ? {} : { profileId: seed.profileId }),
-            ...(seed.agentTarget === undefined ? {} : { agentTarget: seed.agentTarget }),
+            ...(params.teamModelSeed ?? (seed.agentTarget === undefined ? {} : { agentTarget: seed.agentTarget })),
             ...(seed.permissionMode === undefined ? {} : { permissionMode: seed.permissionMode }),
             ...(seed.checkoutIntent === undefined ? {} : { checkoutIntent: seed.checkoutIntent }),
             ...(seed.placement === undefined ? {} : { placement: seed.placement }),

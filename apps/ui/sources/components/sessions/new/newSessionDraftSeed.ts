@@ -1,5 +1,6 @@
 import type { ComposerAttachmentAuthorValueV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
+import type { SessionModelSelectionV2 } from '@happier-dev/protocol/providers/selection/v2';
 import type { HappierSceneId } from '@happier-dev/plugin-ui/presentation';
 import type {
     PluginUiNewSessionPlacementV1,
@@ -58,6 +59,13 @@ export type NewSessionDraftPromptSeedV1 = Readonly<{
 
 export type NewSessionDraftPlacementSeedV1 = PluginUiNewSessionPlacementV1;
 
+export type NewSessionTeamModelSeed = Readonly<{
+    agentTarget: NonNullable<NewSessionDraft['agentTarget']>;
+    modelSelection: SessionModelSelectionV2 & {
+        ref: Extract<SessionModelSelectionV2['ref'], { source: 'team_resource' }>;
+    };
+}>;
+
 /**
  * One author-shaped composer attachment request, exactly as a live
  * `attachment.add` carries it. The seeding plugin is recorded beside it because
@@ -88,6 +96,7 @@ export type NewSessionDraftSeedV1 = Readonly<{
     prompt?: NewSessionDraftPromptSeedV1;
     profileId?: string;
     agentTarget?: NonNullable<NewSessionDraft['agentTarget']>;
+    modelSelection?: NewSessionTeamModelSeed['modelSelection'];
     permissionMode?: NewSessionDraft['permissionMode'];
     /**
      * A reader question only. A concrete `checkoutCreationDraft` needs a
@@ -129,6 +138,7 @@ export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1)
         || normalizedNonEmpty(seed.prompt?.text) !== null
         || normalizedNonEmpty(seed.profileId) !== null
         || seed.agentTarget !== undefined
+        || seed.modelSelection !== undefined
         || seed.permissionMode !== undefined
         // An explicit checkout question opens the established picker route. It
         // is not persisted into this draft because it is not yet a concrete
@@ -205,6 +215,7 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
             }),
         ...(profileId === null ? {} : { selectedProfileId: profileId }),
         ...(input.seed.agentTarget === undefined ? {} : { agentTarget: input.seed.agentTarget }),
+        ...(input.seed.modelSelection === undefined ? {} : { modelSelection: input.seed.modelSelection }),
         ...(input.seed.permissionMode === undefined ? {} : {
             permissionMode: input.seed.permissionMode, permissionModeExplicit: true,
         }),

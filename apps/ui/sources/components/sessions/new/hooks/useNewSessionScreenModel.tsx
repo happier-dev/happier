@@ -1595,10 +1595,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
         modelMode,
         modelSelection,
         modelSelectionV2,
+        modelSelectionForAuthoring,
         modelSelectionForPersistence,
         modelIsManagedDefault,
         modelSource,
         teamCredentialModel: selectedTeamCredentialModel,
+        teamCredentialModelIntent,
+        teamCredentialModelRequirement,
         setModelMode,
         setModelSelection,
         setModelSelectionForBackendTarget,
@@ -1614,6 +1617,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         managedDefaults: managedSessionDefaults.read.context,
         agentTarget: canonicalAgentTarget,
         explicitTeamCredentialModel: storedTeamCredentialModel,
+        teamCredentialCatalog,
+        teamCredentialAccess: accessDraftState,
         agentType: agentPolicyType,
         backendTargetKey: selectedBackendTargetKey,
         allowTargetlessDraftEngineSelection: routeBackendTarget === null,
@@ -1727,9 +1732,10 @@ export function useNewSessionScreenModel(input?: Readonly<{
         resourceStatusByKey: teamCredentialCatalog.resourceStatusByKey,
     });
     const coordinateTeamCredentialSelection = useTeamCredentialSelectionCoordinator(targetServerId);
-    const teamCredentialProviderBinding = React.useMemo(() => modelSelectionV2?.ref.source === 'team_resource'
-        ? sessionModelSelectionV2TeamBindingIntent(modelSelectionV2)
-        : undefined, [modelSelectionV2]);
+    const teamCredentialProviderBinding = React.useMemo(() => modelSelectionForAuthoring?.v === 2
+        && modelSelectionForAuthoring.ref.source === 'team_resource'
+        ? sessionModelSelectionV2TeamBindingIntent(modelSelectionForAuthoring)
+        : undefined, [modelSelectionForAuthoring]);
     const setAcpSessionModeIdAndRemember = React.useCallback<React.Dispatch<React.SetStateAction<string | null>>>((next) => {
         const current = currentEngineSelectionRef.current.acpSessionModeId;
         const value = typeof next === 'function'
@@ -2018,16 +2024,17 @@ export function useNewSessionScreenModel(input?: Readonly<{
     });
 
     React.useEffect(() => {
-        if (connectedAccountSelected || modelIsManagedDefault || modelOptionsProbeState.phase !== 'idle' || modelOptionsProbeState.failed
+        if (!teamCredentialModelRequirement.ready || connectedAccountSelected || modelIsManagedDefault || modelOptionsProbeState.phase !== 'idle' || modelOptionsProbeState.failed
             || (modelSelection?.v === 2 ? modelSelection.ref.source === 'account_provider_connection' : modelSelection?.ref.providerConnectionId) || selectedTeamCredentialModel) return;
         const reconciled = resolveCanonicalModelOptionId(modelOptions, modelMode, preflightModels);
         if (reconciled === modelMode) return;
         setModelMode(reconciled);
         rememberCurrentEngineSelection({ modelMode: reconciled });
     }, [connectedAccountSelected, modelIsManagedDefault, modelMode, modelOptions, modelOptionsProbeState.failed, modelOptionsProbeState.phase, modelSelection,
-        preflightModels, rememberCurrentEngineSelection, selectedTeamCredentialModel, setModelMode]);
+        preflightModels, rememberCurrentEngineSelection, selectedTeamCredentialModel, setModelMode, teamCredentialModelRequirement.ready]);
 
     React.useEffect(() => {
+        if (!teamCredentialModelRequirement.ready) return;
         const acceptedSnapshot = !connectedAccountSelected && preflightModels && preflightModels.unavailable !== true
             && modelOptionsProbeState.phase === 'idle' && !modelOptionsProbeState.failed
             && !acpConfigOptionsProbeState.failed && !acpConfigOptionsUnavailable
@@ -2051,7 +2058,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }, [connectedAccountSelected, acpConfigOptions, acpConfigOptionsUnavailable, acpConfigOptionsProbeState.failed, acpConfigOptionsProbeState.phase,
         acpConfigOptionsProbeState.rejectedConfigOptionOverrides, modelMode, modelOptions, modelOptionsProbeState.failed,
         modelOptionsProbeState.phase, modelSelection, preflightModels, rememberCurrentEngineSelection, selectedBackendTargetKey,
-        selectedTeamCredentialModel, sessionConfigOptionOverrides, setSessionConfigOptionOverrides]);
+        selectedTeamCredentialModel, sessionConfigOptionOverrides, setSessionConfigOptionOverrides, teamCredentialModelRequirement.ready]);
 
     const selectTeamCredentialModel = React.useCallback(async (selection: TeamCredentialProviderModelSelectionV1) => {
         const selectedResource = teamCredentialSelectionContextRef.current.resources.find((resource) => (
@@ -3035,7 +3042,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         selectedProfileId,
         resumeSessionId,
         permissionMode,
-        modelSelection,
+        modelSelection: modelSelectionForAuthoring,
         modelSelectionForPersistence: { value: modelSelectionForPersistence },
         permissionModeForPersistence,
         permissionModeExplicit,
@@ -3265,7 +3272,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             structuredInputMentions: newSessionComposerDocument.structuredInputMentions,
             composerAttachments: newSessionComposerDocument.attachments,
         },
-        selectedTeamCredentialModel,
+        selectedTeamCredentialModel: teamCredentialModelIntent,
         machineId: managedMachineSelection ? null : selectedMachineId,
         managedMachineSelection: managedMachineCreationIntent(managedMachineSelection),
         sourceContext: sourceContextState.sourceContext,
@@ -3283,7 +3290,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         promptStore,
         newSessionComposerDocument.structuredInputMentions,
         newSessionComposerDocument.attachments,
-        selectedTeamCredentialModel,
+        teamCredentialModelIntent,
         selectedMachineId,
         managedMachineSelection,
         sourceContextState.sourceContext,
@@ -4145,6 +4152,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         profileMap,
         recentMachinePaths,
         requireConnectedAccountDefaultsReady,
+        teamCredentialModelReady: teamCredentialModelRequirement.ready,
         agentType: selectedUiAgentType,
         presentConnectedAccountPoolFailure,
         staticAgentId,
@@ -4250,6 +4258,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const hasMachine = useHasMachineForGettingStartedGuidance();
     const createAdmission = resolveNewSessionCreateAdmission([
         { ready: !profileLaunchFailure, reason: profileLaunchFailure?.message ?? null },
+        teamCredentialModelRequirement,
         resolveNewSessionTargetRequirement({
             ready: canCreateFromAuthoring,
             hasTarget: Boolean(selectedMachineId || managedMachineSelection),
@@ -4419,13 +4428,13 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const launchStatus = React.useMemo(
         () => buildNewSessionLaunchStatus({ isCreating: isCreating || temporaryComputerLaunchActive, launchPresentation,
             disabledReason: createAdmission.disabledReason, translate: t,
-            agentStartBlock,
+            agentStartBlock: teamCredentialModelRequirement.ready ? agentStartBlock : null,
             requesterDisclosure: targetAccountScopeResolution.kind === 'bound' && selectedMachine?.access
                 && selectedMachine.access.custodian.accountId !== targetAccountScopeResolution.scope.accountId
                 ? { owner: selectedMachine.access.custodian.displayName || t('shareSheet.person'),
                     machine: selectedMachineSentenceName ?? selectedMachine.id, signIn: 'full', signInPurposes: requesterSignInPurposes }
                 : undefined }),
-        [isCreating, temporaryComputerLaunchActive, launchPresentation, createAdmission.disabledReason, agentStartBlock, selectedMachine, selectedMachineSentenceName, targetAccountScopeResolution, requesterSignInPurposes],
+        [isCreating, temporaryComputerLaunchActive, launchPresentation, createAdmission.disabledReason, agentStartBlock, teamCredentialModelRequirement.ready, selectedMachine, selectedMachineSentenceName, targetAccountScopeResolution, requesterSignInPurposes],
     );
     // One cause, one line: the machine's own state leads (it is the cause of a blocked launch), then the
     // launch's blocker or progress, on the status line above the card where a session states its status.
