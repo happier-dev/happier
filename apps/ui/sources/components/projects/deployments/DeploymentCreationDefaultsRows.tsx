@@ -46,12 +46,16 @@ export function renderDeploymentCreationDefaultsRows(
     defaults: CreationDefaults;
     machineName: (machineId: string) => string;
     testID: string;
+    /** A Machine a row above already names (the Review's runs row): its builder and controller rows are not said again. */
+    namedMachineId?: string | null;
   }>,
 ): React.ReactElement {
   const { values, sources } = props.defaults;
+  const said = (machineId: string | undefined, source: DefaultSource | undefined) =>
+    source === 'explicit' || (machineId !== undefined && machineId === props.namedMachineId);
   return (
     <>
-      {values.buildMachineId && sources.buildMachineId !== 'explicit' ? (
+      {values.buildMachineId && !said(values.buildMachineId, sources.buildMachineId) ? (
         <Item
           testID={`${props.testID}.builder`}
           mode="info"
@@ -61,7 +65,7 @@ export function renderDeploymentCreationDefaultsRows(
           subtitle={sourceWord(sources.buildMachineId)}
         />
       ) : null}
-      {values.controllerMachineId && sources.controllerMachineId !== 'explicit' ? (
+      {values.controllerMachineId && !said(values.controllerMachineId, sources.controllerMachineId) ? (
         <Item
           testID={`${props.testID}.controller`}
           mode="info"

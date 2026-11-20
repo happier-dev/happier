@@ -153,8 +153,9 @@ export type DeploymentCreationReviewPlan = Readonly<{
   newProjectName: string | null;
   environment: Readonly<{ name: string; production: boolean; deployers: Parameters<typeof deployersLabel>[0] }>;
   runs: Readonly<{ kind: 'repository'; ref: string } | { kind: 'compose' } | { kind: 'image'; image: string } | { kind: 'app'; name: string }> | null;
-  runsOn: Readonly<{ kind: 'machine'; machine: string }
-    | { kind: 'platform'; platform: string; pluginId: string; machine: string; resource: 'create' | 'existing' }>;
+  /** `machineId` is the Machine the runs row names, so the defaults rows don't name it again. */
+  runsOn: Readonly<{ kind: 'machine'; machine: string; machineId: string }
+    | { kind: 'platform'; platform: string; pluginId: string; machine: string; machineId: string; resource: 'create' | 'existing' }>;
   /** Create has answered (a refusal or an approval request): what was asked stays, what would follow goes. */
   answered: boolean;
   /** Create refused: nothing was created, and the Environment row says it couldn't be (journey-deploy revFail). */
@@ -195,7 +196,8 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
   const builder = useServerScopedMachineLabel(props.serverId, review.creationDefaults.values.buildMachineId ?? null);
   const controller = useServerScopedMachineLabel(props.serverId, review.creationDefaults.values.controllerMachineId ?? null);
   const machineName = (id: string) => (id === review.creationDefaults.values.buildMachineId ? builder : controller) ?? t('approvals.machineNotKnown');
-  const defaultsRows = renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults` });
+  const defaultsRows = renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults`,
+    namedMachineId: plan?.runs ? plan.runsOn.machineId : null });
   const runsOn = plan?.runsOn;
   return <>
     {plan ? <ItemGroup testID={`${testID}.creates`} title={t('newApp.deploy.plan.createsTitle')}>

@@ -35,7 +35,6 @@ export function NewAppAutoAdjust(
     adjust: (change: Change) => boolean;
     onEditDescription: () => void;
     phone: boolean;
-    insetStyle: object | null;
   }>,
 ) {
   const { recommendation, catalog } = props.chosen;
@@ -169,17 +168,15 @@ export function NewAppAutoAdjust(
         title={t('newApp.auto.askElse')}
         description={t('newApp.auto.askElseDescription')}
       >
-        <View style={props.insetStyle}>
-          <FieldTextInput
-            testID="newApp.auto.adjust.note"
-            value={props.note}
-            onChangeText={props.onNoteChange}
-            accessibilityLabel={t('newApp.auto.askElse')}
-            multiline
-            minLines={3}
-            growWithText
-          />
-        </View>
+        <FieldTextInput
+          testID="newApp.auto.adjust.note"
+          value={props.note}
+          onChangeText={props.onNoteChange}
+          accessibilityLabel={t('newApp.auto.askElse')}
+          multiline
+          minLines={3}
+          growWithText
+        />
       </ItemGroup>
     </View>
   );

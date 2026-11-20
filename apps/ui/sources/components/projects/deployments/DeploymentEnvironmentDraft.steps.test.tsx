@@ -107,13 +107,16 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
                 contentBodyVersion: 1,
               },
               review: {
+                // As the live resolver answers a new draft: builder and controller default to the chosen Machine.
                 creationDefaults: {
                   values: {
                     controllerMachineId: 'runtime',
+                    buildMachineId: 'runtime',
                     retainPreviousDeployments: 1,
                   },
                   sources: {
-                    controllerMachineId: 'explicit',
+                    controllerMachineId: 'builtin',
+                    buildMachineId: 'builtin',
                     retainPreviousDeployments: 'builtin',
                   },
                 },
@@ -214,6 +217,11 @@ describe('Environment draft hosted as steps (journey-deploy D3: Where → Config
       expect(
         screen.findByTestId('project-deployments.draft.defaults'),
       ).not.toBeNull();
+      // The Machine the runs row already names ("On runtime") is not said again as the builder and the controller
+      // (DESIGN-ACCEPT-2 R-a; lab revM names it once); what it adds, the retention, stays.
+      expect(screen.findByTestId('project-deployments.draft.defaults.builder')).toBeNull();
+      expect(screen.findByTestId('project-deployments.draft.defaults.controller')).toBeNull();
+      expect(screen.findByTestId('project-deployments.draft.defaults.retention')).not.toBeNull();
       // Review says what Happier creates and what happens next, from the operands it prepared (journey-deploy revM):
       // a new Project and its Environment are saved, then the person deploys from the Environment.
       expect(screen.findByTestId('project-deployments.draft.creates.project')).not.toBeNull();

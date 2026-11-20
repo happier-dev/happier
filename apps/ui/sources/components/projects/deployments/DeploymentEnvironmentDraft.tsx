@@ -1,4 +1,4 @@
-import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
+import { OWN_SERVER_DEPLOYMENT_TARGET_V1, resolvePublishTargetRecommendation, type PublishTargetRecommendationInput } from '@happier-dev/deployments';
 import { isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { deploymentRecommendationDescription, deploymentRecommendationReason } from './deploymentRecommendationDescription';
 import { projectDeploymentConfigurePreflightV1 } from './deploymentPreflightWarnings';
@@ -256,16 +256,20 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A repository-free Project has only stored definitions; a door may also ask for one in any Project.
     const definitionKind = props.definitionKind ?? (source !== null && source.repository === undefined ? 'compose' : null);
     const storedDefinition = definitionKind !== null;
-    const recommendation = resolvePublishTargetRecommendation({
+    const recommendationInput: PublishTargetRecommendationInput = {
       definition: props.copyFrom?.content.definition ?? (props.catalogApp ? { from: 'catalogApp' }
         : definitionKind ? { from: definitionKind } : { kind: 'repository' }),
-      explicitTarget: targetKey !== OWN_SERVER_TARGET ? { id: targetKey, targetClass: 'platform' } : undefined,
       targets: [{ id: OWN_SERVER_TARGET, targetClass: 'ownServer', availability: allMachines == null ? 'unknown'
         : chosen && answers(chosen) ? 'available' : 'unavailable',
         accepts: OWN_SERVER_DEPLOYMENT_TARGET_V1.accepts, needs: OWN_SERVER_DEPLOYMENT_TARGET_V1.needs },
         ...platformTargets.map(target => ({ id: target.key, targetClass: 'platform' as const, availability: 'unknown' as const,
           accepts: target.accepts, needs: target.needs }))],
-    });
+    };
+    const recommendation = resolvePublishTargetRecommendation({ ...recommendationInput,
+      explicitTarget: targetKey !== OWN_SERVER_TARGET ? { id: targetKey, targetClass: 'platform' } : undefined });
+    // What Happier would suggest before the person picks: the stepped grid's lead and its Recommended badge read this,
+    // so choosing a card only moves the selection, never the grid or the badge (DESIGN-ACCEPT-2 W4).
+    const suggestion = stepped ? resolvePublishTargetRecommendation(recommendationInput) : recommendation;
     const offeredPlatformTargets = platformTargets.filter(target => recommendation.offeredTargetIds.includes(target.key));
     const onPlatform = recommendation.target?.targetClass === 'platform';
     const platformDefinitionAccepted = recommendation.offeredTargetIds.includes(targetKey);
@@ -446,8 +450,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     ];
     // Stepped (journey-deploy where): the targets read as cards. The recommended one carries its reason and badge,
     // and More platforms always closes the grid, also where a stored definition runs on a Machine only.
-    const recommendedId = recommendation.evidence.length > 0 ? recommendation.target?.id ?? null : null;
-    const recommendationReason = recommendedId ? deploymentRecommendationReason(recommendation) : null;
+    const recommendedId = suggestion.evidence.length > 0 ? suggestion.target?.id ?? null : null;
+    const recommendationReason = recommendedId ? deploymentRecommendationReason(suggestion) : null;
     // The recommended target (else the first one) leads the grid across its row (journey-deploy where, whereM); the
     // others keep two columns beneath. Choosing another target only moves the selection, never the grid.
     const choiceTiles = targetTiles.filter(tile => tile.id !== PLUGINS_TILE);
@@ -530,7 +534,9 @@ export const DeploymentEnvironmentDraft = React.memo(
     // "name ~/path on Machine" belongs to a local checkout, which this draft is not given).
     const sourceTitle = source ? source.name : props.catalogApp?.title ?? null;
     // A catalog app has no saved Source yet; the summary names the app and where it comes from (journey-deploy catWhere).
-    const sourceNote = !source && props.catalogApp ? t('newApp.deploy.catalogSourceNote') : null;
+    // A repository Source says where its code lives (jdF-where's quiet note after the name); the name already says which.
+    const sourceNote = !source && props.catalogApp ? t('newApp.deploy.catalogSourceNote')
+      : source?.repository?.provider.displayName ?? null;
     const appName = source?.name ?? (projectSelection && 'newProject' in projectSelection ? projectSelection.newProject.name.trim() || null : null);
     const frame = React.useMemo((): DeploymentDraftFrame => ({
       step: draftStep,
@@ -649,8 +655,8 @@ export const DeploymentEnvironmentDraft = React.memo(
         : definitionKind === 'image' ? { kind: 'image', image: imageName.trim() }
         : storedDefinition ? { kind: 'compose' } : branch ? { kind: 'repository', ref: branch } : null,
       runsOn: onPlatform && platformTarget ? { kind: 'platform', platform: platformTarget.title, pluginId: platformTarget.pluginId,
-        machine: machineName(chosen.id), resource: platformProvider?.kind === 'existing' ? 'existing' : 'create' }
-        : { kind: 'machine', machine: machineName(chosen.id) },
+        machine: machineName(chosen.id), machineId: chosen.id, resource: platformProvider?.kind === 'existing' ? 'existing' : 'create' }
+        : { kind: 'machine', machine: machineName(chosen.id), machineId: chosen.id },
       answered: refusal !== null,
       refused: refusal?.kind === 'refused' && !platformRefusal,
       ...(platformRefusalCopy ? { platformRefused: { status: platformRefusalCopy.row } } : {}),

@@ -108,10 +108,13 @@ export function DeploymentTargetPlans(props: DeploymentTargetPlansProps) {
                 `${t('newApp.deploy.plan.price')} ${formatDeclaredPlanPrice(plan.price)}`}>{formatDeclaredPlanPrice(plan.price)}</Text> : null}
             </View>
             {plan.facts.length > 0 ? <PlanFacts facts={plan.facts} labelWidth={labelWidth} /> : null}
-            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{sourceLine(plan.source)}</Text>
           </View>
         ))}
       </View>
+      {/* Where the facts were read, once per card (jdF-where): plans read from one page share one line. */}
+      {[...new Set(props.plans.map((plan) => sourceLine(plan.source)))].map((line) => (
+        <Text key={line} variant="meta" style={{ color: theme.colors.text.secondary }}>{line}</Text>
+      ))}
       <View ref={anchorRef} collapsable={false} style={styles.peek}>
         <TextLinkButton testID={`${props.testID}:included`} size="meta" label={t('newApp.deploy.plan.whatsIncluded')}
           onPress={() => setComparing(true)} />

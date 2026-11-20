@@ -84,8 +84,6 @@ export function NewAppAutoStep(
     /** The open round's answers and whether they are complete, for the dialog footer's Suggest again. */
     onQuestionState?: (state: TransientQuestionAnswerState) => void;
     phone: boolean;
-    /** The dialog's inset for content that has no sheet of its own (NewAppScreen `dialogInset`). */
-    insetStyle: object | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -102,15 +100,13 @@ export function NewAppAutoStep(
           source={{ title: t('newApp.auto.sourceTitle'), note: view.source }}
         />
         <ItemGroup surface="none">
-          <View style={props.insetStyle}>
-            <DeploySuggestionCardTiles
-              testIdPrefix="newApp.auto.card"
-              cards={view.cards}
-              value={props.chosenCardId}
-              onChange={props.onChooseCard}
-              phone={props.phone}
-            />
-          </View>
+          <DeploySuggestionCardTiles
+            testIdPrefix="newApp.auto.card"
+            cards={view.cards}
+            value={props.chosenCardId}
+            onChange={props.onChooseCard}
+            phone={props.phone}
+          />
         </ItemGroup>
       </View>
     );
@@ -149,28 +145,25 @@ export function NewAppAutoStep(
 
   return (
     <View testID={`newApp.auto.${view.kind}`}>
-      <ItemGroup surface="none">
-        <View style={props.insetStyle}>
-          <FieldTextInput
-            testID="newApp.auto.description"
-            value={props.description}
-            onChangeText={props.onDescriptionChange}
-            accessibilityLabel={t('newApp.auto.descriptionLabel')}
-            placeholder={t('newApp.auto.descriptionPlaceholder')}
-            multiline
-            minLines={props.phone ? 5 : 4}
-            growWithText
-            editable={view.kind !== 'working'}
-            autoFocus={view.kind === 'describe' && !props.phone}
-          />
-        </View>
+      {/* The description leads the step under the title band, as the start step's search does (jdF-autoNoAgent). */}
+      <ItemGroup surface="none" header="none">
+        <FieldTextInput
+          testID="newApp.auto.description"
+          value={props.description}
+          onChangeText={props.onDescriptionChange}
+          accessibilityLabel={t('newApp.auto.descriptionLabel')}
+          placeholder={t('newApp.auto.descriptionPlaceholder')}
+          multiline
+          minLines={props.phone ? 5 : 4}
+          growWithText
+          editable={view.kind !== 'working'}
+          autoFocus={view.kind === 'describe' && !props.phone}
+        />
       </ItemGroup>
       {view.kind === 'questions' ? (
         <ItemGroup surface="none" testID="newApp.auto.questions">
-          <View style={props.insetStyle}>
-            <AutoQuestions key={view.questions.map((question) => question.id).join('|')} questions={view.questions}
-              onState={props.onQuestionState} />
-          </View>
+          <AutoQuestions key={view.questions.map((question) => question.id).join('|')} questions={view.questions}
+            onState={props.onQuestionState} />
         </ItemGroup>
       ) : null}
       {view.kind === 'working' && checklist ? (

@@ -771,10 +771,12 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {/* One cause, one line: starters are read on a Machine, so a person without one online is offered the
             Add a computer flow that keeps this draft, instead of one Retry card per source. */}
         {starterState === 'needsMachine' ? (
+          // The same line anatomy as the catalog's outage line beneath it: tile-text type, the glyph on the tiles'
+          // icon column, the one recovery on its end (DESIGN-ACCEPT P4).
           <SurfaceStateCard
             testID="newApp.needsMachine"
             kind="unavailable"
-            layout="inline"
+            size="line"
             title={t('newApp.startersNeedMachine')}
             reason={t('newApp.startersNeedMachineBody')}
             action={{ label: t('newApp.auto.addMachine'), onPress: addComputer }}
@@ -886,7 +888,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         <NewAppDeploySummary phone={phone} frame={deployFrame} onChangeSource={leaveDeploy}
           source={deploySource.kind === 'definition'
             ? { title: t(deploySource.definitionKind === 'image' ? 'newApp.deploy.builtImageSource' : 'newApp.deploy.builtComposeSource'), note: null }
-            : { title: named ?? pastedRepository?.selector.repository.nameWithOwner ?? '…', note: deployFrame?.source?.note ?? null,
+            // The catalog tile's name stands while its listing is read (or failed to read), never a bare ellipsis.
+            : { title: named ?? deployCatalogItem?.title ?? pastedRepository?.selector.repository.nameWithOwner ?? '…',
+              note: deployFrame?.source?.note ?? (deployCatalogItem ? t('newApp.deploy.catalogSourceNote') : null),
               ...(deployCatalogItem ? { mark: <StoreItemMark facts={{ kind: deployCatalogItem.kind, title: deployCatalogItem.title,
                 brand: deployCatalogItem.brandMark }} size={ICON_SIZE.md} /> } : {}) }} />
         <NewAppDeploySteps serverId={scope.serverId} source={deploySource} machineId={props.machine?.machineId ?? null}
@@ -904,7 +908,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         <NewAppAutoAdjust chosen={auto.chosen} title={chosenCard.title}
           source={auto.view.kind === 'recommendations' ? auto.view.source : null}
           note={adjustNote} onNoteChange={setAdjustNote} adjust={auto.adjustChosen}
-          onEditDescription={auto.backToDescription} phone={phone} insetStyle={dialog ? styles.dialogInset : null} />
+          onEditDescription={auto.backToDescription} phone={phone} />
       </>
     ) : (
       <>
@@ -923,7 +927,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           onChooseStarter={back}
           onQuestionState={setQuestionAnswers}
           phone={phone}
-          insetStyle={dialog ? styles.dialogInset : null}
         />
       </>
     );
@@ -931,20 +934,18 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     body = (
       <>
         {header(t('newApp.describeTitle'), t('newApp.describeDescription'))}
-        <ItemGroup surface="none">
-          <View style={dialog ? styles.dialogInset : null}>
-            <FieldTextInput
-              testID="newApp.description"
-              value={description}
-              onChangeText={setDescription}
-              accessibilityLabel={t('newApp.describeLabel')}
-              placeholder={t('newApp.describePlaceholder')}
-              multiline
-              minLines={phone ? 5 : 4}
-              growWithText
-              autoFocus={!devicePhone}
-            />
-          </View>
+        <ItemGroup surface="none" header="none">
+          <FieldTextInput
+            testID="newApp.description"
+            value={description}
+            onChangeText={setDescription}
+            accessibilityLabel={t('newApp.describeLabel')}
+            placeholder={t('newApp.describePlaceholder')}
+            multiline
+            minLines={phone ? 5 : 4}
+            growWithText
+            autoFocus={!devicePhone}
+          />
         </ItemGroup>
         <ItemGroup>
           <Item
@@ -1281,10 +1282,6 @@ const styles = StyleSheet.create((theme) => ({
   // The lab sets the run-existing row a clear step below the gallery, not tight under its captions.
   ways: { gap: theme.space.s8, paddingTop: theme.space.s20, paddingHorizontal: theme.space.s16 },
   waysEntries: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
-  // The card has no page gutter, and a bare group bleeds one step past the card body there. The description field
-  // takes that step back so it shares the edge of the sheets beneath it. The start step's search field and tiles take
-  // none: they stand on the dialog title's edge with their section titles (journey-deploy jdF-src, one edge).
-  dialogInset: { paddingHorizontal: theme.space.s16 },
   forgeRepair: { alignItems: 'flex-end', paddingHorizontal: theme.space.s16, paddingBottom: theme.space.s12 },
   startNewStack: { gap: theme.space.s8 },
 

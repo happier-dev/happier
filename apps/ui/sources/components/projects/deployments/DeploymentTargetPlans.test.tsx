@@ -65,6 +65,17 @@ describe('a platform’s declared plans with the connected account’s plan (dep
     await screen.unmount();
   });
 
+  it('names a source its plans share once per card, with the date on its words (DESIGN-ACCEPT P1/P2)', async () => {
+    const screen = await renderScreen(
+      <DeploymentTargetPlans plans={plans} platform="Vercel" columns={false} phone={false} testID="plans" />,
+    );
+    const text = screen.getTextContent();
+    expect(text.split('Price from vercel.com').length - 1).toBe(1);
+    // "checked" and its date stay one phrase: a narrow card never leaves the date alone on a line.
+    expect(text).toMatch(/checked \S+ \S+/);
+    await screen.unmount();
+  });
+
   it('says “Your plan” only for a declared plan, and dates every plan by its public page', async () => {
     const shown = await renderScreen(
       <DeploymentTargetPlans

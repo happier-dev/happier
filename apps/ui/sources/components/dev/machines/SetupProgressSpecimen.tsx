@@ -112,7 +112,6 @@ export function SetupProgressSpecimen(
         onTryAgain={() => undefined}
         onChooseStarter={() => undefined}
         phone={false}
-        insetStyle={null}
       />
     </ItemList>
   );

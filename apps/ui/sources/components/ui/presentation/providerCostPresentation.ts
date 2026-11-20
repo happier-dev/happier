@@ -58,8 +58,9 @@ export function formatPriceSource(price: Pick<ProviderPriceFactV1, 'observedAt'>
 /** A declared plan's dated source (an ISO calendar date and its public page), on the reader's calendar day. */
 export function formatDeclaredPlanSource(source: Readonly<{ url: string; checkedAt: string }>): string {
   const [year, month, day] = source.checkedAt.split('-').map(Number);
-  const time = formatCalendarDate(new Date(year!, month! - 1, day!));
-  return t('managedMachines.price.checked', { provider: sourceName(source.url) ?? source.url, time });
+  // The date and the word before it keep one line: a narrow card never leaves "Nov 16" alone under "checked".
+  const time = formatCalendarDate(new Date(year!, month! - 1, day!)).replace(/ /g, '\u00a0');
+  return t('managedMachines.price.checked', { provider: sourceName(source.url) ?? source.url, time }).replace(` ${time}`, `\u00a0${time}`);
 }
 
 /** A declared plan's price (Protocol ProviderAmountV1), said like any provider price: "$20.00 a month". */

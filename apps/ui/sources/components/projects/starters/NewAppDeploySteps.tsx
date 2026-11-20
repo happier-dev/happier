@@ -212,8 +212,9 @@ function CatalogAppDeploy(props: BoundProps & Readonly<{ app: Readonly<{ sourceI
   const read = useRegistryItem({ kind: 'app', sourceId: props.app.sourceId, itemId: props.app.itemId }, true, { scope: props.lifetime.scope });
   if (!read.item) {
     return read.error && !read.loading
-      ? <SurfaceStateCard testID="newApp.deploy.catalogFailed" kind="error" layout="inline" title={t('capabilities.store.listing.failed')}
-        reason={read.error} action={{ label: t('common.retry'), onPress: read.refresh }} />
+      // One line under the summary, as the start step's catalog outage reads; the read's own error stays behind Details.
+      ? <SurfaceStateCard testID="newApp.deploy.catalogFailed" kind="error" size="line" title={t('capabilities.store.listing.failed')}
+        diagnosticCode={read.error} action={{ label: t('common.retry'), onPress: read.refresh }} />
       : <SurfaceStateCard testID="newApp.deploy.loading" kind="loading" layout="inline" title={t('common.loading')} />;
   }
   const template = readStoreAppTemplate(read.item);
@@ -260,7 +261,9 @@ export function NewAppDeploySummary(
   const runsOn =
     props.frame && props.frame.step !== 'where' ? props.frame.runsOn : null;
   return (
-    <ItemGroup testID="newApp.deploy.summary">
+    // The summary leads every step: it takes no section space of its own, so it sits under the title band as the
+    // start step's search does (one gap under the header in every step, lab jdF-catWhere / jdF-cfg).
+    <ItemGroup testID="newApp.deploy.summary" header="none">
       <Item
         mode="info"
         testID="newApp.deploy.summary.source"

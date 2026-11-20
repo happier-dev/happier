@@ -160,7 +160,16 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
       const comparison = textOf(`${alpha}:compare`)!;
       for (const expected of ['Free', 'Pro', 'Credit', '$20.00 a month', '—', 'Automatic HTTPS', 'Preview deployments', 'alpha.example'])
         expect(comparison, expected).toContain(expected);
+      const { SelectionTiles } = await import('@/components/ui/forms/SelectionTiles');
+      const grid = () => (screen.findAllByType(SelectionTiles)
+        .find(node => node.props.testIdPrefix === 'project-deployments.draft.target')?.props.options ?? [])
+        .map((option: { id: string; badge?: string; span?: string }) => `${option.id}|${option.badge ?? ''}|${option.span ?? ''}`);
+      const before = grid();
       await screen.pressByTestIdAsync(alpha);
+      // Choosing a platform moves only the selection: the grid keeps its order and lead, and the person's own pick
+      // never turns into "Recommended" (DESIGN-ACCEPT-2 W4; the lead/badge come from the recommendation, not the choice).
+      await waitForHomeGovernance(() => expect(screen.findHostByTestId(`${alpha}:footer`)).not.toBeNull());
+      expect(grid()).toEqual(before);
       // The Machine stays in its card, read-only: an unchosen card names its Machine's facts and holds no live select
       // (DESIGN-ACCEPT W3; lab stWhere / where round 3 #2).
       await waitForHomeGovernance(() => expect(screen.findHostByTestId('project-deployments.draft.target:own-server:footer'),
