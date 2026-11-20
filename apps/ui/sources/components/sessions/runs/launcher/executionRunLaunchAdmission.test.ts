@@ -46,9 +46,12 @@ import { resetTeamsSnapshotsForTests } from '@/sync/store/teams/teamsSnapshots';
 import { ensureSessionDraftRepositoryHydrated } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import '@/sync/syncEngine';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
+import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1, ProfileRowsListResponseV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROFILE_TRANSFER_ROUTE_V1, ProfileTransferRowReadResponseV1Schema } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { applyProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
 import { resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
 import { applyAcpCatalogSnapshot, beginAcpCatalogLoad, resetAcpCatalogSnapshotsForTests } from '@/sync/store/settings/acpCatalogSnapshot';
@@ -589,6 +592,9 @@ describe('real execution Run launch admission', () => {
         const { input, home, session, machine } = await launchFixture({ interactive: true });
         const profile = AIBackendProfileSchema.parse({ id: 'review-profile', name: 'Review profile',
             envVarRequirements: [{ name: 'OPENAI_API_KEY', required: true, kind: 'secret' }] });
+        const profileCatalog = activeProfileCatalog(profile);
+        const profileTransfer = ProfileTransferRowReadResponseV1Schema.parse({ status: 'present', revision: 1,
+            content: { t: 'plain', v: profileCatalog.control!.record } });
         const secret = { id: formatSharedSavedSecretRefV1('review-secret'), name: 'Review key', kind: 'apiKey',
             encryptedValue: { _isSecretValue: true, value: 'synthetic-test-value' }, createdAt: 1, updatedAt: 1 };
         const settings = settingsParse({ ...settingsDefaults, experiments: true,
@@ -630,6 +636,13 @@ describe('real execution Run launch admission', () => {
             if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            if (path === PROFILE_ROWS_ROUTE_V1) return Response.json(ProfileRowsListResponseV1Schema.parse({ status: 'listed',
+                rows: profileCatalog.records.map(row => ({ id: row.record.id, revision: row.revision, content: { t: 'plain', v: row.record } })),
+                nextCursor: null, complete: true, referenceGuardRevision: 1, transferControl: profileTransfer, diagnostics: [],
+            }));
+            if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 1 });
+            if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json(profileTransfer);
+            if (path === '/v1/artifacts') return createArtifactListHttpResponse(new URL(String(url)), []);
             if (path === PROVIDER_CONNECTIONS_ROWS_ROUTE_V1) return Response.json(ProviderConnectionsRowReadResponseV1Schema.parse({
                 status: 'present', revision: 1, content: { t: 'plain', v: providerCatalog },
             }));
@@ -660,7 +673,7 @@ describe('real execution Run launch admission', () => {
             machineListByServerId: { [home.id]: [{ ...machine, activeAt: Date.now() }] },
         });
         await publishMachineInventoryForTest(input.accountLifetime.scope, [{ ...machine, activeAt: Date.now() }]);
-        applyProfileCatalogSnapshot(input.accountLifetime.scope, activeProfileCatalog(profile), true);
+        applyProfileCatalogSnapshot(input.accountLifetime.scope, profileCatalog, true);
         await ensureSessionDraftRepositoryHydrated(input.accountLifetime.scope);
         const readiness = createDeferred<unknown>();
         boundary.rpc.mockImplementation(async (request) => {
@@ -769,9 +782,17 @@ describe('real execution Run launch admission', () => {
         });
         const submit = () => screen.root.findAll(node => ['session-composer-send', 'new-session-composer-send'].includes(node.props.testID)
             && typeof node.props.onPress === 'function').at(-1);
+        const readinessProbe = await renderHook(() => {
+            const context = useExecutionRunLaunchContext(session.id, home.id);
+            const launchability = useSessionExecutionRunLaunchability(session.id, context.session, home.id);
+            return { settingsReady: context.exactSettings !== null, profileReady: context.profileCatalogReady,
+                machineReachable: context.machineReachable, active: context.session?.active,
+                metadataKeys: Object.keys(context.session?.metadata ?? {}), launchability };
+        });
         await waitForHomeGovernance(async () => { await act(async () => {});
             expect(submit()?.props.disabled, JSON.stringify({ text: screen.getTextContent(),
-                requests: httpRequests.map(request => request.path), methods: boundary.rpc.mock.calls.map(([request]) => request.method) })).toBe(false);
+                readiness: readinessProbe.getCurrent(), requests: httpRequests.map(request => request.path),
+                methods: boundary.rpc.mock.calls.map(([request]) => request.method) })).toBe(false);
         });
         await act(async () => { submit()?.props.onPress(); });
         if (!composition) {

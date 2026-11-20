@@ -379,7 +379,7 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
     });
     const { identity, setIdentity, actionInput, setActionInput: setNormalizedActionInput, setUserActionInput: setActionInput } = launcherDraft;
     const reviewInventory = useReviewEngineInventory({
-        enabled: intent === 'review' && !credentialSelectionOnly,
+        enabled: intent === 'review',
         sessionId: props.sessionId,
         machineId: machineId ?? undefined,
         serverId,
