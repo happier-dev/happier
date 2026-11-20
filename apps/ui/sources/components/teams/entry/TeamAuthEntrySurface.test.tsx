@@ -663,7 +663,10 @@ describe('TeamAuthEntrySurface', () => {
         );
         await waitForTestId(screen, 'team-auth-entry-unavailable');
 
-        await screen.pressByTestIdAsync('team-auth-entry-unavailable-secondary-action');
+        const leaveId = 'team-auth-entry-unavailable-secondary-action';
+        expect(screen.findHostByTestId(leaveId)?.props.accessibilityLabel).toBe(t('teams.entry.returnToHappier'));
+        expect(screen.findHostByTestId('team-auth-entry-unavailable-action')).toBeNull();
+        await screen.pressByTestIdAsync(leaveId);
 
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');
     });
