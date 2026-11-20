@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -24,6 +25,43 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Source owner p
         connected = true;
     });
     afterAll(async () => { if (connected) await db.$disconnect(); });
+
+    it.skipIf(provider !== 'postgres')('uses one native Source presence statement for PostgreSQL directory pages of 1, 11 and 100 Teams', async () => {
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const teams = Array.from({ length: 100 }, (_, index) => ({
+            id: crypto.randomUUID(), name: `Directory ${String(index).padStart(3, '0')}`,
+        }));
+        await db.team.createMany({ data: teams });
+        await db.teamMembership.createMany({ data: teams.map(({ id }) => ({
+            accountId: viewer.id, teamId: id, role: 'member' as const,
+        })) });
+        const source = await db.projectSource.create({ data: {
+            name: 'Visible directory Source', createdByAccountId: viewer.id,
+            owner: { kind: 'team', teamId: teams[0]!.id }, attachments: [], audience: [], repository,
+        } });
+        try {
+            for (const limit of [1, 11, 100]) {
+                const bindings: number[] = [];
+                const page = await inTx(tx => listTeamsForActorInTx(new Proxy(tx, { get(target, property, receiver) {
+                    const value = Reflect.get(target, property, receiver);
+                    if (property === '$queryRaw' && typeof value === 'function') return (...args: unknown[]) => {
+                        const statement = args[0] as Prisma.Sql;
+                        if (statement.sql?.includes('ProjectSource')) bindings.push(statement.values.length);
+                        return Reflect.apply(value, target, args);
+                    };
+                    return typeof value === 'function' ? value.bind(target) : value;
+                } }), { actorAccountId: viewer.id, v: 1, scope: 'member', archived: 'active', limit }));
+                if (!page.ok) throw new Error(page.error);
+                expect(page.page.items).toHaveLength(limit);
+                expect(page.page.items.filter(row => row.hasSetup).map(row => row.id)).toEqual([teams[0]!.id]);
+                expect(bindings).toHaveLength(1);
+                console.info('hasSetup PostgreSQL', { teams: limit, bindings });
+            }
+        } finally {
+            await db.projectSource.delete({ where: { id: source.id } });
+            await db.team.deleteMany({ where: { id: { in: teams.map(({ id }) => id) } } });
+        }
+    });
 
     it('projects one shared Source onto both Teams while hiding a Group the viewer cannot read', async () => {
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });

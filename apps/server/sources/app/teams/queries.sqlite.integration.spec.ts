@@ -1,4 +1,6 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
+import { spawnSync } from 'node:child_process';
+import type { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NO_TEAM_CAPABILITIES_V1, TeamSummaryV1Schema } from '@happier-dev/protocol';
 
@@ -18,6 +20,45 @@ import {
   resolveGrantableTeamForActorInTx,
   resolveGrantableTeamsForActorInTx,
 } from './queries';
+
+const sqliteBindingLimit = 999;
+
+function readSourceRowsAtSqliteBoundary(dbPath: string, statement: Prisma.Sql): unknown {
+  // Use a separate process for the second SQLite driver so its WAL bookkeeping
+  // stays isolated from Prisma. All fixture writes have committed by this read.
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import { readFileSync } from 'node:fs';
+    import { DatabaseSync } from 'node:sqlite';
+    const { dbPath, strings, values, limit } = JSON.parse(readFileSync(0, 'utf8'));
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      const option = db.prepare('PRAGMA compile_options').all()
+        .find(({ compile_options }) => compile_options.startsWith('MAX_VARIABLE_NUMBER='));
+      // Numbered binds reserve the lower slots, so SQLite itself rejects any
+      // statement with more than ${sqliteBindingLimit} effective bindings.
+      const offset = Number(option.compile_options.split('=')[1]) - limit;
+      const parameter = index => '?' + (offset + index + 1);
+      const sql = strings.map((part, index) => index === 0 ? part : parameter(index - 1) + part).join('');
+      const bindings = Object.fromEntries(values.map((value, index) => [parameter(index), value]));
+      process.stdout.write(JSON.stringify(db.prepare(sql).all(bindings)));
+    } finally {
+      db.close();
+    }
+  `], { input: JSON.stringify({ dbPath, strings: statement.strings, values: statement.values, limit: sqliteBindingLimit }),
+    encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+// SQLite binds a JSON path and a value for each principal field. An Account
+// and a Team each have two fields and are checked against both owner and audience.
+const principalBindings = 2 * 2 * 2;
+const teamArmBindings = principalBindings;
+const fixedActorBindings = 1 + principalBindings;
+const teamsThatFitInOneStatement = Math.floor(
+  (sqliteBindingLimit - fixedActorBindings) / (teamArmBindings + principalBindings),
+);
 
 describe('Team directory (SQLite integration)', () => {
   let harness: LightSqliteHarness;
@@ -77,6 +118,27 @@ describe('Team directory (SQLite integration)', () => {
     );
   }
 
+  async function listAtSqliteBindingBoundary(actorAccountId: string, limit: number) {
+    const bindings: number[] = [];
+    const page = await inTx(tx => {
+      const counted = new Proxy(tx, { get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property === '$queryRaw' && typeof value === 'function') return (...args: unknown[]) => {
+          const statement = args[0] as Prisma.Sql;
+          if (statement.sql?.includes('ProjectSource')) {
+            bindings.push(statement.values.length);
+            return readSourceRowsAtSqliteBoundary(harness.dbPath, statement);
+          }
+          return Reflect.apply(value, target, args);
+        };
+        return typeof value === 'function' ? value.bind(target) : value;
+      } });
+      return listTeamsForActorInTx(counted, { actorAccountId, v: 1, scope: 'member', archived: 'active', limit });
+    });
+    if (!page.ok) throw new Error(page.error);
+    return { items: page.page.items, bindings };
+  }
+
   it('projects hasSetup only for readable Team or own Group Sources, with no empty or preset-only Team offer fact', async () => {
     const viewer = await account();
     const author = await account();
@@ -120,49 +182,59 @@ describe('Team directory (SQLite integration)', () => {
     ]) } });
   });
 
-  it('uses one native Source query per directory page for the hasSetup projection', async () => {
+  it.each([
+    { teams: teamsThatFitInOneStatement, statements: 1 },
+    { teams: teamsThatFitInOneStatement + 1, statements: 2 },
+  ])('returns correct Source presence for $teams Teams in $statements SQLite statements', async ({ teams: limit, statements }) => {
     const viewer = await account();
-    const teams = Array.from({ length: 100 }, (_, index) => ({ id: crypto.randomUUID(), name: `Page ${index}` }));
+    const teams = Array.from({ length: limit }, (_, index) => ({ id: crypto.randomUUID(), name: `Page ${String(index).padStart(3, '0')}` }));
     await db.team.createMany({ data: teams });
     await db.teamMembership.createMany({ data: teams.map(row => ({ teamId: row.id, accountId: viewer.id, role: 'member' as const })) });
-    const sourceId = crypto.randomUUID();
-    await db.projectSource.create({ data: { id: sourceId, name: 'Visible source', createdByAccountId: viewer.id,
-      owner: { kind: 'team', teamId: teams[0]!.id }, audience: [], attachments: [] } });
+    const visible = new Set([teams[0]!.id, teams.at(-1)!.id]);
+    const sources = [...visible].map(teamId => ({ id: crypto.randomUUID(), name: 'Visible source', createdByAccountId: viewer.id,
+      owner: { kind: 'team', teamId }, audience: [], attachments: [] }));
+    await db.projectSource.createMany({ data: sources });
     try {
-      const { countScopedTeamProjectSourcesInTx } = await import('../projects/sources/projectSourceQuery');
-      expect(await inTx(tx => countScopedTeamProjectSourcesInTx(tx, {
-        actorAccountId: viewer.id, sharedWithTeamId: teams[0]!.id,
-      }))).toEqual({ ok: true, count: 1 });
-      const observe = (limit: number) => inTx(async tx => {
-        let sourceReads = 0;
-        const counted = new Proxy(tx, { get(target, property, receiver) {
-          const value = Reflect.get(target, property, receiver);
-          if (property === '$queryRaw' && typeof value === 'function') return (...args: unknown[]) => {
-            const sql = (args[0] as { strings?: readonly string[] }).strings?.join(' ') ?? '';
-            if (sql.includes('SELECT') && sql.includes('ProjectSource')) sourceReads++;
-            return Reflect.apply(value, target, args);
-          };
-          return typeof value === 'function' ? value.bind(target) : value;
-        } });
-        const started = performance.now();
-        const result = await listTeamsForActorInTx(counted, { actorAccountId: viewer.id, v: 1, scope: 'member', archived: 'active', limit });
-        return { result, sourceReads, elapsedMs: Math.round(performance.now() - started) };
-      });
-      const measurements = [];
-      for (const limit of [1, 11, 100]) {
-        const measured = await observe(limit);
-        expect(measured.result).toMatchObject({ ok: true });
-        if (!measured.result.ok) throw new Error(measured.result.error);
-        expect(measured.result.page.items).toHaveLength(limit);
-        if (limit === 100) expect(measured.result.page.items.filter(row => row.hasSetup)).toHaveLength(1);
-        measurements.push({ teams: limit, sourceQueries: measured.sourceReads, elapsedMs: measured.elapsedMs });
-      }
-      console.info('hasSetup native count cost', JSON.stringify(measurements));
-      expect(measurements.map(({ sourceQueries }) => sourceQueries)).toEqual([1, 1, 1]);
+      const { items, bindings } = await listAtSqliteBindingBoundary(viewer.id, limit);
+      expect(items.map(({ id, hasSetup }) => ({ id, hasSetup })))
+        .toEqual(teams.map(({ id }) => ({ id, hasSetup: visible.has(id) })));
+      expect(bindings).toHaveLength(statements);
+      expect(bindings.reduce((total, count) => total + count, 0)).toBe(
+        limit * teamArmBindings + statements * (fixedActorBindings + limit * principalBindings),
+      );
+      console.info('hasSetup SQLite boundary', { teams: limit, bindings });
     } finally {
-      await db.projectSource.deleteMany({ where: { id: sourceId } });
+      await db.projectSource.deleteMany({ where: { id: { in: sources.map(row => row.id) } } });
       await db.team.deleteMany({ where: { id: { in: teams.map(row => row.id) } } });
     }
+  });
+
+  it('keeps a one-Team Source presence read that fits with off-page Group grants', async () => {
+    const viewer = await account();
+    const selected = await team('A selected Team', [viewer]);
+    const offPage = await team('Z off-page Team', [viewer]);
+    const membership = await db.teamMembership.findUniqueOrThrow({
+      where: { teamId_accountId: { teamId: offPage.id, accountId: viewer.id } },
+    });
+    const groupBindings = 3 * 2; // Group audience binds three principal paths and values.
+    const groupCount = Math.floor((sqliteBindingLimit - fixedActorBindings - 2 * principalBindings - teamArmBindings) / groupBindings);
+    const groups = Array.from({ length: groupCount }, (_, index) => ({
+      id: crypto.randomUUID(), teamId: offPage.id, name: `Group ${index}`,
+    }));
+    await db.teamGroup.createMany({ data: groups });
+    await db.teamGroupMembership.createMany({ data: groups.map(({ id }) => ({
+      teamId: offPage.id, teamGroupId: id, teamMembershipId: membership.id, nativeContribution: true,
+    })) });
+    await db.projectSource.create({ data: {
+      name: 'Visible source at the final bind', createdByAccountId: viewer.id, attachments: [],
+      owner: { kind: 'account', accountId: viewer.id },
+      audience: [{ principal: { kind: 'team', teamId: selected.id }, level: 'view' }],
+    } });
+
+    const { items, bindings } = await listAtSqliteBindingBoundary(viewer.id, 1);
+    expect(items).toMatchObject([{ id: selected.id, hasSetup: true }]);
+    expect(bindings).toEqual([sqliteBindingLimit]);
+    console.info('hasSetup SQLite boundary with off-page Groups', { groups: groupCount, bindings });
   });
 
   it('keeps hasSetup parity when a selected-Team guest reads its Source through another Team outside the page', async () => {

@@ -4,6 +4,7 @@ import type { ProjectSourcesFailureV1, ProjectSourcesListInputV1 } from '@happie
 import type { TeamActorContext, TeamOperationAuthenticationContext } from '@/app/teams/actorContext';
 import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE } from '@/app/teams/memberships/effectiveMembership';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { resolveProjectSourceAdmissionInTx } from './projectSourceService';
@@ -92,7 +93,7 @@ export async function resolveProjectSourceQueryScopeInTx(tx: Tx, input: Readonly
         sharedWithTeamGroupIds: new Set(selection?.kind === 'selected' ? selection.groupIds : []) };
 }
 
-/** The directory asks for presence, with one admission and one native read per projected page. */
+/** The directory asks for presence, with one admission and portable native reads per page. */
 export async function readScopedTeamProjectSourcePresenceInTx(tx: Tx, input: Readonly<{
     actorAccountId: string;
     authentication?: Partial<TeamOperationAuthenticationContext>;
@@ -103,24 +104,36 @@ export async function readScopedTeamProjectSourcePresenceInTx(tx: Tx, input: Rea
     const visibility = await resolveSourceVisibilityInTx(tx, input);
     if (!visibility) return presence;
     const table = sourceTable();
-    const selections: Prisma.Sql[] = [];
+    const selections: { teamId: string; arm: Prisma.Sql }[] = [];
     for (const { team: { id } } of input.admittedTeamActors) {
         const selection = visibility.selectTeam(id);
         presence.set(id, selection.kind === 'unavailable' ? null : false);
         if (selection.kind !== 'selected') continue;
         // Each requested Team can use the native containment indexes before the
         // shared reader predicate is applied. The same Source can match multiple Teams.
-        selections.push(prismaRuntime.sql`SELECT ${id} AS team_id, ${column('id')} AS source_id
-            FROM ${table} s WHERE ${column('deletedAt')} IS NULL AND ${selection.where}`);
+        // The generated ordinal identifies the arm without spending a bind
+        // on a result label, so a Team filter that fits alone still fits here.
+        const ordinal = prismaRuntime.raw(String(selections.length));
+        selections.push({
+            teamId: id,
+            arm: prismaRuntime.sql`SELECT ${ordinal} AS team_ordinal, ${column('id')} AS source_id
+                FROM ${table} s WHERE ${column('deletedAt')} IS NULL AND ${selection.where}`,
+        });
     }
-    if (selections.length === 0) return presence;
-    const rows = await tx.$queryRaw<Readonly<{ team_id: string }>[]>(prismaRuntime.sql`
-        SELECT DISTINCT matching.team_id
-        FROM (${prismaRuntime.join(selections, ' UNION ALL ')}) matching
-        JOIN ${table} s ON ${column('id')} = matching.source_id
-        WHERE ${visibility.readable}
-    `);
-    for (const { team_id } of rows) presence.set(team_id, true);
+    for (const chunk of portableQueryChunks({
+        values: selections,
+        bindingsPerValue: ({ arm }) => arm.values.length,
+        fixedBindings: visibility.readable.values.length,
+        compoundSelectsPerValue: 1,
+    })) {
+        const rows = await tx.$queryRaw<Readonly<{ team_ordinal: number | bigint }>[]>(prismaRuntime.sql`
+            SELECT DISTINCT matching.team_ordinal
+            FROM (${prismaRuntime.join(chunk.map(({ arm }) => arm), ' UNION ALL ')}) matching
+            JOIN ${table} s ON ${column('id')} = matching.source_id
+            WHERE ${visibility.readable}
+        `);
+        for (const { team_ordinal } of rows) presence.set(selections[Number(team_ordinal)]!.teamId, true);
+    }
     return presence;
 }
 

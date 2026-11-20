@@ -9,20 +9,37 @@ const PORTABLE_SQL_MAX_COMPOUND_SELECTS = 500;
  */
 export function portableQueryChunks<T>(params: Readonly<{
     values: readonly T[];
-    bindingsPerValue: number;
+    bindingsPerValue: number | ((value: T) => number);
     fixedBindings?: number;
     compoundSelectsPerValue?: number;
 }>): readonly (readonly T[])[] {
-    const bindSize = Math.floor(
-        (PORTABLE_SQL_MAX_BOUND_PARAMETERS - (params.fixedBindings ?? 0))
-        / params.bindingsPerValue,
-    );
-    const size = params.compoundSelectsPerValue === undefined ? bindSize : Math.min(bindSize,
-        Math.floor(PORTABLE_SQL_MAX_COMPOUND_SELECTS / params.compoundSelectsPerValue));
-    if (size < 1) throw new Error("Query shape exceeds the portable SQL bind boundary");
+    const { values, bindingsPerValue, fixedBindings = 0, compoundSelectsPerValue } = params;
+    const availableBindings = PORTABLE_SQL_MAX_BOUND_PARAMETERS - fixedBindings;
+    const compoundSize = compoundSelectsPerValue === undefined ? Infinity
+        : Math.floor(PORTABLE_SQL_MAX_COMPOUND_SELECTS / compoundSelectsPerValue);
     const result: T[][] = [];
-    for (let index = 0; index < params.values.length; index += size) {
-        result.push(params.values.slice(index, index + size));
+    if (typeof bindingsPerValue === 'number') {
+        const size = Math.min(Math.floor(availableBindings / bindingsPerValue), compoundSize);
+        if (size < 1) throw new Error("Query shape exceeds the portable SQL bind boundary");
+        for (let index = 0; index < values.length; index += size) {
+            result.push(values.slice(index, index + size));
+        }
+        return result;
     }
+
+    let chunk: T[] = [];
+    let usedBindings = 0;
+    for (const value of values) {
+        const bindings = bindingsPerValue(value);
+        if (bindings > availableBindings || compoundSize < 1) throw new Error("Query shape exceeds the portable SQL bind boundary");
+        if (usedBindings + bindings > availableBindings || chunk.length === compoundSize) {
+            result.push(chunk);
+            chunk = [];
+            usedBindings = 0;
+        }
+        chunk.push(value);
+        usedBindings += bindings;
+    }
+    if (chunk.length > 0) result.push(chunk);
     return result;
 }
