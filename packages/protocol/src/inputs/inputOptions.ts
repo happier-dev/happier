@@ -1034,16 +1034,72 @@ function oneLetterApart(left: string, right: string): boolean {
   return left.slice(mismatch + (left.length === right.length ? 1 : 0)) === right.slice(mismatch + 1);
 }
 
+function modelIdOf(option: InputOption): unknown {
+  return typeof option.value === 'string' ? option.value : readRecord(option.value).modelId;
+}
+
+function modelSourceWord(option: InputOption): 'Native' | 'Personal' | 'Team' {
+  const ref = readRecord(option.value);
+  if (ref.source === 'team_resource') return 'Team';
+  return typeof ref.providerConnectionId === 'string' ? 'Personal' : 'Native';
+}
+
+function indexSpokenModelLabels(options: readonly InputOption[]) {
+  const keyOf = (text: string) => modelWords(text).join(' ');
+  const sources = new Map<string, Set<string>>();
+  const matches = new Map<string, Set<InputOption>>();
+  const labels = new Map<string, string>();
+  const addMatch = (key: string, option: InputOption) => {
+    if (!key) return;
+    const group = matches.get(key) ?? new Set<InputOption>();
+    group.add(option);
+    matches.set(key, group);
+  };
+  for (const option of options) {
+    if (option.disabled) continue;
+    const key = keyOf(option.label);
+    const group = sources.get(key) ?? new Set<string>();
+    group.add(modelSourceWord(option));
+    sources.set(key, group);
+    addMatch(key, option);
+    const id = modelIdOf(option);
+    if (typeof id === 'string') addMatch(keyOf(id), option);
+  }
+  for (const option of options) {
+    if (option.disabled) continue;
+    const key = keyOf(option.label);
+    if (!key) continue;
+    const label = (sources.get(key)?.size ?? 0) > 1 ? `${option.label} ${modelSourceWord(option)}` : option.label;
+    const spokenKey = keyOf(label);
+    addMatch(spokenKey, option);
+    if (!labels.has(spokenKey)) labels.set(spokenKey, label);
+  }
+  return { matches, labels };
+}
+
+/** Speakable choices use the same exact-match index as a subsequent spoken retry. */
+export function projectSpokenSpawnModelChoices(options: readonly InputOption[]): readonly Readonly<{
+  label: string;
+  needsModelPicker?: true;
+}>[] {
+  const { matches, labels } = indexSpokenModelLabels(options);
+  return Array.from(labels, ([key, label]) => (matches.get(key)?.size ?? 0) > 1
+    ? { label, needsModelPicker: true }
+    : { label });
+}
+
 export function matchSpokenSpawnModelOptions(options: readonly InputOption[], query: string): readonly InputOption[] {
   const requested = modelWords(query);
   if (requested.length === 0) return [];
+  const exact = indexSpokenModelLabels(options).matches.get(requested.join(' '));
+  if (exact) return [...exact];
   const numericWord = /^\p{N}/u;
   const startsWithVersion = numericWord.test(requested[0] ?? '');
   const endsWithVersion = numericWord.test(requested[requested.length - 1] ?? '');
-  const levels: InputOption[][] = [[], [], []];
+  const levels: InputOption[][] = [[], []];
   for (const option of options) {
     if (option.disabled) continue;
-    const id = typeof option.value === 'string' ? option.value : readRecord(option.value).modelId;
+    const id = modelIdOf(option);
     const names = [option.label, ...(typeof id === 'string' ? [id] : [])];
     let best = levels.length;
     for (const name of names) {
@@ -1058,9 +1114,9 @@ export function matchSpokenSpawnModelOptions(options: readonly InputOption[], qu
           return candidate === undefined || word === candidate ? [] : [{ word, candidate }];
         });
         if (mismatches.length === 0) {
-          best = Math.min(best, words.length === requested.length ? 0 : 1);
+          best = 0;
         } else if (mismatches.length === 1 && oneLetterApart(mismatches[0].word, mismatches[0].candidate)) {
-          best = Math.min(best, 2);
+          best = Math.min(best, 1);
         }
       }
     }

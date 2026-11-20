@@ -55,7 +55,7 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
   if (envelope?.ok !== true) {
     if (owner === SESSION_SPAWN_NEW_ACTION_ID_V1
       && (envelope?.errorCode === 'provider_model_ambiguous' || envelope?.errorCode === 'provider_model_not_found')) {
-      // The carrier reads the returned choices and maps the answer to the exact choice.
+      // The carrier reads the returned labels or directs the person to the device picker.
       return null;
     }
     if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {

@@ -1,7 +1,7 @@
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { projectSpokenSpawnModelChoices } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionInputOptionSchema } from '@happier-dev/protocol/actions/actionInputHints';
-import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { redactVoicePathLikeData } from '@/voice/shared/redactVoicePathLikeData';
+import { redactVoicePathLikeData, redactVoicePathLikeString } from '@/voice/shared/redactVoicePathLikeData';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
 import { SESSION_AWARENESS_OPERATIONAL_PRIMARY_PRECEDENCE_V1, SessionAwarenessProjectionV1Schema, type SessionOperationalReasonV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
@@ -53,9 +53,13 @@ const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
   getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
 ).trim();
 const SPAWN_SESSION_TOOL_NAME = getActionSpec(SESSION_SPAWN_NEW_ACTION_ID_V1).bindings?.voiceClientToolName;
+const MODEL_LIST_ACTION_ID = 'agents.models.list';
+const MODEL_LIST_TOOL_NAME = getActionSpec(MODEL_LIST_ACTION_ID).bindings?.voiceClientToolName;
+const OPTIONS_ACTION_ID = 'action.options.resolve';
+const OPTIONS_TOOL_NAME = getActionSpec(OPTIONS_ACTION_ID).bindings?.voiceClientToolName;
 const SETTINGS_LIST_TOOL_NAME = String(getActionSpec(SETTINGS_LIST_ACTION_ID_V1).bindings?.voiceClientToolName ?? '').trim();
 const DECLARATION_LABEL_TOOL_NAMES: ReadonlySet<string> = new Set(
-  (['agents.backends.list', 'agents.models.list', 'settings.list'] as const).flatMap(id => [
+  (['agents.backends.list', 'settings.list'] as const).flatMap(id => [
     id, getActionSpec(id).bindings?.voiceClientToolName ?? '',
   ]).filter(Boolean),
 );
@@ -215,7 +219,7 @@ function redactVoiceToolResultValueWithClassification(
   prefs: VoiceToolResultRedactionPrefs,
   preservePresentationLabels: boolean,
   preserveSchemaFieldPaths = false,
-  catalogMetadata?: 'settingsDeclarations' | 'modelChoices',
+  catalogMetadata?: 'settingsDeclarations',
 ): unknown {
   const resolvedPrefs: VoiceToolResultRedactionPrefs = {
     shareFilePaths: prefs?.shareFilePaths === true,
@@ -281,6 +285,63 @@ export function isVoiceToolResultBlockedByPrivacy(
   return false;
 }
 
+function readResultRecord(value: unknown): Readonly<Record<string, unknown>> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};
+}
+
+function isSpeakableModelLabel(label: unknown, prefs: VoiceToolResultRedactionPrefs): label is string {
+  // A scrubbed label is not a usable retry operand. Omit it rather than reading back a path token.
+  return typeof label === 'string' && label.trim().length > 0
+    && (prefs.shareFilePaths === true || redactVoicePathLikeString(label) === label);
+}
+
+function projectModelChoices(value: unknown, prefs: VoiceToolResultRedactionPrefs) {
+  if (prefs.shareDeviceInventory !== true || !Array.isArray(value)) return [];
+  const options = value.flatMap(option => {
+    const parsed = ActionInputOptionSchema.safeParse(option);
+    return parsed.success ? [parsed.data] : [];
+  });
+  // Local effect custody retains the provider projection and projects again
+  // at delivery, where the person may have withdrawn file-path sharing.
+  const choices = options.length > 0 ? projectSpokenSpawnModelChoices(options) : value.flatMap(option => {
+    const { label, needsModelPicker, ...privateFields } = readResultRecord(option);
+    if (typeof label !== 'string' || Object.keys(privateFields).length > 0) return [];
+    return [needsModelPicker === true ? { label, needsModelPicker: true as const } : { label }];
+  });
+  return choices.filter(({ label }) => isSpeakableModelLabel(label, prefs));
+}
+
+function projectModelList(value: unknown, prefs: VoiceToolResultRedactionPrefs): unknown {
+  const result = readResultRecord(value);
+  if (result.ok === false) {
+    const errorCode = typeof result.errorCode === 'string' ? result.errorCode : 'action_failed';
+    return redactVoiceToolResultValue({ ok: false, errorCode, error: errorCode }, prefs);
+  }
+  const status = result.ok === true ? { ok: true } : {};
+  if (result.source === 'auto' || result.source === 'explicit') {
+    return { ...status, source: result.source,
+      ...(isSpeakableModelLabel(result.title, prefs) ? { title: result.title } : {}) };
+  }
+  const labels = (rows: unknown, key: 'label' | 'title') => Array.isArray(rows) ? rows.flatMap(row => {
+    const label = readResultRecord(row)[key];
+    return isSpeakableModelLabel(label, prefs) ? [{ [key]: label }] : [];
+  }) : [];
+  const catalog = readResultRecord(result.scmDiffSummaryCatalog);
+  return {
+    ...status,
+    items: labels(result.items, 'label'),
+    ...(result.scmDiffSummaryCatalog === undefined ? {} : {
+      scmDiffSummaryCatalog: { profiles: labels(catalog.profiles, 'title'), automaticProfiles: labels(catalog.automaticProfiles, 'title'),
+        ...(catalog.unavailableReason === 'account_metadata_unavailable' ? { unavailableReason: catalog.unavailableReason } : {}) },
+    }),
+    ...(result.source === 'preflight' || result.source === 'static' || result.source === 'dynamic' || result.source === 'unavailable'
+      ? { source: result.source } : {}),
+    ...(typeof result.supportsFreeform === 'boolean' ? { supportsFreeform: result.supportsFreeform } : {}),
+    ...(result.unavailable === true ? { unavailable: true } : {}),
+    ...(result.refreshError === true ? { refreshError: true } : {}),
+  };
+}
+
 export function redactVoiceToolResultForProvider(
   toolName: string,
   value: unknown,
@@ -296,25 +357,35 @@ export function redactVoiceToolResultForProvider(
   if (ACTION_RESULT_TOOL_NAMES.has(toolName)) {
     return projectActionResultForProvider(value);
   }
-  if (toolName === SPAWN_SESSION_TOOL_NAME) {
-    const failure = parseActionExecuteFailure(value);
-    if (failure?.errorCode === 'provider_model_ambiguous' || failure?.errorCode === 'provider_model_not_found') {
-      const details = failure.details;
-      const candidates = details && typeof details === 'object' && 'candidates' in details
-        ? details.candidates : undefined;
-      // Only inventory choice labels are presentation. Other fields on the failure
-      // can still contain Session information and use the normal privacy projection.
-      const choices = Array.isArray(candidates) && prefs.shareDeviceInventory === true
-        ? candidates.flatMap(candidate => {
-          const parsed = ActionInputOptionSchema.safeParse(candidate);
-          if (!parsed.success || parsed.data.disabled) return [];
-          const { value, label, description } = parsed.data;
-          return [{ value, label, ...(description === undefined ? {} : { description }) }];
-        }) : [];
-      return redactVoiceToolResultValueWithClassification({
-        ok: false, errorCode: failure.errorCode, error: failure.errorCode, details: { candidates: choices },
-      }, prefs, true, false, 'modelChoices');
+  const optionsLookup = toolName === OPTIONS_TOOL_NAME || toolName === OPTIONS_ACTION_ID;
+  if (optionsLookup || toolName === SPAWN_SESSION_TOOL_NAME || toolName === SESSION_SPAWN_NEW_ACTION_ID_V1) {
+    const result = readResultRecord(value);
+    const { errorCode } = result;
+    // Direct delivery uses errorMessage and wrapped Actions use error. Both
+    // carry the same failure code and details; neither error string is allowed out.
+    if (result.ok === false && (errorCode === 'provider_model_ambiguous' || errorCode === 'provider_model_not_found')) {
+      return { ok: false, errorCode, error: errorCode, details: {
+        candidates: projectModelChoices(readResultRecord(result.details).candidates, prefs),
+      } };
     }
+    if (optionsLookup) {
+      const { optionsSourceId } = result;
+      const modelSource = optionsSourceId === 'agents.models.available' || optionsSourceId === 'teams.credential_models.available';
+      const spawnModelField = result.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && result.fieldPath === 'modelSelection';
+      if (modelSource || spawnModelField) {
+        if (prefs.shareDeviceInventory !== true) {
+          return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
+        }
+        return {
+          ...(result.ok === true ? { ok: true } : {}),
+          ...(modelSource ? { optionsSourceId } : { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, fieldPath: 'modelSelection' }),
+          options: projectModelChoices(result.options, prefs),
+        };
+      }
+    }
+  }
+  if (toolName === MODEL_LIST_TOOL_NAME || toolName === MODEL_LIST_ACTION_ID) {
+    return projectModelList(value, prefs);
   }
   return redactVoiceToolResultValueWithClassification(
     ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : value,
@@ -343,7 +414,11 @@ export function redactVoiceActionExecutionResultForProvider(
       : { ok: false, errorCode: projected.errorCode, error: projected.errorCode };
   }
   if (record?.ok === true) {
-    return { ok: true, result: redactVoiceToolResultForProvider(toolName, record.result, prefs) };
+    const result = redactVoiceToolResultForProvider(toolName, record.result, prefs);
+    if (readResultRecord(result).errorCode === 'privacy_disabled') {
+      return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
+    }
+    return { ok: true, result };
   }
   return redactVoiceToolResultForProvider(toolName, value, prefs);
 }

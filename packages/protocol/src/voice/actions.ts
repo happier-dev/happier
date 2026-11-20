@@ -84,7 +84,7 @@ let voiceActionFunctionTool: ReturnType<typeof buildVoiceActionFunctionTool> | u
 function buildVoiceActionFunctionTool() {
   return {
     name: VOICE_ACTION_FUNCTION_NAME,
-    description: `Execute one Happier Voice Action and wait for its settled result. For spawnSession, spokenModelName belongs in args. ${VOICE_SPAWN_NAMED_MODEL_GUIDANCE}`,
+    description: `Execute one Happier Voice Action and wait for its settled result. For spawnSession, put spokenModelName in args on both the first call and a label retry. ${VOICE_SPAWN_NAMED_MODEL_GUIDANCE}`,
     // Advertise transport, not the whole catalog. searchActionSpecs/getActionSpec
     // provide the canonical sectioned schemas on demand; the decoder below
     // still validates args against the selected Action before executing it.

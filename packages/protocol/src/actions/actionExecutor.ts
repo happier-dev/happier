@@ -658,6 +658,8 @@ export type {
 
 type ActionExecuteFailure = Extract<ActionExecuteResult, Readonly<{ ok: false }>>;
 
+export { projectSpokenSpawnModelChoices } from '../inputs/inputOptions.js';
+
 /** Resolve Voice authoring once, before either spawn transport projects the exact recipe. */
 export async function prepareVoiceNamedModelSpawn(
   input: SessionSpawnNewActionAuthoringInputV2,
@@ -684,12 +686,16 @@ export async function prepareVoiceNamedModelSpawn(
       profileId: spawn.profileId,
       connectedServices: spawn.connectedServices,
     },
-    query: spokenModelName,
   }, context);
   if (!choice.ok) return choice;
   const { options: candidates } = ActionOptionsResolveResultSchema.parse(choice.result);
-  const [candidate] = candidates;
-  if (!candidate || candidates.length !== 1) {
+  const matches = matchSpokenSpawnModelOptions(candidates, spokenModelName);
+  const [candidate] = matches;
+  if (!candidate) {
+    return { ok: false, errorCode: 'provider_model_not_found', error: 'The named model could not be resolved.',
+      details: { candidates } };
+  }
+  if (matches.length !== 1) {
     return { ok: false, errorCode: 'provider_model_ambiguous', error: 'Choose one model from the matching options.',
       details: { candidates } };
   }

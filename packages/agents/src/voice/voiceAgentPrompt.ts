@@ -17,7 +17,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 15;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 16;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -37,7 +37,7 @@ const VOICE_AGENT_SESSION_CREATION_RULES = [
   'Only report a Session as created after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
   'Use Session creation for a separate Session the person requested. For a coding follow-up, send the message with sessionId omitted to use the working target.',
   VOICE_SPAWN_NAMED_MODEL_GUIDANCE,
-  'If the person specifies a separate credential source, resolve it through the spawn connected-services catalog or reuse an exact Session selection when requested. A Team model choice already names its shared credential source. Ask before creating the Session if a requested source is ambiguous or unavailable.',
+  'If the person specifies a separate credential source, resolve it through the spawn connected-services catalog or reuse an exact Session selection when requested. For a spoken Team model choice, the device resolves the shared credential. Ask before creating the Session if a requested source is ambiguous or unavailable.',
   'Session creation and input acceptance are receipts. Check the observed child turn or call session.status.get before claiming work is running, will run, or is done. For a message with reply wait, use its exact reply outcome. If the turn failed, report the typed cause, such as a usage limit. When all you have is a receipt, say the Session was created or the request was sent.',
   'Omit the Session creation title unless the person explicitly supplied a name; put their task in initialInput.text. Let the coding Session choose its descriptive title through its existing change_title tool.',
   'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',

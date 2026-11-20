@@ -3,7 +3,7 @@ import type { ActionInputPredicate } from './actionInputPredicates.js';
 import { APPROVAL_REQUEST_LIST_ACTION_ID_V1, INBOX_GET_ACTION_ID_V1 } from './actionIds.js';
 import { VOICE_BRIEF_REQUEST_ACTION_ID_V1 } from './voiceConversationActionIdsV1.js';
 
-export const VOICE_SPAWN_NAMED_MODEL_GUIDANCE = 'When the person names a model for a new coding Session, pass the name you heard in spokenModelName on the first spawn call. If it returns provider_model_ambiguous or provider_model_not_found, read the returned details.candidates labels as a short closed question. When the person picks by name or position, call spawn again with the exact returned choice using the model selection input hints. If no choices are available, say you could not resolve the requested model and ask for an exact name. Omit the model fields only when the person names no model.';
+export const VOICE_SPAWN_NAMED_MODEL_GUIDANCE = 'When the person names a model for a new coding Session, pass the name you heard in spokenModelName on the first spawn call. If it returns provider_model_ambiguous or provider_model_not_found, read the selectable labels in details.candidates as a short closed question. When the person chooses, submit the chosen label in spokenModelName, including its Native, Personal, or Team suffix if present. For any label marked needsModelPicker, say that the model is available from more than one of their credentials and ask them to choose it in the model picker on the device. You can also offer the other selectable labels. If no labels are returned, say you could not resolve the requested model and ask for an exact name. Omit the model fields only when the person names no model.';
 
 type VoiceGuidanceNote = Readonly<{
   text: string;
@@ -127,11 +127,11 @@ const FIELD_GUIDANCE_BY_ACTION_ID: Readonly<Record<string, Readonly<Record<strin
       { text: 'Use listRecentPaths when you need a recent path handle', requiresActionIds: ['paths.list_recent'] },
     ],
     agentTarget: [{ text: 'Omit when no coding Agent was named so the host binds the ready default; use listAgentBackends to resolve an explicitly named Agent to its exact target', requiresActionIds: ['agents.backends.list'] }],
-    modelSelection: [{ text: 'Copy the exact structured ref from the selected choice, including a Team-resource ref when applicable. When the person asks to reuse a Session’s model, use its exact model ref if available' }],
-    modelSelectionInput: [{ text: 'When the selected choice has no structured ref, copy its exact model ID and any provider connection. A Connected Account profile is a separate credential choice' }],
+    modelSelection: [{ text: 'Use modelSelection only to reuse a model ref already supplied by the Session status when the person asks to reuse that model' }],
+    modelSelectionInput: [{ text: 'Use spokenModelName when the person names a model or chooses a returned label' }],
     connectedServices: [{ text: 'Use listSpawnConnectedServices or a content-free binding returned by Session status. Preserve the exact requested credential binding, without reading credentials or copying bindings the person did not ask to reuse', requiresActionIds: ['sessions.spawn.connected_services.list'] }],
     connectedServicesAuthIntent: [{ text: 'Use listSpawnConnectedServices to resolve the named profile or group for that Agent. Pass the exact choice as the auth intent when the catalog did not already return a binding', requiresActionIds: ['sessions.spawn.connected_services.list'] }],
-    teamCredentialBindings: [{ text: 'For a requested Team credential, use its catalog or Session selection reference. Pass its exact binding when required together with the selected Team-resource model ref', requiresActionIds: ['sessions.spawn.connected_services.list'] }],
+    teamCredentialBindings: [{ text: 'For a requested Team credential, use its catalog or Session selection reference. Pass its exact binding when required. Submit the chosen Team model label in spokenModelName. For a label marked needsModelPicker, use the device model picker', requiresActionIds: ['sessions.spawn.connected_services.list'] }],
   },
   'session.permission.respond': {
     requestId: [{ text: 'Optional when only one permission request is pending' }],

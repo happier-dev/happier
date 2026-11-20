@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { matchSpokenSpawnModelOptions, projectSpokenSpawnModelChoices } from './inputOptions.js';
 import { decodeVoiceAssistantActions } from '../voice/actions.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { resolveMachineAgentTeamCredentialDemandV1 } from '../teams/credentials/teamCredentialModelCatalogV1.js';
@@ -80,6 +81,62 @@ describe('teams.credential_models.available', () => {
     initialInput: { text: 'Write exactly yellow to the requested file.' },
   } as const;
   const spokenSpawnContext = { surface: 'voice', authority: 'present_user', serverId: 'home', actionRequestId: 'spoken-model-request' } as const;
+
+  it('round-trips all three source-qualified labels to their original model selections', () => {
+    const label = 'Shared Model';
+    const options = [
+      { label, value: 'native-model' },
+      { label, value: { agentTargetKey: CODEX, providerConnectionId: 'personal-connection', modelId: 'personal-model' } },
+      { label, value: { source: 'team_resource', teamId: 'team-1', resourceId: 'credential', expectedResourceRevision: 1,
+        deliveryMode: 'brokered', agentTargetKey: CODEX, modelId: 'team-model' } },
+    ];
+    const choices = projectSpokenSpawnModelChoices(options);
+    expect(choices).toEqual([{ label: 'Shared Model Native' }, { label: 'Shared Model Personal' }, { label: 'Shared Model Team' }]);
+    expect(choices.map(choice => matchSpokenSpawnModelOptions(options, choice.label))).toEqual(options.map(option => [option]));
+  });
+
+  it('admits two Team credential resources for the same spoken model label and refuses to guess', async () => {
+    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const resources = ['first', 'second'].map(id => {
+      const item = resource(id, service);
+      const [model] = item.providerModels;
+      return { ...item, providerModels: [{ ...model,
+        descriptor: { id: 'shared-model', name: 'Shared Model' },
+        selection: { ...model.selection, modelId: 'shared-model' },
+      }] };
+    });
+    const spawn = vi.fn<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>(async () => ({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }));
+    const executor = createActionExecutor({
+      sessionSpawnNew: spawn,
+      agentsModelsList: async () => ({ items: [{ id: 'native-shared-id', label: 'Shared Model' }, { id: 'other-id', label: 'Other Model' }], source: 'dynamic' }),
+      resolveSessionSpawnAgentInventorySelection: async () => ({ backendTargetKey: CODEX }),
+      machinePluginProjectionRead: async () => projection,
+      homeDomainAction: async ({ actionId }) => actionId === 'teams.list'
+        ? { items: [TEAM], nextCursor: null } : { resources, nextCursor: null, failures: [] },
+      providerActionExecute: async () => ({ ok: true, result: { status: 'success', agentTargetKey: CODEX, groups: [],
+        teamCredentialResources: resources } }),
+    });
+    const candidates = resources.map(item => ({ label: 'Shared Model', value: {
+      source: 'team_resource', resourceId: item.id, teamId: item.teamId, modelId: 'shared-model',
+    } }));
+    const run = (spokenModelName: string) => executor.execute('session.spawn_new',
+      { ...spokenSpawnInput, spokenModelName }, spokenSpawnContext);
+    expect(await run('Shared Model')).toMatchObject({
+      ok: false, errorCode: 'provider_model_ambiguous', details: { candidates: expect.arrayContaining([...candidates.map(candidate => expect.objectContaining({
+        ...candidate, value: expect.objectContaining(candidate.value),
+      })), { label: 'Other Model', value: 'other-id' }]) },
+    });
+    expect(await run('Shared Model Team')).toMatchObject({
+      ok: false, errorCode: 'provider_model_ambiguous', details: { candidates: expect.arrayContaining([...candidates.map(candidate => expect.objectContaining({
+        ...candidate, value: expect.objectContaining(candidate.value),
+      })), { label: 'Other Model', value: 'other-id' }]) },
+    });
+    expect(spawn).not.toHaveBeenCalled();
+    expect(await run('Shared Model Native')).toMatchObject({ ok: true });
+    expect(spawn.mock.calls[0]?.[0].admittedInput).toMatchObject({
+      modelSelection: { ref: { providerConnectionId: null, modelId: 'native-shared-id' } },
+    });
+  });
 
   it.each([
     { query: 'Muse Spark 1.2', versions: ['1.2', '1.2.3'], matched: '1.2', errorCode: null },

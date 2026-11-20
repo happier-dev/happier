@@ -82,12 +82,12 @@ export function redactVoicePathLikeString(value: string): string {
 
 export function redactVoicePathLikeData(input: unknown, options?: Readonly<{
     preserveSchemaFieldPaths?: boolean;
-    catalogMetadata?: 'settingsDeclarations' | 'modelChoices';
+    catalogMetadata?: 'settingsDeclarations';
 }>): unknown {
     const seen = new Set<object>();
 
     const walk = (value: unknown, depth: number, parentKey: string | null, schemaSectionField = false,
-        catalogValue = false, modelChoice = false): unknown => {
+        catalogValue = false): unknown => {
         // Provider-bound redaction must fail closed at the traversal guard. An
         // untouched deep subtree could otherwise carry paths beyond the limit.
         if (depth > 20) return null;
@@ -113,14 +113,13 @@ export function redactVoicePathLikeData(input: unknown, options?: Readonly<{
 
         if (Array.isArray(value)) {
             const declarations = options?.catalogMetadata === 'settingsDeclarations' && parentKey === 'items';
-            const choices = options?.catalogMetadata === 'modelChoices' && parentKey === 'candidates';
-            return value.map(entry => walk(entry, depth + 1, parentKey, false, catalogValue || declarations, choices));
+            return value.map(entry => walk(entry, depth + 1, parentKey, false, catalogValue || declarations));
         }
 
         const output: Record<string, unknown> = {};
         for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
             output[key] = walk(entry, depth + 1, key,
-                parentKey === 'schemaSections' || parentKey === 'schemaSection', catalogValue || (modelChoice && key === 'value'));
+                parentKey === 'schemaSections' || parentKey === 'schemaSection', catalogValue);
         }
         return output;
     };

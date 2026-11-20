@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
 import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { serializeVoiceActionExecuteResult } from '@/voice/tools/voiceActionResult';
 import { projectSessionActivityCompatibilityV1 } from '@happier-dev/protocol/sessions/awareness/action';
 
 import {
@@ -29,12 +30,12 @@ describe('redactVoiceToolResultValue', () => {
       expect(redactVoiceToolResultForProvider(toolName, request, SHARE_ALL)).toEqual(request);
     },
   );
-  it('keeps admitted inventory labels and owner paging while omitting private connection details', () => {
+  it('projects inventory labels without descriptions, refs or connection details', () => {
     const result = redactVoiceToolResultForProvider('listAgentModels', {
-      items: [{ modelId: 'model', label: 'Model', uiConnectedService: 'private', flavorAliases: ['alias'] }],
+      items: [{ modelId: 'model', label: 'Model', providerConnectionId: 'private-connection', providerName: 'Private name', description: 'Private description' }],
       hasMore: true, nextCursor: 'next', totalCount: 12,
     }, { ...SHARE_ALL, shareSessionSummary: false, shareDeviceInventory: true });
-    expect(result).toEqual({ items: [{ modelId: 'model', label: 'Model' }], hasMore: true, nextCursor: 'next', totalCount: 12 });
+    expect(result).toEqual({ items: [{ label: 'Model' }] });
     // Inventory permission is not permission to disclose a Session summary
     // nested in another inventory-family Action's result.
     expect(redactVoiceToolResultForProvider('projects.open', { session: { id: 's1', title: 'PRIVATE SESSION' } }, {
@@ -43,22 +44,72 @@ describe('redactVoiceToolResultValue', () => {
   });
 
   it.each(['provider_model_ambiguous', 'provider_model_not_found'])(
-    'keeps the exact spawn choices for %s when Session summaries are private', errorCode => {
-      const value = { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'cloudflare/@cf/openai/gpt-oss-120b' };
-      const result = { ok: false, errorCode, error: errorCode, details: {
-        candidates: [{ value, label: 'Named Model', description: 'Configured at /home/user/private.json and src/private.json' }],
+    'shares only permitted spawn labels for %s', errorCode => {
+      const team = (resourceId: string) => ({ source: 'team_resource', teamId: 'private-team', resourceId,
+        expectedResourceRevision: 1, deliveryMode: 'brokered', agentTargetKey: 'agent:codex', modelId: 'private-team-model' });
+      const personal = { agentTargetKey: 'agent:codex', providerConnectionId: 'private-personal-id', modelId: 'private-personal-model' };
+      const failure = { ok: false as const, errorCode, error: errorCode, details: {
+        candidates: [
+          { value: team('secret-resource-1'), label: 'Shared Model', description: 'Private Team credential name' },
+          { value: team('secret-resource-2'), label: 'Shared Model', description: 'Other Team credential name' },
+          { value: personal, label: 'Shared Model', description: 'Private Personal connection name' },
+          { value: 'native-opaque-id', label: 'Another Model' },
+          { value: 'slash-model-id', label: 'src/private.json' },
+        ],
         session: { title: 'PRIVATE TITLE' },
       } };
       const prefs = { ...SHARE_ALL, shareSessionSummary: false, shareDeviceInventory: true, shareFilePaths: false };
-      for (const redact of [redactVoiceToolResultForProvider, redactVoiceActionExecutionResultForProvider]) {
+      for (const canonicalResult of [false, true]) {
+        const redact = canonicalResult ? redactVoiceActionExecutionResultForProvider : redactVoiceToolResultForProvider;
+        const result: unknown = JSON.parse(serializeVoiceActionExecuteResult('session.spawn_new', failure, { canonicalResult }));
         const projected = redact('spawnSession', result, prefs);
-        expect(projected).toMatchObject({ details: { candidates: [{ value, label: 'Named Model', description: 'Configured at <path_redacted> and <path_redacted>' }] } });
-        expect(JSON.stringify(projected)).not.toContain('PRIVATE TITLE');
-        expect(redact('spawnSession', result, { ...prefs, shareDeviceInventory: false }))
-          .toMatchObject({ errorCode, details: { candidates: [] } });
+        expect(projected).toEqual({ ok: false, errorCode, error: errorCode, details: {
+          candidates: [{ label: 'Shared Model Team', needsModelPicker: true }, { label: 'Shared Model Personal' }, { label: 'Another Model' }],
+        } });
+        const retained = redact('spawnSession', result, { ...prefs, shareFilePaths: true });
+        expect(retained).toMatchObject({ details: {
+          candidates: expect.arrayContaining([{ label: 'src/private.json' }]),
+        } });
+        // Local effect custody projects on settlement and again before provider delivery.
+        expect(redact('spawnSession', retained, prefs)).toEqual(projected);
+        for (const shareDeviceInventory of [false, undefined, 'true']) {
+          expect(Reflect.apply(redact, undefined, ['spawnSession', result, { ...prefs, shareDeviceInventory }]))
+            .toMatchObject({ errorCode, details: { candidates: [] } });
+        }
       }
     },
   );
+
+  it('preserves slash-separated prose and dates in ordinary tool results with private paths', () => {
+    const sample = { message: 'Use and/or in the update due 11/20.' };
+    expect(redactVoiceToolResultForProvider('spawnSession', { sample }, {
+      ...SHARE_ALL, shareFilePaths: false,
+    })).toEqual({ sample });
+  });
+
+  it.each(['agents.models.available', 'teams.credential_models.available'])(
+    'applies inventory consent and label-only projection to %s lookups', optionsSourceId => {
+      const result = { ok: true, optionsSourceId, options: [{ value: 'private-ref', label: 'Model', description: 'Private' }],
+        modelCatalog: { private: 'private-ref' }, machineRecipeDetails: { accountId: 'private-account' } };
+      expect(redactVoiceToolResultForProvider('resolveActionOptions', result, { ...SHARE_ALL, shareDeviceInventory: true }))
+        .toEqual({ ok: true, optionsSourceId, options: [{ label: 'Model' }] });
+      expect(redactVoiceToolResultForProvider('resolveActionOptions', result, SHARE_ALL))
+        .toMatchObject({ errorCode: 'privacy_disabled' });
+      expect(redactVoiceActionExecutionResultForProvider('resolveActionOptions', { ok: true, result }, SHARE_ALL))
+        .toEqual({ ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' });
+    },
+  );
+
+  it('projects runner catalog titles and the task result without selectors or refs', () => {
+    const prefs = { ...SHARE_ALL, shareDeviceInventory: true };
+    expect(redactVoiceToolResultForProvider('listAgentModels', { ok: true, items: [], scmDiffSummaryCatalog: {
+      profiles: [{ title: 'Model', catalogId: 'secret-catalog-id', modelSelector: { providerConnectionId: 'private-ref' } }],
+      automaticProfiles: [], discoveryTargetKeys: ['hidden-agent-key'],
+    } }, prefs)).toEqual({ ok: true, items: [], scmDiffSummaryCatalog: { profiles: [{ title: 'Model' }], automaticProfiles: [] } });
+    expect(redactVoiceToolResultForProvider('listAgentModels', { ok: true, source: 'auto', title: 'Agent and model',
+      runner: { modelSelection: { providerConnectionId: 'private-ref' } },
+    }, prefs)).toEqual({ ok: true, source: 'auto', title: 'Agent and model' });
+  });
 
   it('withholds awareness request state and private work without changing the canonical result', () => {
     const awareness = {

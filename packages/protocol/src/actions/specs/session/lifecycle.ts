@@ -1,3 +1,4 @@
+import { VOICE_SPAWN_NAMED_MODEL_GUIDANCE } from '../../actionInputVoiceGuidance.js';
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1 } from './projectFilesReturn.js';
 import { sessionProjectFilesConsumeRequesterAccountContentV1, sessionProjectFilesOpenChildrenV1 } from '../../../sessions/creation/sessionProjectFilesOpenV1.js';
@@ -760,7 +761,7 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
       return snapshot.state === 'cancelled' ? 'replay' : 'refuse';
     },
     title: 'Create session',
-    description: 'Create a new Session on the requested Machine using the selected Agent. In Voice, use this Action for a separate coding Session and session.message.send for work in the bound Session. Pass an explicitly named model in spokenModelName. Ask the person to choose if provider_model_ambiguous or provider_model_not_found returns candidates. Omit model fields when the person names no model. Creation and initialInput admission are receipts. Read session.status.get for the coding Session’s turn outcome. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for a private folder.',
+    description: 'Create a new Session on the requested Machine using the selected Agent. In Voice, use this Action for a separate coding Session and session.message.send for work in the bound Session. For a named model or a choice among returned labels, use spokenModelName. Creation and initialInput admission are receipts. Read session.status.get for the coding Session’s turn outcome. Pass directory {kind:"path",path} for a folder or {kind:"managed"} for a private folder.',
     prompting: { voiceHotPath: true },
     sideEffectClass: 'write',
     safety: 'safe',
@@ -776,16 +777,16 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
         inputHints: { ...SessionSpawnNewInputHints, fields: [...SessionSpawnNewInputHints.fields.map(field => field.path === 'agentTarget'
           ? { ...field, required: false, description: `${field.description} Omit agentTarget to use the configured default Agent; the host resolves its exact catalog target.` }
           : field.path === 'modelSelection'
-            ? { ...field, description: `${field.description} For a Team option (source: team_resource), copy option.value as ref in {v:2,ref,updatedAt}. For an Account Provider ref, use v:1. The launch owner derives the Team credential binding from the ref.` }
+            ? { ...field, description: 'Use a structured model ref only when the person asks to reuse a Session’s model and its status supplies the ref.' }
             : field),
           { path: 'spokenModelName', title: 'Spoken model name', widget: 'text',
-            description: 'Pass the name the person said on the first call. On a model-choice retry, submit the selected exact model with modelSelection or modelSelectionInput.' },
+            description: VOICE_SPAWN_NAMED_MODEL_GUIDANCE },
           { path: 'modelSelectionInput', title: 'Model choice by ID', widget: 'json',
-            description: 'Supply modelId, providerConnectionId when applicable, and updatedAt when using a catalog choice without a structured model ref.' },
+            description: 'Use spokenModelName for a model named by the person or chosen from returned labels.' },
           { path: 'connectedServicesAuthIntent', title: 'Connected Account choice', widget: 'json',
             description: 'Use listSpawnConnectedServices for the selected Agent. Supply the requested profile or group, or {kind:"native"} for native authentication.' },
           { path: 'teamCredentialBindings', title: 'Team credential bindings', widget: 'json',
-            description: 'Preserve the exact Team binding approved for the requested slot. Use the Team-resource model ref in modelSelection for a Team model.' },
+            description: 'Preserve the exact Team binding approved for the requested slot. Submit the chosen Team model label in spokenModelName. For a label marked needsModelPicker, use the device model picker.' },
         ] },
       },
       mcp: { inputSchema: SessionSpawnNewTerminalInputSchema },
