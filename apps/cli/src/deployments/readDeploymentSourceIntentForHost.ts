@@ -3,7 +3,8 @@ import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure'
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readHostAdmittedReviewedChildV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1, type DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { suggestProjectOpenCloneDestinationV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
@@ -15,6 +16,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { StoredCredentials } from '@/persistence';
+import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
 import { fetchWorkspaceCommitRef, resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
@@ -82,6 +84,7 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     const sourceId = intent?.kind === 'repository' ? intent.projectSourceId : environment.environment.projectSourceId;
     let sourceRevision = intent?.kind === 'repository' ? intent.sourceRevision : undefined;
     let sourceRepository: ProjectSourceRepositorySelectorV1 | undefined;
+    let sourceDefaults: Pick<ProjectSourceV1, 'defaultRef' | 'subdir'> = {};
     if (intent?.kind === 'repository' && intent.projectSourceId !== environment.environment.projectSourceId) return refuse('target_mismatch');
     const assertAuthority = async () => {
         signal?.throwIfAborted();
@@ -116,6 +119,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         if (!result.source.repository) return refuse('deployment_source_unavailable');
         sourceRepository = result.source.repository;
         sourceRevision ??= result.source.revision;
+        const { defaultRef, subdir } = result.source;
+        sourceDefaults = { ...(defaultRef === undefined ? {} : { defaultRef }), ...(subdir === undefined ? {} : { subdir }) };
     };
     await readSource();
     const rows = needsWorkspace ? await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => readProjectAccountRowsObservation({
@@ -130,9 +135,14 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         if (sourceRevision === undefined || !sourceRepository) return refuse('deployment_source_unavailable');
         // The person or agent opens this Source's checkout through projects.open (its own review), then deploys again.
         const code = 'deployment_source_checkout_required';
+        const destination = suggestProjectOpenCloneDestinationV1({ machineId: host.machineId, homeDir: resolveHomeDirFromEnvironment(),
+            name: sourceRepository.repository.nameWithOwner.split('/').pop() ?? '', checkouts: rows?.snapshot.workspaceRefs ?? [] });
+        const definition = environment.content.definition;
         const failure = { ok: false as const, errorCode: code, error: code, details: projectDeploymentSourceCheckoutRequiredV1({
             serverId: host.serverId, machineId: host.machineId,
-            source: { id: sourceId, revision: sourceRevision, selector: sourceRepository } }) };
+            source: { kind: 'source', id: sourceId, revision: sourceRevision, selector: sourceRepository, ...sourceDefaults },
+            ...(definition.kind === 'repository' && definition.ref !== undefined ? { ref: definition.ref } : {}),
+            materialization: { kind: 'clone', ...destination } }) };
         throw Object.assign(createActionExecuteFailureError(failure), { cause: failure });
     }
     if (!intent) {

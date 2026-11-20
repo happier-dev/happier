@@ -2,9 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { isRecord } from '../common/records.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { projectActionFailureRecoveryV1 } from '../actions/actionExecutionResult.js';
-import { OpenProjectRefusalV1Schema } from '../projects/openProjectV1.js';
-import type { OpenProjectDraftSelectionV1 } from '../projects/openProjectDraftV1.js';
-import type { ProjectSourceRepositorySelectorV1 } from '../projects/sources/projectSourceV1.js';
+import { OpenProjectInputV1Schema, OpenProjectRefusalV1Schema, type OpenProjectInputV1 } from '../projects/openProjectV1.js';
 
 export const DeploymentImageResolutionFailureV1Schema = lazyZodSchema(() => z.strictObject({
     kind: z.literal('deploymentImageResolutionFailure'),
@@ -341,20 +339,17 @@ export function projectDeploymentFailureRecoveryV1<T extends Record<string, unkn
 }
 
 /**
- * The agent front door's next step for a missing controller checkout: a reference to the existing projects.open
- * draft for this Source. Nothing runs from it; the caller chooses the clone destination and projects.open keeps its
- * own approval. The app reads the same code's navigate route through the readers below.
+ * The suggested Projects Open action carries the Source and a complete clone destination.
+ * Invoking it uses Projects Open's own review. The app uses the Source navigation route.
  */
 export type DeploymentFailureActionReferenceV1 = Readonly<{
-    kind: 'action'; actionId: 'projects.open'; input: OpenProjectDraftSelectionV1;
+    kind: 'action'; actionId: 'projects.open'; input: OpenProjectInputV1;
 }>;
-export function projectDeploymentSourceCheckoutRequiredV1(target: Readonly<{
-    serverId: string; machineId: string;
-    source: Readonly<{ id: string; revision: number; selector: ProjectSourceRepositorySelectorV1 }>;
-}>) {
-    const nextAction: DeploymentFailureActionReferenceV1 = { kind: 'action', actionId: 'projects.open', input: {
-        serverId: target.serverId, machineId: target.machineId, source: { kind: 'source', ...target.source } } };
-    return projectDeploymentFailureRecoveryV1({ reason: 'deployment_source_checkout_required', nextAction },
+export function projectDeploymentSourceCheckoutRequiredV1(target: OpenProjectInputV1) {
+    const input = OpenProjectInputV1Schema.safeParse(target);
+    const nextAction: DeploymentFailureActionReferenceV1 | undefined = input.success
+        ? { kind: 'action', actionId: 'projects.open', input: input.data } : undefined;
+    return projectDeploymentFailureRecoveryV1({ reason: 'deployment_source_checkout_required', ...(nextAction ? { nextAction } : {}) },
         'deployment_source_checkout_required');
 }
 

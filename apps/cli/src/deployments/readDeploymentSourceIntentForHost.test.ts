@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
-import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { admitProjectSourceSelectionV1, ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1,
     type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
@@ -12,7 +12,7 @@ import { readDeploymentSourceIntentForHost } from './readDeploymentSourceIntentF
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
 import { projectDeploymentException, projectDeploymentFailure } from './deploymentFailure';
 import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import { OpenProjectDraftSelectionV1Schema } from '@happier-dev/protocol/projects/openProjectDraftV1';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { normalizeActionExecuteResult, projectCliActionFailure } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { createPlainProjectAccountRefRow } from '@/workspaces/projectAccountRows.testkit';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
@@ -306,14 +306,18 @@ it.each([true, false])('captures an admitted exact provider Git commit without a
 
 it('requires a local workspace for native materialization and refuses provider refs without a resolver', async () => {
     const environment = createDeploymentEnvironmentDetailV1();
+    if (environment.content.definition.kind !== 'repository') throw new Error('Repository fixture required');
+    environment.content.definition.ref = 'release';
     const sourceIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
     if (sourceIntent.kind !== 'repository') throw new Error('Repository fixture required');
     mockProjectAccountRowsHttpBoundary([]);
-    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true, source: {
+    const source = ProjectSourcesReadOutputV1Schema.parse({ ok: true, canManage: true, source: {
         id: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision, name: 'App', audience: [], createdByAccountId: 'owner',
+        defaultRef: 'main', subdir: 'workers/site',
         repository: { protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
             repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } },
-    } }) });
+    } });
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: source });
     const context = { authority: 'present_user' as const, signal: new AbortController().signal,
         machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'controller',
             installationId: 'installation', role: 'use' as const, encryptionMode: 'plain' as const },
@@ -334,16 +338,22 @@ it('requires a local workspace for native materialization and refuses provider r
     const publicFailure = projectCliActionFailure(failure);
     expect(publicFailure).toMatchObject({ code: 'deployment_source_checkout_required',
         details: { requiredFact: 'deploymentActionResult', remedy: expect.any(String) } });
-    // The agent's public result names the one next Action, projects.open for this Source on the controller.
-    // It is a reference only: the agent chooses where to clone and runs projects.open under its own approval.
+    // Replay the returned input unchanged through the same schema as the public projects.open Action.
     const nextAction = (publicFailure.details as { nextAction?: { input?: unknown } } | undefined)?.nextAction;
-    expect(nextAction).toEqual({ kind: 'action', actionId: 'projects.open', input: { serverId: 'home', machineId: 'controller',
+    const open = OpenProjectInputV1Schema.parse(nextAction?.input);
+    expect(nextAction).toMatchObject({ kind: 'action', actionId: 'projects.open', input: { serverId: 'home', machineId: 'controller',
         source: { kind: 'source', id: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision, selector: {
             // The Source reader's canonical selector, including its qualified provider id.
             protocol: 'https', provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub',
                 baseUrl: 'https://github.com' },
             repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } } } });
-    expect(OpenProjectDraftSelectionV1Schema.safeParse(nextAction?.input).success).toBe(true);
+    expect(open.materialization).toMatchObject({ kind: 'clone', destinationDirectoryName: 'app' });
+    if (open.source.kind !== 'source') throw new Error('Projects Open must use the recorded Source');
+    expect(open.source.defaultRef).toBe('main');
+    await expect(admitProjectSourceSelectionV1({ serverId: open.serverId, sourceId: open.source.id,
+        captured: open.source, ...(open.ref === undefined ? {} : { ref: open.ref }), async readSource() { return source; } })).resolves.toMatchObject({
+        kind: 'admitted', ref: 'release', subdir: 'workers/site',
+    });
     // The app keeps its navigate route from the same recovery owner.
     expect(readDeploymentRefusalRecoveryV1(publicFailure.code, publicFailure.details)).toMatchObject({
         nextAction: { kind: 'navigate', destination: 'source', label: 'Open checkout' } });

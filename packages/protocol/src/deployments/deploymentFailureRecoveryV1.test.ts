@@ -3,6 +3,7 @@ import { DeploymentFailureRecoveryV1Schema, projectDeploymentFailureRecoveryV1, 
 import { DeploymentReceiptFailureV1Schema } from './deploymentReceiptEventsV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from './deploymentDomainFailureV1.js';
 import { DeploymentTemplateInstantiationPartialV1Schema } from './deploymentTemplateInstantiationV1.js';
+import { OpenProjectInputV1Schema } from '../projects/openProjectV1.js';
 
 it('routes a repository clone refusal with INVALID_REQUEST to repair the deployment Source', () => {
     const cause = { phase: 'projects.open', errorClass: 'Error', errorCode: 'INVALID_REQUEST', httpStatus: null };
@@ -338,11 +339,12 @@ describe('deployment refusal recovery (a refused press: banner and platform shee
     it('gives agents the projects.open reference for a missing checkout while the app keeps its navigate route', () => {
         const selector = { protocol: 'https' as const, provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub',
             baseUrl: 'https://github.com' }, repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } };
-        const details = projectDeploymentSourceCheckoutRequiredV1({ serverId: 'home', machineId: 'controller',
-            source: { id: 'source-1', revision: 2, selector } });
+        const input = { serverId: 'home', machineId: 'controller',
+            source: { kind: 'source', id: 'source-1', revision: 2, selector },
+            materialization: { kind: 'clone', destinationParentPath: '/home/developer/src', destinationDirectoryName: 'app' } } as const;
+        const details = projectDeploymentSourceCheckoutRequiredV1(input);
         expect(details).toMatchObject({ remedy: readDeploymentRefusalRecoveryV1('deployment_source_checkout_required')?.remedy,
-            nextAction: { kind: 'action', actionId: 'projects.open', input: { serverId: 'home', machineId: 'controller',
-                source: { kind: 'source', id: 'source-1', revision: 2, selector } } } });
+            nextAction: { kind: 'action', actionId: 'projects.open', input: OpenProjectInputV1Schema.parse(input) } });
         expect(readDeploymentRefusalRecoveryV1('deployment_source_checkout_required', details)?.nextAction)
             .toEqual({ kind: 'navigate', destination: 'source', label: 'Open checkout' });
     });

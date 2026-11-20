@@ -59,6 +59,10 @@ If Upload cannot clone a Source, the Deploy panel shows the checkout failure and
 its repair step. The failed checkout is recorded by Projects Open. A deployment
 receipt begins only after Deploy is admitted.
 
+When a direct deploy Action needs a checkout, its refusal returns the complete
+`projects.open` input for that Source and Machine. Open uses the same destination
+suggestion and runs with its own review before the person retries the deploy.
+
 ## Declared platform plans (0.3 development)
 
 The optional `deploymentTargets[].plans` contribution carries provider-authored

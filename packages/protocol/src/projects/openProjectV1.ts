@@ -9,6 +9,7 @@ import { QualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnecte
 import { SessionAuthoringCheckoutCreationDraftV1Schema } from '../sessions/authoring/creationFieldsV1.js';
 import { HandoffWorkspaceActionV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import { WorkspaceAddressV1Schema, WorkspaceAddressV2Schema, ManagedWorkspaceRefV2WriteSchema, WorkspaceRefV1WriteSchema, WorkspaceProjectFactsV1Schema } from '../workspaces/workspaceRefV1.js';
+import type { WorkspaceRefV1 } from '../workspaces/workspaceRefV1.js';
 import { ProjectSourceRepositorySelectorV1Schema } from './sources/projectSourceV1.js';
 import { ScmRepositoryProvisioningFailureResponseSchema, ScmRepositoryProvisioningRemediationSchema } from '../scm/repositoryProvisioning.js';
 import { WorkspaceManifestSchema, WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
@@ -79,6 +80,28 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
   }
 })));
 export type OpenProjectInputV1 = z.infer<typeof OpenProjectInputV1Schema>;
+
+/** Where Open and app starters suggest placing new checkouts on a Machine. */
+export function projectCheckoutParentPath(homeDir: string): string {
+  return `${homeDir.replace(/[\\/]+$/u, '')}/src`;
+}
+
+/** Known checkout rows guide the suggestion. Open checks destination availability at execution. */
+export function suggestProjectOpenCloneDestinationV1(input: Readonly<{
+  machineId: string | null;
+  homeDir: string;
+  name: string;
+  checkouts: readonly Pick<WorkspaceRefV1, 'machineId' | 'rootPath'>[];
+}>): Pick<Extract<WorkspaceActivationRequestV1, { kind: 'clone' }>, 'destinationParentPath' | 'destinationDirectoryName'> {
+  const comparable = (path: string) => path.replace(/\\/gu, '/').replace(/\/+$/u, '');
+  const taken = new Set(input.checkouts.filter(ref => ref.machineId === input.machineId).map(ref => comparable(ref.rootPath)));
+  const destinationParentPath = projectCheckoutParentPath(input.homeDir);
+  let destinationDirectoryName = input.name;
+  for (let suffix = 2; taken.has(comparable(`${destinationParentPath}/${destinationDirectoryName}`)); suffix += 1) {
+    destinationDirectoryName = `${input.name}-${suffix}`;
+  }
+  return { destinationParentPath, destinationDirectoryName };
+}
 
 export const OpenProjectRefusalV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('refused'), code: IdSchema,
