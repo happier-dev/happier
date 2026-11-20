@@ -82,6 +82,10 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
             kind: "terminal",
             authority: "account_automation",
         });
+        const directory = await auth.createToken(account.id, undefined, {
+            kind: "account_directory",
+            authority: "present_user",
+        });
         const profile = {
             id: 4815,
             login: "external-login",
@@ -104,11 +108,18 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         const deniedStart = await app.inject({
             method: "GET",
             url: "/v1/connect/external/github/params?connectFinalization=credential_adoption_v1",
-            headers: { authorization: `Bearer ${terminal}` },
+            headers: { authorization: `Bearer ${directory}` },
         });
-        expect(deniedStart.statusCode, deniedStart.body).toBe(403);
+        expect(deniedStart.statusCode).toBe(403);
         expect(deniedStart.json()).toEqual({ error: "present_user_required" });
         expect(await db.repeatKey.count()).toBe(0);
+
+        const terminalStart = await app.inject({
+            method: "GET",
+            url: "/v1/connect/external/github/params?connectFinalization=credential_adoption_v1",
+            headers: { authorization: `Bearer ${terminal}` },
+        });
+        expect(terminalStart.statusCode).toBe(200);
 
         const paramsRes = await app.inject({
             method: "GET",
@@ -135,7 +146,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         const deniedFinalize = await app.inject({
             method: "POST",
             url: "/v1/connect/external/github/finalize",
-            headers: { authorization: `Bearer ${terminal}` },
+            headers: { authorization: `Bearer ${directory}` },
             payload: { pending, username: "account-owner" },
         });
         expect(deniedFinalize.statusCode, deniedFinalize.body).toBe(403);
@@ -169,7 +180,7 @@ describe("connectRoutes (GitHub callback) external auth flow (integration)", () 
         const deniedDisconnect = await app.inject({
             method: "DELETE",
             url: "/v1/connect/external/github",
-            headers: { authorization: `Bearer ${terminal}` },
+            headers: { authorization: `Bearer ${directory}` },
         });
         expect(deniedDisconnect.statusCode, deniedDisconnect.body).toBe(403);
         expect(deniedDisconnect.json()).toEqual({ error: "present_user_required" });
