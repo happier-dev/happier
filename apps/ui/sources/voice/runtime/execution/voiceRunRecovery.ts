@@ -40,6 +40,7 @@ export function createVoiceRunRecovery(
   getVoiceAgentHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
   isActive: (sessionId: string) => boolean;
   resetCachedHandle: (sessionId: string) => void;
+  releaseCachedState: (sessionId: string) => void;
   prepareStop: (
     sessionId: string,
     beforeStop?: () => Promise<void>,
@@ -73,6 +74,19 @@ export function createVoiceRunRecovery(
       if (args.voiceAgentInitBySessionId.get(sessionId) === init)
         args.voiceAgentInitBySessionId.delete(sessionId);
     }
+  };
+
+  const resetCachedHandle = (sessionId: string): void => {
+    args.voiceAgentBySessionId.delete(sessionId);
+    args.onHandleChanged?.(sessionId, undefined);
+  };
+
+  const releaseCachedState = (sessionId: string): void => {
+    args.voiceAgentInitBySessionId.delete(sessionId);
+    resetCachedHandle(sessionId);
+    args.voiceAttemptExplicitContextBySessionId.delete(sessionId);
+    args.deferredTargetSessionContextBySessionId.delete(sessionId);
+    args.latestAutomaticUiContextBySessionId.delete(sessionId);
   };
 
   const commit = async (sessionId: string): Promise<string> => {
@@ -118,8 +132,7 @@ export function createVoiceRunRecovery(
       if (!isVoiceAgentNotFoundError(error)) {
         throw error;
       }
-      args.voiceAgentBySessionId.delete(sessionId);
-      args.onHandleChanged?.(sessionId, undefined);
+      resetCachedHandle(sessionId);
       return await commitWithHandle();
     }
   };
@@ -138,12 +151,7 @@ export function createVoiceRunRecovery(
     const metadataSessionId = persistedRuntimeState?.metadataSessionId ?? null;
     const persistedRunMeta = persistedRuntimeState?.runMetadata ?? null;
     const pendingInit = args.voiceAgentInitBySessionId.get(sessionId) ?? null;
-    args.voiceAgentInitBySessionId.delete(sessionId);
-    args.voiceAgentBySessionId.delete(sessionId);
-    args.onHandleChanged?.(sessionId, undefined);
-    args.voiceAttemptExplicitContextBySessionId.delete(sessionId);
-    args.deferredTargetSessionContextBySessionId.delete(sessionId);
-    args.latestAutomaticUiContextBySessionId.delete(sessionId);
+    releaseCachedState(sessionId);
     const run = async (signal?: AbortSignal): Promise<void> => {
       const caller = createAbortRacer(signal);
       caller.throwIfAborted();
@@ -332,10 +340,8 @@ export function createVoiceRunRecovery(
     },
     getVoiceAgentHandle,
     isActive: (sessionId: string) => args.voiceAgentBySessionId.has(sessionId),
-    resetCachedHandle: (sessionId: string) => {
-      args.voiceAgentBySessionId.delete(sessionId);
-      args.onHandleChanged?.(sessionId, undefined);
-    },
+    resetCachedHandle,
+    releaseCachedState,
     prepareStop,
   };
 }

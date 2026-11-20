@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { standardCleanup } from '@/dev/testkit';
+import { createDeferred, standardCleanup } from '@/dev/testkit';
 import {
     createRetainedVoiceAgentRpcBoundary, createStandaloneVoicePolicyHarness, prepareStandaloneVoicePolicyHarness,
 } from '@/dev/testkit/harness/standaloneVoicePolicyHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { ExecutionRunActionRequestSchema, ExecutionRunActionResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import { ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { VOICE_TRANSCRIPT_MEMORY_KEY } from '@/voice/persistence/voiceTranscriptMemory';
 import { encodeBase64StoredJsonContentEnvelope } from '@/sync/encryption/base64StoredJsonContent';
@@ -20,7 +21,8 @@ let rpc: Awaited<ReturnType<typeof createRetainedVoiceAgentRpcBoundary>>;
 const welcomeRequests: Array<ReturnType<typeof ExecutionRunActionRequestSchema.parse>> = [];
 let assistantReplyText = 'Welcome!';
 let preparedInstructionsFor: { serverId: string; sessionId: string } | undefined;
-let beforeWelcomeReply: (() => void) | undefined;
+let beforeWelcomeReply: (() => void | Promise<void>) | undefined;
+let acceptUserTurn: (() => unknown) | undefined;
 
 await prepareStandaloneVoicePolicyHarness();
 
@@ -53,17 +55,27 @@ describe('Voice welcome through retained initialization, execution cache and Hom
         assistantReplyText = 'Welcome!';
         preparedInstructionsFor = undefined;
         beforeWelcomeReply = undefined;
+        acceptUserTurn = undefined;
         ({ storage } = await import('@/sync/domains/state/storage'));
         artifacts = createArtifactStoreBoundary({
             ownerAccountId: () => storage.getState().profileScope?.accountId ?? null, encryptionMode: 'plain',
         });
         rpc = await createRetainedVoiceAgentRpcBoundary({ runId: 'welcome-run',
             async handleOtherRpc(method, input) {
+                if ((method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START
+                    || method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2) && acceptUserTurn) return acceptUserTurn();
+                if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_READ && acceptUserTurn) {
+                    return ExecutionRunTurnStreamReadResponseSchema.parse({
+                        streamId: 'answer', done: true, nextCursor: 1,
+                        events: [{ t: 'done', assistantText: 'Here is the answer.' }],
+                    });
+                }
+                if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_CANCEL && acceptUserTurn) return { ok: true };
                 if (method !== SESSION_RPC_METHODS.EXECUTION_RUN_ACTION) throw new Error('Unexpected Voice RPC: ' + method);
                 const request = ExecutionRunActionRequestSchema.parse(input);
                 if (request.actionId !== 'voice_agent.welcome') throw new Error('Unexpected Voice Action: ' + request.actionId);
                 welcomeRequests.push(request);
-                beforeWelcomeReply?.();
+                await beforeWelcomeReply?.();
                 return ExecutionRunActionResponseSchema.parse({ ok: true, result: { assistantText: assistantReplyText,
                     ...(preparedInstructionsFor ? { preparedInstructionsFor } : {}) } });
             },
@@ -89,6 +101,69 @@ describe('Voice welcome through retained initialization, execution cache and Hom
     afterEach(async () => {
         try { await execution?.stop(fixture.sessionId); }
         finally { await fixture?.dispose(); standardCleanup(); }
+    });
+
+    it('delivers the first conversational turn once after the immediate greeting settles', async () => {
+        const greetingEntered = createDeferred<void>();
+        const finishGreeting = createDeferred<void>();
+        let greetingActive = false;
+        let userTurns = 0;
+        beforeWelcomeReply = async () => {
+            greetingActive = true;
+            greetingEntered.resolve();
+            await finishGreeting.promise;
+            greetingActive = false;
+        };
+        acceptUserTurn = () => {
+            userTurns++;
+            return greetingActive
+                ? { ok: false, errorCode: 'execution_run_busy', error: 'Voice agent busy' }
+                : ExecutionRunTurnStreamStartResponseSchema.parse({ streamId: 'answer' });
+        };
+        const greeting = execution.ensureRunningAndMaybeWelcome(fixture.sessionId);
+        let turn: ReturnType<typeof execution.sendTurn> | undefined;
+        try {
+            await greetingEntered.promise;
+            turn = execution.sendTurn(fixture.sessionId, 'My first question');
+            void turn.catch(() => {});
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+            finishGreeting.resolve();
+            await expect(greeting).resolves.toBe('Welcome!');
+            await expect(turn).resolves.toMatchObject({ assistantText: 'Here is the answer.' });
+            expect(userTurns).toBe(1);
+        } finally {
+            finishGreeting.resolve();
+            await Promise.allSettled([greeting, turn]);
+        }
+    });
+
+    it('keeps a cancelled first turn out of the Run while the immediate greeting is active', async () => {
+        const greetingEntered = createDeferred<void>();
+        const finishGreeting = createDeferred<void>();
+        beforeWelcomeReply = async () => {
+            greetingEntered.resolve();
+            await finishGreeting.promise;
+        };
+        let dispatchedTurns = 0;
+        acceptUserTurn = () => {
+            dispatchedTurns++;
+            return ExecutionRunTurnStreamStartResponseSchema.parse({ streamId: 'answer' });
+        };
+        const greeting = execution.ensureRunningAndMaybeWelcome(fixture.sessionId);
+        const controller = new AbortController();
+        let turn: ReturnType<typeof execution.sendTurn> | undefined;
+        try {
+            await greetingEntered.promise;
+            turn = execution.sendTurn(fixture.sessionId, 'A cancelled question', { signal: controller.signal });
+            void turn.catch(() => {});
+            await new Promise<void>(resolve => setTimeout(resolve, 0));
+            controller.abort();
+            await expect(turn).rejects.toMatchObject({ name: 'AbortError' });
+            expect(dispatchedTurns).toBe(0);
+        } finally {
+            finishGreeting.resolve();
+            await Promise.allSettled([greeting, turn]);
+        }
     });
 
     it('retries immediate welcome when welcomedEpoch was not persisted', async () => {

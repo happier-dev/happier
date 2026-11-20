@@ -356,7 +356,7 @@ export async function initializeVoiceAgentHandle({
 
     let daemonConversationSessionId =
         backend === 'daemon' && isGlobalVoiceAgent
-            ? normalizeNonEmptyString(globalConversationSessionId ?? boundConversationSessionId)
+            ? normalizeNonEmptyString(boundConversationSessionId ?? globalConversationSessionId)
             : null;
 
     if (backend === 'daemon' && isGlobalVoiceAgent && !daemonConversationSessionId) {

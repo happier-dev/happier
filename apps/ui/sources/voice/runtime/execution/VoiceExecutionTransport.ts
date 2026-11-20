@@ -70,7 +70,10 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
     }>();
     const voiceAgentLifetimeBySessionId = new Map<string, AbortController>();
     const admittedSessionAgents = new Map<string, Readonly<{
-        backendTarget: BackendTargetRefV1; agentSource: 'session' | 'agent'; dispose(): void;
+        backendTarget: BackendTargetRefV1;
+        agentSource: 'session' | 'agent';
+        carrierSessionId: string | null;
+        dispose(): void;
     }>>();
 
     const publishAgentRuntime = (sessionId: string, handle: VoiceAgentHandle | undefined): void => {
@@ -96,6 +99,17 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
 
     const prepareAgentSelection = async (sessionId: string, signal: AbortSignal): Promise<void> => {
         signal.throwIfAborted();
+        const isGlobalTarget = sessionId === VOICE_AGENT_GLOBAL_SESSION_ID;
+        const boundConversationSessionId = resolveBoundConversationSessionId(sessionId);
+        const carrierSessionId = isGlobalTarget ? boundConversationSessionId : null;
+        const previousCarrierId = voiceAgentBySessionId.get(sessionId)?.rpcSessionId
+            ?? admittedSessionAgents.get(sessionId)?.carrierSessionId;
+        if (carrierSessionId && previousCarrierId && carrierSessionId !== previousCarrierId) {
+            // A failed call can leave its native Run available to its original
+            // conversation. Drop this client's local handle before admitting a new carrier.
+            retireAgentLifetime(sessionId);
+            recovery.releaseCachedState(sessionId);
+        }
         if (admittedSessionAgents.has(sessionId)) {
             publishAgentRuntime(sessionId, voiceAgentBySessionId.get(sessionId));
             return;
@@ -103,10 +117,9 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         const agent = readLocalConversationSettingsFromAccountSettings(storage.getState().settings).agent;
         const account = captureActiveServerAccountScopeLifetime();
         if (!account) throw new Error('voice_agent_account_scope_unavailable');
-        const isGlobalTarget = sessionId === VOICE_AGENT_GLOBAL_SESSION_ID;
         const target = resolveBoundTargetSessionAddress(sessionId) ?? {
             serverId: account.scope.serverId,
-            sessionId: resolveBoundConversationSessionId(sessionId) ?? sessionId,
+            sessionId: boundConversationSessionId ?? sessionId,
         };
         if (!readVoiceSessionOwnerMetadataFromState(storage.getState(), target)) {
             await sync.ensureSessionVisibleForMessageRoute(target.sessionId, {
@@ -139,19 +152,25 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         // their shared attempt, including handle recovery, without starting a model.
         const retirement = account.onRetire(() => clearAgentSelection(sessionId));
         admittedSessionAgents.set(sessionId, { backendTarget,
-            agentSource: configured ? 'agent' : 'session', dispose: () => retirement.dispose() });
+            agentSource: configured ? 'agent' : 'session', carrierSessionId, dispose: () => retirement.dispose() });
         publishAgentRuntime(sessionId, undefined);
     };
 
-    const trackActiveTurn = async <T>(sessionId: string, task: () => Promise<T>): Promise<T> => {
+    const trackActiveTurn = async <T>(
+        sessionId: string,
+        task: (preceding: Promise<void> | undefined) => Promise<T>,
+    ): Promise<T> => {
+        const activeTurns = voiceAgentActiveTurnSettlementsBySessionId.get(sessionId) ?? new Set<Promise<void>>();
+        // Snapshot the admitted work before registering this turn, so a first
+        // user turn can follow the greeting on the same Run.
+        const preceding = activeTurns.size > 0 ? waitForActiveTurns(sessionId) : undefined;
         let turn: Promise<T>;
         try {
-            turn = task();
+            turn = task(preceding);
         } catch (error) {
             turn = Promise.reject(error);
         }
         const settlement = turn.then(() => undefined, () => undefined);
-        const activeTurns = voiceAgentActiveTurnSettlementsBySessionId.get(sessionId) ?? new Set<Promise<void>>();
         activeTurns.add(settlement);
         voiceAgentActiveTurnSettlementsBySessionId.set(sessionId, activeTurns);
         try {
@@ -280,11 +299,15 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         return stopPromise;
     };
 
-    const stop = (sessionId: string, reason?: 'continued_elsewhere', signal?: AbortSignal): Promise<void> => {
+    const retireAgentLifetime = (sessionId: string): void => {
         clearAgentSelection(sessionId);
         interruptActiveTurn(sessionId);
         voiceAgentLifetimeBySessionId.get(sessionId)?.abort();
         voiceAgentLifetimeBySessionId.delete(sessionId);
+    };
+
+    const stop = (sessionId: string, reason?: 'continued_elsewhere', signal?: AbortSignal): Promise<void> => {
+        retireAgentLifetime(sessionId);
         return runStop(sessionId, reason, signal);
     };
 
@@ -309,7 +332,8 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
         commit: recovery.commit,
         ensureRunning: recovery.ensureRunning,
         prepareAgentSelection,
-        ensureRunningAndMaybeWelcome: welcomePolicy.ensureRunningAndMaybeWelcome,
+        ensureRunningAndMaybeWelcome: sessionId =>
+            trackActiveTurn(sessionId, () => welcomePolicy.ensureRunningAndMaybeWelcome(sessionId)),
         isActive: recovery.isActive,
         sendInterruptingTextUpdate: turnStreaming.sendInterruptingTextUpdate,
         sendTextUpdate: turnStreaming.sendTextUpdate,

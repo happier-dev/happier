@@ -458,6 +458,43 @@ describe('initializeVoiceAgentHandle', () => {
         }
     });
 
+    it('opens the newly bound global carrier after the previous call leaves a retained Run', async () => {
+        const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+        const { readLastVoiceConversationAddress } = await import('@/voice/binding/resolveVoiceConversationSelection');
+        const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+        const { createVoiceExecutionTransport } = await import('@/voice/runtime/execution/VoiceExecutionTransport');
+        const carrierIds = ['retained-after-failure', 'new-voice-conversation'];
+        const current = storage.getState();
+        storage.setState({ sessions: { ...current.sessions, ...Object.fromEntries(carrierIds.map((id, index) => [id,
+            createSessionFixture({ id, serverId: sessionServerId, createdAt: 200 - index, active: true, presence: 'online', encryptionMode: 'plain', metadata: {
+                host: 'tester.local', machineId: 'machine-1', path: '/voice', flavor: 'claude',
+                ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }),
+                voiceConversationScopeV1: { v: 1, kind: 'voice_home' },
+            } }),
+        ])) } });
+        const bind = (conversationSessionId: string, updatedAt: number) => voiceSessionBindingStore.getState().bind({
+            adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID, conversationSessionId,
+            conversationSessionAddress: { serverId: sessionServerId, sessionId: conversationSessionId },
+            targetSessionAddress: null, lifetime: 'runtime_attempt', transcriptMode: 'synthetic', updatedAt,
+        });
+        const transport = createVoiceExecutionTransport();
+        try {
+            bind(carrierIds[0], 1);
+            await transport.prepareAgentSelection(VOICE_AGENT_GLOBAL_SESSION_ID, new AbortController().signal);
+            await transport.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
+            expect(transport.readVoiceAgentHandle(VOICE_AGENT_GLOBAL_SESSION_ID)?.rpcSessionId).toBe(carrierIds[0]);
+
+            // The call fault releases capture while retaining the native Run for recovery.
+            bind(carrierIds[1], 2);
+            expect(readLastVoiceConversationAddress()?.sessionId).toBe(carrierIds[0]);
+            await transport.prepareAgentSelection(VOICE_AGENT_GLOBAL_SESSION_ID, new AbortController().signal);
+            await transport.ensureRunning(VOICE_AGENT_GLOBAL_SESSION_ID);
+            expect(transport.readVoiceAgentHandle(VOICE_AGENT_GLOBAL_SESSION_ID)?.rpcSessionId).toBe(carrierIds[1]);
+        } finally {
+            for (const id of carrierIds) voiceSessionBindingStore.getState().unbind(id);
+        }
+    });
+
     it('takes the transcript epoch from Account memory when starting a different carrier', async () => {
         omitIncidentalProfile();
         await transcriptMemory.handleFetch('https://voice-initialize.example.test/v1/kv', { method: 'POST',

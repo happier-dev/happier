@@ -13,6 +13,7 @@ import {
     collectAssistantTextMessagesSinceBaseline,
 } from '@/voice/runtime/waitForNextAssistantTextMessage';
 import { isVoiceAgentNotFoundError, isVoiceAgentRpcMethodUnavailable } from '@/voice/agent/voiceAgentErrorGuards';
+import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
 import { clearStaleDaemonRunState } from '@/voice/agent/voiceAgentRunState';
 import { streamVoiceAgentTurn } from '@/voice/agent/streamVoiceAgentTurn';
 import { buildVoiceAgentTurnPayload } from '@/voice/agent/buildVoiceAgentTurnPayload';
@@ -25,7 +26,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
     getVoiceAgentHandle: (sessionId: string) => Promise<VoiceAgentHandle>;
     interruptActiveTurn: (sessionId: string) => void;
     resetCachedHandle: (sessionId: string) => void;
-    trackActiveTurn: <T>(sessionId: string, task: () => Promise<T>) => Promise<T>;
+    trackActiveTurn: <T>(sessionId: string, task: (preceding: Promise<void> | undefined) => Promise<T>) => Promise<T>;
     voiceAttemptExplicitContextBySessionId: Map<string, string[]>;
     deferredTargetSessionContextBySessionId: Map<string, (() => string) | null>;
     latestAutomaticUiContextBySessionId: Map<string, string>;
@@ -225,7 +226,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
         userText: string,
         options?: VoiceAgentSendTurnOptions,
     ): Promise<Readonly<{ assistantText: string; actions: VoiceAssistantAction[] }>> =>
-        await args.trackActiveTurn(sessionId, async () => {
+        await args.trackActiveTurn(sessionId, async preceding => {
             const internalAbortController = new AbortController();
             args.voiceAgentTurnAbortControllerBySessionId.set(sessionId, internalAbortController);
             const mergedSignals = [options?.signal, internalAbortController.signal].filter(Boolean) as AbortSignal[];
@@ -252,6 +253,11 @@ export function createVoiceTurnStreaming(args: Readonly<{
                 };
             })();
             try {
+                if (preceding) {
+                    const admission = createAbortRacer(mergedAbort.signal);
+                    await admission.race(preceding);
+                    admission.throwIfAborted();
+                }
                 return await sendTurnImpl(sessionId, userText, { ...options, signal: mergedAbort.signal });
             } finally {
                 mergedAbort.dispose();
