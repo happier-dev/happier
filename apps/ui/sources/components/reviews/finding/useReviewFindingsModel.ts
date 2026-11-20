@@ -13,7 +13,7 @@ import { projectReviewFindingRoundStatusV1,
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { ReviewFindingDecision } from '@/components/sessions/reviews/findings/ReviewFindingRow';
-import { readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
+import { findCommentForFinding, readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
 import type { ReviewFindingAskContext, ReviewFindingThreadEntryView } from '@/components/sessions/reviews/findings/ReviewFindingThread';
 import type { ReviewFollowUpRecipient } from '@/components/sessions/reviews/findings/ReviewFollowUpComposer';
 import {
@@ -121,6 +121,22 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         [record?.comments, recordReviewId]);
     const { rows: sealedRows, unavailableFindings } = native;
     const rootById = React.useMemo(() => new Map(sealedRows.map(row => [row.rowId, row.comment] as const)), [sealedRows]);
+    // Retained payloads keep the current reviewer's local finding id; durable roots may originate in an older round.
+    const nativeSourcesByRowId = React.useMemo(() => {
+        const sources = new Map<string, { member: Member; finding: Member['findings'][number] }[]>();
+        if (!record) return sources;
+        for (const member of members) {
+            for (const finding of member.findings) {
+                const referenced = finding.comment ? rootById.get(finding.comment.id) : undefined;
+                const root = findCommentForFinding(referenced ? [referenced] : native.roots, finding, member.runId);
+                if (!root?.appearances?.some(appearance => appearance.roundOrdinal === record.round.roundOrdinal && appearance.runId === member.runId)) continue;
+                const held = sources.get(root.id) ?? [];
+                held.push({ member, finding });
+                sources.set(root.id, held);
+            }
+        }
+        return sources;
+    }, [members, native.roots, record, rootById]);
     const acceptedRows = React.useMemo(
         () => rows.filter((row) => rowDecision(row, pending) === 'accept'),
         [pending, rows],
@@ -249,15 +265,16 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
 
     const askAboutRow = React.useCallback(async (rowId: string, messageMarkdown: string) => {
         const row = rowById.get(rowId);
-        if (!row) return false;
+        const sources = record ? nativeSourcesByRowId.get(rowId) : row?.sources;
+        if (!sources) return false;
         // One thread per finding and reviewer: a merged row asks each reviewer in its own thread.
-        const sent = await sendToEach(row.sources.map((source) => {
+        const sent = await sendToEach(sources.map((source) => {
             const threadId = source.member.threadsByFindingId[source.finding.id]?.at(-1)?.threadId;
             return { sessionId: memberByRunId.get(source.member.runId)?.sessionId ?? null, runId: source.member.runId, findingIds: [source.finding.id], messageMarkdown, ...(threadId ? { threadId } : {}) };
         }));
         if (sent) setPendingQuestionByRowId((current) => ({ ...current, [rowId]: messageMarkdown }));
         return sent;
-    }, [memberByRunId, rowById, sendToEach]);
+    }, [memberByRunId, nativeSourcesByRowId, record, rowById, sendToEach]);
 
     const askReviewers = React.useCallback(async (messageMarkdown: string) => {
         const targets = replyToQuestion
@@ -359,6 +376,8 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
     const followUp = React.useMemo(() => followUpOf(dockMembers), [dockMembers]);
     const dockRecipient = React.useMemo(() => recipientOf(dockMembers), [dockMembers]);
     const rowViews = React.useMemo(() => record ? sealedRows.map(row => {
+        const rowMembers = nativeSourcesByRowId.get(row.rowId)?.map(source => source.member) ?? [];
+        const rowSessionId = rowMembers[0]?.sessionId ?? null;
         const appearances = row.comment.appearances?.filter(appearance => appearance.roundOrdinal === record.round.roundOrdinal) ?? [];
         const reviewers = appearances.map(appearance => {
             const member = memberByRunId.get(appearance.runId);
@@ -373,7 +392,12 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             decidable: true, reviewers,
             attribution: reviewers.length > 1 ? { label: formatReviewerSet(reviewers.map(reviewer => reviewer.label)),
                 backendIds: reviewers.map(reviewer => reviewer.backendId).filter(Boolean) } : null,
-            original: null, followUp: null, threadEntries: threadEntriesByRowId.get(row.rowId) ?? EMPTY_THREAD, askContext: null,
+            original: null, followUp: rowMembers.length > 0 ? followUpOf(rowMembers) : null,
+            threadEntries: threadEntriesByRowId.get(row.rowId) ?? EMPTY_THREAD,
+            askContext: canAct && rowSessionId ? {
+                sessionId: rowSessionId, serverId, accountLifetime, draftRunId: rowMembers[0]!.runId,
+                recipient: recipientOf(rowMembers), waitingLabel: waitingLabelOf(rowMembers),
+            } satisfies ReviewFindingAskContext : null,
             appearance: projectReviewFindingRoundStatusV1(row.comment, record.round),
         };
     }) : rows.map(row => {
@@ -405,7 +429,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
             } satisfies ReviewFindingAskContext : null,
             appearance: null,
         };
-    }), [accountLifetime, canAct, draftRunId, memberByRunId, pending, record, reviewerCount, rows, sealedRows, serverId, threadEntriesByRowId]);
+    }), [accountLifetime, canAct, draftRunId, memberByRunId, nativeSourcesByRowId, pending, record, reviewerCount, rows, sealedRows, serverId, threadEntriesByRowId]);
 
     const createTask = React.useCallback(async (rowIds: readonly string[]): Promise<boolean> => {
         if (!canActRef.current) return false;

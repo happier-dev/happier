@@ -78,7 +78,7 @@ export function useReviewQuestionRuns(params: Readonly<{
                             sessionId: reference.sessionId ?? null,
                             followUp: resolveReviewFollowUpAvailability(normalized.runRef, { sessionId: reference.sessionId ?? null }),
                             questions: normalized.questions, assumptions: normalized.assumptions,
-                            findings: [], commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {},
+                            findings: normalized.findings, commentByFindingId: EMPTY_COMMENTS, originalByFindingId: {}, threadsByFindingId: {}, threadRefsByFindingId: {},
                         } : null;
                         return { key: referenceKey(reference), member, unavailableReason: null };
                     } catch (error) {
