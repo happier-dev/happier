@@ -1845,6 +1845,33 @@ describe('workflow coordinator', () => {
     expect(new Set(coordinatorClosed.map((record) => record.reason)).size).toBe(1);
   });
 
+  it('fails a required parallel branch after running its cleanup, including on reclaim', async () => {
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const started: string[] = [];
+    const coordinator = createWorkflowCoordinator({
+      store,
+      resolveWorkspace,
+      executeStep: async ({ step: current }) => {
+        started.push(current.id);
+        return current.id === 'verify'
+          ? { kind: 'failed', code: 'backup_verification_failed' }
+          : { kind: 'completed', result: 'ok' };
+      },
+    });
+    const workflow = definition([
+      { kind: 'parallel', id: 'drill', failurePolicy: 'fail_stop', branches: [
+        { id: 'restore', blocks: [step('verify'), step('must-not-restore')] },
+      ] },
+      { ...step('inspect-services'), runWhen: 'always' },
+      { ...step('stop-services'), runWhen: 'always' },
+    ]);
+    const request = { runId: 'run-required-restore', definition: workflow, inputs: {}, executionTarget, authorization };
+    await expect(coordinator.run(request)).resolves.toEqual({ state: 'failed', reason: 'backup_verification_failed' });
+    expect(started).toEqual(['verify', 'inspect-services', 'stop-services']);
+    await expect(coordinator.run(request)).resolves.toEqual({ state: 'failed', reason: 'backup_verification_failed' });
+    expect(started).toEqual(['verify', 'inspect-services', 'stop-services']);
+  });
+
   it('collects definitive member failures but keeps unresolved effects actionable', async () => {
     const definitiveCalls: string[] = [];
     const definitive = createWorkflowCoordinator({

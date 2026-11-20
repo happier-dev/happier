@@ -54,7 +54,7 @@ export function createRestoreDrillWorkflowV1(): WorkflowDefinitionV1 {
         description: 'The selected drill database target and a read-only statement with ordered typed parameters that prove the restored data is usable.' },
     ],
     blocks: [
-      { kind: 'parallel', id: 'drill', name: 'Restore and check the retained drill Environment', failurePolicy: 'collect_outcomes', branches: [
+      { kind: 'parallel', id: 'drill', name: 'Restore and check the retained drill Environment', failurePolicy: 'fail_stop', branches: [
         { id: 'restoreAndCheck', name: 'Check this recovery point', blocks: [
           { kind: 'action', id: 'drillServices', name: 'Read the isolated Environment services', actionId: 'machines.services.list', input: services },
           { kind: 'loop', id: 'startDrill', name: 'Start the retained drill services', repetition: {

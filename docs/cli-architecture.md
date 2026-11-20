@@ -3360,8 +3360,9 @@ and safe failure cause while the controller remains available. Native fork clean
 uses that same observed runner witness to preserve a replacement generation. No original input
 is offered for that failed startup. Missing diagnostic acknowledgement and
 unknown effect outcomes continue to retain uncertain custody.
-Existing authored collection policies and
-recovery of already-admitted inputs keep their own semantics. Operation discovery,
+After a required parallel branch fails definitively, the Workflow sequence runs
+its `runWhen: always` cleanup and retains the failed outcome. Authored failure
+handlers and `collect_outcomes` policies can recover or collect failures. Operation discovery,
 Get, Wait and Cancel on the executing daemon use its installed exact-Machine
 transport. An operation retained on another Machine still routes to that original
 Machine through Home. Home storage remains required for durable Workflow writes;

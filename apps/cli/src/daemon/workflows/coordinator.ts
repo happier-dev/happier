@@ -1454,17 +1454,31 @@ async function executeSequenceBlock(
       }
     }
   }
+  const nextRunWhen = blocks[index + 1]?.runWhen;
   try {
-    await executeBlock(block, scope, frame, context, parentKey, String(index));
+    await executeBlock(block, scope, frame, context, parentKey, String(index), nextRunWhen === 'always');
   } catch (error) {
-    const nextRunWhen = blocks[index + 1]?.runWhen;
     if (!(error instanceof WorkflowLeafFailure && error.collectable) || context.signal?.aborted
       || (nextRunWhen !== 'failure' && nextRunWhen !== 'always')) throw error;
     const failed = await context.deps.store.readCurrent({ ...coordinate, blockId: block.id, memberOrdinal: String(index) });
     if (failed?.lifecycle !== 'failed') throw error;
-    // Retain the failed fact and use the incumbent aggregate outcome; a handler
-    // never rewrites a failed step into success or invents a second status owner.
+    // A failure handler can recover; an always block only runs cleanup.
     frame.collectedFailures = true;
+    return;
+  }
+
+  if (block.runWhen !== 'always' || nextRunWhen === 'always') return;
+  // Inspect the current facts for this cleanup sequence, including when reclaim
+  // starts at its last block. Earlier failure handlers have their own sequence.
+  let firstCleanup = index;
+  while (firstCleanup > 0 && blocks[firstCleanup - 1]!.runWhen === 'always') firstCleanup--;
+  for (let prior = Math.max(0, firstCleanup - 1); prior < index; prior++) {
+    const failed = await context.deps.store.readCurrent({
+      ...coordinate, blockId: blocks[prior]!.id, memberOrdinal: String(prior),
+    });
+    if (failed?.lifecycle === 'failed') {
+      throw new WorkflowLeafFailure('failed', failed.reason ?? 'failed', true);
+    }
   }
 }
 
@@ -1473,8 +1487,9 @@ async function executeBlock(
   scope: WorkflowInvocationPath['scope'],
   frame: Frame,
   context: ExecutionContext,
-  parentKey?: string,
-  memberOrdinal = '0',
+  parentKey: string | undefined,
+  memberOrdinal: string,
+  alwaysCleanupFollows: boolean,
 ): Promise<void> {
   const current = await context.deps.store.readCurrent({ runId: context.runId, blockId: block.id, scope, memberOrdinal,
     ...(parentKey ? { parentKey } : {}) });
@@ -1606,9 +1621,16 @@ async function executeBlock(
         (settlement): settlement is PromiseRejectedResult => settlement.status === 'rejected',
       );
       if (rejectedBranch) {
-        throw failStop.signal.reason instanceof WorkflowFailStopClosure
+        const failure: unknown = failStop.signal.reason instanceof WorkflowFailStopClosure
           ? failStop.signal.reason.original
           : failStop.signal.reason ?? rejectedBranch.reason;
+        // A definitive branch failure can leave the enclosing sequence to run
+        // cleanup. Commit the failed group before its frontier advances.
+        if (alwaysCleanupFollows && block.failurePolicy === 'fail_stop'
+          && failure instanceof WorkflowLeafFailure && failure.collectable) {
+          throw new WorkflowLeafFailure('failed', failure.code, true);
+        }
+        throw failure;
       }
     }, { kind: 'parallel', nextBranchOrdinal: '0' });
     return;

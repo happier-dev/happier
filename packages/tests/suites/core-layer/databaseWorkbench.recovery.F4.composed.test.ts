@@ -349,7 +349,8 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         expect(manifest).toMatchObject({ environmentId, configRevision: sourceBackup.configuration.configRevision, kind: 'dump' });
         expect(manifest.totalBytesProcessed).toBeGreaterThan(0);
 
-        async function savedWorkflow(definition: WorkflowDefinitionV1, inputs: Record<string, JsonValue>) {
+        async function savedWorkflow(definition: WorkflowDefinitionV1, inputs: Record<string, JsonValue>,
+            expectedState: 'succeeded' | 'failed' = 'succeeded') {
             const saved = await account.execute('workflow.definition.create', { definitionId: randomUUID(),
                 metadata: { title: 'R6 native recovery' }, definition });
             if (!saved.ok) throw new Error(`R6 Workflow save refused (${saved.errorCode})`);
@@ -364,7 +365,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
             const waited = await account.execute('workflow.run.wait', { runId: run.id, conditions: ['terminal', 'attention'] });
             if (!waited.ok) throw new Error(`R6 Workflow wait refused (${waited.errorCode})`);
             const settled = WorkflowRunWaitResultV1Schema.parse(waited.result);
-            expect(settled).toMatchObject({ observation: 'terminal', run: { state: 'succeeded' } });
+            expect(settled).toMatchObject({ observation: 'terminal', run: { state: expectedState } });
             const listed = await account.execute('workflow.run.invocations.list', { runId: run.id, includeContent: true });
             if (!listed.ok) throw new Error(`R6 Workflow evidence unavailable (${listed.errorCode})`);
             const history = WorkflowInvocationListResultV1Schema.parse(listed.result);
@@ -456,7 +457,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         }
         await assertDrillStopped();
         const failed = await savedWorkflow(createRestoreDrillWorkflowV1(), { ...drillInputs,
-            restoreSource: { ...restoreSource, snapshotId: 'b'.repeat(64) } });
+            restoreSource: { ...restoreSource, snapshotId: 'b'.repeat(64) } }, 'failed');
         expect(failed.details.find(row => row.progress.invocationPath.blockId === 'verify'))
             .toMatchObject({ index: { lifecycle: 'failed' }, progress: { reason: { code: 'backup_required' } } });
         expect(failed.details.some(row => row.progress.invocationPath.blockId === 'confirmRestore')).toBe(false);
