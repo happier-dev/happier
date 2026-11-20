@@ -179,10 +179,8 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
     const bandSeparator = (index: number): string => index === 0 || !line ? ''
         : isToneSegment(line.segments[index]!) && isToneSegment(line.segments[index - 1]!) ? NO_BREAK_SPACE : `${NO_BREAK_SPACE}·${NO_BREAK_SPACE}`;
     if (large && line && (line.segments.length > 0 || line.leading)) {
-        // A large header: the leading words and the facts are one quiet row under the title, starting on the
-        // title's own text edge (labs cshead H1, ideas-1118 PR header; no ruling puts them on the right), wrapping
-        // onto lines that start there too. Every item carries its separator in a fixed-width box after it, and the
-        // row ends one box to the right under the clip, so a separator that would close a line never shows.
+        // Every wrapped row starts at the title's text edge. Separators sit in the gap before their
+        // facts, so the clip hides the one that would open each row.
         const items: React.ReactNode[][] = [];
         // Items that hold a pending fact's room: their separator stays unseen with them.
         const pendingItems = new Set<number>();
@@ -200,9 +198,7 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
         });
         // The final fact's own trailing words (who wrote it, a copy control) wrap with that fact, inside the row.
         if (props.lineEnd) items[items.length - 1]!.push(<React.Fragment key="lineEnd">{props.lineEnd}</React.Fragment>);
-        // A seen item is separated from the next seen one; a pending fact shows and speaks no separator.
-        const separatedFromNext = items.map((_, index) => !pendingItems.has(index)
-            && items.some((__, later) => later > index && !pendingItems.has(later)));
+        const firstVisibleItem = items.findIndex((_, index) => !pendingItems.has(index));
         return (
             <View style={[styles.line, styles.largeLine]}>
                 <View
@@ -215,7 +211,11 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
                         {items.map((nodes, index) => (
                             <View key={index} style={[styles.largeItem, pendingItems.has(index) ? PENDING_FACT_STYLE : null]} {...(pendingItems.has(index) ? PENDING_FACT_HIDDEN : {})}>
                                 {nodes}
-                                <View style={styles.largeSeparator}>{separatedFromNext[index] ? <Text style={subtitleStyle}>·</Text> : null}</View>
+                                {firstVisibleItem >= 0 && index > firstVisibleItem && !pendingItems.has(index) ? (
+                                    <View aria-hidden {...PENDING_FACT_HIDDEN} style={styles.largeSeparator}>
+                                        <Text style={subtitleStyle}>·</Text>
+                                    </View>
+                                ) : null}
                             </View>
                         ))}
                     </View>
@@ -611,8 +611,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 0,
         flexGrow: 1,
     },
-    // The large header's one row of leading words and facts, from the title's text edge: it ends one separator box
-    // to the right of the clip.
     largeFlow: {
         flexGrow: 1,
         flexShrink: 1,
@@ -621,7 +619,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexWrap: 'wrap',
         alignItems: 'center',
         justifyContent: 'flex-start',
-        marginRight: -theme.space.s16,
+        columnGap: theme.space.s16,
     },
     largeItem: {
         flexDirection: 'row',
@@ -629,11 +627,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 1,
         minWidth: 0,
     },
-    // Every item's separator box is the same width, so the clip hides exactly the one that closes a line.
     largeSeparator: {
+        position: 'absolute',
+        end: '100%',
+        pointerEvents: 'none',
+        top: 0,
+        bottom: 0,
         width: theme.space.s16,
         alignItems: 'center',
-        flexShrink: 0,
+        justifyContent: 'center',
     },
     leadingSeparated: {
         flexDirection: 'row',
