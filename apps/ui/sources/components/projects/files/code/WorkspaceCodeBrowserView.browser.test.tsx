@@ -59,6 +59,44 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         await vi.waitFor(() => expect(screen.root.findAllByProps({ title: 'newSession.pathPicker.truncatedDirectoryInfo' }).length).toBeGreaterThan(0));
     });
 
+    it('shows the managed checkout commit and its entry history through the controller', async () => {
+        const rootPath = '/home/member/repo';
+        const controller = { machineId: 'm1', installationId: 'test-installation' };
+        const serverUrl = 'https://managed-code-history.test';
+        const serverId = `srv_${Buffer.from(serverUrl).toString('base64url')}`;
+        const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'guest-checkout',
+            managedId: 'guest', controller, rootPath } as const;
+        const headOid = 'a'.repeat(40);
+        fixture = await createSessionFilesViewFixture({ rootPath, serverUrl, rpc: request => {
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true,
+                entries: [{ name: 'a.ts', type: 'file' }] };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+                const snapshot = fileViewSnapshot({ rootPath });
+                return { success: true, snapshot: { ...snapshot, branch: { ...snapshot.branch, headOid } } };
+            }
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) {
+                const payload = request.payload as { target?: typeof workspace; input?: { paths: string[] } };
+                if (payload.target?.managedId === workspace.managedId && payload.input) {
+                    return { success: true, headOid, entries: payload.input.paths.map(path => ({ path, kind: 'commit',
+                        commit: { oid: headOid, subject: path ? 'Latest guest file commit' : 'Latest guest checkout commit',
+                            authorName: 'Member', committedAt: 1000 },
+                    })) };
+                }
+                return { success: false, errorCode: 'NOT_REPOSITORY', error: 'Controller has no repository here' };
+            }
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-guest" scope={{ ...fixture.scope, workspace }}
+            rootLabel="Guest" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} />);
+        await vi.waitFor(() => expect(fixture?.requests.some(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES)).toBe(true));
+        const history = fixture.requests.filter(request => request.method === RPC_METHODS.SCM_HISTORY_ENTRIES);
+        for (const request of history) {
+            expect(request).toMatchObject({ targetId: controller.machineId, payload: { target: workspace } });
+        }
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Latest guest checkout commit'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Latest guest file commit'));
+    });
+
     it('mounts and demands only the large folder viewport, then reveals an off-screen row through the shared keyboard owner', async () => {
         const rootPath = '/code-large-folder';
         const entries = [...Array.from({ length: 1000 }, (_, index) => ({ name: `file-${String(index).padStart(4, '0')}.ts`,

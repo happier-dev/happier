@@ -31,7 +31,7 @@ export function useWorkspaceEntryHistory(input: Readonly<{
     const scopeKey = JSON.stringify([workspaceKey, input.folder]);
     const pathsKey = JSON.stringify([...new Set(input.paths)].sort());
     const [state, setState] = React.useState<Readonly<{ scopeKey: string; repoRootPath: string | null; value: WorkspaceEntryHistory }> | null>(null);
-    const scope = React.useMemo(() => input.scope, [input.scope.serverId, input.scope.machineId, input.scope.rootPath]);
+    const scope = React.useMemo(() => input.scope, [input.scope.serverId, input.scope.machineId, input.scope.rootPath, workspaceKey]);
     const repoRootPath = input.repoRootPath ?? null;
     const workspacePrefix = React.useMemo(() => repoRootPath
         ? resolvePathRelativeToRoot({ path: scope.rootPath, root: repoRootPath, preservePathSpelling: true }) : null,
@@ -62,7 +62,7 @@ export function useWorkspaceEntryHistory(input: Readonly<{
         void machineScmHistoryEntries(scope.machineId, {
             cwd: scope.rootPath, folder: toRepoPath(input.folder), paths: [...demandedPaths.keys()],
             ...(input.headOid ? { headOid: input.headOid } : {}),
-        }, { serverId: scope.serverId, signal: controller.signal }).then(response => {
+        }, { serverId: scope.serverId, signal: controller.signal, ...(scope.workspace ? { workspace: scope.workspace } : {}) }).then(response => {
             if (controller.signal.aborted) return;
             if (!response.success) { unavailable(response.errorCode === 'SCM_SOURCE_CHANGED' ? response.errorCode : response.error ?? response.errorCode); return; }
             if (input.headOid !== undefined && response.headOid !== input.headOid) { unavailable('SCM_SOURCE_CHANGED'); return; }
