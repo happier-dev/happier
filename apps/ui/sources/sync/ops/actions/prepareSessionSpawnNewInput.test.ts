@@ -1,6 +1,9 @@
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { describe, expect, it } from 'vitest';
-import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
+import { buildManagedSessionDefaultsContext, resolveManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { projectSessionSpawnNewActionAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { buildNewSessionAuthoringDraftFromResolvedInputs, buildSessionSpawnNewInputV2FromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import { createUiPrepareSessionSpawnNewInput } from './prepareSessionSpawnNewInput';
 
 const projectAgent = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
@@ -63,6 +66,46 @@ describe('UI Session authoring preparation', () => {
         expect(prepared.input.executionTarget).toEqual(projectTarget);
         expect(inventoryTargets).toEqual([projectTarget]);
     });
+    it('keeps the selected Muse Agent and model when sending a Project build draft', async () => {
+        const muse = { kind: 'agent', identity: { pluginId: 'happier.agent.muse', localId: 'muse' } } as const;
+        const modelSelection = { v: 1, updatedAt: 5, ref: {
+            agentTargetKey: buildBackendTargetKeyV2(muse), providerConnectionId: null,
+            modelId: 'muse-spark-1.3-contributor',
+        } } as const;
+        const draft = buildNewSessionAuthoringDraftFromResolvedInputs({
+            executionTarget: { kind: 'machine', target: executionTarget },
+            directory: '/project/checkout', prompt: 'Build this app', agentTarget: muse, modelSelection,
+        });
+        const input = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft, creationKey: 'project-build-first-send', permissionMode: 'default',
+            configurationUpdatedAtMs: 5, initialMessage: draft.prompt,
+        });
+        const unexpectedRead = async (): Promise<never> => { throw new Error('captured defaults must not reread'); };
+        const prepare = createUiPrepareSessionSpawnNewInput({
+            readSettings: unexpectedRead, createLoader: () => ({ readSource: unexpectedRead }),
+            resolveDefaultAgentTarget: async () => projectAgent,
+        });
+        // Project ready authors exact placement and the prompt. Muse is the
+        // composer's effective Agent from the personal connected-account preference,
+        // while the Home default names another Agent and its own model.
+        const homeModel = { v: 1, updatedAt: 1, ref: { agentTargetKey: buildBackendTargetKeyV2(projectAgent),
+            providerConnectionId: null, modelId: 'gpt-default' } } as const;
+        const context = buildManagedSessionDefaultsContext({ home: { defaultAgentTarget: projectAgent,
+            modelByAgentTargetKey: { [buildBackendTargetKeyV2(projectAgent)]: homeModel } } });
+        const prepared = await prepare(projectSessionSpawnNewActionAuthoringInputV2(input), { surface: 'ui', sessionCreationDefaults: {
+            context, authoredChoices: { executionTarget },
+        } });
+        expect(prepared.input).toMatchObject({ agentTarget: muse, modelSelection,
+            initialInput: { text: 'Build this app' } });
+        expect(prepared.input.modelSelection?.ref.agentTargetKey).toBe(buildBackendTargetKeyV2(prepared.input.agentTarget));
+        // The receiving Machine resolves model defaults from these choices; they must key by Muse too.
+        const machineDecision = resolveManagedSessionDefaults({ ...prepared.defaults.context,
+            agentTargetKey: buildBackendTargetKeyV2(prepared.input.agentTarget),
+            explicitChoices: { defaultAgentTarget: prepared.defaults.authoredChoices.agentTarget,
+                modelByAgentTargetKey: { [buildBackendTargetKeyV2(prepared.input.agentTarget)]: modelSelection } } });
+        expect(machineDecision.model.value?.ref.agentTargetKey).toBe(buildBackendTargetKeyV2(muse));
+    });
+
     it('preserves explicit Machine sandbox and Project file intent through preparation', async () => {
         const unexpectedRead = async (): Promise<never> => { throw new Error('captured defaults must not reread'); };
         const prepare = createUiPrepareSessionSpawnNewInput({ readSettings: unexpectedRead,

@@ -46,10 +46,14 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
                 policyDefaults: getOrganizationPolicySessionDefaults(readOrganizationPolicy()),
             }, ports.createLoader(context)));
         let defaultsContext = loaded.context;
-        const authoredChoices = captured?.authoredChoices ?? {
+        // A submitted Agent is the one its model and connected services were chosen for, so every
+        // later defaults decision (here and on the receiving Machine) keys by it.
+        const authoredChoices = {
+            ...(captured?.authoredChoices ?? {
+                ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),
+                ...(input.sessionPlacement ? { sessionPlacement: input.sessionPlacement } : {}),
+            }),
             ...(input.agentTarget ? { agentTarget: input.agentTarget } : {}),
-            ...(input.executionTarget ? { executionTarget: input.executionTarget } : {}),
-            ...(input.sessionPlacement ? { sessionPlacement: input.sessionPlacement } : {}),
         };
         const authoredPlacement = authoredChoices.sessionPlacement;
         const acquiredCreation = input.managedCreation !== undefined;
