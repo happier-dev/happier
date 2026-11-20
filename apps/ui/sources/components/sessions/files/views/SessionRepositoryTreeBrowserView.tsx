@@ -5,6 +5,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 
 import { RepositoryTreeList } from '@/components/sessions/files/content/RepositoryTreeList';
+import { SessionMediaGrid } from '@/components/sessions/sessionMedia/SessionMediaGrid';
 import { SearchResultsList } from '@/components/sessions/files/content/SearchResultsList';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
@@ -54,6 +55,14 @@ export type SessionRepositoryTreeBrowserViewProps = Readonly<{
     showSearchBar?: boolean;
     onRequestClose?: () => void;
     revealRequest?: Readonly<{ path: string }>;
+    /** One-shot request to switch to a tab; applied once, then reported through `onViewRequestHandled`. */
+    viewRequest?: Readonly<{ view: 'session' }>;
+    onViewRequestHandled?: () => void;
+    /**
+     * Whether the host is presenting this browser. A retained-but-hidden Files tab sets this to false
+     * so the Session media tab does no paging, subscription or scan until it is shown again.
+     */
+    active?: boolean;
 }>;
 
 type ToolbarActionId =
@@ -124,7 +133,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     const searchQuery = props.searchQuery ?? uncontrolledSearchQuery;
     const setSearchQuery = props.onSearchQueryChange ?? setUncontrolledSearchQuery;
     const [showChangedOnly, setShowChangedOnly] = React.useState(false);
-    const [visibilityMode, setVisibilityMode] = React.useState<'project' | 'all'>('project');
+    const [visibilityMode, setVisibilityMode] = React.useState<'session' | 'project' | 'all'>('project');
     const [gitIgnoreStatus, setGitIgnoreStatus] = React.useState<Readonly<{ sessionId: string; available?: boolean }> | null>(null);
     const gitIgnoreAvailable = gitIgnoreStatus?.sessionId === props.sessionId ? gitIgnoreStatus.available : undefined;
     const setGitIgnoreAvailable = React.useCallback((available: boolean | undefined) => {
@@ -132,8 +141,11 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
             ? previous : { sessionId: props.sessionId, available });
     }, [props.sessionId]);
     const { paths: revealedPaths, revealPath, latestRequest } = useRepositoryTreeRevealedPaths(props.sessionId);
-    const effectiveVisibilityMode = gitIgnoreAvailable === true ? visibilityMode : 'all';
+    const effectiveVisibilityMode = visibilityMode === 'session'
+        ? 'session'
+        : gitIgnoreAvailable === true ? visibilityMode : 'all';
     const visibilityTabs = React.useMemo(() => [
+        { id: 'session' as const, label: t('files.toolbar.sessionMedia') },
         { id: 'project' as const, label: t('files.toolbar.projectFiles') },
         { id: 'all' as const, label: t('files.toolbar.allFiles') },
     ], []);
@@ -286,6 +298,8 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
         if (!isSafeWorkspaceRelativePath(path)) return;
         setSearchQuery('');
         setShowChangedOnly(false);
+        // Only the tree consumes a reveal, so leave Session media for it.
+        setVisibilityMode((mode) => (mode === 'session' ? 'all' : mode));
         revealPath(path, { focus: true });
         const expandedPaths = computeExpandedPathsForReveal({
             expandedPaths: storage.getState().getSessionRepositoryTreeExpandedPaths(props.sessionId),
@@ -298,6 +312,15 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     React.useEffect(() => {
         if (props.revealRequest) handleRevealPath(props.revealRequest.path);
     }, [props.revealRequest, handleRevealPath]);
+
+    const { viewRequest, onViewRequestHandled } = props;
+    React.useEffect(() => {
+        if (!viewRequest) return;
+        setVisibilityMode(viewRequest.view);
+        setSearchQuery('');
+        setShowChangedOnly(false);
+        onViewRequestHandled?.();
+    }, [viewRequest, onViewRequestHandled, setSearchQuery]);
 
     const handleSearchFolderPress = React.useCallback((folder: FileItem) => {
         handleRevealPath(folder.fullPath.replace(/\/+$/, ''), true);
@@ -707,6 +730,13 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                     onScroll={scrollFades.onScroll}
                     scrollEventThrottle={16}
                 />
+            ) : visibilityMode === 'session' ? (
+                props.active === false ? null : (
+                    <SessionMediaGrid
+                        sessionId={props.sessionId}
+                        onOpenFile={handleRepositoryFileOpen}
+                    />
+                )
             ) : (
                 <RepositoryTreeList
                     theme={repositoryTreeTheme}
@@ -743,6 +773,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
     ), [
         activeSearchResultsTheme,
         visibilityMode,
+        props.active,
         revealedPaths,
         latestRequest,
         setGitIgnoreAvailable,
@@ -806,7 +837,7 @@ export const SessionRepositoryTreeBrowserView = React.memo((props: SessionReposi
                         onSelectTab={setVisibilityMode}
                         testIDPrefix="repository-tree-visibility"
                     />
-                    {gitIgnoreAvailable === false ? (
+                    {gitIgnoreAvailable === false && visibilityMode !== 'session' ? (
                         <Text testID="repository-tree-project-unavailable" style={{ color: theme.colors.text.secondary }}>
                             {t('files.toolbar.projectFilesUnavailable')}
                         </Text>

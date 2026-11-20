@@ -167,6 +167,14 @@ describe('useOpenSessionTarget', () => {
         expect(scope.details).toBe(details);
     });
 
+    it('opens the file browser straight onto the Session media view', async () => {
+        const screen = await renderScreen(<AppPaneProvider><OpenerHost target={{ kind: 'fileBrowser', view: 'session' }} /><Probe /></AppPaneProvider>);
+        await pressTestInstanceAsync(screen.findByTestId('open')!, 'open');
+        const scope = observedState.scopes['session:s1'];
+        expect(scope.right.activeTabId).toBe('files');
+        expect(scope.right.tabState.files.viewRequest).toEqual({ view: 'session' });
+    });
+
     it('opens Changes in the existing source control pane', async () => {
         const screen = await renderScreen(<AppPaneProvider><OpenerHost target={{ kind: 'sourceControl' }} /><Probe /></AppPaneProvider>);
         await pressTestInstanceAsync(screen.findByTestId('open')!, 'open');
