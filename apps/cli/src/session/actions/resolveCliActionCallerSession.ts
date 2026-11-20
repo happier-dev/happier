@@ -110,9 +110,11 @@ export async function resolveCliActionCallerSession(params: Readonly<{
         SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1, { turnId }, params.context.signal, null);
       params.context.signal?.throwIfAborted();
       const parsed = SessionAgentStartSelectionResponseV1Schema.safeParse(response);
-      if (!parsed.success || parsed.data.sessionId !== sessionId || parsed.data.turnId !== turnId
-        || parsed.data.selection.status !== 'applied'
-        || buildBackendTargetKeyV2(parsed.data.selection.backendTarget) !== buildBackendTargetKeyV2(backendTarget)) {
+      if (!parsed.success || parsed.data.sessionId !== sessionId || parsed.data.turnId !== turnId) {
+        return { status: 'unavailable' };
+      }
+      if (parsed.data.selection.status === 'applied'
+        && buildBackendTargetKeyV2(parsed.data.selection.backendTarget) !== buildBackendTargetKeyV2(backendTarget)) {
         return { status: 'unavailable' };
       }
       return parsed.data.selection;

@@ -58,6 +58,10 @@ it('publishes the live Session applied selection after its proposal turn complet
     readSelection = async () => teamSelection;
     await expect(read('selection-turn')).resolves.toEqual({ sessionId, turnId: 'selection-turn', selection: teamSelection });
     expect(nativeReads).toBe(7);
+    readSelection = async () => ({ status: 'unavailable', reason: 'direct_custody' });
+    await expect(read('selection-turn')).resolves.toEqual({
+      sessionId, turnId: 'selection-turn', selection: { status: 'unavailable', reason: 'direct_custody' },
+    });
     let entered!: () => void;
     const reading = new Promise<void>(resolve => { entered = resolve; });
     let release!: () => void;
@@ -68,10 +72,10 @@ it('publishes the live Session applied selection after its proposal turn complet
     turnId = 'successor-turn';
     release();
     await expect(pending).resolves.toMatchObject({ selection });
-    expect(nativeReads).toBe(8);
+    expect(nativeReads).toBe(9);
     registration.dispose();
     turnId = 'selection-turn';
     await expect(read('selection-turn')).resolves.toMatchObject({ selection: { status: 'unavailable' } });
-    expect(nativeReads).toBe(8);
+    expect(nativeReads).toBe(9);
   } finally { registration.dispose(); }
 });

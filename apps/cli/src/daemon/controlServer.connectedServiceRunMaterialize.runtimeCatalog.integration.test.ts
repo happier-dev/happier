@@ -13,7 +13,7 @@ import { createExecutionRunConnectedServicesBridge } from './connectedServices/r
 import { resolveConnectedServiceAuthForSpawn } from './connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { ApiClient } from '@/api/api';
 import { ConnectedServiceRuntimeRegistry } from './connectedServices/runtimeRegistry/registry';
-import { recoverExecutionRunConnectedServiceRuntimeFailure } from './controlClient';
+import { readAppliedParentConnectedServices, recoverExecutionRunConnectedServiceRuntimeFailure } from './controlClient';
 import { ConnectedServiceTemporaryThrottleRetryScheduler } from './connectedServices/runtimeAuth/temporaryThrottleRetryScheduler';
 import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import * as persistence from '@/persistence';
@@ -139,7 +139,7 @@ describe('createDaemonControlApp connected-service run materialization bridge', 
         } finally { await app.close(); }
     });
 
-    it('reads applied parent bindings only with scoped auth and exact runtime identity', async () => {
+    it('reads applied parent bindings with scoped auth and distinguishes unavailable reasons without credential details', async () => {
         const registry = new ConnectedServiceRuntimeRegistry();
         registry.registerTarget({ pid: 4242, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: {
             v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
@@ -149,20 +149,32 @@ describe('createDaemonControlApp connected-service run materialization bridge', 
         const app = createApp({ readAppliedSessionConnectedServices: (input: { runnerPid: number; sessionId: string; agentId: string }) =>
             registry.readAppliedSessionBindings(input) });
         try {
+            const address = await app.listen({ host: '127.0.0.1', port: 0 });
+            vi.spyOn(persistence, 'readDaemonState').mockResolvedValue({ pid: process.pid,
+                httpPort: Number(new URL(address).port), controlToken: 'master-token',
+                startedAt: Date.now(), startedWithCliVersion: '0.3.0',
+            });
             const payload = { runnerPid: 4242, sessionId: 'parent', agentId: 'codex' };
             const denied = await app.inject({ method: 'POST', url: '/connected-service-run/applied-parent-selection',
                 headers: { 'x-happier-daemon-token': 'master-token' }, payload });
             expect(denied.statusCode).toBe(401);
-            const accepted = await app.inject({ method: 'POST', url: '/connected-service-run/applied-parent-selection',
-                headers: { 'x-happier-daemon-token': scopedToken }, payload });
-            expect(accepted.statusCode).toBe(200);
-            expect(accepted.json()).toEqual({ status: 'applied', connectedServices: { v: 2, bindingsByServiceId: {
+            await expect(readAppliedParentConnectedServices(payload)).resolves.toEqual({ status: 'applied', connectedServices: { v: 2, bindingsByServiceId: {
                 'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'parent-pool' },
             } } });
-            const unknown = await app.inject({ method: 'POST', url: '/connected-service-run/applied-parent-selection',
-                headers: { 'x-happier-daemon-token': scopedToken }, payload: { ...payload, sessionId: 'other' } });
-            expect(unknown.json()).toEqual({ status: 'unavailable' });
-        } finally { await app.close(); }
+            await expect(readAppliedParentConnectedServices({ ...payload, sessionId: 'other' })).resolves
+                .toEqual({ status: 'unavailable', reason: 'not_registered' });
+            registry.updateTarget({ pid: 4242, sessionId: 'parent', connectedServicesBindingsRaw: null });
+            await expect(readAppliedParentConnectedServices(payload)).resolves
+                .toEqual({ status: 'unavailable', reason: 'validation_failed' });
+            registry.updateTarget({ pid: 4242, sessionId: 'parent', connectedServicesBindingsRaw: {
+                v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
+                    source: 'team_resource', resourceId: 'private-resource', deliveryMode: 'direct',
+                    disclosedMember: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'private-account' },
+                } },
+            } });
+            await expect(readAppliedParentConnectedServices(payload)).resolves
+                .toEqual({ status: 'unavailable', reason: 'direct_custody' });
+        } finally { await app.close(); vi.restoreAllMocks(); }
     });
 
     it('admits rejected-start recovery only with scoped Run auth and sanitized evidence', async () => {

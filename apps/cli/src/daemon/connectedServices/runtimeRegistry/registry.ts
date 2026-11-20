@@ -9,6 +9,7 @@ import {
   serializeConnectedServiceChildSelectionValues,
 } from '../connectedServiceChildEnvironment';
 import { parseConnectedServiceBindingSelections } from '../parseConnectedServicesBindings';
+import type { ConnectedServiceAppliedParentSelectionUnavailableReason } from '../runs/materializeContract';
 
 import {
   buildConnectedServiceRuntimeIdentityKey,
@@ -240,21 +241,24 @@ export class ConnectedServiceRuntimeRegistry {
   public readAppliedSessionBindings(input: Readonly<{ runnerPid: number; sessionId: string; agentId: string }>,
     runtimeIdentity?: Readonly<{ pid: number; sessionRunnerPid?: number; happySessionId?: string }>,
   ): Readonly<
-    { status: 'unavailable' } | { status: 'applied'; connectedServices: ConnectedServiceBindingsV2 }
+    { status: 'unavailable'; reason: ConnectedServiceAppliedParentSelectionUnavailableReason }
+    | { status: 'applied'; connectedServices: ConnectedServiceBindingsV2 }
   > {
     if (runtimeIdentity && (runtimeIdentity.happySessionId !== input.sessionId
       || (input.runnerPid !== runtimeIdentity.pid && input.runnerPid !== runtimeIdentity.sessionRunnerPid))) {
-      return { status: 'unavailable' };
+      return { status: 'unavailable', reason: 'validation_failed' };
     }
     // Wrapper launchers retain the registry target; accepted runner identity
     // comes from the daemon's canonical tracked Session, never from a new alias table.
     const target = this.getIndexedSessionTarget(runtimeIdentity?.pid ?? input.runnerPid, input.sessionId)?.target;
-    if (!target || target.sessionId !== input.sessionId || target.agentId !== input.agentId) return { status: 'unavailable' };
+    if (!target || target.sessionId !== input.sessionId || target.agentId !== input.agentId) {
+      return { status: 'unavailable', reason: 'not_registered' };
+    }
     const parsed = ConnectedServiceBindingsV2IngressSchema.safeParse(target.connectedServicesBindingsRaw);
-    if (!parsed.success) return { status: 'unavailable' };
+    if (!parsed.success) return { status: 'unavailable', reason: 'validation_failed' };
     // Direct Team custody cannot be inherited, even inside this host seam.
     if (Object.values(parsed.data.bindingsByServiceId).some(binding => binding.source === 'team_resource'
-      && binding.deliveryMode !== 'brokered')) return { status: 'unavailable' };
+      && binding.deliveryMode !== 'brokered')) return { status: 'unavailable', reason: 'direct_custody' };
     return { status: 'applied', connectedServices: projectConnectedServiceBindingsForChild(parsed.data) };
   }
 

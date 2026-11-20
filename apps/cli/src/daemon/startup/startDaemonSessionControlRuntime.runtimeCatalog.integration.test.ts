@@ -1768,7 +1768,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 .toEqual(applied);
             expect(ConnectedServiceAppliedParentSelectionResultSchema.parse(await read(request))).toEqual(applied);
             registry.unregisterPid(tracked.pid);
-            expect(await read(request)).toEqual({ status: 'unavailable' });
+            expect(await read(request)).toEqual({ status: 'unavailable', reason: 'not_registered' });
         } finally { await runtime.stopControlServer(); }
     });
     async function runPrivateManagedRequesterFixture(finiteWake = false, refreshRequesterPolicy = false,

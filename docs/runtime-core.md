@@ -1451,6 +1451,13 @@ materialization resolve the accepted runner through canonical tracked Session
 identity, including wrapper launchers. The reader uses that Session's existing
 runtime-registry target; Session exit retires Run credential authority using its
 tracked runner PID.
+
+The runtime registry distinguishes an unavailable applied selection caused by
+direct Team custody (`direct_custody`), no matching target (`not_registered`),
+or failed validation (`validation_failed`). The daemon and Session runner
+carry that reason without credential identifiers, credential material, or
+parser errors. A reasonless response remains a generic unavailable result.
+
 Attached SCM summary Runs inherit the applied parent when available; otherwise
 they use the configured summary model with the child Account's default route.
 If that default belongs to another Agent, SCM submits it through canonical

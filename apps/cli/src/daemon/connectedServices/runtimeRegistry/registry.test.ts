@@ -84,7 +84,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     registry.registerTarget(input);
     const recipient = registry.getByPid(input.pid)!;
     const withdrawn = registry.withdrawSessionGroupApplicationBindings(recipient)!;
-    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'applying', agentId: 'codex' })).toEqual({ status: 'unavailable' });
+    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'applying', agentId: 'codex' })).toEqual({ status: 'unavailable', reason: 'validation_failed' });
     expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBe(withdrawn);
     registry.registerTarget(input, { groupApplicationTarget: withdrawn });
     const settled = registry.getByPid(input.pid)!;
@@ -104,7 +104,7 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     registry.updateTarget({ pid: 123, connectedServicesBindingsRaw: null });
     expect(registry.resolveExactSessionGroupApplicationTarget(recipient)).toBeNull();
     expect(() => registry.registerTarget(input, { groupApplicationTarget: applying })).toThrow('credential_revision_superseded');
-    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'applying', agentId: 'codex' })).toEqual({ status: 'unavailable' });
+    expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'applying', agentId: 'codex' })).toEqual({ status: 'unavailable', reason: 'validation_failed' });
   });
   it('retires selected Agent launch bytes when the applied credential identity changes, without borrowing Session material for a Run', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
@@ -179,9 +179,9 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     expect(registry.readAppliedSessionBindings(request, tracked)).toMatchObject({ status: 'applied',
       connectedServices: { bindingsByServiceId: { 'acme.accounts/session-auth': { source: 'connected', groupId: 'codex-team' } } } });
     expect(registry.readAppliedSessionBindings(request, { ...tracked, sessionRunnerPid: 125 }))
-      .toEqual({ status: 'unavailable' });
+      .toEqual({ status: 'unavailable', reason: 'validation_failed' });
     expect(registry.readAppliedSessionBindings(request, { ...tracked, happySessionId: 'other' }))
-      .toEqual({ status: 'unavailable' });
+      .toEqual({ status: 'unavailable', reason: 'validation_failed' });
   });
   it('reads only an exact applied parent pool identity, without its member or pending bootstrap selection', () => {
     const registry = new ConnectedServiceRuntimeRegistry();
@@ -199,11 +199,11 @@ describe('ConnectedServiceRuntimeRegistry', () => {
         'acme.accounts/session-auth': { source: 'connected', selection: 'group', groupId: 'codex-team' },
       } } });
     expect(registry.readAppliedSessionBindings({ runnerPid: 124, sessionId: 'parent', agentId: 'codex' }))
-      .toEqual({ status: 'unavailable' });
+      .toEqual({ status: 'unavailable', reason: 'not_registered' });
     expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'other', agentId: 'codex' }))
-      .toEqual({ status: 'unavailable' });
+      .toEqual({ status: 'unavailable', reason: 'not_registered' });
     expect(registry.readAppliedSessionBindings({ runnerPid: 123, sessionId: 'parent', agentId: 'claude' }))
-      .toEqual({ status: 'unavailable' });
+      .toEqual({ status: 'unavailable', reason: 'not_registered' });
   });
   it('keeps an admitted cold requester run out of the custodian view when its tracked attribution is unavailable', () => {
     const registry = new ConnectedServiceRuntimeRegistry();

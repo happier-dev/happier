@@ -39,8 +39,17 @@ export const ConnectedServiceAppliedParentSelectionRequestSchema = z.strictObjec
     /** Startup-only proof from the accepted native open, never a read-time fallback. */
     initialEmpty: z.optional(z.literal(true)),
 });
+const ConnectedServiceAppliedParentSelectionUnavailableReasonSchema = z.enum([
+    'direct_custody', 'not_registered', 'validation_failed',
+]);
+export type ConnectedServiceAppliedParentSelectionUnavailableReason =
+    z.infer<typeof ConnectedServiceAppliedParentSelectionUnavailableReasonSchema>;
+export const ConnectedServiceAppliedParentSelectionUnavailableSchema = z.strictObject({
+    status: z.literal('unavailable'),
+    reason: z.optional(ConnectedServiceAppliedParentSelectionUnavailableReasonSchema),
+});
 export const ConnectedServiceAppliedParentSelectionResultSchema = z.union([
-    z.strictObject({ status: z.literal('unavailable') }),
+    ConnectedServiceAppliedParentSelectionUnavailableSchema,
     z.strictObject({ status: z.literal('applied'), connectedServices: ConnectedServiceBindingsV2Schema }),
 ]);
 export type ConnectedServiceAppliedParentSelectionReader = (

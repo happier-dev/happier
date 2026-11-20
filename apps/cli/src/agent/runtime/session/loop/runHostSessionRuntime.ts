@@ -4011,12 +4011,13 @@ async function runHostedSessionRuntime(
         phase: 'before_connected_services' | 'after_connected_services';
         reason: SessionAppliedModelTransitionUnavailableReason;
       }>,
+      result: Extract<ExecutionRunAppliedParentSelection, { status: 'unavailable' }> = { status: 'unavailable' },
     ): ExecutionRunAppliedParentSelection => {
       logger.infoFile(`${config.uiLogPrefix} Applied parent selection unavailable`, {
         sessionId: currentLifecycleSession.sessionId, runnerPid: process.pid, reason,
         ...(transition ? { transitionPhase: transition.phase, transitionReason: transition.reason } : {}),
       });
-      return { status: 'unavailable' };
+      return result;
     };
     await initialParentSelectionRegistration;
     if (!modelTransitionCoordinator) return unavailable('model_coordinator_unavailable');
@@ -4036,7 +4037,6 @@ async function runHostedSessionRuntime(
     if (!modelTransitionCoordinator) return unavailable('model_coordinator_unavailable');
     const after = await modelTransitionCoordinator.readAppliedTarget();
     if (connected === null) return unavailable('connected_services_read_failed');
-    if (connected.status !== 'applied') return unavailable('connected_services_unavailable');
     if (after.status !== 'applied') return unavailable('model_transition_unavailable', {
       phase: 'after_connected_services', reason: after.reason,
     });
@@ -4044,6 +4044,7 @@ async function runHostedSessionRuntime(
     if (JSON.stringify(hookRuntime.readAppliedTeamCredentialModel?.()) !== JSON.stringify(teamCredentialModel)) {
       return unavailable('native_applied_selection_changed');
     }
+    if (connected.status !== 'applied') return unavailable('connected_services_unavailable', undefined, connected);
     const unknownNativeModel = !teamCredentialModel && appliedTarget.selection.modelId === 'default'
       && appliedTarget.selection.providerConnectionId === null;
     return {

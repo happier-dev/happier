@@ -91,15 +91,15 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     try {
       expect(read()).toEqual({ status: 'applied', connectedServices: selection === 'group' ? appliedPool : previous });
       admit(); await sdkEntered;
-      expect(read()).toEqual({ status: 'unavailable' });
+      expect(read()).toEqual({ status: 'unavailable', reason: 'validation_failed' });
       expect(registry.getRunTargetByRunKey('retained-child')).toEqual(retainedChild);
       completeSdkEffect(); await fileEntered;
-      expect(read()).toEqual({ status: 'unavailable' });
+      expect(read()).toEqual({ status: 'unavailable', reason: 'validation_failed' });
       completeFileEffect();
       const result = await transition;
       expect(result).toMatchObject({ ok: true });
       expect(readHomeCurrentness).not.toHaveBeenCalled();
-      expect(read()).toEqual({ status: 'unavailable' });
+      expect(read()).toEqual({ status: 'unavailable', reason: 'validation_failed' });
       // Only the existing authoritative success registration restores applied proof.
       registry.registerTarget({ pid: 123, sessionId: 'parent', agentId: 'codex', connectedServicesBindingsRaw: next },
         result.ok && result.groupApplicationTarget ? { groupApplicationTarget: result.groupApplicationTarget } : undefined);

@@ -1,5 +1,14 @@
 # Compatibility and version skew
 
+## Applied parent Connected Service reads (unreleased 0.3)
+
+The daemon and Session runner may return a closed `reason` on an unavailable
+applied-parent selection. Updated readers accept earlier reasonless responses.
+Earlier strict development readers reduce reason-bearing refusals to their
+existing generic unavailable result. Applied responses keep their existing
+shape. The inspected 0.2 checkout at `24731ff73c` has no daemon applied-parent
+selection endpoint. The persisted formats and wire epoch are unchanged.
+
 ## Event webhook authoring setup (unreleased 0.3)
 
 The closed daemon eligible-Event catalog accepts optional `webhookEndpointSetup`.

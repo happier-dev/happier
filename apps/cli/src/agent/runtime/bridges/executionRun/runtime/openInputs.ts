@@ -13,12 +13,13 @@ import type {
 import { executionRunPermissionIntentV1 as permissionMode } from '@happier-dev/protocol/actions/executionRunActionPermissionMode';
 import { readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import type { ConnectedServiceAppliedParentSelectionUnavailableReason } from '@/daemon/connectedServices/runs/materializeContract';
 import { createExecutionRunCodedError } from '../errors';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { areExecutionRunBackendTargetsEqual, resolveExecutionRunRuntimeBackendId } from '../backendTargets';
 
 export type ExecutionRunAppliedParentSelection = Readonly<
-    | { status: 'unavailable' }
+    | { status: 'unavailable'; reason?: ConnectedServiceAppliedParentSelectionUnavailableReason }
     | {
         status: 'applied';
         backendTarget: BackendTargetRefV2Input;

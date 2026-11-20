@@ -9,6 +9,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerRegistrar } from '../../api/rpc/types';
 import type { NativeAgentSessionInteractionHostBinding } from '../../agent/runtime/registry/engineRegistryTypes';
+import { ConnectedServiceAppliedParentSelectionUnavailableSchema } from '../../daemon/connectedServices/runs/materializeContract';
 
 const turnIdSchema = lazyZodSchema(() => SessionActionRpcOriginV1Schema.shape.sourceTurnId);
 // Validate closure before canonical legacy refinements: an intersection can
@@ -18,7 +19,7 @@ const backendTargetSchema = lazyZodSchema(() => z.union([
   PersistedAgentTargetRefV1Schema,
 ]));
 const selectionSchema = z.discriminatedUnion('status', [
-  z.strictObject({ status: z.literal('unavailable') }),
+  ConnectedServiceAppliedParentSelectionUnavailableSchema,
   z.strictObject({ status: z.literal('applied'), backendTarget: backendTargetSchema,
     modelId: z.nullable(z.string()), modelSelection: z.optional(ProviderBoundModelRefSchema),
     teamCredentialModel: z.optional(TeamCredentialProviderModelSelectionV1Schema),
