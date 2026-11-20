@@ -45,7 +45,7 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
   DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReviewedCandidateV1Schema } from '../deployments/deploymentCandidatePublicationV1.js';
-import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
+import { DeploymentReadAdmissionV1Schema, DeploymentTelemetryReadFactsV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentReadAdmissionV1Schema, isDeploymentNativeReadActionIdV1, isDeploymentReadActionIdV1, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
@@ -984,6 +984,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   v: z.literal(2), requestId: ExternalActionRequestIdV1Schema,
   /** Requester-scoped Get opens with an invocation key instead of Machine content material. */
   requesterOperationRead: z.optional(z.literal(true)),
+  telemetryCollectorCodec: z.optional(z.literal(true)),
   /** Non-content Browser Session operand; checked against the sealed command on open. */
   browserSessionId: z.optional(ExternalActionTargetIdV1Schema),
   /** Declaration-derived pre-effect runtime demand; private operands remain sealed. */
@@ -1433,12 +1434,15 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     })),
     accountEncryptionMode: z.optional(AccountEncryptionModeSchema),
     requesterOperationRead: z.optional(z.literal(true)),
+    telemetryCollectorCodec: z.optional(z.literal(true)),
     sessionActionOrigin: z.optional(SessionActionRpcOriginV1Schema),
     sessionActionSource: z.optional(ExternalActionSessionSourceV1Schema),
     workflowActionOrigin: z.optional(ExternalActionWorkflowOriginV1Schema),
     pendingResetStartAdmission: z.optional(ExternalActionPendingResetStartAdmissionV1Schema),
     approvalDecisionAdmission: z.optional(ExternalActionApprovalDecisionAdmissionV1Schema),
     deploymentReadAdmission: z.optional(DeploymentReadAdmissionV1Schema),
+    /** Home's metadata decision for the current installed Environment collector. */
+    deploymentTelemetryRead: z.optional(DeploymentTelemetryReadFactsV1Schema),
     /** Home's editor decision for the exact database target of an admitted write. */
     deploymentDatabaseEditor: z.optional(z.enum(['allowed', 'editing_off', 'not_an_editor'])),
     presetPreparationAdmission: z.optional(z.union([ManagedMachinePresetPrepareInputV1Schema, ManagedMachinePresetRevisionInputV1Schema])),
@@ -1561,8 +1565,17 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
       : value.deploymentReadAdmission !== undefined) {
     context.addIssue({ code: 'custom', path: ['deploymentReadAdmission'], message: 'Deployment reads bind their exact authenticated receiver and operation.' });
   }
+  const telemetry = value.deploymentReadAdmission && 'telemetryCollector' in value.deploymentReadAdmission
+    ? value.deploymentReadAdmission.telemetryCollector : undefined;
+  if (telemetry && telemetry.serverId !== value.serverIdentityId
+    || value.telemetryCollectorCodec && (!telemetry || value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin
+      || value.target.kind !== 'machine' || value.target.project || !('authentication' in value) || value.authentication.kind !== 'account')
+    || value.deploymentTelemetryRead && (!telemetry || !sameStrictJsonValue(
+      value.deploymentTelemetryRead.map(environment => environment.environmentId), telemetry.environmentIds))) {
+    context.addIssue({ code: 'custom', path: ['deploymentTelemetryRead'], message: 'Telemetry facts belong to their exact Home and Environment operands.' });
+  }
   if (value.deploymentDatabaseEditor !== undefined && (value.actionId !== ACTION_INVOKE_ACTION_ID_V1
-    || value.deploymentReadAdmission?.actionId !== ACTION_INVOKE_ACTION_ID_V1 || value.deploymentReadAdmission.access !== 'write')) {
+    || !value.deploymentReadAdmission || !('databaseTarget' in value.deploymentReadAdmission) || value.deploymentReadAdmission.access !== 'write')) {
     context.addIssue({ code: 'custom', path: ['deploymentDatabaseEditor'], message: 'A database editor decision belongs to an exact write.' });
   }
   if (value.approvalDecisionAdmission && value.actionId !== 'approval.request.decide') {
@@ -1648,6 +1661,7 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
   requesterAccountContext: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
   /** Public recipient key for the invocation codec. Never a Machine content key. */
   requesterOperationReadInstallationPublicKey: z.optional(MachineInstallationPublicKeySchema),
+  telemetryReadInstallationPublicKey: z.optional(MachineInstallationPublicKeySchema),
   /** Home-proved finite placement hint and private custody; neither retargets the root. */
   managedFiniteWake: z.optional(z.strictObject({
     target: ManagedWakeTargetV1Schema,
@@ -1659,6 +1673,9 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
 }).check(z.superRefine((value, context) => {
   if (value.requesterOperationReadInstallationPublicKey && !value.binding.requesterOperationRead) {
     context.addIssue({ code: 'custom', path: ['requesterOperationReadInstallationPublicKey'], message: 'Expected the requester operation read carrier' });
+  }
+  if (value.telemetryReadInstallationPublicKey && (!value.binding.telemetryCollectorCodec || !value.binding.deploymentTelemetryRead)) {
+    context.addIssue({ code: 'custom', path: ['telemetryReadInstallationPublicKey'], message: 'Expected the admitted telemetry collector carrier' });
   }
   const wake = value.managedFiniteWake;
   if (!wake) return;

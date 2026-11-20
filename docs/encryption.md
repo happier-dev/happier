@@ -138,6 +138,13 @@ Ingest authorizes before reading the body and attributes the batch from the
 matched assignment, never from caller-supplied resource attributes. Raw spans,
 logs and query text stay in the collector's Machine-local capture store.
 
+For an Environment capture read, Home admits the caller through R16 and binds
+the request to the Environment's current collector installation. The client
+seals the invocation key to that installation. Home relays the sealed request
+and response, and the collector uses the signed Environment scope without
+receiving the reader's Account credentials. A new presentation of the signed
+root passes through the existing admission boundary.
+
 Environment Duplicate prepares one opaque create-intent commitment at the
 Account crypto owner before allocating new content Artifacts. It binds the exact
 source revision, explicit copy choices and resolved reviewed configuration. Plain

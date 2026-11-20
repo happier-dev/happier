@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { bindCallerInput } from '@happier-dev/protocol/actions/executor/callerInput';
@@ -65,6 +67,23 @@ function answerOwnedMachine() {
     const machine = { ...createPlainMachineRowFixture({ id: 'machine-1', accountId: 'owner' }), installationId: 'installation-1' };
     homes.answer(serverId, '/v1/machines/machine-1', { body: { machine } });
 }
+
+it('routes a Team Environment capture read to Home admission without a Machine grant', async () => {
+    if (!account) throw new Error('Expected captured Account');
+    const admissionPath = '/v1/actions/action.invoke/execution-authorization';
+    const refusal = projectExternalActionHttpError('credential_scope_denied');
+    homes.answer(serverId, admissionPath, { status: refusal.statusCode, body: refusal.payload });
+
+    const result = await executeOriginalAccountMachineAction({ account, actionId: 'action.invoke',
+        input: { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1)!,
+            input: { source: { kind: 'environment', serverId: binding.serverIdentityId, environmentId: 'environment' } } },
+        machineId: 'collector', requestId: 'team-capture-read', authority: 'present_user' });
+
+    expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', effectAttempted: false });
+    expect(homes.requestsFor(admissionPath)).toHaveLength(1);
+    expect(homes.requestsFor('/v1/machines/read-batch')).toHaveLength(0);
+    expect(homes.requestsFor('/v1/machines/collector')).toHaveLength(0);
+});
 
 async function execute() {
     if (!account) throw new Error('Expected captured Account');

@@ -57,6 +57,14 @@ import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { registerExternalActionRoutes } from '@/app/api/routes/actions/registerExternalActionRoutes';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+    TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions';
 import { Server } from 'socket.io';
@@ -71,6 +79,113 @@ describe('current Source deployment authority', () => {
             env: { HAPPIER_SERVER_IDENTITY_ID: serverId } });
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
+
+    it.each(['plain', 'e2ee'] as const)('admits the current installed collector for a Team reader without a Machine grant (%s)', async mode => {
+        const [owner, teammate, outsider] = await Promise.all(Array.from({ length: 3 }, () =>
+            db.account.create({ data: { encryptionMode: 'plain' } })));
+        if (mode === 'e2ee') await db.account.update({ where: { id: teammate.id }, data: { encryptionMode: 'e2ee' } });
+        const team = await db.team.create({ data: { name: 'Telemetry readers' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: teammate.id, role: 'member' } });
+        const project = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId, requestKey: crypto.randomUUID(),
+            name: 'Telemetry', audience: [{ principal: { kind: 'team', teamId: team.id }, level: 'view' }] }));
+        if (!project.ok) throw new Error(project.error);
+        const collectorSigning = nacl.sign.keyPair();
+        const collectorKey = collectorSigning.publicKey;
+        const createCollector = (publicKey: Uint8Array) => db.machine.create({ data: {
+            id: crypto.randomUUID(), accountId: owner.id, active: true, installationId: crypto.randomUUID(),
+            installationPublicKey: Uint8Array.from(publicKey), metadata: encodePlainMachineStoredContent({}),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+        } });
+        const [collector, unrelated] = await Promise.all([createCollector(collectorKey), createCollector(nacl.sign.keyPair().publicKey)]);
+        const artifact = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
+            kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Telemetry' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+        if (!artifact.ok) throw new Error(artifact.error);
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: project.source.id,
+            createdByAccountId: owner.id, controllerMachineId: collector.id, telemetryMachineId: collector.id,
+            protection: 'nonProduction', purpose: 'standard',
+            deployerMode: 'managers', referencedSavedSecretRevisions: [], contentArtifactId: artifact.artifact.id,
+            contentHeaderVersion: 1, contentBodyVersion: 1, telemetryMetricsEnabled: true } });
+        const token = (accountId: string) => auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+        const [ownerToken, readerToken, outsiderToken] = await Promise.all([token(owner.id), token(teammate.id), token(outsider.id)]);
+        const relayed: Array<{ machineId: string; installationId: string }> = [];
+        await withAuthenticatedTestApp(app => registerExternalActionRoutes(app, {
+            dispatch: async request => {
+                if (request.admittedMachine) relayed.push(request.admittedMachine);
+                return { kind: 'placement_error', code: 'target_unavailable' };
+            },
+        }), async app => {
+            const route = `/v1/actions/${ACTION_INVOKE_ACTION_ID_V1}`;
+            const makeRead = (accountId: string, machineId: string, regression = false) => {
+                const target = { kind: 'machine' as const, machineId };
+                const material = { type: 'dataKey' as const, machineKey: nacl.randomBytes(32) };
+                const input = regression
+                    ? { action: parseQualifiedPluginActionId(TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1),
+                        input: { serverId, environmentId: environment.id, serviceName: 'app', measure: 'http.error_rate', windowMs: 1000 } }
+                    : { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1),
+                        input: { source: { kind: 'environment', serverId, environmentId: environment.id }, page: { limit: 6 } } };
+                const envelope = sealExternalActionRequestV2({ material, input, randomBytes: nacl.randomBytes,
+                    projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                    binding: { accountId, serverIdentityId: serverId, actionId: ACTION_INVOKE_ACTION_ID_V1, target,
+                        requestId: crypto.randomUUID(), authentication: { kind: 'account', tokenEpoch: 0 } } });
+                return { material, body: { v: 1 as const, machineId, envelope: { ...envelope, telemetryCollectorCodec: true as const } } };
+            };
+            const post = (bearer: string, url: string, payload: object) => app.inject({
+                method: 'POST', url, headers: { authorization: `Bearer ${bearer}` }, payload,
+            });
+            const admit = (bearer: string, body: object) => post(bearer, `${route}/execution-authorization`, body);
+            expect((await admit(ownerToken, makeRead(owner.id, collector.id).body)).statusCode).toBe(200);
+            expect((await loadDeploymentEnvironmentInTx(db, teammate.id, serverId, environment.id)).ok).toBe(true);
+            const { body, material } = makeRead(teammate.id, collector.id);
+            const accepted = await admit(readerToken, body);
+            expect(accepted.statusCode).toBe(200);
+            const { telemetryReadInstallationPublicKey, ...signed } = ExternalActionExecutionAuthorizationV1Schema.parse(accepted.json());
+            expect(telemetryReadInstallationPublicKey).toBe(Buffer.from(collectorKey).toString('base64url'));
+            expect(signed.binding).toMatchObject({
+                accountId: teammate.id, custodianAccountId: owner.id, machineId: collector.id, installationId: collector.installationId,
+                deploymentTelemetryRead: [{ environmentId: environment.id, revision: environment.revision, capabilities: { metrics: true } }],
+            });
+            const executionAuthorization = sealManagedControllerActionCodecV1({ authorization: signed, material,
+                installationPublicKey: collectorKey, randomBytes: nacl.randomBytes });
+            await post(readerToken, route, { ...body, executionAuthorization });
+            expect(relayed.map(row => ({ machineId: row.machineId, installationId: row.installationId })))
+                .toEqual([{ machineId: collector.id, installationId: collector.installationId }]);
+            expect((await admit(outsiderToken, makeRead(outsider.id, collector.id).body)).statusCode).toBe(403);
+            expect((await admit(readerToken, makeRead(teammate.id, unrelated.id).body)).statusCode).toBe(403);
+            const nonRead = { ...body, envelope: { ...body.envelope, deploymentReadAdmission: {
+                ...body.envelope.deploymentReadAdmission, action: parseQualifiedPluginActionId(DATABASE_CAPTURE_CLEAR_ACTION_ID_V1),
+            } } };
+            expect((await admit(readerToken, nonRead)).statusCode).toBe(400);
+
+            const regression = ExternalActionExecutionAuthorizationV1Schema.parse((await admit(readerToken,
+                makeRead(teammate.id, collector.id, true).body)).json());
+            const readReceipts = (root: typeof regression, environmentId: string) => {
+                const target = root.binding.target;
+                const effectActionId = 'deployments.receipts.list';
+                const routeInput = { serverId, environmentId, state: 'succeeded' };
+                const { inputSchema, serverTransport } = getActionSpec(effectActionId);
+                if (!serverTransport) throw new Error('Receipt list transport unavailable');
+                const { method, path, body } = bindHomeDomainHttpRequestV1({ inputSchema, transport: serverTransport, input: routeInput });
+                const signature = signExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId, target,
+                    installationId: root.binding.installationId, requestId: root.binding.requestId,
+                    method, path, privateKey: collectorSigning.secretKey });
+                return verifyExternalActionDomainExecutionRequest({ authorizationToken: root.token, effectActionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(target), machineSignature: signature,
+                    method, path, body, routeInput });
+            };
+            expect(await readReceipts(signed, environment.id)).toBeNull();
+            expect(await readReceipts(regression, crypto.randomUUID())).toBeNull();
+            await db.teamMembership.delete({ where: { id: membership.id } });
+            expect((await admit(readerToken, makeRead(teammate.id, collector.id).body)).statusCode).toBe(403);
+            expect((await post(readerToken, route, { ...body, executionAuthorization })).statusCode).toBe(403);
+            expect(relayed).toHaveLength(1);
+            expect((await readReceipts(regression, environment.id))?.acceptedDeploymentReceipt?.read)
+                .toEqual({ environmentId: environment.id, contentCustody: false });
+        }, { authentication: 'real' });
+    });
 
     it('atomically cuts over reviewed definition and Saved Secret bindings through Environment update', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });

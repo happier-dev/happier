@@ -330,6 +330,7 @@ async function executeExternalActionRequest(input: Readonly<{
   const managedControllerCodec = executionAuthorization?.success
     && (executionAuthorization.data.binding.accountId !== executionAuthorization.data.binding.custodianAccountId
       || executionAuthorization.data.binding.requesterOperationRead
+      || executionAuthorization.data.binding.telemetryCollectorCodec
       || isReviewedMachineSetupCodecV1(executionAuthorization.data.binding))
     && isManagedControllerCodecRootV1(executionAuthorization.data.binding);
   let envelopeCodecMaterial: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | null = null;
@@ -588,6 +589,7 @@ async function executeExternalActionRequest(input: Readonly<{
       throw new TypeError('Deployment read admission mismatch');
     if (expectedRead && executionAuthorization?.success) {
       const home = 'databaseTarget' in expectedRead ? expectedRead.databaseTarget.environment.serverId
+        : 'telemetryCollector' in expectedRead ? expectedRead.telemetryCollector.serverId
         : decodedInput && typeof decodedInput === 'object' && 'serverId' in decodedInput
           && typeof decodedInput.serverId === 'string' ? decodedInput.serverId : null;
       if (!home || !await isServerProfileHomeIdentity(home, executionAuthorization.data.binding.serverIdentityId))

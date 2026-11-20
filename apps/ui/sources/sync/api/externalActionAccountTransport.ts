@@ -38,7 +38,8 @@ import { t } from '@/text';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { ServerFetchWriteTimeoutError } from '@/sync/http/client';
-import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { projectDeploymentTelemetryReadAdmissionV1, type DeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
 } from '@happier-dev/protocol/actions/externalActionApi';
 
@@ -159,6 +160,7 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     requestFailureCode?: string;
     /** Fresh captured-Home identity only; inventory hints never select private custody. */
     machineCustody?: MachineCustody;
+    telemetryCollector?: Readonly<{ scope: DeploymentTelemetryReadAdmissionV1; accountMode: 'plain' | 'e2ee' }>;
     invocation?: ExternalActionRequesterInvocationV1;
     reviewedChild?: ReviewedActionChildHttpProofV1;
     onTransportIssued?: () => void;
@@ -178,12 +180,17 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
     const retainedResource = params.resourceContinuation !== undefined || params.machineServiceLogsGeneration !== undefined
         || params.managedContinuation !== undefined;
     const foreignGuest = custody !== undefined && custody.custodian.accountId !== account.accountId;
-    const prepareManagedControllerCodec = foreignGuest && isManagedControllerCodecActionV1({ actionId: binding.actionId,
+    const telemetryRead = params.telemetryCollector?.scope;
+    if (telemetryRead && (telemetryRead.telemetryCollector.serverId !== binding.serverIdentityId
+        || params.pluginInvocation || account.credentialAuthorityKind !== 'account')) return failure('admission_unavailable');
+    const prepareManagedControllerCodec = Boolean(telemetryRead) || foreignGuest && isManagedControllerCodecActionV1({ actionId: binding.actionId,
         managedAdmission: projectExternalActionManagedAdmissionV1(binding.actionId, params.input) });
     // This invocation key is independent of every Account key and credential.
     const codecMaterial = prepareManagedControllerCodec ? { type: 'dataKey' as const, machineKey: getRandomBytes(32) } : undefined;
-    const material = codecMaterial ? custody?.accountMode === 'e2ee' ? codecMaterial : undefined : params.material;
-    if ((finite || params.invocation || retainedResource) && !custody) return failure('admission_unavailable');
+    const material = codecMaterial
+        ? (telemetryRead || custody?.accountMode === 'e2ee' ? codecMaterial : undefined)
+        : params.material;
+    if ((finite || params.invocation || retainedResource) && !custody && !telemetryRead) return failure('admission_unavailable');
     if (custody) {
         if ((custody.accountMode === 'e2ee') !== Boolean(material)) return failure('content_unavailable');
         if (account.credentialAuthorityKind !== 'account' || binding.target.kind !== 'machine' || !('authentication' in binding)
@@ -216,9 +223,10 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         : ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: binding.requestId, target: binding.target, input, ...logsOperands,
             ...(sessionSpawnAdmission ? { sessionSpawnAdmission } : {}),
             ...(params.pluginInvocation ? { pluginInvocation: params.pluginInvocation } : {}) });
-    const envelope = params.handoffAdmission ? { ...sealed, handoffAdmission: params.handoffAdmission } : sealed;
+    const envelope = { ...sealed, ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
+        ...(telemetryRead && sealed.v === 2 ? { telemetryCollectorCodec: true as const } : {}) };
     let request: unknown = envelope;
-    if (custody) {
+    if (custody || telemetryRead) {
         if (binding.target.kind !== 'machine' || !('authentication' in binding)) return failure('admission_unavailable');
         const mint = await account.request(bindExternalActionExecutionAuthorizationHttpPathV1(binding.actionId), {
             method: 'POST', headers,
@@ -246,13 +254,16 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         if (!authorization.success || binding.target.kind !== 'machine') return failure('admission_unavailable');
         const root = authorization.data.binding;
         if (root.accountId !== account.accountId || root.serverIdentityId !== account.serverIdentityId
-            || root.machineId !== binding.target.machineId || root.installationId !== custody.installationId
-            || root.custodianAccountId !== custody.custodian.accountId || root.accountEncryptionMode !== custody.accountMode
+            || root.machineId !== binding.target.machineId
+            || (telemetryRead ? !root.telemetryCollectorCodec || !root.deploymentTelemetryRead || !sameStrictJsonValue(root.deploymentReadAdmission, telemetryRead)
+                : !custody || root.installationId !== custody.installationId || root.custodianAccountId !== custody.custodian.accountId)
+            || root.accountEncryptionMode !== (params.telemetryCollector?.accountMode ?? custody?.accountMode)
             || !('authentication' in root)
             || root.authentication.tokenEpoch !== binding.authentication.tokenEpoch
             || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId: binding.actionId,
                 machineId: binding.target.machineId, envelope })) return failure('admission_unavailable');
-        let executionAuthorization = authorization.data;
+        const { telemetryReadInstallationPublicKey, ...signedAuthorization } = authorization.data;
+        let executionAuthorization = signedAuthorization;
         if (root.deploymentCandidatePublication && !root.deploymentCandidatePublication.reviewed) {
             params.onDeploymentCandidateAuthorized?.(executionAuthorization.token);
         }
@@ -276,14 +287,16 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
                 if (!confirmed) return failure('requester_credential_disclosure_declined');
             }
         }
-        const managedControllerCodec = foreignGuest && isManagedControllerCodecActionV1(root);
+        const managedControllerCodec = root.telemetryCollectorCodec === true || foreignGuest && isManagedControllerCodecActionV1(root);
         if (managedControllerCodec !== Boolean(codecMaterial)) return failure('admission_unavailable');
         if (managedControllerCodec && codecMaterial) {
-            if (!custody.installationPublicKey || wake) return failure('admission_unavailable');
+            const telemetryKey = telemetryRead ? telemetryReadInstallationPublicKey : undefined;
+            const installationPublicKey = telemetryKey ? decodeBase64(telemetryKey, 'base64url') : custody?.installationPublicKey;
+            if (!installationPublicKey || wake) return failure('admission_unavailable');
             executionAuthorization = sealManagedControllerActionCodecV1({ authorization: executionAuthorization,
-                material: codecMaterial, installationPublicKey: custody.installationPublicKey, randomBytes: getRandomBytes,
+                material: codecMaterial, installationPublicKey, randomBytes: getRandomBytes,
                 ...(params.invocation ? { invocation: params.invocation } : {}) });
-        } else if (foreignGuest || wake || params.invocation) {
+        } else if (custody && (foreignGuest || wake || params.invocation)) {
             account.assertCurrent();
             params.signal?.throwIfAborted();
             const credentials = serializeRequesterAccountCredentials(custody.accountMode, account.credentials);
@@ -414,6 +427,7 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     if (params.actionId === 'session.agent.transition' && !params.invocation) return failure('admission_unavailable');
     if (params.invocation && (account.credentialAuthorityKind !== 'account'
         || !ExternalActionRequesterInvocationV1Schema.safeParse(params.invocation).success)) return failure('admission_unavailable');
+    const telemetryRead = params.machineTarget?.project ? undefined : projectDeploymentTelemetryReadAdmissionV1(params.actionId, params.input);
     const finite = Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, params.actionId);
     const runtimeDemand = projectExternalActionMachineRuntimeDemandV1(params.actionId, params.input,
         params.machineTarget ?? { kind: 'machine', machineId: params.machineId }) === 'required';
@@ -436,9 +450,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const ownTargetIncumbent = params.foreignTargetOnly === true
         && isMachineTerminalStreamActionIdV1(params.actionId);
     const reviewedInvocation = params.invocation !== undefined && !ownTargetIncumbent;
-    const currentOwnRow = !scopedController && !finite && !runtimeDemand && !reviewedInvocation && !retainedResource
+    const currentOwnRow = !telemetryRead && !scopedController && !finite && !runtimeDemand && !reviewedInvocation && !retainedResource
         ? readCurrentOwnActionMachine(account, params.machineId) : null;
-    const row = scopedController ? null : currentOwnRow ?? await readOriginalAccountActionMachine(account, params.machineId, params.signal);
+    const row = telemetryRead || scopedController ? null : currentOwnRow ?? await readOriginalAccountActionMachine(account, params.machineId, params.signal);
     const custody = scopedController ? {
         installationId: scopedController.controller.installationId,
         installationPublicKey: decodeBase64(scopedController.access.installationPublicKey, 'base64url'),
@@ -448,9 +462,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
             installationId: row.installationId, installationPublicKey: row.installationPublicKey,
             custodian: row.access.custodian, resourceMode: row.access.resourceMode, managed: Boolean(row.managedMachineRef),
         } : null;
-    if (!custody) return failure('admission_unavailable');
-    const foreignCustody = custody.custodian.accountId !== account.accountId;
-    const needsCustody = foreignCustody || finite || runtimeDemand && custody.managed
+    if (!custody && !telemetryRead) return failure('admission_unavailable');
+    const foreignCustody = custody !== null && custody.custodian.accountId !== account.accountId;
+    const needsCustody = Boolean(telemetryRead) || foreignCustody || finite || runtimeDemand && custody?.managed
         || reviewedInvocation || retainedResource;
     // Ordinary own targets retain their incumbent transport. Managed runtime
     // demand and finite placement need Home custody even for an own guest.
@@ -458,10 +472,10 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
     const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
     if (!authentication || !account.serverIdentityId) return failure('admission_unavailable');
     const { accountMode, encryption } = await account.resolveAccountEncryption();
-    if (!scopedController && !foreignCustody && custody.resourceMode !== accountMode) return failure('admission_unavailable');
-    if (needsCustody && !custody.installationId) return failure('content_unavailable');
-    if ((foreignCustody || params.invocation) && !custody.installationPublicKey) return failure('content_unavailable');
-    if (accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
+    if (custody && !scopedController && !foreignCustody && custody.resourceMode !== accountMode) return failure('admission_unavailable');
+    if (!telemetryRead && needsCustody && !custody?.installationId) return failure('content_unavailable');
+    if (!telemetryRead && (foreignCustody || params.invocation) && !custody?.installationPublicKey) return failure('content_unavailable');
+    if (!telemetryRead && accountMode === 'e2ee' && !encryption) return failure('content_unavailable');
     const input = sessionInput
         ? projectSessionSpawnHome(sessionInput, { serverId: account.serverIdentityId, machineId: params.machineId }) : params.input;
     return await executeOriginalAccountActionTransport({ account, input, authority: params.authority,
@@ -482,8 +496,9 @@ export async function executeOriginalAccountMachineAction(params: OriginalAccoun
         ...(params.handoffAdmission ? { handoffAdmission: params.handoffAdmission } : {}),
         binding: { serverIdentityId: account.serverIdentityId, accountId: account.accountId, authentication,
             actionId: params.actionId, requestId: params.requestId, target: params.machineTarget ?? { kind: 'machine', machineId: params.machineId } },
-        ...(accountMode === 'e2ee' && encryption ? { material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() } } : {}),
-        ...(needsCustody && custody.installationId ? { machineCustody: {
+        ...(telemetryRead ? { telemetryCollector: { scope: telemetryRead, accountMode } }
+            : accountMode === 'e2ee' && encryption ? { material: { type: 'dataKey', machineKey: encryption.getContentPrivateKey() } } : {}),
+        ...(needsCustody && custody?.installationId ? { machineCustody: {
             accountMode, installationId: custody.installationId, ...(custody.installationPublicKey ? { installationPublicKey: custody.installationPublicKey } : {}),
             custodian: custody.custodian,
         } } : {}),

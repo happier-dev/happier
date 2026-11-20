@@ -2,7 +2,6 @@ import { z } from 'zod/mini';
 import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { warn } from '@/utils/logging/log';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
-import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, MachineConnectorSecretGrantInputV1Schema, MachineConnectorSecretGrantResultV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { readEnvironmentSecretLaunchAdmissionInTx, accessMachineConnectorSecretGrantInTx } from '@/app/deployments/environmentSecretLaunchAdmission';
@@ -58,8 +57,8 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         const requestId = request.externalActionExecutionRequestId ?? request.id;
         const native = binding?.deploymentNativeAdmission;
         const readAdmission = binding?.deploymentReadAdmission;
-        const admittedDataQuery = readAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
-            || readAdmission?.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1
+        const admittedDataQuery = readAdmission && ('databaseTarget' in readAdmission
+            || readAdmission.actionId === DEPLOYMENT_DATA_SIZE_ACTION_ID_V1)
             ? readAdmission : undefined;
         const admittedBackup = native && 'kind' in native && (native.kind === 'restore' || native.kind === 'backup') ? native : undefined;
         if (request.authTokenKind === 'api_token' && !admittedBackup && !admittedDataQuery && !request.externalActionDeploymentChildSigner

@@ -789,6 +789,13 @@ export function registerExternalActionRoutes(
             const receivingMachineId = body.data.workflowActionOrigin && target.kind === 'machine'
                 ? target.machineId : body.data.machineId;
             const requesterOperationRead = body.data.envelope.v === 2 && body.data.envelope.requesterOperationRead;
+            const telemetryCollectorCodec = body.data.envelope.v === 2 && body.data.envelope.telemetryCollectorCodec;
+            if (telemetryCollectorCodec && (!deploymentReadAdmission || !('telemetryCollector' in deploymentReadAdmission)
+                || !('authentication' in principal) || principal.authentication.kind !== 'account'
+                || body.data.sessionActionOrigin || body.data.sessionActionSource || body.data.workflowActionOrigin
+                || body.data.envelope.pluginInvocation || body.data.envelope.managedCreationCodec)) {
+                return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
+            }
             if (requesterOperationRead && (actionId.data !== ACTION_OPERATION_GET_ACTION_ID_V1
                 || !('authentication' in principal) || principal.authentication.kind !== 'account'
                 || body.data.envelope.pluginInvocation
@@ -815,6 +822,7 @@ export function registerExternalActionRoutes(
                 : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: principal.accountId,
                     machineId: receivingMachineId, actionId: actionId.data, envelope: body.data.envelope, carrier: 'select',
                     ...(requesterOperationRead ? { requesterOperationRead } : {}),
+                    ...(telemetryCollectorCodec ? { telemetryCollectorCodec } : {}),
                     ...(workflowAdmission ? { workflowAdmission } : {}),
                     ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
                     ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
@@ -870,6 +878,7 @@ export function registerExternalActionRoutes(
                     ...(pendingResetStartAdmission ? { pendingResetStartAdmission } : {}),
                     ...(approvalDecisionAdmission ? { approvalDecisionAdmission } : {}),
                     ...(deploymentReadAdmission ? { deploymentReadAdmission } : {}),
+                    ...(telemetryCollectorCodec ? { telemetryCollectorCodec } : {}),
                     ...(deploymentPreparationAdmission ? { deploymentPreparationAdmission } : {}),
                     ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
                     ...(registryAppUpdateAdmission ? { registryAppUpdateAdmission } : {}),
@@ -922,13 +931,14 @@ export function registerExternalActionRoutes(
                     resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
                 const managedFiniteWake = isExternalActionManagedWakeRootV1(authorization.binding)
                     ? await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: authorization })) : null;
-                if (requesterOperationRead) {
+                if (requesterOperationRead || telemetryCollectorCodec && authorization.binding.deploymentTelemetryRead) {
                     if (authorization.binding.installationId !== machine.installationId
                         || authorization.binding.custodianAccountId !== admission.custodianAccountId) {
                         return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
                     }
                     return reply.header('cache-control', 'no-store').send({ ...authorization,
-                        requesterOperationReadInstallationPublicKey: Buffer.from(machine.installationPublicKey).toString('base64url') });
+                        [requesterOperationRead ? 'requesterOperationReadInstallationPublicKey' : 'telemetryReadInstallationPublicKey']:
+                            Buffer.from(machine.installationPublicKey).toString('base64url') });
                 }
                 return reply.header("cache-control", "no-store").send(managedFiniteWake
                     ? { ...authorization, managedFiniteWake } : authorization);
@@ -1082,6 +1092,11 @@ export function registerExternalActionRoutes(
                     "invalid_envelope",
                     readExternalActionProtectedRequestId(request.body),
                 );
+            }
+            if (envelope.data.v === 2 && envelope.data.telemetryCollectorCodec
+                && (!admittedRoot || !admittedRoot.authorization.binding.telemetryCollectorCodec
+                    || !admittedRoot.authorization.requesterAccountContext)) {
+                return sendExternalActionHttpError(reply, 'invalid_envelope', envelope.data.requestId);
             }
             if (actionId.data === 'workflow.trigger.run_now' && request.headers['idempotency-key'] !== undefined
                 && request.headers['idempotency-key'] !== envelope.data.idempotencyKey) {

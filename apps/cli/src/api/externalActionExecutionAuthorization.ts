@@ -45,6 +45,7 @@ import type { ManagedPresetAcquireOriginV1 } from '@happier-dev/cli-common/machi
 import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkflowPlacement } from './managedPresetOrigination';
 import { projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1, projectDeploymentPreparationAdmissionV1,
   projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { readRequesterActionOperationV1, readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { randomBytes } from 'node:crypto';
@@ -981,6 +982,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   if (!await isCurrent()) return fail('target_unavailable', 'dispatch.currentness');
   // This branch only chooses the incumbent own-account path. Home still owns
   // authentication and the destination owns its Action admission.
+  const telemetryRead = !workflow && !input.executeOnRequester && input.target.kind === 'machine' && !input.target.project
+    && provenance?.provenance.kind === 'account' ? projectDeploymentTelemetryReadAdmissionV1(input.actionId, input.input) : undefined;
+  if (telemetryRead && telemetryRead.telemetryCollector.serverId !== input.serverIdentityId)
+    return fail('server_target_mismatch');
   let machines: Awaited<ReturnType<typeof listCurrentAccountMachines>> | undefined;
   let managedAdmission = projectExternalActionManagedAdmissionV1(input.actionId, input.input);
   let scopedController: (NonNullable<ManagedMachineV1['controllerAccess']> & ManagedMachineV1['controller']) | undefined;
@@ -1035,7 +1040,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     if (scopedController && (input.target.kind !== 'machine' || scopedController.machineId !== input.target.machineId
       || !await isCurrent())) return fail('controller_retired');
   }
-  if (input.foreignTargetOnly && !workflow && !scopedController && !workflowPlacementRequested) {
+  if (input.foreignTargetOnly && !workflow && !scopedController && !workflowPlacementRequested && !telemetryRead) {
     if (input.target.kind !== 'machine') return fail('target_unavailable', 'dispatch.foreign_target_kind');
     const machineId = input.target.machineId;
     machines = await phase('machine_inventory', () => listCurrentAccountMachines({ token: input.credentials.token,
@@ -1110,8 +1115,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   // These passive reads already have the exact target and authenticated requester. Join them
   // before interpreting mode/ownership, minting authority or disclosing material.
   const target = input.target;
-  const needsInventory = target.kind === 'machine' && !input.executeOnRequester && !machines && !workflow && !scopedController;
-  const needsInstalled = target.kind === 'machine' && requiresMachineProof && input.serverIdentityId && !workflow && !scopedController;
+  const needsInventory = target.kind === 'machine' && !input.executeOnRequester && !machines && !workflow && !scopedController && !telemetryRead;
+  const needsInstalled = target.kind === 'machine' && requiresMachineProof && input.serverIdentityId && !workflow && !scopedController && !telemetryRead;
   const publicationRead = target.kind === 'machine' && needsInventory && needsInstalled
     ? phase('installed_machine', () => readExternalActionMachinePublication({ serverHttpBaseUrl: homeUrl,
       machineId: target.machineId, headers, ...(input.signal ? { signal: input.signal } : {}) })) : undefined;
@@ -1143,7 +1148,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   machines = inventoryRead.value;
   let machine: CurrentAccountMachineInventoryItem | undefined;
   let foreign = scopedController ? scopedController.custodian.accountId !== accountId : false;
-  if (input.target.kind === 'machine' && !input.executeOnRequester && !workflow && !scopedController) {
+  if (input.target.kind === 'machine' && !input.executeOnRequester && !workflow && !scopedController && !telemetryRead) {
     const selected = await resolveOriginalAccountMachineTarget({ actionId: input.actionId,
       machineId: input.target.machineId, machines, accountId, accountMode: mode.mode,
       authenticationKind: kind, authority: input.authority, credentialProvenance: input.credentials.credentialProvenance,
@@ -1157,7 +1162,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     ? { runId: workflowCaller.runId, requestId: input.requestId,
       ...(workflowCaller.authorization.reviewedChild ? { reviewedChild: workflowCaller.authorization.reviewedChild } : {}) }
     : undefined;
-  const controllerCodec = Boolean(foreign && isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission })
+  const controllerCodec = Boolean(telemetryRead || foreign && isManagedControllerCodecActionV1({ actionId: input.actionId, managedAdmission })
     || workflowActionOrigin && isReviewedMachineSetupCodecV1({ actionId: input.actionId, workflowActionOrigin }));
   if (controllerCodec) material = { type: 'dataKey', machineKey: randomBytes(32) };
   if (mode.mode === 'e2ee') {
@@ -1170,7 +1175,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   }
   const actionId = ExternalActionActionIdV1Schema.parse(input.actionId);
   const requestId = input.requestId;
-  const binding = mode.mode === 'e2ee' && material ? { serverIdentityId: input.serverIdentityId!, accountId,
+  const binding = (mode.mode === 'e2ee' || telemetryRead) && material ? { serverIdentityId: input.serverIdentityId!, accountId,
     ...(workflowBinding && !('authentication' in workflowBinding) ? { credentialId: workflowBinding.credentialId }
       : { authentication: { kind: authentication.data.kind, tokenEpoch: authentication.data.tokenEpoch } }),
     actionId, requestId, target: input.target } satisfies ExternalActionEncryptionBindingV2 : undefined;
@@ -1179,7 +1184,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
   // the Action owner's existing admission projection.
   const envelopeInput = input.executeOnRequester?.input ?? input.input;
   const workflowPreparation = workflowPlacement?.kind === 'bound' ? workflowPlacement.workflowPreparation : undefined;
-  const envelope = (workflowPlacement?.kind === 'bound' ? workflowPlacement.retainedRoot?.envelope : undefined) ?? (binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
+  const originalEnvelope = (workflowPlacement?.kind === 'bound' ? workflowPlacement.retainedRoot?.envelope : undefined) ?? (binding && material ? sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, material, input: envelopeInput, randomBytes,
     ...(workflowPreparation ? { workflowPreparation } : {}),
     ...(sessionSpawnAdmission && (sessionSpawnAdmission.machineSetupRequested || sessionPresetAcquisition)
       ? { sessionSpawnAdmission } : {}),
@@ -1188,6 +1193,8 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
         ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
         ...(workflowPreparation ? { workflowPreparation } : {}),
         ...(sessionPresetAcquisition ? { sessionSpawnAdmission } : {}) }));
+  const envelope = telemetryRead && originalEnvelope.v === 2
+    ? { ...originalEnvelope, telemetryCollectorCodec: true as const } : originalEnvelope;
   if (input.executeOnRequester) {
     const minted = await phase('mint_authorization', () => mintExternalActionExecutionAuthorization({
       actionId, envelope, machineId: input.target.machineId,
@@ -1276,7 +1283,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
           machineId: root.machineId, envelope, executionAuthorization: authorization });
       } catch { return fail('content_unavailable'); }
     }
-  } else if (scopedController || machine && access && (foreign || requiresMachineProof)) {
+  } else if (telemetryRead && input.target.kind === 'machine' || scopedController || machine && access && (foreign || requiresMachineProof)) {
     if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.machine_home_identity');
     if (foreign && !controllerCodec && !retainedRequester && !input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
     const readInstalledMachine = async (observed: CurrentAccountMachineInventoryItem) => {
@@ -1290,10 +1297,10 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       return installed;
     };
     const installed = scopedController ?? (machine ? await readInstalledMachine(machine) : null);
-    if (!installed) return fail('admission_unavailable', 'dispatch.machine_installation');
-    const destinationId = scopedController?.machineId ?? machine!.id;
-    const custodianAccountId = scopedController?.custodian.accountId ?? access!.custodian.accountId;
-    if (input.requesterCustody && (input.requesterCustody.binding.installationId !== installed.installationId
+    if (!installed && !telemetryRead) return fail('admission_unavailable', 'dispatch.machine_installation');
+    const destinationId = scopedController?.machineId ?? (input.target.kind === 'machine' ? input.target.machineId : machine!.id);
+    const custodianAccountId = scopedController?.custodian.accountId ?? access?.custodian.accountId;
+    if (input.requesterCustody && (input.requesterCustody.binding.installationId !== installed?.installationId
       || input.requesterCustody.binding.custodianAccountId !== custodianAccountId)) {
       return fail('admission_unavailable', 'dispatch.retained_requester_installation');
     }
@@ -1313,8 +1320,9 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
     const managedOperand = projectExternalActionManagedAdmissionOperandV1(root.managedAdmission);
     if (!('authentication' in root) || root.authentication.kind !== authentication.data.kind
       || root.authentication.tokenEpoch !== authentication.data.tokenEpoch || root.accountId !== accountId
-      || root.custodianAccountId !== custodianAccountId || root.serverIdentityId !== input.serverIdentityId
-      || root.machineId !== destinationId || root.installationId !== installed.installationId
+      || root.serverIdentityId !== input.serverIdentityId || root.machineId !== destinationId
+      || (telemetryRead ? !root.telemetryCollectorCodec || !root.deploymentTelemetryRead || !sameStrictJsonValue(root.deploymentReadAdmission, telemetryRead)
+        : root.custodianAccountId !== custodianAccountId || root.installationId !== installed?.installationId)
       || root.accountEncryptionMode !== mode.mode || root.actionId !== actionId || root.requestId !== input.requestId
       || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: destinationId, envelope })
       // Acquire's compute projection is bound by the envelope digest above;
@@ -1349,15 +1357,17 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       if (confirmed !== true) return fail('requester_credential_disclosure_declined');
       return await isCurrent() ? null : fail(input.signal?.aborted ? 'cancelled' : 'target_unavailable', 'dispatch.requester_disclosure.currentness');
     };
-    let authorization = minted.authorization;
+    const { telemetryReadInstallationPublicKey, ...signedAuthorization } = minted.authorization;
+    let authorization = signedAuthorization;
     try {
       if (controllerCodec) {
-        if (!installed.installationPublicKey || !material || authorization.managedFiniteWake) return fail('admission_unavailable', 'dispatch.controller_codec');
+        const key = telemetryRead ? telemetryReadInstallationPublicKey : installed?.installationPublicKey;
+        if (!key || !material || authorization.managedFiniteWake) return fail('admission_unavailable', 'dispatch.controller_codec');
         authorization = sealManagedControllerActionCodecV1({ authorization, material,
           ...(input.invocation ? { invocation: input.invocation } : {}),
-          installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
+          installationPublicKey: decodeBase64(key, telemetryRead || scopedController ? 'base64url' : 'base64'), randomBytes });
       } else if (foreign || input.invocation) {
-        if (!installed.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
+        if (!installed?.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
         if (foreign && !retainedRequester) {
           const refusal = await confirmDisclosure({ id: destinationId, custodian: machine?.access?.custodian });
           if (refusal) return refusal;
@@ -1643,7 +1653,7 @@ function resolveContributedActionRequesterHttpHeaders(input: Readonly<{
 }>): Readonly<{ ok: true; headers: Readonly<Record<string, string>> }> | ExternalActionHeaderRefusal | null {
   const binding = input.authorization.binding;
   if (binding.actionId !== ACTION_INVOKE_ACTION_ID_V1 || input.effectActionId === binding.actionId
-    || !('authentication' in binding)) return null;
+    || !('authentication' in binding) || binding.telemetryCollectorCodec) return null;
   // The outer Action proof is not a credential for arbitrary child HTTP purposes.
   const requester = readRequesterAccountActionContext(input.authorization);
   if (!requester || binding.accountId !== readAccountIdFromToken(requester.credentials.token)

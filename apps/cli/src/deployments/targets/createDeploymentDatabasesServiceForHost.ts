@@ -14,7 +14,6 @@ import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConn
 import { readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
 import { decideDatabaseAccessV1, resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
-import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { resolvePluginContributionHostAccessRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
@@ -56,6 +55,10 @@ type EnvironmentScope = Extract<DatabaseTargetsListInputV1['scope'], { kind: 'en
 /** Captures actual invocation custody; operands select a Link, never a caller or credential. */
 export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabasesHostInput): DeploymentDatabasesServiceV1 {
     const context = input.seed.approvalContext;
+    const binding = context?.externalActionExecutionAuthorization?.binding;
+    const read = binding?.deploymentReadAdmission;
+    const telemetryCollector = read && 'telemetryCollector' in read ? read.telemetryCollector : undefined;
+    const telemetryFacts = telemetryCollector && new Map(binding?.deploymentTelemetryRead?.map(fact => [fact.environmentId, fact]));
     const readEnvironment = async (scope: EnvironmentScope, targetLinkId?: string,
         options: Readonly<{ includeDataTargetLinkContent?: true; nativeMember?: true }> = {}) => {
         if (!context) return refuse('deployment_target_role_unavailable');
@@ -174,7 +177,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         let person = { mayWrite: environment.capabilities.editData, editingOff: environment.dataEditorMode === 'off' };
         if (operation === 'write' && binding) {
             const scope = binding.deploymentReadAdmission;
-            if (scope?.actionId !== ACTION_INVOKE_ACTION_ID_V1 || scope.access !== 'write'
+            if (!scope || !('databaseTarget' in scope) || scope.access !== 'write'
                 || !sameStrictJsonValue(scope.databaseTarget, target)) return refuse('target_mismatch');
             // The installed Environment read is content custody. Only Home's signed decision grants editing.
             person = { mayWrite: binding.deploymentDatabaseEditor === 'allowed',
@@ -201,6 +204,12 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
 
     return Object.freeze<DeploymentDatabasesServiceV1>({
         async admitTelemetryRead(request) {
+            if (binding && telemetryCollector) {
+                const selected = telemetryFacts?.get(request.environmentId);
+                if (!selected || request.serverId !== telemetryCollector.serverId) return refuse('target_mismatch');
+                return { environment: { ...request, revision: selected.revision }, collectorMachineId: binding.machineId,
+                    capabilities: resolveDeploymentTelemetryCapabilitiesV1(selected.capabilities) };
+            }
             const admission = await readEnvironment({ kind: 'environment', environment: request }, undefined, { nativeMember: true });
             const environment = admission.detail.environment;
             if (environment.telemetryMachineId !== admission.host.machineId) return refuse('machine_unavailable');

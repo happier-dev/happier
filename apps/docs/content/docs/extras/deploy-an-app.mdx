@@ -180,6 +180,10 @@ Moving or turning off the collector requires confirmation and deletes that
 Environment's telemetry from the previous collector, without copying it to the
 new one. Redeploy afterward to start sending to the selected collector.
 
+In the 0.3 development flow, teammates who can view an Environment can read
+its capture from the selected collector without a Machine grant. Withdrawing
+Environment access takes effect on the next read request.
+
 Happier leaves the app's SDK sampling default unchanged unless you choose a
 sampling ratio. An app's authored collector configuration takes precedence at
 deployment. Telemetry reads and the Environment screens are still under

@@ -1,3 +1,4 @@
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import {
@@ -218,6 +219,7 @@ export type DeploymentRootBindingAdmission =
       ok: true;
       deploymentLinkAdmission?: NonNullable<ExternalActionExecutionAuthorizationBindingV1['deploymentLinkAdmission']>;
       deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
+      deploymentTelemetryRead?: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'];
     }>
   | Readonly<{ ok: false; code?: Extract<DeploymentPreparationAuthorization, { ok: false }>['code']; placement?: ActionExecuteFailure;
       /** Private refusing branch for the mint's server diagnostic; never a public code. */
@@ -264,18 +266,21 @@ export async function admitDeploymentRootBindingInTx(
   if (binding.registryAppUpdateAdmission && !await readRegistryAppUpdateAuthorizationInTx(tx, binding, authentication)) {
     return { ok: false, phase: 'registry_app_update' };
   }
-  const databaseAction = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
+  const qualifiedRead = binding.actionId === ACTION_INVOKE_ACTION_ID_V1
     && binding.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1;
   let deploymentDatabaseEditor: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
-  if (isDeploymentReadAdmissionActionIdV1(binding.actionId) || databaseAction) {
+  let deploymentTelemetryRead: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'];
+  if (isDeploymentReadAdmissionActionIdV1(binding.actionId) || qualifiedRead) {
     if (!binding.deploymentReadAdmission) return { ok: false, phase: 'read_admission_missing' };
     const selected = await readDeploymentReadAuthorizationInTx(tx, binding, binding.deploymentReadAdmission, authentication);
     if (!selected) return { ok: false, phase: 'read_admission' };
     if (!selected.ok) return { ...selected, phase: 'read_authorization' };
     deploymentDatabaseEditor = selected.deploymentDatabaseEditor;
+    deploymentTelemetryRead = selected.deploymentTelemetryRead;
   }
   return { ok: true, ...(deploymentLinkAdmission ? { deploymentLinkAdmission } : {}),
-    ...(deploymentDatabaseEditor ? { deploymentDatabaseEditor } : {}) };
+    ...(deploymentDatabaseEditor ? { deploymentDatabaseEditor } : {}),
+    ...(deploymentTelemetryRead ? { deploymentTelemetryRead } : {}) };
 }
 
 /**
@@ -303,5 +308,8 @@ export async function readCurrentDeploymentRootEnvironmentAdmissionInTx(
   if (!admitted.ok) return admitted;
   if (admitted.deploymentLinkAdmission?.environmentId !== recordedLink?.environmentId) return { ok: false, phase: 'link_environment_changed' };
   if (admitted.deploymentDatabaseEditor !== root.deploymentDatabaseEditor) return { ok: false, phase: 'database_editor_changed' };
+  if (root.deploymentTelemetryRead && !sameStrictJsonValue(admitted.deploymentTelemetryRead, root.deploymentTelemetryRead)) {
+    return { ok: false, code: 'source_changed' };
+  }
   return admitted;
 }

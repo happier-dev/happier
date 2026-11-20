@@ -888,6 +888,7 @@ class AuthModule {
         // Link's private input names the Environment; only Home derives its owner.
         if (input.deploymentLinkAdmission) throw refuse('deployment_link_admission_supplied');
         if (input.deploymentDatabaseEditor !== undefined) throw refuse('deployment_database_editor_supplied');
+        if (input.deploymentTelemetryRead !== undefined) throw refuse('deployment_telemetry_read_supplied');
         let linkEnvironmentId: string | undefined;
         if (supplied.actionId === 'deployments.targets.link') {
             const { projectExternalActionDeploymentLinkEnvironmentIdV1 } = await import('@happier-dev/protocol/actions/externalActionApi');
@@ -908,10 +909,11 @@ class AuthModule {
         });
         if (!bindingAdmission.ok) throw refuse(bindingAdmission.phase ? `root_binding.${bindingAdmission.phase}` : 'root_binding', bindingAdmission.code, { details: bindingAdmission.placement?.details,
             failureCause: bindingAdmission.placement?.failureCause });
-        if (bindingAdmission.deploymentLinkAdmission || bindingAdmission.deploymentDatabaseEditor) {
+        if (bindingAdmission.deploymentLinkAdmission || bindingAdmission.deploymentDatabaseEditor || bindingAdmission.deploymentTelemetryRead) {
             supplied = ExternalActionExecutionAuthorizationBindingV1Schema.parse({ ...supplied,
                 ...(bindingAdmission.deploymentLinkAdmission ? { deploymentLinkAdmission: bindingAdmission.deploymentLinkAdmission } : {}),
-                ...(bindingAdmission.deploymentDatabaseEditor ? { deploymentDatabaseEditor: bindingAdmission.deploymentDatabaseEditor } : {}) });
+                ...(bindingAdmission.deploymentDatabaseEditor ? { deploymentDatabaseEditor: bindingAdmission.deploymentDatabaseEditor } : {}),
+                ...(bindingAdmission.deploymentTelemetryRead ? { deploymentTelemetryRead: bindingAdmission.deploymentTelemetryRead } : {}) });
         }
         const workspaceSyncRequest = context.workspaceSyncAdmission ?? projectWorkspaceSyncAdmissionInputV1(input.actionId, context.input);
         // Callers cannot supply Home-produced facts, including when no source was selected.

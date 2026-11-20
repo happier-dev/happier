@@ -1,7 +1,36 @@
-import { expect, it } from 'vitest';
+import axios from 'axios';
+import { afterEach, expect, it, vi } from 'vitest';
+import { DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deliverExternalActionRequest, dispatchOriginalAccountAction } from './externalActionExecutionAuthorization';
 import { resolveOriginalAccountMachineTarget } from './machine/originalAccountTarget';
+
+afterEach(() => vi.restoreAllMocks());
+
+it('sends an Environment telemetry read to Home admission without a direct Machine grant', async () => {
+  const claims = Buffer.from(JSON.stringify({ sub: 'reader', tokenEpoch: 1,
+    provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url');
+  const target = { kind: 'machine' as const, machineId: 'collector' };
+  vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
+    ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+    : { status: 404, data: {} });
+  const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403,
+    data: { error: 'invalid_request', code: 'credential_scope_denied', requestId: 'team-queries' } });
+  const result = await dispatchOriginalAccountAction({
+    actionId: ACTION_INVOKE_ACTION_ID_V1,
+    input: { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1),
+      input: { source: { kind: 'environment', serverId: 'srv_home', environmentId: 'environment' }, page: { limit: 6 } } },
+    requestId: 'team-queries', target, credentials: { token: `header.${claims}.signature`, encryption: null,
+      credentialProvenance: 'stored_session' },
+    serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_home',
+  });
+  expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+  expect(post).toHaveBeenCalledWith(expect.stringContaining('/execution-authorization'), expect.objectContaining({
+    machineId: target.machineId,
+  }), expect.anything());
+});
 
 it.each([
   ['requester authentication', false, 'dispatch.requester_authentication'],

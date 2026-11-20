@@ -7,7 +7,6 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitDeploymentMachineInTx, admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, loadDeploymentEnvironmentForInstalledMachineInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
@@ -90,7 +89,7 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     admittedChild?: DeploymentChildAdmission,
     admittedBackup?: DeploymentRestoreNativeAdmissionV1 | DeploymentBackupNativeAdmissionV1,
     admittedDataQuery?: Extract<DeploymentReadAdmissionV1, { actionId: typeof DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 }>
-        | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
+        | Extract<DeploymentReadAdmissionV1, { databaseTarget: unknown }>,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     if ('kind' in input) return readEnvironmentBindingPreparationInTx(tx, actorAccountId, input, authentication);
     const dataRole = input.materialization.kind === 'dataRole';

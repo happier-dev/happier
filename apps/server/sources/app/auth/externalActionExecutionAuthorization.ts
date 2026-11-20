@@ -1,6 +1,8 @@
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MACHINE_REMOVE_ACTION_ID_V1, MACHINE_REPLACEMENT_SET_ACTION_ID_V1, MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
 import { MACHINE_REBOOT_ACTION_IDS } from '@happier-dev/protocol/machines/rebootActionIdsV1';
 import { isManagedReferenceCensusActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -96,7 +98,7 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
-    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { DeploymentEnvironmentUpdateStorageInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -381,6 +383,7 @@ type ExternalActionExecutionMachineAdmissionInput = ExternalActionManagedAdmissi
         managedCreationAdmission?: ManagedCreationChildAdmission;
         capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
         requesterOperationRead?: true;
+        telemetryCollectorCodec?: true;
         nativePurpose?: 'machine_npm_profile_acquisition';
         carrier?: 'select' | 'home_relay';
     }>;
@@ -442,15 +445,21 @@ async function resolveExternalActionExecutionMachineAccessInTx(
         return admitted ? { ...admitted, role: binding.admittedMachineRole } : { kind: 'denied', code: 'machine_unavailable' };
     }
     const native = input.executionBinding;
-    if (input.requesterOperationRead || native?.requesterOperationRead) {
-        // This selects an installed carrier only. The operation store is the
-        // authority on whether this requester can read the encrypted operand.
+    const requesterOperationRead = input.requesterOperationRead || native?.requesterOperationRead;
+    const telemetryRead = input.telemetryCollectorCodec || native?.telemetryCollectorCodec;
+    if (requesterOperationRead || telemetryRead) {
+        // Select the installed carrier. The deployment Environment or operation
+        // store admits the actual read before any data can be accessed.
         const machine = await reader.machine.findUnique({ where: { id: input.machineId }, select: {
             accountId: true, kind: true, installationId: true, revokedAt: true, replacedByMachineId: true,
             account: { select: { encryptionMode: true } },
         } });
         const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
-        if (input.actionId !== ACTION_OPERATION_GET_ACTION_ID_V1 || !machine?.installationId || mode?.status !== 'ready'
+        if (requesterOperationRead && input.actionId !== ACTION_OPERATION_GET_ACTION_ID_V1
+            || telemetryRead && (input.actionId !== ACTION_INVOKE_ACTION_ID_V1
+                || input.envelope?.target?.kind !== 'machine' || input.envelope.target.machineId !== input.machineId
+                || input.envelope.target.project || input.sessionActionOrigin)
+            || !machine?.installationId || mode?.status !== 'ready'
             || classifyMachineAvailabilityState(machine) !== 'available'
             || machine.kind === 'ephemeral_session_runner' && machine.accountId !== input.actorAccountId
             || native && (native.actionId !== input.actionId || native.accountId !== input.actorAccountId
@@ -3134,8 +3143,19 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
     proof: ExternalActionExecutionRequestProof): Promise<Pick<VerifiedExternalActionExecutionRequest,
         'acceptedDeploymentReceipt' | 'deploymentChildArtifactRead'> | false> {
     const admission = verified.binding.deploymentReadAdmission;
-    if (admission?.actionId !== ACTION_INVOKE_ACTION_ID_V1
-        && admission?.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
+    if (!admission) return false;
+    if ('telemetryCollector' in admission) {
+        // Compare uses settled receipt headers to choose its two sample windows.
+        // The same finite root covers that read on the admitted Environment.
+        if (!verified.binding.deploymentTelemetryRead || verified.effectActionId !== DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1
+            || formatQualifiedPluginActionId(admission.action) !== TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1
+            || !isAccountActionHttpOperation(DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, proof)) return false;
+        const input = DeploymentActionInputSchemasV1[DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1].safeParse(proof.routeInput);
+        return input.success && input.data.serverId === admission.telemetryCollector.serverId
+            && admission.telemetryCollector.environmentIds.includes(input.data.environmentId)
+            ? { acceptedDeploymentReceipt: { read: { environmentId: input.data.environmentId, contentCustody: false } } } : false;
+    }
+    if (!('databaseTarget' in admission) && admission.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
     if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
         && proof.path === `/v1/deployments/environments/${encodeURIComponent(admission.environmentId)}/secret-launch-admission`) {
         const secret = EnvironmentSecretLaunchAdmissionInputV1Schema.safeParse(proof.body);

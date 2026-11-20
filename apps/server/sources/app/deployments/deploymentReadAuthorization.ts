@@ -11,7 +11,7 @@ import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { loadDeploymentTargetRowsInTx, readCurrentManagedDataTargetLinksInTx } from './deploymentTargetLinkService';
-import { resolveProjectSourceAccessInTx } from '@/app/projects/sources/projectSourceService';
+import { resolveProjectSourceAccessInTx, resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
 import { canEditDeploymentEnvironmentData, type DeploymentAuthentication } from './deploymentAdmission';
 import type { DeploymentContentReference } from './deploymentStoredContent';
 import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
@@ -20,7 +20,8 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
 type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[];
-    deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'] }>
+    deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
+    deploymentTelemetryRead?: ExternalActionExecutionAuthorizationBindingV1['deploymentTelemetryRead'] }>
     | Readonly<{ ok: false; code: 'source_changed' }> | null;
 
 /** Registry demand selects current metadata only; the Environment remains its private-content authority. */
@@ -56,7 +57,7 @@ export async function readAdmittedRegistryAppUpdateScopeInTx(tx: Tx,
 /** A finite read spends its signed scope; these reads select content custody, not fresh permission. */
 export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
     admission: Readonly<{ environmentId: string; deploymentId: string; targetLinkId?: string }>
-        | Extract<DeploymentReadAdmissionV1, { actionId: typeof ACTION_INVOKE_ACTION_ID_V1 }>,
+        | Extract<DeploymentReadAdmissionV1, { databaseTarget: unknown }>,
 ): Promise<Readonly<{ artifactContents: readonly DeploymentContentReference[]; managedControllerMachineId?: string }> | null> {
     const select = { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } as const;
     const databaseTarget = 'databaseTarget' in admission ? admission.databaseTarget : undefined;
@@ -94,6 +95,31 @@ export async function readDeploymentReadAuthorizationInTx(tx: Tx, binding: Exter
     if ('action' in admission) {
         if (binding.actionId !== admission.actionId || binding.target.kind !== 'machine'
             || binding.target.machineId !== binding.machineId) return null;
+        if ('telemetryCollector' in admission) {
+            if (admission.telemetryCollector.serverId !== binding.serverIdentityId) return null;
+            const { environmentIds } = admission.telemetryCollector;
+            const rows = new Map<string, { projectSourceId: string; revision: number; telemetryMetricsEnabled: boolean;
+                telemetryAppLlmCostEnabled: boolean; telemetryExceptionsEnabled: boolean }>();
+            for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+                for (const row of await tx.deploymentEnvironment.findMany({
+                    where: { id: { in: [...ids] }, telemetryMachineId: binding.machineId, deletedAt: null },
+                    select: { id: true, projectSourceId: true, revision: true, telemetryMetricsEnabled: true,
+                        telemetryAppLlmCostEnabled: true, telemetryExceptionsEnabled: true },
+                })) rows.set(row.id, row);
+            }
+            if (rows.size !== environmentIds.length) return null;
+            // As with the batch Environment access read, R16 resolves each
+            // Source once for these Environment rows and keeps a retained Source's authority.
+            const sources = await resolveProjectSourcesAccessInTx(tx, binding.accountId,
+                [...new Set([...rows.values()].map(row => row.projectSourceId))], authentication, { includeDeleted: true });
+            const facts = environmentIds.map(environmentId => {
+                const row = rows.get(environmentId);
+                if (!row || !sources.get(row.projectSourceId)?.ok) return null;
+                return { environmentId, revision: row.revision, capabilities: { metrics: row.telemetryMetricsEnabled,
+                    appLlmCost: row.telemetryAppLlmCostEnabled, exceptions: row.telemetryExceptionsEnabled } };
+            });
+            return facts.every(fact => fact !== null) ? { ok: true, artifactIds: [], deploymentTelemetryRead: facts } : null;
+        }
         const loaded = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
             admission.environmentId, authentication);
         if (!loaded.ok || loaded.row.deletedAt) return null;
