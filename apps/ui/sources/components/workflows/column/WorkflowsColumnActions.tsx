@@ -141,6 +141,7 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
                     matchTriggerWidth={false}
                     maxWidthCap={320}
                     popoverPortalWebTarget="body"
+                    popoverPhonePresentation={props.barOwnsAdd ? 'sheet' : undefined}
                     // On a phone the floating bar's "+" is the one way to add (scene 8 phone, fix 8): the menu keeps a bare anchor.
                     trigger={({ toggle }) => props.barOwnsAdd ? <View testID="workflows-column:add" collapsable={false} /> : (
                         <IconButton
