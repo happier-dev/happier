@@ -1,10 +1,11 @@
 import { PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import { DeploymentTargetRoleInputProtocolSchemasV1, type DefinePluginInput, type JsonValue } from '@happier-dev/plugin-sdk';
+import { DeploymentTargetRoleInputProtocolSchemasV1, type DefinePluginInput, type DeploymentTargetRoleFailureV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request, requestAccounts, type DeploymentContext } from './deploymentHttp.js';
+import { readWorkerScripts, resolveWorkerTag } from './workers.js';
 
 const pluginId = 'happier.deploy.cloudflare';
 const text = { type: 'string', minLength: 1 } as const;
@@ -24,6 +25,11 @@ type Option = { value: JsonValue; label: string };
 function invalid(): never { throw new PluginError({ code: 'provider_response_invalid' }); }
 function missingDependency(requiredDraftPath: string): never {
   throw new PluginError({ code: 'missing_option_dependency', details: { requiredDraftPath } });
+}
+function refuse(failure: DeploymentTargetRoleFailureV1): never {
+  throw withActionFailureDiagnostic(new PluginError({ code: failure.code, retryable: failure.retryable, details: { phase: failure.phase },
+    failureCause: projectActionFailureCauseV1(failure, `deployment.cloudflare.${failure.phase}`) }),
+  { phase: `deployment.cloudflare.${failure.phase}`, causeKind: 'native_failure', error: failure });
 }
 function name(value: unknown): value is string { return typeof value === 'string' && value.length > 0; }
 function options(rows: readonly Option[], query?: string) {
@@ -49,13 +55,14 @@ async function read(input: Input, context: DeploymentContext) {
     reply = await requestAccounts(context, params.size ? `?${params}` : '');
   } else {
     const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
-    // The Pages sheet names its project by native coordinates (targetProductInputHints); identity fields keep theirs.
-    if (!accountId) missingDependency(input.product === 'pages' && !input.fieldPath.startsWith('providerIdentity.')
-      ? 'providerAccountId' : 'providerIdentity.providerAccountId');
+    if (!accountId) missingDependency(input.fieldPath.startsWith('providerIdentity.') ? 'providerIdentity.providerAccountId' : 'providerAccountId');
     let path: string;
     if (input.fieldPath === 'triggerUuid') {
-      if (!input.providerIdentity?.providerResourceId) missingDependency('providerIdentity.providerResourceId');
-      path = `/builds/workers/${encodeURIComponent(input.providerIdentity.providerResourceId)}/triggers`;
+      const workerTag = input.providerIdentity?.providerResourceId ?? (input.scriptName
+        ? await resolveWorkerTag(accountId, input.scriptName, context)
+        : missingDependency(input.providerIdentity ? 'providerIdentity.providerResourceId' : 'providerEnvironment'));
+      if (typeof workerTag !== 'string') refuse(workerTag);
+      path = `/builds/workers/${encodeURIComponent(workerTag)}/triggers`;
     } else if (input.product === 'pages') {
       if (input.fieldPath === 'providerEnvironment') return { options: options([
         { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' },
@@ -66,14 +73,18 @@ async function read(input: Input, context: DeploymentContext) {
         { value: { kind: 'script', scriptName: input.resourceName }, label: input.resourceName },
       ], input.query) };
       selectedScript = input.fieldPath === 'providerEnvironment' ? input.scriptName : undefined;
-      if (selectedScript && input.query) params.set('name', input.query);
-      path = selectedScript ? `/workers/workers/${encodeURIComponent(selectedScript)}/previews${params.size ? `?${params}` : ''}` : '/workers/scripts';
+      if (!selectedScript) {
+        const scripts = await readWorkerScripts(accountId, context);
+        if ('code' in scripts) refuse(scripts);
+        return { options: options(scripts.map(({ scriptName, workerTag }) => ({ label: scriptName,
+          value: input.fieldPath === 'providerEnvironment' ? { kind: 'script', scriptName } : workerTag })), input.query) };
+      }
+      if (input.query) params.set('name', input.query);
+      path = `/workers/workers/${encodeURIComponent(selectedScript)}/previews${params.size ? `?${params}` : ''}`;
     } else return missingDependency('product');
     reply = await request(context, accountId, path, 'link');
   }
-  if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase },
-    failureCause: projectActionFailureCauseV1(reply, `deployment.cloudflare.${reply.phase}`) }),
-    { phase: `deployment.cloudflare.${reply.phase}`, causeKind: 'native_failure', error: reply });
+  if ('code' in reply) refuse(reply);
   if (!Array.isArray(reply.value)) invalid();
   const rows: Option[] = reply.value.map((row: unknown): Option => {
     if (!isObject(row)) return invalid();
@@ -93,8 +104,7 @@ async function read(input: Input, context: DeploymentContext) {
       if (!name(row.id) || !name(row.name)) return invalid();
       return { value: input.fieldPath === 'preparedNative.projectName' ? row.name : row.id, label: row.name };
     }
-    if (!name(row.id) || !name(row.tag)) return invalid();
-    return { value: input.fieldPath === 'providerEnvironment' ? { kind: 'script', scriptName: row.id } : row.tag, label: row.id };
+    return invalid();
   });
   if (selectedScript) rows.unshift({ value: { kind: 'script', scriptName: selectedScript }, label: selectedScript });
   const page = reply.resultInfo;
@@ -175,6 +185,8 @@ export const targetOptionResources = {
 
 const choiceSchema: PluginJsonSchema = { anyOf: [{ type: 'string' }, { type: 'object' }] };
 export const targetOptionInputTypes = {
+  'new-pages-environment': { title: 'Cloudflare Pages environment', semantic: 'cloudflare-new-pages-environment',
+    valueSchema: base.properties!.providerEnvironment! },
   'target-choice': { title: 'Cloudflare target choice', semantic: 'cloudflare-target-choice',
     valueSchema: choiceSchema, options: { resource: 'target-options' } },
   'workers-target-choice': { title: 'Cloudflare Workers choice', semantic: 'cloudflare-workers-choice',
@@ -199,11 +211,9 @@ export const targetProductSchema = product;
 
 export function targetProductInputHints(product: 'workers' | 'pages') {
   return { fields: targetOptionInputHints.fields
-    .filter(field => product === 'workers' ? field.path !== 'preparedNative.projectName'
-      // A Pages project is named by its account and project name; Inspect reads its id, so the sheet asks once.
-      : field.path !== 'triggerUuid' && field.path !== 'providerIdentity.providerResourceId')
-    // Pages selects native coordinates and Inspect produces the comparison identity (as Vercel does); a partial
-    // providerIdentity is neither the Action's nor host admission's preparation input.
-    .map(field => ({ ...field, ...(product === 'pages' && field.path === 'providerIdentity.providerAccountId' ? { path: 'providerAccountId' } : {}),
+    // The product sheet selects native coordinates. Inspect resolves the exact comparison identity.
+    .filter(field => field.path !== 'providerIdentity.providerResourceId'
+      && (product === 'workers' ? field.path !== 'preparedNative.projectName' : field.path !== 'triggerUuid'))
+    .map(field => ({ ...field, ...(field.path === 'providerIdentity.providerAccountId' ? { path: 'providerAccountId' } : {}),
       inputType: { pluginId, localId: `${product}-target-choice` } })) };
 }

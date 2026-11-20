@@ -2,6 +2,7 @@ import { expect, it } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { resolveEffectiveActionInputFields } from '@happier-dev/plugin-sdk/actions';
+import { normalizePluginActionInputHintsV2, PluginActionInputHintsV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import * as entry from '../index.js';
 
 const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'selected-profile' };
@@ -31,12 +32,12 @@ it('keeps an empty Account discovery distinct from a missing draft dependency', 
 });
 
 it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves required discovery choices and conditional trigger visibility for %s', (actionId) => {
-  const action = entry.manifest.contributes.actions.find(value => value.id === actionId);
+  const action = entry.manifest.contributes.actions?.find(value => value.id === actionId);
   if (!action) throw new Error('Missing Cloudflare inspect Action');
-  const fields = (input: unknown) => resolveEffectiveActionInputFields({ inputHints: action.inputHints }, input);
-  // Pages names its project by native coordinates (account + project name); Inspect reads the project's identity.
-  expect(fields({}).filter(field => field.required).map(field => field.path)).toEqual(expect.arrayContaining(actionId === 'pages-inspect'
-    ? ['providerAccountId', 'providerEnvironment'] : ['providerIdentity.providerAccountId', 'providerIdentity.providerResourceId', 'providerEnvironment']));
+  const inputHints = normalizePluginActionInputHintsV2(PluginActionInputHintsV2Schema.parse(action.inputHints));
+  const fields = (input: unknown) => resolveEffectiveActionInputFields({ inputHints }, input);
+  expect(fields({}).filter(field => field.required).map(field => field.path)).toEqual(expect.arrayContaining(actionId === 'targets-inspect-v1'
+    ? ['providerIdentity.providerAccountId', 'providerIdentity.providerResourceId', 'providerEnvironment'] : ['providerAccountId', 'providerEnvironment']));
   if (actionId !== 'pages-inspect') {
     expect(fields({ providerEnvironment: { kind: 'script', scriptName: 'worker' } })
       .find(field => field.path === 'triggerUuid')).toMatchObject({ required: true });
@@ -60,20 +61,19 @@ it.each(['workers-inspect', 'pages-inspect', 'targets-inspect-v1'])('resolves re
 
 it.each([
   { targetKind: 'cloudflare-workers', row: { id: 'selected-worker', tag: 'worker-tag' },
-    expected: { value: 'worker-tag', label: 'selected-worker' }, endpoint: '/workers/scripts' },
+    expected: { value: { kind: 'script', scriptName: 'selected-worker' }, label: 'selected-worker' }, endpoint: '/workers/scripts',
+    projectPath: 'providerEnvironment', account: { providerAccountId: 'account' } },
   { targetKind: 'cloudflare-pages', row: { id: 'pages-id', name: 'selected-pages' },
     expected: { value: 'selected-pages', label: 'selected-pages' }, endpoint: '/pages/projects',
     projectPath: 'preparedNative.projectName', account: { providerAccountId: 'account' } },
-])('a per-product $targetKind target exposes no product choice and discovers its own projects from an empty draft', async ({ targetKind, row, expected, endpoint, ...variant }) => {
-  const projectPath = 'projectPath' in variant ? variant.projectPath : 'providerIdentity.providerResourceId';
-  const account = 'account' in variant ? variant.account : { providerIdentity: { providerAccountId: 'account' } };
-  const target = entry.manifest.contributes.deploymentTargets.find(value => value.targetKind === targetKind);
+])('a per-product $targetKind target exposes no product choice and discovers its own projects from an empty draft', async ({ targetKind, row, expected, endpoint, projectPath, account }) => {
+  const target = entry.manifest.contributes.deploymentTargets?.find(value => value.targetKind === targetKind);
   if (!target || target.role !== 'runtime') throw new Error('Missing Cloudflare runtime target');
-  const inspect = entry.manifest.contributes.actions.find(action => action.id === target.actions.inspect);
-  const fields = inspect?.inputHints?.fields ?? [];
+  const inspect = entry.manifest.contributes.actions?.find(action => action.id === target.actions.inspect);
+  const fields = PluginActionInputHintsV2Schema.parse(inspect?.inputHints).fields;
   expect(fields.map(field => field.path)).not.toContain('product');
   const project = fields.find(field => field.path === projectPath);
-  if (!project?.inputType || !('localId' in project.inputType)) throw new Error('Missing project input type');
+  if (!project?.inputType || typeof project.inputType !== 'object' || !('localId' in project.inputType)) throw new Error('Missing project input type');
   const typeId = project.inputType.localId;
   const inputType = entry.manifest.contributes.inputTypes?.find(type => type.id === typeId);
   const resourceRef = inputType?.options?.resource;
@@ -149,7 +149,14 @@ it('keeps Worker names and immutable tags distinct, filters scripts by search an
       .toEqual({ options: [{ value: { kind: 'script', scriptName: 'hello-worker' }, label: 'hello-worker' }] });
     expect(await kit.invokeAction('target-options-read', { ...selected, providerIdentity: { providerAccountId: 'account', providerResourceId: 'immutable-tag' }, fieldPath: 'triggerUuid' }))
       .toEqual({ options: [{ value: 'trigger-id', label: 'trigger-id' }] });
-    expect(requests[2].url).toBe('https://api.cloudflare.com/client/v4/accounts/account/builds/workers/immutable-tag/triggers');
+    expect(await kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, product: 'workers',
+      providerAccountId: 'account', scriptName: 'hello-worker', fieldPath: 'triggerUuid' }))
+      .toEqual({ options: [{ value: 'trigger-id', label: 'trigger-id' }] });
+    expect(requests.slice(2).map(request => new URL(request.url).pathname)).toEqual([
+      '/client/v4/accounts/account/builds/workers/immutable-tag/triggers',
+      '/client/v4/accounts/account/workers/scripts',
+      '/client/v4/accounts/account/builds/workers/immutable-tag/triggers',
+    ]);
   } finally { await kit.dispose(); }
 });
 

@@ -7,7 +7,8 @@ import { ScmHostingRepositoryIdentityV1ProtocolSchema, projectNativeJsonValueFor
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
 import { targetProductSchema } from './targetOptions.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
-import { workerEnvironmentKey, prepareWorker, deployWorker, observeWorker, cancelWorker, observeUploadedWorker, isUploadedWorkerReference } from './workers.js';
+import { workerEnvironmentKey, prepareWorker, deployWorker, observeWorker, cancelWorker, observeUploadedWorker,
+  isUploadedWorkerReference, resolveWorkerTag } from './workers.js';
 import { inspectPreviewIdentity, preparePreview } from './preview.js';
 import { teardownWorker } from './workersTeardown.js';
 import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, isUploadedPreviewReference,
@@ -16,7 +17,7 @@ import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, i
 const base = preparation.jsonSchema;
 const prepareProperties = { ...base.properties, product: targetProductSchema, repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
   triggerUuid: { type: 'string', minLength: 1 } } satisfies NonNullable<PluginJsonSchema['properties']>;
-const prepareRequired = [...base.required ?? [], 'providerIdentity', 'repository'];
+const prepareRequired = [...base.required ?? [], 'repository'];
 const prepareVariants: PluginJsonSchema[] = [
   { type: 'object', additionalProperties: false, required: [...prepareRequired, 'triggerUuid'], properties: { ...prepareProperties, sourceMethod: inputs.deploy.jsonSchema.properties!.sourceMethod!,
       providerEnvironment: { type: 'object', additionalProperties: false, properties: { kind: { const: 'script' }, scriptName: { type: 'string', minLength: 1 } }, required: ['kind', 'scriptName'] } } },
@@ -28,7 +29,8 @@ const prepareVariants: PluginJsonSchema[] = [
       required: ['kind', 'scriptName', 'previewName'] } }, required: prepareRequired },
 ];
 export const workerPrepareInput = { type: 'object', additionalProperties: false,
-  properties: prepareProperties, required: prepareRequired, oneOf: prepareVariants } satisfies PluginJsonSchema;
+  properties: prepareProperties, required: prepareRequired, oneOf: prepareVariants,
+  allOf: [{ oneOf: [{ required: ['providerAccountId'] }, { required: ['providerIdentity'] }] }] } satisfies PluginJsonSchema;
 export const workerLinkSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
   properties: { credentialPrincipal: base.properties!.credentialPrincipal!, providerIdentity: base.properties!.providerIdentity!,
     sourceMethod: base.properties!.sourceMethod!,
@@ -45,9 +47,12 @@ function io(context: PluginAccountActionContext) {
   if (!context.services.http) throw new PluginError({ code: 'client_required' });
   return { http: context.services.http, signal: context.signal, now: () => Date.now() };
 }
+function refuse(outcome: DeploymentTargetRoleFailureV1): never {
+  throw withActionFailureDiagnostic(new PluginError({ code: outcome.code, retryable: outcome.retryable, details: { phase: outcome.phase } }), {
+    phase: `deployment.cloudflare.${outcome.phase}`, causeKind: 'native_failure', error: outcome });
+}
 function result(outcome: DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1) {
-  if ('code' in outcome) throw withActionFailureDiagnostic(new PluginError({ code: outcome.code, retryable: outcome.retryable, details: { phase: outcome.phase } }), { phase: `deployment.cloudflare.${outcome.phase}`,
-      causeKind: 'native_failure', error: outcome });
+  if ('code' in outcome) refuse(outcome);
   return outcome;
 }
 export { common as workersCommon, io as workersIo, result as workersResult };
@@ -70,47 +75,44 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
   inputSchema: workerPrepareInput, resultSchema: workerLinkSchema,
   async run(value: JsonValue, context: PluginAccountActionContext) {
     const request = value as unknown as DeploymentTargetPreparationBaseV1 & {
-      providerIdentity: NonNullable<DeploymentTargetPreparationBaseV1['providerIdentity']>;
       repository: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>; triggerUuid: string;
-    };
+    } & ({ providerIdentity: NonNullable<DeploymentTargetPreparationBaseV1['providerIdentity']> }
+      | { providerIdentity?: never; providerAccountId: string });
+    const environment = request.providerEnvironment;
+    if (environment.kind !== 'script' && (environment.kind !== 'preview' || !('scriptName' in environment))) {
+      throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
+    }
+    const accountId = request.providerIdentity ? request.providerIdentity.providerAccountId : request.providerAccountId;
+    const workerTag = request.providerIdentity?.providerResourceId ?? await resolveWorkerTag(accountId, environment.scriptName, io(context));
+    if (typeof workerTag !== 'string') refuse(workerTag);
     if (request.sourceMethod === 'upload') {
-      if (request.providerEnvironment.kind !== 'script'
-        && (request.providerEnvironment.kind !== 'preview' || !('scriptName' in request.providerEnvironment))) {
-        throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
-      }
-      const environment = request.providerEnvironment;
-      const preview = environment.kind === 'preview' ? await inspectPreviewIdentity({ accountId: request.providerIdentity.providerAccountId,
+      const preview = environment.kind === 'preview' ? await inspectPreviewIdentity({ accountId,
         scriptName: environment.scriptName, previewName: environment.previewName }, io(context)) : null;
-      if (preview && 'code' in preview) throw withActionFailureDiagnostic(new PluginError({ code: preview.code, retryable: preview.retryable, details: { phase: preview.phase } }), { phase: `deployment.cloudflare.${preview.phase}`,
-      causeKind: 'native_failure', error: preview });
+      if (preview && 'code' in preview) refuse(preview);
       return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal,
-        providerIdentity: { ...request.providerIdentity, providerEnvironment: workerEnvironmentKey(environment.scriptName, preview?.previewName) },
+        providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag,
+          providerEnvironment: workerEnvironmentKey(environment.scriptName, preview?.previewName) },
         sourceMethod: request.sourceMethod,
-        providerEnvironment: request.providerEnvironment, preparedNative: { projectName: environment.scriptName,
+        providerEnvironment: environment, preparedNative: { projectName: environment.scriptName,
           ...(preview ? { previewId: preview.previewId, scriptName: environment.scriptName } : {}),
           reviewNotice: cloudflareReviewNotice('workers', 'upload') } });
     }
     const contextIo = io(context);
-    if (request.providerEnvironment.kind === 'preview' && 'scriptName' in request.providerEnvironment) {
-      const environment = request.providerEnvironment;
-      const prepared = await preparePreview({ accountId: request.providerIdentity.providerAccountId,
-        workerTag: request.providerIdentity.providerResourceId, scriptName: environment.scriptName,
+    if (environment.kind === 'preview') {
+      const prepared = await preparePreview({ accountId, workerTag, scriptName: environment.scriptName,
         previewName: environment.previewName, repository: request.repository }, contextIo);
-      if ('code' in prepared) throw withActionFailureDiagnostic(new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase } }), { phase: `deployment.cloudflare.${prepared.phase}`,
-      causeKind: 'native_failure', error: prepared });
+      if ('code' in prepared) refuse(prepared);
       return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal,
-        providerIdentity: { ...request.providerIdentity, providerEnvironment: workerEnvironmentKey(environment.scriptName, prepared.previewName) },
+        providerIdentity: { providerAccountId: accountId, providerResourceId: workerTag,
+          providerEnvironment: workerEnvironmentKey(environment.scriptName, prepared.previewName) },
         ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
         providerEnvironment: environment, repositoryAccess: prepared.repositoryAccess,
         preparedNative: { projectName: environment.scriptName, previewId: prepared.previewId, gitBranch: prepared.gitBranch,
-          workerTag: request.providerIdentity.providerResourceId, scriptName: environment.scriptName, reviewNotice: cloudflareReviewNotice('workers', 'gitIntegration') } });
+          workerTag, scriptName: environment.scriptName, reviewNotice: cloudflareReviewNotice('workers', 'gitIntegration') } });
     }
-    if (request.providerEnvironment.kind !== 'script') throw new PluginError({ code: 'unsupported_action' });
-    const prepared = await prepareWorker({ accountId: request.providerIdentity.providerAccountId,
-      workerTag: request.providerIdentity.providerResourceId, scriptName: request.providerEnvironment.scriptName,
+    const prepared = await prepareWorker({ accountId, workerTag, scriptName: environment.scriptName,
       triggerUuid: request.triggerUuid, repository: request.repository }, contextIo);
-    if ('code' in prepared) throw withActionFailureDiagnostic(new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase } }), { phase: `deployment.cloudflare.${prepared.phase}`,
-      causeKind: 'native_failure', error: prepared });
+    if ('code' in prepared) refuse(prepared);
     return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal, providerIdentity: prepared.providerIdentity,
       ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
       providerEnvironment: prepared.providerEnvironment, repositoryAccess: prepared.repositoryAccess,

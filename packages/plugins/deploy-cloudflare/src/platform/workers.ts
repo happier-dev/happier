@@ -17,6 +17,27 @@ type Outcome = DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1;
 type Phase = DeploymentTargetRoleFailureV1['phase'];
 function text(value: unknown): value is string { return typeof value === 'string' && value.trim().length > 0; }
 
+/** The script catalog names each Worker and supplies its immutable native tag. */
+export async function readWorkerScripts(accountId: string, context: WorkerContext) {
+  const reply = await request(context, accountId, '/workers/scripts', 'link');
+  if ('code' in reply) return reply;
+  if (!Array.isArray(reply.value)) return failure('provider_response_invalid', 'link');
+  const scripts: Array<{ scriptName: string; workerTag: string }> = [];
+  for (const row of reply.value) {
+    if (!isObject(row) || !text(row.id)) return failure('provider_response_invalid', 'link');
+    // A row can omit its optional tag. Such a script cannot supply a link identity.
+    if (text(row.tag)) scripts.push({ scriptName: row.id, workerTag: row.tag });
+  }
+  return scripts;
+}
+
+export async function resolveWorkerTag(accountId: string, scriptName: string, context: WorkerContext) {
+  const scripts = await readWorkerScripts(accountId, context);
+  if ('code' in scripts) return scripts;
+  const selected = scripts.find(script => script.scriptName === scriptName);
+  return selected?.workerTag ?? failure('deployment_unavailable', 'link');
+}
+
 /** Git and Upload preparation name the same selected provider Environment. */
 export function workerEnvironmentKey(scriptName: string, previewName?: string): string {
   return previewName === undefined ? `script:${scriptName}` : `preview:${JSON.stringify([scriptName, previewName])}`;
