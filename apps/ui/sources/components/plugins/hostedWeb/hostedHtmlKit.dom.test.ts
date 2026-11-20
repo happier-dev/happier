@@ -17,19 +17,9 @@ describe('hosted HTML kit', () => {
       '<happier-slider label="Base delay" unit="ms"><input type="range" name="delay" min="0" max="1200" step="100" value="400"></happier-slider>',
       "<script>globalThis.delays = []; document.querySelector('[name=delay]').addEventListener('input', event => globalThis.delays.push(event.target.value));</script>",
     ].join('');
-    const guest = HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT.replace(/<\/script/giu, '<\\/script');
-    const html = `<!doctype html><html><head><script>${guest}</script></head><body>${body}</body></html>`;
-    const dom = new JSDOM(html, {
-      runScripts: 'dangerously',
-      pretendToBeVisual: true,
-      // jsdom lacks the encoding globals every browser frame has; the bootstrap's modules read them at load.
-      beforeParse(window) {
-        Object.assign(window, { TextEncoder, TextDecoder });
-      },
-    });
+    const dom = await openKitDocument(body);
     try {
       const { document } = dom.window;
-      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
 
       // The kit sheet comes first in <head>, so the author's own rules win by order.
       const firstSheet = document.head.querySelector(
@@ -74,4 +64,46 @@ describe('hosted HTML kit', () => {
       dom.window.close();
     }
   });
+
+  it('keeps the slider name it gave in step with its label, and leaves a name the page set', async () => {
+    const dom = await openKitDocument(
+      [
+        '<happier-slider id="kit" label="Before"><input type="range" value="1"></happier-slider>',
+        '<happier-slider id="author" label="Before"><input type="range" value="1" aria-label="Delay"></happier-slider>',
+      ].join(''),
+    );
+    try {
+      const { document } = dom.window;
+      const kitNamed = document.querySelector('#kit input')!;
+      const authorNamed = document.querySelector('#author input')!;
+      expect(kitNamed.getAttribute('aria-label')).toBe('Before');
+
+      document.querySelector('#kit')!.setAttribute('label', 'After');
+      document.querySelector('#author')!.setAttribute('label', 'After');
+      expect(kitNamed.getAttribute('aria-label')).toBe('After');
+      expect(authorNamed.getAttribute('aria-label')).toBe('Delay');
+
+      document.querySelector('#kit')!.removeAttribute('label');
+      expect(kitNamed.hasAttribute('aria-label')).toBe(false);
+    } finally {
+      dom.window.close();
+    }
+  });
 });
+
+async function openKitDocument(body: string): Promise<JSDOM> {
+  const guest = HOSTED_HTML_GUEST_BOOTSTRAP_SCRIPT.replace(/<\/script/giu, '<\\/script');
+  const dom = new JSDOM(
+    `<!doctype html><html><head><script>${guest}</script></head><body>${body}</body></html>`,
+    {
+      runScripts: 'dangerously',
+      pretendToBeVisual: true,
+      // jsdom lacks the encoding globals every browser frame has; the bootstrap's modules read them at load.
+      beforeParse(window) {
+        Object.assign(window, { TextEncoder, TextDecoder });
+      },
+    },
+  );
+  await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+  return dom;
+}

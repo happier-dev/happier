@@ -1,7 +1,7 @@
 /**
- * The slider's geometry, platform-free, for plugin-ui's slider (the hosted HTML kit). It is Happier core's
- * `Slider` geometry: the thumb is filled with the text ink and ringed in the surface colour, and the track's
- * filled part is ink too. Core reads its own copy until this is a public plugin-ui export (API governance).
+ * The slider's geometry, platform-free: the one owner Happier core's `Slider` and the hosted HTML kit's
+ * slider both draw from. The thumb is filled with the text ink and ringed in the surface colour, and the
+ * track's filled part is ink too.
  */
 export const HAPPIER_SLIDER_METRICS = Object.freeze({
   trackHeightPx: 4,

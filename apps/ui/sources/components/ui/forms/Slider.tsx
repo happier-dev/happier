@@ -13,7 +13,7 @@ import { useItemRowAccessibleName } from '@/components/ui/lists/ItemRowAccessibl
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { shadowLevelStyle } from '@/shadowElevation';
-import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, isHappierFocusVisible, useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_FOCUS_RING_DELEGATED_STYLE, HAPPIER_SLIDER_METRICS, isHappierFocusVisible, useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
 
 export type SliderProps = Readonly<{
     value: number;
@@ -38,11 +38,9 @@ export type SliderProps = Readonly<{
     testID?: string;
 }>;
 
-const TRACK_HEIGHT_PX = 4;
-const THUMB_SIZE_PX = 18;
-/** The track frame in layout under every pointer; a finger reaches the touch target through the shared hit area. */
-const TRACK_HIT_HEIGHT_PX = 40;
-const TRACK_FRAME_STYLE = { height: TRACK_HIT_HEIGHT_PX } as const;
+// The slider's geometry is plugin-ui's, shared with the hosted HTML kit's slider.
+const { trackHeightPx, thumbSizePx, thumbRingWidthPx, trackHitHeightPx, disabledOpacity } = HAPPIER_SLIDER_METRICS;
+const TRACK_FRAME_STYLE = { height: trackHitHeightPx } as const;
 /** The track scrubs along its own width; the hit area extends above and below only. */
 const TRACK_HIT_REACH = { left: 0, right: 0 } as const;
 /** Page Up/Down move a tenth of the range, at least one step. */
@@ -246,7 +244,7 @@ export function Slider(props: SliderProps) {
                     style={[
                         styles.thumb,
                         {
-                            top: (TRACK_HIT_HEIGHT_PX - THUMB_SIZE_PX) / 2,
+                            top: (trackHitHeightPx - thumbSizePx) / 2,
                             left: percent,
                             backgroundColor: theme.colors.text.primary,
                             borderColor: theme.colors.surface.base,
@@ -291,7 +289,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 1,
     },
     disabled: {
-        opacity: 0.5,
+        opacity: disabledOpacity,
     },
     adornment: {
         alignItems: 'center',
@@ -300,7 +298,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     trackHitArea: {
         justifyContent: 'center',
         // The thumb overhangs both ends by half its width at the extremes.
-        marginHorizontal: THUMB_SIZE_PX / 2,
+        marginHorizontal: thumbSizePx / 2,
         ...(Platform.OS === 'web' ? ({ cursor: 'pointer', touchAction: 'none', userSelect: 'none' } as object) : null),
     },
     trackHitAreaFill: {
@@ -309,20 +307,20 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 80,
     },
     track: {
-        height: TRACK_HEIGHT_PX,
-        borderRadius: TRACK_HEIGHT_PX / 2,
+        height: trackHeightPx,
+        borderRadius: trackHeightPx / 2,
         overflow: 'hidden',
     },
     fill: {
-        height: TRACK_HEIGHT_PX,
+        height: trackHeightPx,
     },
     thumb: {
         position: 'absolute',
-        width: THUMB_SIZE_PX,
-        height: THUMB_SIZE_PX,
-        marginLeft: -THUMB_SIZE_PX / 2,
-        borderRadius: THUMB_SIZE_PX / 2,
-        borderWidth: 2,
+        width: thumbSizePx,
+        height: thumbSizePx,
+        marginLeft: -thumbSizePx / 2,
+        borderRadius: thumbSizePx / 2,
+        borderWidth: thumbRingWidthPx,
         ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
 }));

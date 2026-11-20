@@ -4572,6 +4572,8 @@ describe('graduated shared presentation families (§8.2)', () => {
       { app: 'components/ui/forms/fieldBox.ts', symbol: 'HAPPIER_FIELD_BOX_METRICS' },
       { app: 'components/ui/forms/dropdown/renderDropdownItemTriggerRightElement.tsx', symbol: 'HappierFieldBoxTrigger' },
       { app: 'components/ui/navigation/SegmentedTabBar.tsx', symbol: 'HAPPIER_SEGMENTED_METRICS' },
+      // The slider's geometry: core's Slider and the hosted HTML kit's slider draw the same numbers.
+      { app: 'components/ui/forms/Slider.tsx', symbol: 'HAPPIER_SLIDER_METRICS' },
       { app: 'components/ui/motion/motionTokens.ts', symbol: 'HAPPIER_MOTION_V1' },
     ] as const;
     for (const consumer of consumers) {

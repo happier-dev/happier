@@ -222,6 +222,8 @@ export function installHappierHtmlKit(realm: HappierHtmlKitRealm): void {
     readonly #head: HTMLElement;
     readonly #label: HTMLElement;
     readonly #value: HTMLElement;
+    /** The name the kit last gave a range input from `label`; a name the page set itself is never touched. */
+    #givenName: Readonly<{ input: HTMLInputElement; name: string }> | null = null;
 
     constructor() {
       super();
@@ -268,12 +270,7 @@ export function installHappierHtmlKit(realm: HappierHtmlKitRealm): void {
       const shown = unit ? `${input.value} ${unit}` : input.value;
       this.#value.textContent = shown;
       this.#head.hidden = false;
-      if (
-        labelText &&
-        !input.hasAttribute('aria-label') &&
-        !input.labels?.length
-      )
-        input.setAttribute('aria-label', labelText);
+      this.#nameInput(input, labelText);
       input.setAttribute('aria-valuetext', shown);
       const min = Number(input.min || 0);
       const max = Number(input.max || 100);
@@ -285,6 +282,22 @@ export function installHappierHtmlKit(realm: HappierHtmlKitRealm): void {
             )
           : 0;
       this.style.setProperty('--happier-slider-fill', `${fill}%`);
+    }
+
+    /** Names the range input after `label` while the page has not named it, and follows later label changes. */
+    #nameInput(input: HTMLInputElement, labelText: string): void {
+      const given = this.#givenName;
+      const kitOwned =
+        given?.input === input && input.getAttribute('aria-label') === given.name;
+      if (!kitOwned && (input.hasAttribute('aria-label') || input.labels?.length))
+        return;
+      if (labelText) {
+        input.setAttribute('aria-label', labelText);
+        this.#givenName = { input, name: labelText };
+      } else {
+        if (kitOwned) input.removeAttribute('aria-label');
+        this.#givenName = null;
+      }
     }
   }
 

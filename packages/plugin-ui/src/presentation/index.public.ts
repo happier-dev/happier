@@ -1370,6 +1370,8 @@ export {
   type HappierSwitchProps,
   type HappierSwitchSize,
 } from './form/Switch.js';
+// The slider's geometry, drawn by Happier core's Slider and the hosted HTML kit's slider.
+export { HAPPIER_SLIDER_METRICS } from './form/sliderMetrics.js';
 // The raised edge (one side of a bordered control's or surface's own border, lit on dark and
 // lipped on light) and the gloss of a filled accent control: which side, and which states sit flat.
 export {
