@@ -235,11 +235,17 @@ const structurallyUnboundedSchemas = {
  * actual provider-sized list result; its transport envelope owns that boundary.
  */
 const taskFactsEntryRef = createTriageSourceV1Fixture().detailInput.observation.entryRef;
+function arrayItemSchema(array: PluginJsonSchema | undefined): PluginJsonSchema | undefined {
+    const item = array?.items;
+    return Array.isArray(item) ? undefined : item;
+}
+
 function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
+    const { items } = fragment;
     return {
         ...fragment,
         ...(fragment.anyOf === undefined ? {} : { anyOf: fragment.anyOf.map(withTaskFactsWitness) }),
-        ...(fragment.items === undefined ? {} : { items: withTaskFactsWitness(fragment.items) }),
+        ...(items === undefined ? {} : { items: Array.isArray(items) ? items.map(withTaskFactsWitness) : withTaskFactsWitness(items) }),
         ...(fragment.properties === undefined ? {} : { properties: Object.fromEntries(
             // Optional label collections carry provider-sized names. Exclude
             // them from this finite sub-envelope rather than invent maxima.
@@ -291,6 +297,7 @@ function listEntriesResultWitnessAt(rows: number, frontiers: number): PluginJson
 
 /** Re-measure the same bounded allocation with provider collections held at their explicit witnesses. */
 function withFieldAllocation(fragment: PluginJsonSchema, bytes: number): PluginJsonSchema {
+    const { items } = fragment;
     const fieldBounds = new Set([
         MAX_TRIAGE_TEXT_UTF8_BYTES_V1, MAX_TRIAGE_LOCATION_UTF8_BYTES_V1,
         MAX_TRIAGE_ROUTING_TOKEN_UTF8_BYTES_V1,
@@ -306,7 +313,8 @@ function withFieldAllocation(fragment: PluginJsonSchema, bytes: number): PluginJ
         ...(allocated ? { 'x-happier-max-utf8-bytes': fragment['x-happier-max-utf8-bytes'] === MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1
             ? bytes * MAX_TRIAGE_LIST_WINDOW_ROWS_V1 : bytes } : {}),
         ...(fragment.anyOf === undefined ? {} : { anyOf: fragment.anyOf.map(child => withFieldAllocation(child, bytes)) }),
-        ...(fragment.items === undefined ? {} : { items: withFieldAllocation(fragment.items, bytes) }),
+        ...(items === undefined ? {} : { items: Array.isArray(items)
+            ? items.map(item => withFieldAllocation(item, bytes)) : withFieldAllocation(items, bytes) }),
         ...(fragment.properties === undefined ? {} : { properties: Object.fromEntries(
             Object.entries(fragment.properties).map(([key, child]) => [key, withFieldAllocation(child, bytes)]),
         ) }),
@@ -320,7 +328,7 @@ function admits(value: unknown): boolean {
 describe('aggregate Action value shapes', () => {
     it('derives one presentation and control field allocation from a finite 56-row 32-lane witness', async () => {
         const shape = listEntriesResultWitnessAt(MAX_TRIAGE_LIST_WINDOW_ROWS_V1, MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
-        const row = shape.properties?.window?.properties?.rows?.items?.properties;
+        const row = arrayItemSchema(shape.properties?.window?.properties?.rows)?.properties;
         if (row?.otherObservations === undefined || row.observedByCount === undefined) throw new Error('missing observation geometry');
         row.otherObservations.maxItems = 0;
         row.observedByCount.maximum = 1;
@@ -342,8 +350,9 @@ describe('aggregate Action value shapes', () => {
         // Adding a real projected text field reduces its envelope allocation,
         // while all four persisted instance fields keep their retained contract.
         const expanded = structuredClone(shape);
-        expanded.properties!.window!.properties!.rows!.items!.properties!.extraDisplay =
-            TriageEntryLocatorV1Schema.jsonSchema.properties!.displayPath!;
+        const expandedRow = arrayItemSchema(expanded.properties?.window?.properties?.rows)?.properties;
+        if (expandedRow === undefined) throw new Error('missing expanded row geometry');
+        expandedRow.extraDisplay = TriageEntryLocatorV1Schema.jsonSchema.properties!.displayPath!;
         const expandedBytes = await measure(sample, expanded);
         const expandedUnits = await measure(sample + 1, expanded) - expandedBytes;
         const expandedFixed = expandedBytes - expandedUnits * sample;
@@ -378,8 +387,8 @@ describe('aggregate Action value shapes', () => {
         expect(fixedBytes + escapedFieldUnits * (derived + 1))
             .toBeGreaterThan(EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES);
 
-        const token = shape.properties?.window?.properties?.continuations
-            ?.items?.properties?.continuation?.properties?.token;
+        const token = arrayItemSchema(shape.properties?.window?.properties?.continuations)
+            ?.properties?.continuation?.properties?.token;
         if (token?.['x-happier-max-utf8-bytes'] !== MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1) {
             throw new Error('the list continuation token no longer carries the shared byte ceiling');
         }
