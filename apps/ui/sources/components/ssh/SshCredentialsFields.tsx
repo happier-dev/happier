@@ -350,6 +350,7 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                     <SelectionTiles
                         variant="card"
                         density="compact"
+                        surface="sheet"
                         maximumColumns={1}
                         accessibilityLabel={t('settings.machineEnrollRemoteSshAuthMethodLabel')}
                         testIdPrefix={testIDs.sshAuthMethod ?? resolveTestID('sshAuthMethod')}
@@ -357,8 +358,8 @@ export const SshCredentialsFields = React.memo(function SshCredentialsFields(pro
                             id: tab.id,
                             testID: `${testIDs.sshAuthMethod ?? resolveTestID('sshAuthMethod')}:${tab.id}`,
                             title: tab.label,
-                            // Only the chosen way says what it means, so the list stays one line per way (lab "New host").
-                            subtitle: tab.id !== value.authMode ? undefined : t(tab.id === 'keyfile'
+                            // Every way says what it means, so choosing one never moves the form (the tiles' own rule).
+                            subtitle: t(tab.id === 'keyfile'
                                 ? 'addFlows.sshSignInKeyFile'
                                 : tab.id === 'password'
                                     ? 'addFlows.sshSignInPassword'
