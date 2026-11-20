@@ -353,7 +353,7 @@ export function artifactsRoutes(app: Fastify) {
         for (const item of request.body.items) {
             const result = await updateArtifactHttpMutation(request.userId, item.artifactId,
                 { kind: item.kind, approvalState: item.approvalState, approvalSessionId: item.approvalSessionId,
-                    expectedHeaderVersion: item.expectedHeaderVersion });
+                    expectedHeaderVersion: item.expectedHeaderVersion }, undefined, undefined, request.authTokenKind);
             items.push('success' in result.body && result.body.success
                 ? { artifactId: item.artifactId, success: true }
                 : { artifactId: item.artifactId, success: false, error: 'error' in result.body
@@ -544,7 +544,7 @@ export function artifactsRoutes(app: Fastify) {
     }, async (request, reply) => {
         const result = await createArtifactHttpMutation(request.userId, request.body,
             readSessionAccessAuthenticationFromRequest(request),
-            candidateMutationGuard(request, request.body.id));
+            candidateMutationGuard(request, request.body.id), request.authTokenKind);
         return reply.code(result.statusCode).send(result.body);
     });
 
@@ -592,7 +592,7 @@ export function artifactsRoutes(app: Fastify) {
     }, async (request, reply) => {
         const result = await updateArtifactHttpMutation(request.userId, request.params.id, request.body,
             request.body.memoryDecisionSource === undefined ? undefined : readSessionAccessAuthenticationFromRequest(request),
-            candidateMutationGuard(request, request.params.id));
+            candidateMutationGuard(request, request.params.id), request.authTokenKind);
         return reply.code(result.statusCode).send(result.body);
     });
 

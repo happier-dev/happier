@@ -1849,6 +1849,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         list: () => readApprovalProfileCatalog(accountContext),
         change: (change, signal) => executeUiApprovalProfileChange(accountContext, change, signal),
       } : undefined,
+      sessionApprovalConsents: accountContext ? {
+        list: accountContext.workflowArtifacts.list,
+        create: async input => {
+          const { artifactId, revision } = await accountContext.createArtifactDocument(input);
+          return { artifactId, revision };
+        },
+        update: accountContext.workflowArtifacts.update,
+      } : undefined,
       host: settingsHost,
       tauriDesktop: settingsHosts.tauriDesktop(settingsHost),
       readPageGate: readSettingsPageGate,

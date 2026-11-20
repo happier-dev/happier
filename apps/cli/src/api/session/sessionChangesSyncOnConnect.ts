@@ -18,6 +18,7 @@ import { PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/pr
 import { artifactKindsMayIncludeKindV1, readArtifactKindsChangeHintV1 } from '@happier-dev/protocol/changes';
 import { launchProfileArtifactSharingAdapterV1 } from '@happier-dev/protocol/launchProfiles/launchProfileArtifactV1';
 import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { parsePromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import {
     publishPluginAccountSettingsWatchInvalidation,
@@ -354,7 +355,7 @@ export async function runSessionChangesSyncOnConnect(params: {
             || isProfileCatalogAccountChangeEntityIdV1(change.entityId)
             || parsePromptLibraryPhysicalKeyV1(change.entityId) !== null)
             || change.kind === 'artifact' && artifactKindsMayIncludeKindV1(readArtifactKindsChangeHintV1(change.hint),
-                [launchProfileArtifactSharingAdapterV1.kind, APPROVAL_PROFILE_ARTIFACT_KIND_V1]))) {
+                [launchProfileArtifactSharingAdapterV1.kind, APPROVAL_PROFILE_ARTIFACT_KIND_V1, SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1]))) {
         await refreshDemandedAccountCatalogs();
     }
     if (pageFull) {

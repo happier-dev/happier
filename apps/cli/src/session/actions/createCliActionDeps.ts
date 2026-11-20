@@ -5,6 +5,9 @@ import { resolveSessionApprovalProfileReferenceV1 } from '@happier-dev/protocol/
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { refreshActiveApprovalProfileCatalog } from '@/settings/profiles/hydrateProfileCatalog';
+import { readHeldSessionApprovalConsents } from '@/settings/profiles/sessionApprovalConsentsCatalog';
+import { loadSessionApprovalConsentsV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentsV1';
+import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createActionExecuteFailureError, createActionRefusalDetailsV1, isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { apiTokenEncryptionAccessRequired } from '@/auth/apiTokenDeploymentCustody';
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -1190,6 +1193,23 @@ export function createCliActionDeps(params: CliActionDepsParams,
         catalog = read();
       }
       return bindApprovalProfileV1(catalog ?? [], id);
+    },
+    readSessionApprovalConsents: async context => {
+      // F-2: only the host-stamped Session caller that is this host's own bound Session, read with
+      // that Session's Account credential. A selector, origin or input Session never chooses rows.
+      const boundSessionId = readCliActionBoundSessionId(params.sessionId);
+      const credentials = params.credentials;
+      if (!credentials || !boundSessionId || context.actionCaller?.kind !== 'session'
+        || context.actionCaller.sessionId !== boundSessionId) return null;
+      const accountId = readAccountIdFromToken(credentials.token);
+      if (!accountId || context.runtimeAccountId !== undefined && context.runtimeAccountId !== accountId) return null;
+      const store = () => createCredentialedAccountArtifactStore(credentials);
+      // A requester's Session on someone else's Machine has no owner change feed here: read at admission.
+      const read = async () => params.savedSecretOperationContext
+        ? loadSessionApprovalConsentsV1(store(), boundSessionId, context.signal).then(record => record
+          ? { sessionId: record.sessionId, rows: record.rows } : { sessionId: boundSessionId, rows: [] })
+        : readHeldSessionApprovalConsents({ token: credentials.token, sessionId: boundSessionId, store });
+      return await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, read) : read());
     },
     resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope ?? deploymentStorageDeps.resolveEnvironmentApprovalScope,
     ...(params.deploymentTelemetrySet ? { deploymentTelemetrySet: params.deploymentTelemetrySet } : {}),

@@ -10,6 +10,7 @@ import type { ActionExecutorContext } from './executor/types.js';
 import type { DatabaseAgentLevelV1 } from '../deployments/deploymentEnvironmentDeployerV1.js';
 import type { ArtifactCallerAccessV1 } from '../artifacts/artifactAccessV1.js';
 import { isDiscussionInviteActionIdV1 } from '../discussions/actionIds.js';
+import { applySessionApprovalConsentsV1 } from './sessionApprovalConsentsV1.js';
 
 import { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
 export { ApprovalProfileIdV1Schema } from './approvalProfileIdV1.js';
@@ -133,7 +134,8 @@ export type ProfiledActionsSettingsOptionsV1 = Readonly<{
   boundProfile?: BoundApprovalProfileV1 | null;
   /** Produced once by the creation-default resolver; an explicit pick clears this bit. */
   approvalProfileTeamOrGroupDerived?: boolean;
-  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'actionCaller' | 'actionsSettings' | 'authority'>;
+  /** Carries the caller Session's own rows (`sessionApprovalConsents`), bound once by the executor at admission. */
+  context?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'actionCaller' | 'actionsSettings' | 'authority' | 'sessionApprovalConsents'>;
   targetApproval?: ActionTargetApprovalV1;
 }>;
 
@@ -174,8 +176,13 @@ export function resolveProfiledActionsSettingsV1(settings: ActionsSettingsV1, ap
   Readonly<{ settings: ActionsSettingsV1; profile?: ApprovalProfileResolutionV1 }> {
   const selected = options.boundProfile !== undefined ? options.boundProfile
     : approvalProfileId ? { profile: null, resolution: { status: 'missing' as const, requestedId: approvalProfileId } } : undefined;
-  const profiled = selected?.profile ? applyApprovalProfileOverlayV1(settings, selected.profile,
-    options.approvalProfileTeamOrGroupDerived === true ? 'tighten-only' : 'full') : settings;
+  // Order (F-4): Account, the person's full profile, the Session rows, then the target owner's
+  // Ask and the retained invitation below. An inherited Team or Group profile tightens last.
+  const sessionConsents = options.context?.sessionApprovalConsents;
+  const profiled = !selected?.profile ? applySessionApprovalConsentsV1(settings, sessionConsents)
+    : options.approvalProfileTeamOrGroupDerived === true
+      ? applyApprovalProfileOverlayV1(applySessionApprovalConsentsV1(settings, sessionConsents), selected.profile, 'tighten-only')
+      : applySessionApprovalConsentsV1(applyApprovalProfileOverlayV1(settings, selected.profile, 'full'), sessionConsents);
   const effective = applyAdmittedTargetApproval(settings, profiled, options);
   const context = options.context;
   const retainedInvitationPolicy = options.actionId && isDiscussionInviteActionIdV1(options.actionId)

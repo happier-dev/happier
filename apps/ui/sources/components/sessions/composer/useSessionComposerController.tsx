@@ -4459,6 +4459,7 @@ export function useSessionComposerController({
                             forkPoint: { type: 'latest' },
                             serverId: sessionRouteServerId ?? null,
                             accountLifetime: sessionAccountLifetime,
+                            continuation: true,
                             navigateToNewSession: route => router.push(route),
                         });
                         return outcome.kind === 'opened';

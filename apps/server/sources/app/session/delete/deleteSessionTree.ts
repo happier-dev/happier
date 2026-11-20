@@ -13,6 +13,7 @@ import { resolveSessionGrantedAccountIdsInTx } from '@/app/session/access/sessio
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { publishNativeCredentialPolicyChangesInTx } from '@/app/teams/credentials/nativePolicyChanges';
+import { deleteSessionApprovalConsentsInTx } from '@/app/artifacts/sessionApprovalConsentWriteAdmission';
 
 export class SessionDeleteConditionLostError extends Error {
     constructor() {
@@ -134,6 +135,8 @@ export async function deleteSessionTree(
         sessionId: params.sessionId,
     });
     await invalidateSessionManagerForSessionDeleteInTx(tx, { sessionId: params.sessionId });
+    // "Allow for this Session" ends with its Session.
+    await deleteSessionApprovalConsentsInTx(tx, { sessionId: params.sessionId });
 
     const usageResources = await tx.usageEvent.groupBy({
         by: ['teamCredentialResourceId'], _min: { observedAt: true }, _max: { observedAt: true },

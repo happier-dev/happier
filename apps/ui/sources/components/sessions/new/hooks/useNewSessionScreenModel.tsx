@@ -571,6 +571,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         draftServerId: draftServerIdParam,
         draftAccountId: draftAccountIdParam,
         sectionId: sectionIdParam,
+        continuation: continuationParam,
     } = useNewSessionHostParams<{
         prompt?: string;
         dataId?: string;
@@ -593,6 +594,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         draftServerId?: string;
         draftAccountId?: string;
         sectionId?: string | string[];
+        continuation?: string;
     }>();
     const activeDraftScope = useActiveServerAccountScope();
     const requestedDraftScopeResolution = useServerCredentialAccountScopeResolution(draftServerIdParam);
@@ -4197,6 +4199,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         onLaunchApprovalPending: launchApproval.request,
         authoringCommitPending: confirmExperimentalProviderModel.pending,
         sourceContext: sourceContextState.sourceContext,
+        continuationSourceSessionId: continuationParam === '1' ? sourceContextState.sourceContext?.sourceSessionId ?? null : null,
         temporaryComputerLaunch: launchOnTemporaryComputer,
     });
     const {

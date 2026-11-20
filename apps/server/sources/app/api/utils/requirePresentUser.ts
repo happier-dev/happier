@@ -21,6 +21,16 @@ type AuthenticatedRouteReply = Readonly<{
 }>;
 
 /**
+ * A person-class credential: an Account (app) or terminal (CLI login) credential. Scoped
+ * credentials are never a person: API tokens, Account Directory credentials (identity
+ * operations only), ephemeral Session runners, and missing or unknown provenance.
+ * The route guard below and the Session consent write gate share this one decision.
+ */
+export function isPresentUserAuthTokenKind(authTokenKind: unknown): boolean {
+    return authTokenKind === "account" || authTokenKind === "terminal";
+}
+
+/**
  * Admits only a person-class credential: an Account (app) or terminal (CLI
  * login) credential, whatever its per-invocation authority. An
  * `account_automation` authority ceiling attributes an agent- or
@@ -32,9 +42,6 @@ export async function requirePresentUser(
     request: AuthenticatedRouteRequest,
     reply: AuthenticatedRouteReply,
 ): Promise<unknown> {
-    // Scoped credentials are never a person: API tokens, Account Directory
-    // credentials (identity operations only), ephemeral Session runners, and
-    // missing or unknown provenance all fail closed.
-    if (request.authTokenKind === "account" || request.authTokenKind === "terminal") return undefined;
+    if (isPresentUserAuthTokenKind(request.authTokenKind)) return undefined;
     return reply.code(403).send({ error: PRESENT_USER_REQUIRED_ERROR });
 }

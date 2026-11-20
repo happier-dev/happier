@@ -16,6 +16,7 @@ export const PROMPT_BUNDLE_ARTIFACT_KIND_V2 = 'prompt_bundle.v2';
 export const WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 = 'workflow-definition.v1';
 export const THEME_PROFILE_ARTIFACT_KIND_V1 = 'theme_profile.v1';
 export const APPROVAL_PROFILE_ARTIFACT_KIND_V1 = 'approval-profile.v1';
+export { SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1 } from '../approvals/approvalArtifactKindV1.js';
 export const REVIEW_ARTIFACT_KIND_V1 = 'review.v1';
 
 export type ArtifactContentDeliveryPolicyV1 = Readonly<{

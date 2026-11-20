@@ -39,6 +39,8 @@ function memoryDecisionHttpFailure(error: string) {
 
 export async function createArtifactHttpMutation(userId: string, input: ArtifactCreateHttpInput, authentication?: SessionAccessAuthentication,
     mutationGuard?: ArtifactMutationTransactionGuard,
+    /** The request's verified credential kind (never request input). */
+    writerAuthTokenKind?: unknown,
 ) {
         const { id, header, body, dataEncryptionKey, blob } = input;
         let createSucceeded = false;
@@ -59,7 +61,7 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
                 provenance: input.provenance == null ? undefined : privacyKit.decodeBase64(input.provenance),
                 provenanceDataEncryptionKey: input.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(input.provenanceDataEncryptionKey),
                 blob,
-                memoryDecisionSource: input.memoryDecisionSource, authentication,
+                memoryDecisionSource: input.memoryDecisionSource, authentication, writerAuthTokenKind,
             });
 
             if (!result.ok) {
@@ -110,6 +112,8 @@ export async function createArtifactHttpMutation(userId: string, input: Artifact
 
 export async function updateArtifactHttpMutation(userId: string, artifactId: string, input: ArtifactUpdateHttpInput, authentication?: SessionAccessAuthentication,
     mutationGuard?: ArtifactMutationTransactionGuard,
+    /** The request's verified credential kind (never request input). */
+    writerAuthTokenKind?: unknown,
 ) {
         const id = artifactId;
         const { header, expectedHeaderVersion, body, expectedBodyVersion, blob } = input;
@@ -154,7 +158,7 @@ export async function updateArtifactHttpMutation(userId: string, artifactId: str
                 provenance: input.provenance == null ? undefined : privacyKit.decodeBase64(input.provenance),
                 provenanceDataEncryptionKey: input.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(input.provenanceDataEncryptionKey),
                 blob,
-                memoryDecisionSource: input.memoryDecisionSource, authentication,
+                memoryDecisionSource: input.memoryDecisionSource, authentication, writerAuthTokenKind,
             });
 
             if (!result.ok) {

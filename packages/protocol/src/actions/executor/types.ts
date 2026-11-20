@@ -1173,6 +1173,11 @@ export type ActionExecutorContext = Readonly<{
   approvalProfile?: import('../approvalProfiles.js').BoundApprovalProfileV1 | null;
   /** Creation provenance of the inherited profile; private host context, never authored Action input. */
   approvalProfileTeamOrGroupDerived?: boolean;
+  /**
+   * The calling Session's own "allow for this Session" rows, bound once by the executor at
+   * admission from `readSessionApprovalConsents`. Any caller-supplied value is replaced.
+   */
+  sessionApprovalConsents?: import('../sessionApprovalConsentsV1.js').BoundSessionApprovalConsentsV1 | null;
   /** Host-derived selection change from an admitted Workflow origin; never authored Action input. */
   approvalProfileChange?: boolean;
   /** Incumbent row opened by the trigger mutation owner at this invocation's admission. */
@@ -1535,6 +1540,11 @@ export type ActionExecutorDeps = Readonly<{
     approvalProfileId: string | null;
     approvalProfileTeamOrGroupDerived: boolean;
   }> | ActionExecuteFailure>;
+  /**
+   * The caller Session's consent rows: only for a host-stamped Session caller that is this host's
+   * bound Session, from the same Account. Null applies none (the normal Ask).
+   */
+  readSessionApprovalConsents?: (context: ActionExecutorContext) => Promise<import('../sessionApprovalConsentsV1.js').BoundSessionApprovalConsentsV1 | null>;
   /** Catalog owner may hydrate on cold demand; warm admission performs one held lookup. */
   readApprovalProfile?: (id: string, context: ActionExecutorContext) => import('../approvalProfiles.js').BoundApprovalProfileV1
     | Promise<import('../approvalProfiles.js').BoundApprovalProfileV1>;

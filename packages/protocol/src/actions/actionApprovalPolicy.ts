@@ -24,6 +24,7 @@ import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } 
 import { readExplicitActionApprovalPreferenceFromSettingsV1 } from './actionApprovalPreference.js';
 import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from './specs/machine/accessActionIdsV1.js';
+import { isApprovalRuleChangeActionId } from './actionPolicyActionIds.js';
 export { isSharedRequesterActionV1 } from './actionRequestAttributionV1.js';
 export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
@@ -81,7 +82,7 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   approvalScope?: ActionApprovalPolicyScopeV1;
   /** Already admitted by the target owner; identity and scope come from this invocation. */
   targetApproval?: Pick<ActionTargetApprovalV1, 'databaseAgentLevel'>;
-  context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfile' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'workflowTriggerMutationAdmission' | 'actionsSettings'> | null;
+  context?: ApprovalInvocationContext & Pick<ActionExecutorContext, 'bypassApprovals' | 'isPluginSettingsIntentCurrent' | 'machineServiceLogsResource' | 'approvalProfileId' | 'approvalProfile' | 'approvalProfileTeamOrGroupDerived' | 'approvalProfileChange' | 'workflowTriggerMutationAdmission' | 'actionsSettings' | 'sessionApprovalConsents'> | null;
   requiredByPolicy?: boolean;
   /** Host fact: the receiving signed root owns this invocation's Ask, so the local host creates none. */
   approvalOwner?: 'receiver' | 'local';
@@ -344,7 +345,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const policyActionId = args.profileActionId ?? args.actionId;
   // The caller's approval profile replaces the Account rows of the Actions it names. Everything
   // below decides once on the merged settings, with the same floors and person-class defaults.
-  const profiled = args.settings || args.context?.approvalProfile?.profile
+  const profiled = args.settings || args.context?.approvalProfile?.profile || args.context?.sessionApprovalConsents?.rows.length
     ? resolveProfiledActionsSettingsV1(args.settings ?? { v: 1, actions: {} }, args.context?.approvalProfileId, {
     actionId: policyActionId,
     boundProfile: args.context?.approvalProfile,
@@ -353,7 +354,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     ...(args.targetApproval ? { targetApproval: { actionId: policyActionId,
       databaseAgentLevel: args.targetApproval.databaseAgentLevel, approvalScope: args.approvalScope } } : {}),
   }) : undefined;
-  const settings = profiled?.settings ?? args.settings;
+  // A change to approval rules is decided on the person's Account settings only, like profile
+  // control below and approval decisions: no profile or Session row can waive it (owner Q6).
+  const settings = isApprovalRuleChangeActionId(args.actionId) ? args.settings : profiled?.settings ?? args.settings;
   const profile = profiled?.profile ?? (args.context?.approvalProfileId
     ? { status: 'missing' as const, requestedId: args.context.approvalProfileId } : undefined);
   const directReviewInvocation = isOwnUiInvocation(args.actionId, args.context)

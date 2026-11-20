@@ -35,6 +35,18 @@ describe('openNewSessionSourceContextNavigation', () => {
         expect(peekTempData(route.params.dataId)).toEqual({ sourceContext: {
             v: 1, kind: 'session_replay', sourceSessionId: session.id, forkPoint: { type: 'latest' },
         }, sourceContextServerId: scope.serverId });
+        // Fork and other source-context entries do not move "allow for this Session" rows.
+        expect(route.params.continuation).toBeUndefined();
+    });
+    it('marks only Continue after a failed resume, so its Session approval rows move to the child', async () => {
+        const session = createSessionFixture({ id: 'continued-session', serverId: scope.serverId,
+            metadata: { path: '/repo', host: 'dev', machineId: 'machine-a', flavor: 'codex' } });
+        storage.getState().applySessions([session]);
+        const navigate = vi.fn();
+        expect((await openNewSessionSourceContextNavigation({ sourceSessionId: session.id, forkPoint: { type: 'latest' },
+            serverId: scope.serverId, createDraftId: () => 'continue-draft', continuation: true, navigateToNewSession: navigate })).kind)
+            .toBe('opened');
+        expect(navigate.mock.calls[0]![0].params).toMatchObject({ draftId: 'continue-draft', continuation: '1' });
     });
     it('refuses a retired source Account without opening a draft', async () => {
         const navigate = vi.fn();

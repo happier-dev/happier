@@ -6,7 +6,7 @@ import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, PROMPT_DOC_ARTIFACT_KIND_V2, PROMPT_
   WORKFLOW_DEFINITION_ARTIFACT_KIND_V1, THEME_PROFILE_ARTIFACT_KIND_V1, getArtifactContentDeliveryPolicyV1,
   type ArtifactContentDeliveryPolicyV1 } from './artifactKindV1.js';
 import { isArtifactHtmlHeaderV1 } from './artifactHtmlV1.js';
-import { APPROVAL_ARTIFACT_KINDS_V1 } from '../approvals/approvalArtifactKindV1.js';
+import { APPROVAL_ARTIFACT_KINDS_V1, SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1 } from '../approvals/approvalArtifactKindV1.js';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
 import { WIDGET_SURFACE_ARTIFACT_KIND_V1, readWidgetSurfaceArtifactV1 } from '../widgets/widgetSurfaceArtifactV1.js';
 import { HOME_HUB_ARTIFACT_KIND_V1 } from '../home/homeHubArtifactV1.js';
@@ -222,6 +222,11 @@ const kindPolicies: readonly Readonly<Omit<ArtifactKindPolicyV1, keyof ArtifactC
     { adapter: widgetDefinitionArtifactSharingAdapterV1, useKind: 'widget' as const },
   ].map(policy => ({ ...documentPolicy, ...policy, kind: policy.adapter.kind, requiresTextBody: true })),
   ...Object.values(APPROVAL_ARTIFACT_KINDS_V1).map(kind => ({ ...privatePolicy, kind, useKind: 'approval' as const, requiresTextBody: true })),
+  // A Session's own approval rows: no share, recipient or public link (F-3).
+  { ...privatePolicy, kind: SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1, useKind: 'open', requiresTextBody: true },
+  { ...privatePolicy, kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1,
+    get adapter() { return approvalProfileArtifactSharingAdapterV1; },
+    peopleSharingAllowed: true, useKind: 'approval_profile', requiresTextBody: true },
   { ...documentPolicy, kind: botTemplateArtifactSharingAdapterV1.kind, adapter: botTemplateArtifactSharingAdapterV1,
     useKind: 'open', requiresTextBody: true, browserListed: false, addressedReadAllowed: false, publicLinkAllowed: false, signedInLinkAllowed: true, grantInspection: 'owner_only' },
   { ...documentPolicy, kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, adapter: widgetSurfaceArtifactSharingAdapterV1, useKind: 'open', requiresTextBody: false,

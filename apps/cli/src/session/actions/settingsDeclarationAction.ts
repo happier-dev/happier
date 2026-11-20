@@ -5,6 +5,7 @@ import { ActionPolicyInputSchemas, isActionPolicyActionId, type ActionPolicySetR
 import { readActionAudiencePolicy, applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { executeSessionApprovalConsentPolicyV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentPolicyV1';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { refreshActiveApprovalProfileCatalog, publishApprovalProfileArtifactChange } from '@/settings/profiles/hydrateProfileCatalog';
 import { readPortableDomainSettingBindingV1,
@@ -78,8 +79,15 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
       if (lacksCurrentAccountMaterial(context, params.credentials)) return refuse('requester_account_material_unavailable');
       if (!params.credentials) return refuse('not_authenticated');
       if (params.isCredentialCurrent && !await params.isCredentialCurrent()) return refuse('credential_scope_retired');
+      // A Session's own rows live in its consent record; the server admits only the owning Account's writes.
+      const policyRequest = ActionPolicyInputSchemas[actionId].parse(input);
+      if ('session' in policyRequest || 'sessionConsentsMove' in policyRequest) {
+        return await executeSessionApprovalConsentPolicyV1(createCredentialedAccountArtifactStore(params.credentials),
+          actionId, policyRequest, context.signal) ?? refuse('invalid_parameters');
+      }
       if (actionId === 'actions.policy.get') {
         const requested = ActionPolicyInputSchemas[actionId].parse(input);
+        if ('session' in requested) return refuse('invalid_parameters');
         if ('profiles' in requested) return { profiles: await refreshActiveApprovalProfileCatalog({ credentials: params.credentials,
           operationContext: params.savedSecretOperationContext, signal: context.signal }) };
         const { bootstrapAccountSettingsContext } = await import("@/settings/accountSettings/bootstrapAccountSettingsContext");
@@ -91,6 +99,7 @@ export function createCliSettingsDeclarationAction(params: Readonly<{
       }
       const requested = actionId === 'actions.policy.set' ? ActionPolicyInputSchemas[actionId].parse(input)
         : { ...ActionPolicyInputSchemas[actionId].parse(input), mode: 'default' as const };
+      if ('session' in requested || 'sessionConsentsMove' in requested) return refuse('invalid_parameters');
       let profileResult: ActionPolicySetResult | undefined;
       if ('profileChange' in requested && requested.profileChange.kind !== 'machine_default') {
         const changed = await executeApprovalProfileArtifactChangeV1(createCredentialedAccountArtifactStore(params.credentials),

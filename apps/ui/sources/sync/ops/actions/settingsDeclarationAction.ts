@@ -2,6 +2,8 @@ import { z } from 'zod/mini';
 import { ActionPolicyInputSchemas, isActionPolicyActionId, readActionAudiencePolicy,
     applyActionPolicyMutation, type ActionPolicyActionId, type ActionPolicySetResult } from '@happier-dev/protocol/actions';
 import type { ReadableApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfiles';
+import type { SessionApprovalConsentsStoreV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentsV1';
+import { executeSessionApprovalConsentPolicyV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentPolicyV1';
 import type { ApprovalProfileArtifactChangeV1, executeApprovalProfileArtifactChangeV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SettingsDeclarationActionInputSchemasV1, SettingsDeclarationActionOutputSchemasV1, SettingsDeclarationValueV1Schema, SettingsDeclarationMutationReversalV1Schema, SettingsDeclarationCapturedMutationV1Schema, type SettingsDeclarationActionIdV1, type SettingsDeclarationDescriptorV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
@@ -69,6 +71,8 @@ type SettingsDeclarationOwner = Readonly<{
     isCurrent?: () => boolean;
     mutationServices?: SettingsMutationServices;
     readAccountSettings: () => Promise<Settings>;
+    /** The Account Artifact transport for a Session's own approval rows ("allow for this Session"). */
+    sessionApprovalConsents?: SessionApprovalConsentsStoreV1;
     approvalProfiles?: Readonly<{
         list: () => Promise<readonly ReadableApprovalProfileV1[]>;
         change: (change: ApprovalProfileArtifactChangeV1, signal?: AbortSignal) => ReturnType<typeof executeApprovalProfileArtifactChangeV1>;
@@ -192,8 +196,16 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
         const currentOwner = () => !context?.signal?.aborted && owner.isCurrent?.() !== false;
         if (isActionPolicyActionId(actionId)) {
             if (!currentOwner()) return refuse('setting_not_bound');
+            const policyRequest = ActionPolicyInputSchemas[actionId].parse(input);
+            if ('session' in policyRequest || 'sessionConsentsMove' in policyRequest) {
+                if (!owner.sessionApprovalConsents) return refuse('setting_not_bound');
+                const sessionPolicy = await executeSessionApprovalConsentPolicyV1(owner.sessionApprovalConsents, actionId,
+                    policyRequest, context?.signal);
+                return currentOwner() ? sessionPolicy ?? refuse('invalid_parameters') : refuse('setting_not_bound');
+            }
             if (actionId === 'actions.policy.get') {
                 const requested = ActionPolicyInputSchemas[actionId].parse(input);
+                if ('session' in requested) return refuse('invalid_parameters');
                 if ('profiles' in requested) {
                     if (!owner.approvalProfiles) return refuse('setting_not_bound');
                     const profiles = await owner.approvalProfiles.list();
@@ -206,6 +218,7 @@ export function createSettingsDeclarationAction(owner: SettingsDeclarationOwner)
             }
             const requested = actionId === 'actions.policy.set' ? ActionPolicyInputSchemas[actionId].parse(input)
                 : { ...ActionPolicyInputSchemas[actionId].parse(input), mode: 'default' as const };
+            if ('session' in requested || 'sessionConsentsMove' in requested) return refuse('invalid_parameters');
             if ('profileChange' in requested && requested.profileChange.kind !== 'machine_default') {
                 if (!owner.approvalProfiles) return refuse('setting_not_bound');
                 const changed = await owner.approvalProfiles.change(requested.profileChange, context?.signal);

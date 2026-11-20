@@ -85,6 +85,7 @@ import {
 } from '@/utils/errors/daemonUnavailableAlert';
 import { captureExceptionIfEnabled } from '@/utils/system/sentry';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { moveSessionApprovalConsentsOnContinue } from '@/sync/ops/actions/moveSessionApprovalConsentsOnContinue';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useNewSessionEmbeddedHost, useNewSessionHostCreationProfile, useNewSessionHostSpawnExecutor } from '@/components/sessions/new/navigation/newSessionHost';
@@ -534,6 +535,8 @@ export function useCreateNewSession(params: Readonly<{
      * The UI never retries without it.
      */
     sourceContext?: SessionSpawnSourceContextV1 | null;
+    /** Continue after a failed resume: the source Session whose approval rows move to the child. */
+    continuationSourceSessionId?: string | null;
     /** Canonical Temporary-computer activation owner. Automation never reaches this callback. */
     temporaryComputerLaunch?: (
         submission: NonNullable<HandleCreateSessionOptions['temporaryComputerSubmission']>,
@@ -2261,6 +2264,11 @@ export function useCreateNewSession(params: Readonly<{
                 }
 
                 createdSessionId = actionResult.result.sessionId;
+                if (current.continuationSourceSessionId) {
+                    fireAndForget(moveSessionApprovalConsentsOnContinue({ scope: executionAccountScope,
+                        fromSessionId: current.continuationSourceSessionId, toSessionId: createdSessionId }),
+                        { tag: 'newSession.continuation.sessionApprovalConsents' });
+                }
                 const agentUpdate = actionResult.result.agentUpdate ?? managedAgentUpdate;
                 if (agentUpdate) {
                     presentMachineAgentUpdateNotice({

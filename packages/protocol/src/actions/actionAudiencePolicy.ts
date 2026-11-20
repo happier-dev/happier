@@ -79,6 +79,8 @@ export function applyActionPolicyMutation(settings: ActionsSettingsV1, input: Ac
   settings: ActionsSettingsV1;
   result: ActionPolicySetResult;
 }> {
+  // Session rows live in their Session's consent record, never in Account settings.
+  if ('session' in input || 'sessionConsentsMove' in input) throw new Error('session_policy_owner_required');
   if ('profileChange' in input) {
     const normalized = normalizeActionsSettingsV1(settings);
     const change = input.profileChange;

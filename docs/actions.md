@@ -10107,6 +10107,98 @@ Fork and Continue preserve an omitted choice, including the source Session's
 inherited-profile provenance, in unreleased 0.3 source. Explicitly selecting the
 same profile accepts its full overlay.
 
+#### "Allow for this Session" (0.3 development source)
+
+In unreleased 0.3 source, a person can answer an Action's Ask for one Session with
+two more rungs on the same approval-preference ladder. The first allows this
+Action in this Session; the second allows this Action on one Machine or
+Environment in this Session. The Session's rows live in one private Account
+Artifact of kind `approval_session_consents.v1`, bound to the Session by the
+server-gated `approvalSessionId`. The body is `{ v, kind, sessionId, rows }`, and
+each row is `{ actionId, audience, scope?, mode: 'allowed' | 'ask_first' }`.
+`actionId` is the policy identity (`profileActionId ?? actionId`), never a carrier
+such as `action.invoke`. Nothing is stored per remembered call, and an approval
+record is never written for one.
+
+The record owners are Protocol `actions/sessionApprovalConsentsV1.ts` (record
+reader and composer) and `actions/sessionApprovalConsentPolicyV1.ts` (writers and
+eligibility). The Artifact kind has the private kind policy: no people sharing,
+recipient or public link.
+
+**Writers.** `createArtifact`/`updateArtifact`
+(`apps/server/sources/app/artifacts/sessionApprovalConsentWriteAdmission.ts`)
+admit a write whenever the current or next stored kind is the consent kind. That
+covers create, re-kind, re-bind, header and body writes. The writer's verified
+credential must be person-class, `account` or `terminal`: the same predicate as
+`requirePresentUser` and the Account rung. The record may bind only to a Session
+that the writer's Account owns. API tokens, Account Directory credentials and
+ephemeral runners are refused, and so is binding to another Account's Session.
+HTTP routes, the query-hint batch and the socket `artifact-create` /
+`artifact-update` handlers pass the credential kind. Internal writers that pass
+none are refused for this kind. Deleting the Session deletes its record.
+
+**Composition.** `resolveProfiledActionsSettingsV1` applies the layers in this
+order: Account settings, the person's full profile, the Session rows, the target
+owner's Ask (database `readWriteAsk`), and the retained Workflow invitation. An
+inherited Team or Group profile is applied tighten-only after the Session rows.
+A Session Action row therefore replaces the Account or profile answer for that
+Action and audience, including their narrower Machine or Environment rows (Q1).
+A Session resource row is the most specific rung. A target owner's Ask, and an
+inherited Team Ask on the Action rung, still win.
+
+Two parts of that last claim depend on Coordination. The Team-derived bit is
+read from Session metadata, which the Machine side can rewrite (design F-5).
+Beating a member's own exact-scope Allowed is Coordination's pending precedence
+change.
+
+**Admission.** The executor binds `context.sessionApprovalConsents` once per
+admission from `deps.readSessionApprovalConsents` and replaces any
+caller-supplied value. On a CLI Session host, rows apply only when
+`actionCaller.kind === 'session'` names that host's own bound Session and the
+invocation Account equals the credential's Account. `defaultSessionId`, an
+origin or an input `sessionId` never selects rows. The owner's Session process
+holds the rows in memory, so an admission does one lookup and no network read. A
+consent Artifact change on the Account feed refreshes the held rows, and the
+next admission waits for that refresh. A requester's Session on another person's
+Machine reads its rows at each admission. A read failure applies no rows, so
+the ordinary Ask returns.
+
+The receiving Machine of a signed cross-Machine call runs its daemon-level
+executor, whose bound Session is not the caller's. Rows therefore never apply
+there, and the receiver's own Ask stands. A receiver-owned Ask is only used for
+the original CLI finite path, which has no Session caller.
+
+**Eligibility (Q6).** Some Actions are decided elsewhere and are never eligible:
+approval controls and decisions, the per-plugin capture waiver, and approval-rule
+changes (`actions.policy.set`, `actions.policy.reset`,
+`session.approval_profile.set`). The router decides an approval-rule change's
+Ask on the person's raw Account settings, so no profile or Session row waives
+it. An explicit Account waiver stays the person's own choice. Writers refuse an
+ineligible row with `session_approval_consent_unsupported`.
+
+**Policy Actions.** These Actions take a `session` target:
+
+- `actions.policy.get { session: { sessionId } }` lists the rows.
+- `actions.policy.get { actionId, audience, session, scope? }` returns that row's mode.
+- `actions.policy.set { actionId, audience, session, scope?, mode }` sets a row:
+  `allowed` or `ask_first` saves it and `default` removes it.
+- `actions.policy.reset { actionId, audience, session, scope? }` removes it.
+- `actions.policy.set { sessionConsentsMove: { fromSessionId, toSessionId } }` moves the rows.
+
+`get` is `account_automation`, so an agent may list and read rows. An agent's
+`set` reaches the ordinary Ask, which is decided on Account settings. After the
+person approves, the replay writes with the host's person-class credential,
+which the gate admits for the Account's own Session. A person's own write from
+their app is direct and has no second confirmation. People a Session is shared
+with cannot add rows in this build. The terminal CLI keeps its existing danger
+Ask for policy changes.
+
+**Lifetime.** Resume and an Agent transition stay on the same Session record, so
+the rows stay. A Continue after a failed resume moves the record (it is never
+copied) through `sessionConsentsMove`. Fork, agent-initiated spawns, Workflows and
+the legacy `session.continueWithReplay` ingress carry none.
+
+
 `resolveActionApprovalRouting` applies the selected profile once, at the top:
 `applyApprovalProfileOverlayV1` replaces the Account row and waiver list of each
 Action the profile names for a member-chosen profile. For a captured Team/Group

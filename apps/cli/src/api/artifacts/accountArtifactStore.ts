@@ -47,7 +47,7 @@ import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabl
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { readApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/board/transcriptReference';
-import { deriveApprovalArtifactQueryHintsV1, isApprovalArtifactKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
+import { artifactKindCarriesApprovalSessionHintV1, deriveApprovalArtifactQueryHintsV1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { projectTargetActionApprovalInvocationV1, TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -971,7 +971,7 @@ export function createAccountArtifactStore(params: Readonly<{
       ...(approvalInputCustody ? { approvalInputCustody } : {}),
       ...(transcriptVisualPublication ? { transcriptVisualPublication } : {}),
       body, expectedBodyVersion: input.expectedRevision.bodyVersion,
-      ...provenance.wire, ...(kind === undefined ? {} : { kind, ...(isApprovalArtifactKindV1(nextHeader.kind)
+      ...provenance.wire, ...(kind === undefined ? {} : { kind, ...(artifactKindCarriesApprovalSessionHintV1(nextHeader.kind)
         ? deriveApprovalArtifactQueryHintsV1(nextHeader) : {}) }) };
     return { ok: true, stored, blob, header, body, kind, provenance, wire, afterCommit: async () => {
       await provenance.prepareRecipients?.();
@@ -1332,7 +1332,7 @@ export function createAccountArtifactStore(params: Readonly<{
         const response = await axios.post(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(input.artifactId)}/revisions/${input.bodyVersion}/restore`,
           { expectedHeaderVersion: input.expectedRevision.headerVersion, expectedBodyVersion: input.expectedRevision.bodyVersion,
             header: codec.encode(withArtifactExcerptV1(nextHeader, retained.body)),
-            ...(kind === undefined ? {} : { kind, ...(isApprovalArtifactKindV1(nextHeader.kind)
+            ...(kind === undefined ? {} : { kind, ...(artifactKindCarriesApprovalSessionHintV1(nextHeader.kind)
               ? deriveApprovalArtifactQueryHintsV1(nextHeader) : {}) }),
             ...provenance.wire }, accessConfig(signal));
         const quota = readWriteFailure(response);
@@ -1426,7 +1426,7 @@ export function createAccountArtifactStore(params: Readonly<{
         id: artifactId, header, body, dataEncryptionKey: codec.dataEncryptionKey, ...provenance,
         ...(input.reviewMetadata ? { reviewMetadata: input.reviewMetadata } : {}),
         ...(input.idScope === undefined ? {} : { idScope: input.idScope }),
-        ...(kind === undefined ? {} : { kind, ...(isApprovalArtifactKindV1(nextHeader.kind)
+        ...(kind === undefined ? {} : { kind, ...(artifactKindCarriesApprovalSessionHintV1(nextHeader.kind)
           ? deriveApprovalArtifactQueryHintsV1(nextHeader) : {}) }),
         ...(input.memoryDecisionSource ? { memoryDecisionSource: input.memoryDecisionSource } : {}),
         ...(content.blob ? { blob: content.blob } : {}),

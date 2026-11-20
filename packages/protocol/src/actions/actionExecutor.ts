@@ -2601,6 +2601,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ctx = { ...ctx, ...reference };
       }
     }
+    if (!existingAdmission) {
+      // One host lookup per admission; a read failure applies no Session rows, so the Ask returns.
+      const sessionApprovalConsents = deps.readSessionApprovalConsents
+        ? await deps.readSessionApprovalConsents(ctx).catch(() => null) : null;
+      if (ctx.signal?.aborted) return { ok: false as const, errorCode: 'cancelled', error: 'cancelled' };
+      ctx = { ...ctx, sessionApprovalConsents };
+    }
     if (!existingAdmission && ctx.approvalProfileId && ctx.approvalProfile === undefined) {
       try {
         ctx = { ...ctx, approvalProfile: deps.readApprovalProfile

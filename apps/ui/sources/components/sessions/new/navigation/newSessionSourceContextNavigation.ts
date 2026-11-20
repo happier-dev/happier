@@ -26,6 +26,11 @@ export async function openNewSessionSourceContextNavigation(params: Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     /** Restored user text when the fork point is an editable user message. */
     restoredDraftText?: string | null;
+    /**
+     * Set only by Continue after a failed resume: the child is the same Session to the person,
+     * so its "allow for this Session" rows move to it. Fork never sets it.
+     */
+    continuation?: true;
     createDraftId?: () => string;
     navigateToNewSession: (route: NewSessionSourceContextNavigation) => void;
 }>) {
@@ -48,6 +53,7 @@ export async function openNewSessionSourceContextNavigation(params: Readonly<{
                 pathname: '/new', params: {
                     draftId, draftServerId: lifetime.scope.serverId, draftAccountId: lifetime.scope.accountId,
                     ...(dataId ? { dataId } : {}), ...(serverId ? { spawnServerId: serverId } : {}),
+                    ...(params.continuation ? { continuation: '1' } : {}),
                 },
             };
             if (!interceptNewSessionEntry(href)) params.navigateToNewSession(href);

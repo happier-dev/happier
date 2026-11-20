@@ -11,7 +11,7 @@ const policyTargetVisibleWhen = { op: 'not', predicate: { op: 'or', any: [
 export const ACTION_POLICY_SPECS = Object.freeze([
   ...(ACTION_POLICY_ACTION_IDS.map((id): PreNormalizedActionSpec => ({
     id, title: id === 'actions.policy.get' ? 'Read Action policy' : id === 'actions.policy.reset' ? 'Reset Action policy' : 'Change Action policy',
-    description: 'Read or change one exact Action policy preference. Default and reset restore inherited audience policy; unrelated preferences remain intact. Policy changes require human authority.',
+    description: 'Read or change one exact Action policy preference. Default and reset restore inherited audience policy; unrelated preferences remain intact. Policy changes require human authority. With session {sessionId}, read or change that Session\'s own "allow for this Session" rows (optionally on one Machine or Environment scope); {session} alone lists them. Approval-rule changes always ask inside a Session.',
     approval: { result: 'required' }, originalExecution: { terminalRoot: 'host' },
     ...(id !== 'actions.policy.get' ? { permissionChanging: true as const, approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
     safety: id === 'actions.policy.get' ? 'safe' : 'danger', sideEffectClass: id === 'actions.policy.get' ? 'read' : 'write',

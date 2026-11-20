@@ -170,11 +170,16 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 body: body ? { bytes: privacyKit.decodeBase64(body.data), expectedVersion: body.expectedVersion } : undefined,
                 provenance: data.provenance == null ? undefined : privacyKit.decodeBase64(data.provenance),
                 provenanceDataEncryptionKey: data.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(data.provenanceDataEncryptionKey),
+                writerAuthTokenKind: socket.data.authTokenKind,
             });
 
             if (!result.ok) {
                 if (result.error === 'quota_exceeded') {
                     callback?.({ result: 'error', error: result.error, budget: result.budget, limitBytes: result.limitBytes, usedBytes: result.usedBytes });
+                    return;
+                }
+                if (result.error === 'artifact_access_forbidden') {
+                    callback?.({ result: 'error', error: result.error });
                     return;
                 }
 
@@ -308,11 +313,16 @@ export function artifactUpdateHandler(userId: string, socket: Socket) {
                 dataEncryptionKey: privacyKit.decodeBase64(dataEncryptionKey),
                 provenance: data.provenance == null ? undefined : privacyKit.decodeBase64(data.provenance),
                 provenanceDataEncryptionKey: data.provenanceDataEncryptionKey == null ? undefined : privacyKit.decodeBase64(data.provenanceDataEncryptionKey),
+                writerAuthTokenKind: socket.data.authTokenKind,
             });
 
             if (!result.ok) {
                 if (result.error === 'quota_exceeded') {
                     callback?.({ result: 'error', error: result.error, budget: result.budget, limitBytes: result.limitBytes, usedBytes: result.usedBytes });
+                    return;
+                }
+                if (result.error === 'artifact_access_forbidden') {
+                    callback?.({ result: 'error', error: result.error });
                     return;
                 }
 

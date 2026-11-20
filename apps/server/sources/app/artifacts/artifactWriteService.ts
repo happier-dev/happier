@@ -72,6 +72,7 @@ import { readApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol
 import type { ApprovalTranscriptVisualPublicationV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { InvalidApprovalTranscriptVisualPublicationError, settleSessionTranscriptApprovalVisualPublicationInTx } from '@/app/session/sessionTranscriptApprovalVisualPublication';
 import { isDeepStrictEqual } from 'node:util';
+import { admitSessionApprovalConsentWriteInTx } from './sessionApprovalConsentWriteAdmission';
 
 type Cursor = AccountChangePublication;
 
@@ -781,6 +782,8 @@ export async function createArtifact(params: {
     provenance?: Uint8Array;
     provenanceDataEncryptionKey?: Uint8Array;
     blob?: ArtifactBlobWriteV1;
+    /** Verified credential kind of this write; Session consent records admit only a person (F-7). */
+    writerAuthTokenKind?: unknown;
 } & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext): Promise<CreateArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const artifactId = typeof params.artifactId === "string" ? params.artifactId : "";
@@ -821,7 +824,7 @@ export async function createArtifact(params: {
             provenance: params.provenance,
             provenanceDataEncryptionKey: params.provenanceDataEncryptionKey,
             memoryDecisionSource: params.memoryDecisionSource, authentication: params.authentication,
-            blob: params.blob, preparedBlob,
+            blob: params.blob, preparedBlob, writerAuthTokenKind: params.writerAuthTokenKind,
         }), { transactionClass: "artifact-create" });
         admitted = result.ok && result.didWrite;
         return result;
@@ -868,6 +871,7 @@ type CreateArtifactTxParams = {
      * while composing its classification in this same transaction.
      */
     markChanged?: (artifactId: string) => Promise<Cursor>;
+    writerAuthTokenKind?: unknown;
 } & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext;
 
 /** Creation and a rolled-back concurrent insert use one idempotent projection. */
@@ -1027,6 +1031,8 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     const plain = isPlainArtifactDataKeyBytes(params.dataEncryptionKey);
     const kind = artifactWriteKind(params.header, params.dataEncryptionKey, params.kind, params);
     if (!kind) return { ok: false, error: 'invalid-params' };
+    if (!await admitSessionApprovalConsentWriteInTx(tx, { actorAccountId: params.actorUserId, ownerAccountId: params.actorUserId,
+        writerAuthTokenKind: params.writerAuthTokenKind, current: null, next: kind })) return { ok: false, error: 'artifact_access_forbidden' };
     const isReview = decodeArtifactKindV1(kind.kind).kindHint === REVIEW_ARTIFACT_KIND_V1;
     if (isReview !== (params.reviewMetadata !== undefined) || (params.reviewMetadata && params.reviewMetadata.state !== 'running')) return { ok: false, error: 'invalid-params' };
     if (params.provenanceDataEncryptionKey && !params.provenance) return { ok: false, error: 'invalid-params' };
@@ -1194,6 +1200,8 @@ export async function updateArtifact(params: {
     provenance?: Uint8Array;
     provenanceDataEncryptionKey?: Uint8Array;
     blob?: ArtifactBlobWriteV1 | null;
+    /** Verified credential kind of this write; Session consent records admit only a person (F-7). */
+    writerAuthTokenKind?: unknown;
 } & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext): Promise<UpdateArtifactResult> {
     const actorUserId = typeof params.actorUserId === "string" ? params.actorUserId : "";
     const artifactId = typeof params.artifactId === "string" ? params.artifactId : "";
@@ -1257,7 +1265,7 @@ export async function updateArtifact(params: {
             provenance: params.provenance,
             provenanceDataEncryptionKey: params.provenanceDataEncryptionKey,
             memoryDecisionSource: params.memoryDecisionSource, authentication: params.authentication,
-            blob: params.blob, preparedBlob,
+            blob: params.blob, preparedBlob, writerAuthTokenKind: params.writerAuthTokenKind,
         }), { transactionClass: "artifact-update" });
         admitted = result.ok && result.didWrite;
         if (result.ok && (header || body)) await cleanupArtifactOrphanBlobsAfterCommit(artifactId);
@@ -1291,6 +1299,7 @@ export async function updateArtifactTx(
         blob?: ArtifactBlobWriteV1 | null;
         preparedBlob?: PreparedArtifactBlobWrite;
         restoredBlobId?: string | null;
+        writerAuthTokenKind?: unknown;
     } & Partial<ApprovalArtifactQueryHintsV1> & ArtifactMemoryDecisionWriteContext,
 ): Promise<UpdateArtifactResult> {
     const hasQueryHints = params.kind !== undefined || params.approvalState !== undefined || params.approvalSessionId !== undefined;
@@ -1417,6 +1426,10 @@ export async function updateArtifactTx(
             approvalSessionId: params.approvalSessionId === undefined ? current.approvalSessionId : params.approvalSessionId,
         }) : undefined;
     if (nextKind === null) return { ok: false, error: 'invalid-params' };
+    if (!await admitSessionApprovalConsentWriteInTx(tx, { actorAccountId: params.actorUserId, ownerAccountId,
+        writerAuthTokenKind: params.writerAuthTokenKind, current, next: nextKind ?? current })) {
+        return { ok: false, error: 'artifact_access_forbidden' };
+    }
     if (params.reviewMetadata && (!params.header || !params.body || decodeArtifactKindV1(nextKind?.kind ?? current.kind).kindHint !== REVIEW_ARTIFACT_KIND_V1)) return { ok: false, error: 'invalid-params' };
     const legacySocketPublication = getArtifactContentDeliveryPolicyV1(
         decodeArtifactKindV1(nextKind?.kind ?? current.kind).kindHint).legacySocketPublication;
