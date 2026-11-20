@@ -273,6 +273,7 @@ const ALLOW_SAME_STRING_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<stri
     'machineDetailPage.placeholderTitle': new Set(['fr']),
     'machinePools.machinesSection': new Set(['fr']),
     'machinePools.descriptionTitle': new Set(['fr']),
+    'machinePools.teamAudience': new Set(['de', 'it']),
     'profilesPage.descriptionTitle': new Set(['fr']),
     'automationPages.run.statusTitle': new Set(['pt', 'de']),
     'detailPages.person.placeholderTitle': new Set(['de']),

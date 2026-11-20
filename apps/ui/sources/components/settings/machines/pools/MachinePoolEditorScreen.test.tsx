@@ -316,7 +316,7 @@ describe('MachinePoolEditorScreen', () => {
                 content: { t: 'plain', v: accountSettings }, version: accountSettingsVersion,
             } }],
         });
-        boundaries.pools = null;
+        boundaries.pools = [];
         boundaries.machines = [];
         boundaries.memberEligibility = null;
         boundaries.memberEligibilityUnavailable = false;
@@ -340,9 +340,8 @@ describe('MachinePoolEditorScreen', () => {
         Reflect.set(sync, 'credentials', { token: createAccountTokenForTests('account-a') });
         boundaries.request.mockReset().mockImplementation((url: string, init?: RequestInit) => actionResponse(url, init));
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('account-a') });
-        vi.stubGlobal('fetch', vi.fn(async () => Response.json(featureResponse)));
-        await getServerFeaturesSnapshot({ serverId: boundaries.serverId, force: true });
         setRuntimeFetch((url, init) => boundaries.request(String(url), init));
+        await getServerFeaturesSnapshot({ serverId: boundaries.serverId, force: true });
         await act(async () => publishBoundaryState());
     });
 
