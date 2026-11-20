@@ -128,6 +128,7 @@ import { t } from '@/text';
 import { usePaneHeaderSlotBinding, usePaneHeaderSlotContent } from '@/components/appShell/panes/paneHeaderSlot';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { getPreferredLanguage } from '@/text';
+import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 
 const stylesheet = StyleSheet.create((theme) => ({
     // No box of its own: the pane or the Details column owns separation, the page is the hero.
@@ -676,8 +677,13 @@ export function BrowserShell(props: Readonly<{
     // UB-6: browser chrome shortcuts, owned by the app's one keyboard-command registry. Each is
     // registered only while the active engine can fulfil it, so a key is never swallowed by a
     // control the toolbar itself hides.
+    // The Browser's own root: an Escape from inside it (the page or its chrome) is the Browser's to stop a load.
+    const browserRootRef = React.useRef<View>(null);
+    const browserContainsTarget = React.useCallback(
+        (target: unknown) => isFindSurfaceTarget(browserRootRef.current as unknown as Element | null, target), []);
     const browserShortcutLabels = useBrowserKeyboardShortcuts({
         model: toolbar,
+        containsTarget: browserContainsTarget,
         onFocusAddress: () => urlFieldRef.current?.focus(),
         onBack: () => dispatchViewCommand('goBack'),
         onForward: () => dispatchViewCommand('goForward'),
@@ -857,7 +863,7 @@ export function BrowserShell(props: Readonly<{
     return (
         <GlassLivePictureBackdropContext.Provider value>
         <SurfaceStateSizeProvider size={phone ? 'phone' : 'details'}>
-        <View testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
+        <View ref={browserRootRef} testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
             {annotatorSession ? <BrowserAnnotatorMount session={annotatorSession} onAnnotator={setAnnotator} /> : null}
             {annotating ? (
                 <View

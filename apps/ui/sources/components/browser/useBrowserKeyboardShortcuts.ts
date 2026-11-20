@@ -32,6 +32,8 @@ export type BrowserKeyboardShortcutLabels = Partial<Record<BrowserKeyboardComman
  */
 export function useBrowserKeyboardShortcuts(input: Readonly<{
     model: BrowserToolbarModel;
+    /** Whether a key event came from inside this Browser (its page or chrome): only then does Escape stop a load. */
+    containsTarget: (target: unknown) => boolean;
     onFocusAddress: () => void;
     onBack: () => void;
     onForward: () => void;
@@ -64,15 +66,18 @@ export function useBrowserKeyboardShortcuts(input: Readonly<{
     ]);
     useKeyboardShortcutHandlers(handlers);
 
-    // Escape stops an in-flight load. Routed through the canonical escape stack rather than a
-    // keybinding so it can never double-fire with a modal, popover or pane dismissal; it sits at
-    // the lowest priority, so Escape only means "stop loading" when nothing else claims it, and it
-    // is registered only while a load is actually stoppable.
+    // Escape stops an in-flight load while the Browser has focus (owner 2026-11-20). Routed through the
+    // canonical escape stack rather than a keybinding so it never double-fires with a dismissal: dialogs and
+    // popovers still take Escape first, then this layer, then the pane and Session navigation, so the next
+    // Escape closes the pane as before. It is registered only while a load is stoppable, and an Escape from
+    // outside the Browser passes to the layers below.
+    const containsTarget = input.containsTarget;
     useEscapeLayer({
         priority: ESCAPE_LAYER_PRIORITIES.browserStopLoading,
         enabled: model.canStop,
-        onEscape: () => {
+        onEscape: (event) => {
             if (!model.canStop) return false;
+            if (!containsTarget((event as { target?: unknown } | null)?.target)) return false;
             onStop();
             return true;
         },

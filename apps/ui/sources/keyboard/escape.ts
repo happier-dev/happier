@@ -5,18 +5,18 @@ import { restoreFocusToBestTarget, useFocusReturnFallbackRef, type FocusReturnRe
 const ESCAPE_EVENT_HANDLED_KEY = '__happierEscapeEventHandled';
 
 export const ESCAPE_LAYER_PRIORITIES = {
-    /**
-     * Stop an in-flight page load in the in-app browser. Deliberately the LOWEST layer: every
-     * overlay, popover, pane and selection state must consume Escape first, and stopping a load is
-     * only what Escape means when nothing else is claiming it.
-     */
-    browserStopLoading: 5,
     focusSessionSurface: 10,
     /** Take control of a shared computer from the Agent: only when no overlay, pane or selection claims Escape. */
     computerTakeControl: 12,
     sessionListSelection: 15,
     draftClear: 20,
     pane: 100,
+    /**
+     * Stop a loading page in the in-app browser while the Escape comes from inside that browser. It sits
+     * above its pane and Session navigation, so the first Escape stops the load and the next one closes
+     * the pane (or leaves the Session on a phone); overlays, popovers and dialogs still consume it first.
+     */
+    browserStopLoading: 150,
     overlay: 200,
     composerSuggestions: 300,
     /** Cancel a focused field's edit before an enclosing pane dismisses. */

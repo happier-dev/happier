@@ -7,6 +7,8 @@ import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ESCAPE_LAYER_PRIORITIES, EscapeLayerProvider, useEscapeLayer } from './escape';
+import { useBrowserKeyboardShortcuts } from '@/components/browser/useBrowserKeyboardShortcuts';
+import { selectBrowserToolbarModel } from '@/sync/domains/browser/shell/selectors';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -75,6 +77,48 @@ describe('useEscapeLayer', () => {
             </>));
             press();
             expect(dismissed).toEqual(['menu', 'new-dialog']);
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
+    it('stops a loading browser that has focus before its pane or Session navigation, while popovers still come first', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        const handled: string[] = [];
+        const pageRef: { current: HTMLDivElement | null } = { current: null };
+        function Browser(props: Readonly<{ loading: boolean; popover: boolean }>) {
+            useEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.focusSessionSurface, onEscape: () => { handled.push('session'); } });
+            useEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.pane, onEscape: () => { handled.push('pane'); } });
+            useEscapeLayer({ priority: ESCAPE_LAYER_PRIORITIES.popover, enabled: props.popover, onEscape: () => { handled.push('popover'); } });
+            useBrowserKeyboardShortcuts({
+                model: { ...selectBrowserToolbarModel(null), canStop: props.loading },
+                containsTarget: (target) => pageRef.current?.contains(target as Node) === true,
+                onFocusAddress() {}, onBack() {}, onForward() {}, onReload() {},
+                onStop: () => { handled.push('stop'); },
+            });
+            return <>
+                <div ref={pageRef} tabIndex={0} data-testid="page" />
+                <div tabIndex={0} data-testid="elsewhere" />
+            </>;
+        }
+        const press = (testId: string) => container.querySelector(`[data-testid="${testId}"]`)!
+            .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        try {
+            await act(async () => root.render(<Browser loading popover={false} />));
+            press('page');
+            expect(handled).toEqual(['stop']);
+            // Focus elsewhere: the load is not what this Escape is about.
+            press('elsewhere');
+            expect(handled).toEqual(['stop', 'pane']);
+            await act(async () => root.render(<Browser loading={false} popover={false} />));
+            press('page');
+            expect(handled).toEqual(['stop', 'pane', 'pane']);
+            await act(async () => root.render(<Browser loading popover />));
+            press('page');
+            expect(handled).toEqual(['stop', 'pane', 'pane', 'popover']);
         } finally {
             await act(async () => root.unmount());
             container.remove();

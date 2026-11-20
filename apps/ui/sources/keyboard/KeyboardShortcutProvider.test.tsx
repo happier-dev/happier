@@ -95,7 +95,7 @@ describe('KeyboardShortcutProvider', () => {
         let hints: BrowserKeyboardShortcutLabels = {};
         function Browser({ canGoBack }: { canGoBack: boolean }) {
             hints = useBrowserKeyboardShortcuts({
-                model: { ...selectBrowserToolbarModel(null), canGoBack },
+                model: { ...selectBrowserToolbarModel(null), canGoBack }, containsTarget: () => true,
                 onBack: back, onForward: () => {}, onFocusAddress: () => {}, onReload: () => {}, onStop: () => {},
             });
             return null;
@@ -505,7 +505,7 @@ describe('KeyboardShortcutProvider', () => {
             event.stopPropagation();
         });
         function Browser() {
-            useBrowserKeyboardShortcuts({ model: { ...selectBrowserToolbarModel(null), canNavigate: true },
+            useBrowserKeyboardShortcuts({ model: { ...selectBrowserToolbarModel(null), canNavigate: true }, containsTarget: () => true,
                 onFocusAddress: () => address.focus(), onBack() {}, onForward() {}, onReload() {}, onStop() {} });
             return null;
         }
