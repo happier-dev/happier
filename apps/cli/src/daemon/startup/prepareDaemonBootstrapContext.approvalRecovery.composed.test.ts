@@ -58,13 +58,13 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
     rows.get(request.params.id) ?? reply.code(404).send({ error: 'artifact_not_found' }));
   app.post('/v1/artifacts', async request => {
     const body = request.body as Record<string, unknown> & { id: string };
-    const { idScope: _idScope, kind: _kind, approvalState: _state, approvalSessionId: _session, ...content } = body;
-    approvalStates.set(body.id, _state);
+    const { id, header, body: storedBody, dataEncryptionKey, kind, approvalState } = body;
+    approvalStates.set(id, approvalState);
     // Writes carry the encoded storage index; list selectors use its exact kind hint.
-    approvalKinds.set(body.id, decodeArtifactKindV1(_kind).kindHint);
-    rows.set(body.id, { ...content, ownerAccountId: 'account', access: 'owner', publicAudience: 'none',
+    approvalKinds.set(id, decodeArtifactKindV1(kind).kindHint);
+    rows.set(id, { id, header, body: storedBody, dataEncryptionKey, ownerAccountId: 'account', access: 'owner', publicAudience: 'none',
       encryptionMode: mode, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
-    return { id: body.id, headerVersion: 1, bodyVersion: 1 };
+    return { id, headerVersion: 1, bodyVersion: 1 };
   });
   app.post<{ Params: { id: string } }>('/v1/artifacts/:id', async request => {
     const row = rows.get(request.params.id);
@@ -75,10 +75,9 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
     }
     const headerVersion = Number(row.headerVersion) + 1;
     const bodyVersion = Number(row.bodyVersion) + 1;
-    const { expectedHeaderVersion: _headerCas, expectedBodyVersion: _bodyCas,
-      kind: _kind, approvalState: _state, approvalSessionId: _session, ...content } = body;
-    if (_state !== undefined) approvalStates.set(row.id, _state);
-    rows.set(row.id, { ...row, ...content, headerVersion, bodyVersion });
+    const { header, body: storedBody, approvalState } = body;
+    if (approvalState !== undefined) approvalStates.set(row.id, approvalState);
+    rows.set(row.id, { ...row, header, body: storedBody, headerVersion, bodyVersion });
     return { success: true, headerVersion, bodyVersion };
   });
   await app.ready();
@@ -115,13 +114,16 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
       const other = await seed('machine-2', 'other-claimed', 'executing');
       const unclaimed = await seed(ownMachineId, 'own-unclaimed', 'approved');
       const sessionClaim = await seed(ownMachineId, 'live-session-claim', 'executing', true);
-      const seedBuiltIn = async (machineId: string, requestId: string, status: 'executing' | 'approved') => {
+      const seedBuiltIn = async (machineId: string | undefined, requestId: string, status: 'executing' | 'approved') => {
+        const actionId = machineId ? 'daemon.filesystem.readFile' : 'machines.presets.archive';
+        const actionArgs = machineId ? FilesystemReadFileInputSchema.parse({ rootPath: '/fixture', path: 'file' })
+          : { homeId: 'fixture-home', id: 'fixture-preset', expectedRevision: 3 };
         const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-          createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId: 'daemon.filesystem.readFile',
-          actionArgs: FilesystemReadFileInputSchema.parse({ rootPath: '/fixture', path: 'file' }), summary: 'Read file',
+          createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs,
+          summary: machineId ? 'Read file' : 'Archive preset',
+          ...(machineId ? {} : { approval: { flow: 'deferred', result: 'required' } }),
           executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
-            serverId: configuration.activeServerId, accountId: 'account', machineId,
-            actionId: 'daemon.filesystem.readFile', requestId } });
+            serverId: configuration.activeServerId, accountId: 'account', ...(machineId ? { machineId } : {}), actionId, requestId } });
         const { artifactId } = await store.approvalsCreate({ request, serverId: null });
         const approved = ApprovalRequestV2Schema.parse({ ...request, status: 'approved',
           decision: { kind: 'approve', decidedAtMs: 2 } });
@@ -133,6 +135,7 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
       const builtInOwn = await seedBuiltIn(ownMachineId, 'own-built-in-claimed', 'executing');
       const builtInOther = await seedBuiltIn('machine-2', 'other-built-in-claimed', 'executing');
       const builtInUnclaimed = await seedBuiltIn(ownMachineId, 'own-built-in-unclaimed', 'approved');
+      const appClaim = await seedBuiltIn(undefined, 'app-archive-claimed', 'executing');
       const startupFileReads = vi.spyOn(fsPromises, 'readFile');
       const bootstrap = await prepareDaemonBootstrapContext({ daemonLockHandle: lock,
         initialMachineMetadata: { host: 'fixture', platform: 'linux', happyCliVersion: '0.0.0',
@@ -162,6 +165,7 @@ it.each(['plain', 'e2ee'] as const)('settles only daemon-owned executing approva
         execution: { ok: false, errorCode: 'approval_execution_outcome_unknown' } });
       expect(await store.approvalsGet({ artifactId: builtInOther, serverId: null })).toMatchObject({ status: 'executing' });
       expect(await store.approvalsGet({ artifactId: builtInUnclaimed, serverId: null })).toMatchObject({ status: 'approved' });
+      expect(await store.approvalsGet({ artifactId: appClaim, serverId: null })).toMatchObject({ status: 'executing' });
       expect(selections[0]?.get('approvalStates')).toBe(JSON.stringify(['executing']));
     });
   } finally { await releaseDaemonLock(lock); restoreHttp(); await app.close(); }
