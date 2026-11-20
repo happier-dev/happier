@@ -28,6 +28,7 @@ describe('committed client Message Action delivery', () => {
     const effects: string[] = [];
     const pluginId = PLUGIN_MANIFEST.id;
     const action = { pluginId, localId: 'tasks/open-create-v1' };
+    const actionRequestId = 'original-client-message-action';
     const messageActionReference = { v: 1 as const, sessionId: 'committed-session', messageId: 'committed-message', observedRevision: 'revision-1' };
     const bundled = loadCurrentBundledPluginLocatorResult();
     const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({ loadResult: {
@@ -42,7 +43,7 @@ describe('committed client Message Action delivery', () => {
       callConnectedClientRpc: async (_method, raw, options) => {
         expect(options.answeringClient).toEqual({ requireSingle: true, ...(clientId ? { clientId } : {}) });
         const request = UiContributedActionExecuteRequestV1Schema.parse(JSON.parse(JSON.stringify(raw)));
-        expect(request).toMatchObject({ action, input: {}, messageActionReference, surface: 'cli' });
+        expect(request).toMatchObject({ action, input: {}, actionRequestId, messageActionReference, surface: 'cli' });
         const targets = clients.map(id => ({ id, timeout: () => ({ emitWithAck: async () => {
           effects.push(id); return { ok: true, result: { delivered: request.messageActionReference ?? null } };
         } }) }));
@@ -59,7 +60,7 @@ describe('committed client Message Action delivery', () => {
         acquireRuntimeRegistryLease: () => fixture.controller.acquireRuntimeRegistry(),
       }) });
       const result = await executor.execute('action.invoke', { action, input: {}, messageActionReference,
-        ...(clientId ? { clientId } : {}) }, { surface: 'cli' });
+        ...(clientId ? { clientId } : {}) }, { surface: 'cli', actionRequestId });
       if (expected === 'client_ambiguous') {
         expect(result).toMatchObject({ ok: false, errorCode: 'client_ambiguous', details: {
           clients: clients.map(id => ({ id, deviceLabel: null })), recovery: { inputField: 'clientId' },

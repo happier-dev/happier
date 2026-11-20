@@ -641,10 +641,11 @@ export async function executeContributedAction(params: Readonly<{
         params.clientId ? 'client_not_available' : 'plugin_action_client_target_unavailable', 'No answering UI client is available',
       ) };
     }
+    const actionRequestId = params.approvalContext?.actionRequestId ?? params.context.actionRequestId;
     const request = UiContributedActionExecuteRequestV1Schema.safeParse({
       v: 1, action: { pluginId, localId: action.definition.id },
       input: params.input ?? null, surface: invocationSurface,
-      ...(params.context.actionRequestId ? { actionRequestId: params.context.actionRequestId } : {}),
+      ...(actionRequestId ? { actionRequestId } : {}),
       ...(params.messageActionReference ? { messageActionReference: params.messageActionReference } : {}),
       expectedContributorOccurrenceId: contributorOccurrenceId,
       ...(params.context.defaultSessionId === undefined ? {} : { defaultSessionId: params.context.defaultSessionId }),
