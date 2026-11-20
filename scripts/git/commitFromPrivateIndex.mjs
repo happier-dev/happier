@@ -73,43 +73,37 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     for (const key of ['user.name', 'user.email']) {
       if (!git('config', '--get', key)) throw new Error(`Missing Git ${key}`);
     }
-    const { runCommitGate, formatCommitGateRefusal, withCommitLock } = await import('../workspaces/commitGate.mjs');
-    const prepare = async (head, prior) => {
-      git('read-tree', head);
-      if (paths.length) git('add', '--', ...paths);
-      if (patchFile) git('apply', '--cached', '--check', patchFile);
-      if (patchFile) git('apply', '--cached', patchFile);
-      git('diff', '--cached', '--check');
-      const committed = gitAt(cwd, env)('diff', '--cached', '--name-only', '--no-renames', '-z', head).split('\0').filter(Boolean);
-      if (!committed.length) throw new Error('Refusing an empty commit');
-      if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
-      const tree = git('write-tree');
-      const gate = await runCommitGate({ repo: cwd, base: head, tree, prior, label: 'commitFromPrivateIndex' });
-      for (const note of gate.notes) console.error(`commit gate: ${note}`);
-      if (gate.verdict !== 'pass') throw new Error(formatCommitGateRefusal(gate));
-      const commit = git('commit-tree', tree, '-p', head, '-F', messageFile);
-      return { head, tree, commit, committed };
-    };
+    const { finalizeGatedCommit, formatCommitGateRefusal } = await import('../workspaces/commitGate.mjs');
+    const base = git('rev-parse', 'HEAD');
+    git('read-tree', base);
+    if (paths.length) git('add', '--', ...paths);
+    if (patchFile) git('apply', '--cached', '--check', patchFile);
+    if (patchFile) git('apply', '--cached', patchFile);
+    git('diff', '--cached', '--check', base);
+    const committed = gitAt(cwd, env)('diff', '--cached', '--name-only', '--no-renames', '-z', base).split('\0').filter(Boolean);
+    if (!committed.length) throw new Error('Refusing an empty commit');
+    if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
 
-    let packet = await prepare(git('rev-parse', 'HEAD'));
-    const commit = await withCommitLock({ repo: cwd }, async (moveRef) => {
-      for (;;) {
-        const head = git('rev-parse', 'HEAD');
-        if (head !== packet.head) packet = await prepare(head, packet.tree);
-        try {
-          moveRef({ commit: packet.commit, head, reason: `commitFromPrivateIndex: pid ${process.pid}` });
-          return packet.commit;
-        } catch (error) {
-          // A writer outside the lock (or on a host without flock) may still move HEAD.
-          if (git('rev-parse', 'HEAD') === head) throw error;
-        }
-      }
+    const packet = { base, tree: git('write-tree') };
+    // Replay the accepted bytes, even if the worktree or the input patch changes while queued.
+    const frozen = path.join(temp, 'packet.patch');
+    git('diff', '--cached', '--binary', '--full-index', '--no-renames', `--output=${frozen}`, base);
+    const { commit, gate } = await finalizeGatedCommit({
+      repo: cwd, packet, label: 'commitFromPrivateIndex',
+      replay: (head) => {
+        git('read-tree', head);
+        git('apply', '--cached', frozen);
+        git('diff', '--cached', '--check', head);
+        return { base: head, tree: git('write-tree') };
+      },
+      createCommit: ({ base, tree }) => git('commit-tree', tree, '-p', base, '-F', messageFile),
     });
+    if (gate) throw new Error(formatCommitGateRefusal(gate));
     console.error(`Committed ${commit}; synchronizing shared index`);
     // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
     const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
     console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
-    await syncSharedIndex(cwd, commit, packet.committed);
+    await syncSharedIndex(cwd, commit, committed);
     return commit;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

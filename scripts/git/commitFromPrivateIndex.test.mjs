@@ -307,11 +307,12 @@ test('waits for the commit wrapper lock before moving HEAD', { skip: !hasFlock }
   assert.match(f.git('reflog', '-1', '--format=%gs', 'HEAD'), /^commitFromPrivateIndex: pid \d+/);
 });
 
-function runWithCommitLockContender(f, winner, name) {
+function runWithCommitLockContender(f, winner, name, { observeTreeGate = false } = {}) {
   const base = f.git('rev-parse', 'HEAD').trim();
   const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
   const bin = path.join(f.cwd, 'bin');
   const acquisitions = path.join(f.cwd, 'acquisitions');
+  const treeGateLocks = path.join(f.cwd, 'tree-gate-locks');
   const flock = execFileSync('sh', ['-c', 'command -v flock'], { encoding: 'utf8' }).trim();
   fs.mkdirSync(bin);
   // Advance the real ref under the real lock immediately before the writer's first acquisition.
@@ -324,15 +325,28 @@ if [ "$head" = "$TEST_BASE" ]; then
 fi
 exec "$TEST_FLOCK" "$@"
 `, { mode: 0o755 });
+  if (observeTreeGate) {
+    const git = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+case "$1 \${2-}" in
+  "show "*:apps/stack/scripts/perf/entry-graphs.mjs)
+    "$TEST_FLOCK" -n "$TEST_LOCK" true
+    printf '%s\\n' "$?" >> "$TEST_TREE_GATE_LOCKS"
+    ;;
+esac
+exec "${git}" "$@"
+`, { mode: 0o755 });
+  }
   const result = spawnSync(process.execPath, [
     fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', f.messageFile, '--', name,
   ], {
     cwd: f.cwd, encoding: 'utf8',
     env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`,
-      HAPPIER_COMMIT_TREE_GATE: 'report', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
-      TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
+      HAPPIER_COMMIT_TREE_GATE: observeTreeGate ? 'block' : 'report', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+      TEST_TREE_GATE_LOCKS: treeGateLocks, TEST_ACQUISITIONS: acquisitions, TEST_BASE: base, TEST_FLOCK: flock, TEST_LOCK: lock, TEST_WINNER: winner },
   });
-  return { result, acquisitions: fs.readFileSync(acquisitions, 'utf8').trim().split('\n'), flock, lock };
+  return { result, acquisitions: fs.readFileSync(acquisitions, 'utf8').trim().split('\n'), flock, lock,
+    treeGateLocks: observeTreeGate ? fs.readFileSync(treeGateLocks, 'utf8').trim().split('\n') : [] };
 }
 
 test('replays onto a competing commit and lands without rejoining the commit lock queue', { skip: !hasFlock }, (t) => {
@@ -351,6 +365,21 @@ test('replays onto a competing commit and lands without rejoining the commit loc
   assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
   assert.equal(f.git('show', 'HEAD:unrelated'), 'competitor\n');
   assert.deepEqual(acquisitions, [base]);
+});
+
+test('releases the commit lock for a full replay gate and reacquires it before advancing HEAD', { skip: !hasFlock }, (t) => {
+  const f = fixture(t);
+  const base = f.git('rev-parse', 'HEAD').trim();
+  const winner = f.git('commit-tree', f.git('write-tree').trim(), '-p', base, '-m', 'test: competing writer').trim();
+  f.write('changed', 'selected\n');
+
+  const { result, acquisitions, treeGateLocks } = runWithCommitLockContender(f, winner, 'changed', { observeTreeGate: true });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(treeGateLocks, ['0', '0'], 'the initial and replayed tree-entry gates can acquire the commit lock');
+  assert.deepEqual(acquisitions, [base, winner]);
+  assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
+  assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
 });
 
 test('refuses a replay when the winning commit removed its producer and releases the commit lock', { skip: !hasFlock }, (t) => {

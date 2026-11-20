@@ -188,6 +188,66 @@ export async function withCommitLock({ repo, ref = 'HEAD' }, run) {
   }
 }
 
+/**
+ * Shared replay for the JavaScript HEAD writers. Like the shell wrapper, the
+ * locked gate may only reuse a prior pass and do cheap rechecks. A miss
+ * releases the lock before the full gate and joins the queue again afterward.
+ */
+export async function finalizeGatedCommit({ repo, ref, label, packet, replay, createCommit }) {
+  const git = gitIn(repo);
+  const headAt = () => git(['rev-parse', 'HEAD']).trim();
+  let accepted;
+  let commit;
+  const check = async (cheapOnly) => {
+    const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, cheapOnly, label });
+    for (const note of gate.notes) console.error(`commit gate: ${note}`);
+    if (gate.verdict === 'pass') {
+      commit = createCommit(packet);
+      accepted = packet;
+    }
+    return gate;
+  };
+
+  if (headAt() === packet.base) {
+    const gate = await check(false);
+    if (gate.verdict !== 'pass') return { gate };
+  }
+  for (;;) {
+    const result = await withCommitLock({ repo, ref }, async (moveRef) => {
+      for (;;) {
+        const head = headAt();
+        if (head !== packet.base) {
+          packet = replay(head);
+          if (!packet) return {};
+        }
+        if (packet !== accepted) {
+          if (!accepted) return { recheck: 'the replay has no prior verdict' };
+          let gate;
+          try {
+            gate = await check(true);
+          } catch (error) {
+            if (!error.unavailable) throw error;
+            return { recheck: error.message };
+          }
+          if (gate.verdict === 'needs-full') return { recheck: `${gate.check} needs a full recheck` };
+          if (gate.verdict !== 'pass') return { gate };
+        }
+        try {
+          moveRef({ commit, head, reason: `${label}: pid ${process.pid}` });
+          return { commit };
+        } catch (error) {
+          if (headAt() === head) throw error;
+          // A writer outside the lock (or a host without flock) can still win CAS.
+        }
+      }
+    });
+    if (!result.recheck) return result;
+    console.error(`commit gate: ${result.recheck}. Released the commit lock for the full gate`);
+    const gate = await check(false);
+    if (gate.verdict !== 'pass') return { gate };
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const option = name => args.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3);

@@ -690,117 +690,89 @@ export async function finalizeCommitTypeCoherence({ repo, checked, message, ref 
   });
   // Loaded here, not at module scope: the gate's import-cycle check loads the TypeScript compiler, and the CLI loads no
   // compiler module before its admission (the plain TS CLI re-enters admitted).
-  const { withCommitLock, runCommitGate } = await import('./commitGate.mjs');
-  const currentHead = () => git.gitText(['rev-parse', 'HEAD']).trim();
+  const { finalizeGatedCommit } = await import('./commitGate.mjs');
   const blocked = () => checked.fresh.length || checked.unowned.length || checked.gate;
-  let accepted;
-  const prepare = async () => {
-    const { base, tree } = checked;
-    const gate = await runCommitGate({ repo, base, tree, prior: accepted?.checked.tree, label: 'checkCommitTypeCoherence' });
-    for (const note of gate.notes) console.error(`commit gate: ${note}`);
-    if (gate.verdict !== 'pass') {
-      checked = { ...checked, gate };
-      return;
-    }
-    const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
-    const commit = git.git(['commit-tree', ...(sign ? ['-S'] : []), tree, '-p', base], { input: message, encoding: 'utf8' }).trim();
-    accepted = { checked, commit };
-  };
   if (blocked()) return outcome();
-  // An already stale result needs a replay before it can get a gate verdict.
-  if (currentHead() === checked.base) {
-    await prepare();
-    if (blocked()) return outcome();
-  }
 
-  return withCommitLock({ repo, ref }, async (moveRef) => {
-    const refresh = (head) => {
-      const replayStarted = Date.now();
-      git.git(['merge-base', '--is-ancestor', checked.base, head]);
-      const tree = replayPacket(git, original.base, original.tree, head);
-      if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim())
-        throw new Error('Packet is already present at HEAD');
-      const entries = git.treeEntries(tree);
-      const packetChanges = git.sliceOf(head, tree).filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
-      const roots = [...new Set([
-        ...packetChanges.filter(({ status }) => status !== 'D').map(({ path }) => path),
-        ...git.importersOf(tree, packetChanges),
-      ])];
-      const discovered = git.groupRoots(roots, entries);
-      const previousEntries = git.treeEntries(checked.tree);
-      // The verdict belongs to these exact inputs. Intervening edits that were reverted
-      // cannot change it; compare the checked tree with the replayed tree, not commit history.
-      const changed = new Set(nulList(git.gitText([
-        'diff', '--name-only', '-z', '--no-renames', checked.tree, tree,
-      ])));
-      const contextChanges = new Map();
-      const changesContext = path => {
-        if (contextChanges.has(path)) return contextChanges.get(path);
-        const before = previousEntries.get(path);
-        const after = entries.get(path);
-        const blobs = git.readBlobs([...new Set([before?.oid, after?.oid].filter(Boolean))]);
-        const prior = sourceContext(path, before ? blobs.get(before.oid) : 'export {};');
-        const next = sourceContext(path, after ? blobs.get(after.oid) : 'export {};');
-        // A module outside the closure can still add/remove global declarations through
-        // its own body or changed imports. Those changes keep the existing recheck path.
-        const changed = prior.global || next.global || prior.dependencies !== next.dependencies;
-        contextChanges.set(path, changed);
-        return changed;
-      };
-      const affected = new Set(checked.groups.filter(group => {
-        const paths = new Set(group.paths);
-        const members = new Set(group.members);
-        return [...changed].some(path => paths.has(path)
-          || members.has(path) && changesContext(path)
-          || ['pnpm-lock.yaml', 'pnpm-workspace.yaml'].includes(path)
-          || path.startsWith('patches/')
-          // New compiler inputs in this project's directory can join its configured membership
-          // or resolve an import that was previously unresolved.
-          || (!previousEntries.has(path) && COMPILER_INPUT.test(path)
-            && (group.id === '.' || path.startsWith(`${group.id}/`))));
-      }).map(group => group.id));
-      for (const [id, files] of discovered.groups) {
-        const previous = checked.candidates.find(group => group.id === id);
-        if (!previous || files.some(file => !previous.roots.includes(file))) affected.add(id);
-      }
-      const replayLog = `[commit-coherence] replay head=${head} reused=${checked.groups.map(group => group.id).filter(id => !affected.has(id)).sort().join(',') || 'none'} rechecked=${[...affected].sort().join(',') || 'none'}`;
-      console.error(`${replayLog} phase=start`);
-      let groups = checked.groups;
-      if (affected.size) {
-        const refreshed = checkCommitTypeCoherence({ repo, base: head, tree, onlyGroups: affected });
-        for (const id of affected) rechecked.add(id);
-        groups = [...groups.filter(group => !affected.has(group.id)), ...refreshed.groups];
-      }
-      checked = {
-        ...checked, base: head, tree, groups,
-        candidates: [...discovered.groups].map(([id, files]) => ({ id, roots: files })),
-        roots: groups.reduce((sum, group) => sum + group.roots.length, 0),
-        unowned: discovered.unowned,
-        fresh: groups.flatMap(group => group.fresh),
-      };
-      console.error(`${replayLog} phase=complete ms=${Date.now() - replayStarted}`);
+  const refresh = (head) => {
+    const replayStarted = Date.now();
+    git.git(['merge-base', '--is-ancestor', checked.base, head]);
+    const tree = replayPacket(git, original.base, original.tree, head);
+    if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim())
+      throw new Error('Packet is already present at HEAD');
+    const entries = git.treeEntries(tree);
+    const packetChanges = git.sliceOf(head, tree).filter(({ path }) => TYPESCRIPT_SOURCE.test(path));
+    const roots = [...new Set([
+      ...packetChanges.filter(({ status }) => status !== 'D').map(({ path }) => path),
+      ...git.importersOf(tree, packetChanges),
+    ])];
+    const discovered = git.groupRoots(roots, entries);
+    const previousEntries = git.treeEntries(checked.tree);
+    // The verdict belongs to these exact inputs. Intervening edits that were reverted
+    // cannot change it; compare the checked tree with the replayed tree, not commit history.
+    const changed = new Set(nulList(git.gitText([
+      'diff', '--name-only', '-z', '--no-renames', checked.tree, tree,
+    ])));
+    const contextChanges = new Map();
+    const changesContext = path => {
+      if (contextChanges.has(path)) return contextChanges.get(path);
+      const before = previousEntries.get(path);
+      const after = entries.get(path);
+      const blobs = git.readBlobs([...new Set([before?.oid, after?.oid].filter(Boolean))]);
+      const prior = sourceContext(path, before ? blobs.get(before.oid) : 'export {};');
+      const next = sourceContext(path, after ? blobs.get(after.oid) : 'export {};');
+      // A module outside the closure can still add/remove global declarations through
+      // its own body or changed imports. Those changes keep the existing recheck path.
+      const changed = prior.global || next.global || prior.dependencies !== next.dependencies;
+      contextChanges.set(path, changed);
+      return changed;
     };
-    while (true) {
-      if (blocked()) return outcome();
-      const head = currentHead();
-      if (head !== checked.base) {
-        refresh(head);
-        continue;
-      }
-      if (accepted?.checked !== checked) {
-        await prepare();
-        if (blocked()) return outcome();
-      }
-      const { commit } = accepted;
-      try {
-        moveRef({ commit, head, reason: `checkCommitTypeCoherence: pid ${process.pid}` });
-        return outcome(commit);
-      } catch (error) {
-        if (currentHead() === head) throw error;
-        // A writer outside the lock (or on a host without flock) may still move HEAD.
-      }
+    const affected = new Set(checked.groups.filter(group => {
+      const paths = new Set(group.paths);
+      const members = new Set(group.members);
+      return [...changed].some(path => paths.has(path)
+        || members.has(path) && changesContext(path)
+        || ['pnpm-lock.yaml', 'pnpm-workspace.yaml'].includes(path)
+        || path.startsWith('patches/')
+        // New compiler inputs in this project's directory can join its configured membership
+        // or resolve an import that was previously unresolved.
+        || (!previousEntries.has(path) && COMPILER_INPUT.test(path)
+          && (group.id === '.' || path.startsWith(`${group.id}/`))));
+    }).map(group => group.id));
+    for (const [id, files] of discovered.groups) {
+      const previous = checked.candidates.find(group => group.id === id);
+      if (!previous || files.some(file => !previous.roots.includes(file))) affected.add(id);
     }
+    const replayLog = `[commit-coherence] replay head=${head} reused=${checked.groups.map(group => group.id).filter(id => !affected.has(id)).sort().join(',') || 'none'} rechecked=${[...affected].sort().join(',') || 'none'}`;
+    console.error(`${replayLog} phase=start`);
+    let groups = checked.groups;
+    if (affected.size) {
+      const refreshed = checkCommitTypeCoherence({ repo, base: head, tree, onlyGroups: affected });
+      for (const id of affected) rechecked.add(id);
+      groups = [...groups.filter(group => !affected.has(group.id)), ...refreshed.groups];
+    }
+    checked = {
+      ...checked, base: head, tree, groups,
+      candidates: [...discovered.groups].map(([id, files]) => ({ id, roots: files })),
+      roots: groups.reduce((sum, group) => sum + group.roots.length, 0),
+      unowned: discovered.unowned,
+      fresh: groups.flatMap(group => group.fresh),
+    };
+    console.error(`${replayLog} phase=complete ms=${Date.now() - replayStarted}`);
+  };
+  const result = await finalizeGatedCommit({
+    repo, ref, label: 'checkCommitTypeCoherence', packet: checked,
+    replay: (head) => {
+      refresh(head);
+      return blocked() ? undefined : checked;
+    },
+    createCommit: ({ base, tree }) => {
+      const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
+      return git.git(['commit-tree', ...(sign ? ['-S'] : []), tree, '-p', base], { input: message, encoding: 'utf8' }).trim();
+    },
   });
+  if (result.gate) checked = { ...checked, gate: result.gate };
+  return outcome(result.commit);
 }
 
 async function main(argv) {
