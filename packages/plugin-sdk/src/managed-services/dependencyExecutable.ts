@@ -1,6 +1,8 @@
 /** @moduleRealm any */
 import type { ManagedDependenciesService, ManagedExecutableRef } from './contract.js';
-import type { ManagedPrerequisiteV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { MachineProvisionerCheckResultV1 } from '../machineProvisioners.js';
+
+type Prerequisite = NonNullable<MachineProvisionerCheckResultV1['prerequisites']>[number];
 
 /** An unreadable status cannot establish that an executable is missing. */
 export async function readManagedDependencyExecutable(
@@ -17,8 +19,8 @@ export async function readManagedDependencyExecutable(
 }
 
 export function projectUnavailableManagedDependency(
-    id: Extract<ManagedPrerequisiteV1['requirement'], { kind: 'managedDependency' }>['id'],
-    details: Pick<ManagedPrerequisiteV1, 'reason' | 'repairAction' | 'setupSources'> = {},
-): ManagedPrerequisiteV1 {
+    id: Prerequisite['requirement']['id'],
+    details: Pick<Prerequisite, 'reason' | 'repairAction' | 'setupSources'> = {},
+): Prerequisite {
     return { requirement: { kind: 'managedDependency', id }, status: 'unavailable', ...details };
 }
