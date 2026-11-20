@@ -105,6 +105,17 @@ observer consumes the live hold identities; ordinary human viewers continue to
 receive the viewer snapshot. This development contract follows the all-component
 one-way 0.3 upgrade, not mixed 0.2/0.3 live-component support.
 
+## Encrypted Account POST replay (0.3 development)
+
+When the host replaces an encrypted Account request with its settled authority
+envelope, Home keeps a digest of the original ciphertext and requested action
+in Pending's existing request-equality record. The transcript carries that
+record through delivery. An authorized retry of the original POST rejoins the
+same local ID while Pending holds it and returns the existing message after
+delivery with `didWrite: false` (`alreadyAccepted` to the caller). A changed
+request under the same local ID returns `session_input_idempotency_conflict`.
+Home compares opaque bytes and derives no plaintext equality from them.
+
 ## Follow-original replay (0.3 development)
 
 Pending reads project `hostFollowInput` from the server-admitted Follow receipt,

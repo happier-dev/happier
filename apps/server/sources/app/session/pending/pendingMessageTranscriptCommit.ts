@@ -12,18 +12,22 @@ import {
     type SessionTranscriptWriteRejectionCode,
 } from "@/app/session/sessionTranscriptWrite";
 import type { Tx } from "@/storage/inTx";
-import { PendingRequestedActionV1Schema, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { readStoredSessionMessageDeliveryResolutionV1, type SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
-import { readSessionInputAuthority, serializeSessionInputRequestEqualityIntentV1, SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, type SessionInputAdmissionReceiptV1, type SessionInputRequestEqualityEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { readSessionInputAuthority, SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { type SessionEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 import { type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { notifySessionTranscriptMutationAfterCommit } from '../sessionTranscriptMutationObserver';
-import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { SessionMessageReplyProgressV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { UsageTimingBoundsV1Schema, mergeUsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { getActivePrismaRuntime } from '@/storage/db';
+import {
+    derivePlainRequestEqualityEvidence,
+    StoredPendingRequestEqualityEvidenceV1Schema,
+    type StoredPendingRequestEqualityEvidenceV1,
+} from "./pendingRequestEqualityEvidence";
 
 /**
  * Pending is the sole custody owner until retirement, including when a transcript row already exists:
@@ -70,22 +74,6 @@ function parseCommittedInputAdmissionReceipt(value: unknown): SessionInputAdmiss
     return parsed.success ? parsed.data : null;
 }
 
-export function derivePlainRequestEqualityEvidence(params: Readonly<{
-    content: PrismaJson.SessionMessageContent;
-    requestedAction: PendingRequestedActionV1;
-}>): SessionInputRequestEqualityEvidenceV1 | undefined {
-    if (params.content.t !== "plain") return undefined;
-    return SessionInputRequestEqualityEvidenceV1Schema.parse({
-        kind: "plainDigest",
-        digest: createHash("sha256")
-            .update(serializeSessionInputRequestEqualityIntentV1({
-                requestEnvelope: params.content,
-                requestedAction: params.requestedAction,
-            }), "utf8")
-            .digest("base64url"),
-    });
-}
-
 export async function createSessionMessageFromPending(tx: Tx, params: {
     sessionId: string;
     sessionEncryptionMode: SessionEncryptionMode;
@@ -104,7 +92,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
     deliveryUsageTimingV1?: unknown;
     deliveryResolution?: SessionMessageDeliveryResolutionV1;
     inputAdmissionReceipt?: SessionInputAdmissionReceiptV1;
-    requestEqualityEvidenceV1?: SessionInputRequestEqualityEvidenceV1;
+    requestEqualityEvidenceV1?: StoredPendingRequestEqualityEvidenceV1;
     pendingRequestedAction?: unknown;
 }): Promise<{
     ok: true;
@@ -131,7 +119,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
         : SessionInputAdmissionReceiptV1Schema.safeParse(params.inputAdmissionReceipt);
     const requestEqualityEvidenceV1 = params.requestEqualityEvidenceV1 === undefined
         ? undefined
-        : SessionInputRequestEqualityEvidenceV1Schema.safeParse(params.requestEqualityEvidenceV1);
+        : StoredPendingRequestEqualityEvidenceV1Schema.safeParse(params.requestEqualityEvidenceV1);
     const pendingRequestedAction = params.pendingRequestedAction === undefined
         ? undefined
         : PendingRequestedActionV1Schema.safeParse(params.pendingRequestedAction);
@@ -248,7 +236,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
         }
         const existingRequestEqualityEvidenceV1 = existing.requestEqualityEvidenceV1 == null
             ? null
-            : createStoredReadSchema(SessionInputRequestEqualityEvidenceV1Schema).safeParse(existing.requestEqualityEvidenceV1);
+            : StoredPendingRequestEqualityEvidenceV1Schema.safeParse(existing.requestEqualityEvidenceV1);
         if (
             effectiveRequestEqualityEvidenceV1 !== undefined
             && existingRequestEqualityEvidenceV1 !== null

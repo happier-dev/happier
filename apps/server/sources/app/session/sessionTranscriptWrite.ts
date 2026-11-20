@@ -11,7 +11,8 @@ import { isStoredContentKindAllowedForSessionByStoragePolicy, type SessionEncryp
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { isMessageStructuredPresentationV1Candidate, readMessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { SessionMessageRoleSchema, type SessionMessageRole } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
-import { type SessionInputAdmissionReceiptV1, type SessionInputRequestEqualityEvidenceV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { StoredPendingRequestEqualityEvidenceV1 } from "./pending/pendingRequestEqualityEvidence";
 import { type SessionMessageDeliveryResolutionV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { advanceCaughtUpViewerReadCursorsInTx, stampViewerUnreadEntryInTx } from "./personal/readState";
@@ -280,7 +281,7 @@ export type SessionTranscriptMessageWriteParams = Readonly<{
     deliveryResolution?: SessionMessageDeliveryResolutionV1;
     /** Only the Pending admission/settlement owner may supply immutable input evidence. */
     inputAdmissionReceipt?: SessionInputAdmissionReceiptV1;
-    requestEqualityEvidenceV1?: SessionInputRequestEqualityEvidenceV1;
+    requestEqualityEvidenceV1?: StoredPendingRequestEqualityEvidenceV1;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferenceInputV1;
 }>;
 

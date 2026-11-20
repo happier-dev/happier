@@ -4687,6 +4687,55 @@ describe("pendingMessageService (shared sessions)", () => {
         });
     });
 
+    it("rejoins the original encrypted Account POST after host settlement and delivery", async () => {
+        const owner = await createAccount("delivered-account-retry-owner");
+        const session = await createSession(owner.id);
+        const publisherAuthority = await createCurrentPendingPublisher({ accountId: owner.id, sessionId: session.id });
+        const localId = "delivered-account-retry";
+        const pendingInput = { actorUserId: owner.id, sessionId: session.id, localId, publisherAuthority };
+        const payload = { localId, ciphertext: "original-encrypted-request", messageRole: "user",
+            requestedAction: { v: 1, kind: "enqueue" } };
+
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const post = (body = payload) => app.inject({
+                method: "POST", url: `/v2/sessions/${session.id}/pending`,
+                headers: { "x-test-user-id": owner.id, "x-test-auth-token-kind": "terminal" },
+                payload: body,
+            });
+            const admitted = await post();
+            expect(admitted.statusCode).toBe(200);
+            expect(admitted.json()).toMatchObject({ didWrite: true });
+            expect(await materializeNextPendingMessage(pendingInput)).toMatchObject({ ok: true, didMaterialize: true });
+            // Home sees opaque ciphertext. The publisher replaces the protected
+            // request with a newly encrypted authority envelope before delivery.
+            expect(await settlePendingInputAdmission({ ...pendingInput, decision: {
+                kind: "admit", finalContent: { t: "encrypted", c: "settled-encrypted-authority" },
+            } })).toMatchObject({ ok: true, result: { status: "accepted" } });
+            const frozenReplay = await post();
+            expect(frozenReplay.statusCode).toBe(200);
+            expect(frozenReplay.json()).toMatchObject({ didWrite: false, pending: { localId } });
+            expect(await resolveAcceptedPendingDelivery({
+                ...pendingInput, acceptedDelivery: { t: "encrypted", c: "provider-accepted" },
+            })).toMatchObject({ ok: true, didResolve: true });
+            const where = { sessionId: session.id, localId };
+            const delivered = await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: where } });
+            expect(await db.sessionPendingMessage.count({ where })).toBe(0);
+
+            const replay = await post();
+            expect.soft(replay.statusCode).toBe(200);
+            expect.soft(replay.json()).toMatchObject({
+                terminal: true, didWrite: false, message: {
+                    id: delivered.id, localId, seq: delivered.seq, deliveryResolution: { kind: "provider_accepted" },
+                },
+            });
+            const conflict = await post({ ...payload, ciphertext: "settled-encrypted-authority" });
+            expect(conflict.statusCode).toBe(400);
+            expect.soft(conflict.json()).toMatchObject({ code: "session_input_idempotency_conflict" });
+            expect(await db.sessionMessage.count({ where: { sessionId: session.id } })).toBe(1);
+            expect(await db.sessionPendingMessage.count({ where })).toBe(0);
+        });
+    });
+
     it("treats a compatible terminal transcript localId as idempotent and rejects conflicting replay", async () => {
         const owner = await createAccount("terminal-enqueue-owner");
         const session = await createSession(owner.id);

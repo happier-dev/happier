@@ -82,9 +82,15 @@ import { hasExactCurrentPublisherAuthorityInTx, readExactCurrentPublisherSession
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
 import {
     createSessionMessageFromPending,
-    derivePlainRequestEqualityEvidence,
     type PendingTranscriptMessage,
 } from "@/app/session/pending/pendingMessageTranscriptCommit";
+import {
+    deriveAccountEncryptedRequestDigest,
+    derivePlainRequestEqualityEvidence,
+    matchesAccountEncryptedRequestDigest,
+    StoredPendingRequestEqualityEvidenceV1Schema,
+    type StoredPendingRequestEqualityEvidenceV1,
+} from "./pendingRequestEqualityEvidence";
 import { compareSessionMessageContentAndRole } from "@/app/session/sessionTranscriptWrite";
 import {
     resolveReadyProjectionEventType,
@@ -1312,7 +1318,7 @@ async function enqueuePendingMessageWithAdmission(
                     : undefined;
                 const existingEqualityEvidence = existing.requestEqualityEvidenceV1 == null
                     ? existingPlainEqualityEvidence === undefined ? null : { success: true as const, data: existingPlainEqualityEvidence }
-                    : createStoredReadSchema(SessionInputRequestEqualityEvidenceV1Schema).safeParse(existing.requestEqualityEvidenceV1);
+                    : StoredPendingRequestEqualityEvidenceV1Schema.safeParse(existing.requestEqualityEvidenceV1);
                 if (existingEqualityEvidence !== null && !existingEqualityEvidence.success) {
                     return { ok: false, error: "invalid-params" } as const;
                 }
@@ -1326,6 +1332,8 @@ async function enqueuePendingMessageWithAdmission(
                 const matchedOpaqueEquality = requestEqualityEvidenceV1?.kind === "e2eeTag"
                     && existingEqualityEvidence !== null
                     && isDeepStrictEqual(existingEqualityEvidence.data, requestEqualityEvidenceV1);
+                const matchedAccountEncryptedRequest = matchedAccountAdmissionIssuer
+                    && matchesAccountEncryptedRequestDigest(existingEqualityEvidence?.data, { content, requestedAction });
                 // Account Follow content is derived from the source original;
                 // re-encryption need not reproduce its ciphertext. Without a
                 // supplied tag, exact original/event/receipt identity above
@@ -1348,9 +1356,11 @@ async function enqueuePendingMessageWithAdmission(
                     || requestEqualityEvidenceV1 === undefined
                         && existingEqualityEvidence !== null
                         && !matchedPlainEquality
+                        && !matchedAccountEncryptedRequest
                         && !matchedAccountRetryAfterHostEquality
                         && !matchedFrozenAccountFollowIdentity
                     || !matchedPlainEquality && !matchedOpaqueEquality && !matchedFrozenAccountFollowIdentity
+                        && !matchedAccountEncryptedRequest
                         && !isDeepStrictEqual(existing.content, content)
                     || existing.messageRole !== null && existing.messageRole !== messageRole
                 ) {
@@ -1419,6 +1429,7 @@ async function enqueuePendingMessageWithAdmission(
                     ...(targetExecutionRunId !== null
                         || terminalTranscript.targetExecutionRunId !== null
                         || terminalTranscript.sidechainId !== null
+                        || terminalTranscript.inputAdmissionReceipt != null
                         ? { admissionRejectionCode: "session_input_idempotency_conflict" as const }
                         : {}),
                 } as const;
@@ -1459,7 +1470,7 @@ async function enqueuePendingMessageWithAdmission(
                 });
                 const terminalEqualityEvidence = terminalTranscript.requestEqualityEvidenceV1 == null
                     ? null
-                    : createStoredReadSchema(SessionInputRequestEqualityEvidenceV1Schema).safeParse(terminalTranscript.requestEqualityEvidenceV1);
+                    : StoredPendingRequestEqualityEvidenceV1Schema.safeParse(terminalTranscript.requestEqualityEvidenceV1);
                 if (terminalEqualityEvidence !== null && !terminalEqualityEvidence.success) {
                     return identityConflict;
                 }
@@ -1469,6 +1480,9 @@ async function enqueuePendingMessageWithAdmission(
                 const matchedTerminalOpaqueEquality = requestEqualityEvidenceV1?.kind === "e2eeTag"
                     && terminalEqualityEvidence !== null
                     && isDeepStrictEqual(terminalEqualityEvidence.data, requestEqualityEvidenceV1);
+                const matchedTerminalAccountEncryptedRequest = terminalReceipt?.success === true
+                    && terminalReceipt.data.issuer === "authenticatedAccount"
+                    && matchesAccountEncryptedRequestDigest(terminalEqualityEvidence?.data, { content, requestedAction });
                 const matchedTerminalAccountRetryAfterHostEquality = requestEqualityEvidenceV1 === undefined
                     && isAuthenticatedAccountRetryOfHostVerifiedEncryptedBytes({
                         admission,
@@ -1487,6 +1501,7 @@ async function enqueuePendingMessageWithAdmission(
                     || requestEqualityEvidenceV1 === undefined
                         && terminalEqualityEvidence !== null
                         && !matchedTerminalPlainEquality
+                        && !matchedTerminalAccountEncryptedRequest
                         && !matchedTerminalAccountRetryAfterHostEquality
                 ) {
                     return identityConflict;
@@ -1496,7 +1511,11 @@ async function enqueuePendingMessageWithAdmission(
                     existingMessageRole = parseSessionMessageRole(terminalTranscript.messageRole);
                 } else {
                     const compatibility = compareSessionMessageContentAndRole({
-                        existing: terminalTranscript,
+                        // The digest already proves request equality. Reuse the
+                        // stored role check independently of the host rewrite.
+                        existing: matchedTerminalAccountEncryptedRequest
+                            ? { content, messageRole: terminalTranscript.messageRole }
+                            : terminalTranscript,
                         candidate: { content, messageRole },
                     });
                     if (compatibility.kind !== "match") {
@@ -2280,7 +2299,7 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
     const requestedAction = PendingRequestedActionV1StoredSchema.safeParse(params.existing.requestedAction);
     if (!requestedAction.success) return null;
 
-    let requestEqualityEvidenceV1: SessionInputRequestEqualityEvidenceV1 | undefined;
+    let requestEqualityEvidenceV1: StoredPendingRequestEqualityEvidenceV1 | undefined;
     // A publisher refusing this exact claim leaves its original content and equality evidence intact.
     if (params.code !== "permission_mode_not_granted" && requestContent.t === "plain") {
         const derived = derivePlainRequestEqualityEvidence({
@@ -2291,10 +2310,10 @@ async function rejectQueuedPendingInputInTx(params: Readonly<{
         requestEqualityEvidenceV1 = derived;
     } else if (params.code !== "permission_mode_not_granted" && (requestContent.t !== "encrypted"
         || params.code !== "session_input_cancelled" || params.existing.requestEqualityEvidenceV1 != null)) {
-        const parsed = createStoredReadSchema(SessionInputRequestEqualityEvidenceV1Schema).safeParse(
+        const parsed = StoredPendingRequestEqualityEvidenceV1Schema.safeParse(
             params.existing.requestEqualityEvidenceV1,
         );
-        if (!parsed.success || parsed.data.kind !== "e2eeTag") return null;
+        if (!parsed.success || parsed.data.kind === "plainDigest") return null;
         requestEqualityEvidenceV1 = parsed.data;
     }
 
@@ -2632,7 +2651,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 : SessionInputRequestEqualityEvidenceV1Schema.safeParse(decision.requestEqualityEvidenceV1);
             const existingEquality = existing.requestEqualityEvidenceV1 == null
                 ? undefined
-                : createStoredReadSchema(SessionInputRequestEqualityEvidenceV1Schema).safeParse(existing.requestEqualityEvidenceV1);
+                : StoredPendingRequestEqualityEvidenceV1Schema.safeParse(existing.requestEqualityEvidenceV1);
             if (publisherEquality !== undefined && (
                 !publisherEquality.success
                 || publisherEquality.data.kind !== "e2eeTag"
@@ -2704,6 +2723,13 @@ export async function settlePendingInputAdmission(params: Readonly<{
             const policy = readEncryptionFeatureEnv(process.env);
             const sessionEncryptionMode = session.encryptionMode === "plain" ? "plain" : "e2ee";
             if (existingEquality !== undefined && !existingEquality.success) return { ok: false, error: "conflict" } as const;
+            const accountEncryptedRequestDigest = existingEquality === undefined
+                && receipt.data.issuer === "authenticatedAccount"
+                && requestContent.t === "encrypted" && finalContent.t === "encrypted"
+                && requestContent.c !== finalContent.c
+                ? deriveAccountEncryptedRequestDigest({ content: requestContent, requestedAction: requestedAction.data })
+                : undefined;
+            const retainedEquality = existingEquality?.data ?? accountEncryptedRequestDigest;
             const committed = await createSessionMessageFromPending(tx, {
                 sessionId,
                 sessionEncryptionMode,
@@ -2716,9 +2742,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 messageRole: "user",
                 pendingRequestedAction: requestedAction.data,
                 inputAdmissionReceipt: receipt.data,
-                ...(existingEquality === undefined
-                    ? {}
-                    : { requestEqualityEvidenceV1: existingEquality.data }),
+                ...(retainedEquality ? { requestEqualityEvidenceV1: retainedEquality } : {}),
             });
             if (!committed.ok) return { ok: false, error: "conflict" } as const;
             if (domainValidation.ok && domainValidation.exchangeCause) {
@@ -2769,7 +2793,7 @@ export async function settlePendingInputAdmission(params: Readonly<{
                     content: finalContent,
                     ...(requestContent.t === "plain" ? {
                         requestEqualityEvidenceV1: derivePlainRequestEqualityEvidence({ content: requestContent, requestedAction: requestedAction.data }),
-                    } : {}),
+                    } : accountEncryptedRequestDigest ? { requestEqualityEvidenceV1: accountEncryptedRequestDigest } : {}),
                 },
             });
             const state = await applyPendingSessionStateChange({
@@ -3770,7 +3794,7 @@ async function commitResolvedPendingDelivery(
         : createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(params.existing.inputAdmissionReceipt);
     const requestEqualityEvidenceV1 = params.existing.requestEqualityEvidenceV1 == null
         ? undefined
-        : createStoredReadSchema(SessionInputRequestEqualityEvidenceV1Schema).safeParse(params.existing.requestEqualityEvidenceV1);
+        : StoredPendingRequestEqualityEvidenceV1Schema.safeParse(params.existing.requestEqualityEvidenceV1);
     if (
         inputAdmissionReceipt !== undefined && !inputAdmissionReceipt.success
         || requestEqualityEvidenceV1 !== undefined && !requestEqualityEvidenceV1.success
