@@ -16,6 +16,7 @@ const os = require('node:os');
 const fs = require('node:fs');
 const readline = require('node:readline');
 const { createHash, randomUUID } = require('node:crypto');
+const { createRequire } = require('node:module');
 const { resolveClaudeProjectId } = require('../testkit/claudeProjectId.cjs');
 const {
   fakeClaudeEchoResponseText,
@@ -88,7 +89,9 @@ function captureEnvironmentAttestation() {
   }));
 }
 
-const mcpConfigs = parseMcpConfigs(argv);
+const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
+const drivesSessionMcp = scenario === 'session-mcp-tool';
+const mcpConfigs = parseMcpConfigs(argv, drivesSessionMcp);
 const mergedMcpServers = mergeMcpServers(mcpConfigs);
 
 const outputFormat = findArgValue(argv, '--output-format');
@@ -100,7 +103,6 @@ const hasPrint = argv.includes('--print');
 // started + the replayed row, same uuid) and its result names it in user_message_uuids.
 const replayUserMessages = argv.includes('--replay-user-messages');
 const mode = isSdkStreamJson ? 'sdk' : 'local';
-const scenario = process.env.HAPPIER_E2E_FAKE_CLAUDE_SCENARIO || process.env.HAPPY_E2E_FAKE_CLAUDE_SCENARIO || '';
 const runtimeContinuityReleaseFile =
   process.env.HAPPIER_E2E_FAKE_CLAUDE_RUNTIME_CONTINUITY_RELEASE_FILE || '';
 
@@ -177,14 +179,51 @@ safeAppendJsonl(logPath, {
   pid: process.pid,
   ts: Date.now(),
   cwd: process.cwd(),
-  argv,
+  // The Session relay config carries live credentials. This scenario uses it
+  // only inside the vendor process and exposes just the tool outcome.
+  argv: drivesSessionMcp ? [] : argv,
   claudeConfigDir: resolveClaudeConfigDir(),
-  mcpConfigs,
-  mergedMcpServers,
+  ...(drivesSessionMcp ? {} : { mcpConfigs, mergedMcpServers }),
   // The fake vendor uses the Session-issued MCP transport, never a synthetic admission.
   sessionMcpContextFile: process.env.HAPPIER_SESSION_MCP_CONTEXT_FILE,
   environmentAttestation: captureEnvironmentAttestation(),
 });
+
+function readSessionMcpToolCommand(prompt) {
+  // The driver sends one JSON line. Native delivery may prepend Session context and startup guidance.
+  const delivered = prompt.trimEnd();
+  try {
+    const command = JSON.parse(delivered.slice(delivered.lastIndexOf('\n') + 1));
+    return typeof command?.id === 'string' && typeof command.name === 'string' ? command : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function callSessionMcpTool({ id: commandId, name, arguments: args }) {
+  const observation = { type: 'session_mcp_tool_outcome', invocationId, commandId, ts: Date.now() };
+  let phase = 'relay_config';
+  let client;
+  try {
+    const relay = mergedMcpServers.happier;
+    if (!relay || typeof relay.command !== 'string') throw new Error('Session MCP relay unavailable');
+    phase = 'initialize';
+    const requireCli = createRequire(path.resolve(__dirname, '../../../../apps/cli/package.json'));
+    const { Client } = requireCli('@modelcontextprotocol/sdk/client/index.js');
+    const { StdioClientTransport } = requireCli('@modelcontextprotocol/sdk/client/stdio.js');
+    client = new Client({ name: 'fake-claude', version: '1' });
+    await client.connect(new StdioClientTransport({ command: relay.command, args: relay.args ?? [],
+      env: relay.env ?? {}, stderr: 'ignore' }));
+    phase = 'tool_call';
+    const result = await client.callTool({ name, arguments: args });
+    safeAppendJsonl(logPath, { ...observation, result });
+  } catch (error) {
+    safeAppendJsonl(logPath, { ...observation, failure: { phase,
+      ...(typeof error?.code === 'number' ? { code: error.code } : {}) } });
+  } finally {
+    await client?.close();
+  }
+}
 
 // Ensure the transcript path exists even if this process is terminated before any SDK output is emitted.
 safeAppendTranscriptJsonl({
@@ -597,6 +636,13 @@ async function runSdkStreamUntilEof() {
 
     const now = Date.now();
     turn += 1;
+
+    const sessionTool = drivesSessionMcp ? readSessionMcpToolCommand(submittedPrompt) : undefined;
+    if (sessionTool) {
+      await callSessionMcpTool(sessionTool);
+      emitSdk(createResultSuccess());
+      continue;
+    }
 
     // Fake only Claude's SDK transport: the real daemon owns recovery and Pending.
     if (scenario === 'usage-limit-once') {

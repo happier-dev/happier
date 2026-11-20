@@ -14,6 +14,7 @@ import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } fr
 import { startDatabaseWorkbenchPostgres } from './process/databaseWorkbenchPostgres';
 export { prepareDatabaseWorkbenchPostgresService } from './process/databaseWorkbenchPostgres';
 import { repoRootDir } from './paths';
+import { startSessionMcpAgent } from './sessionMcpAgent';
 
 /** Install and trust the current source through the daemon's ordinary plugin
  * change flow. A fresh development installation is enabled by that owner. */
@@ -25,6 +26,20 @@ export async function installDatabaseWorkbenchPluginFixture(params: Readonly<{
   return applyTrustedLocalPluginFixture({ ...params,
     pluginRoot: join(repoRootDir(), 'packages/plugins/database-workbench'),
     pluginId: DATABASE_PLUGIN_ID_V1, interactionId: 'database-workbench-fixture-install' });
+}
+
+/** Exercise the internal Session relay using the vendor boundary shim. The
+ * relay supplies the agent's actual caller and authority from the live turn. */
+export async function startDatabaseWorkbenchAgent(
+  fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchInsightsFixture>>,
+  testDir: string,
+) {
+  const agent = await startSessionMcpAgent({ testDir, directory: fixture.machine.workspaceDir,
+    daemonState: fixture.machine.daemon.state, executeAsPerson: fixture.owner.executeAsPerson });
+  return {
+    sessionId: agent.sessionId, stop: agent.stop,
+    execute: (actionId: DatabaseActionIdV1, input: unknown) => agent.execute(actionId, input),
+  };
 }
 
 /** Real CLI Action → Postgres Home → enrolled daemon. No internal boundary mocks.

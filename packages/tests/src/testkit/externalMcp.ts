@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { repoRootDir } from './paths';
 import type { CliTestLaunchSpec } from './process/cliLaunchSpec';
@@ -92,4 +93,11 @@ export async function connectStdioMcp(params: Readonly<{
 
 export function parseToolJson<T = Record<string, unknown>>(call: McpToolCallResult): T {
   return JSON.parse(String(call.content?.[0]?.text ?? '')) as T;
+}
+
+/** Native Action tools return the result payload, or the typed failure payload. */
+export function parseMcpActionExecuteResult(call: McpToolCallResult) {
+  const result = parseToolJson<unknown>(call);
+  const failure = result && typeof result === 'object' ? result : {};
+  return ActionExecuteResultSchema.parse(call.isError ? { ...failure, ok: false } : { ok: true, result });
 }

@@ -22,16 +22,20 @@ function fakeClaudeEchoResponseTextFromSha256(promptSha256) {
   return `FAKE_CLAUDE_ECHO_${String(promptSha256).slice(0, 16)}`;
 }
 
-function parseMcpConfigs(argv) {
+function parseMcpConfigs(argv, readMaterializedConfig = false) {
   const configs = [];
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] !== '--mcp-config') continue;
-    const raw = argv[i + 1];
-    if (typeof raw !== 'string') continue;
-    i++;
+    const arg = argv[i];
+    let raw;
+    if (arg === '--mcp-config') {
+      raw = argv[++i];
+    } else if (arg.startsWith('--mcp-config=')) {
+      raw = arg.slice('--mcp-config='.length);
+    }
+    if (raw === undefined) continue;
     try {
-      const parsed = JSON.parse(raw);
-      configs.push(parsed);
+      const json = readMaterializedConfig && path.isAbsolute(raw) ? fs.readFileSync(raw, 'utf8') : raw;
+      configs.push(JSON.parse(json));
     } catch {
       configs.push({ _parseError: true, raw });
     }

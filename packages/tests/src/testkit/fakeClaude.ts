@@ -45,6 +45,7 @@ export async function createIsolatedFakeClaudeControlShim(params: Readonly<{
   invocationId: string;
   captureEnvironmentKeys: readonly string[];
   logFullStdin: boolean;
+  scenario?: string;
   /** Observe the native vendor's startup file before the runtime cleans it up. */
   captureStartupInstructions?: boolean;
 }>): Promise<Readonly<{
@@ -63,6 +64,7 @@ export async function createIsolatedFakeClaudeControlShim(params: Readonly<{
     HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: params.invocationId,
     HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: params.logFullStdin ? '1' : '0',
     HAPPIER_E2E_FAKE_CLAUDE_CAPTURE_ENV_KEYS: params.captureEnvironmentKeys.join(','),
+    ...(params.scenario === undefined ? {} : { HAPPIER_E2E_FAKE_CLAUDE_SCENARIO: params.scenario }),
     CLAUDE_CONFIG_DIR: configDir,
   } satisfies Record<string, string>;
   const source = [
@@ -121,6 +123,15 @@ export async function readFakeClaudeLogEvents(path: string): Promise<FakeClaudeL
     const record = asFakeClaudeLogEvent(event);
     return record ? [record] : [];
   });
+}
+
+export async function readFakeClaudeSessionMcpToolOutcome(
+  path: string,
+  commandId: string,
+): Promise<FakeClaudeLogEvent | undefined> {
+  const events = await readJsonlFile(path);
+  return asFakeClaudeLogEvent(events.find(event => event?.type === 'session_mcp_tool_outcome'
+    && event.commandId === commandId)) ?? undefined;
 }
 
 export async function countFakeClaudeEventsAfterCurrentRunSentinel(params: Readonly<{
