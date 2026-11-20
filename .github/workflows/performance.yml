@@ -35,6 +35,9 @@ jobs:
       - name: Check the Home at-rest frame budget
         if: steps.selection.outputs.selected == 'true' && github.event_name == 'pull_request'
         run: pnpm --filter @happier-dev/app exec vitest run sources/components/atmosphere/HomePlanet.test.tsx -t firstOpen.01.F1.idle60
+      - name: Install Chromium for performance journeys
+        if: steps.selection.outputs.selected == 'true'
+        run: pnpm --dir packages/tests exec playwright install --with-deps chromium
       - name: Run performance comparison
         if: steps.selection.outputs.selected == 'true'
         env:
