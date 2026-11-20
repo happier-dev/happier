@@ -13,6 +13,8 @@ import { accountSettingsParse } from '@happier-dev/protocol/account/settings/acc
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readSessionCreationAccountSettingsContext } from './cliManagedSessionDefaultsContext';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 // HTTP is the boundary. Preparation, context loading, custody and precedence stay real.
 afterEach(() => vi.restoreAllMocks());
@@ -194,4 +196,63 @@ it('inherits signed Account Home defaults without a Project selection or request
   expect(prepared.defaults.unavailableDefaults ?? []).toEqual([]);
   expect(resolveManagedSessionDefaults({ ...prepared.defaults.context, agentTargetKey: '' }).approvalProfileId)
     .toMatchObject({ value: 'home-profile', source: 'home' });
+});
+
+it('resolves a Project choice from the native Session issuer’s own Account custody', async () => {
+  const channel = await createRequesterCurrentnessSocketHarness();
+  try {
+    const serverHttpBaseUrl = 'https://session-defaults.test';
+    const requesterToken = 'session-requester-token';
+    const daemonToken = 'daemon-custodian-token';
+    const target = { kind: 'machine', machineId: 'machine' } as const;
+    const projectRef = { serverId: 'home', projectKey: 'selected-project' };
+    const origin = { v: 1, caller: { kind: 'session', sessionId: 'parent', starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'turn', callerPermissionMode: null, requestId: 'spawn' };
+    const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-authorization', binding: {
+      accountId: 'requester', custodianAccountId: 'custodian', accountEncryptionMode: 'plain',
+      authentication: { kind: 'terminal', tokenEpoch: 1 }, serverIdentityId: 'home',
+      machineId: target.machineId, installationId: 'installed', target, actionId: 'session.spawn_new',
+      requestId: origin.requestId, requestEnvelopeDigest: 'a'.repeat(43), sessionActionOrigin: origin,
+      sessionActionSource: { machineId: target.machineId, installationId: 'installed' },
+      projectSessionDefaultsAdmission: { projectRef },
+    } });
+    const keys = nacl.sign.keyPair();
+    const key = { kind: 'project-session-defaults', ...projectRef };
+    vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(config?.headers?.Authorization).toBe(`Bearer ${requesterToken}`);
+      return { status: 200, data: String(url).endsWith('/currentness')
+        ? { mode: 'plain', version: 0, settingsVersion: 0, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }
+        : { mode: 'plain', updatedAt: 1 } };
+    });
+    const readRow = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      expect(url).toBe(`${serverHttpBaseUrl}/v1/account/project-rows/read`);
+      expect(body).toEqual({ key });
+      expect(config?.headers?.Authorization).toBe(`Bearer ${requesterToken}`);
+      return { status: 200, data: { status: 'present', row: { key, revision: 0,
+        content: { t: 'plain', v: { key, value: { approvalProfileId: 'personal-profile' } } } } } };
+    });
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { homeDefaults: { approvalProfileId: 'home-profile' } } });
+    const authorization = await projectRequesterAccountActionAuthorization({ authorization: root, serverIdentityId: 'home',
+      bootstrap: { credentials: { token: requesterToken, encryption: null }, serverHttpBaseUrl,
+        attribution: { serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installed' },
+        getBoundSessionId: () => 'parent', isCurrent: async () => true },
+    });
+    if (!authorization) throw new Error('Expected admitted Session requester transport');
+    const prepare = createPrepareSessionSpawnInput({ credentials: { token: daemonToken, encryption: null },
+      token: daemonToken, mode: 'plain', sessionId: 'parent', ctx: null, serverId: 'home',
+      serverIdentityId: 'home', serverHttpBaseUrl,
+      externalActionMachineInstallationId: 'installed', externalActionMachineRequestPrivateKey: keys.secretKey,
+    }, { serverId: 'home', serverHttpBaseUrl }, {
+      spawnConnectedServicesList: async () => { throw new Error('no connected-services intent'); },
+    });
+    const prepared = await prepare({ executionTarget: { serverId: 'home', machineId: target.machineId },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      directory: { kind: 'path', path: '/repo' }, projectContext: { projectRef } },
+    { surface: 'mcp', authority: 'account_automation', externalActionExecutionAuthorization: authorization, externalActionTarget: target });
+    expect(resolveManagedSessionDefaults({ ...prepared.defaults.context, agentTargetKey: '' }).approvalProfileId)
+      .toMatchObject({ value: 'personal-profile', source: 'personal-project' });
+    expect(readRow).toHaveBeenCalledTimes(1);
+  } finally {
+    await channel.close();
+  }
 });

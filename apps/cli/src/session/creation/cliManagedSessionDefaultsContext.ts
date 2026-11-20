@@ -10,7 +10,7 @@ import { hasStoredSessionCredentialProvenance, type StoredCredentials } from '@/
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
 import { readProjectSessionDefaults } from '@/workspaces/projectAccountRows';
@@ -61,14 +61,22 @@ export function createCliManagedSessionDefaultsContextLoader(input: Readonly<{
   });
   const privateAccountAvailable = canReadPrivateSessionDefaults(input.credentials, context);
   const binding = context.externalActionExecutionAuthorization?.binding;
+  const requester = privateAccountAvailable ? null : readRequesterAccountActionTransportContext(context.externalActionExecutionAuthorization);
+  // A native Session already holds its creator's Account transport for an exact Project read.
+  const personalRows = requester ? { credentials: requester.credentials, sessionCustody: {
+    serverId: requester.authorization.binding.serverIdentityId,
+    accountId: requester.authorization.binding.accountId,
+    serverHttpBaseUrl: requester.serverHttpBaseUrl,
+    isCurrent: () => requester.isCurrent(),
+  } } : privateAccountAvailable ? { credentials: input.credentials } : undefined;
   const teamAvailable = privateAccountAvailable
     || (binding !== undefined && isExternalActionProjectSessionDefaultsReadAdmittedV1(binding, 'teams.get'));
   const homeAvailable = privateAccountAvailable
     || (binding !== undefined && isExternalActionProjectSessionDefaultsReadAdmittedV1(binding, 'home.governance.get'));
   return {
-    ...(privateAccountAvailable ? {
+    ...(personalRows ? {
       readPersonalDefaults: (project: Parameters<NonNullable<ManagedSessionDefaultsContextLoaderV1['readPersonalDefaults']>>[0]) =>
-        runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => readProjectSessionDefaults({ credentials: input.credentials,
+        runWithServerHttpBaseUrl(input.serverHttpBaseUrl, () => readProjectSessionDefaults({ ...personalRows,
           ...project, ...(input.signal ? { signal: input.signal } : {}) })),
     } : {}),
     readSource: async source => {
