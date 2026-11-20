@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import type { PluginResourceContextV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { PluginCollectionReadErrorCodeV1Schema } from '@happier-dev/protocol/plugins/data/collectionsV1';
-import type { PluginUiHostApiSurfaceTargetV1 } from '@happier-dev/protocol/plugins/ui';
+import type { PluginUiHostApiSurfaceTargetV1, PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { ResourcesService } from '@happier-dev/plugin-sdk/resources';
 import { MAX_PLUGIN_DYNAMIC_RESOURCE_DECLARED_BYTES_V2 } from '@happier-dev/protocol/plugins/contributions/v2';
@@ -17,6 +17,7 @@ import type { PluginUiProjectionModel, PluginUiResourceProjection } from '@/sync
 import { createPluginAccountResourceClient } from './pluginAccountResourceClient';
 
 import { createPluginContextualResourceReadClient } from './pluginSurfaceResourceRead';
+import { bindPluginSurfaceResourceInput } from './pluginSurfaceResourceRead';
 import { readPluginResourceStoreSnapshot } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceResourceReference } from './pluginSurfaceResourceRead';
 import { createPluginContextualResourceWatchClient } from './pluginSurfaceResourceWatch';
@@ -34,6 +35,11 @@ import { resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/p
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 type PluginContextualResourceStore = ReturnType<typeof createPluginUiResourceStore>;
+
+/** Authored operands select a surface entry without changing its host-bound custody. */
+export type PluginDeclaredResourceStore = PluginUiResourceStore & Readonly<{
+    getEntry(resource: PluginUiResourceReference, authoredInput?: PluginUiJsonValueV1): PluginUiResourceEntry;
+}>;
 
 export type PluginContextualResourceStoreLease = Readonly<{
     store: PluginContextualResourceStore;
@@ -460,7 +466,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
     target?: PluginUiHostApiSurfaceTargetV1;
     surfaceContext?: Extract<PluginResourceContextV1, { kind: 'surface' }>;
     createFallbackStore?: () => PluginUiResourceStore;
-}>): (PluginUiResourceStore & Readonly<{
+}>): (PluginDeclaredResourceStore & Readonly<{
     reconcile(): void;
     hasDeclaredNamespace(): boolean;
     readNamespaceKey(): string;
@@ -563,25 +569,26 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
             namespaceListeners.add(listener);
             return () => { namespaceListeners.delete(listener); };
         },
-        getEntry(resource) {
+        getEntry(resource: PluginUiResourceReference, authoredInput?: PluginUiJsonValueV1) {
             reconcile();
             if (disposed || !input.accountLifetime.isCurrent()) return fail('plugin_surface_retired');
             const reference = readPluginSurfaceResourceReference(input.pluginId, resource);
             if (!reference || reference.pluginId !== input.pluginId) return fail('plugin_resource_not_found');
             const declaration = hasDeclaredNamespace ? readDeclarations().find(row => row.id === reference.localId) : undefined;
             if (hasDeclaredNamespace && !declaration) return fail('plugin_resource_not_found');
-            const key = pluginUiResourceReferenceKey(reference, input.pluginId);
+            const key = stableJsonStringify([pluginUiResourceReferenceKey(reference, input.pluginId),
+                authoredInput === undefined ? [] : [authoredInput]]);
             const mounted = entries.get(key);
             if (mounted) return mounted.entry;
             let lease: PluginContextualResourceStoreLease | null = null;
             let shared: PluginUiResourceEntry;
             if (declaration) {
-                const context: PluginResourceContextV1 | undefined = declaration.scope === 'global'
+                const context = bindPluginSurfaceResourceInput(declaration.scope === 'global'
                     || declaration.scope === undefined && declaration.path !== undefined ? { kind: 'global' }
                     : declaration.scope === 'session' && input.sessionId
                         && (!input.target || input.target.kind === 'session' && input.target.sessionId === input.sessionId)
                         ? { kind: 'session', sessionId: input.sessionId, ...(input.target ? { target: input.target } : {}) }
-                    : declaration.scope === 'surface' ? input.surfaceContext : undefined;
+                    : declaration.scope === 'surface' ? input.surfaceContext : undefined, authoredInput);
                 if (!context) return fail('plugin_resource_context_unavailable');
                 const accountPlaced = declaration.execution?.target === 'account';
                 if (accountPlaced && !declaration.occurrenceId) return fail('plugin_resource_not_found');

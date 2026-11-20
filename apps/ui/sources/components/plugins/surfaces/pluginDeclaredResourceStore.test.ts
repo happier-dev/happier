@@ -25,6 +25,59 @@ installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 afterEach(async () => { rpc.action.mockReset(); await connection?.dispose(); connection = undefined; });
 
+it('reads authored surface operands through Account Resource custody while the Machine is unavailable', async () => {
+    const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+    const { createPluginSurfaceResourceReadHandler } = await import('./pluginSurfaceResourceRead');
+    const { decodeBase64 } = await import('@/encryption/base64');
+    const accountId = 'surface-input-account';
+    const http = createHomeHubArtifactHttpBoundary(accountId);
+    connection = await restoreServerAccountForTest({ serverUrl: 'http://surface-input.test', accountId, request: http.request });
+    const accountLifetime = captureActiveServerAccountScopeLifetime()!;
+    const pluginId = 'example.surface-input';
+    const execution = { target: 'account', account: { artifactId: 'surface-input', exportName: 'activate' } };
+    const parsed = parsePluginManifest({ schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Surface input',
+        runtime: { apiVersion: 1 }, contributes: {
+            actions: [{ id: 'read', title: 'Read', scopes: ['global'], surfaces: ['plugin'], execution, dangerLevel: 'safe', readOnly: true }],
+            resources: [{ id: 'selected', source: 'dynamic', scope: 'surface', kind: 'config', contentType: 'application/json', execution }],
+        } });
+    if (!parsed.ok) throw new Error('Expected admitted surface Resource fixture');
+    let revision = 1;
+    const fixture = await installPortableAccountPluginReleaseForTest({ manifest: parsed.manifest, accountLifetime,
+        activate(api) {
+            api.actions.register('read', async () => null);
+            api.resources.registerDynamicResource('selected', { read(options) {
+                return JSON.stringify({ context: options.context, revision });
+            }, observe() { return { dispose() {} }; } });
+        } });
+    const unpublish = publishCommittedAppShellPluginUiProjection(() => fixture.projection);
+    const declaration = fixture.projection.resourcesById[`${pluginId}/selected`]!;
+    const context = { kind: 'surface' as const, mountInstanceKey: 'task-detail', launchInput: { entryId: 'ambient-task' }, target: { kind: 'app' as const } };
+    const store = createPluginDeclaredResourceStore({ accountLifetime, pluginId, machineId: null,
+        serverId: accountLifetime.scope.serverId, expectedCallerOccurrenceId: declaration.occurrenceId!,
+        resourcesById: fixture.projection.resourcesById, resourceDeclarationsComplete: true, surfaceContext: context })!;
+    const read = createPluginSurfaceResourceReadHandler({ pluginId, isDaemonAvailable: () => false,
+        resource: { machineId: null, expectedCallerOccurrenceId: declaration.occurrenceId!, context, store } });
+    const readSelected = async (entryId: string | null | undefined) => {
+        const result = await read({ requestId: `read-${entryId}`, method: 'readResource',
+            payload: { resource: 'selected', ...(entryId === undefined ? {} : { input: entryId === null ? null : { entryId } }) } });
+        expect(result).toMatchObject({ contentType: 'application/json', bytesBase64: expect.any(String) });
+        if (!result || typeof result !== 'object' || !('bytesBase64' in result) || typeof result.bytesBase64 !== 'string') {
+            throw new Error('Expected Account Resource bytes');
+        }
+        return JSON.parse(new TextDecoder().decode(decodeBase64(result.bytesBase64, 'base64')));
+    };
+    try {
+        expect(await readSelected(undefined)).toEqual({ context, revision: 1 });
+        expect(await readSelected(null)).toEqual({ context: { ...context, launchInput: null }, revision: 1 });
+        expect(await readSelected('task-a')).toEqual({ context: { ...context, launchInput: { entryId: 'task-a' } }, revision: 1 });
+        expect(await readSelected('task-b')).toEqual({ context: { ...context, launchInput: { entryId: 'task-b' } }, revision: 1 });
+        revision = 2;
+        expect(await readSelected('task-a')).toEqual({ context: { ...context, launchInput: { entryId: 'task-a' } }, revision: 2 });
+    } finally { store.dispose(); unpublish(); await fixture.dispose(); }
+});
+
 it.each(['mounted', 'unmounted'] as const)('preserves the mounted Machine through Session admission for a %s Account Resource nested daemon read without sharing it with a Machine-less demand', async presentation => {
     // The outer Account executable runs in native UI; its child retains explicit daemon placement.
     installNativeRuntimeFetchBoundaryForTest();

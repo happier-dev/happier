@@ -9,6 +9,7 @@ import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/
 import type { PluginUiResourceClient, PluginUiResourceEntry, PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { pluginUiResourceReferenceKey } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginDeclaredResourceStore } from './PluginContextualResourceStoreProvider';
 import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
@@ -67,7 +68,7 @@ export type PluginSurfaceResourceBinding = Readonly<{
     timeoutMs?: number;
     read?: PluginSurfaceResourceReadTransport;
     /** Host-private shared owner; never accepted from a plugin request. */
-    store?: PluginUiResourceStore;
+    store?: PluginDeclaredResourceStore;
     /** The same contextual fallback owner, borrowed for read cancellation but not legacy watch admission. */
     contextualFallbackStore?: PluginUiResourceStore;
     /** Preserve fresh legacy protocol reads when their contextual store owns cancellation. */
@@ -358,10 +359,12 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
 
         const store = input.resource.store ?? input.resource.contextualFallbackStore;
-        if (store && payload?.input === undefined) {
+        if (store && (payload?.input === undefined || input.resource.store?.requiresMachine?.(reference) === false)) {
             try {
-                const entry = store.getEntry(reference);
-                await readPluginResourceStoreSnapshot(entry, signal, input.resource.refreshOnRead === true);
+                const entry = input.resource.store
+                    ? input.resource.store.getEntry(reference, payload?.input)
+                    : store.getEntry(reference);
+                await readPluginResourceStoreSnapshot(entry, signal, input.resource.refreshOnRead === true || payload?.input !== undefined);
                 if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
                 const snapshot = entry.getSnapshot();
                 if (snapshot.error || !snapshot.value) return createPluginSurfaceResourceSnapshotError(snapshot.error);
