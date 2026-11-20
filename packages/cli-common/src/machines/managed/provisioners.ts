@@ -46,6 +46,10 @@ export function readManagedOpaquePresetProvisionerV1(params: Readonly<{
     return resolveRetainedMachineProvisioner(params.provisioners, params.launch)?.descriptor ?? null;
 }
 
+type ManagedOpaquePresetProvisionerQualificationV1 =
+    | Readonly<{ kind: 'qualified'; provisioner: MachineProvisionerContributionV1 }>
+    | Readonly<{ kind: 'refused'; code: 'invalid_request' | 'provider_unavailable' }>;
+
 /**
  * One keyholding-host qualification for an opened opaque preset launch.
  * Callers supply their installed declaration view; this helper neither reads
@@ -54,13 +58,15 @@ export function readManagedOpaquePresetProvisionerV1(params: Readonly<{
 export function qualifyManagedOpaquePresetProvisionerV1(params: Readonly<{
     launch: Pick<ValidatedLaunchSnapshotV1, 'provider' | 'schemaVersion' | 'choices'>;
     provisioners: readonly ManagedOpaquePresetProvisionerCandidateV1[];
-}>): MachineProvisionerContributionV1 | null {
+}>): ManagedOpaquePresetProvisionerQualificationV1 {
     const selected = readManagedOpaquePresetProvisionerV1(params);
-    if (!selected?.actions.acquire) return null;
+    if (!selected?.actions.acquire) return { kind: 'refused', code: 'provider_unavailable' };
     try {
-        return compilePluginJsonSchema(selected.launchSchema)(params.launch.choices) ? selected : null;
+        return compilePluginJsonSchema(selected.launchSchema)(params.launch.choices)
+            ? { kind: 'qualified', provisioner: selected }
+            : { kind: 'refused', code: 'invalid_request' };
     } catch {
-        return null;
+        return { kind: 'refused', code: 'provider_unavailable' };
     }
 }
 

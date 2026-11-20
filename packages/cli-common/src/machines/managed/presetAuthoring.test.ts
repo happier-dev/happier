@@ -29,6 +29,26 @@ const plainCensus = { kind: 'ready' as const, contentEncryptionMode: 'plain' as 
 const controller = { machineId: 'author-computer', installationId: 'author-installation' };
 
 describe('preset author source review', () => {
+  it.each([
+    { selected: true, code: 'invalid_request' },
+    { selected: false, code: 'provider_unavailable' },
+  ])('returns $code when a draft has invalid choices and the provider selection is $selected', async ({ selected, code }) => {
+    const content = { t: 'plain', v: { v: 1, name: 'Draft preset', launch: { provider: contribution,
+      schemaVersion: 1, name: 'Draft launch', choices: {} } } };
+    const deps = { custody: { accountId: 'author', readWriterMode: async () => 'plain' as const,
+      open: params => openManagedMachinePresetRecipientProjectionV1({ ...params, mode: 'plain' }),
+      withE2eeAccountKey: () => null, readRecipientCensus: async () => plainCensus },
+      readSelectedProvisioners: async () => selected ? [{ contribution, occurrenceId: 'installed',
+        acquireExecutionTarget: 'daemon' as const, descriptor: MachineProvisionerContributionV1Schema.parse(descriptor) }] : [],
+      randomBytes: (length: number) => new Uint8Array(length),
+    } satisfies Parameters<typeof managed.prepareManagedMachinePresetAuthoringV1>[1];
+    const result = await managed.prepareManagedMachinePresetAuthoringV1({ actionId: 'machines.presets.create',
+      input: { id: 'preset', homeId: 'home', owner: { kind: 'team', teamId: 'team' }, contentEncryptionMode: 'plain',
+        content, recipients: [], controller }, context: { runtimeAccountId: 'author' },
+    }, deps);
+    expect(result).toMatchObject({ ok: false, errorCode: code });
+  });
+
   it('persists the captured carrier through the ordinary Save admission', async () => {
     const sealed = sealManagedMachinePresetContentV1({ presetId: 'preset', mode: 'plain', content: {
       v: 1, name: 'Team source', preparation: { enabled: false }, launch: { provider: contribution,

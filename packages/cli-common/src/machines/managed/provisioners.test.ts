@@ -191,14 +191,15 @@ describe('opaque preset launch qualification', () => {
         acquireExecutionTarget: 'account' as const }];
 
     it('selects and validates the exact opened declaration once for every keyholding host', () => {
-        expect(qualifyManagedOpaquePresetProvisionerV1({ launch, provisioners: selected })).toBe(provisioner);
+        expect(qualifyManagedOpaquePresetProvisionerV1({ launch, provisioners: selected })).toEqual({ kind: 'qualified', provisioner });
     });
 
     it('rejects schema drift or an absent acquire role before any host can issue a private child', () => {
         expect(qualifyManagedOpaquePresetProvisionerV1({ launch: { ...launch, choices: { stale: true } }, provisioners: selected }))
-            .toBeNull();
+            .toEqual({ kind: 'refused', code: 'invalid_request' });
         expect(qualifyManagedOpaquePresetProvisionerV1({ launch, provisioners: [{ ...selected[0]!,
             // @ts-expect-error -- Simulates a malformed declaration at the external plugin boundary.
-            descriptor: { ...provisioner, actions: { ...provisioner.actions, acquire: undefined } } }], })).toBeNull();
+            descriptor: { ...provisioner, actions: { ...provisioner.actions, acquire: undefined } } }], }))
+            .toEqual({ kind: 'refused', code: 'provider_unavailable' });
     });
 });

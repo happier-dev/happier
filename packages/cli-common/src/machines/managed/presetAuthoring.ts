@@ -118,8 +118,9 @@ export async function prepareManagedMachinePresetAuthoringV1(
     return failure('invalid_request');
   }
   const entries = await deps.readSelectedProvisioners(content.launch.provider.pluginId);
-  const descriptor = entries && qualifyManagedOpaquePresetProvisionerV1({ launch: content.launch, provisioners: entries });
-  if (!descriptor) return failure('provider_unavailable');
+  const qualification = qualifyManagedOpaquePresetProvisionerV1({ launch: content.launch, provisioners: entries ?? [] });
+  if (qualification.kind === 'refused') return failure(qualification.code);
+  const descriptor = qualification.provisioner;
   if (!requiresMachineProvisionerEffectReviewV1(descriptor, content.launch.choices)) return prepared;
   if (!request.invokeChild) return failure('admission_unavailable');
   const native = await request.invokeChild({ action: 'machines.provisioners.options', role: 'preset-authoring-review', input: {

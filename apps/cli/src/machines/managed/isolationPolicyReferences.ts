@@ -23,13 +23,13 @@ export function isMachineIsolationPresetReference(input: Readonly<{
   launch: NonNullable<ManagedMachinePresetContentV1['launch']>; descriptor: MachineProvisionerContributionV1 | null;
 }>): boolean {
   const { entry, target, preset, launch, descriptor } = input;
-  const provisioner = descriptor && qualifyManagedOpaquePresetProvisionerV1({ launch,
+  const qualification = descriptor && qualifyManagedOpaquePresetProvisionerV1({ launch,
     provisioners: [{ contribution: entry.provisioner, descriptor }] });
   return preset.id === entry.presetId && preset.homeId === target.homeId && preset.archivedAt === undefined
     && (!preset.controller || preset.controller.machineId === target.machineId && preset.controller.installationId === target.installationId)
     && launch.provider.pluginId === entry.provisioner.pluginId && launch.provider.localId === entry.provisioner.localId
-    && provisioner !== null && provisioner.id === entry.provisioner.localId
-    && readMachineProvisionerSessionPlacementV1(provisioner, launch.choices)?.kind === 'controller-local';
+    && qualification?.kind === 'qualified' && qualification.provisioner.id === entry.provisioner.localId
+    && readMachineProvisionerSessionPlacementV1(qualification.provisioner, launch.choices)?.kind === 'controller-local';
 }
 
 /** One save uses its admitted requester's Account and one captured admitted contribution catalog. */

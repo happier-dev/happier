@@ -107,8 +107,9 @@ async function prepareUiManagedOpaquePreset(params: Readonly<{
         if (!baseOpened?.launch) throw new ManagedMachineControllerError('content_unavailable');
         const provisioners = await readUiManagedProvisioners(params.account, baseOpened.launch.provider.pluginId);
         if ('ok' in provisioners) throw new ManagedMachineControllerError(provisioners.errorCode);
-        const provisioner = qualifyManagedOpaquePresetProvisionerV1({ launch: baseOpened.launch, provisioners });
-        if (!provisioner) throw new ManagedMachineControllerError('provider_unavailable');
+        const qualification = qualifyManagedOpaquePresetProvisionerV1({ launch: baseOpened.launch, provisioners });
+        if (qualification.kind === 'refused') throw new ManagedMachineControllerError('provider_unavailable');
+        const provisioner = qualification.provisioner;
         const prepare = async (snapshot: UiManagedOpaquePresetSnapshot, contentOverride?: unknown) => {
             const override = contentOverride === undefined ? undefined
                 : readManagedMachinePresetContentOverrideForModeV1({ mode: snapshot.contentEncryptionMode,

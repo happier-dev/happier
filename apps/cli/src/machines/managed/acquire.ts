@@ -123,8 +123,9 @@ async function qualifyManagedPresetAcquire(input: ManagedMachineAcquisitionDrive
     const declared = readManagedOpaquePresetProvisionerV1({ launch: machine.launch, provisioners: candidates(input.runtimeRegistry) });
     if (!declared?.actions.acquire) throw new ManagedMachineControllerError('provider_unavailable');
     const roleHost = await resolveManagedRoleRuntime(input, machine.launch.provider.pluginId, declared.actions.acquire);
-    const provider = qualifyManagedOpaquePresetProvisionerV1({ launch: machine.launch, provisioners: candidates(roleHost.runtimeRegistry) });
-    if (!provider?.actions.acquire) throw new ManagedMachineControllerError('provider_unavailable');
+    const qualification = qualifyManagedOpaquePresetProvisionerV1({ launch: machine.launch, provisioners: candidates(roleHost.runtimeRegistry) });
+    if (qualification.kind === 'refused') throw new ManagedMachineControllerError('provider_unavailable');
+    const provider = qualification.provisioner;
     await resolveManagedRoleCredentialAuthorizations(roleHost, machine.launch.provider, provider.actions.acquire,
         machine.launch.credentials, { descriptor: provider, launch: machine.launch.choices });
     return provider;
