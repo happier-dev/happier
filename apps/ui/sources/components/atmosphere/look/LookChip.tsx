@@ -67,6 +67,8 @@ export function LookPopover(
     <Popover
       open
       phonePresentation="sheet"
+      // On a phone Home changes above the sheet as each choice applies (lab Home look sheet).
+      sheetBackdrop="none"
       accessibilityLabel={props.accessibilityLabel ?? (props.target && !props.target.editor
         ? t('settingsAppearance.glassControls.homeLook') : t('settingsAppearance.glassControls.look'))}
       anchorRef={props.anchorRef}

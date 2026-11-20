@@ -146,6 +146,23 @@ describe('Popover phone presentation', () => {
         expect(recover).toHaveBeenCalledOnce();
     });
 
+    it('keeps the screen above a sheet about it readable: no scrim, and the sheet stops at half the screen', async () => {
+        let renderedBounds: PopoverRenderProps | undefined;
+        const screen = await renderScreen(
+            <Popover open phonePresentation="sheet" sheetBackdrop="none" accessibilityLabel="Home look"
+                onRequestClose={() => {}}>
+                {(bounds) => {
+                    renderedBounds = bounds;
+                    return <View testID="look-rows"><Text>{'A row of the sheet.\n'.repeat(80)}</Text></View>;
+                }}
+            </Popover>,
+        );
+        expect(renderedBounds?.maxHeight).toBe(viewport.height / 2);
+        expect(screen.findAll(node => typeof node.type === 'string' && flattenStyle(node.props.style).maxHeight === viewport.height / 2).length)
+            .toBeGreaterThan(0);
+        expect(screen.findByTestId('modal-card-body-scroll')?.props.scrollEnabled).toBe(true);
+    });
+
     it('uses a form completion action as the single sheet header exit', async () => {
         const onComplete = vi.fn();
         const onClose = vi.fn();

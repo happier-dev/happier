@@ -208,7 +208,8 @@ type PopoverCommonProps = Readonly<{
     sheetMaterial?: 'glass' | 'solid';
     /**
      * `none`: no scrim or blur behind the sheet, for a sheet about something on the screen (the
-     * tapped name in code) that must stay readable above it. A tap outside still closes it.
+     * tapped name in code, Home's look) that must stay readable above it: the sheet stops at half the
+     * screen and its body scrolls. A tap outside still closes it.
      */
     sheetBackdrop?: 'scrim' | 'none';
     /** Controls pinned under the sheet's scrolling body (a filter sheet's Clear and Show results). */
@@ -532,7 +533,10 @@ function PhonePopoverSheet(props: PopoverShellProps) {
     const portalId = React.useId();
     const { width: windowWidth, height: windowHeight } = usePresentationWindowDimensions();
     const insets = useChromeSafeAreaInsets();
-    const maxHeight = Math.min(props.maxHeightCap ?? windowHeight, Math.max(0, windowHeight - insets.top - insets.bottom));
+    // A sheet about the screen keeps the upper half of that screen in view (the first-open Home look sheet).
+    const aboutScreen = props.sheetBackdrop === 'none';
+    const frameHeight = aboutScreen ? Math.round(windowHeight / 2) : Math.max(0, windowHeight - insets.top);
+    const maxHeight = Math.min(props.maxHeightCap ?? windowHeight, frameHeight, Math.max(0, windowHeight - insets.top - insets.bottom));
     // Stable, so the retained body is not republished (and re-rendered) on every render of the sheet.
     const closeSheet = useEventCallback(() => props.onRequestClose?.());
     // Views pushed inside this sheet (a row's picker): the band then names the top one and leads with Back.
@@ -568,7 +572,7 @@ function PhonePopoverSheet(props: PopoverShellProps) {
             completion={pushed ? undefined : props.sheetHeaderAction}
             footer={pushed ? undefined : props.sheetFooter}
             onClose={props.onRequestClose && (pushed || !props.sheetHeaderAction) ? closeSheet : undefined}
-            style={{ maxHeight: Math.max(0, windowHeight - insets.top) }}
+            style={{ maxHeight: frameHeight }}
             bodyStyle={{ flexGrow: 0, paddingLeft: insets.left, paddingRight: insets.right }}
         >
             <FloatingOverlaySheetContext.Provider value={true}>
