@@ -26,6 +26,13 @@
     "./happier-plugin-ui/telemetry-metric-widget-native": "./src/ui/widgets/metricWidget.tsx",
     "./happier-plugin-ui/telemetry-slowest-routes-widget-native": "./src/ui/widgets/slowestRoutesWidget.tsx"
   },
+  "files": [
+    "src",
+    "dist",
+    ".happier-plugin",
+    ".happier-plugin-build",
+    "package.json"
+  ],
   "scripts": {
     "tsc": "node ../../../scripts/workspaces/runTypeScriptCli.mjs",
     "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",

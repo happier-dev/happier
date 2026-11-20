@@ -55,7 +55,7 @@ const EXCEPTION_DETAIL_FALLBACK_RENDERER_ID = 'exception-detail-fallback';
 export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  id: 'happier.telemetry', version: '0.0.0', displayName: 'Telemetry',
  description: 'Machine-local database observations and application telemetry.',
- entrypoints: { daemon: './dist/index.js' },
+ entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
  hostAccess: { required: [], optional: [{ id: 'account-storage', capability: 'storage.account', reason: 'Read the Project capture preference and keep native exception issues.', scope: { enabled: true } }] },
  machineRoles: {
   local: { title: 'Local database capture', description: 'Record database observations and application telemetry for local Workspaces.', partOf: 'workspaces', backgroundServices: ['local-capture'] },
