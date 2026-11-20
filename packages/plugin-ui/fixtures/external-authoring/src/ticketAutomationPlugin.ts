@@ -57,6 +57,7 @@ export function createExternalTicketContributions(pluginId: string) {
         resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, externalTicketIdentitySchema.jsonSchema),
         run: (input: ProtocolSchemaOutput<typeof externalTicketIdentitySchema>) => ({
           v: 1, sourceInstanceId: 'tickets', sourceContractVersion: 1, sourceConfig: input,
+          displayLabel: `Ticket ${input.ticketId}`,
         }),
       },
       'observe-ticket': {

@@ -8,6 +8,7 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import { ActionSpecGetResultSchema } from '@happier-dev/protocol/actions/specs/catalog';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
+import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
 import { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
@@ -273,10 +274,17 @@ describe('Automations everywhere: qualified plugin subjects', () => {
       WorkflowEventsListOutputV1Schema.parse(catalogResult.result).events.find(row =>
         row.event.identity.pluginId === pluginIds[0] && row.event.identity.localId === 'ticket-changed'));
     if (!selected.observationBinding) throw new Error('Ticket Event has no watcher assignment');
+    const configured = await actor.executeAsPerson('action.invoke', {
+      action: { pluginId: pluginIds[0], localId: 'watch-tickets' }, input: { ticketId: 'ticket-1' },
+    }, context, { action: { pluginId: pluginIds[0], localId: 'watch-tickets' }, machineId: machine.target.machineId });
+    expect(configured.ok, JSON.stringify(configured)).toBe(true);
+    if (!configured.ok) throw new Error(`Ticket Event setup refused (${configured.errorCode})`);
+    const source = PluginEventAutomationSetupResultV1Schema.parse(configured.result);
     const eventAttachment = await actor.executeAsPerson('workflow.trigger.add', {
       workflow: workflowId, project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
       trigger: { kind: 'pluginEvent', enabled: true, eventRef: selected.event.identity,
-        sourceInstanceId: 'tickets', sourceContractVersion: 1, sourceConfig: { ticketId: 'ticket-1' },
+        sourceInstanceId: source.sourceInstanceId, sourceContractVersion: source.sourceContractVersion,
+        sourceConfig: source.sourceConfig, displayLabel: source.displayLabel,
         observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: selected.observationBinding.materializationRef },
         filter: null, maximumObservationAgeMs: null,
         subject: { kind: 'plugin', serverId: fixture.serverId, pluginId: pluginIds[0], subjectKindId: 'ticket',
