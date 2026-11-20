@@ -4083,9 +4083,11 @@ isolated Environment and keeps its volumes and sealed grants between runs. It
 starts that Environment's current services, verifies the selected source
 snapshot, prepares and confirms restore, and checks the restored data through the
 restore owner's shared engine read operation. The selected target and statement
-use ordered typed parameters. Existing Workflow cleanup reads current
+use ordered typed parameters. The installed backup or restore target executes
+each Action under the Workflow's Home admission. Cleanup reads the current
 service generations again and stops them after a definite success or failure.
-The starter creates no Environment or agent Session. Typed result rows,
+A failed restore-and-check branch fails the Workflow after cleanup.
+The starter uses an existing Environment and runs without an agent Session. Typed result rows,
 completeness and
 any diagnostic remain in the existing child result; incomplete output does not
 claim a complete data comparison. The composed native drill and semantic host

@@ -35,6 +35,8 @@ import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { sealSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
+import { DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 
 let server: Awaited<ReturnType<typeof startWorkflowApprovedOperationServer>>;
 beforeAll(async () => { server = await startWorkflowApprovedOperationServer(); }, 120_000);
@@ -47,6 +49,43 @@ it('publishes complete Machine metadata for real daemon snapshot readers', async
         expect(metadata).toMatchObject({ platform: 'linux', homeDir: '/users/worker', happyHomeDir: '/users/worker/.happier' });
     }
 });
+
+it('binds native backup Workflow provenance to the assigned publisher and selected installation', async () => {
+    const [publisher, receiver] = server.machines;
+    const runId = randomUUID();
+    const snapshot = await materializeWorkflowAcceptedSnapshotFixture({
+        definition: { version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'wait', id: 'review',
+            document: { text: 'Review', references: [], attachments: [] }, result: { kind: 'text' } }] },
+        context: { source: { kind: 'inline' }, inputs: {}, machineId: publisher.id, executionTarget: { kind: 'session' },
+            workspaceTarget: { project: { machineId: publisher.id, directory: '/repo', checkoutRootPath: '/repo' } },
+            origin: { kind: 'direct' }, authorization: { principal: { kind: 'host' } } },
+    });
+    await admitWorkflowRun({ accountId: server.accountId, machineId: publisher.id, runId,
+        accountCurrentness: server.currentness, origin: { kind: 'direct' }, acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(
+            sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+                binding: { v: 1, purpose: 'accepted_snapshot', accountId: server.accountId, runId }, acceptedSnapshot: snapshot })) });
+    await server.claim(publisher.id);
+    const actionId = DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1;
+    const requestId = `${runId}/${randomUUID()}/0`;
+    const target = { kind: 'machine' as const, machineId: receiver.id };
+    const input = { serverId: server.homeId, environmentId: 'backup-environment', targetLinkId: 'backup-link',
+        machineId: receiver.id, installationId: receiver.installationId, deploymentId: 'deployment',
+        expectedRevision: 1, configRevision: 2, backupOperationId: 'capture',
+        snapshotId: 'a'.repeat(64), level: 'manifestReadBack' };
+    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target, input });
+    const native = projectDeploymentNativeAdmissionV1(actionId, input);
+    const admission = { accountId: server.accountId, serverIdentityId: server.homeId, actionId, requestId, target,
+        machineId: publisher.id, publisherMachineId: publisher.id, workflowActionOrigin: { runId, requestId },
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) };
+    // This gate proves the Run and exact placement. The native mint separately
+    // requires the real Environment, receipt and membership for this input.
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, deploymentNativeAdmission: native })).toBe(true);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, deploymentNativeAdmission: undefined })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, deploymentNativeAdmission:
+        projectDeploymentNativeAdmissionV1(actionId, { ...input, installationId: publisher.installationId }) })).toBe(false);
+    expect(await hasCurrentExternalActionWorkflowOriginInTx(db, { ...admission, publisherMachineId: receiver.id,
+        deploymentNativeAdmission: native })).toBe(false);
+}, 120_000);
 
 it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal Workflow native provenance before receiver approval (%s)', async intent => {
     const [publisher, receiver] = server.machines;

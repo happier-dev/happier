@@ -142,6 +142,9 @@ import { readDeploymentHealthCurrentPlacementFailure } from '@/deployments/healt
 import { createPrepareDeploymentBindingsForHost } from '@/deployments/secrets/prepareDeploymentBindingsForHost';
 import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, isDeploymentDataRoleBindingWriteV1, isDeploymentEnvironmentPlacementActionV1, resolveDeploymentEnvironmentExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_HEALTH_CURRENT_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, isDeploymentObservationReadActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentBackupActionResultSchemasV1, type DeploymentBackupActionResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import { DeploymentBackupRestoreResultV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentCreateIntentInputV1Schema, resolveDeploymentPreviewExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import type { withCliPromptLibraryArtifactReader } from '@/agent/prompts/library/resolveCliPromptStackSystemAppendBlocks';
@@ -1057,6 +1060,15 @@ export function createCliActionDeps(params: CliActionDepsParams,
   };
 
   const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, actionOperationAction: machineDeps.actionOperationAction!, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
+  const dispatchDeploymentBackupTarget = (
+    actionId: Parameters<typeof dispatchOriginalDeploymentRoot>[0],
+    input: Readonly<{ serverId: string; machineId: string }>,
+    context: ActionExecutorContext,
+  ) => dispatchOriginalDeploymentRoot(actionId, input, context, async () =>
+    isSameActionHomeId(input.serverId)
+      ? { ok: true, machineId: input.machineId }
+      : executionRunActionFailure('server_scope_mismatch'));
+
   const machineResourceDeps = createCliMachineResourceActionDeps(params, { projectHomeAdmission, callMachineAction, assertProjectRequesterCurrent, projectAccountAdmission, withProjectHome, projectHomeId, machineRebootReferences,
     resolveServerRequestHeaders,
     readEnvironmentAccess: deploymentStorageDeps.readEnvironmentAccess,
@@ -1300,6 +1312,19 @@ export function createCliActionDeps(params: CliActionDepsParams,
       credentials: params.credentials, isCredentialCurrent: params.isCredentialCurrent,
       readWorkspaceRows: readAdmittedProjectRows,
       readSource: (input, context) => (readEffectiveDeps?.() ?? actionDeps).projectSourcesRead!(input, context) }),
+    deploymentBackupAction: async (actionId, input, context) => {
+      const execution = await dispatchDeploymentBackupTarget(actionId, input, context);
+      if (!execution.ok) return execution;
+      const output = DeploymentBackupActionResultSchemasV1[actionId].safeParse(execution.result);
+      return output.success ? output.data as DeploymentBackupActionResultV1<typeof actionId>
+        : executionRunActionFailure('invalid_action_output');
+    },
+    deploymentRestore: async (input, context) => {
+      const execution = await dispatchDeploymentBackupTarget(DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, input, context);
+      if (!execution.ok) return execution;
+      const output = DeploymentBackupRestoreResultV1Schema.safeParse(execution.result);
+      return output.success ? output.data : executionRunActionFailure('invalid_action_output');
+    },
     deploymentReadArtifactHeaders: createDeploymentArtifactHeaderReader({ serverHttpBaseUrl: todoHomeBaseUrl, assertCurrent: assertDeploymentReadCurrent,
       ...(roleArtifactStore ? { artifacts: roleArtifactStore } : {}) }),
     // A committed Permissions Save delivers the Environment's content to its Source audience.

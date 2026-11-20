@@ -9,6 +9,8 @@ import { projectActionExecuteFailure, projectUnexpectedActionFailureV1 } from '.
 import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { DeploymentTeardownInputV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
+  DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 
 it('presents an unadmitted Action without claiming a creation and preserves unknown outcomes', () => {
   const refused = projectUnexpectedActionFailureV1(false, 'managed-delete');
@@ -68,6 +70,13 @@ it('admits Workflow preview creation, preparation, receipt and cleanup roots wit
 it('refuses Workflow-origin Artifact and Session public-link creation', () => {
   expect(externalActionApi.isExternalActionWorkflowActionIdV1('artifact.public_link.create')).toBe(false);
   expect(externalActionApi.isExternalActionWorkflowActionIdV1('session.public_link.create')).toBe(false);
+});
+
+it('admits the native backup and restore family as installed Workflow roots', () => {
+  for (const actionId of [...DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1]) {
+    expect(externalActionApi.isExternalActionMachineWorkflowActionIdV1(actionId), actionId).toBe(true);
+  }
+  expect(externalActionApi.isExternalActionWorkflowActionIdV1(DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1)).toBe(false);
 });
 
 it('admits an owned Workflow preview teardown through exact approval while retaining irreversible Ask', () => {

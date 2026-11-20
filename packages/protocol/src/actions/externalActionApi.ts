@@ -38,7 +38,7 @@ import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSes
 import { DeploymentIdentifierV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import type { ProjectSourceArtifactReadOptionsV1 } from '../projects/sources/projectSourceAttachmentAdmissionV1.js';
-import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1,
+import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
@@ -1341,6 +1341,7 @@ export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boo
     || actionId === 'deployments.templates.instantiate'
     || actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
     || isDeploymentDomainChildActionIdV1(actionId)
+    || isDeploymentBackupActionIdV1(actionId) || actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
     || deploymentOperationForRootActionV1(actionId) !== undefined;
 }
 

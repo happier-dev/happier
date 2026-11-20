@@ -1,9 +1,12 @@
 import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
+import type { DeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
     DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1,
+    isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
 import { canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, admitDeploymentMachineInTx } from '@/app/deployments/deploymentAdmission';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
@@ -20,7 +23,7 @@ export type DeploymentWorkflowOriginInput = Readonly<{
     serverIdentityId?: string; installationId?: string; custodianAccountId?: string; environmentId?: string;
     admittedMachineRole?: ExternalActionExecutionAuthorizationBindingV1['admittedMachineRole'];
     authentication?: Readonly<{ evidence?: readonly AuthTokenAuthenticationEvidenceV1[] }>;
-    deploymentNativeAdmission?: Readonly<{ environmentId: string }>;
+    deploymentNativeAdmission?: DeploymentNativeAdmissionV1;
     deploymentCandidatePublication?: ExternalActionExecutionAuthorizationBindingV1['deploymentCandidatePublication'];
     deploymentPreparationAdmission?: ExternalActionExecutionAuthorizationBindingV1['deploymentPreparationAdmission'];
     workflowActionOrigin?: ExternalActionExecutionAuthorizationBindingV1['workflowActionOrigin'];
@@ -70,6 +73,13 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
     if (continuation) return hasAcceptedDeploymentReceiptInTx(reader, input, continuation);
     const target = await readCurrentMachineWorkflowOriginInTx(reader, input, phase);
     if (!target) return false;
+    if (isDeploymentBackupActionIdV1(input.actionId) || input.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) {
+        // The native root guard owns Environment and receipt admission, including
+        // an installed runtime member that is different from the controller.
+        const native = input.deploymentNativeAdmission;
+        return (native?.kind === 'backup' || native?.kind === 'restore') && native.actionId === input.actionId
+            && native.machineId === input.target.machineId && native.installationId === target.installationId;
+    }
     // Mint admitted definition Manage. Move runs finite SCM work on the selected
     // workspace; the active Run and installed receiver retain that admission.
     if (input.actionId === DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1) return input.environmentId !== undefined;

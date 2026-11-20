@@ -140,7 +140,7 @@ import { buildDiscussionModelSessionCreationProofPayloadV1, type SessionCreation
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
 import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentBackupActionIdV1, isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentChildRpcV1, type DeploymentChildRpcV1, doesDeploymentChildInputMatchRootV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import type { DeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
@@ -1262,7 +1262,7 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin: workflowActionOrigin } } }) });
     const setupApply = actionId === 'machines.setup.apply' ? MachineSetupApplyInputV1Schema.safeParse(input.input) : null;
     // Catalog Publish Prepare and template preparation open private Account content.
-    if (isDeploymentChildEffectActionIdV1(actionId) || actionId === 'deployments.teardown'
+    if (isDeploymentBackupActionIdV1(actionId) || isDeploymentChildEffectActionIdV1(actionId) || actionId === 'deployments.teardown'
       || actionId === 'deployments.templates.instantiate' || actionId === 'deployments.environments.create'
       || actionId === DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1
       || setupApply?.success) {

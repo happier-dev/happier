@@ -14,13 +14,13 @@ import { createDeploymentReceiptArtifactHeaderV1 } from '@happier-dev/deployment
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionResponseEnvelopeV1Schema,
-  projectDeploymentReadAdmissionV1, createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  projectDeploymentReadAdmissionV1, projectDeploymentNativeAdmissionV1, createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { createCliActionDeps } from './createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
-import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { normalizeActionsSettingsV1, setScopedActionApprovalPreference } from '@happier-dev/protocol/actions/actionSettings';
 import { createRequesterBoundDeploymentActionDeps } from '@/daemon/externalActions/deploymentActionDeps';
 import tweetnacl from 'tweetnacl';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
@@ -36,6 +36,106 @@ import { GITHUB_PULL_REQUEST_RESPONSE } from '../../../../../packages/plugins/sc
 
 afterEach(() => vi.restoreAllMocks());
 const token = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-account' })).toString('base64url')}.signature`;
+it.each([
+  ['deployments.backups.verify', 'verify'],
+  ['deployments.backups.restore', 'prepare'],
+  ['deployments.backups.restore', 'confirm'],
+] as const)('delivers a detached Workflow backup Action %s (%s) through signed Home admission', async (actionId, phase) => {
+    const publisherToken = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-account', tokenEpoch: 7,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    const verifying = phase === 'verify';
+    const targetFields = { serverId: 'deployment-home', machineId: 'backup-target', installationId: 'backup-installation',
+      environmentId: verifying ? 'source-env' : 'drill-env', targetLinkId: verifying ? 'source-link' : 'drill-link',
+      deploymentId: 'deployment', expectedRevision: 1 };
+    const snapshot = { backupOperationId: 'capture', snapshotId: 'a'.repeat(64) };
+    const input = verifying ? { ...targetFields, ...snapshot, configRevision: 2, level: 'manifestReadBack' }
+      : { ...targetFields, mode: phase, source: { kind: 'repository', ...snapshot,
+        origin: { environmentId: 'source-env', targetLinkId: 'source-link' } },
+      destination: { kind: 'database', service: 'database', database: 'app' },
+      ...(phase === 'confirm' ? { prepareOperationId: 'restore-prepare' } : {}) };
+    const result = verifying ? { kind: 'verified', operationId: 'verify', ...snapshot,
+      environmentId: input.environmentId, configRevision: 2, repositoryId: 'b'.repeat(64),
+      level: 'manifestReadBack', verified: true }
+      : phase === 'prepare' ? { kind: 'prepared', operationId: 'restore-prepare', evidence: {} }
+        : { kind: 'restored', verified: true, nextAction: 'none', evidence: {} };
+    const environment = createDeploymentEnvironmentHeaderV1({ id: input.environmentId, serverId: input.serverId,
+      controllerMachineId: input.machineId });
+    vi.spyOn(axios, 'request').mockImplementation(async ({ url, method }) => {
+      expect(method).toBe('GET');
+      expect(new URL(String(url)).pathname).toBe(`/v1/deployments/environments/${input.environmentId}`);
+      return { status: 200, data: { ok: true, environment, targetLinks: [] } };
+    });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(url).pathname;
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      expect(path).toBe(`/v1/machines/${input.machineId}`);
+      return { status: 200, data: { machine: { id: input.machineId, kind: 'persistent', active: true,
+        installationId: input.installationId, storageMode: 'plain', revokedAt: null, replacedByMachineId: null,
+        installationPublicKey: Buffer.from(ed25519.getPublicKey(new Uint8Array(32).fill(19))).toString('base64'),
+        access: { custodian: { accountId: 'deployment-account', displayName: 'Owner' },
+          role: 'manage', resourceMode: 'plain', accessState: 'ready' } } } };
+    });
+    let transportAssertion: unknown;
+    const respond = async (url: string, data: unknown) => {
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(data);
+      const target = { kind: 'machine', machineId: input.machineId };
+      const workflowActionOrigin = { runId: 'workflow-run', requestId: 'backup-invocation' };
+      const canonicalInput = { ...input, serverId: 'srv_deployment_home' };
+      expect(request.envelope).toMatchObject({ target, input: canonicalInput });
+      if (new URL(url).pathname.endsWith('/execution-authorization')) {
+        expect(request).toMatchObject({ machineId: 'workflow-publisher', installationProof: expect.anything(), workflowActionOrigin });
+        return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-proof', binding: {
+          accountId: 'deployment-account', custodianAccountId: 'deployment-account',
+          authentication: { kind: 'terminal', tokenEpoch: 7 }, accountEncryptionMode: 'plain',
+          serverIdentityId: 'srv_deployment_home', machineId: input.machineId, installationId: input.installationId,
+          actionId, requestId: request.envelope.requestId, target, workflowActionOrigin, environmentId: input.environmentId,
+          deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(actionId, canonicalInput),
+          deploymentReadAdmission: projectDeploymentReadAdmissionV1(actionId, canonicalInput),
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
+        } }) };
+      }
+      expect(new URL(url).pathname).toBe(`/v1/actions/${actionId}`);
+      expect(request).toMatchObject({ machineId: input.machineId, executionAuthorization: {
+        token: 'home-proof', binding: { workflowActionOrigin }, requesterAccountContext: expect.anything(),
+      } });
+      return { status: 200, data: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1,
+        actionId, requestId: 'backup-invocation', execution: { ok: true, result } }) };
+    };
+    const send = vi.spyOn(axios, 'post').mockImplementation(async (url, data) => {
+      try {
+        return await respond(url, data);
+      } catch (error) {
+        transportAssertion = error;
+        throw error;
+      }
+    });
+    const executor = createCliActionExecutorFromCredentials({
+      credentials: { token: publisherToken, encryption: null }, serverId: input.serverId,
+      serverIdentityId: 'srv_deployment_home', serverApiUrl: 'https://deployment-home.test', machineId: 'workflow-publisher',
+      pluginActionExecutionOwner: 'current_process',
+      runActionOperation: async () => { throw new Error('The receiving daemon owns the backup operation'); },
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).secretKey,
+      externalActionMachineInstallationId: 'workflow-installation',
+      machineActionDirectTargetTransport: { machineId: 'workflow-publisher', invoke: async () => {
+        throw new Error('The Workflow publisher is not the backup target');
+      } },
+      actionsSettingsProvider: { getActionsSettings: () => setScopedActionApprovalPreference({
+        settings: normalizeActionsSettingsV1({}), actionId: 'deployments.backups.restore',
+        scope: { kind: 'environment', environmentId: 'drill-env' }, surface: 'agent', mode: 'waived',
+      }) },
+    });
+    const execution = await executor.execute(actionId, input, {
+      surface: 'agent', authority: 'account_automation', actionRequestId: 'backup-invocation',
+      executionRunWorkflowRunId: 'workflow-run', executionRunTargetMachineId: 'workflow-publisher',
+      actionCaller: { kind: 'workflowRun', runId: 'workflow-run',
+        authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' } },
+    });
+    if (transportAssertion) throw transportAssertion;
+    if (!execution.ok) throw new Error(JSON.stringify({ execution, requests: send.mock.calls.map(([url]) => url) }));
+    expect(execution.result).toEqual(result);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
 const artifact = { contentArtifactId: 'private-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
 function executor() {
   return createActionExecutor(createCliActionDeps({ token, credentials: { token, encryption: null },
