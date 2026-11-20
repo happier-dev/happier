@@ -12,7 +12,6 @@ import {
     readHomeGovernancePolicyInTx,
     setHomeGovernancePolicyInTx,
 } from "./governancePolicy";
-import { publishHomeGovernanceChangedInTx } from "./governanceChanges";
 import {
     resolvePersonalHomeBootstrapOwnerInTx,
 } from "./ownerAssignment";
@@ -136,7 +135,6 @@ async function bootstrapPersonalHomeTeamsInTx(
             },
         });
         if (applied.status !== "applied") abort("governance_policy_unavailable");
-        await publishHomeGovernanceChangedInTx(tx, { audience: "all_active_accounts" });
     }
 
     const team = await createTeamInTx(tx, {

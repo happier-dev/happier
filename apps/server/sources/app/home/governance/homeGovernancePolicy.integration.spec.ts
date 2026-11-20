@@ -105,6 +105,24 @@ describe("Home governance policy singleton", () => {
         });
     });
 
+    it("keeps the Home policy revision, audit and publication quiet on an equivalent save", async () => {
+        const owner = await createAccount("owner");
+        const patch = (expectedRevision: number) => setHomeGovernancePolicy({
+            actorAccountId: owner, env: POLICY_ENV, patch: { expectedRevision, teamCreationPolicy: "self_service" },
+        });
+        const seq = async () => (await db.account.findUniqueOrThrow({ where: { id: owner }, select: { seq: true } })).seq;
+        const audit = () => db.homeAdministrationEvent.count({ where: { actorAccountId: owner, action: "home.policy.set" } });
+        const before = await seq();
+        expect(await patch(0)).toMatchObject({ status: "applied", policy: { revision: 1 } });
+        expect(await seq() - before).toBe(1);
+        expect(await audit()).toBe(1);
+        const repeated = await patch(1);
+        expect({ repeated, publishes: await seq() - before, events: await audit() }).toMatchObject({
+            repeated: { status: "applied", policy: { revision: 1 } }, publishes: 1, events: 1,
+        });
+        expect(await patch(0)).toMatchObject({ status: "revision_conflict", policy: { revision: 1 } });
+    });
+
     it("persists Home Session defaults through the Home-admin authority", async () => {
         const owner = await createAccount("owner");
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner, metadata: "{}" } });

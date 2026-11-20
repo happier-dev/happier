@@ -185,13 +185,6 @@ export function isHomeGovernancePolicyCreateConflictError(
  * reauthorizes the actor, and observes the winning revision through the same
  * canonical owner.
  */
-function homeGovernancePolicyChangeAudience(patch: HomeGovernancePolicySetInputV1): "all_active_accounts" | "administrators" {
-    return patch.teamCreationPolicy !== undefined || patch.teamsVisibleToMembers !== undefined
-        || patch.authenticationPolicy !== undefined || patch.teamProviderPolicy !== undefined
-        || patch.identityNetworkPolicy !== undefined
-        || patch.sessionDefaults !== undefined ? "all_active_accounts" : "administrators";
-}
-
 export async function setHomeGovernancePolicy(input: Readonly<{
     actorAccountId: string;
     patch: HomeGovernancePolicySetInputV1;
@@ -199,15 +192,8 @@ export async function setHomeGovernancePolicy(input: Readonly<{
 }>): Promise<HomeGovernancePolicySetResult> {
     const emailDeliveryReady = input.patch.authenticationPolicy !== undefined
         && await isAuthEmailDeliveryReady({ env: input.env });
-    const attempt = async () => await inTx(async (tx) => {
-        const result = await setHomeGovernancePolicyInTx(tx, { ...input, emailDeliveryReady });
-        if (result.status === "applied") {
-            await publishHomeGovernanceChangedInTx(tx, {
-                audience: homeGovernancePolicyChangeAudience(input.patch),
-            });
-        }
-        return result;
-    }, { isolationLevel: "Serializable" });
+    const attempt = () => inTx(tx => setHomeGovernancePolicyInTx(tx, { ...input, emailDeliveryReady }),
+        { isolationLevel: "Serializable" });
 
     try {
         return await attempt();
@@ -326,28 +312,33 @@ async function assessAuthenticationPolicyChangeInTx(
 const POLICY_FIELDS = HomeGovernancePolicyFieldV1Schema.options;
 
 /** Records the fields this patch changed, as stored before and after (§3.9). */
-async function recordPolicyChangeInTx(tx: Tx, input: Readonly<{
+function readPolicyChanges(before: HomeGovernancePolicyRow | null, patch: HomeGovernancePolicySetInputV1) {
+    return POLICY_FIELDS.flatMap(field => {
+        const to = patch[field];
+        if (to === undefined) return [];
+        const from = before?.[field] ?? null;
+        return sameStrictJsonValue(from, to, { omitUndefinedObjectMembers: true }) ? [] : [{ field, from, to }];
+    });
+}
+
+async function publishPolicyChangeInTx(tx: Tx, input: Readonly<{
     actorAccountId: string;
-    before: HomeGovernancePolicyRow | null;
-    patch: HomeGovernancePolicySetInputV1;
+    changes: ReturnType<typeof readPolicyChanges>;
     revision: number;
     widening: boolean;
+    audience: "all_active_accounts" | "administrators";
 }>): Promise<void> {
-    const changes = POLICY_FIELDS.flatMap((field) => {
-        const next = input.patch[field];
-        if (next === undefined) return [];
-        const from = input.before ? (input.before[field] ?? null) : null;
-        return JSON.stringify(from) === JSON.stringify(next) ? [] : [{ field, from, to: next }];
-    });
-    if (changes.length === 0) return;
-    await recordHomeAdministrationEventInTx(tx, {
-        actor: { kind: "account", accountId: input.actorAccountId },
-        target: null,
-        detail: {
-            action: "home.policy.set",
-            summary: { revision: input.revision, changes, ...(input.widening ? { widening: true as const } : {}) },
-        },
-    });
+    if (input.changes.length > 0) {
+        await recordHomeAdministrationEventInTx(tx, {
+            actor: { kind: "account", accountId: input.actorAccountId },
+            target: null,
+            detail: {
+                action: "home.policy.set",
+                summary: { revision: input.revision, changes: input.changes, ...(input.widening ? { widening: true as const } : {}) },
+            },
+        });
+    }
+    await publishHomeGovernanceChangedInTx(tx, { audience: input.audience });
 }
 
 /**
@@ -376,10 +367,11 @@ export async function setHomeGovernancePolicyInTx(
         || input.patch.teamProviderPolicy !== undefined
         || input.patch.identityNetworkPolicy !== undefined) operations.add("set_authentication_policy");
     if (input.patch.sessionDefaults !== undefined) operations.add("set_session_defaults");
+    const audience = POLICY_FIELDS.some(field => input.patch[field] !== undefined) ? "all_active_accounts" : "administrators";
     await acquireHomeGovernanceAdmissionInTx(tx, {
         accountIds: [input.actorAccountId],
         intent: operations.has("set_authentication_policy") ? "exclusive" : "content",
-        audience: homeGovernancePolicyChangeAudience(input.patch),
+        audience,
     });
     for (const operation of operations) {
         const authorization = await authorizeHomeGovernanceMutationInTx(tx, {
@@ -431,6 +423,9 @@ export async function setHomeGovernancePolicyInTx(
         if (!audience.ok) return { status: "refused", code: audience.error };
     }
 
+    const changes = readPolicyChanges(current, input.patch);
+    if (current && changes.length === 0) return { status: "applied", policy: projectPolicyRow(current) };
+
     const teamsVisibleToMembersWrite = input.patch.teamsVisibleToMembers === undefined
         ? {}
         : { teamsVisibleToMembers: input.patch.teamsVisibleToMembers };
@@ -480,7 +475,7 @@ export async function setHomeGovernancePolicyInTx(
             }
             throw error;
         }
-        await recordPolicyChangeInTx(tx, { actorAccountId: input.actorAccountId, before: null, patch: input.patch, revision: 1, widening });
+        await publishPolicyChangeInTx(tx, { actorAccountId: input.actorAccountId, changes, revision: 1, widening, audience });
         return { status: "applied", policy: projectPolicyRow(await findPolicyRowInTx(tx)) };
     }
 
@@ -499,12 +494,12 @@ export async function setHomeGovernancePolicyInTx(
     if (applied.count === 0) {
         return { status: "revision_conflict", policy: projectPolicyRow(await findPolicyRowInTx(tx)) };
     }
-    await recordPolicyChangeInTx(tx, {
+    await publishPolicyChangeInTx(tx, {
         actorAccountId: input.actorAccountId,
-        before: current,
-        patch: input.patch,
+        changes,
         revision: currentRevision + 1,
         widening,
+        audience,
     });
     return { status: "applied", policy: projectPolicyRow(await findPolicyRowInTx(tx)) };
 }
