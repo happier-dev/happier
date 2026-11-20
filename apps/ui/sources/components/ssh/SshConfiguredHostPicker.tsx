@@ -1,8 +1,9 @@
 import * as React from 'react';
+import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
+import { StepQuietAction } from '@/components/onboarding/unauthShell/StepFormParts';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Item } from '@/components/ui/lists/Item';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
@@ -23,6 +24,8 @@ export type SshConfiguredHostPickerProps = Readonly<{
     error: Error | null;
     onRefresh: () => void | Promise<void>;
     onSelectSuggestion: ApplySshConfiguredHostSuggestion;
+    /** The inline row's last chip (a step's "New host"), drawn in the same row as the hosts. */
+    trailingChip?: React.ReactNode;
 }>;
 
 function describeSuggestion(suggestion: SshConfiguredHostSuggestion): string {
@@ -70,18 +73,22 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
     }
 
     return (
-        <View testID={props.testID}>
+        <View testID={props.testID} style={inline ? styles.inlineRoot : undefined}>
             {inline && items.length > 0 ? (
+                // The detected hosts as one centred row of chips, the step's own chip last (lab direction A "Which
+                // machine?"); each names where it was found as its hint.
                 <View style={styles.suggestions}>
-                    {props.suggestions.map((suggestion) => <RoundButton
+                    {props.suggestions.map((suggestion) => <WelcomeActionCard
                         key={suggestion.id}
                         testID={`${props.testID}-${suggestion.id}`}
-                        size="small"
-                        display="secondary"
+                        presentation="pill"
+                        iconName="terminal"
                         title={suggestion.alias}
-                        accessibilityHint={describeSuggestion(suggestion)}
+                        subtitle={describeSuggestion(suggestion)}
+                        escape
                         onPress={() => props.onSelectSuggestion(suggestion)}
                     />)}
+                    {props.trailingChip}
                 </View>
             ) : items.length > 0 ? (
                 <DropdownMenu
@@ -132,21 +139,33 @@ export const SshConfiguredHostPicker = React.memo(function SshConfiguredHostPick
                 />
             ) : null}
 
-            <Item
-                testID={`${props.testID}-refresh`}
-                title={props.refreshing
-                    ? t('settings.sshConfiguredHostPickerRefreshingTitle')
-                    : t('settings.sshConfiguredHostPickerRefreshTitle')}
-                disabled={props.loading || props.refreshing}
-                showChevron={false}
-                onPress={() => {
-                    void props.onRefresh();
-                }}
-            />
+            {inline ? (
+                <StepQuietAction
+                    testID={`${props.testID}-refresh`}
+                    label={props.refreshing
+                        ? t('settings.sshConfiguredHostPickerRefreshingTitle')
+                        : t('settings.sshConfiguredHostPickerRefreshTitle')}
+                    disabled={props.loading || props.refreshing}
+                    onPress={() => { void props.onRefresh(); }}
+                />
+            ) : (
+                <Item
+                    testID={`${props.testID}-refresh`}
+                    title={props.refreshing
+                        ? t('settings.sshConfiguredHostPickerRefreshingTitle')
+                        : t('settings.sshConfiguredHostPickerRefreshTitle')}
+                    disabled={props.loading || props.refreshing}
+                    showChevron={false}
+                    onPress={() => {
+                        void props.onRefresh();
+                    }}
+                />
+            )}
         </View>
     );
 });
 
 const styles = StyleSheet.create((theme) => ({
-    suggestions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 },
+    suggestions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: theme.space.s8 },
+    inlineRoot: { width: '100%', alignItems: 'center', gap: theme.space.s16 },
 }));

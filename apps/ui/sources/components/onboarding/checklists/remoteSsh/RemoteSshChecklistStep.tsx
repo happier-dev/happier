@@ -32,6 +32,7 @@ import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDra
 import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
 import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
 import { SshConfiguredHostPicker } from '@/components/ssh/SshConfiguredHostPicker';
+import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 import { resolveRemoteRelayCompletionUrl } from '@/components/systemTasks/remoteSshBootstrap/remoteSshBootstrapTask';
 
 import { buildRemoteSshChecklistItems } from './buildRemoteSshChecklistItems';
@@ -768,9 +769,9 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
                 suggestions={filteredConfiguredHostSuggestions}
                 onRefresh={configuredHostSuggestions.refresh}
                 onSelectSuggestion={handleSelectConfiguredHostSuggestion}
+                trailingChip={<WelcomeActionCard testID={`${testID}-new-host`} presentation="pill" iconName="plus" escape
+                    title={t('setupOnboarding.remoteHosts.newHostOption')} onPress={() => setCredentialEntryChosen(true)} />}
             />
-            <RoundButton testID={`${testID}-new-host`} size="small" display="secondary"
-                title={t('setupOnboarding.remoteHosts.newHostOption')} onPress={() => setCredentialEntryChosen(true)} />
         </View>;
     }
 
