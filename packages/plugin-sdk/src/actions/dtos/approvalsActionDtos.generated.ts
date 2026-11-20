@@ -878,6 +878,13 @@ export type ApprovalsActionResultById = {
                 inputDigest: string;
             };
             discussionDraftReview?: true | undefined;
+            approvalScope?: undefined | {
+                kind: 'environment';
+                environmentId: string;
+            } | {
+                kind: 'machine';
+                machineId: string;
+            };
             storageRetryResults?: undefined | {
                 batchId: string;
                 mode: 'delete' | 'trash';
@@ -1624,6 +1631,13 @@ export type ApprovalsActionResultById = {
                         resourceRevision?: number | undefined;
                     };
                 }[];
+            };
+            approvalScope?: undefined | {
+                kind: 'environment';
+                environmentId: string;
+            } | {
+                kind: 'machine';
+                machineId: string;
             };
             requestedSurface?: string | undefined;
             sessionCreationDirectoryApproval?: undefined | {
