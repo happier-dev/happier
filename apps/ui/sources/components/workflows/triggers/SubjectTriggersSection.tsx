@@ -94,6 +94,8 @@ export type SubjectTriggersSectionProps = Readonly<{
       /** A legacy page subject (Machine, Environment, service) keeps its starters; a canonical subject is read as itself. */
       subject: TriggerSubject | AutomationSubjectV1 | ActionAutomationsSubject;
       contextSubjects?: readonly AutomationSubjectV1[];
+      /** The admitted host Machine for Action/event catalogs; does not imply an execution directory. */
+      machineId?: string;
       executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
       serverId?: string;
       /** The host's mounted Account lifetime, when its read borrows one; explicit null makes no read. */
@@ -165,9 +167,9 @@ export function SubjectTriggersSectionReadState(props: SubjectTriggersReadStateP
 export const SubjectTriggersSectionContent = React.memo(
   function SubjectTriggersSectionContent(props: SubjectTriggersSectionProps & Readonly<{
     /** An Action's selected read has no resource Link, placement or Session intake. */
-    automations: SelectedAutomationsSectionRead & Partial<Pick<ResourceAutomationsSectionRead, 'project' | 'link' | 'session'>>;
+    automations: SelectedAutomationsSectionRead & Partial<Pick<ResourceAutomationsSectionRead, 'machineId' | 'project' | 'link' | 'session'>>;
   }>) {
-    const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, link, session } = props.automations;
+    const { accountLifetime, read, editor, rows, also, skippedNotSharedCount, machineId, project, link, session } = props.automations;
     const presented = useLayoutPresentationActive();
     const linkAnchor = React.useRef<View>(null);
     // Link is decided by this resource's settled starts: offered when some can start a linked workflow, never a form that
@@ -379,7 +381,7 @@ export const SubjectTriggersSectionContent = React.memo(
         {opening?.kind === 'link' && link ? (
           <ResourceLinkWorkflowSheet anchorRef={opening.anchor} resourceName={props.subjectName} link={link}
             serverId={accountLifetime?.scope.serverId ?? props.serverId ?? null}
-            machineId={project?.machineId ?? (legacy ? legacy.machineId : null)} accountLifetime={accountLifetime}
+            machineId={machineId ?? null} accountLifetime={accountLifetime}
             onRequestClose={close} onLinked={() => { close(); read.retry(); }} />
         ) : null}
         {opening?.kind === 'check' ? (

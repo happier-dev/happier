@@ -785,7 +785,8 @@ export function createPluginUiPrivatePresentationHost(
         ...presentationRenderers,
         ...(automations ? {
             renderAutomationsSection(input: import('@happier-dev/plugin-ui/components').AutomationsSectionProps) {
-                return <SubjectTriggersSection subject={input.subject} subjectName={input.subjectName ?? ''} testID={input.testID}
+                const target = automations.context?.externalActionTarget;
+                return <SubjectTriggersSection machineId={target?.kind === 'machine' ? target.machineId : undefined} subject={input.subject} subjectName={input.subjectName ?? ''} testID={input.testID}
                     accountLifetime={automations.isCurrent() ? automations.accountLifetime : null} />;
             },
             renderAutomationSubjectPicker(input: import('@happier-dev/plugin-ui/components').AutomationSubjectPickerProps) {

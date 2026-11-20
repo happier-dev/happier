@@ -47,6 +47,8 @@ export type ResourceAutomationsSectionInput = Readonly<{
     /** A mounted resource borrows its physical host's Account; explicit null never captures focus. */
     accountLifetime?: ServerAccountScopeLifetime | null;
     contextSubjects?: readonly AutomationSubjectV1[];
+    /** The physical host's selected catalog Machine, independent of workflow execution placement. */
+    machineId?: string;
     /** Execution placement is independent of the selected resource's identity. */
     executionContext?: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'>;
     serverId?: string;
@@ -67,6 +69,7 @@ export type SelectedAutomationsSectionRead = Readonly<{
 }>;
 
 export type ResourceAutomationsSectionRead = SelectedAutomationsSectionRead & Readonly<{
+    machineId: string | null;
     project: Pick<WorkflowProjectTargetV1, 'machineId' | 'directory'> | undefined;
     audience: readonly PrincipalRefV1[] | undefined;
     /** Session lifetime and Channels context stay separate from the selected subject's attachments. */
@@ -196,9 +199,9 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     const session = subject?.kind === 'session' ? { ...sessionContext, createSentenceIntent } : null;
     const actionScope = React.useMemo(() => subject?.kind === 'session'
         ? { kind: 'session' as const, sessionId: subject.sessionId, serverId }
-        : { kind: 'machine' as const, machineId: project?.machineId ?? (subject?.kind === 'machine' ? subject.machineId : null), serverId },
+        : { kind: 'machine' as const, machineId: props.machineId ?? project?.machineId ?? (subject?.kind === 'machine' ? subject.machineId : null), serverId },
     [subject?.kind, subject?.kind === 'session' ? subject.sessionId : null,
-        subject?.kind === 'machine' ? subject.machineId : null, project?.machineId, serverId]);
+        subject?.kind === 'machine' ? subject.machineId : null, props.machineId, project?.machineId, serverId]);
     const actionCatalog = useWorkflowActionCatalog(actionScope, 'automation', {
         enabled: demanded && subject !== null, accountLifetime });
     const eventCatalog = useWorkflowTriggerEventOptions({ machineId: actionCatalog.machineId, serverId: serverId ?? null,
@@ -223,7 +226,7 @@ export function useResourceAutomationsSection(props: ResourceAutomationsSectionI
     });
     const { link, audience } = useWorkflowLinkController({ subject, subjectName: props.subjectName, sourceAudience: props.sourceAudience,
         binding, demanded, editor, project, whenOptions, whenStatus, retryWhen });
-    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, project, audience, session, link };
+    return { accountLifetime, read, editor, rows, also, skippedNotSharedCount, machineId: actionCatalog.machineId, project, audience, session, link };
 }
 
 /** Resource and Action hosts link through the same trigger writer and optional grant review. */

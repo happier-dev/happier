@@ -912,7 +912,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
     renderWidgetArea?: DeclarativeWidgetAreaRender;
     entityDragBinding?: PluginEntityDragDropBinding | null;
     readLiveStreamViewing: BoundPluginSurfaceController['readLiveStreamViewing'];
-    liveStreamMachineId: string | null;
+    machineId: string | null;
     liveStreamServerId: string | null;
     surfaceId: string;
     mountInstanceKey?: PluginUiInstanceKeyV1;
@@ -1302,6 +1302,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                 automations: {
                     accountLifetime: canonicalAccountLifetime,
                     target: canonicalRenderIdentity.target,
+                    ...(props.machineId ? { context: { externalActionTarget: { kind: 'machine' as const, machineId: props.machineId } } } : {}),
                     isCurrent: props.mountLifetime.isCurrent,
                 },
                 ...(canonicalAccountLifetime ? { markdownWorkspace: {
@@ -1314,7 +1315,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
                 actionControls: props.actionControls,
                 renderLiveStream: (input) => <PluginLiveStreamViewer {...input} hostApi={props.hostApi}
                     surface={props.requestSurface} mountLifetime={props.mountLifetime} readViewing={props.readLiveStreamViewing}
-                    machineId={props.liveStreamMachineId} serverId={props.liveStreamServerId} />,
+                    machineId={props.machineId} serverId={props.liveStreamServerId} />,
                 ...(brandTargetPresentation
                     ? {
                         resolveBrandTarget: brandTargetPresentation.resolveBrandTarget,
@@ -1394,7 +1395,7 @@ function PluginReactNativeSurfaceHost(props: Readonly<{
             renderTargetedSurface,
             props.targetedSurfaceUnavailableReason,
             props.hostApi, props.requestSurface, props.mountLifetime, props.readLiveStreamViewing,
-            props.liveStreamMachineId, props.liveStreamServerId, props.runPress, props.actionControls,
+            props.machineId, props.liveStreamServerId, props.runPress, props.actionControls,
         ],
     );
     const canonicalPrivateDataClient = props.dataClient ?? undefined;
@@ -4168,7 +4169,7 @@ function PluginSurfaceHostMount(props: Readonly<(
                 {...(renderDeclarativeWidgetArea ? { renderWidgetArea: renderDeclarativeWidgetArea } : {})}
                 entityDragBinding={entityDragBinding}
                 readLiveStreamViewing={controller.readLiveStreamViewing}
-                liveStreamMachineId={machineId ?? null}
+                machineId={machineId ?? null}
                 liveStreamServerId={serverId ?? null}
                 surfaceId={mountedSurfaceId}
                 mountInstanceKey={mountInstanceKey}

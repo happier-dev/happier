@@ -31,7 +31,9 @@ export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPick
     [sessionId, serverId]));
     const checkout = props.target.kind === 'project' ? props.target.checkout
         : props.target.kind === 'services' ? props.target.project?.checkout : undefined;
-    const machineId = props.target.kind === 'machine' ? props.target.machineId : checkout?.machineId ?? sessionMachineId;
+    const actionTarget = props.context?.externalActionTarget;
+    const machineId = actionTarget?.kind === 'machine' ? actionTarget.machineId
+        : props.target.kind === 'machine' ? props.target.machineId : checkout?.machineId ?? sessionMachineId;
     const plugin = props.kind.kind === 'plugin';
     const demanded = open && props.disabled !== true && props.isCurrent();
     const projection = useDaemonMergedProjectionInputs({ accountLifetime: props.accountLifetime, machineId, serverId,
@@ -58,8 +60,8 @@ export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPick
         input = { ...common, kind: demand.kind, ...demand.page };
     } else input = { ...common, kind: props.kind };
     const read = useAutomationSubjectPicker(input);
-    const current = React.useRef({ targetKey, lifetime: props.accountLifetime });
-    current.current = { targetKey, lifetime: props.accountLifetime };
+    const current = React.useRef({ targetKey, machineId, lifetime: props.accountLifetime });
+    current.current = { targetKey, machineId, lifetime: props.accountLifetime };
     const choices = React.useMemo(() => read.items.map(item => ({ id: automationSubjectKeyV1(item.subject), title: item.label,
         ...(item.description === undefined ? {} : { subtitle: item.description }) })), [read.items]);
     const selectedId = props.value === null ? null : automationSubjectKeyV1(props.value);
@@ -77,7 +79,7 @@ export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPick
         return items;
     }, [choices, waiting, failed, read.hasMore, props.testID, open, selected, selectedId]);
     const select = React.useCallback((id: string) => {
-        if (current.current.targetKey !== targetKey || current.current.lifetime !== props.accountLifetime
+        if (current.current.targetKey !== targetKey || current.current.machineId !== machineId || current.current.lifetime !== props.accountLifetime
             || !props.isCurrent() || !props.accountLifetime?.isCurrent() || props.disabled) return;
         if (id === MORE) { void read.loadMore(); return; }
         if (id === RETRY) {
@@ -91,7 +93,7 @@ export function PluginAutomationSubjectPicker(props: PluginAutomationSubjectPick
         setSelected(choices[index]!);
         props.onChange(item.subject);
         setOpen(false);
-    }, [targetKey, props.accountLifetime, props.isCurrent, props.disabled, props.onChange, choices, read, plugin, projection.phase]);
+    }, [targetKey, machineId, props.accountLifetime, props.isCurrent, props.disabled, props.onChange, choices, read, plugin, projection.phase]);
     const unavailable = props.accountLifetime === null || !props.isCurrent() || read.status === 'unsupported'
         || plugin && (!machineId || projection.phase === 'unsupported');
     return <DropdownMenu testID={props.testID} open={open && !props.disabled} onOpenChange={setOpen}
