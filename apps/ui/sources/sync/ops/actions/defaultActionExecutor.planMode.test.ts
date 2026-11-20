@@ -3128,36 +3128,75 @@ describe('default Action executor mode and catalog contracts', () => {
 
   it.each(([false, true, undefined] as const).flatMap(isShared => (['create', 'preview'] as const).map(phase => ({ isShared, phase }))))(
     'sends strict V2 spawn input with one custody read only when uncertain ($phase isShared=$isShared)', async ({ isShared, phase }) => {
-    if (phase === 'preview') await homes.requireUiApproval(serverId, 'session.spawn_new');
-    const existing = storage.getState().machineListByServerId[serverId]?.find(machine => machine.id === 'machine-a');
-    if (!existing) throw new Error('Expected the scoped Machine inventory');
-    const machine = { ...existing, isShared };
-    storage.getState().applyMachines([machine], true, { sourceServerId: connection!.serverId });
-    const access = bindMachineAccessActionHttpRequestV1('machines.access.grants.list', { serverId, machineId: machine.id });
-    const readsBefore = homes.requestsFor(access.path).length;
+    const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+    const { HomeSessionDefaultsProjectionV1Schema } = await import('@happier-dev/protocol/home/governance/projection');
+    const { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationPortV1 } =
+      await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+    const executionTarget = { serverId: 'srv_mode_home', machineId: 'machine-a' };
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey: `manual:voice-v2-contract:${phase}:${String(isShared)}`,
-      executionTarget: { serverId, machineId: 'machine-a' }, directory: { kind: 'path', path: '/tmp/project' },
+      executionTarget, sessionPlacement: { kind: 'machine', target: executionTarget },
+      directory: { kind: 'path', path: '/tmp/project' },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       initialInput: { text: 'Inspect this project.' } });
-    const spawnResult = { type: 'success', disposition: 'created', sessionId: 'session-new', executionTarget: input.executionTarget,
-      organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'accepted', localId: 'message-new' } };
-    daemonAnswer = request => request.method === `machine-a:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`
-      ? createExistingSessionDirectoryPreflightResult(request.params) : spawnResult;
-    let previewed = false;
-    const executor = createDefaultActionExecutor({ presentUserActionConfirmation: async ({ preview }) => {
+    const spawnResult = { type: 'success' as const, disposition: 'created' as const, sessionId: 'session-new', executionTarget,
+      organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'accepted' as const, localId: 'message-new' } };
+    const actionAutomationIndex = ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] });
+    const spawn = vi.fn(async ({ admittedInput }: { admittedInput?: typeof input }) => {
+      expect(admittedInput).toEqual(input);
+      return spawnResult;
+    });
+    const receiver = createActionExecutor({
+      actionAutomations: createActionAutomationPortV1({
+        accountId: 'alice', seed: async () => actionAutomationIndex, settle: async () => {},
+      }),
+      ...(phase === 'preview' ? {
+        sessionSpawnNewDirectoryApprovalPreflight: async () => ({ type: 'approval_required' as const,
+          approval: { v: 1 as const, executionTarget, directory: '/tmp/project' } }),
+      } : {}),
+      sessionSpawnNew: spawn,
+    });
+    const { machine } = await answerExternalActionAccountForHome(homes, serverId, {
+      machineId: executionTarget.machineId, actionId: 'session.spawn_new', tokenEpoch: 0,
+      async execute(received, { invocation, authorization, target, signal }) {
+        expect(received).toEqual(input);
+        const result = await receiver.execute('session.spawn_new', received, {
+          surface: invocation.surface, authority: invocation.authority, actionCaller: invocation.caller,
+          presentUserConfirmation: invocation.presentUserConfirmation, ...(signal ? { signal } : {}),
+          actionRequestId: authorization.binding.requestId, runtimeAccountId: authorization.binding.accountId,
+          serverId: executionTarget.serverId, serverIdentityId: authorization.binding.serverIdentityId,
+          externalActionTarget: target, externalActionExecutionAuthorization: authorization,
+          sessionCreationDefaults: invocation.sessionCreationDefaults,
+        });
+        return result.ok ? result.result : result;
+      },
+      failure: value => {
+        const parsed = ActionExecuteFailureSchema.safeParse(value);
+        return parsed.success ? parsed.data : null;
+      },
+    });
+    homes.answer(serverId, 'POST /v1/home/governance/get', { body: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) });
+    homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, { body: actionAutomationIndex });
+    homes.answer(serverId, 'GET /v1/machines', { body: [machine] });
+    const existing = storage.getState().machineListByServerId[serverId]?.find(entry => entry.id === machine.id);
+    if (!existing) throw new Error('Expected the scoped Machine inventory');
+    storage.getState().applyMachines([{ ...existing, isShared }], true, { sourceServerId: connection!.serverId });
+    const access = bindMachineAccessActionHttpRequestV1('machines.access.grants.list', { serverId, machineId: machine.id });
+    const readsBefore = homes.requestsFor(access.path).length;
+    const confirm = vi.fn(async ({ preview }: { preview?: unknown }) => {
       expect(preview).toMatchObject({ actionId: 'session.spawn_new' });
-      previewed = true;
       return false;
-    } });
+    });
+    const result = await createDefaultActionExecutor({ presentUserActionConfirmation: confirm })
+      .execute('session.spawn_new', input, context());
     if (phase === 'create') {
-      const result = await executor.execute('session.spawn_new', input, { ...context(), signal: new AbortController().signal });
-      expect(result).toEqual({ ok: true, result: spawnResult });
-      expect(outgoing).toContainEqual(expect.objectContaining({ method: `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`, params: input }));
+      expect(result, JSON.stringify(result)).toEqual({ ok: true, result: {
+        ...spawnResult, organizationPlacement: { sectionId: null, tagIds: [] },
+      } });
+      expect(spawn).toHaveBeenCalledOnce();
     } else {
-      const result = await executor.execute('session.spawn_new', input, context());
       expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
-      expect(previewed).toBe(true);
-      expect(outgoing.some(request => request.method === `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`)).toBe(false);
+      expect(confirm).toHaveBeenCalledOnce();
+      expect(spawn).not.toHaveBeenCalled();
     }
     expect(homes.requestsFor(access.path)).toHaveLength(readsBefore + (isShared === false ? 0 : 1));
   });
