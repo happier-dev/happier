@@ -1,15 +1,50 @@
 import { createHash } from 'node:crypto';
+import { lstatSync, readlinkSync } from 'node:fs';
 import { readlink, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import type { FirstPartyVersionRootIdentity } from '@happier-dev/cli-common/firstPartyRuntime';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh/shellQuote';
 import type { MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
+const memberCliParent = '/opt';
+const memberCliPrefix = 'happier-member-cli-';
+const generationPattern = /^[0-9a-f]{64}$/u;
+
 export function resolveAgentIsolationMemberCliRuntime(installedCli: string) {
-  const root = `/opt/happier-member-cli-${createHash('sha256').update(installedCli).digest('hex')}`;
+  const root = join(memberCliParent, memberCliPrefix + createHash('sha256').update(installedCli).digest('hex'));
   return { sourceCli: installedCli, root, executable: join(root, 'current', basename(installedCli)) };
 }
 
 export type AgentIsolationMemberCliRuntime = ReturnType<typeof resolveAgentIsolationMemberCliRuntime>;
+
+function isProtectedDirectory(path: string): boolean {
+  const stat = lstatSync(path);
+  return stat.isDirectory() && stat.uid === 0 && (stat.mode & 0o022) === 0;
+}
+
+/** Read the publisher's root-owned generation store, using its relative pointers. */
+export function resolveAgentIsolationMemberCliVersionRoot(
+  runtimeRoot: string, retainedVersionRootId?: string,
+): FirstPartyVersionRootIdentity | null {
+  const store = dirname(runtimeRoot);
+  const storeName = basename(store);
+  if (process.platform !== 'linux' || dirname(store) !== memberCliParent
+    || !storeName.startsWith(memberCliPrefix) || !generationPattern.test(storeName.slice(memberCliPrefix.length))) return null;
+  try {
+    if (!['/', memberCliParent, store].every(isProtectedDirectory)) return null;
+    const executingName = basename(runtimeRoot);
+    const executingId = executingName === 'current' || executingName === 'previous'
+      ? readlinkSync(runtimeRoot) : executingName;
+    if (!generationPattern.test(executingId) || !isProtectedDirectory(join(store, executingId))) return null;
+    const versionRootId = retainedVersionRootId ?? executingId;
+    if (!generationPattern.test(versionRootId)) return null;
+    const root = join(store, versionRootId);
+    if (versionRootId !== executingId && !isProtectedDirectory(root)) return null;
+    return Object.freeze({ root, versionRootId });
+  } catch {
+    return null;
+  }
+}
 
 async function readInstalledPayload(runtime: AgentIsolationMemberCliRuntime) {
   const installRoot = await realpath(dirname(dirname(runtime.sourceCli)));
@@ -74,7 +109,7 @@ if [ -n "$incumbent" ] && [ "$incumbent" != "$generation" ]; then
   ln -s -- "$incumbent" "$stage/previous"
   mv -Tf -- "$stage/previous" "$root/previous"
   if [ "$older" != "$generation" ] && [ "$older" != "$incumbent" ] &&
-      printf '%s\\n' "$older" | grep -Eq '^[0-9a-f]{64}$'; then
+      printf '%s\\n' "$older" | grep -Eq '${generationPattern.source}'; then
     rm -rf -- "$root/$older"
   fi
 fi

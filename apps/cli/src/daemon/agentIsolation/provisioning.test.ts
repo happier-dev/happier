@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { PassThrough } from 'node:stream';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveSeparateUserToolsLayout } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
@@ -16,6 +17,8 @@ import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.tes
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
 import { createDaemonAgentIsolationEffects } from './createDaemonAgentIsolationEffects';
 import { buildAgentIsolationMemberCliRuntimeSteps, isAgentIsolationMemberCliCurrent } from './memberCliRuntime';
+import { resolveAgentLaunchRuntimeCustody } from './agentLaunchAccountSettings';
+import { resolveRetainedBundledPluginRoot } from '@/plugins/runtime/retainedPluginSourceAttestation';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -66,7 +69,7 @@ describe('agent isolation provisioning', () => {
         const source = dirname(dirname(privateCli));
         const stageRelease = async (version: string, companion: string) => {
           const payload = join(source, 'versions', version);
-          await mkdir(payload, { recursive: true });
+          await mkdir(join(payload, 'node_modules', '@happier-dev', 'plugins-claude'), { recursive: true });
           await writeFile(join(payload, 'companion'), companion, { mode: 0o600 });
           await writeFile(join(payload, 'happier'), '#!/bin/sh\ncat "$(dirname "$(realpath "$0")")/companion"\n', { mode: 0o700 });
           await symlink(payload, join(source, 'next'));
@@ -95,6 +98,17 @@ describe('agent isolation provisioning', () => {
         expect(() => sudo('-u', 'nobody', '--', 'test', '-w', target!)).toThrow();
         expect((await lstat(root)).mode & 0o777).toBe(0o700);
         const previous = await realpath(target!);
+        const memberEnv = { HOME: '/nonexistent' };
+        const frame = { v: 1 as const, executable: '/bin/true', args: [], cwd: '/', runtimeHome: '/nonexistent/runtime',
+          environment: { HAPPIER_FIRST_PARTY_INSTALL_HOME: root }, selectedMaterials: [] };
+        const readCustody = (executable: string) => resolveAgentLaunchRuntimeCustody(frame, {
+          moduleUrl: 'file:///$bunfs/root/happier.js', currentExecPath: executable,
+          argv: [executable, 'agent-launch'], processEnv: memberEnv,
+        });
+        const captured = readCustody(previous);
+        expect(captured).toMatchObject({ root: dirname(previous),
+          packagedRuntime: { kind: 'cli_version_root', versionRootId: basename(dirname(previous)) } });
+        expect(readCustody(target!)).toEqual(captured);
         await stageRelease('v2', 'new managed release\n');
         expect(await isAgentIsolationMemberCliCurrent(production.memberCliRuntime!)).toBe(false);
         const upgrade = await resolveAgentIsolationEffectIntentResult(true, effects, requesterIdentity);
@@ -104,6 +118,23 @@ describe('agent isolation provisioning', () => {
         expect(await isAgentIsolationMemberCliCurrent(production.memberCliRuntime!)).toBe(true);
         expect(sudo('-u', 'nobody', '--', target!, 'agent-launch')).toBe('new managed release\n');
         expect(sudo('-u', 'nobody', '--', previous, 'agent-launch')).toBe('managed release\n');
+        const current = await realpath(target!);
+        expect(readCustody(current)?.root).toBe(dirname(current));
+        expect(readCustody(join(publishedRoot, 'previous', 'happier'))).toEqual(captured);
+        await expect(resolveRetainedBundledPluginRoot({ pluginId: 'happier.agent.claude',
+          custody: { kind: 'bundled_first_party', packagedRuntime: captured!.packagedRuntime },
+          moduleUrl: pathToFileURL(join(dirname(current), 'package-dist', 'index.mjs')).href,
+          processEnv: memberEnv,
+        })).resolves.toMatchObject({ rootPath: join(dirname(previous), 'node_modules', '@happier-dev', 'plugins-claude') });
+        const forged = join(publishedRoot, 'a'.repeat(64));
+        sudo('ln', '-s', '--', dirname(previous), forged);
+        expect(() => readCustody(join(forged, 'happier'))).toThrowError(expect.objectContaining({
+          code: 'FIRST_PARTY_VERSION_ROOT_OUTSIDE_LAYOUT',
+        }));
+        sudo('chmod', '0775', '--', publishedRoot);
+        expect(() => readCustody(current)).toThrowError(expect.objectContaining({
+          code: 'FIRST_PARTY_VERSION_ROOT_OUTSIDE_LAYOUT',
+        }));
       } finally {
         if (publishedRoot) sudo('rm', '-rf', '--', publishedRoot);
         await rm(root, { recursive: true, force: true });

@@ -4232,7 +4232,10 @@ In 0.3 development, Separate users publishes the current installed CLI payload,
 including companion files, to a root-owned, read-only runtime on Linux. The
 reviewed Apply and existing member setup use the same publisher. Readiness,
 RunAs, Session launch and finite operations use that runtime while the owner's
-home keeps its existing permissions. After the managed installer switches
+home keeps its existing permissions. Packaged custody uses the executing
+generation of that protected member store for bundled Account settings and
+plugin loads. Retained loads can reopen a generation in the same store by ID.
+After the managed installer switches
 releases, the existing member setup refreshes the runtime before a new member
 launch. Member retirement removes either exact managed RunAs rule during the
 path migration. Agent install replies and failed jobs carry the same closed

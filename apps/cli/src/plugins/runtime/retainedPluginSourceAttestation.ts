@@ -1,11 +1,6 @@
 import { basename, dirname, join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
-import {
-    resolveFirstPartyInstallLayout,
-    resolveFirstPartyVersionRootIdentity,
-} from '@happier-dev/cli-common/firstPartyRuntime';
-import { PUBLIC_RELEASE_RING_IDS } from '@happier-dev/release-runtime/releaseRings';
 
 import {
     type BundledFirstPartyPluginSourceCustodyV1,
@@ -248,6 +243,7 @@ export async function resolveRetainedBundledPluginRoot(params: Readonly<{
     const authoritativeRuntime = resolveAuthoritativePackagedRuntimeCustody({
         moduleUrl,
         ...(params.processEnv ? { processEnv: params.processEnv } : {}),
+        ...(packagedRuntime.kind === 'cli_version_root' ? { retainedVersionRootId: packagedRuntime.versionRootId } : {}),
     });
     const expectedIdentity = packagedRuntime.kind === 'pinned_runner_snapshot'
         ? packagedRuntime.snapshotId
@@ -270,34 +266,8 @@ export async function resolveRetainedBundledPluginRoot(params: Readonly<{
             throw new Error('Retained bundled runner snapshot is unavailable or untrusted');
         }
         runtimeRoot = location.snapshotRoot;
-    } else {
-        if (authoritativeRuntime.packagedRuntime.kind !== 'cli_version_root') {
-            throw new Error('Retained bundled source custody does not match the executing packaged runtime');
-        }
-        const processEnv = params.processEnv ?? process.env;
-        const retainedVersionRoot = PUBLIC_RELEASE_RING_IDS.flatMap((channel) => {
-            const layout = resolveFirstPartyInstallLayout({
-                componentId: 'happier-cli',
-                channel,
-                processEnv,
-            });
-            try {
-                resolveFirstPartyVersionRootIdentity({
-                    layout,
-                    runtimeRoot: authoritativeRuntime.root,
-                });
-                return [resolveFirstPartyVersionRootIdentity({
-                    layout,
-                    runtimeRoot: join(layout.versionsDir, packagedRuntime.versionRootId),
-                }).root];
-            } catch {
-                return [];
-            }
-        })[0];
-        if (!retainedVersionRoot) {
-            throw new Error('Retained bundled source custody does not match an available packaged version root');
-        }
-        runtimeRoot = retainedVersionRoot;
+    } else if (authoritativeRuntime.packagedRuntime.kind !== 'cli_version_root') {
+        throw new Error('Retained bundled source custody does not match the executing packaged runtime');
     }
     const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(
         (candidate) => candidate.pluginId === params.pluginId,

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import {
+  assertValidFirstPartyVersionId,
   FirstPartyVersionRootIdentityError,
   FIRST_PARTY_INSTALL_HOME_ENV_KEY,
   readDefaultManagedReleaseChannelSync,
@@ -16,6 +17,7 @@ import { PUBLIC_RELEASE_RING_IDS, type PublicReleaseRingId } from '@happier-dev/
 import type { BundledPackagedRuntimeCustodyV1 } from '@happier-dev/protocol';
 import { projectPath, projectPathFromModuleUrl } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
+import { resolveAgentIsolationMemberCliVersionRoot } from '@/daemon/agentIsolation/memberCliRuntime';
 import { defaultCanImportFirstPartyPluginSource } from './firstPartySourceRuntime';
 export { defaultCanImportFirstPartyPluginSource } from './firstPartySourceRuntime';
 import {
@@ -302,12 +304,11 @@ export type AuthoritativePackagedRuntimeCustody = Readonly<{
 
 /**
  * Resolve first-party packaged custody to either the exact executing runner
- * snapshot, Stack daemon artifact, or immutable managed version root. Source modules intentionally
- * return null. Snapshot custody is selected before managed-layout validation;
- * snapshots are already immutable runtime roots, not version-layout aliases.
+ * snapshot, Stack daemon artifact, or immutable managed version root. A
+ * retained version is resolved within the store that owns the executing root.
  */
 export function resolveAuthoritativePackagedRuntimeCustody(
-  params: RuntimeAuthorityParams = {},
+  params: RuntimeAuthorityParams & Readonly<{ retainedVersionRootId?: string }> = {},
 ): AuthoritativePackagedRuntimeCustody | null {
   const authority = resolveAuthoritativeRuntimeAuthority(params);
   if (authority && isRunnerSnapshotRuntimeRoot(authority.runtimeRoot)) {
@@ -363,6 +364,15 @@ export function resolveAuthoritativePackagedRuntimeCustody(
     // owner below; never substitute another installed channel's runtime.
   }
 
+  const { retainedVersionRootId } = params;
+  if (retainedVersionRootId !== undefined) assertValidFirstPartyVersionId(retainedVersionRootId);
+  const memberVersion = resolveAgentIsolationMemberCliVersionRoot(authority.runtimeRoot, retainedVersionRootId);
+  if (memberVersion) return Object.freeze({
+    root: memberVersion.root,
+    packagedRuntime: Object.freeze({ kind: 'cli_version_root', versionRootId: memberVersion.versionRootId }),
+    provenance: authority.provenance,
+  });
+
   const processEnv = params.processEnv ?? process.env;
   // A copied/hardlinked managed shim proves its installation home. A loaded
   // immutable module can outlive channel/version pointer changes, so validate
@@ -381,18 +391,11 @@ export function resolveAuthoritativePackagedRuntimeCustody(
   )));
   let outsideLayoutError: FirstPartyVersionRootIdentityError | null = null;
   for (const layout of layouts) {
+    let executingVersion;
     try {
-      const identity = resolveFirstPartyVersionRootIdentity({
+      executingVersion = resolveFirstPartyVersionRootIdentity({
         layout,
         runtimeRoot: authority.runtimeRoot,
-      });
-      return Object.freeze({
-        root: identity.root,
-        packagedRuntime: Object.freeze({
-          kind: 'cli_version_root',
-          versionRootId: identity.versionRootId,
-        }),
-        provenance: authority.provenance,
       });
     } catch (error) {
       if (
@@ -404,6 +407,14 @@ export function resolveAuthoritativePackagedRuntimeCustody(
       }
       throw error;
     }
+    const identity = retainedVersionRootId !== undefined && retainedVersionRootId !== executingVersion.versionRootId
+      ? resolveFirstPartyVersionRootIdentity({ layout, runtimeRoot: join(layout.versionsDir, retainedVersionRootId) })
+      : executingVersion;
+    return Object.freeze({
+      root: identity.root,
+      packagedRuntime: Object.freeze({ kind: 'cli_version_root', versionRootId: identity.versionRootId }),
+      provenance: authority.provenance,
+    });
   }
   throw outsideLayoutError ?? new FirstPartyVersionRootIdentityError(
     'FIRST_PARTY_VERSION_ROOT_OUTSIDE_LAYOUT',
