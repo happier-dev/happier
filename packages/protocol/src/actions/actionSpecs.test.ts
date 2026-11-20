@@ -236,7 +236,8 @@ describe('Composer state mutation Actions', () => {
     expect(getActionSpec('session.connected_services_auth.set')).toMatchObject({
       sideEffectClass: 'write',
       safety: 'danger',
-      executionPlacement: 'client',
+      // e7e3e2cdcfb2 routes both picker and Agent choices through the Session owner.
+      executionPlacement: 'session',
       placements: [],
       surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
     });
@@ -1944,12 +1945,13 @@ describe('Action Spec Registry', () => {
     const structuredInput = { v: 1, mentions: [{ kind: 'happier.session', ref: 'session:s1', token: '@session' }] };
     expect(publicInput.parse({ ...input, message: '@session Continue', structuredInput }))
       .toEqual({ ...input, message: '@session Continue', structuredInput });
+    // 27141215f5a admits authored metadata through the canonical Send schema.
+    expect(publicInput.parse({ ...input, messageMeta: {} })).toEqual({ ...input, messageMeta: {} });
     for (const extra of [
       { source: { sourceRef: 'private-source' } },
       { attachments: [] },
       { idempotencyKey: 'plugin-owned-identity' },
       { authority: 'present_user' },
-      { messageMeta: {} },
     ]) expect(publicInput.safeParse({ ...input, ...extra }).success).toBe(false);
     expect(publicInput.safeParse({ ...input, recipient: { ...input.recipient, label: 'Display only' } }).success).toBe(false);
     expect(getActionSpec('session.message.send').inputSchema.safeParse({ ...input, unknown: true }).success).toBe(false);

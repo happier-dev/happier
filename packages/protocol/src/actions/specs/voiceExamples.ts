@@ -126,7 +126,7 @@ export const ACTION_VOICE_ARGS_EXAMPLES: Readonly<Partial<Record<ActionId, strin
   "connectedServices.accounts.revoke": "{\"account\":{\"service\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"},\"accountId\":\"example\"},\"cleanupGroupReferences\":false,\"machineId\":\"machine-1\"}",
   "machines.presets.list": "{\"homeId\":\"example\"}",
   "machines.presets.get": "{\"homeId\":\"example\",\"id\":\"example\"}",
-  "machines.presets.create": "{\"id\":\"example\",\"homeId\":\"example\",\"name\":\"example\",\"owner\":{\"kind\":\"account\",\"accountId\":\"example\"},\"launch\":{\"provider\":{\"pluginId\":\"example.widgets\",\"localId\":\"example\"},\"schemaVersion\":1,\"name\":\"example\",\"choices\":false},\"controller\":{\"machineId\":\"machine-1\",\"installationId\":\"example\"}}",
+  "machines.presets.create": "{\"id\":\"example\",\"homeId\":\"example\",\"owner\":{\"kind\":\"account\",\"accountId\":\"example\"},\"contentEncryptionMode\":\"plain\",\"content\":{\"t\":\"plain\",\"v\":{\"v\":1,\"name\":\"example\",\"setup\":{\"scripts\":[{\"body\":\"echo ready\",\"affects\":\"none\"}]}}},\"recipients\":[]}",
   "machines.presets.update": "{\"homeId\":\"example\",\"id\":\"example\",\"expectedRevision\":0,\"patch\":{}}",
   "machines.presets.archive": "{\"homeId\":\"example\",\"id\":\"example\",\"expectedRevision\":0}",
   "machines.presets.restore": "{\"homeId\":\"example\",\"id\":\"example\",\"expectedRevision\":0}",
