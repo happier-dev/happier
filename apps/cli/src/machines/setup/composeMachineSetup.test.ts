@@ -216,6 +216,8 @@ describe('Combined Machine setup child settlement', () => {
       .then(value => { observed = value; });
     try {
       await vi.waitFor(() => expect(observed, JSON.stringify(observed)).toMatchObject({ ok: false, errorCode: 'terminal_spawn_failed' }));
+      const setupRetry = { runId: fixture.runId, invocationId: 'setup-child' };
+      expect(observed).toEqual({ ok: false, errorCode: 'terminal_spawn_failed', error: 'terminal_spawn_failed', setupRetry });
       const operation = store.get(scope, 'setup-operation');
       expect(operation).toMatchObject({ state: 'failed', error: {
         errorCode: 'terminal_spawn_failed', setupRetry: { runId: fixture.runId, invocationId: 'setup-child' },
@@ -223,8 +225,8 @@ describe('Combined Machine setup child settlement', () => {
       expect(operation?.error?.details).toBeUndefined();
       const handlers = createActionOperationRpcHandlers({ store, runner, machineId: scope.machineId,
         resolveAccountId: async () => scope.accountId });
-      expect(await waitForMachineSetupOperationV1('setup-operation', request => handlers.getV2(request))).toMatchObject({
-        ok: false, details: { setupRetry: { runId: fixture.runId, invocationId: 'setup-child' } },
+      expect(await waitForMachineSetupOperationV1('setup-operation', request => handlers.getV2(request))).toEqual({
+        ok: false, errorCode: 'terminal_spawn_failed', error: 'terminal_spawn_failed', setupRetry,
       });
     } finally {
       controller.abort();

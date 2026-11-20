@@ -10,7 +10,7 @@ import { MachineAvailabilityDiagnosticV1Schema } from '../../machines/machineAcc
 import { MachineRebootResultV1Schema } from '../specs/machine/reboot.js';
 import * as machineSetupActions from '../../machines/managed/actionsV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../../machines/managed/actionIdsV1.js';
-import { MachineSetupOperationReferenceV1Schema, MachineSetupRetryV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
+import { MachineSetupOperationReferenceV1Schema } from '../../machines/setup/machineSetupOperationV1.js';
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ProjectSourceIdentityV1Schema } from '../../projects/sources/projectSourceIdentityV1.js';
@@ -275,8 +275,7 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   requestId: ActionExecuteFailureSchema.shape.requestId,
   effectAttempted: z.optional(z.boolean()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
-  /** The Workflow owner exposes this exact invocation after confirming Retry is available. */
-  setupRetry: z.optional(MachineSetupRetryV1Schema),
+  setupRetry: ActionExecuteFailureSchema.shape.setupRetry,
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
     ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedMachineFailureDetailsV1Schema,
     MachineSetupFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,

@@ -13,6 +13,7 @@ import { ActionIdSchema } from './actionIds.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { DeploymentTargetRoleFailureV1Schema } from '../plugins/contributions/deploymentTargetRoleFailureV1.js';
 import { ManagedRefusalCodeV1Schema } from '../machines/managed/managedRefusalCodeV1.js';
+import { MachineSetupRetryV1Schema } from '../machines/setup/machineSetupOperationV1.js';
 export { readActionErrorCodeV1 } from './actionErrorClassV1.js';
 export { readActionFailurePresentationV1, projectActionFailureForAgentV1, type ActionFailurePresentationV1 } from './actionFailurePresentation.js';
 
@@ -204,6 +205,8 @@ export const ActionExecuteFailureSchema = lazyZodSchema(() => z.strictObject({
   // producers decide their shape; this public envelope only excludes extra
   // top-level transit metadata.
   details: z.optional(z.unknown()),
+  /** Exact invocation for which the Workflow owner confirmed Retry is available. */
+  setupRetry: z.optional(MachineSetupRetryV1Schema),
   failureCause: z.optional(ActionFailureCauseV1Schema),
   goalControlFailure: z.optional(SessionGoalControlFailureV1Schema),
   automationNotices: z.optional(ActionAutomationNoticesV1Schema),

@@ -1,5 +1,5 @@
 import { isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { MachineSetupApplyResultV1Schema, MachineSetupRetryV1Schema, type MachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
+import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { randomUUID } from 'node:crypto';
 import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { createPendingSessionBirth } from './pendingSessionBirth';
@@ -564,19 +564,9 @@ export function createActionOperationRunner(deps: Readonly<{
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
               ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
-              ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}) };
-            let details = executionResult.details;
-            let setupRetry: MachineSetupRetryV1 | undefined;
-            if (isMachineSetupCombinedActionIdV1(action.actionId)
-              && details && typeof details === 'object' && !Array.isArray(details) && 'setupRetry' in details) {
-              const { setupRetry: link, ...childDetails } = details;
-              const parsed = MachineSetupRetryV1Schema.safeParse(link);
-              if (parsed.success) {
-                setupRetry = parsed.data;
-                details = childDetails;
-              }
-            }
-            const publicFailure = setupRetry ? { ...failure, setupRetry } : failure;
+              ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}),
+              ...(isMachineSetupCombinedActionIdV1(action.actionId) && executionResult.setupRetry
+                ? { setupRetry: executionResult.setupRetry } : {}) };
             // Only named producers carry validated public facts. Arbitrary executor details remain private.
             const reviewedFailure = isFiniteProjectCommand(action.actionId) || isProjectCheckoutRemovalActionIdV1(action.actionId)
               || action.actionId.startsWith('machines.managed.')
@@ -586,8 +576,8 @@ export function createActionOperationRunner(deps: Readonly<{
               || action.actionId === 'machines.setup.remove' || action.actionId === 'machines.setup.updates.apply'
               || action.actionId === 'deployments.templates.instantiate'
               || isDeploymentDomainChildActionIdV1(action.actionId)
-              ? ActionOperationFailureV1Schema.safeParse({ ...publicFailure, details }) : null;
-            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : publicFailure, failureResult);
+              ? ActionOperationFailureV1Schema.safeParse({ ...failure, details: executionResult.details }) : null;
+            deps.store.fail(operationId, reviewedFailure?.success ? reviewedFailure.data : failure, failureResult);
           }
           return executionResult;
         } catch (error) {

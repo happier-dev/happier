@@ -2,7 +2,6 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readMachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/waitForMachineSetupOperationV1';
 
 import {
   buildProjectOpenDraft,
@@ -71,7 +70,6 @@ export type TeamSetupRunState =
       kind: 'stopped';
       operationId: string | null;
       failure: ActionExecuteFailure | null;
-      retry?: NonNullable<ReturnType<typeof readMachineSetupRetryV1>>;
     }>
   | Readonly<{ kind: 'done'; operationId: string | null }>;
 
@@ -327,10 +325,9 @@ function TeamSetupPlanPage(
       result.machine && !result.machine.ok
         ? result.machine
         : result.machineSettlement;
-    const retry = readMachineSetupRetryV1(machineFailure);
     setRun(
       machineFailure
-        ? { kind: 'stopped', operationId, failure: machineFailure, ...(retry ? { retry } : {}) }
+        ? { kind: 'stopped', operationId, failure: machineFailure }
         : { kind: 'done', operationId },
     );
   }, [
@@ -356,7 +353,7 @@ function TeamSetupPlanPage(
     (operationId: string) => openActionOperationDetail({ serverId: context.scope.serverId, operationId }),
     [context.scope.serverId],
   );
-  const setupRetry = run.kind === 'stopped' ? run.retry : undefined;
+  const setupRetry = run.kind === 'stopped' ? run.failure?.setupRetry : undefined;
   const openSetupRetry = React.useCallback(() => {
     if (setupRetry) router.push(createWorkflowInvocationRoute(setupRetry.runId, setupRetry.invocationId, context.scope.serverId) as never);
   }, [context.scope.serverId, router, setupRetry]);

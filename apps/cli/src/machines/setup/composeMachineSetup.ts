@@ -304,14 +304,13 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       const hasReceivers = reviewed.targets.some(target => target.recipePlans.some(entry =>
         entry.plan.basis.kind === 'setup' && entry.plan.basis.selection
           && isBackupReceiverSelection(entry.plan.basis.selection)));
-      const withRecovery = (value: ActionExecuteFailure, setupRetry?: MachineSetupRetryV1): ActionExecuteFailure => {
-        if (!hasReceivers && !setupRetry) return value;
+      const withRecovery = (value: ActionExecuteFailure): ActionExecuteFailure => {
+        if (!hasReceivers) return value;
         const details = value.details;
         return { ...value, details: {
           ...(details === undefined ? {} : details && typeof details === 'object' && !Array.isArray(details)
             ? details : { childResult: details }),
-          ...(hasReceivers ? { setupOperation: result } : {}),
-          ...(setupRetry ? { setupRetry } : {}),
+          setupOperation: result,
         } };
       };
       // Losing the observer does not settle the Run or release its native child.
@@ -375,7 +374,8 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
           }
           return withRecovery({ ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
             ...(progress.reason.failureCause ? { failureCause: progress.reason.failureCause } : {}),
-            ...(details === undefined ? {} : { details }) }, setupRetry);
+            ...(details === undefined ? {} : { details }),
+            ...(setupRetry ? { setupRetry } : {}) });
         }
         cursor = page.data.nextCursor;
       } while (cursor);
