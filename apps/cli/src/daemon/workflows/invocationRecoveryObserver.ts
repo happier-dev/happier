@@ -286,7 +286,7 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
       sessionId: execution.sessionId, ...(params.signal ? { signal: params.signal } : {}) });
     if (!authorized) return unavailable;
     const observed = await observeWorkflowSessionInputResult({ credentials: params.credentials,
-      sessionId: execution.sessionId, localId: execution.localInputId, deadlineMs: Date.now(),
+      sessionId: execution.sessionId, localId: execution.localInputId, snapshotAtMs: Date.now(),
       ...(params.signal ? { signal: params.signal } : {}) });
     if (!observed.ok || observed.sessionId !== execution.sessionId || observed.localId !== execution.localInputId) return unavailable;
     const result = classifyWorkflowSessionInputResult(observed.result, observed.replyOutcome);
@@ -684,7 +684,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
           credentials: params.credentials,
           sessionId: execution.sessionId,
           localId: execution.localInputId,
-          deadlineMs: now(),
+          snapshotAtMs: now(),
           ...(input.signal ? { signal: input.signal } : {}),
         });
       } catch {
@@ -715,7 +715,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
         try {
           const physical = await observeSession({ credentials: params.credentials,
             sessionId: execution.sessionId, localId: execution.localInputId,
-            observeReply: false, deadlineMs: now(),
+            observeReply: false, snapshotAtMs: now(),
             ...(input.signal ? { signal: input.signal } : {}),
           });
           if (physical.ok && physical.sessionId === execution.sessionId && physical.localId === execution.localInputId) {

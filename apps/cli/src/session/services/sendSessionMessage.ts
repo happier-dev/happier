@@ -177,6 +177,7 @@ export type WaitForSessionInputReplyResult = Exclude<WaitForSessionInputResult, 
 
 export type SessionInputResultObservationV1 =
   | Readonly<{ kind: 'no_deadline' }>
+  | Readonly<{ kind: 'snapshot'; atMs: number }>
   | Readonly<{ kind: 'after_input'; timeoutMs: number }>
   | Readonly<{ kind: 'absolute_deadline'; deadlineMs: number }>;
 
@@ -1446,7 +1447,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
   const deadlineMs = observation !== undefined
     ? observation.kind === 'absolute_deadline'
       ? observation.deadlineMs
-      : null
+      : observation.kind === 'snapshot' ? observation.atMs : null
     : Date.now() + (Number.isFinite(params.timeoutMs)
         ? Math.max(1, Math.trunc(params.timeoutMs))
         : 1);
@@ -1504,7 +1505,7 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
     }
     if (promptDelivery.kind === 'missing') {
       if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
-      if (params.scope === 'user' && deadlineMs !== null && Date.now() >= deadlineMs) {
+      if (observation?.kind !== 'snapshot' && params.scope === 'user' && deadlineMs !== null && Date.now() >= deadlineMs) {
         return { ok: false, code: 'session_reply_timeout' };
       }
       return {
@@ -1543,7 +1544,8 @@ export async function waitForSessionInputResult(params: WaitForSessionInputResul
     if (outcome.kind === 'missing') {
       if (params.signal?.aborted) return { ok: false, code: 'cancelled' };
       const awaitingReply = originalReply?.status === 'available' && !replyOutcome;
-      if ((awaitingReply || params.scope === 'user') && acceptedDeadlineMs !== null && Date.now() >= acceptedDeadlineMs) {
+      if (observation?.kind !== 'snapshot' && (awaitingReply || params.scope === 'user')
+        && acceptedDeadlineMs !== null && Date.now() >= acceptedDeadlineMs) {
         return { ok: false, code: 'session_reply_timeout' };
       }
     }

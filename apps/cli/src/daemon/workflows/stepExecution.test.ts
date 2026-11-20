@@ -150,6 +150,35 @@ describe('Workflow Session step execution', () => {
     expect(admitted).toHaveLength(1);
   });
 
+  it('reattaches an observing Workflow reply after the immediate recovery read', async () => {
+    const previousGet = http.get.getMockImplementation()!;
+    const localId = 'retained-workflow-input';
+    const workflow = { purpose: 'invocation', runId: 'run-1', invocationRecordId: 'reply-invocation' } as const;
+    let replied = false;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.endsWith(`/by-local-id/${localId}/reply`)) return { status: 200, data: { v: 1, status: 'available',
+        progress: { v: 1, mode: 'wait', disposition: 'observing', workflow, acceptedTurnId: 'retained-turn',
+          ...(replied ? { outcome: { kind: 'pass' } } : {}) } } };
+      if (url.endsWith(`/by-local-id/${localId}`)) return { status: 200, data: { message: {
+        id: 'retained-user-row', localId, seq: 1, createdAt: 100, updatedAt: 100,
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Review' } } },
+      } } };
+      return previousGet(url);
+    });
+    const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId: 'machine-1',
+      actionExecutor: { execute: async () => { throw new Error('Recovery cannot replay an Action'); } } });
+    const input = { progress: { kind: 'happier.workflow-progress.v1', blockKind: 'step',
+      invocationPath: { blockId: 'step', scope: [] }, attempt: '0', logicalInvocationRecordId: workflow.invocationRecordId,
+      execution: { kind: 'session', sessionId, localInputId: localId } }, terminalParent: false, cancellationRequested: false } as const;
+
+    const pending = await observe(input);
+    expect(pending).toMatchObject({ kind: 'unresolved', code: 'session_input_pending', waitForCompletion: expect.any(Function) });
+    if (pending.kind !== 'unresolved' || !pending.waitForCompletion) throw new Error('Missing exact reply observation');
+    replied = true;
+    await pending.waitForCompletion();
+    await expect(observe(input)).resolves.toMatchObject({ kind: 'completed', result: '', replyOutcome: { kind: 'pass' } });
+  });
+
   it('resumes an offline Workflow target with frozen native launch intent through Session input admission', async () => {
     const model = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'incoming-model' };
     const previousGet = http.get.getMockImplementation()!;

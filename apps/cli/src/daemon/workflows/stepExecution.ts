@@ -320,6 +320,8 @@ export async function observeWorkflowSessionInputResult(params: Readonly<{
   credentials: StoredCredentials;
   sessionId: string;
   localId: string;
+  /** Read current state for recovery without expiring the reply obligation. */
+  snapshotAtMs?: number;
   deadlineMs?: number;
   timeoutAfterInputMs?: number;
   /** Physical cancellation custody is independent of original reply publication. */
@@ -329,7 +331,9 @@ export async function observeWorkflowSessionInputResult(params: Readonly<{
   onAttentionRequired?: (required: boolean) => Promise<void>;
   signal?: AbortSignal;
 }>): Promise<WaitForSessionInputReplyResult> {
-  const observation: SessionInputResultObservationV1 = params.deadlineMs === undefined
+  const observation: SessionInputResultObservationV1 = params.snapshotAtMs !== undefined
+    ? { kind: 'snapshot', atMs: params.snapshotAtMs }
+    : params.deadlineMs === undefined
     ? params.timeoutAfterInputMs === undefined ? { kind: 'no_deadline' }
       : { kind: 'after_input', timeoutMs: params.timeoutAfterInputMs }
     : { kind: 'absolute_deadline', deadlineMs: params.deadlineMs };
