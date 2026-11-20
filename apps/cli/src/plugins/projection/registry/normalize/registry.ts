@@ -269,7 +269,7 @@ function normalizeVoiceProviderDefinition(
   });
 }
 
-function toActionDefinition(definition: PluginActionContributionV2): ResolvedActionDefinition {
+export function toActionDefinition(definition: PluginActionContributionV2): ResolvedActionDefinition {
   const kindVersion: ActionDefinitionV1['kindVersion'] = 1;
   const safety: ActionDefinitionV1['safety'] = definition.dangerLevel === 'safe' ? 'safe' : 'danger';
   // Deferred bundled schemas stay deferred through this projection.

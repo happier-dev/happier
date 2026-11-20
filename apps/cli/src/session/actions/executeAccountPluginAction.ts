@@ -2,13 +2,14 @@ import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDe
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import type { ActionId } from '@happier-dev/protocol';
 import { parseQualifiedPluginActionId, type QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { ActionDefinitionV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime, type AccountExecutionRuntimeInput, type RetainedAccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { readPluginActionExecutionReference, type CurrentProcessPluginActionExecutionAttempt } from './createDaemonPluginActionExecutor';
 import { createCommittedContributedActionDefinitionLister, createCommittedContributedActionInvoker,
   createCommittedContributedActionSchemaReader, createRegistryInputTypeDeps,
-  listRuntimeContributedActionDefinitions } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
+  listRuntimeContributedActionDefinitions, projectDaemonContributedActionDefinition } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCredentialedTargetActionCurrentIntent } from './approvals/credentialedTargetActionCurrentIntent';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
@@ -50,7 +51,8 @@ export function executeAccountPluginAction(params: AccountPluginActionRequest): 
 export async function readAccountPluginActionDefinition(host: AccountPluginActionRuntimeRequest['host'],
   id: QualifiedPluginActionId, context?: ActionExecutorContext): Promise<ActionDefinitionV1 | null> {
   const resolved = await withAccountPluginActionRuntime({ host, actionId: 'action.spec.get', input: { id }, ...(context ? { context } : {}) },
-    ({ registry }) => ({ definition: listRuntimeContributedActionDefinitions(registry, { id })[0] ?? null }));
+    ({ registry }) => ({ definition: listRuntimeContributedActionDefinitions(registry, { id })[0] ?? null }),
+    (manifest, declaration) => ({ definition: projectDaemonContributedActionDefinition(manifest, declaration) }));
   return 'definition' in resolved ? resolved.definition : null;
 }
 
@@ -58,6 +60,8 @@ export async function readAccountPluginActionDefinition(host: AccountPluginActio
 async function withAccountPluginActionRuntime<T extends CurrentProcessPluginActionExecutionAttempt | { definition: ActionDefinitionV1 | null }>(
   params: AccountPluginActionRuntimeRequest,
   useRuntime: (runtime: AccountExecutionRuntime, allowUnmatched?: boolean) => T | Promise<T>,
+  readDaemonDeclaration?: (manifest: PluginPortableReleaseManifestV1,
+    declaration: PluginPortableReleaseManifestV1['contributes']['actions'][number]) => T,
 ): Promise<T | CurrentProcessPluginActionExecutionAttempt> {
   const credentials = params.host.credentials;
   if (!credentials || !params.host.serverHttpBaseUrl) return { matched: false };
@@ -122,6 +126,11 @@ async function withAccountPluginActionRuntime<T extends CurrentProcessPluginActi
       const declaration = selection.kind === 'available'
         ? selection.manifest.contributes.actions.find(action => action.id === localId)
         : resolvedAction?.admittedTarget?.declaration;
+      // The selected release owns trigger metadata. A daemon handler still
+      // executes only through Machine admission.
+      if (readDaemonDeclaration && selection.kind === 'available' && declaration?.execution.target === 'daemon') {
+        return readDaemonDeclaration(selection.manifest, declaration);
+      }
       const execution = declaration?.execution;
       if (selection.kind !== 'available' || typeof execution !== 'object' || execution === null || !('target' in execution)
         || execution.target !== 'account') return { matched: false, accountSelectionUnavailable: true,

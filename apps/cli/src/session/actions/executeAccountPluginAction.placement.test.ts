@@ -1,4 +1,5 @@
 import fastify from 'fastify';
+import { DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/database-protocol';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -50,7 +51,9 @@ it('arms an after-Action trigger for an installed Account Action from the retain
     const serverId = 'account-action-trigger-home';
     const serverHttpBaseUrl = 'http://account-action-trigger.test';
     const homeFeatures = registerAccountHomeHttp(app, { accountId, serverId });
-    const authored = await registerAuthoredAccountActionRelease(app, accountId);
+    const authored = await registerAuthoredAccountActionRelease(app, accountId, {
+        includeBundledPluginIds: [DATABASE_PLUGIN_ID_V1],
+    });
     const saved = new Map<string, ReturnType<typeof AutomationDefinitionDetailSchema.parse>>();
     app.get('/v3/automations', async () => ({ automations: [], nextCursor: null }));
     app.post('/v3/automations', async request => {
@@ -80,23 +83,30 @@ it('arms an after-Action trigger for an installed Account Action from the retain
                 features: { ...homeFeatures, features: { ...homeFeatures.features, automations: { enabled: true }, workflows: { enabled: true } } } }),
         });
         const machineId = 'workflow-machine';
-        const arm = (localId: string) => executor.execute(WORKFLOW_TRIGGER_ADD_ACTION_ID, {
+        const accountAction = (localId: string) => formatQualifiedPluginActionId({ pluginId: authored.pluginId, localId });
+        const arm = (actionId: string, subject?: unknown) => executor.execute(WORKFLOW_TRIGGER_ADD_ACTION_ID, {
             project: { machineId, directory: '/workspace' },
             target: { kind: 'inline', definition: { version: 1, blocks: [
                 { kind: 'action', id: 'read-policy', actionId: 'actions.policy.get', input: { profiles: { kind: 'literal', value: true } } },
             ] } },
             trigger: { kind: 'action', enabled: true, phase: 'after',
-                actionIds: [formatQualifiedPluginActionId({ pluginId: authored.pluginId, localId })] },
+                actionIds: [actionId], ...(subject === undefined ? {} : { subject }) },
         }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
             externalActionTarget: { kind: 'machine', machineId },
             presentUserConfirmation: { actionId: WORKFLOW_TRIGGER_ADD_ACTION_ID } });
-        expect(await arm('echo')).toMatchObject({ ok: true, result: { set: { triggers: [
+        expect(await arm(accountAction('echo'))).toMatchObject({ ok: true, result: { set: { triggers: [
             { kind: 'action', phase: 'after', actionIds: [formatQualifiedPluginActionId({ pluginId: authored.pluginId, localId: 'echo' })] },
         ] } } });
-        expect(await arm('unknown')).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        expect(await arm(accountAction('unknown'))).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
         authored.setEnabled(false);
-        expect(await arm('echo')).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
-        expect(saved.size).toBe(1);
+        expect(await arm(accountAction('echo'))).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        const subject = { kind: 'database', serverId, target: { kind: 'managed_deployment',
+            environmentId: 'env', targetLinkId: 'db-link', databaseName: 'neondb' } };
+        expect(await arm(DATABASE_STATEMENT_RUN_ACTION_ID_V1, subject)).toMatchObject({
+            ok: true, result: { set: { triggers: [{ kind: 'action', phase: 'after',
+                actionIds: [DATABASE_STATEMENT_RUN_ACTION_ID_V1], subject }] } },
+        });
+        expect(saved.size).toBe(2);
     } finally {
         restore();
         await app.close();

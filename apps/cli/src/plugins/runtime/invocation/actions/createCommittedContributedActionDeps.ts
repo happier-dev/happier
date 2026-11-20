@@ -15,6 +15,8 @@ import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/act
 import { readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
+import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import { toActionDefinition } from '@/plugins/projection/registry/normalize/registry';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginInvocationCaller } from '@happier-dev/plugin-sdk';
 import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol/local/services/nativeLogsV1';
@@ -71,6 +73,16 @@ function projectDefinition(definition: ResolvedActionDefinition, identity: NonNu
     ...(definition.operation === undefined ? {} : { operation: definition.operation }),
   } satisfies ActionDefinitionV1;
   return Object.freeze({ ...projected, automation: projectActionAutomationChoices(projected) });
+}
+
+/** Projects an exact daemon declaration from the effective Account catalog without mounting a handler. */
+export function projectDaemonContributedActionDefinition(
+  manifest: PluginPortableReleaseManifestV1,
+  declaration: PluginPortableReleaseManifestV1['contributes']['actions'][number],
+): ActionDefinitionV1 {
+  const identity = { pluginId: manifest.id, localId: declaration.id };
+  return projectDefinition(toActionDefinition(declaration), identity,
+    manifest.contributes.subjectKinds.map(definition => ({ pluginId: manifest.id, definition })));
 }
 
 function readSurface(surface: string | null | undefined): PluginActionSurface | null {
