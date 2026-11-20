@@ -307,7 +307,7 @@ test('waits for the commit wrapper lock before moving HEAD', { skip: !hasFlock }
   assert.match(f.git('reflog', '-1', '--format=%gs', 'HEAD'), /^commitFromPrivateIndex: pid \d+/);
 });
 
-function runWithCommitLockContender(f, winner, name, { observeTreeGate = false } = {}) {
+function runWithCommitLockContender(f, winner, name, { observeTreeGate = false, additionalWinners = [] } = {}) {
   const base = f.git('rev-parse', 'HEAD').trim();
   const lock = path.join(f.cwd, '.git', 'p03-commit-partial.lock');
   const bin = path.join(f.cwd, 'bin');
@@ -325,6 +325,22 @@ if [ "$head" = "$TEST_BASE" ]; then
 fi
 exec "$TEST_FLOCK" "$@"
 `, { mode: 0o755 });
+  if (additionalWinners.length) {
+    const git = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const moves = additionalWinners.map((next, index) =>
+      `${[winner, ...additionalWinners][index]}) "$real_git" update-ref HEAD ${next} "$head" ;;`).join('\n');
+    fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+set -eu
+real_git='${git}'
+if [ "$1" = update-ref ] && [ "${'$'}{2-}" = -m ]; then
+  head=$("$real_git" rev-parse HEAD)
+  case "$head" in
+  ${moves}
+  esac
+fi
+exec "$real_git" "$@"
+`, { mode: 0o755 });
+  }
   const result = spawnSync(process.execPath, [
     fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)), '--message-file', f.messageFile, '--', name,
   ], {
@@ -365,6 +381,10 @@ function treeGraphReplayFixture(t, { uiGraph = false } = {}) {
     f.write(`apps/${app}/src/index.mjs`, 'export const value = 0;\n');
   }
   fs.mkdirSync(path.join(f.cwd, 'apps/stack/scripts/perf'), { recursive: true });
+  fs.mkdirSync(path.join(f.cwd, 'apps/stack/scripts/build'), { recursive: true });
+  f.write('apps/stack/scripts/build/source_revision.mjs', 'export async function deriveRevisionGeneratedInputs() {}');
+  fs.mkdirSync(path.join(f.cwd, 'packages/cli-common'), { recursive: true });
+  f.write('packages/cli-common/registerSourceRuntime.mjs', 'export {};');
   const graphs = (uiGraph ? ['cli', 'ui'] : ['cli']).map(id => ({ id, entry: `apps/${id}/src/index.mjs` }));
   f.write('apps/stack/scripts/perf/entry-graphs.mjs', `export const ENTRY_GRAPHS = ${JSON.stringify(graphs)};`);
   f.write('apps/stack/scripts/perf/entry-load.mjs', `
@@ -381,7 +401,7 @@ export async function loadEntryGraph(graph) {
   return { graph: graph.id, status: 'passed', elapsedMs: 0 };
 }
 `);
-  f.git('add', '--', 'apps');
+  f.git('add', '--', 'apps', 'packages/cli-common');
   f.git('commit', '-qm', 'test: graph inputs');
   const base = f.git('rev-parse', 'HEAD').trim();
   f.write('apps/cli/src/index.mjs', 'export const value = 1;\n');
@@ -414,6 +434,24 @@ test('releases the lock and reruns only entry graphs whose inputs changed since 
   assert.deepEqual(acquisitions, [base, winner]);
   assert.equal(f.git('rev-parse', 'HEAD^').trim(), winner);
   assert.equal(f.git('show', `HEAD:${packet}`), 'export const value = 2;\n');
+});
+
+test('finishes a second CAS loss without preparing an entry graph under the commit lock', { skip: !hasFlock }, t => {
+  const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
+  const additionalWinners = [];
+  for (const value of [3, 4]) {
+    f.write('apps/cli/src/index.mjs', `export const value = ${value};\n`);
+    f.git('add', '--', 'apps/cli/src/index.mjs');
+    additionalWinners.push(f.git('commit-tree', f.git('write-tree').trim(), '-p',
+      additionalWinners.at(-1) ?? winner, '-m', 'test: another qualifying writer').trim());
+  }
+  f.git('read-tree', base);
+
+  const { result, treeGateLocks, flock, lock } = runWithCommitLockContender(f, winner, packet, { observeTreeGate: true, additionalWinners });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:0', 'cli:0']);
+  assert.equal(f.git('rev-parse', 'HEAD^').trim(), additionalWinners.at(-1));
+  assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });
 
 test('refuses a replay when the winning commit removed its producer and releases the commit lock', { skip: !hasFlock }, (t) => {

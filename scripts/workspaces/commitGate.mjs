@@ -156,7 +156,7 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
     const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly }));
     if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
     if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);
-  } else if (treeMode === 'report' && !prior) {
+  } else if (treeMode === 'report' && !prior && !cheapOnly) {
     // Report mode records the verdict in the ledger without waiting; a recheck replays a packet whose first gate started it.
     const pid = startCommitTreeEntryLoadReport({ repo, base, tree, label, env });
     if (pid) notes.push(`tree entry loads: report started (pid ${pid})`);
@@ -210,8 +210,8 @@ export async function withCommitLock({ repo, ref = 'HEAD' }, run) {
 }
 
 /**
- * Shared replay for the JavaScript HEAD writers. Normally misses release the
- * lock for the full gate. Two lost attempts keep it through the final recheck.
+ * Shared replay for the JavaScript HEAD writers. The lock covers the local
+ * recheck and CAS. After two losses, allow one more preparation outside it.
  */
 export async function finalizeGatedCommit({ repo, ref, label, packet, replay, createCommit }) {
   const git = gitIn(repo);
@@ -219,6 +219,11 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
   let accepted;
   let commit;
   let losses = 0;
+  let finalPrepared = false;
+  const incomplete = () => ({
+    verdict: 'incomplete', check: 'final scoped recheck',
+    reason: { code: 'final-recheck-incomplete' }, findings: [], notes: [],
+  });
   let recheckedAfterRelease = false;
   const check = async (cheapOnly) => {
     const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, priorBase: accepted?.base, cheapOnly, label });
@@ -245,13 +250,12 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
           if (!packet) return {};
         }
         if (packet !== accepted) {
-          const finalRecheck = losses >= 2;
-          if (!accepted && !finalRecheck) return { recheck: 'the replay has no prior verdict' };
+          if (!accepted) return { recheck: 'the replay has no prior verdict' };
           let gate;
           try {
-            gate = await check(!finalRecheck);
+            gate = await check(true);
           } catch (error) {
-            if (finalRecheck || !error.unavailable) throw error;
+            if (!error.unavailable) throw error;
             return { recheck: error.message };
           }
           if (gate.verdict === 'needs-full') return { recheck: `${gate.check} needs a full recheck` };
@@ -269,8 +273,17 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
       }
     });
     if (!result.recheck) return result;
+    if (finalPrepared) return { gate: incomplete() };
+    finalPrepared = losses >= 2;
     console.error(`commit gate: ${result.recheck}. Released the commit lock for the full gate`);
-    const gate = await check(false);
+    let gate;
+    try {
+      gate = await check(false);
+    } catch (error) {
+      if (!finalPrepared || !error.unavailable) throw error;
+      console.error(error.message);
+      return { gate: incomplete() };
+    }
     if (gate.verdict !== 'pass') return { gate };
     recheckedAfterRelease = true;
   }

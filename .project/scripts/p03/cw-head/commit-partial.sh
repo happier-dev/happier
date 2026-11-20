@@ -179,11 +179,19 @@ else
   head=$(git rev-parse HEAD); compose "$head"
   git diff --binary --full-index --no-renames -U3 "$head" "$commit" > "$packet"
 fi
+final_recheck_incomplete() {
+  echo 'commit gate incomplete (final scoped recheck): {"code":"final-recheck-incomplete"}'
+  exit 11
+}
 check_gate() {
-  local rc=0
+  local rc=0 phase=${2:-}
   echo "BUILD GATE on candidate $commit"
   rungate "$GATE" "$1" "$commit" || rc=$?
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 10 ] && [ "$rc" -ne 11 ]; then
+    if [ "$phase" = final ]; then
+      echo "final worker preparation unavailable (exit $rc)"
+      final_recheck_incomplete
+    fi
     echo "gate unavailable (exit $rc); re-running it once"
     rc=0; rungate "$GATE" "$1" "$commit" || rc=$?
   fi
@@ -228,33 +236,44 @@ requeue_after_full_gate() {
   rechecked_after_release=1
   resume_frozen_packet
 }
+final_prepared=0
 locked_recheck() {
-  local rc=0 t0=$SECONDS
-  replay_onto_now
-  if [ "$cas_losses" -ge 2 ]; then
-    echo "two CAS losses; final scoped recheck under the commit lock"
-    if both_sides_deps; then
-      check_gate "$now"
-    else
-      P03_GATE_PRIOR=$gated check_gate "$now"
+  local rc=0 t0=$SECONDS prior=$gated
+  while :; do
+    replay_onto_now
+    if [ "$cas_losses" -ge 2 ]; then
+      echo "two CAS losses; final scoped recheck under the commit lock"
     fi
-    gated=$commit; head=$now
-    return
-  fi
-  if both_sides_deps; then
-    echo "both sides edited a package manifest or the lockfile; releasing the commit lock for the full gate"
-    requeue_after_full_gate
-  fi
-  P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$gated \
-    rungate "$GATE" "$now" "$commit" || rc=$?
-  case $rc in
-    0) ;;
-    10) echo "candidate refused by the gate; abort"; exit 1;;
-    11) echo "candidate gate incomplete; no ref changed"; exit 11;;
-    *) echo "recheck needs the full path (exit $rc); releasing the commit lock"
-       requeue_after_full_gate "$gated";;
-  esac
-  gated=$commit; head=$now; echo "recheck accepted in $((SECONDS - t0)) s (under the commit lock)"
+    if both_sides_deps; then
+      prior=
+      rc=3
+      echo "both sides edited a package manifest or the lockfile"
+    else
+      rc=0
+      P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$prior \
+        rungate "$GATE" "$now" "$commit" || rc=$?
+    fi
+    case $rc in
+      0) gated=$commit; head=$now
+         echo "recheck accepted in $((SECONDS - t0)) s (under the commit lock)"
+         return;;
+      10) echo "candidate refused by the gate; abort"; exit 1;;
+      11) echo "candidate gate incomplete; no ref changed"; exit 11;;
+    esac
+    echo "recheck needs the full path (exit $rc); releasing the commit lock"
+    if [ "$cas_losses" -lt 2 ]; then requeue_after_full_gate "$prior"; fi
+    unlock
+    if [ "$final_prepared" -eq 1 ]; then final_recheck_incomplete; fi
+    final_prepared=1
+    P03_GATE_PRIOR=$prior check_gate "$now" final
+    head=$now
+    gated=$commit
+    lock
+    now=$(git rev-parse HEAD)
+    if [ "$now" = "$head" ]; then return; fi
+    prior=$gated
+    t0=$SECONDS
+  done
 }
 # Installs replace the file by mv (LANE-RULES). A new inode means new rules; carry the existing gate and packet.
 reexec_if_replaced() {
