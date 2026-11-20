@@ -3,8 +3,8 @@
  *
  * ## Test Coverage Strategy
  * These tests exercise the real code paths with minimal mocking:
- * - Only axios.isAxiosError is mocked (needed for error type detection)
- * - Health check is injected for deterministic behavior
+ * - Real Axios handles HTTP through an in-process Fastify adapter.
+ * - Health checks are injected for cancellation and failure shapes the default HTTP probe accepts.
  * - Real exponentialBackoffDelay is used (tests account for timing)
  *
  * ## Requirements Verified
@@ -15,21 +15,11 @@
  * - REQ-9: Backend transparency (via generic TSession tests)
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import fastify, { type FastifyInstance } from 'fastify';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { startOfflineReconnection, printOfflineWarning, connectionState, isNetworkError, NETWORK_ERROR_CODES } from './serverConnectionErrors';
-
-// Mock axios - only isAxiosError needed for error type detection
-vi.mock('axios', () => ({
-    default: {
-        get: vi.fn(),
-        isAxiosError: (e: unknown) => {
-            return e !== null && typeof e === 'object' && 'isAxiosError' in e && (e as any).isAxiosError === true;
-        }
-    },
-    isAxiosError: (e: unknown) => {
-        return e !== null && typeof e === 'object' && 'isAxiosError' in e && (e as any).isAxiosError === true;
-    }
-}));
 
 // ============================================================================
 // Test Helpers (DRY)
@@ -43,6 +33,8 @@ interface TestHandleConfig<T = { id: string }> {
     initialDelayMs?: number;
     backoffDelayMs?: (failureCount: number) => number;
 }
+
+const serverUrl = 'http://test-server';
 
 const reconnectionSignals = new WeakMap<object, Promise<void>>();
 
@@ -65,11 +57,11 @@ function createTestHandle<T = { id: string }>(config: TestHandleConfig<T> = {}) 
     const onCleanup = config.onCleanup ?? vi.fn();
 
     const handle = startOfflineReconnection<T>({
-        serverUrl: 'http://test-server',
+        serverUrl,
         onReconnected: onReconnected as unknown as () => Promise<T>,
         onNotify,
         onCleanup,
-        healthCheck: config.healthCheck ?? (async () => { /* success */ }),
+        healthCheck: config.healthCheck,
         initialDelayMs: config.initialDelayMs ?? 1,
         backoffDelayMs: config.backoffDelayMs ?? (() => 1),
     });
@@ -116,11 +108,15 @@ async function waitForReconnection(
 /**
  * Creates an axios-style error for testing error handling paths.
  */
-function createAxiosError(status: number): Error & { response: { status: number }, isAxiosError: true } {
-    const error = new Error(`HTTP ${status}`) as any;
-    error.response = { status };
-    error.isAxiosError = true;
-    return error;
+function createAxiosError(status: number): AxiosError {
+    const config = { headers: new AxiosHeaders() };
+    return new AxiosError(`HTTP ${status}`, AxiosError.ERR_BAD_REQUEST, config, undefined, {
+        status,
+        statusText: '',
+        headers: {},
+        config,
+        data: null,
+    });
 }
 
 // ============================================================================
@@ -128,8 +124,21 @@ function createAxiosError(status: number): Error & { response: { status: number 
 // ============================================================================
 
 describe('startOfflineReconnection', () => {
+    let app: FastifyInstance;
+    let restoreAdapter: () => void;
+    let probeStatus: () => number;
+
     beforeEach(() => {
         vi.clearAllMocks();
+        probeStatus = () => 200;
+        app = fastify();
+        app.get('/v1/sessions', async (_request, reply) => reply.code(probeStatus()).send({}));
+        restoreAdapter = installAxiosFastifyAdapter({ app, origin: serverUrl });
+    });
+
+    afterEach(async () => {
+        restoreAdapter();
+        await app.close();
     });
 
     describe('successful reconnection', () => {
@@ -328,12 +337,9 @@ describe('startOfflineReconnection', () => {
 
         it('should retry on 500 server error', async () => {
             let attemptCount = 0;
-            const healthCheck = async () => {
-                attemptCount++;
-                if (attemptCount < 2) throw createAxiosError(500);
-            };
+            probeStatus = () => ++attemptCount === 1 ? 500 : 200;
 
-            const { handle } = createTestHandle({ healthCheck });
+            const { handle } = createTestHandle();
 
             await waitForReconnection(handle);
 
@@ -345,12 +351,9 @@ describe('startOfflineReconnection', () => {
 
         it('should retry on 503 service unavailable', async () => {
             let attemptCount = 0;
-            const healthCheck = async () => {
-                attemptCount++;
-                if (attemptCount < 2) throw createAxiosError(503);
-            };
+            probeStatus = () => ++attemptCount === 1 ? 503 : 200;
 
-            const { handle } = createTestHandle({ healthCheck });
+            const { handle } = createTestHandle();
 
             await waitForReconnection(handle);
 

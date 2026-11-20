@@ -1,15 +1,28 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import fastify from 'fastify';
 import { resolveCanonicalMachineId } from '@happier-dev/protocol';
-const transport = vi.hoisted(() => ({ get: vi.fn() }));
-vi.mock('axios', () => ({ default: { get: transport.get } }));
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { fetchAccountMachineReplacements } from './fetchAccountMachineReplacements';
 
 describe('retained Machine replacement identity', () => {
   it('preserves a revoked predecessor for the real canonical replacement walk', async () => {
-    transport.get.mockImplementation(async (url: string) => ({ data: new URL(url).searchParams.get('includeRevoked') === 'true'
-      ? [{ id: 'old', replacedByMachineId: 'current', revokedAt: 1 }, { id: 'current' }]
-      : [{ id: 'current' }] }));
-    const records = await fetchAccountMachineReplacements({ credentials: { token: 'fixture-token' } });
-    expect(resolveCanonicalMachineId('old', records ?? [])?.machineId).toBe('current');
+    const origin = 'https://home.example.test';
+    const app = fastify();
+    app.get<{ Querystring: { includeRevoked?: string } }>('/v1/machines', async ({ query }) => (
+      query.includeRevoked === 'true'
+        ? [{ id: 'old', replacedByMachineId: 'current', revokedAt: 1 }, { id: 'current' }]
+        : [{ id: 'current' }]
+    ));
+    const restoreAdapter = installAxiosFastifyAdapter({ app, origin });
+    try {
+      const records = await fetchAccountMachineReplacements({
+        credentials: { token: 'fixture-token' },
+        serverUrl: origin,
+      });
+      expect(resolveCanonicalMachineId('old', records ?? [])?.machineId).toBe('current');
+    } finally {
+      restoreAdapter();
+      await app.close();
+    }
   });
 });

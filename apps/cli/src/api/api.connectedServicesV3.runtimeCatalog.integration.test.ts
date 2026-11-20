@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import axios from 'axios';
+import fastify, { type FastifyInstance } from 'fastify';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { ApiClient, ConnectedServiceCredentialUnsupportedFormatError } from './api';
@@ -11,59 +12,36 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import { fetchServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 
-const { mockPost, mockPatch, mockGet } = vi.hoisted(() => ({
-  mockPost: vi.fn(),
-  mockPatch: vi.fn(),
-  mockGet: vi.fn(),
-}));
-
-vi.mock('axios', () => ({
-  default: { post: mockPost, patch: mockPatch, get: mockGet, isAxiosError: vi.fn(() => true) },
-  isAxiosError: vi.fn(() => true),
-}));
-
 vi.mock('@/ui/logger', () => ({
   logger: {
     debug: vi.fn(),
   },
 }));
 
-function createAxiosResponseError(params: Readonly<{
-  status: number;
-  data?: unknown;
-  headers?: Record<string, string>;
-}>): Error & {
-  response: {
-    status: number;
-    data: unknown;
-    headers: Record<string, string>;
-  };
-} {
-  const error = new Error(`Request failed with status ${params.status}`) as Error & {
-    response: {
-      status: number;
-      data: unknown;
-      headers: Record<string, string>;
-    };
-  };
-  error.response = {
-    status: params.status,
-    data: params.data ?? { error: 'request_failed' },
-    headers: params.headers ?? {},
-  };
-  return error;
-}
+const credentialPath = '/v3/connect/openai-codex/profiles/work/credential';
 
 describe('ApiClient connected services v3 credentials', () => {
+  let app: FastifyInstance;
+  let restoreAdapter: () => void;
+  let requests: Array<{ body: unknown; authorization: string | undefined }>;
+
   beforeEach(() => {
-    mockPost.mockReset();
-    mockPatch.mockReset();
-    mockGet.mockReset();
+    app = fastify();
+    requests = [];
+    app.addHook('preHandler', async (request) => {
+      requests.push({ body: request.body, authorization: request.headers.authorization });
+    });
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: new URL(resolveServerHttpBaseUrl()).origin });
     resetServerFeaturesClientForTests();
     vi.clearAllMocks();
     resetServerEndpointFailureLogSamplingForTests();
   });
-  afterEach(() => { vi.unstubAllGlobals(); resetServerFeaturesClientForTests(); });
+  afterEach(async () => {
+    vi.unstubAllGlobals();
+    resetServerFeaturesClientForTests();
+    restoreAdapter();
+    await app.close();
+  });
 
   it('force-refreshes server features instead of trusting a warm cached contract', async () => {
     const cached = { status: 'ready', features: { features: {}, capabilities: {} } } as const;
@@ -126,13 +104,10 @@ describe('ApiClient connected services v3 credentials', () => {
       kind: 'token',
       token: { token: 'setup-token', providerAccountId: null, providerEmail: null },
     });
-    mockGet.mockResolvedValue({
-      status: 200,
-      data: {
+    app.get(credentialPath, async () => ({
         credentialRevision: 'csr_abcdefghijklmnopqrstuv',
         content: { t: 'plain', v: record },
-      },
-    });
+      }));
 
     const api = await ApiClient.create({
       token: 'happy-token',
@@ -147,10 +122,8 @@ describe('ApiClient connected services v3 credentials', () => {
   });
 
   it('preserves unsupported stored credential content as a typed failure instead of absence', async () => {
-    mockGet.mockRejectedValue(createAxiosResponseError({
-      status: 409,
-      data: { error: 'connect_credential_unsupported_format' },
-    }));
+    app.get(credentialPath, async (_request, reply) =>
+      reply.code(409).send({ error: 'connect_credential_unsupported_format' }));
 
     const api = await ApiClient.create({
       token: 'happy-token',
@@ -172,10 +145,8 @@ describe('ApiClient connected services v3 credentials', () => {
   });
 
   it('keeps a genuine missing v3 credential as absence', async () => {
-    mockGet.mockRejectedValue(createAxiosResponseError({
-      status: 404,
-      data: { error: 'connect_credential_not_found' },
-    }));
+    app.get(credentialPath, async (_request, reply) =>
+      reply.code(404).send({ error: 'connect_credential_not_found' }));
 
     const api = await ApiClient.create({
       token: 'happy-token',
@@ -189,10 +160,7 @@ describe('ApiClient connected services v3 credentials', () => {
   });
 
   it('posts plaintext credentials without logging credential secrets', async () => {
-    mockPost.mockResolvedValue({
-      status: 200,
-      data: { success: true, credentialRevision: 'csr_abcdefghijklmnopqrstuv' },
-    });
+    app.post(credentialPath, async () => ({ success: true, credentialRevision: 'csr_abcdefghijklmnopqrstuv' }));
 
     const api = await ApiClient.create({
       token: 'happy-token',
@@ -225,15 +193,10 @@ describe('ApiClient connected services v3 credentials', () => {
       credentialRevision: 'csr_abcdefghijklmnopqrstuv',
     });
 
-    expect(axios.post).toHaveBeenCalledWith(
-      expect.stringContaining('/v3/connect/openai-codex/profiles/work/credential'),
-      {
-        content: { t: 'plain', v: record },
-      },
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer happy-token' }),
-      }),
-    );
+    expect(requests).toEqual([{
+      body: { content: { t: 'plain', v: record } },
+      authorization: 'Bearer happy-token',
+    }]);
 
     const serializedLogs = JSON.stringify(vi.mocked(logger.debug).mock.calls);
     expect(serializedLogs).not.toContain('plain-access-token');
@@ -241,10 +204,7 @@ describe('ApiClient connected services v3 credentials', () => {
   });
 
   it('serializes the server-v0.2.1 token discriminator with oauth:null as content-only', async () => {
-    mockPost.mockResolvedValue({
-      status: 200,
-      data: { success: true },
-    });
+    app.post(credentialPath, async () => ({ success: true }));
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
@@ -265,20 +225,18 @@ describe('ApiClient connected services v3 credentials', () => {
       content: { t: 'plain', v: record },
     })).resolves.toEqual({ success: true });
 
-    expect(mockPost.mock.calls[0]?.[1]).toEqual({
+    expect(requests[0]?.body).toEqual({
       content: { t: 'plain', v: releasedRecord },
     });
   });
 
   it('returns typed supersession for a revision-fenced plaintext credential mutation', async () => {
-    mockPost.mockRejectedValue(createAxiosResponseError({
-      status: 409,
-      data: {
+    app.post(credentialPath, async (_request, reply) =>
+      reply.code(409).send({
         error: 'connect_credential_mutation_superseded',
         reason: 'revision_mismatch',
         credentialRevision: 'csr_bcdefghijklmnopqrstuvw',
-      },
-    }));
+      }));
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
@@ -305,10 +263,8 @@ describe('ApiClient connected services v3 credentials', () => {
   });
 
   it('preserves a sanitized deterministic status for a non-typed plaintext mutation failure', async () => {
-    mockPost.mockRejectedValue(createAxiosResponseError({
-      status: 400,
-      data: { error: 'invalid-params', echoedSecret: 'plain-request-secret' },
-    }));
+    app.post(credentialPath, async (_request, reply) =>
+      reply.code(400).send({ error: 'invalid-params', echoedSecret: 'plain-request-secret' }));
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
@@ -342,11 +298,8 @@ describe('ApiClient connected services v3 credentials', () => {
   });
 
   it('samples transient plaintext credential registration failures without error-labeled logs', async () => {
-    mockPost.mockRejectedValue(createAxiosResponseError({
-      status: 503,
-      data: { error: 'server_unavailable' },
-      headers: { 'retry-after': '3' },
-    }));
+    app.post(credentialPath, async (_request, reply) =>
+      reply.code(503).headers({ 'retry-after': '3' }).send({ error: 'server_unavailable' }));
 
     const api = await ApiClient.create({
       token: 'happy-token',
@@ -398,11 +351,8 @@ describe('ApiClient connected services v3 credentials', () => {
   });
 
   it('samples transient credential health update failures without error-labeled logs', async () => {
-    mockPatch.mockRejectedValue(createAxiosResponseError({
-      status: 429,
-      data: { error: 'rate_limited' },
-      headers: { 'retry-after': '4' },
-    }));
+    app.patch(credentialPath + '/health', async (_request, reply) =>
+      reply.code(429).headers({ 'retry-after': '4' }).send({ error: 'rate_limited' }));
 
     const api = await ApiClient.create({
       token: 'happy-token',

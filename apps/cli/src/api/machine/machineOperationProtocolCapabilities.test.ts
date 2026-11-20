@@ -1,12 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const axiosGet = vi.hoisted(() => vi.fn());
-
-vi.mock('axios', () => ({
-  default: {
-    get: (...args: unknown[]) => axiosGet(...args),
-  },
-}));
+import fastify, { type FastifyInstance } from 'fastify';
+import { createDeferred } from '@/testkit/async/deferred';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 
 vi.mock('@/api/client/serverHttpBaseUrl', () => ({
   resolveServerHttpBaseUrl: () => 'https://api.example.test',
@@ -46,12 +42,26 @@ describe('readMachineOperationProtocolCapabilitiesProjectionV1', () => {
     });
   });
 
+  it('drops a malformed capability while preserving a valid sibling and revision', () => {
+    const projection = readMachineOperationProtocolCapabilitiesProjectionV1({
+      machineId: 'machine-1',
+      value: {
+        ...validMachineSnapshot,
+        operationProtocolCapabilities: {
+          sessionSpawn: { protocolVersions: [2] },
+          finiteTransferRpc: { protocolVersions: [1] },
+        },
+      },
+    });
+
+    expect(projection?.capabilities.sessionSpawn).toBeUndefined();
+    expect(projection?.capabilities.finiteTransferRpc).toEqual({ protocolVersions: [1] });
+    expect(projection?.revision).toBe(4);
+  });
+
   it.each([
     ['missing capability projection', { ...validMachineSnapshot, operationProtocolCapabilities: undefined }],
-    ['malformed capability projection', {
-      ...validMachineSnapshot,
-      operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [2] } },
-    }],
+    ['malformed capability projection', { ...validMachineSnapshot, operationProtocolCapabilities: [] }],
     ['missing revision', { ...validMachineSnapshot, operationProtocolCapabilitiesRevision: null }],
     ['non-positive revision', { ...validMachineSnapshot, operationProtocolCapabilitiesRevision: 0 }],
     ['revoked Machine', { ...validMachineSnapshot, revokedAt: 1 }],
@@ -66,14 +76,32 @@ describe('readMachineOperationProtocolCapabilitiesProjectionV1', () => {
 });
 
 describe('readMachineOperationProtocolCapabilitiesV1', () => {
+  const path = '/v1/machines/machine-1';
+  let app: FastifyInstance;
+  let restoreAdapter: () => void;
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    app = fastify();
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'https://api.example.test' });
+  });
+
+  afterEach(async () => {
+    restoreAdapter();
+    await app.close();
   });
 
   it('reads the exact Machine snapshot from the configured server with caller cancellation', async () => {
-    axiosGet.mockResolvedValue({
-      status: 200,
-      data: { machine: validMachineSnapshot },
+    let requests = 0;
+    const requestStarted = createDeferred();
+    const releaseResponse = createDeferred();
+    app.get(path, async (request) => {
+      requests++;
+      expect(request.headers.authorization).toBe('Bearer account-token');
+      if (requests === 2) {
+        requestStarted.resolve();
+        await releaseResponse.promise;
+      }
+      return { machine: validMachineSnapshot };
     });
     const controller = new AbortController();
 
@@ -88,17 +116,21 @@ describe('readMachineOperationProtocolCapabilitiesV1', () => {
       revision: 4,
     });
 
-    expect(axiosGet).toHaveBeenCalledWith(
-      'https://api.example.test/v1/machines/machine-1',
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: 'Bearer account-token' }),
-        signal: controller.signal,
-      }),
-    );
+    const pending = readMachineOperationProtocolCapabilitiesV1({
+      credentials: { token: 'account-token' },
+      machineId: 'machine-1',
+      signal: controller.signal,
+    });
+    const cancelled = expect(pending).rejects.toMatchObject({ code: 'ERR_CANCELED' });
+    await requestStarted.promise;
+    controller.abort();
+    releaseResponse.resolve();
+    await cancelled;
+    expect(requests).toBe(2);
   });
 
   it('treats a missing exact Machine as incompatible without a fallback target', async () => {
-    axiosGet.mockResolvedValue({ status: 404, data: { error: 'Machine not found' } });
+    app.get(path, async (_request, reply) => reply.code(404).send({ error: 'Machine not found' }));
 
     await expect(readMachineOperationProtocolCapabilitiesV1({
       credentials: { token: 'account-token' },
@@ -107,7 +139,7 @@ describe('readMachineOperationProtocolCapabilitiesV1', () => {
   });
 
   it('preserves an authentication rejection instead of relabeling it as incompatibility', async () => {
-    axiosGet.mockResolvedValue({ status: 401, data: { error: 'not-authenticated' } });
+    app.get(path, async (_request, reply) => reply.code(401).send({ error: 'not-authenticated' }));
 
     await expect(readMachineOperationProtocolCapabilitiesV1({
       credentials: { token: 'expired-token' },

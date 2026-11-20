@@ -1,19 +1,15 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import axios from 'axios';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fastify, { type FastifyInstance } from 'fastify';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import {
+  projectPrivateLabelForRecipientV1,
   PROVIDER_BROKER_OPEN_HTTP_PATH_V1,
   PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1,
+  sealPrivateLabelV1,
 } from '@happier-dev/protocol';
 import { TEAM_CREDENTIAL_ACTION_PATHS_V1, TeamCredentialResourceSummaryV1Schema } from '@happier-dev/protocol/teams';
 
 import { ApiClient } from './api';
-
-vi.mock('axios', () => ({
-  default: { post: vi.fn(), get: vi.fn(), isAxiosError: vi.fn() },
-  post: vi.fn(),
-  get: vi.fn(),
-  isAxiosError: vi.fn(),
-}));
 
 vi.mock('@/configuration', () => ({
   configuration: { apiServerUrl: 'https://home.example' },
@@ -21,13 +17,21 @@ vi.mock('@/configuration', () => ({
 
 describe('ApiClient Team credential Provider broker methods', () => {
   let api: ApiClient;
+  let app: FastifyInstance;
+  let restoreAdapter: () => void;
 
   beforeEach(async () => {
-    vi.clearAllMocks();
+    app = fastify();
+    restoreAdapter = installAxiosFastifyAdapter({ app, origin: 'https://home.example' });
     api = await ApiClient.create({
       token: 'account-token',
       encryption: { type: 'legacy', secret: new Uint8Array(32) },
     });
+  });
+
+  afterEach(async () => {
+    restoreAdapter();
+    await app.close();
   });
 
   it('reads the current custodian resource projection through its canonical Action route', async () => {
@@ -35,10 +39,17 @@ describe('ApiClient Team credential Provider broker methods', () => {
       id: 'resource-1',
       teamId: 'team-1',
       custodianAccountId: 'account-1',
-      displayName: 'Shared Codex',
+      displayName: projectPrivateLabelForRecipientV1({
+        recipientAccountId: 'account-1',
+        stored: sealPrivateLabelV1({
+          mode: 'plain',
+          value: 'Shared Codex',
+          binding: { entity: 'team_credential_resource', field: 'displayName', id: 'resource-1' },
+        }),
+      }),
       enabled: true,
       revision: 7,
-      disclosureCeiling: 'brokered_only',
+      deliveryPolicy: { preferredAllowedModes: ['brokered'] },
       sessionUsePolicy: 'personal_allowed',
       source: null,
       sourcePresentation: {
@@ -47,7 +58,7 @@ describe('ApiClient Team credential Provider broker methods', () => {
       },
       requestPolicy: null,
       brokerPlacement: { kind: 'machine', machineId: 'broker-1' },
-      allMembersDeliveryMode: null,
+      allMembersAllowedRoutes: null,
       groupGrants: [],
       memberGrants: [],
       readiness: { kind: 'available' },
@@ -56,14 +67,13 @@ describe('ApiClient Team credential Provider broker methods', () => {
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString(),
     });
-    vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: resource });
+    app.post(TEAM_CREDENTIAL_ACTION_PATHS_V1['teams.credentials.get'], async (incoming) => {
+      expect(incoming.body).toEqual({ resourceId: 'resource-1' });
+      expect(incoming.headers.authorization).toBe('Bearer account-token');
+      return resource;
+    });
 
     await expect(api.getTeamCredentialResource('resource-1')).resolves.toEqual(resource);
-    expect(axios.post).toHaveBeenCalledWith(
-      `https://home.example${TEAM_CREDENTIAL_ACTION_PATHS_V1['teams.credentials.get']}`,
-      { resourceId: 'resource-1' },
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer account-token' }) }),
-    );
   });
 
   it('opens a broker authority through the canonical typed endpoint', async () => {
@@ -83,14 +93,13 @@ describe('ApiClient Team credential Provider broker methods', () => {
       },
     };
     const response = { ok: false as const, reasonCode: 'broker_unavailable' as const };
-    vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: response });
+    app.post(PROVIDER_BROKER_OPEN_HTTP_PATH_V1, async (incoming) => {
+      expect(incoming.body).toEqual(request);
+      expect(incoming.headers.authorization).toBe('Bearer account-token');
+      return response;
+    });
 
     await expect(api.openTeamCredentialProviderBroker(request)).resolves.toEqual(response);
-    expect(axios.post).toHaveBeenCalledWith(
-      `https://home.example${PROVIDER_BROKER_OPEN_HTTP_PATH_V1}`,
-      request,
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer account-token' }) }),
-    );
   });
 
   it('admits each Provider request through the canonical typed endpoint', async () => {
@@ -126,13 +135,12 @@ describe('ApiClient Team credential Provider broker methods', () => {
       requestFacts: { generation: false, routeKind: 'openai_responses' as const, modelId: 'gpt-5', reasoningEffort: null },
     };
     const response = { ok: false as const, reasonCode: 'resource_changed' as const };
-    vi.mocked(axios.post).mockResolvedValueOnce({ status: 200, data: response });
+    app.post(PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1, async (incoming) => {
+      expect(incoming.body).toEqual(request);
+      expect(incoming.headers.authorization).toBe('Bearer account-token');
+      return response;
+    });
 
     await expect(api.admitTeamCredentialProviderBrokerRequest(request)).resolves.toEqual(response);
-    expect(axios.post).toHaveBeenCalledWith(
-      `https://home.example${PROVIDER_BROKER_REQUEST_ADMISSION_HTTP_PATH_V1}`,
-      request,
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer account-token' }) }),
-    );
   });
 });
