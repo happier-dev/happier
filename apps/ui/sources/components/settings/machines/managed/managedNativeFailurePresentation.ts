@@ -4,6 +4,7 @@ import type { HomeEnrollmentCarrierFailure } from '@happier-dev/protocol/ssh/com
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 import { t } from '@/text';
 
 /** Existing Details disclosures accept only typed causes and the Action's correlation identity. */
@@ -79,6 +80,15 @@ export function describeManagedPresetAvailabilityFailure(code: string): string {
         case 'enrollment_retired': return t('session.startFailure.cause.enrollment_retired');
         default: return t('managedMachines.options.unavailable');
     }
+}
+
+/** The Home admitted the read, but the current Account has yet to receive this Team preset's key. */
+export function describeManagedPresetKeyPending(code: string | null | undefined) {
+    return code === MACHINE_PRESET_TEAM_KEY_PENDING ? {
+        title: t('machinePresets.keyPendingTitle'),
+        reason: t('machinePresets.keyPendingReason'),
+        diagnosticCode: 'content_unavailable',
+    } : null;
 }
 
 export function describeManagedOperationDiagnostic(error: NonNullable<ActionOperationSnapshotV1['error']>): string {

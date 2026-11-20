@@ -27,6 +27,7 @@ import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import {
   createHomeGovernanceHarness,
+  createAccountTokenForTests,
   installHomeGovernanceBoundaries,
   waitForHomeGovernance,
 } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -515,6 +516,46 @@ async function seedConfiguration(serverId: string, image = false,
 }
 
 describe('reachable preset detail', () => {
+  it('explains how to get the key for an authorized Team preset without offering a premature retry', async () => {
+    const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
+    const { sealManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
+    const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint');
+    const credentials = {
+      token: createAccountTokenForTests('member', { currentAccount: true }),
+      secret: encodeBase64(new Uint8Array(32).fill(39), 'base64url'),
+    };
+    const ownerEncryption = await createEncryptionFromAuthCredentials({
+      token: createAccountTokenForTests('owner', { currentAccount: true }),
+      secret: encodeBase64(new Uint8Array(32).fill(37), 'base64url'),
+    });
+    const contentPublicKey = ownerEncryption.contentDataKey;
+    const serverId = await harness.addHome({
+      name: 'History', serverUrl: 'https://history.example', serverIdentityId: preset.homeId,
+      accountId: 'member', currentAccount: true, teamsEnabled: true, accountEncryptionMode: 'e2ee', credentials,
+    });
+    const sealed = sealManagedMachinePresetContentV1({
+      presetId: preset.id, mode: 'e2ee', content: { v: 1, name: preset.name, launch: preset.launch },
+      recipientCensus: [{
+        account: { kind: 'account', accountId: 'owner', name: null, firstName: null, lastName: null, username: null, avatarUrl: null },
+        readiness: { status: 'available', contentPublicKey: encodeBase64(contentPublicKey, 'base64'),
+          contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(contentPublicKey) },
+        envelopeStatus: 'missing',
+      }],
+      randomBytes: length => new Uint8Array(length).fill(23),
+    });
+    harness.answer(serverId, '/v1/machines/presets/get', {
+      body: { kind: 'found', preset: { id: preset.id, homeId: preset.homeId, revision: preset.revision,
+        owner: { kind: 'team', teamId: 'team' }, contentEncryptionMode: 'e2ee', controller: preset.controller, ...sealed } },
+    });
+    const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
+    try {
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.read-state-diagnostic-content_unavailable')).not.toBeNull());
+      expect(screen.findByTestId('machine-preset.read-state-reason')).not.toBeNull();
+      expect(screen.findByTestId('machine-preset.read-state-action')).toBeNull();
+      expect(screen.tree.findAllByType(MachinePresetDetail)).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  });
+
   it('headless preset preparation retains last reports without guessing an operation host and follows actual scoped pushes', async () => {
     const serverId = await seed();
     const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);

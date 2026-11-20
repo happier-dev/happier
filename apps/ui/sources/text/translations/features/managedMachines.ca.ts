@@ -519,6 +519,8 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Desa les opcions que fas servir per crear màquines.",
         loading: "S’estan carregant els valors predefinits…",
         loadFailed: "No s’han pogut carregar els valors predefinits. Torna-ho a provar.",
+        keyPendingTitle: "S’està esperant la clau del valor predefinit",
+        keyPendingReason: "Han compartit un valor predefinit amb tu i encara no n’has rebut la clau. La rebràs quan un administrador de l’equip que ja el pugui obrir torni a obrir els valors predefinits de màquina a Happier.",
         archiveFailed: "No s’ha pogut arxivar aquest valor predefinit.",
         ownerPersonal: "Teu",
         futureOnly: "Els canvis s’apliquen a màquines noves. Les existents conserven les seves opcions.",

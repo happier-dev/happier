@@ -1,7 +1,8 @@
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import * as React from 'react';
 import { shallow } from 'zustand/shallow';
-import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { hasOpenedManagedMachinePresetCreationV1, isOpenedManagedMachinePresetV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -14,6 +15,7 @@ import { useManagedMachineAccountSettings } from '@/components/settings/machines
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetCost, ManagedPresetMark, ManagedPresetOfferLine } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { describeManagedPresetOffer } from '@/components/settings/machines/managed/managedConfigurationPresentation';
+import { describeManagedPresetKeyPending } from '@/components/settings/machines/managed/managedNativeFailurePresentation';
 import { MachineProvisionerPicker, type ManagedProvisionerSelection } from '@/components/settings/machines/managed/MachineProvisionerPicker';
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -140,6 +142,9 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
     const approval = useActionApprovalContinuation({ serverId: props.serverId, scopeKey, onExecuted: () => {} });
     const presets = useMachinePresets(serverIds, approval.requestApproval);
     const state = presets.statesByServerId[props.serverId];
+    const waitingForPresetKey = React.useMemo(() => state?.value?.some(preset => preset.archivedAt === undefined
+        && !isOpenedManagedMachinePresetV1(preset) && preset.reason === MACHINE_PRESET_TEAM_KEY_PENDING), [state?.value]);
+    const keyPending = waitingForPresetKey ? describeManagedPresetKeyPending(MACHINE_PRESET_TEAM_KEY_PENDING) : null;
     const homeId = getServerProfileById(props.serverId)?.serverIdentityId;
     const router = useRouter();
     const configure = useManagedMachineConfigurator({ serverId: props.serverId, binding,
@@ -154,6 +159,7 @@ function CurrentManagedMachineSelectionOffers(props: OffersProps & Readonly<{ bi
             action={{ label: t('approvals.details'), onPress: () => router.push(buildApprovalHref(approval.approvalId!, props.serverId) as never) }} /> : null}
         {state?.error ? <SurfaceStateCard kind="error" title={t('machinePresets.loadFailed')} diagnosticCode={state.error}
             action={{ label: t('common.retry'), onPress: presets.refresh }} /> : null}
+        {keyPending ? <SurfaceStateCard kind="unavailable" size="line" lineLayout="notice" {...keyPending} /> : null}
     </>;
 }
 

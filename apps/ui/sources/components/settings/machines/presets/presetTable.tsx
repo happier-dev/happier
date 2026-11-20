@@ -23,6 +23,7 @@ import {
   describePresetImage,
   type PresetImageState,
 } from '../managed/presetPreparationPresentation';
+import { describeManagedPresetKeyPending } from '../managed/managedNativeFailurePresentation';
 import {
   MANAGED_PROVISIONER_MARK_SIZE,
   ManagedPresetMark,
@@ -68,11 +69,16 @@ const NO_IMAGE: PresetImageState = Object.freeze({
   next: null,
 });
 
-/** The image state of an item, through the preset page's own decision; an unreadable preset says none. */
+/** An unreadable body cannot tell us whether it has an image. */
 export function readPresetTableImage(item: PresetTableItem): PresetImageState {
-  if (item.preset && isOpenedManagedMachinePresetV1(item.preset))
-    return describePresetImage(item.preset);
-  return { ...NO_IMAGE, word: t('machinePresets.imageNone') };
+  if (!item.preset) return { ...NO_IMAGE, word: t('machinePresets.imageNone') };
+  return isOpenedManagedMachinePresetV1(item.preset) ? describePresetImage(item.preset) : NO_IMAGE;
+}
+
+function describePresetTableKeyPending(item: PresetTableItem) {
+  return item.preset && !isOpenedManagedMachinePresetV1(item.preset)
+    ? describeManagedPresetKeyPending(item.preset.reason)
+    : null;
 }
 
 /** Column widths at normal text size; the shared table scales them with the reader's text. */
@@ -222,22 +228,27 @@ export function usePresetTableAnatomy(
             size={MANAGED_PROVISIONER_MARK_SIZE.row}
           />
         ) : null,
-      title: (item) => item.title,
+      title: (item) => describePresetTableKeyPending(item)?.title ?? item.title,
       // Wide: the provider and where it runs ("Hetzner · Falkenstein"); the columns carry the rest.
       // Narrow: who it is for, then the image's word; the step itself is in the row's "…".
-      byline: (item, layout) =>
-        layout?.fieldColumns ? (
+      byline: (item, layout) => {
+        const keyPending = describePresetTableKeyPending(item);
+        return keyPending ? <Text numberOfLines={2} style={styles.cell}>{keyPending.reason}</Text>
+          : layout?.fieldColumns ? (
           <PresetPlaceLine item={item} />
         ) : (
           <PresetPhoneLine item={item} host={host} />
-        ),
+        );
+      },
       fields,
       // Only the next step stands beside a row (lab review 5): Out of date → Rebuild, Failed → Retry. A healthy
       // image is quiet; its Rebuild stays on the preset's page. The "…" keeps one slot on every row's end.
-      accessibilityLabel: (item) =>
-        [item.title, readPresetTableImage(item).word, item.note]
+      accessibilityLabel: (item) => {
+        const keyPending = describePresetTableKeyPending(item);
+        return [keyPending?.title ?? item.title, keyPending?.reason ?? readPresetTableImage(item).word, item.note]
           .filter(Boolean)
-          .join(', '),
+          .join(', ');
+      },
       testID: (item) => `preset-table.row.${item.key}`,
       columnTitles: {
         title:

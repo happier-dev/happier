@@ -519,6 +519,8 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "保存你创建机器时使用的选择。",
         loading: "正在加载机器预设…",
         loadFailed: "无法加载机器预设。请重试。",
+        keyPendingTitle: "正在等待预设密钥",
+        keyPendingReason: "有一个预设已与你共享，但你还没有收到它的密钥。能够打开该预设的团队管理员下次在 Happier 中打开机器预设时，你就会收到密钥。",
         archiveFailed: "无法归档此预设。",
         ownerPersonal: "你的",
         futureOnly: "修改仅适用于新机器。现有机器保留原有选择。",

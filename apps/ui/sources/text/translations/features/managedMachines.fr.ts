@@ -519,6 +519,8 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Enregistre les choix que tu utilises pour créer des machines.",
         loading: "Chargement des préréglages…",
         loadFailed: "Impossible de charger les préréglages. Réessaie.",
+        keyPendingTitle: "En attente de la clé du préréglage",
+        keyPendingReason: "Un préréglage est partagé avec toi, mais tu n’as pas encore reçu sa clé. Elle te parviendra la prochaine fois qu’une personne qui peut gérer l’équipe et ouvrir ce préréglage ouvrira les préréglages de machines dans Happier.",
         archiveFailed: "Impossible d’archiver ce préréglage.",
         ownerPersonal: "À toi",
         futureOnly: "Les modifications s’appliquent aux nouvelles machines. Les machines existantes gardent leurs choix.",

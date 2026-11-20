@@ -39,7 +39,7 @@ import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creat
 import { buildManagedMachineConfigurationRoute } from './managedMachineConfigurationRoute';
 import { isManagedControllerCandidate, useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, managedCredentialReceiptTargets } from './managedConfigurationPresentation';
-import { describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
+import { describeManagedPresetAvailabilityFailure, describeManagedPresetKeyPending } from './managedNativeFailurePresentation';
 import { findPresetLastSavedFacts } from './managedPresetHistory';
 import { useQualifiedConnectedAccountTargetPresentations } from '@/hooks/server/connectedServices/useQualifiedConnectedAccountTargetPresentations';
 import { useMachinePresetDetail, useMachinePresetConfiguration, useMachinePresetPreparation } from './useMachinePresets';
@@ -287,12 +287,14 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
     const approvalNotice = approval.approvalId ? <AttentionBanner testID="machine-preset.approval" tone="neutral"
         title={t('approvals.title')} description={t('approvals.status.open')}
         action={{ label: t('approvals.details'), onPress: () => navigate(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(props.serverId)}`) }} /> : null;
+    const keyPending = describeManagedPresetKeyPending(detail.state.error);
     if (!visiblePreset) return <ItemList><PageHeader title={t('machinePresets.title')} description={t('machinePresets.futureOnly')} />
         {approvalNotice}
         <SurfaceStateCard testID="machine-preset.read-state" kind={detail.state.loading ? 'loading' : teamDenied ? 'denied' : 'unavailable'}
-            title={detail.state.loading ? t('machinePresets.loading') : teamDenied || detail.state.error === 'permission_denied'
-                || detail.state.error === 'preset_not_found' || detail.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed')}
-            diagnosticCode={detail.state.error ?? undefined} action={detail.state.loading ? undefined : { label: t('common.retry'), onPress: detail.refresh }} />
+            title={keyPending?.title ?? (detail.state.loading ? t('machinePresets.loading') : teamDenied || detail.state.error === 'permission_denied'
+                || detail.state.error === 'preset_not_found' || detail.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed'))}
+            reason={keyPending?.reason} diagnosticCode={keyPending?.diagnosticCode ?? detail.state.error}
+            action={detail.state.loading || keyPending ? undefined : { label: t('common.retry'), onPress: detail.refresh }} />
     </ItemList>;
 
     // Named apart from same-named machines in this Home, as the Machines list and the configurator chip name it.
@@ -352,8 +354,10 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
             {!archived && !catalog.error && configurationUnavailable ? <SurfaceStateCard testID="machine-preset.configuration-unavailable"
                 kind="unavailable" size="line" title={configuration.error ? describeManagedPresetAvailabilityFailure(configuration.error) : t('managedMachines.options.unavailable')} diagnosticCode={configuration.error ?? undefined}
                 action={{ label: t('common.retry'), onPress: configuration.refresh }} /> : null}
-            {detail.state.error ? <SurfaceStateCard testID="machine-preset.refresh-error" kind="unavailable" size="line" title={t('machinePresets.loadFailed')}
-                diagnosticCode={detail.state.error} action={{ label: t('common.retry'), onPress: detail.refresh }} /> : null}
+            {detail.state.error ? <SurfaceStateCard testID="machine-preset.refresh-error" kind="unavailable" size="line" lineLayout="notice"
+                title={keyPending?.title ?? t('machinePresets.loadFailed')} reason={keyPending?.reason}
+                diagnosticCode={keyPending?.diagnosticCode ?? detail.state.error}
+                action={keyPending ? undefined : { label: t('common.retry'), onPress: detail.refresh }} /> : null}
             {conflict || mutationError || refusal ? <SurfaceStateCard testID="machine-preset.mutation-error" kind="error" size="line"
                 title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost')
                     : revealArchiveFeedback.current ? t('machinePresets.archiveFailed') : t('machinePresets.loadFailed')}

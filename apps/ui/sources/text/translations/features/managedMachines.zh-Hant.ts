@@ -519,6 +519,8 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "儲存你建立機器時使用的選擇。",
         loading: "正在載入機器預設組合…",
         loadFailed: "無法載入機器預設組合。請再試一次。",
+        keyPendingTitle: "正在等待預設組合金鑰",
+        keyPendingReason: "有一個預設組合已與你分享，但你尚未收到金鑰。當可以開啟該預設組合的團隊管理員下次在 Happier 中開啟機器預設組合時，你就會收到金鑰。",
         archiveFailed: "無法封存此預設組合。",
         ownerPersonal: "你的",
         futureOnly: "修改只適用於新機器。現有機器保留原本的選擇。",

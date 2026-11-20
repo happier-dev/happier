@@ -525,6 +525,8 @@ export const managedMachinesEn = {
         empty: "Save the choices you use to create machines.",
         loading: "Loading machine presets…",
         loadFailed: "Machine presets couldn’t load. Try again.",
+        keyPendingTitle: "Waiting for the preset key",
+        keyPendingReason: "A preset was shared with you and its key hasn’t reached you yet. You can get the key when a Team manager who can already open it next opens Machine presets in Happier.",
         archiveFailed: "This preset couldn’t be archived.",
         ownerPersonal: "Yours",
         futureOnly: "Edits apply to new machines. Existing machines keep their choices.",

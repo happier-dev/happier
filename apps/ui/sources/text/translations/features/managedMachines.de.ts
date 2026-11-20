@@ -519,6 +519,8 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Speichere die Auswahl, mit der du Rechner erstellst.",
         loading: "Rechnervorlagen werden geladen…",
         loadFailed: "Rechnervorlagen konnten nicht geladen werden. Versuche es erneut.",
+        keyPendingTitle: "Warten auf den Vorlagenschlüssel",
+        keyPendingReason: "Eine Rechnervorlage wurde mit dir geteilt. Der Schlüssel ist noch nicht bei dir angekommen. Du erhältst ihn, wenn ein Teammitglied mit Verwaltungsrechten, das die Vorlage bereits öffnen kann, das nächste Mal die Rechnervorlagen in Happier öffnet.",
         archiveFailed: "Diese Vorlage konnte nicht archiviert werden.",
         ownerPersonal: "Deine",
         futureOnly: "Änderungen gelten für neue Rechner. Bestehende behalten ihre Auswahl.",

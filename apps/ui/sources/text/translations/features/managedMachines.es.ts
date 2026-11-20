@@ -519,6 +519,8 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Guarda las opciones que usas para crear máquinas.",
         loading: "Cargando ajustes predefinidos…",
         loadFailed: "No se pudieron cargar los ajustes predefinidos. Inténtalo de nuevo.",
+        keyPendingTitle: "Esperando la clave del ajuste predefinido",
+        keyPendingReason: "Se ha compartido contigo un ajuste predefinido y aún no has recibido su clave. La recibirás cuando alguien con permisos para gestionar el equipo y que ya pueda abrir el ajuste vuelva a abrir los ajustes predefinidos de máquinas en Happier.",
         archiveFailed: "No se pudo archivar este ajuste predefinido.",
         ownerPersonal: "Tuyo",
         futureOnly: "Los cambios se aplican a máquinas nuevas. Las existentes conservan sus opciones.",

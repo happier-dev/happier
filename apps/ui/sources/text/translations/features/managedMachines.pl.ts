@@ -519,6 +519,8 @@ export const managedMachines: ManagedMachinesTranslations = {
         empty: "Zapisz wybory, których używasz do tworzenia maszyn.",
         loading: "Wczytywanie ustawień maszyn…",
         loadFailed: "Nie udało się wczytać ustawień maszyn. Spróbuj ponownie.",
+        keyPendingTitle: "Oczekiwanie na klucz ustawienia maszyny",
+        keyPendingReason: "Udostępniono Ci ustawienie maszyny, ale jego klucz jeszcze do Ciebie nie dotarł. Otrzymasz go, gdy osoba z uprawnieniami do zarządzania zespołem, która może już otworzyć to ustawienie, ponownie otworzy ustawienia maszyn w Happier.",
         archiveFailed: "Nie udało się zarchiwizować tego ustawienia.",
         ownerPersonal: "Twoje",
         futureOnly: "Zmiany dotyczą nowych maszyn. Istniejące zachowują swoje wybory.",

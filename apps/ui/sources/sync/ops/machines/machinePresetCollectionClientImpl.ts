@@ -66,6 +66,7 @@ import {
     machinePresetEditDraftContent, machinePresetEditDraftUpdatePatch,
     type MachinePresetCreateDraftInput, type MachinePresetEditDraft, type MachinePresetUpdateDraftInput,
 } from '@/sync/domains/machines/presets/machinePresetEditDraft';
+import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 
 const PRESET_RECIPIENT_CENSUS_PATH = '/v1/machines/presets/recipient-census';
 
@@ -112,6 +113,7 @@ export type OpenedManagedMachinePresetV1 = Omit<ManagedMachinePresetV1, 'content
 /** A listed row remains visible when this Account cannot open its private body. */
 export type ManagedMachinePresetPrivateContentUnavailableV1 = Omit<ManagedMachinePresetV1, 'content' | 'recipients'> & Partial<Record<keyof ManagedMachinePresetContentV1, never>> & Readonly<{
     kind: 'private_content_unavailable';
+    reason?: typeof MACHINE_PRESET_TEAM_KEY_PENDING;
 }>;
 export type ManagedMachinePresetListEntryV1 = OpenedManagedMachinePresetV1 | ManagedMachinePresetPrivateContentUnavailableV1;
 export function isOpenedManagedMachinePresetV1(value: ManagedMachinePresetListEntryV1): value is OpenedManagedMachinePresetV1 {
@@ -638,7 +640,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<Readonly<{
         content: ManagedMachinePresetContentV1;
         recipientProjection: ManagedMachinePresetRecipientProjectionV1;
-    }> | null> {
+    }> | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
         const custody = await (await reader())?.open(raw.contentEncryptionMode);
         if (!custody) return null;
         if (raw.contentEncryptionMode === 'plain') {
@@ -649,21 +651,22 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }
         const projection = projectManagedMachinePresetForRecipientV1({ content: raw.content, recipients: raw.recipients,
             recipientAccountId: custody.accountId });
+        if (raw.owner.kind === 'team' && projection.recipientEnvelope === null) return MACHINE_PRESET_TEAM_KEY_PENDING;
         const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: raw.id,
             mode: 'e2ee', projection, custody });
         return content ? { content, recipientProjection: projection } : null;
     }
 
     async function openPreset(raw: ManagedMachinePresetV1,
-        reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<OpenedMachinePreset | null> {
+        reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<OpenedMachinePreset | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
         const initiallyOpened = await openStoredPreset(raw, reader);
-        if (!initiallyOpened) return null;
+        if (!initiallyOpened || initiallyOpened === MACHINE_PRESET_TEAM_KEY_PENDING) return initiallyOpened;
         // A current keyholder repairs newly owed Account envelopes on this normal read boundary. It cannot
         // expose content to a non-keyholder, and the server rechecks the live census/CAS before accepting it.
         const repaired = await repairRecipientEnvelopes(raw, reader);
         const selected = repaired ?? raw;
         const opened = selected === raw ? initiallyOpened : await openStoredPreset(selected, reader);
-        if (!opened) return null;
+        if (!opened || opened === MACHINE_PRESET_TEAM_KEY_PENDING) return opened;
         const { content: _stored, recipients: _recipients, ...structural } = selected;
         return { ...structural, ...opened.content, recipientProjection: opened.recipientProjection };
     }
@@ -766,27 +769,27 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
     }
 
     async function openActionOutput<T extends MachinePresetHttpActionIdV1>(actionId: T, value: MachinePresetActionOutputV1<T>,
-        signal?: AbortSignal): Promise<OpenedPresetActionOutput<T> | null> {
+        signal?: AbortSignal): Promise<OpenedPresetActionOutput<T> | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
         const readerState: { key: Promise<ManagedMachinePresetReadCustodyV1 | null> | null } = { key: null };
         const reader = () => readerState.key ??= captureManagedMachinePresetReadCustodyV1(scope, signal);
         try {
             if (actionId === 'machines.presets.get' && value.kind === 'found') {
                 const preset = await openPreset(value.preset, reader);
-                return preset ? { ...value, preset } as OpenedPresetActionOutput<T> : null;
+                return !preset || preset === MACHINE_PRESET_TEAM_KEY_PENDING ? preset : { ...value, preset } as OpenedPresetActionOutput<T>;
             }
             if (actionId === 'machines.presets.list' && value.kind === 'listed') {
                 const presets = await Promise.all(value.presets.map(async raw => {
                     const preset = await openPreset(raw, reader);
-                    if (preset) return preset;
+                    if (preset && preset !== MACHINE_PRESET_TEAM_KEY_PENDING) return preset;
                     const { content: _content, recipients: _recipients, ...structural } = raw;
-                    return { ...structural, kind: 'private_content_unavailable' as const };
+                    return { ...structural, kind: 'private_content_unavailable' as const, ...(preset ? { reason: preset } : {}) };
                 }));
                 return { ...value, presets } as OpenedPresetActionOutput<T>;
             }
             if ((actionId === 'machines.presets.create' || actionId === 'machines.presets.update'
                 || actionId === 'machines.presets.archive' || actionId === 'machines.presets.restore') && value.kind === 'saved') {
                 const preset = await openPreset(value.preset, reader);
-                return preset ? { ...value, preset } as OpenedPresetActionOutput<T> : null;
+                return preset && preset !== MACHINE_PRESET_TEAM_KEY_PENDING ? { ...value, preset } as OpenedPresetActionOutput<T> : null;
             }
             return value as OpenedPresetActionOutput<T>;
         } finally {
@@ -856,28 +859,33 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         if (!parsed.success) return { kind: 'failed', code: 'invalid_parameters',
             diagnosticDetail: JSON.stringify(actionInputValidationFailure(parsed.error), null, 2) };
         if (parsed.data.homeId !== homeId) return { kind: 'failed', code: 'invalid_parameters' };
-        const map = async (value: MachinePresetActionOutputV1<T>) => await openActionOutput(actionId, value, options?.signal);
+        const complete = async (value: MachinePresetActionOutputV1<T>): Promise<MachinePresetCollectionSettledResult<OpenedPresetActionOutput<T>>> => {
+            const opened = await openActionOutput(actionId, value, options?.signal);
+            if (opened === null || opened === MACHINE_PRESET_TEAM_KEY_PENDING) {
+                return { kind: 'failed', code: opened ?? 'content_unavailable' };
+            }
+            return { kind: 'succeeded', value: opened };
+        };
+        const settleApproval = async (value: MachinePresetActionOutputV1<T>) => {
+            const settled = await complete(value);
+            if (settled.kind === 'failed') options?.onApprovalFailed?.(settled.code);
+            else await options?.onApprovalSucceeded?.(settled.value);
+        };
         const outcome = observeHomeActionOutcome<MachinePresetActionOutputV1<T>, T>({
             result: await executeAction(actionId, parsed.data, context(options?.signal)),
             actionId, actionInput: parsed.data, scope, signal: options?.signal,
-            onSucceeded: async value => {
-                const opened = await map(value);
-                if (!opened) { options?.onApprovalFailed?.('content_unavailable'); return; }
-                await options?.onApprovalSucceeded?.(opened);
-            },
+            onSucceeded: settleApproval,
             onFailed: (code, failure) => {
                 const raw = readPresetDomainFailureResult(actionId, code, failure?.details);
                 if (!raw) { options?.onApprovalFailed?.(code); return; }
-                void map(raw).then(opened => opened ? options?.onApprovalSucceeded?.(opened)
-                    : options?.onApprovalFailed?.('content_unavailable')).catch(() => options?.onApprovalFailed?.('content_unavailable'));
+                void settleApproval(raw).catch(() => options?.onApprovalFailed?.('content_unavailable'));
             },
         });
         if (outcome.kind === 'failed') {
             const code = homeDomainFailureCode(outcome.failure);
             const raw = readPresetDomainFailureResult(actionId, code, outcome.failure.details);
             if (!raw) return { kind: 'failed', code };
-            const opened = await map(raw);
-            return opened ? { kind: 'succeeded', value: opened } : { kind: 'failed', code: 'content_unavailable' };
+            return await complete(raw);
         }
         if (outcome.kind === 'approval_pending') {
             options?.onApprovalPending?.(outcome.approval);
@@ -885,8 +893,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }
         const output = MachinePresetActionOutputSchemasV1[actionId].safeParse(outcome.result);
         if (!output.success) return { kind: 'failed', code: 'invalid_action_output' };
-        const opened = await map(output.data as MachinePresetActionOutputV1<T>);
-        return opened ? { kind: 'succeeded', value: opened } : { kind: 'failed', code: 'content_unavailable' };
+        return await complete(output.data as MachinePresetActionOutputV1<T>);
     }
 
     function read<T extends 'machines.presets.get' | 'machines.presets.list'>(actionId: T, input: MachinePresetClientInput<T>,

@@ -5,7 +5,7 @@ import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/
 import { showManagedGetTheAppModal } from './ManagedGetTheAppModal';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
-import { describeManagedActionFailureDiagnostic, describeManagedNativeFailureDiagnostic } from './managedNativeFailurePresentation';
+import { describeManagedActionFailureDiagnostic, describeManagedNativeFailureDiagnostic, describeManagedPresetKeyPending } from './managedNativeFailurePresentation';
 import { randomUUID } from '@/platform/randomUUID';
 import type { OpenedMachinePresetActionOutputV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 type PresetMutationResultV1 = OpenedMachinePresetActionOutputV1<'machines.presets.update'>;
@@ -1149,6 +1149,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const unreadableController = !loadingCatalog && catalog.error ? knownControllerName : undefined;
         // A refused delegated review (a pool with no machine, an unavailable controller) is this page's read failure too.
         const readError = presetQuery.state.error ?? catalog.error ?? (error?.during === 'read' ? error.code : undefined);
+        const keyPending = describeManagedPresetKeyPending(presetQuery.state.error);
         return <ItemList pageColumn="wide">
             <PageHeader title={props.presetOnly ? t('machinePresets.title') : t('managedMachines.picker.newMachine')} actions={compact ? undefined : pageChip}
                 cancelAction={cancelContinuation ? { title: t('common.cancel'), onPress: cancelContinuation, disabled: busy,
@@ -1156,12 +1157,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             {creationDisabledNotice}
             {compact && pageChip ? <ManagedScopeRow testID="managed-config.scope" chip={pageChip} /> : null}
             <ItemGroup surface="none">
-                <SurfaceStateCard kind={loadingCatalog ? 'loading' : readError ? 'error' : 'empty'} size="line"
-                    title={presetQuery.state.error && !loadingCatalog ? t('machinePresets.loadFailed')
+                <SurfaceStateCard kind={keyPending ? 'unavailable' : loadingCatalog ? 'loading' : readError ? 'error' : 'empty'} size="line"
+                    title={keyPending?.title ?? (presetQuery.state.error && !loadingCatalog ? t('machinePresets.loadFailed')
                         : unreadableController ? t('managedMachines.add.controllerUnreadable', { controller: unreadableController })
-                        : loadingCatalog ? t('managedMachines.providers.loading') : readError ? describeManagedProvisionerFailure(readError) : t('managedMachines.providers.unavailable')}
-                    diagnosticCode={readError} testID="managed-config.catalog"
-                    {...(readError && !loadingCatalog ? { action: { label: t('common.retry'),
+                        : loadingCatalog ? t('managedMachines.providers.loading') : readError ? describeManagedProvisionerFailure(readError) : t('managedMachines.providers.unavailable'))}
+                    reason={keyPending?.reason} diagnosticCode={keyPending?.diagnosticCode ?? readError} testID="managed-config.catalog"
+                    {...(readError && !loadingCatalog && !keyPending ? { action: { label: t('common.retry'),
                         onPress: presetQuery.state.error ? retry : catalog.refresh } } : {})} />
             </ItemGroup>
         </ItemList>;
