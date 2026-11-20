@@ -200,6 +200,9 @@ function ensureWorktree(repo, worktree, rev = 'HEAD') {
 /** Parses compiler output; `null` when the compiler did not finish with a verdict. */
 export function packageTypecheckRows(result, cwd, rootDir) {
   if (result.error || result.signal || ![0, 1, 2].includes(result.status)) return null;
+  // The compiler continues after declaration preparation fails. Its diagnostics can be
+  // downstream effects of missing inputs and cannot be attributed to this tree.
+  if (/^\[typecheck-declaration-failure\] /mu.test(result.stderr)) return null;
   const rows = [];
   for (const line of `${result.stdout}\n${result.stderr}`.split(/\r?\n/u)) {
     const located = compilerDiagnosticFromLine(line, cwd, rootDir);
@@ -299,8 +302,9 @@ function compileApp(worktree, dir, env) {
 }
 const compileScope = (worktree, dir, env) => (isAppScope(dir) ? compileApp : compilePackage)(worktree, dir, env);
 
-// `declarations`: package rows include declaration emit; earlier rows (source check only) are not comparable.
-const resultCachePath = (state, treeId, dir) => join(state, 'results', treeId, `${dir.replaceAll('/', '__')}${isAppScope(dir) ? '' : '.declarations'}.json`);
+// Package rows include declaration emit and exclude failed declaration preparation. Older
+// cached package rows may contain resulting diagnostics, so they cannot be used for attribution.
+const resultCachePath = (state, treeId, dir) => join(state, 'results', treeId, `${dir.replaceAll('/', '__')}${isAppScope(dir) ? '' : '.prepared-declarations'}.json`);
 
 const DEPENDENCY_INPUT = /(?:^|\/)package\.json$|^pnpm-lock\.yaml$|^pnpm-workspace\.yaml$|^patches\//u;
 const compileEnvOf = env => {
@@ -527,6 +531,7 @@ export function commitPackageTypecheckCached({ repo, base, tree, env = process.e
 
 /** Human-readable verdict lines; also what committers see when a packet is refused. */
 export function formatCommitPackageTypecheck(result) {
+  if (result.supersededBy) return [`package typecheck: superseded by rolling ${result.supersededBy.slice(0, 11)} (${result.packages.join(', ')})`];
   if (result.skipped) return ['package typecheck: skipped (no packages/* source touched)'];
   const lines = [`package typecheck: ${result.packages.join(', ')} new=${result.fresh.length} incomplete=${result.incomplete.length} unavailable=${result.unavailable.length} ${(result.ms / 1000).toFixed(1)}s`];
   for (const row of result.fresh) lines.push(`  ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text}`);
@@ -566,6 +571,26 @@ export async function commitGateTypecheck({ repo, base, tree, env = process.env,
   return { ...result, detached: plan.detached };
 }
 
+/** A green range can still list packages that the worker could not compare. */
+function coveringRollingHead(repo, verdictPath, commit, packages) {
+  let verdicts;
+  try { verdicts = readFileSync(verdictPath, 'utf8'); }
+  catch (error) { if (error?.code === 'ENOENT') return undefined; throw error; }
+  for (const line of verdicts.split('\n').reverse()) {
+    const row = /^\S+ ROLLING-ok scope=packages base=\S+ head=([0-9a-f]+) packages=(\S+) new=0 incomplete=(\S+) unavailable=(\S+) /u.exec(line);
+    if (!row) continue;
+    const [, head, selected, incomplete, unavailable] = row;
+    const checked = new Set(selected.split(','));
+    for (const dir of `${incomplete},${unavailable}`.split(',')) checked.delete(dir);
+    if (!packages.every(dir => checked.has(dir))) continue;
+    if (spawnSync('git', ['merge-base', '--is-ancestor', commit, head], { cwd: repo, env: gitEnv() }).status === 0) return head;
+  }
+}
+
+function recordGateReport(path, sha, result, verdict) {
+  appendFileSync(path, `${new Date().toISOString()} GATE-REPORT-${verdict} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s${result.supersededBy ? ` rolling=${result.supersededBy}` : ''}\n`);
+}
+
 /**
  * Report-and-URGENT mode of the gate check (P03 ORCH 2026-11-18, before it blocks): a landed commit's touched
  * packages/* and packages/plugins/* workspaces against its parent; new errors go to the lane that posted the commit's
@@ -577,17 +602,27 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
   const git = gitAt(repo);
   const sha = git(['rev-parse', `${commit}^{commit}`]).trim();
   const base = git(['rev-parse', `${sha}^`]).trim();
-  if (!commitGateTypecheckPlan({ repo, base, tree: sha }).blocking.length) return null;
+  const { blocking: packages, detached } = commitGateTypecheckPlan({ repo, base, tree: sha });
+  if (!packages.length) return null;
+  const started = Date.now();
+  const state = commitPackageTypecheckStateDir(repo, env);
+  const verdictPath = join(state, 'verdicts.log');
+  mkdirSync(state, { recursive: true });
+  const supersededBy = coveringRollingHead(repo, verdictPath, sha, packages);
+  if (supersededBy) {
+    const result = { touched: packages, packages, detached, skipped: true, fresh: [], incomplete: [], unavailable: [],
+      timings: [], ms: Date.now() - started, supersededBy };
+    recordGateReport(verdictPath, sha, result, 'superseded');
+    return result;
+  }
   const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, workers, record: false });
-  const red = commitPackageTypecheckRefuses(result);
   if (result.fresh.length) {
     const subject = git(['log', '-1', '--format=%s', sha]).trim();
     try { post(urgentEntry({ commit: sha, subject, lane: commitLane(sha, boardPaths), rows: result.fresh, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
     catch (error) { log(`[commit-gate-typecheck] board post failed for ${sha.slice(0, 11)}: ${error?.message ?? error}`); }
   }
-  const state = commitPackageTypecheckStateDir(repo, env);
-  mkdirSync(state, { recursive: true });
-  appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} GATE-REPORT-${red ? 'RED' : 'ok'} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s\n`);
+  const verdict = result.fresh.length ? 'RED' : result.incomplete.length || result.unavailable.length ? 'incomplete' : 'ok';
+  recordGateReport(verdictPath, sha, result, verdict);
   return result;
 }
 

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -495,6 +495,55 @@ test('report mode checks a landed commit against its parent and posts one URGENT
   assert.match(verdicts.at(-1), new RegExp(`GATE-REPORT-ok commit=${clean} `, 'u'));
   const app = await commit('apps/cli/src/index.ts', 'export const value = 42;\n');
   assert.equal(await reportCommitGateTypecheck({ ...options, commit: app }), null, 'apps stay with the rolling owner');
+});
+
+test('report mode skips queued work only when a rolling verdict completed all its packages', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-report-coverage-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  const sha = await commit('packages/leaf/src/index.ts', 'export const value = 42;');
+  const head = await commit('packages/leaf/src/index.ts', 'export const value = 43;');
+  const log = join(state, 'verdicts.log');
+  const verdict = (head, unavailable) => `${new Date().toISOString()} ROLLING-ok scope=packages base=${base} head=${head} packages=packages/leaf new=0 incomplete=- unavailable=${unavailable} 1.0s\n`;
+  await writeFile(log, verdict(base, '-') + verdict(head, 'packages/leaf'));
+  let requests = 0;
+  const options = { repo, env, log: () => {}, post: () => assert.fail('unexpected author notification'),
+    remote: (trees, dirs) => {
+      requests += 1;
+      return new Map(trees.map(tree => [tree, new Map(dirs.map(dir => [dir, []]))]));
+    } };
+  await reportCommitGateTypecheck({ ...options, commit: sha });
+  assert.equal(requests, 1, 'older or unavailable rolling results do not count');
+  await appendFile(log, verdict(head, '-'));
+  queueCommitGateReport({ repo, env, commit: head });
+  await drainCommitGateReports(options);
+  assert.equal(requests, 1);
+  assert.match(readFileSync(log, 'utf8').trim().split('\n').at(-1), /GATE-REPORT-superseded .*packages=packages\/leaf/u);
+});
+
+test('report mode records failed declaration preparation as incomplete without notifying the author', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-report-preparation-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const sha = await commit('packages/leaf/src/index.ts', 'export const value = 42;');
+  const failed = {
+    status: 2, stdout: "src/index.ts(2,1): error TS2307: Cannot find module '@happier-dev/forge-ci/runtime'.",
+    stderr: '[typecheck-declaration-failure] {"step":"declaration-emission","status":2}\n',
+  };
+  const remote = ([base, head]) => new Map([
+    [base, new Map([['packages/leaf', []]])],
+    [head, new Map([['packages/leaf', packageTypecheckRows(failed, join(repo, 'packages/leaf'), repo)]])],
+  ]);
+  const posts = [];
+  const result = await reportCommitGateTypecheck({ repo, env, commit: sha, remote, log: () => {}, post: entry => posts.push(entry), boardPaths: [] });
+  assert.deepEqual(result.fresh, []);
+  assert.deepEqual(result.incomplete, ['packages/leaf']);
+  assert.deepEqual(posts, []);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /GATE-REPORT-incomplete .*new=0 incomplete=packages\/leaf/u);
+  assert.equal(packageTypecheckRows({ ...failed, stderr: '' }, join(repo, 'packages/leaf'), repo)[0].code, 2307);
 });
 
 // P03 ORCH 2026-11-18: the worker's dependency install ran inside the admitted compile, so the gate identity recorded a
