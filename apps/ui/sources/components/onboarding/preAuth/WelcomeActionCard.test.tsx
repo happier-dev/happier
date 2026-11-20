@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { StyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -9,6 +10,20 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 await import('./WelcomeActionCard');
 
 describe('WelcomeActionCard', () => {
+    it('constrains the Home address pill to its column while keeping the full address accessible', async () => {
+        const { WelcomeActionCard } = await import('./WelcomeActionCard');
+        const address = 'https://long-hostname.example.test:8443';
+        const screen = await renderScreen(<WelcomeActionCard
+            testID="home-pill" presentation="pill" title={address} trailingIconName="caret-right" onPress={() => {}}
+        />);
+        const hit = screen.findByTestId('home-pill');
+        expect(hit?.props.accessibilityLabel).toBe(address);
+        expect(StyleSheet.flatten(hit?.props.style)).toMatchObject({ maxWidth: '100%' });
+        expect(StyleSheet.flatten(screen.findByTestId('home-pill-text')?.props.style)).toMatchObject({
+            minWidth: 0, flexShrink: 1, alignItems: 'stretch',
+        });
+    });
+
     it('exposes its decision and description accessibly and invokes it once', async () => {
         const onPress = vi.fn();
         const { WelcomeActionCard } = await import('./WelcomeActionCard');

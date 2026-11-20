@@ -165,7 +165,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                             {props.subtitle ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`}>{` · ${props.subtitle}`}</Text> : null}
                         </Text>
                     ) : (
-                    <View testID={`${props.testID}-text`} style={button ? styles.buttonText : styles.textBlock}>
+                    <View testID={`${props.testID}-text`}
+                        style={button ? [styles.buttonText, pill ? styles.pillText : null] : styles.textBlock}>
                         {pill ? (
                             // A pill is one line: a long title (a Home's address) gives up its middle, never wraps.
                             <MiddleEllipsisText testID={`${props.testID}-title`} value={props.title} style={[styles.pillTitle, { color: foreground }]} />
@@ -204,7 +205,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
  * Transparency and anywhere without an atmosphere it is exactly this solid fill. The material owner decides which.
  */
 function WelcomeActionGround(props: Readonly<{ fill: string; radius: number }>) {
-    return <GlassSurface surfaceGroup="card" nested finishRole={null} solidColor={props.fill}
+    return <GlassSurface surfaceGroup="card" nested finishRole={null} solidColor={props.fill} children={null}
         // Inside the frame's hairline (a child paints over its parent's border), its corners concentric with the frame's.
         style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, borderRadius: props.radius - CARD_BORDER, pointerEvents: 'none' }} />;
 }
@@ -264,6 +265,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     // Lab `.ar-cta2`: a 40 px rounded line on the page, its hairline the ink edge.
     pill: {
         alignSelf: 'center',
+        maxWidth: '100%',
         minHeight: 40,
         borderRadius: PILL_RADIUS,
         paddingVertical: 0,
@@ -271,7 +273,8 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // The welcome's one body size (owner 2026-11-20): a pill's words read at the doors' subtitle size.
     pillTitle: { ...Typography.variant('body') },
-    pillHit: { alignSelf: 'center' },
+    pillHit: { alignSelf: 'center', maxWidth: '100%' },
+    pillText: { minWidth: 0, maxWidth: '100%', alignItems: 'stretch' },
     link: { paddingHorizontal: 0, paddingVertical: theme.space.s8, borderWidth: 0 },
     linkLineFrame: { minHeight: 0, justifyContent: 'center' },
     linkLine: { ...Typography.variant('label'), flexShrink: 1, textAlign: 'center' },
