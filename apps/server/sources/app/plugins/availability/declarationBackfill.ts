@@ -1,25 +1,40 @@
-import { compactReleaseLessDeclarations, readReleaseLessDeclarationsV2 } from './currentDeclaration';
+import { compactReleaseLessDeclarations, isSplitReleaseLessDeclaration, readReleaseLessDeclarationsV2 } from './currentDeclaration';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import type { db } from '@/storage/db';
 
-/** One-time provider-neutral data migration, retaining the existing intent revision and timestamp. */
+/** Validate body references after schema deployment and compact inline declarations before activation. */
 export async function backfillPluginDeclarations(client: Pick<typeof db, 'accountPluginIntent'>, apply = false) {
     let cursor: string | undefined;
-    let scanned = 0, converted = 0, conflicts = 0, unsupported = 0;
+    let scanned = 0, converted = 0, conflicts = 0, unsupported = 0, incomplete = 0;
     let beforeBytes = 0, afterBytes = 0;
     for (;;) {
         // One potentially large document at a time; no new batch/cap policy.
         const row = await client.accountPluginIntent.findFirst({
             where: cursor === undefined ? {} : { id: { gt: cursor } }, orderBy: { id: 'asc' },
-            select: { id: true, pluginId: true, revision: true, updatedAt: true, releaseLessDeclaration: true },
+            select: {
+                id: true, pluginId: true, revision: true, updatedAt: true, releaseLessDeclaration: true,
+                declarationBodies: { select: { declarationDigest: true } },
+            },
         });
         if (!row) break;
         cursor = row.id;
-        if (row.releaseLessDeclaration === null) continue;
+        const raw = row.releaseLessDeclaration;
+        if (isSplitReleaseLessDeclaration(raw)) {
+            const expanded = readReleaseLessDeclarationsV2(raw, row.pluginId);
+            const digests = new Set<string>(expanded.machines.map(entry => entry.declaration.manifestDigestSha256));
+            if (expanded.legacyDeclaration) digests.add(expanded.legacyDeclaration.manifestDigestSha256);
+            if (digests.size === 0 || digests.size !== row.declarationBodies.length
+                || row.declarationBodies.some(body => !digests.has(body.declarationDigest))) incomplete++;
+            continue;
+        }
+        if (row.declarationBodies.length > 0) {
+            incomplete++;
+            continue;
+        }
+        if (raw === null) continue;
         scanned++;
         const original = JSON.stringify(row.releaseLessDeclaration);
         const expanded = readReleaseLessDeclarationsV2(row.releaseLessDeclaration, row.pluginId);
-        const raw = row.releaseLessDeclaration;
         if (typeof raw !== 'object' || Array.isArray(raw)
             || ('schemaVersion' in raw && raw.schemaVersion !== 2 && raw.schemaVersion !== 3)
             || (expanded.machines.length === 0 && expanded.legacyDeclaration === null)
@@ -42,5 +57,5 @@ export async function backfillPluginDeclarations(client: Pick<typeof db, 'accoun
         }
         converted++;
     }
-    return { scanned, converted, conflicts, unsupported, beforeBytes, afterBytes };
+    return { scanned, converted, conflicts, unsupported, incomplete, beforeBytes, afterBytes };
 }

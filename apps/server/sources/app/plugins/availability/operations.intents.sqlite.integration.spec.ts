@@ -86,6 +86,63 @@ describe("Availability intent reads on SQLite", () => {
         }
     });
 
+    it.each([1, 2, 3])("upgrades a V%i declaration without rewriting held bodies on subsequent claims", async (version) => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const accountId = account.id;
+        const pluginId = `com.acme.split-declaration-v${version}`;
+        const first = wideDeclaration(pluginId, "first-child");
+        const machine = (id: string) => ({ machineId: id, installationId: `installation-${id}` });
+        const initial = version === 1 ? first : version === 2
+            ? { schemaVersion: 2, legacyDeclaration: null, machines: [
+                { machineId: "a", machineInstallationId: "installation-a", declaration: first }] }
+            : mergeReleaseLessDeclarationV2({ stored: null, declaration: first, publisher: machine("a") }).stored;
+        const where = { accountId_pluginId: { accountId, pluginId } };
+        await db.accountPluginIntent.create({ data: { accountId, pluginId, enabled: true, desiredVersion: null,
+            writableCollections: [], releaseLessDeclaration: JSON.parse(JSON.stringify(initial)) } });
+        const claim = (declaration: typeof first, id: string) => operations.claimCollectionWriters({ accountId,
+            input: { manifest: declaration.manifest }, publisher: machine(id) });
+        const read = (declaration: typeof first) => operations.readIntent({ accountId,
+            input: { pluginId, declarationDigests: [declaration.manifestDigestSha256] } });
+        expect((await read(first)).declarationBodies).toEqual([
+            { declarationDigestSha256: first.manifestDigestSha256, manifest: first.manifest },
+        ]);
+        // A real claim upgrades the old row, without a bulk rewrite on open.
+        await claim(first, "b");
+        const upgraded = await db.accountPluginIntent.findUniqueOrThrow({ where, select: { releaseLessDeclaration: true } });
+        expect(upgraded.releaseLessDeclaration).toMatchObject({ schemaVersion: 4 });
+        expect(JSON.stringify(upgraded.releaseLessDeclaration)).not.toContain("first-child");
+        const childDigests = () => db.$queryRaw<{ declarationDigest: string }[]>`
+            SELECT "declarationDigest" FROM "AccountPluginDeclarationBody"
+            WHERE "accountId" = ${accountId} AND "pluginId" = ${pluginId} ORDER BY "declarationDigest"
+        `;
+        expect(await childDigests()).toEqual([{ declarationDigest: first.manifestDigestSha256 }]);
+        const changed = createReleaseLessDeclarationV1({ ...first.manifest, version: "2.0.0" });
+        await db.$executeRaw`CREATE TRIGGER prevent_declaration_body_rewrite
+            BEFORE UPDATE ON "AccountPluginDeclarationBody"
+            BEGIN SELECT RAISE(ABORT, 'immutable declaration updated'); END`;
+        try {
+            await claim(changed, "b");
+            // The V1 legacy root and the V2/V3 first Machine continue holding the first digest.
+            expect((await childDigests()).map(row => row.declarationDigest)).toEqual(
+                [first.manifestDigestSha256, changed.manifestDigestSha256].sort());
+            expect((await read(changed)).declarationBodies).toEqual([
+                { declarationDigestSha256: changed.manifestDigestSha256, manifest: changed.manifest },
+            ]);
+            const restored = await operations.claimCollectionWriters({ accountId, publisher: machine("b"),
+                input: { pluginId, manifestDigestSha256: first.manifestDigestSha256 } });
+            expect(restored.intent.pluginId).toBe(pluginId);
+            expect(await childDigests()).toEqual([{ declarationDigest: first.manifestDigestSha256 }]);
+            const resolved = await inTx(tx => resolveCurrentPluginDeclarationsTx({ tx, accountId,
+                refs: [{ pluginId, version: "1.0.0", machineId: "b" }] }));
+            expect([...resolved.values()][0]?.manifest).toEqual(first.manifest);
+        } finally {
+            await db.$executeRaw`DROP TRIGGER prevent_declaration_body_rewrite`;
+        }
+        await db.accountPluginIntent.delete({ where });
+        expect(await childDigests()).toEqual([]);
+    });
+
+
     it("lists declaration digests from the body-free summary for compacted and per-Machine stores", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const compactedId = "com.acme.sqlite-compacted";
@@ -183,10 +240,10 @@ describe("Availability intent reads on SQLite", () => {
 
         // A second Machine adopting the held digest writes its entry; the stored body stays complete.
         await operations.claimCollectionWriters({ accountId: account.id, input: identity, publisher: machineB });
-        const stored = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId: account.id, pluginId } } });
-        const machines = readCurrentMachinePluginDeclarationsV1(stored, pluginId);
-        expect(machines.map(entry => entry.machineId)).toEqual([machineA.machineId, machineB.machineId]);
-        for (const entry of machines) expect(entry.declaration.manifest).toEqual(declaration.manifest);
+        const stored = await operations.readIntent({ accountId: account.id, input: { pluginId,
+            declarationDigests: [declaration.manifestDigestSha256] } });
+        expect(stored.machineDeclarations?.map(entry => entry.machineId)).toEqual([machineA.machineId, machineB.machineId]);
+        expect(stored.declarationBodies).toEqual([{ declarationDigestSha256: declaration.manifestDigestSha256, manifest: declaration.manifest }]);
 
         const missing = await operations.claimCollectionWriters({ accountId: account.id,
             input: { pluginId, manifestDigestSha256: `sha256:${"0".repeat(64)}` }, publisher: machineA }).then(() => null, (error: unknown) => error);

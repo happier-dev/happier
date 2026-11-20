@@ -1799,6 +1799,16 @@ Availability V1 intent reads, so there is no released predecessor to adapt.
 decode). Older strict readers reject the new fields, so the same reload-together
 rule applies; reported and stored materializations are unchanged.
 
+The later private version-4 storage change keeps the same response and claim
+contracts. Apply the provider's schema migration before loading the server.
+The first changed claim upgrades a readable inline V1–V3 row inside the intent
+CAS. Version-4 bodies live in the intent's private, cascading child table.
+Use the declaration maintenance dry run after schema deployment to check
+reference completeness. Parent and child changes commit in one transaction.
+Complete inline and version-4 rows can coexist. Activate only version-4-capable
+servers after the check, and keep older binaries off the database once a
+version-4 row has been written.
+
 ## Availability digest-only declaration claims (unreleased 0.3)
 
 The existing Collection-writer claim accepts either its unchanged closed full

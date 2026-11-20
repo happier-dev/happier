@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PluginManifestV2Schema } from "@happier-dev/protocol/plugins/manifest/v2";
+import { MAX_PLUGIN_IDENTIFIER_BYTES } from "@happier-dev/protocol/plugins/plugin-id";
 import { db, getDbProviderFromEnv, initDbMysql } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { observePrismaRequests } from "@/testkit/observeSqliteRequests";
 import { createPluginAvailabilityOperations, resolveCurrentClaimablePluginMachineMaterializationTx } from "./operations";
-import { createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2, readCurrentMachinePluginDeclarationsV1, readCurrentPluginDeclarationV1,
+import { compactReleaseLessDeclarations, createReleaseLessDeclarationV1, mergeReleaseLessDeclarationV2, readCurrentMachinePluginDeclarationsV1, readCurrentPluginDeclarationV1,
     resolveCurrentPluginDeclarationsTx } from "./currentDeclaration";
 
 const operations = createPluginAvailabilityOperations({ resolveHostingCapability: () => ({ enabled: false }) });
@@ -64,7 +65,31 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "mysql")("Avai
         const stored = await db.accountPluginIntent.findUniqueOrThrow({ where: { accountId_pluginId: { accountId: account.id, pluginId } } });
         expect(rejoin.result.intent.revision).toBe(String(stored.revision));
         expect(BigInt(rejoin.result.intent.revision)).toBe(BigInt(admitted.intent.revision) + 4n);
-        for (const entry of readCurrentMachinePluginDeclarationsV1(stored, pluginId)) expect(entry.declaration.manifest).toEqual(declaration.manifest);
+        const exact = await operations.readIntent({ accountId: account.id, input: { pluginId,
+            declarationDigests: [declaration.manifestDigestSha256] } });
+        expect(exact.declarationBodies).toEqual([{ declarationDigestSha256: declaration.manifestDigestSha256, manifest: declaration.manifest }]);
+    });
+
+    it("reads a requested body at the canonical plugin identifier width", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const prefix = "com.acme.";
+        const pluginId = prefix + "a".repeat(MAX_PLUGIN_IDENTIFIER_BYTES - prefix.length);
+        const declaration = wideDeclaration(pluginId, "mysql-max-plugin-id");
+        const inline = compactReleaseLessDeclarations(declaration, pluginId);
+        const where = { accountId_pluginId: { accountId: account.id, pluginId } };
+        await db.accountPluginIntent.create({ data: { ...where.accountId_pluginId, enabled: true,
+            desiredVersion: null, writableCollections: [], releaseLessDeclaration: inline } });
+        const readBody = () => operations.readIntent({ accountId: account.id, input: { pluginId,
+            declarationDigests: [declaration.manifestDigestSha256] } });
+        const expected = [{ declarationDigestSha256: declaration.manifestDigestSha256, manifest: declaration.manifest }];
+        expect((await readBody()).declarationBodies).toEqual(expected);
+        const { manifests: _bodies, ...references } = inline;
+        await inTx(async tx => {
+            await tx.accountPluginIntent.update({ where, data: { releaseLessDeclaration: { ...references, schemaVersion: 4 } } });
+            await tx.accountPluginDeclarationBody.create({ data: { ...where.accountId_pluginId,
+                declarationDigest: declaration.manifestDigestSha256, manifest: declaration.manifest } });
+        });
+        expect((await readBody()).declarationBodies).toEqual(expected);
     });
 
     it("transfers only the selected manifest to the current-declaration reader and never a replaced body", async () => {

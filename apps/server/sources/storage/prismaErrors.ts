@@ -11,6 +11,8 @@ export interface PrismaDriverErrorCause {
     readonly code: string | undefined;
     /** The database's own message. It may contain values; log it only through a fixed-text filter. */
     readonly message: string | undefined;
+    /** The missing relation name for a typed table failure. */
+    readonly table?: string;
     /** The violated constraint, for constraint violations. */
     readonly constraint?: Readonly<{ fields?: readonly string[]; index?: string }>;
 }
@@ -42,10 +44,12 @@ export function readPrismaDriverErrorCause(error: unknown): PrismaDriverErrorCau
     const code = record.originalCode ?? record.code;
     const message = record.originalMessage ?? record.message;
     const constraint = readConstraint(record.constraint);
+    const table = 'table' in cause && typeof cause.table === 'string' ? cause.table : undefined;
     return {
         kind: record.kind,
         code: typeof code === 'string' || typeof code === 'number' ? String(code) : undefined,
         message: typeof message === 'string' ? message : undefined,
+        ...(table ? { table } : {}),
         ...(constraint ? { constraint } : {}),
     };
 }
@@ -132,6 +136,17 @@ export function withPrismaQueryValidationDiagnostic(
     return diagnostic ? new PrismaQueryValidationError({
         ...diagnostic, prismaModel: context?.model ?? null, prismaOperation: context?.operation ?? null,
     }) : error;
+}
+
+/** An older database can reject both model and raw reads of this declaration table. */
+export function readPrismaDatabaseMigrationRequiredDiagnostic(error: unknown) {
+    if (!isPrismaErrorCode(error, 'P2010') && !isPrismaErrorCode(error, 'P2021')) return null;
+    const cause = readPrismaDriverErrorCause(error);
+    if (cause?.kind !== 'TableDoesNotExist' || cause.table !== 'AccountPluginDeclarationBody') return null;
+    return {
+        error: 'database_migration_required',
+        message: 'Apply pending server database migrations before reloading this server.',
+    } as const;
 }
 
 export interface SharedQaSchemaMismatchDiagnostic {

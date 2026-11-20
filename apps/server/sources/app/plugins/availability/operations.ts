@@ -64,18 +64,21 @@ import {
     resolveBrowserArtifactCapabilityConfig,
     verifyBrowserArtifactCapability,
 } from "./browserArtifactCapability";
+import { applyPluginDeclarationChangeTx } from "./declarationWriteRows";
 import {
     createReleaseLessDeclarationV1,
-    compactReleaseLessDeclarations,
-    findReleaseLessDeclarationByDigest,
+    isSplitReleaseLessDeclaration,
+    planPluginDeclarationChange,
+    type PluginDeclarationChange,
+    type ReleaseLessDeclarationV1,
     readCurrentReleaseLessDeclarationV1,
+    findReleaseLessDeclarationByDigest,
     readCurrentPluginDeclarationV1,
     readCurrentMachinePluginDeclarationsV1,
-    readReleaseLessDeclarationBodiesV1,
+    readReleaseLessDeclarationBodiesTx,
     readReleaseLessDeclarationListSummary,
     mergeReleaseLessDeclarationV2,
     readStoredPluginManifestV2,
-    type ReleaseLessDeclarationV1,
 } from "./currentDeclaration";
 
 type Awaitable<T> = T | Promise<T>;
@@ -524,10 +527,8 @@ async function transitionIntentTx(input: Readonly<{
         projectScope?: PluginAvailabilityIntentSetActionOutputV1['intent']['projectScope'] | null;
         offlineUiHosting: "disabled" | "enabled";
         writableCollections: readonly PluginCollectionContractRefV1[];
-        /** Only a release-less intent carries a claimed declaration. */
         releaseLessDeclaration: ReleaseLessDeclarationV1 | null;
-        /** The complete Machine-scoped store; Collection promotion consumes only this claim. */
-        storedReleaseLessDeclarationText?: string;
+        declarationChange?: PluginDeclarationChange;
     }>;
 }>): Promise<PluginAvailabilityIntentSetActionOutputV1> {
     const { tx, accountId, pluginId, current, next } = input;
@@ -554,12 +555,9 @@ async function transitionIntentTx(input: Readonly<{
     // cleanup covers cancelled/replaced and no-row bindings without making
     // stages an activation owner.
     await retirePluginCollectionCandidatePreparationStagesTx({ tx, accountId, pluginId });
-    const keepsDeclaration = current !== null && current.desiredVersion === null && next.desiredVersion === null
-        && next.storedReleaseLessDeclarationText === undefined;
-    const admittedDeclaration = next.storedReleaseLessDeclarationText === undefined
-        ? next.releaseLessDeclaration : JSON.parse(next.storedReleaseLessDeclarationText) as unknown;
-    const releaseLessDeclarationText = keepsDeclaration ? undefined : admittedDeclaration === null ? null
-        : JSON.stringify(compactReleaseLessDeclarations(admittedDeclaration, pluginId));
+    const keepsDeclaration = current?.desiredVersion === null && next.desiredVersion === null;
+    const releaseLessDeclarationText = next.declarationChange?.referenceText ?? (keepsDeclaration ? undefined : null);
+    const clearsSplitDeclaration = releaseLessDeclarationText === null && isSplitReleaseLessDeclaration(current?.releaseLessDeclaration);
     const data = {
         desiredVersion: next.desiredVersion,
         enabled: next.enabled,
@@ -577,6 +575,7 @@ async function transitionIntentTx(input: Readonly<{
                     : JSON.parse(releaseLessDeclarationText) as Prisma.InputJsonValue },
             select: INTENT_METADATA_SELECT,
         });
+        await applyPluginDeclarationChangeTx(tx, accountId, pluginId, next.declarationChange);
         await retainSelectedPluginReleaseArchivesTx({
             tx,
             accountId,
@@ -596,6 +595,7 @@ async function transitionIntentTx(input: Readonly<{
     if (updated !== 1) {
         throw new PluginAvailabilityOperationError("plugin_intent_revision_conflict");
     }
+    await applyPluginDeclarationChangeTx(tx, accountId, pluginId, next.declarationChange, clearsSplitDeclaration);
     if (next.desiredVersion !== current.desiredVersion) {
         await retainSelectedPluginReleaseArchivesTx({
             tx,
@@ -2135,7 +2135,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ...(named ? { pluginIds: named } : {}),
                     ...(list?.cursor ? { after: list.cursor } : {}),
                     ...(list && !named ? { take: PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE + 1 } : {}),
-                    ...(bodyDigests ? {} : { list: true }),
+                    list: true,
                     ...(omitDeclarations ? { omitDeclarations: true } : {}),
                 });
                 const account = capturedRows[0];
@@ -2191,7 +2191,16 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                     ? await readManagedResourceDependenciesInTx(tx, { kind: 'plugin', accountId: params.accountId, pluginId: input.pluginId,
                         ...(input.controller ? { controller: input.controller } : {}) })
                     : undefined;
-                return { availabilityCursor: account.availabilityCursor, intentRows, releases, readPluginIds,
+                const exact = intentRows[0];
+                const declarationBodies = input && bodyDigests
+                    ? await readReleaseLessDeclarationBodiesTx(tx, params.accountId, exact ? {
+                        enabled: exact.enabled === true || exact.enabled === 1,
+                        desiredVersion: exact.desiredVersion,
+                        releaseLessDeclaration: exact.releaseLessDeclarationSummaryText
+                            ? JSON.parse(exact.releaseLessDeclarationSummaryText) as unknown : null,
+                    } : null, input.pluginId, bodyDigests)
+                    : undefined;
+                return { availabilityCursor: account.availabilityCursor, intentRows, releases, readPluginIds, declarationBodies,
                     pluginIds: intentRows.map(row => row.pluginId),
                     ...(candidates.length > readPluginIds.length ? { nextCursor: readPluginIds.at(-1)! } : {}),
                     ...(managedResources !== undefined ? { managedResources,
@@ -2235,7 +2244,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         ? { declarationDigestSha256: currentDeclaration.declarationDigestSha256 } : null,
                 }),
                 ...(machineDeclarations.length > 0 ? { machineDeclarations } : {}),
-                ...(bodyDigests ? { declarationBodies: readReleaseLessDeclarationBodiesV1(intentRow, pluginId, bodyDigests) } : {}),
+                ...(current.declarationBodies ? { declarationBodies: current.declarationBodies } : {}),
                 uiArtifacts: facts ? release!.uiArtifacts.map((row) => {
                     const slot = facts.uiSlots.find((candidate) => (
                         candidate.contributionId === row.contributionId
@@ -2345,9 +2354,6 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         projectScope,
                         offlineUiHosting: input.offlineUiHosting,
                         writableCollections: input.writableCollections,
-                        // A present-user release selection displaces the
-                        // claim; staying release-less keeps what the host
-                        // claimed.
                         releaseLessDeclaration: input.desiredVersion === null
                             ? readCurrentReleaseLessDeclarationV1(current, input.pluginId)
                             : null,
@@ -2412,12 +2418,17 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 if (!('manifest' in input) && !held) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
                 let claimedDeclaration = 'manifest' in input ? createReleaseLessDeclarationV1(input.manifest) : held!.declaration;
                 const claimedDigest = claimedDeclaration.manifestDigestSha256;
-                /** The complete held body, read with the complete store a changed claim writes. */
-                const readClaimedBody = (stored: StoredIntentRow | null) => {
+                const readClaimedBody = async (stored: StoredIntentRow | null) => {
                     if ('manifest' in input) return claimedDeclaration;
                     const body = findReleaseLessDeclarationByDigest(stored?.releaseLessDeclaration, pluginId, claimedDigest);
                     if (!body) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
-                    return body.declaration;
+                    // A changed digest-only claim reuses the held row. Only preparation consumes its full manifest.
+                    if (!prepare || !isSplitReleaseLessDeclaration(stored?.releaseLessDeclaration)) return body.declaration;
+                    const selected = await readSelectedDeclarationManifestsTx(tx, params.accountId, [{ key: 'claimed', pluginId,
+                        path: body.manifestPath, declarationDigestSha256: claimedDigest }]);
+                    const manifest = readStoredPluginManifestV2(selected.get('claimed'), pluginId);
+                    if (!manifest) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
+                    return { manifestDigestSha256: claimedDigest, manifest };
                 };
                 let accountCollections = claimedDeclaration.manifest.contributes.accountCollections;
                 if (held) {
@@ -2507,12 +2518,13 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 }
                 if (!prepare || held) {
                     current = await readCurrent();
-                    claimedDeclaration = readClaimedBody(current);
+                    claimedDeclaration = await readClaimedBody(current);
                     resolved = await resolveClaim(current);
                     if (!prepare && resolved.unchanged && resolved.currentIntent) return { intent: resolved.currentIntent };
                 }
                 const { manifest } = claimedDeclaration;
-                const storedReleaseLessDeclarationText = prepare ? undefined : JSON.stringify(resolved.storedReleaseLessDeclaration);
+                const declarationChange = prepare ? undefined : planPluginDeclarationChange(
+                    current?.releaseLessDeclaration, resolved.storedReleaseLessDeclaration, claimedDeclaration);
                 // Immutable contracts are global, not Account state. Prepare
                 // them before occupying this Account's publication fence, in
                 // the same Contract→Account order as release publication.
@@ -2577,7 +2589,7 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                         offlineUiHosting: currentIntent?.offlineUiHosting ?? "disabled",
                         writableCollections,
                         releaseLessDeclaration,
-                        storedReleaseLessDeclarationText,
+                        declarationChange,
                     },
                 });
             }, { isolationLevel: "ReadCommitted", transactionClass: "plugin-availability.collection-writers-claim" });

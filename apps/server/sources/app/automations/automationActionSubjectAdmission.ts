@@ -4,7 +4,7 @@ import {
 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { readCurrentPluginDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
+import { readCurrentPluginDeclarationTx } from '@/app/plugins/availability/currentDeclaration';
 import type { Tx } from '@/storage/inTx';
 import { AutomationValidationError } from './automationValidation';
 
@@ -25,7 +25,7 @@ export async function assertAutomationActionSubjectInTx(tx: Tx, input: Readonly<
         where: { accountId_pluginId_version: { accountId: input.accountId, pluginId, version: intent.desiredVersion } },
         select: { version: true, normalizedManifest: true, archiveDigestSha256: true },
     }) : null;
-    const declaration = readCurrentPluginDeclarationV1({ pluginId, intent, release });
+    const declaration = await readCurrentPluginDeclarationTx(tx, input.accountId, { pluginId, intent, release });
     const supported = input.actionIds.some(actionId => {
         const ref = parseQualifiedPluginActionId(actionId);
         if (ref?.pluginId !== pluginId) return false;

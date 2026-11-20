@@ -2064,36 +2064,34 @@ owner's retained admission result. Ordinary activation and daemon readiness stay
 independent of that optional Account publication; a refused setup claim remains
 a typed Action failure before its handler runs.
 
-In unreleased 0.3 source, the existing Account/plugin intent stores each distinct
-release-less manifest body once under its canonical manifest digest. Machine and
-legacy declarations retain their identity envelopes and refer to that row-local
-body map (storage version 3). Offline selection and divergent-Machine consensus
-still belong to `currentDeclaration.ts`; no body is shared across Accounts.
-Storage readers accept legacy inline declarations and version 2 rows.
-`apps/server/scripts/pluginDeclarationBackfill.ts` dry-runs by default against an
-explicit `DATABASE_URL`; `--apply` converts retained rows using their existing
-revision CAS and preserves revisions and timestamps. It reports unsupported rows
-and concurrent conflicts for operator reconciliation; no schema migration is needed.
+In unreleased 0.3 source, the Account/plugin intent keeps Machine and legacy
+digest references in storage version 4. A private child table holds one admitted
+manifest per Account, plugin and digest. Selection and divergent-Machine
+consensus belong to `currentDeclaration.ts`. Readers support inline storage
+versions 1–3 until a changed Collection-writer claim upgrades the intent.
+`apps/server/scripts/pluginDeclarationBackfill.ts` remains available to compact
+legacy inline rows to version 3. Run its default dry run against an explicit
+`DATABASE_URL` after schema deployment, before activating version-4 writers.
+The scan reports an incomplete row if its child keys disagree with its version-4
+references or an inline row has child bodies. A nonzero count requires repair
+before activation. Maintenance leaves those rows intact. If the server reports
+`database_migration_required`, have the database owner apply pending migrations
+before reloading.
 
-The server captures the Account cursor and intent page in one SQL statement.
-On PostgreSQL, lists capture compact declaration identities first. The existing
-declaration owner applies envelope validation and Machine consensus to those
-identities; one set query fetches only the selected Account-current bodies in
-the same snapshot. Exact reads retain full Machine bodies. SQLite and MySQL
-retain their full-text capture path. Full-body decoding and response projection
-occur after the snapshot closes; archive link reads acquire only the Artifact
-identity they consume. A Collection declaration
-claim or intent update names its plugin in the existing scoped refresh queue;
-initial bootstrap, structural recovery and explicit Retry retain full discovery.
+The server captures the Account cursor and intent page together. Lists return
+declaration identities. Within the same read snapshot, an exact intent read
+fetches only the requested held digests. Contribution readers fetch the selected
+body through the same storage owner. A Collection declaration claim or intent
+update names its plugin in the existing scoped refresh queue. Initial bootstrap,
+structural recovery and explicit Retry retain full discovery.
 
-Collection writer rejoins use the same compact identities and declaration merge
-owner, without fetching Machine bodies or taking the Account publication lock.
-Changed claims capture and encode the complete Machine store before Account
-admission. A revision-only read after admission detects a changed incumbent and
-uses the existing transaction replay; the intent CAS writes the captured JSON
-without returning or decoding those manifests under the lock. Account-before-
-Collection lock ordering, quota admission and candidate-stage retirement remain
-with their existing owners.
+Unchanged Collection-writer rejoins use compact identities and skip the Account
+publication lock. Changed claims read the incumbent before admission. The
+revision check after admission detects a concurrent update and uses the existing
+transaction replay. The intent CAS, insertion of new bodies and deletion of
+unreferenced bodies commit together. Deleting the intent cascades to its bodies.
+Account-before-Collection lock ordering, quota admission and candidate-stage
+retirement remain with their existing owners.
 
 Bundled first-party file declarations are admitted by the bundled-plugin publisher
 and serialized inside the same shipped CLI closure. Runtime locator and packaged

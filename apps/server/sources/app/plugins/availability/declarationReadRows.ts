@@ -1,3 +1,4 @@
+import { MAX_PLUGIN_IDENTIFIER_BYTES } from "@happier-dev/protocol/plugins/plugin-id";
 import type { Tx } from '@/storage/inTx';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -152,21 +153,27 @@ export async function readSelectedDeclarationManifestsTx(tx: Tx, accountId: stri
         return `."${segment}"`;
     }).join('')}`;
     const pathRequests = () => JSON.stringify(selected.map((entry, index) => ({ key: String(index), pluginId: entry.pluginId,
-        digest: entry.declarationDigestSha256, bodyPath: jsonPath([...entry.path, ...member]),
+        digest: entry.declarationDigestSha256, memberPath: jsonPath(member), bodyPath: jsonPath([...entry.path, ...member]),
         manifestsPath: jsonPath(['manifests', entry.declarationDigestSha256, ...member]),
         digestPath: jsonPath([...entry.path.slice(0, -1), 'manifestDigestSha256']) })));
     if (provider === 'mysql') {
         const rows = await tx.$queryRaw<Readonly<{ key: string; manifest: string | null }>[]>(prisma.sql`
-            SELECT r.requestKey AS \`key\`, CAST(CASE WHEN JSON_EXTRACT(i.\`releaseLessDeclaration\`, '$.schemaVersion') = CAST(3 AS JSON)
-                    THEN JSON_EXTRACT(i.\`releaseLessDeclaration\`, r.manifestsPath)
+            SELECT r.requestKey AS \`key\`, CAST(CASE JSON_EXTRACT(i.\`releaseLessDeclaration\`, '$.schemaVersion')
+                    WHEN CAST(4 AS JSON) THEN JSON_EXTRACT(b.manifest, r.memberPath)
+                    WHEN CAST(3 AS JSON) THEN JSON_EXTRACT(i.\`releaseLessDeclaration\`, r.manifestsPath)
                     ELSE JSON_EXTRACT(i.\`releaseLessDeclaration\`, r.bodyPath) END AS CHAR) AS manifest
             FROM JSON_TABLE(CAST(${pathRequests()} AS JSON), '$[*]' COLUMNS (
-                requestKey VARCHAR(16) PATH '$.key', pluginId VARCHAR(255) PATH '$.pluginId', digest VARCHAR(255) PATH '$.digest',
-                bodyPath TEXT PATH '$.bodyPath', manifestsPath TEXT PATH '$.manifestsPath', digestPath TEXT PATH '$.digestPath')) r
+                requestKey VARCHAR(16) PATH '$.key', pluginId VARCHAR(${prisma.raw(String(MAX_PLUGIN_IDENTIFIER_BYTES))}) PATH '$.pluginId', digest VARCHAR(255) PATH '$.digest',
+                bodyPath TEXT PATH '$.bodyPath', manifestsPath TEXT PATH '$.manifestsPath', memberPath TEXT PATH '$.memberPath',
+                digestPath TEXT PATH '$.digestPath')) r
             JOIN \`AccountPluginIntent\` i ON i.\`accountId\` = ${accountId} AND i.\`pluginId\` = r.pluginId
+            LEFT JOIN \`AccountPluginDeclarationBody\` b ON b.\`accountId\` = i.\`accountId\` AND b.\`pluginId\` = i.\`pluginId\`
+                AND b.\`declarationDigest\` = r.digest AND JSON_EXTRACT(i.\`releaseLessDeclaration\`, '$.schemaVersion') = CAST(4 AS JSON)
             -- ReadCommitted callers can observe a replacement between the identity and body reads.
             -- Never pair a replacement body with the previously selected declaration digest.
             WHERE JSON_UNQUOTE(JSON_EXTRACT(i.\`releaseLessDeclaration\`, r.digestPath)) = r.digest
+                AND (NOT (JSON_EXTRACT(i.\`releaseLessDeclaration\`, '$.schemaVersion') <=> CAST(4 AS JSON))
+                    OR b.\`declarationDigest\` IS NOT NULL)
         `);
         return new Map(rows.map(row => [selected[Number(row.key)]!.key,
             row.manifest === null ? null : JSON.parse(row.manifest) as unknown]));
@@ -175,15 +182,20 @@ export async function readSelectedDeclarationManifestsTx(tx: Tx, accountId: stri
         const requests = pathRequests();
         const rows = await tx.$queryRaw<Readonly<{ key: string; manifest: string | null }>[]>(prisma.sql`
             SELECT q.request ->> '$.key' AS key,
-                CASE WHEN CAST(q.v -> '$.schemaVersion' AS TEXT) = '3' THEN q.v -> (q.request ->> '$.manifestsPath')
+                CASE CAST(q.v -> '$.schemaVersion' AS TEXT)
+                    WHEN '4' THEN b.manifest -> (q.request ->> '$.memberPath')
+                    WHEN '3' THEN q.v -> (q.request ->> '$.manifestsPath')
                     ELSE q.v -> (q.request ->> '$.bodyPath') END AS manifest
-            FROM (SELECT r.value AS request, CASE WHEN json_valid(i."releaseLessDeclaration")
+            FROM (SELECT r.value AS request, i."accountId", i."pluginId", CASE WHEN json_valid(i."releaseLessDeclaration")
                     THEN jsonb(i."releaseLessDeclaration") ELSE jsonb('null') END AS v
                 FROM json_each(${requests}) r
                 JOIN "AccountPluginIntent" i ON i."accountId" = ${accountId} AND i."pluginId" = r.value ->> '$.pluginId') q
+            LEFT JOIN "AccountPluginDeclarationBody" b ON b."accountId" = q."accountId" AND b."pluginId" = q."pluginId"
+                AND b."declarationDigest" = q.request ->> '$.digest' AND CAST(q.v -> '$.schemaVersion' AS TEXT) = '4'
             -- ReadCommitted callers can observe a replacement between the identity and body reads.
             -- Never pair a replacement body with the previously selected declaration digest.
             WHERE q.v ->> (q.request ->> '$.digestPath') = q.request ->> '$.digest'
+                AND (CAST(q.v -> '$.schemaVersion' AS TEXT) IS NOT '4' OR b."declarationDigest" IS NOT NULL)
         `);
         return new Map(rows.map(row => [selected[Number(row.key)]!.key,
             row.manifest === null ? null : JSON.parse(row.manifest) as unknown]));
@@ -194,17 +206,20 @@ export async function readSelectedDeclarationManifestsTx(tx: Tx, accountId: stri
             'r."declarationDigestSha256"')}) #> ARRAY(SELECT jsonb_array_elements_text(CAST(${JSON.stringify(member)} AS jsonb))) AS manifest
         FROM jsonb_to_recordset(CAST(${JSON.stringify(selected.map((entry, index) => ({ ...entry, key: String(index), digestPath: [...entry.path.slice(0, -1), "manifestDigestSha256"] })))} AS jsonb)) AS r(key text, "pluginId" text, path jsonb, "digestPath" jsonb, "declarationDigestSha256" text)
         JOIN "AccountPluginIntent" i ON i."accountId" = ${accountId} AND i."pluginId" = r."pluginId"
+        LEFT JOIN "AccountPluginDeclarationBody" b ON b."accountId" = i."accountId" AND b."pluginId" = i."pluginId"
+            AND b."declarationDigest" = r."declarationDigestSha256" AND i."releaseLessDeclaration"->>'schemaVersion' = '4'
         -- ReadCommitted callers can observe a replacement between the identity and body reads.
         -- Never pair a replacement body with the previously selected declaration digest.
         WHERE i."releaseLessDeclaration" #>> ARRAY(SELECT jsonb_array_elements_text(r."digestPath")) = r."declarationDigestSha256"
+            AND (i."releaseLessDeclaration"->>'schemaVersion' IS DISTINCT FROM '4' OR b."declarationDigest" IS NOT NULL)
     `);
     return new Map(rows.map(row => [selected[Number(row.key)]!.key, row.manifest]));
 }
 
-/** Both selected-body readers share the same physical-format translation. */
-export function selectedDeclarationBodySql(inlineExpression: string, digestExpression: string) {
+function selectedDeclarationBodySql(inlineExpression: string, digestExpression: string) {
     const prisma = getActivePrismaRuntime();
-    return prisma.sql`CASE WHEN i."releaseLessDeclaration"->>'schemaVersion' = '3'
-        THEN i."releaseLessDeclaration"->'manifests'->(${prisma.raw(digestExpression)})
+    return prisma.sql`CASE i."releaseLessDeclaration"->>'schemaVersion'
+        WHEN '4' THEN b.manifest
+        WHEN '3' THEN i."releaseLessDeclaration"->'manifests'->(${prisma.raw(digestExpression)})
         ELSE ${prisma.raw(inlineExpression)} END`;
 }

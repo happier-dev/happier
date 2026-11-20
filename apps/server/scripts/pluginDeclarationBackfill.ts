@@ -10,7 +10,7 @@ async function main(): Promise<void> {
         await client.$connect();
         const result = await backfillPluginDeclarations(client, apply);
         console.log(JSON.stringify({ provider, apply, ...result }));
-        if (result.conflicts || result.unsupported) process.exitCode = 1;
+        if (result.conflicts || result.unsupported || result.incomplete) process.exitCode = 1;
     } finally { await client.$disconnect(); }
 }
 void main().catch(() => {

@@ -1041,7 +1041,6 @@ model AccountSettingsSnapshot {
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
     @@unique([accountId, version])
-    @@index([accountId, version])
     @@index([createdAt])
 }
 
@@ -1159,7 +1158,6 @@ model AccountEncryptionTransitionCollectionStage {
     transition AccountEncryptionTransition @relation(fields: [transitionId], references: [id], onDelete: Cascade)
 
     @@unique([transitionId, pluginId, collectionId, rowId], map: "AccountEncryptionTransitionCollectionStage_identity_key")
-    @@index([transitionId, pluginId, collectionId, rowId], map: "AccountEncryptionTransitionCollectionStage_transition_page_idx")
 }
 
 /// Account-owned source/target census facts for the closed Automation participant.
@@ -1198,7 +1196,6 @@ model AccountEncryptionTransitionAutomationStage {
     transition AccountEncryptionTransition @relation(fields: [transitionId], references: [id], onDelete: Cascade)
 
     @@unique([transitionId, participantKind, participantId], map: "AccountEncryptionTransitionAutomationStage_identity_key")
-    @@index([transitionId, participantKind, participantId], map: "AccountEncryptionTransitionAutomationStage_transition_page_idx")
 }
 
 enum AccountIdentityEligibilityStatus {
@@ -1962,7 +1959,6 @@ model SessionSubagentCustody {
     session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
     @@unique([accountId, sessionId, custodyKey, subagentKey], map: "SubagentCustody_scope_subagent_key")
-    @@index([accountId, sessionId, custodyKey, subagentKey], map: "SessionSubagentCustody_scope_list_idx")
     @@index([accountId, pluginId, sourceCustodyKind, sourceCustodyId], map: "SubagentCustody_source_retirement_idx")
     @@index([sessionId])
 }
@@ -4113,8 +4109,8 @@ model ArtifactKeyEnvelope {
 
 /// Present-user selection and writable collection policy for one plugin on one Account.
 /// A release-less intent (`desiredVersion` null) is claimed by a daemon-selected
-/// (bundled/development) host; `releaseLessDeclaration` then holds its admitted
-/// normalized manifest and digest, and is null whenever a release is selected.
+/// (bundled/development) host; `releaseLessDeclaration` then holds digest
+/// references to admitted bodies, or a legacy inline declaration.
 model AccountPluginIntent {
     id                     String   @id @default(cuid())
     accountId              String
@@ -4126,11 +4122,23 @@ model AccountPluginIntent {
     offlineUiHosting       String   @default("disabled")
     writableCollections    Json
     releaseLessDeclaration Json?
+    declarationBodies      AccountPluginDeclarationBody[]
     revision               BigInt   @default(0)
     createdAt              DateTime @default(now())
     updatedAt              DateTime @updatedAt
 
     @@unique([accountId, pluginId])
+}
+
+/// Private immutable bodies held by a release-less plugin intent.
+model AccountPluginDeclarationBody {
+    accountId         String
+    pluginId          String
+    declarationDigest String
+    manifest          Json
+    intent            AccountPluginIntent @relation(fields: [accountId, pluginId], references: [accountId, pluginId], onDelete: Cascade)
+
+    @@id([accountId, pluginId, declarationDigest])
 }
 
 /// Immutable accepted portable release facts. Its database ID is deliberately internal;
@@ -5097,8 +5105,6 @@ model PublicSessionShare {
     updatedAt         DateTime                  @updatedAt
     accessLogs        PublicShareAccessLog[]
 
-    @@index([tokenHash])
-    @@index([sessionId])
 }
 
 /// Access log for public session shares

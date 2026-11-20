@@ -9,7 +9,7 @@ import { isServerApiRequestPath } from "./serverApiPath";
 import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol/crypto/publicShareCapabilityUrl';
 import { redactHttpRequestUrlForLog } from "@/utils/logging/redactHttpRequestUrlForLog";
 import { InactiveAccountError } from "@/app/auth/accountStatus";
-import { readSharedQaSchemaMismatchDiagnostic, readPrismaQueryValidationDiagnostic, withPrismaQueryValidationDiagnostic } from '@/storage/prismaErrors';
+import { readPrismaDatabaseMigrationRequiredDiagnostic, readSharedQaSchemaMismatchDiagnostic, readPrismaQueryValidationDiagnostic, withPrismaQueryValidationDiagnostic } from '@/storage/prismaErrors';
 import { readDatabaseErrorCode, isTransactionDeadlineExceededError } from '@/storage/transactionErrors';
 export { readDatabaseErrorCode } from '@/storage/transactionErrors';
 import { logUnexpectedRequestError } from './logUnexpectedRequestError';
@@ -73,7 +73,8 @@ export function enableErrorHandlers(app: Fastify) {
             });
         }
         const statusCode = error.statusCode || 500;
-        const schemaMismatch = readSharedQaSchemaMismatchDiagnostic(error);
+        const schemaMismatch = readPrismaDatabaseMigrationRequiredDiagnostic(error)
+            ?? readSharedQaSchemaMismatchDiagnostic(error);
         if (statusCode >= 500) {
             logUnexpectedRequestError(error, { ...correlation, statusCode,
                 responseCode: schemaMismatch?.error ?? 'internal_error' });

@@ -48,7 +48,40 @@ export type ReleaseLessDeclarationsV3 = Readonly<{
     legacyDeclaration: DeclarationReferenceV3 | null;
 }>;
 
-export type StoredReleaseLessDeclaration = ReleaseLessDeclarationV1 | ReleaseLessDeclarationsV2 | ReleaseLessDeclarationsV3;
+type ReleaseLessDeclarationsV4 = Readonly<Omit<ReleaseLessDeclarationsV3, 'schemaVersion' | 'manifests'> & {
+    schemaVersion: 4;
+}>;
+
+export type PluginDeclarationChange = Readonly<{
+    referenceText: string;
+    inserted: ReadonlyArray<Readonly<{ digest: string; manifestText: string }>>;
+    retired: readonly string[];
+}>;
+
+export function isSplitReleaseLessDeclaration(stored: unknown): boolean {
+    return stored !== null && typeof stored === 'object' && 'schemaVersion' in stored && stored.schemaVersion === 4;
+}
+
+/** Render references and new bodies before taking the Account publication lock. */
+export function planPluginDeclarationChange(
+    previous: unknown,
+    merged: ReleaseLessDeclarationsV3,
+    claimed: ReleaseLessDeclarationV1,
+): PluginDeclarationChange {
+    const held = new Set<string>();
+    if (isSplitReleaseLessDeclaration(previous)) {
+        const store = readReleaseLessDeclarationsV2(previous, claimed.manifest.id);
+        for (const machine of store.machines) held.add(machine.declaration.manifestDigestSha256);
+        if (store.legacyDeclaration) held.add(store.legacyDeclaration.manifestDigestSha256);
+    }
+    const { manifests, machines, legacyDeclaration } = merged;
+    const references: ReleaseLessDeclarationsV4 = { schemaVersion: 4, machines, legacyDeclaration };
+    const next = new Set(Object.keys(manifests));
+    const inserted = Object.entries(manifests).flatMap(([digest, manifest]) => held.has(digest) ? []
+        : [{ digest, manifestText: JSON.stringify(digest === claimed.manifestDigestSha256 ? claimed.manifest : manifest) }]);
+    return { referenceText: JSON.stringify(references), inserted,
+        retired: [...held].filter(digest => !next.has(digest)) };
+}
 
 /** Physical encoding only: admission, provenance and currentness remain unchanged. */
 export function compactReleaseLessDeclarations(stored: unknown, pluginId: string): ReleaseLessDeclarationsV3 {
@@ -151,7 +184,7 @@ function readReleaseLessDeclarations<T>(stored: unknown, pluginId: string,
     readDeclaration: (stored: unknown, pluginId: string, entry: number | 'legacy' | 'root') => T | null,
 ) {
     if (stored !== null && typeof stored === "object" && !Array.isArray(stored)
-        && "schemaVersion" in stored && (stored.schemaVersion === 2 || stored.schemaVersion === 3)
+        && "schemaVersion" in stored && (stored.schemaVersion === 2 || stored.schemaVersion === 3 || stored.schemaVersion === 4)
         && "machines" in stored && Array.isArray(stored.machines)) {
         const read = (entry: unknown, location: number | 'legacy') => {
             if (stored.schemaVersion !== 3) return readDeclaration(entry, pluginId, location);
@@ -239,7 +272,7 @@ export function mergeReleaseLessDeclarationV2(params: Readonly<{
     stored: unknown;
     declaration: ReleaseLessDeclarationV1;
     publisher?: Readonly<{ machineId: string; installationId: string }>;
-}>): Readonly<{ stored: StoredReleaseLessDeclaration; unchanged: boolean }> {
+}>): Readonly<{ stored: ReleaseLessDeclarationsV3; unchanged: boolean }> {
     const store = readReleaseLessDeclarationsV2(params.stored, params.declaration.manifest.id);
     if (!params.publisher) {
         return { stored: compactReleaseLessDeclarations(store.machines.length === 0 ? params.declaration : { ...store, legacyDeclaration: params.declaration }, params.declaration.manifest.id),
@@ -273,19 +306,51 @@ export function readCurrentMachinePluginDeclarationsV1(
  * currently holds (Machine entries and the legacy declaration), each requested
  * digest at most once. A selected release's body is its release facts.
  */
-export function readReleaseLessDeclarationBodiesV1(
+export async function readReleaseLessDeclarationBodiesTx(
+    tx: Tx,
+    accountId: string,
     intent: StoredDeclarationIntentRow | null | undefined,
     pluginId: string,
     digests: readonly PluginUiArtifactDigestV1[],
-): readonly CurrentPluginDeclarationV1[] {
+): Promise<readonly CurrentPluginDeclarationV1[]> {
     if (!intent?.enabled || intent.desiredVersion !== null) return [];
-    const store = readReleaseLessDeclarationsV2(intent.releaseLessDeclaration, pluginId);
-    const held = new Map([...store.machines.map(entry => entry.declaration),
-        ...(store.legacyDeclaration ? [store.legacyDeclaration] : [])].map(declaration => [declaration.manifestDigestSha256, declaration.manifest]));
-    return [...new Set(digests)].flatMap(digest => {
-        const manifest = held.get(digest);
-        return manifest ? [{ declarationDigestSha256: digest, manifest }] : [];
+    const store = readReleaseLessDeclarations(intent.releaseLessDeclaration, pluginId, (entry, id, location) => {
+        const envelope = readReleaseLessDeclarationEnvelope(entry, id);
+        return envelope ? { digest: envelope.manifestDigestSha256, path: declarationManifestPath(location) } : null;
     });
+    const held = new Map(store.machines.map(({ declaration }) => [declaration.digest, declaration.path] as const));
+    if (store.legacyDeclaration) held.set(store.legacyDeclaration.digest, store.legacyDeclaration.path);
+    const selected = [...new Set(digests)].flatMap(digest => {
+        const path = held.get(digest);
+        return path ? [{ key: digest, pluginId, path, declarationDigestSha256: digest }] : [];
+    });
+    const bodies = await readSelectedDeclarationManifestsTx(tx, accountId, selected);
+    return selected.flatMap(({ key, declarationDigestSha256 }) => {
+        const manifest = readStoredPluginManifestV2(bodies.get(key), pluginId);
+        return manifest ? [{ declarationDigestSha256, manifest }] : [];
+    });
+}
+
+/** Hydrate only the selected body when the caller consumes contributions. */
+export async function readCurrentPluginDeclarationTx(
+    tx: Tx,
+    accountId: string,
+    params: Parameters<typeof readCurrentPluginDeclarationV1>[0],
+): Promise<CurrentPluginDeclarationV1 | null> {
+    const { intent, pluginId } = params;
+    if (!intent?.enabled) return null;
+    if (intent.desiredVersion !== null || !isSplitReleaseLessDeclaration(intent.releaseLessDeclaration)) {
+        return readCurrentPluginDeclarationV1(params);
+    }
+    const machine = params.machineId === undefined ? undefined : { machineId: params.machineId,
+        ...(params.machineInstallationId === undefined ? {} : { machineInstallationId: params.machineInstallationId }) };
+    const current = readReleaseLessDeclarationListSummary(intent.releaseLessDeclaration, pluginId, machine).currentDeclaration;
+    if (!current) return null;
+    const selected = await readSelectedDeclarationManifestsTx(tx, accountId, [{ key: pluginId, pluginId,
+        path: current.manifestPath, declarationDigestSha256: current.manifestDigestSha256 }]);
+    const manifest = readStoredPluginManifestV2(selected.get(pluginId), pluginId);
+    return manifest?.version === current.manifestVersion
+        ? { manifest, declarationDigestSha256: current.manifestDigestSha256 } : null;
 }
 
 /**

@@ -562,6 +562,12 @@ function annotateMySqlPluginAvailabilityFields(schemaBody: string): string {
                 .replace(/^(\s*desiredVersion\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)"),
         )
         .replace(
+            /^model\s+AccountPluginDeclarationBody\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*pluginId\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(256)")
+                .replace(/^(\s*declarationDigest\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)"),
+        )
+        .replace(
             /^model\s+AccountPluginRelease\s+\{[\s\S]*?^\}\s*$/gm,
             (model) => model
                 .replace(/^(\s*id\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(25)")
