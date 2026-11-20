@@ -89,6 +89,19 @@ describe('a stopped Setup run offers its own proposal again', () => {
     });
   });
 
+  it('replans only the addressed preset when its stopped run has unrelated attached sources', () => {
+    const candidatePreset = { presetId: 'build', presetRevision: 2 };
+    const sources = [
+      { kind: 'accountPresetOpaque', ...candidatePreset, setupRevision: 5, contentEncryptionMode: 'plain' },
+      { kind: 'accountPresetOpaque', presetId: 'retained', presetRevision: 1, contentEncryptionMode: 'plain' },
+      ...current.sources,
+    ];
+    expect(readMachineSetupRunRecovery(failedRun({ sources, candidatePreset }), current)).toEqual({
+      retry: { kind: 'sources', sources, candidatePreset },
+      edit: null,
+    });
+  });
+
   it('offers no Edit when the proposal adds no single software recipe (a preset re-apply)', () => {
     const sources = [
       {

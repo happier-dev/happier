@@ -4,6 +4,7 @@ import {
   machineSetupSourceApplyOriginKeyV1,
   ManagedMachineActionOutputSchemasV1,
   MachineSetupPlanResultV1Schema,
+  type MachineSetupPlanInputV1,
   type MachineSetupPlanResultV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
@@ -67,7 +68,7 @@ export type MachineSetupReviewIntent =
   | Readonly<{ kind: 'preset'; preset: MachineSetupPresetChoice }>
   /** `name`: the attached copy's name, so the review can say what it applies (as Stop using carries it). */
   | Readonly<{ kind: 'presetUpdate'; presetId: string; presetRevision: number; setupRevision: number; name?: string }>
-  | Readonly<{ kind: 'sources'; sources: MachineSetupSourceApplyV1 }>
+  | Readonly<{ kind: 'sources'; sources: MachineSetupSourceApplyV1; candidatePreset?: MachineSetupPlanInputV1['candidatePreset'] }>
   /** Stop using one attached preset (its source origin key); what it set up stays unless the review removes it. */
   | Readonly<{ kind: 'stop'; sourceKey: string; name: string }>
   | Readonly<{
@@ -297,6 +298,7 @@ export function useMachineSetup(
         } else if (intent.kind === 'sources') {
           prepared = await prepareMachineSetupSourcesAdditionApplyInput({
             executeAction: execute, context: ctx, homeId, machineId, sources: intent.sources, isCurrent,
+            ...(intent.candidatePreset === undefined ? {} : { candidatePreset: intent.candidatePreset }),
             ...(removeItemKeys?.length ? { removeItemKeys } : {}),
           });
         } else if (intent.kind === 'remove') {

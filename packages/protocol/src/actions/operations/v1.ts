@@ -478,7 +478,7 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     managedId: z.optional(ActionOperationIdentifierV1Schema),
     /** Authored proposal for Edit or a fresh Plan, with preset and secret references intact. */
     source: z.optional(z.pick(machineSetupActions.MachineSetupApplyTargetV1Schema, {
-      sources: true, exclusions: true, removeItemKeys: true,
+      sources: true, candidatePreset: true, exclusions: true, removeItemKeys: true,
     })),
     /** Reviewed native steps in plan order; display facts, never effect operands. */
     steps: z.optional(z.array(z.strictObject({

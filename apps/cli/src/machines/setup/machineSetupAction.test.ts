@@ -429,7 +429,7 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(machineSetupApplyTargetFromPlanV1({ homeId: 'srv_home', machineId: fixture.machine.id }, plan)).not.toHaveProperty('resolvedSources');
     expect(JSON.stringify(post.mock.calls)).not.toContain('private setup');
   });
-  it.each(['settled sibling', 'pending sibling', 'equal candidate', 'candidate retry'] as const)
+  it.each(['settled sibling', 'pending sibling', 'equal candidate', 'candidate retry', 'stopped-run retry'] as const)
   ('applies only the addressed preset candidate with %s', async scenario => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
     const script = (body: string) => ({ body, affects: 'none' as const });
@@ -441,7 +441,7 @@ describe('admitted Machine setup snapshot lifetime', () => {
     const retainedFacts = { [`account:${retained.presetId}`]: { pendingScripts: [1] } };
     const pending = scenario !== 'settled sibling';
     const equal = scenario === 'equal candidate';
-    const fails = scenario === 'candidate retry';
+    const fails = scenario === 'candidate retry' || scenario === 'stopped-run retry';
     const candidateScripts = equal ? local.setup.scripts : [script('echo unchanged'), script('echo candidate')];
     const direct = { kind: 'direct' as const, setup: {} };
     const target = { homeId: 'srv_home', machineId: fixture.machine.id };
@@ -500,7 +500,8 @@ describe('admitted Machine setup snapshot lifetime', () => {
       { kind: 'opened', source: direct },
     ]);
     const input = machineSetupApplyTargetFromPlanV1(target, plan);
-    const applied = await fixture.apply({ input, context: fixture.context('machines.setup.apply', 'reviewed-candidate') });
+    const context = fixture.context('machines.setup.apply', 'reviewed-candidate');
+    const applied = await fixture.apply({ input, context });
     expect(applied).toMatchObject(fails ? { ok: false, errorCode: 'machine_setup_setup_failed',
       details: { kind: 'finiteCommand', step: 1, exitCode: 17 } } : { operationId: expect.any(String) });
     expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: {
@@ -514,9 +515,24 @@ describe('admitted Machine setup snapshot lifetime', () => {
       const retry = fixture.context('machines.setup.apply', 'retry-candidate');
       const authorization = retry.externalActionExecutionAuthorization!;
       nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
-      expect(await fixture.apply({ input, context: { ...retry, externalActionExecutionAuthorization: { ...authorization,
-        binding: { ...authorization.binding, workflowActionOrigin: { runId: 'retained-candidate', requestId: 'retry-candidate' } } },
-      } })).toMatchObject({ operationId: expect.any(String) });
+      if (scenario === 'stopped-run retry') {
+        const recovery = await fixture.machineSetupPlan({ input: { ...target, mode: 'effects', candidatePreset },
+          context: fixture.context('machines.setup.plan', 'review-candidate-recovery') });
+        expect(recovery).toMatchObject({ candidatePreset, review: { presetUpdateEffects: { toolchain: false,
+          scripts: [{ sourceIndex: 0, scriptIndex: 1 }],
+        } } });
+        const receipts = await fixture.operations.handlers.listV2({ states: ['failed'],
+          requestIdentity: { actionId: 'machines.setup.apply', requestId: context.actionRequestId! } }, context);
+        expect(receipts.items).toContainEqual(expect.objectContaining({ domainRef: expect.objectContaining({
+          kind: 'machineSetup', source: expect.objectContaining({ candidatePreset, sources }),
+        }) }));
+        expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, MachineSetupPlanResultV1Schema.parse(recovery)),
+          context: retry })).toMatchObject({ operationId: expect.any(String) });
+      } else {
+        expect(await fixture.apply({ input, context: { ...retry, externalActionExecutionAuthorization: { ...authorization,
+          binding: { ...authorization.binding, workflowActionOrigin: { runId: 'retained-candidate', requestId: 'retry-candidate' } } },
+        } })).toMatchObject({ operationId: expect.any(String) });
+      }
       expect(launchedBodies()).toEqual(['printf CONTROL', 'echo candidate', 'echo candidate']);
       expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: { sourceFacts: retainedFacts } });
 

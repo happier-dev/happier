@@ -1,6 +1,6 @@
 import {
     machineSetupSourceApplyOriginKeyV1, MachineSetupPlanResultV1Schema,
-    type MachineSetupAppChildV1, type MachineSetupSourceApplyV1, type MachineSetupSourceApplyEntryV1,
+    type MachineSetupAppChildV1, type MachineSetupPlanInputV1, type MachineSetupSourceApplyV1, type MachineSetupSourceApplyEntryV1,
 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { mergeMachineSetupsV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -81,6 +81,7 @@ export async function prepareMachineSetupPresetApplyInput(params: Readonly<{
 /** Prerequisite recipes join the Machine's existing sources in the same reviewed effects Plan. */
 export async function prepareMachineSetupSourcesAdditionApplyInput(params: Omit<Parameters<typeof prepareMachineSetupPresetApplyInput>[0], 'preset'> & Readonly<{
     sources: MachineSetupSourceApplyV1;
+    candidatePreset?: MachineSetupPlanInputV1['candidatePreset'];
 }>): Promise<MachineSetupPreparedApply> {
     const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
     const current = () => params.isCurrent() && !params.context.signal?.aborted;
@@ -96,7 +97,7 @@ export async function prepareMachineSetupSourcesAdditionApplyInput(params: Omit<
     if (!parsed.success) return fail('managed_response_invalid');
     const plan = parsed.data;
     let sources = plan.sources;
-    for (const addition of params.sources) {
+    for (const addition of params.candidatePreset === undefined ? params.sources : []) {
         if (addition.kind !== 'direct') {
             sources = attachMachineSetupSource(sources, addition);
             continue;
@@ -111,6 +112,7 @@ export async function prepareMachineSetupSourcesAdditionApplyInput(params: Omit<
         homeId: params.homeId, machineId: params.machineId, selectedMachineId: params.selectedMachineId,
         combined: params.appChildren !== undefined || params.selectedMachineId !== undefined, isCurrent: current,
         targets: [{ homeId: params.homeId, machineId: params.machineId, sources, current: plan, desiredRevision: plan.desiredRevision,
+            ...(params.candidatePreset === undefined ? {} : { candidatePreset: params.candidatePreset }),
             ...(params.removeItemKeys === undefined ? {} : { removeItemKeys: params.removeItemKeys }),
             ...(params.appChildren === undefined ? {} : { appChildren: params.appChildren }) }] });
 }

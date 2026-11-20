@@ -28,6 +28,13 @@ export function readMachineSetupRunRecovery(
       ? snapshot.domainRef.source
       : undefined;
   if (!source) return { retry: { kind: 'reapply' }, edit: null };
+  const retry = {
+    kind: 'sources' as const,
+    sources: source.sources,
+    ...(source.candidatePreset === undefined ? {} : { candidatePreset: source.candidatePreset }),
+    ...(source.removeItemKeys?.length ? { removeItemKeys: [...source.removeItemKeys] } : {}),
+  };
+  if (source.candidatePreset) return { retry, edit: null };
   const currentDirect = current?.sources.find(
     (entry) => entry.kind === 'direct',
   );
@@ -51,13 +58,7 @@ export function readMachineSetupRunRecovery(
   const inputs =
     only?.kind === 'softwareRecipe' ? only.selection.inputs : undefined;
   return {
-    retry: {
-      kind: 'sources',
-      sources: source.sources,
-      ...(source.removeItemKeys?.length
-        ? { removeItemKeys: [...source.removeItemKeys] }
-        : {}),
-    },
+    retry,
     edit:
       only?.kind === 'softwareRecipe' &&
       inputs &&

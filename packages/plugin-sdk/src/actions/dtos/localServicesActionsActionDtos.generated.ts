@@ -2684,6 +2684,10 @@ export type LocalServicesActionsActionResultById = {
                             };
                         };
                     })[];
+                    candidatePreset?: undefined | {
+                        presetId: string;
+                        presetRevision: number;
+                    };
                     exclusions?: undefined | {
                         ref: {
                             pluginId: string;

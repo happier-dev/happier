@@ -2344,13 +2344,18 @@ the reviewed Apply target and its retained Workflow invocation. The receiving
 daemon selects the candidate's changed native scripts and its effective shared
 toolchain change. Selected scripts can use the installed toolchain without
 reinstalling it. Exact Workflow Retry uses the same candidate address for its
-pending commands. Updates leave other attached presets' pending scripts for
-normal Setup recovery. `review.presetUpdateEffects` projects the selected command
+pending commands. The native operation's authored source retains that address
+for Setup-tab Retry, which reviews the same candidate against current Machine
+state. Updates leave other attached presets' pending scripts for normal Setup
+recovery. `review.presetUpdateEffects` projects the selected command
 coordinates and a toolchain flag for Review. Command bodies still come from the
 exact recipient projection. The Apply input carries the candidate address and
 full desired sources. Matching 0.3 development CLI, Home, UI, Protocol and
 generated SDK DTO readers load together. The inspected 0.2 frontier at
 `24731ff73c` has no managed Machine Setup Plan or Apply contract.
+Preset Update Apply requests and stopped-run receipts captured before the
+address was added keep their existing Setup behavior. A fresh Review captures
+the address for a scoped update or retry.
 
 ## Credential-free native Actions (unreleased 0.3)
 

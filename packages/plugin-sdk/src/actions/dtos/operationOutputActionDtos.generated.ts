@@ -2344,6 +2344,10 @@ export type OperationOutputActionResultById = {
                             };
                         };
                     })[];
+                    candidatePreset?: undefined | {
+                        presetId: string;
+                        presetRevision: number;
+                    };
                     exclusions?: undefined | {
                         ref: {
                             pluginId: string;
@@ -5167,6 +5171,10 @@ export type OperationOutputActionResultById = {
                             };
                         };
                     })[];
+                    candidatePreset?: undefined | {
+                        presetId: string;
+                        presetRevision: number;
+                    };
                     exclusions?: undefined | {
                         ref: {
                             pluginId: string;

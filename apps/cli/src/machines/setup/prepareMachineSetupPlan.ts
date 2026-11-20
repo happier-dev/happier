@@ -41,7 +41,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   onCredentialSelection?: Parameters<typeof prepareMachineRecipeProgramV1>[0]['onCredentialSelection'];
   current: Awaited<ReturnType<typeof getMachineSetupDesiredV1>>;
   observation?: MachineSetupObservationV1;
-  candidateSourceIndex?: number;
+  candidate?: Readonly<{ index: number; mode: 'update' | 'recovery' }>;
   /** Receiving Apply reuses its prepared changed operands. */
   executionSources?: readonly MachineSetupV1[];
   readRecipes?: () => Promise<readonly PluginProjectedMachineRecipeEntryV1[] | undefined>;
@@ -77,8 +77,8 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     else {
       const execution = projectMachineSetupSourceChangeExecutionV1(current.policy.sources, sources,
         merged.setup, current.policy.exclusions, { currentSourceFacts: current.policy.sourceFacts,
-          mode: params.candidateSourceIndex !== undefined || input.removeItemKeys !== undefined ? 'update' : 'recovery',
-          candidateSourceIndex: params.candidateSourceIndex });
+          mode: params.candidate?.mode ?? (input.removeItemKeys !== undefined ? 'update' : 'recovery'),
+          candidateSourceIndex: params.candidate?.index });
       if (!execution.ok) return execution;
       executionSources = execution.sources;
     }
@@ -236,7 +236,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     return { target: { homeId: input.homeId, machineId: input.machineId },
       // This is the execution owner's existing gate, not an OS/user guess.
       administratorRequired: machineSetupPlansRequireAdministratorV1(selectedPlans) ? true : incomplete ? null : false,
-      ...(params.candidateSourceIndex === undefined ? {} : { presetUpdateEffects: {
+      ...(params.candidate === undefined ? {} : { presetUpdateEffects: {
         toolchain: executingSetups.some(setup => setup.toolchain !== undefined),
         scripts: executingSetups.flatMap((setup, sourceIndex) => (setup.scripts ?? [])
           .flatMap((script, scriptIndex) => script.body ? [{ sourceIndex, scriptIndex }] : [])),
