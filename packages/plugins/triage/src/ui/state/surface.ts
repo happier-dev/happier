@@ -1,7 +1,7 @@
 import type { TriageListSortV1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEntryRefV1, TriageSourceInstanceIdV1 } from '@happier-dev/triage-protocol/v1';
 
-import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
+import { sameTriageEntryReference as sameTriageEntryRefV1 } from '../../corpus/identity/components.js';
 import {
   CORPUS_DEFAULT_SMART_POLICY_V1,
   type CorpusSmartPolicyV1,
@@ -234,21 +234,7 @@ export const TRIAGE_SURFACE_INITIAL_STATE_V1: TriageSurfaceStateV1 = Object.free
   search: EMPTY_SEARCH,
 });
 
-/**
- * Structural identity over the four canonical `TriageEntryRefV1` components.
- *
- * Deliberately NOT a joined string. `core/CORPUS.md` §6 records the exact
- * contract-valid pair a delimiter join merges — `collisionScope 'origin␟region'`
- * with `entryId '42'` versus `collisionScope 'origin'` with `entryId '␟42'` —
- * and merging two entries into one row here would leave focus on a row that is
- * gone. Comparing components cannot collide at all.
- */
-export function sameTriageEntryRefV1(left: TriageEntryRefV1, right: TriageEntryRefV1): boolean {
-  return left.entryId === right.entryId
-    && left.collisionScope === right.collisionScope
-    && left.kindId === right.kindId
-    && sameTriageSourceIdentity(left.source, right.source);
-}
+export { sameTriageEntryRefV1 };
 
 /**
  * Whether two values of ONE facet are the same constraint.
