@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import ts from 'typescript';
@@ -44,6 +44,89 @@ test('prepared consumers reference the producer with the same workspace source r
   assert.equal(consumer.error, undefined);
   assert.deepEqual(consumer.config.references, [{ path: projects[1].project }],
     'a consumer must resolve its producer through the prepared source aliases used for emission');
+});
+
+test('prepared source references survive another preparation publishing incomplete consumer files', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-prepared-reference-interleaving-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const cli = join(root, 'apps/cli');
+  const options = { strict: true, types: [], module: 'ESNext', moduleResolution: 'Bundler', baseUrl: '.', noEmit: true };
+  const packages = ['plugins/kimi', 'plugin-sdk', 'agents', 'protocol'];
+  const files = {
+    'apps/cli/package.json': JSON.stringify({ name: '@fixture/cli' }),
+    'apps/ui/package.json': JSON.stringify({ name: '@fixture/ui' }),
+    'apps/server/package.json': JSON.stringify({ name: '@fixture/server' }),
+    'apps/cli/tsconfig.json': JSON.stringify({ compilerOptions: options, include: ['src/**/*.ts'] }),
+    'apps/cli/src/index.ts': 'export { value } from "@fixture/kimi";',
+  };
+  for (const [index, directory] of packages.entries()) {
+    const name = directory.split('/').at(-1);
+    const dependency = packages[index + 1]?.split('/').at(-1);
+    files[`packages/${directory}/package.json`] = JSON.stringify({ name: `@fixture/${name}`, exports: {
+      '.': { 'happier-source': './src/index.ts', types: './dist/index.d.ts' },
+    } });
+    files[`packages/${directory}/tsconfig.json`] = JSON.stringify({ compilerOptions: {
+      ...options, noEmit: false, declaration: true, rootDir: 'src', outDir: 'dist',
+    }, include: ['src/**/*.ts'] });
+    files[`packages/${directory}/src/index.ts`] = dependency
+      ? `export { value } from "@fixture/${dependency}";` : 'export const value = true;';
+  }
+  const names = ['foundation', 'services', 'core', 'source', 'test', 'test-ui'];
+  for (const [index, name] of names.entries()) files[`apps/cli/tsconfig.${name}.json`] = JSON.stringify({
+    extends: './tsconfig.json', files: [], include: [], compilerOptions: {
+      ...(index < 4 ? { composite: true, noEmit: false, declaration: true, emitDeclarationOnly: true,
+        outDir: `node_modules/.cache/tsc/${name}.declarations` } : {}),
+      disableSourceOfProjectReferenceRedirect: true,
+    }, references: names.slice(0, Math.min(index, 4)).map(previous => ({ path: `./tsconfig.${previous}.json` })),
+  });
+  for (const [path, content] of Object.entries(files)) {
+    await mkdir(dirname(join(root, path)), { recursive: true });
+    await writeFile(join(root, path), content);
+  }
+  const projects = names.map(name => ({ project: join(cli, `tsconfig.${name}.json`),
+    authoredProject: join(cli, `tsconfig.${name}.json`), args: ['--project', join(cli, `tsconfig.${name}.json`)] }));
+  const inventory = await prepareCliTypecheckProjects(projects, cli);
+  const producers = await prepareReferencedTypecheckDeclarations(projects, cli, inventory);
+  assert.equal(producers.length, packages.length, 'the real declaration preparation must own every package in the chain');
+  const cliOwner = projects.find(project => ts.readConfigFile(project.project, ts.sys.readFile)
+    .config.files.includes(join(cli, 'src/index.ts')));
+  assert.ok(cliOwner, 'the CLI implementation must have a selected owner');
+  const kimi = producers.find(project => project.authoredProject === join(root, 'packages/plugins/kimi/tsconfig.json'));
+  assert.ok(reachableFiles(kimi.project).has(join(root, 'packages/protocol/src/index.ts')),
+    'the known-good prepared graph must reach Protocol before the interleaving');
+  // A concurrent invocation first publishes consumer roots, then adds references.
+  // Reproduce that filesystem interleaving after this invocation chose its graph.
+  for (const project of [...producers, ...projects]) {
+    const { config } = ts.readConfigFile(project.project, ts.sys.readFile);
+    await writeFile(project.project, JSON.stringify({ ...config, references: [] }));
+  }
+  const ordered = orderTypecheckProjects([...producers, ...projects], cli);
+  await prepareWorkspaceSourceTypecheckProjects([...producers, ...projects], cli);
+  function reachableFiles(project) {
+    const visited = new Set();
+    const files = new Set();
+    const pending = [project];
+    while (pending.length) {
+      const path = pending.pop();
+      if (visited.has(path)) continue;
+      visited.add(path);
+      const { config, error } = ts.readConfigFile(path, ts.sys.readFile);
+      assert.equal(error, undefined);
+      const parsed = ts.parseJsonConfigFileContent(config, ts.sys, dirname(path), undefined, path);
+      assert.deepEqual(parsed.errors, []);
+      for (const file of parsed.fileNames) files.add(file);
+      for (const reference of config.references ?? []) pending.push(resolve(dirname(path), reference.path));
+    }
+    return files;
+  }
+  for (const project of [kimi, cliOwner]) {
+    const reachable = reachableFiles(project.project);
+    for (const directory of packages) assert.ok(reachable.has(join(root, 'packages', directory, 'src/index.ts')),
+      `${project.authoredProject} lost the prepared declaration owner for ${directory}`);
+  }
+  const producerOrder = ordered.filter(project => producers.includes(project)).map(project => project.authoredProject);
+  assert.deepEqual(producerOrder, packages.toReversed().map(directory => join(root, 'packages', directory, 'tsconfig.json')),
+    'dependency declarations must still be emitted before their consumers');
 });
 
 test('channels declaration preparation never emits Protocol source siblings', async t => {

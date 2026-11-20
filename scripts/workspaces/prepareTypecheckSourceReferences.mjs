@@ -27,7 +27,7 @@ export function orderTypecheckProjects(projects, cwd = process.cwd()) {
     }
     active.push(project);
     const path = resolve(cwd, project.project);
-    for (const reference of readTypecheckProject(path).config.references ?? []) {
+    for (const reference of project.references ?? readTypecheckProject(path).config.references ?? []) {
       const dependency = byPath.get(resolve(dirname(path), reference.path));
       if (dependency) visit(dependency);
     }
@@ -138,6 +138,7 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
     ambientDependencies.set(foreign.configPath, foreign.ambientDependencies ?? new Map());
     preparedOwners.add(foreign.configPath);
   }
+  const sourceProjects = new Map([...producers, ...projects].map(project => [resolve(cwd, project.project), project]));
   const referencePath = reference => memberships.get(reference.configPath)?.get(reference.file);
   const writeReferences = async (project, required) => {
     const { config, parsed } = readTypecheckProject(project);
@@ -156,6 +157,9 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
     // implementation; preserve enables that import without choosing its JSX ABI.
     const compilerOptions = importedJsx && parsed.options.jsx === undefined
       ? { ...config.compilerOptions, jsx: 'preserve' } : config.compilerOptions;
+    // Another preparation can publish its roots before adding references.
+    // This invocation already chose the declaration owners above.
+    sourceProjects.get(project).references = references;
     await writeJsonAtomic(project, { ...config, compilerOptions, references });
   };
   for (const foreign of foreignProjects.values()) {
@@ -171,7 +175,7 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
     const configPath = resolve(cwd, consumer.project);
     const { config, parsed } = readTypecheckProject(configPath);
     const authored = resolve(cwd, consumer.authoredProject ?? consumer.project);
-    const references = (config.references ?? []).map(reference => {
+    const references = (consumer.references ?? config.references ?? []).map(reference => {
       const path = resolve(dirname(configPath), reference.path);
       return { ...reference, path: redirects.get(path) ?? path };
     });
@@ -220,6 +224,7 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
     const files = [...new Set([...parsed.fileNames, ...consumerAmbientInputs])];
     const target = configPath === authored ? resolve(resolveTypecheckCacheDirectory(dirname(authored)), basename(authored)) : configPath;
     if (!redirects.size) continue;
+    consumer.references = references;
     await mkdir(dirname(target), { recursive: true });
     await writeJsonAtomic(target, configPath === authored
       ? { extends: authored, compilerOptions: { typeRoots: ts.getEffectiveTypeRoots(parsed.options, ts.sys) },
@@ -239,14 +244,15 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
   for (const project of orderTypecheckProjects([...producers, ...projects], cwd)) {
     const path = resolve(cwd, project.project);
     const { config, parsed } = readTypecheckProject(path);
+    project.references ??= config.references ?? [];
     const inherited = new Set();
-    for (const reference of config.references ?? []) {
+    for (const reference of project.references) {
       for (const file of implementations.get(resolve(dirname(path), reference.path)) ?? []) inherited.add(file);
     }
     const own = parsed.fileNames.filter(file => /\.[cm]?tsx?$/.test(file) && !/\.d\.[cm]?ts$/.test(file));
     if (!parsed.options.noEmit && own.some(file => inherited.has(file))) {
       await writeJsonAtomic(path, { ...config,
-        files: parsed.fileNames.filter(file => !inherited.has(file)), include: [], exclude: [] });
+        files: parsed.fileNames.filter(file => !inherited.has(file)), include: [], exclude: [], references: project.references });
     }
     implementations.set(path, new Set([...inherited, ...own]));
   }

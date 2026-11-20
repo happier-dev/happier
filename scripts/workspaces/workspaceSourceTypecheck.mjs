@@ -142,11 +142,11 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
       || (project.authoredProject && original !== resolve(cwd, project.authoredProject))
       ? dirname(original) : resolveTypecheckCacheDirectory(dirname(original));
     const target = resolve(cache, `source-${basename(original)}`);
-    preparedProjects.set(original, { target, config: {
+    preparedProjects.set(original, { project, target, config: {
       extends: original,
       compilerOptions: sourceTypecheckCompilerOptions(options, original, sources, { declarations: useDeclarations }),
       // Project references are not inherited through extends.
-      references: (authored.config.references ?? []).map(reference => ({ ...reference,
+      references: (project.references ?? authored.config.references ?? []).map(reference => ({ ...reference,
         path: resolve(dirname(original), reference.path) })),
     } });
     let replaced = false;
@@ -158,11 +158,11 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     if (!replaced) project.args.push('--project', target);
     project.project = target;
   }
-  for (const { target, config } of preparedProjects.values()) {
-    await writeJsonAtomic(target, { ...config,
-      references: config.references.map(reference => ({ ...reference,
-        path: preparedProjects.get(reference.path)?.target ?? reference.path })),
-    });
+  for (const { project, target, config } of preparedProjects.values()) {
+    const references = config.references.map(reference => ({ ...reference,
+      path: preparedProjects.get(reference.path)?.target ?? reference.path }));
+    project.references = references;
+    await writeJsonAtomic(target, { ...config, references });
   }
   return failures;
 }
