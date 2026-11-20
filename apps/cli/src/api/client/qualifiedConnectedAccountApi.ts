@@ -12,7 +12,7 @@ import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/a
 import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol';
 import type { QualifiedConnectedAccountLegacyPeerClass } from '@happier-dev/protocol/connect/connected-service-bindings';
-import { QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageWriteV4Schema, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadFailureV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageWriteV4Schema, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { QualifiedConnectedAccountServiceListV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema, QualifiedConnectedAccountRefListV4Schema, QualifiedConnectedAccountSummaryListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -155,10 +155,21 @@ export class QualifiedProviderAccountUsageReadConflictError extends HttpStatusEr
     }
 }
 
+export class QualifiedProviderAccountUsageOwnershipError extends HttpStatusError {
+    readonly status = 409;
+    readonly code = "ownership_unproven";
+
+    constructor() {
+        super(409, "ownership_unproven");
+        this.name = "QualifiedProviderAccountUsageOwnershipError";
+    }
+}
+
 function throwQualifiedProviderAccountUsageReadConflict(
     data: unknown,
 ): never {
-    QualifiedProviderAccountUsageReadErrorV4Schema.parse(data);
+    const failure = parseQualifiedConnectedAccountReadResponse(QualifiedProviderAccountUsageReadFailureV4Schema, data);
+    if (failure.error === 'ownership_unproven') throw new QualifiedProviderAccountUsageOwnershipError();
     throw new QualifiedProviderAccountUsageReadConflictError();
 }
 
@@ -1066,11 +1077,12 @@ export async function resolveQualifiedProviderAccountUsageSourceV4(
         {
             headers: providerUsageReadHeaders(params, `/v4/connect/qualified/provider-account-usage/sources/resolve?${query.toString()}`),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
-            validateStatus: (status) => status === 200 || status === 404,
+            validateStatus: (status) => status === 200 || status === 404 || status === 409,
             ...(params.signal ? { signal: params.signal } : {}),
         },
     );
     if (response.status === 404) return null;
+    if (response.status === 409) throwQualifiedProviderAccountUsageReadConflict(response.data);
     if (response.status !== 200) {
         throw new Error(
             `Qualified provider-account usage source resolution returned ${response.status}`,
@@ -1104,10 +1116,7 @@ export async function readQualifiedProviderAccountUsageRecordV4(
         },
     );
     if (response.status === 404) return null;
-    if (response.status === 409) {
-        QualifiedProviderAccountUsageReadErrorV4Schema.parse(response.data);
-        throw new QualifiedProviderAccountUsageReadConflictError();
-    }
+    if (response.status === 409) throwQualifiedProviderAccountUsageReadConflict(response.data);
     if (response.status !== 200) {
         throw new Error(
             `Qualified provider-account usage record read returned ${response.status}`,

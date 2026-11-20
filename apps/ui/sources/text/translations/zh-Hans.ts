@@ -4619,6 +4619,7 @@ export const zhHans: TranslationStructure = {
       quotaRefreshMintFailed: "提供商无法生成使用情况凭据。",
       quotaRefreshRateLimited: "使用情况刷新频率已受限。",
       quotaRefreshFailed: '无法刷新使用情况。',
+      quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `无法验证 ${accounts} 的归属。` : '无法验证账号归属。',
       quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} 请在 ${time} 之后重试。`,
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: '连接服务操作失败。请刷新后重试。',

@@ -10,10 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 
 import type { StoredCredentials } from '@/persistence';
+import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '@/daemon/serverWork';
 import { QualifiedProviderAccountUsageWriteV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import {
     createProviderAccountUsagePersistenceScheduler,
+    persistProviderAccountUsageWithDaySummaries,
     type QualifiedProviderAccountUsagePersistenceTarget,
 } from './persistence';
 
@@ -78,6 +80,67 @@ beforeEach(() => { vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data:
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('provider account usage persistence scheduler', () => {
+    it.each(['ownership_unproven', 'binding_unavailable'] as const)('preserves the typed %s source refusal without reading summaries', async (reason) => {
+        vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: {
+            success: true, source: { status: 'skipped', reason },
+        } });
+        const snapshot = createSnapshot();
+        const target = createTarget();
+        const write = {
+            source: target.source,
+            expectedCredentialRevision: target.expectedCredentialRevision,
+            expectedConfigurationRevision: target.expectedConfigurationRevision,
+            recordId: snapshot.recordId, recordKey: snapshot.recordKey,
+            payloadMode: 'plain_json_v1', status: 'ok', snapshot,
+            fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs,
+        };
+        const serverWork = createDaemonServerWorkScheduler({
+            budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }),
+        });
+        let sourceFailure: unknown;
+        expect(await serverWork.enqueue({
+            key: snapshot.recordId, purpose: 'connectedServiceQuotaPersistence', kind: 'latestStateWrite',
+            payload: write, payloadBytes: Buffer.byteLength(JSON.stringify(write)),
+            run: async (payload) => {
+                try {
+                    await persistProviderAccountUsageWithDaySummaries({ token: 'token', nowMs: 1_500, write: payload });
+                } catch (error) {
+                    sourceFailure = error;
+                    throw error;
+                }
+            },
+        })).toMatchObject({ status: 'failed', classification: { errorCode: reason, retryable: false } });
+        expect(sourceFailure).toMatchObject({ code: reason });
+        expect(axios.get).not.toHaveBeenCalled();
+    });
+
+    it.each(['ownership_unproven', 'binding_unavailable'] as const)('admits the same observation after %s without automatic retry and suppresses it only after valid recovery', async (reason) => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_500);
+        const post = vi.spyOn(axios, 'post')
+            .mockResolvedValueOnce({ status: 200, data: { success: true, source: { status: 'linked' } } })
+            .mockResolvedValueOnce({ status: 200, data: { success: true, source: { status: 'skipped', reason } } })
+            .mockResolvedValue({ status: 200, data: { success: true, source: { status: 'linked' } } });
+        const scheduler = createProviderAccountUsagePersistenceScheduler({
+            api: { getAccountEncryptionMode: async () => 'plain' }, credentials: plainCredentials,
+            now: () => Date.now(), fingerprintKey: new Uint8Array(32).fill(3), minFreshnessMs: 60_000,
+        });
+        const previous = createSnapshot({ meters: [{ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, unit: 'requests', utilizationPct: 20, resetsAt: null, status: 'ok', details: {} }] });
+        const refreshed = createSnapshot({ meters: [{ ...previous.meters[0]!, used: 45, utilizationPct: 45 }] });
+        const targets = [createTarget()];
+        try {
+            await scheduler.recordInBandSnapshot(previous, { targets });
+            await vi.runAllTimersAsync();
+            await scheduler.recordInBandSnapshot(refreshed, { targets });
+            await vi.runAllTimersAsync();
+            expect(post).toHaveBeenCalledTimes(2);
+            expect(await scheduler.recordInBandSnapshot(refreshed, { targets })).toMatchObject({ status: 'enqueued' });
+            await vi.runAllTimersAsync();
+            expect(post).toHaveBeenCalledTimes(3);
+            expect(await scheduler.recordInBandSnapshot(refreshed, { targets })).toEqual({ status: 'already_persisted', reason: 'unchanged_fresh' });
+        } finally { scheduler.dispose(); vi.useRealTimers(); }
+    });
+
     it('persists every valid queued source beyond 500 records and ten minutes of delayed Home writes', async () => {
         let release!: () => void;
         const held = new Promise<void>((resolve) => { release = resolve; });

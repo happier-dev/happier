@@ -134,6 +134,7 @@ model Account {
     AccountPetPackage      AccountPetPackage[]
     AccountPetAsset        AccountPetAsset[]
     ServiceAccountToken    ServiceAccountToken[]
+    qualifiedConnectedAccountUsageRefusals QualifiedConnectedAccountUsageRefusal[]
     ServiceAccountQuotaSnapshot ServiceAccountQuotaSnapshot[]
     homeDirectoryEntries   AccountHomeDirectoryEntry[]
     directoryLinks         AccountDirectoryLink[]
@@ -3441,6 +3442,7 @@ model ServiceAccountToken {
     updatedAt  DateTime  @updatedAt
     members    ConnectedServiceAuthGroupMember[] @relation("QualifiedConnectedAccountMemberCredential")
     usageSources ConnectedServiceUsageSource[] @relation("QualifiedConnectedAccountUsageCredential")
+    usageRefusals QualifiedConnectedAccountUsageRefusal[] @relation("QualifiedConnectedAccountUsageRefusalCredential")
 
     @@unique([accountId, vendor, profileId])
     @@unique([accountId, qualifiedIdentityDigest], map: "sat_qualified_identity_key")
@@ -3560,6 +3562,20 @@ model ConnectedServiceUsageSource {
     @@unique([accountId, sourceKey])
     @@index([accountId, serviceId, profileId], map: "csus_account_service_profile_idx")
     @@index([accountId, providerAccountUsageRecordId], map: "csus_record_idx")
+}
+
+model QualifiedConnectedAccountUsageRefusal {
+    accountId               String
+    qualifiedIdentityDigest String
+    credentialId            String
+    reason                  String
+    observedAt              DateTime @default(now())
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade, map: "qcau_refusal_account_fkey")
+    credential ServiceAccountToken @relation("QualifiedConnectedAccountUsageRefusalCredential", fields: [credentialId], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "qcau_refusal_credential_fkey")
+
+    @@id([accountId, qualifiedIdentityDigest, credentialId])
+    @@index([credentialId], map: "qcau_refusal_credential_idx")
 }
 
 model ConnectedServiceAuthGroup {

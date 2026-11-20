@@ -6,6 +6,7 @@ import { isManagedOpaquePresetMachineV1, type ManagedMachineFullV1 } from '@happ
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
 import { externalActionHeaderRefusalFailure, refuseExternalActionHeaders, requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import axios from '@/api/client/credentialAxios';
+import { QualifiedProviderAccountUsageOwnershipError } from '@/api/client/qualifiedConnectedAccountApi';
 import { type AxiosResponse } from 'axios';
 import { createHash, randomUUID } from 'node:crypto';
 import { executeSessionSectionActionV1, isSessionSectionActionIdV1 } from '@happier-dev/protocol/actions/sessionSections';
@@ -538,6 +539,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           const typedFailure = parseActionExecuteFailure(error);
           if (typedFailure) return typedFailure;
           if (isAuthenticationError(error)) return homeAuthenticationRefused();
+          if (error instanceof QualifiedProviderAccountUsageOwnershipError) return failure(error.code);
           return failure('usage_quota_read_failed');
         }
       };

@@ -3,6 +3,7 @@ import {
   getPreferredLanguage,
   preloadTranslationsForSettings,
   setPreferredLanguageFromSettings,
+  t,
 } from '@/text';
 
 vi.mock('react-native', async () =>
@@ -66,6 +67,26 @@ describe('readPlanAccountsStatement', () => {
     expect(statement).toMatchObject({ kind: 'failed', accounts: 2 });
     expect(statement?.reason).toContain('lost, slow');
     expect(statement?.reason).not.toContain('fresh');
+  });
+
+  it('keeps ownership unproven alongside other accounts still reading or failing', () => {
+    const accountWithRefusal = (id: string) => {
+      const entry = account(id, 'error', false);
+      return { ...entry, state: { ...entry.state, errorCode: 'ownership_unproven' } };
+    };
+    const accounts = [accountWithRefusal('Work'), accountWithRefusal('Research')];
+    const ownershipReason = t('connectedServices.errors.quotaOwnershipUnproven', { accounts: 'Work, Research' });
+
+    const pending = readPlanAccountsStatement([...accounts, account('spare', 'pending', false)], nameOf);
+    expect(pending).toMatchObject({ kind: 'failed', accounts: 3 });
+    expect(pending?.reason).toContain(ownershipReason);
+    expect(pending?.reason).toContain(t('usage.board.page.coveragePending', {
+      sources: t('connectedServices.purposeTargets.poolAccounts', { count: 1 }),
+    }));
+
+    const failed = readPlanAccountsStatement([...accounts, account('spare', 'error', false)], nameOf);
+    expect(failed?.reason).toContain(ownershipReason);
+    expect(failed?.reason).toContain(t('usage.board.page.coverageFailed', { sources: 'spare' }));
   });
 
   it('says nothing when every account read is current', () => {

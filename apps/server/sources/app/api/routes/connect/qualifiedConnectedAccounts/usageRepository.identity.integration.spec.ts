@@ -14,6 +14,8 @@ import { withSqliteReadSnapshot } from '@/storage/prisma';
 import { sealProviderAccountUsageSnapshot, openSealedProviderAccountUsageSnapshot } from "@happier-dev/protocol/connect/accountUsage";
 import { buildQualifiedPluginContributionKey, ConnectedServiceQuotaSnapshotV1Schema } from "@happier-dev/protocol";
 import { buildQualifiedConnectedAccountLocalSubjectId } from "@happier-dev/protocol/connect/qualified-connected-account-persistence";
+import { openQualifiedConnectedAccountQuotaResponseV4, QualifiedConnectedAccountQuotaResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { buildConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import {
     createLightSqliteHarness,
@@ -320,6 +322,137 @@ describe("qualified Connected Account usage stored identity", () => {
             .toMatchObject({ snapshot: { planLabel: 'Pro', recordKey: { quotaScopeId: 'team-a' } } });
     });
 
+    it.each([false, true])('retains ownership_unproven at quota readers through registered routes until recovery (encrypted=%s)', async encrypted => {
+        const account = await db.account.create({ data: encrypted
+            ? { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }
+            : { publicKey: null, encryptionMode: 'plain' } });
+        const ref = { service, accountId: 'unproven-observation' };
+        const controlRef = { service, accountId: 'unproven-observation-control' };
+        const create = async (credentialRef: typeof ref, credentialAccountId = account.id) => {
+            const result = await mutateQualifiedConnectedServiceCredential({ accountId: credentialAccountId, ref: credentialRef,
+                expectedCredentialRevision: null, authenticationModeId: 'api-key',
+                content: encrypted ? { t: 'encrypted', c: 'opaque-e2ee-credential' } : { t: 'plain', v: { token: 'team-token' } },
+                metadata: { scopes: [], providerIdentity: { accountId: null, organizationId: 'team-a' } },
+            });
+            if (result.status !== 'written') throw new Error('Expected credential create');
+            return result;
+        };
+        const credential = await create(ref);
+        const controlCredential = await create(controlRef);
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+            const initialObservedAt = Date.now() - 10_000;
+            const recoveredAt = initialObservedAt + 2_000;
+            const publish = async (credentialRef: typeof ref, credentialRevision: string, valid: boolean, fetchedAt: number) => {
+                const recordKey = createProviderAccountUsageRecordKey({ providerId: buildQualifiedPluginContributionKey(service),
+                    accountSubjectId: buildQualifiedConnectedAccountLocalSubjectId(credentialRef), subjectKind: 'unknown',
+                    ...(valid ? { quotaScope: 'organization', quotaScopeId: 'team-a' } : {}),
+                });
+                const initial = createUsageSnapshot({ fetchedAt, recordKey, planLabel: 'Recovered plan' });
+                const snapshot = { ...initial, meters: initial.meters.map(meter => ({ ...meter,
+                    used: 55, remaining: 45, usedPct: 55, remainingPct: 45, utilizationPct: 55,
+                })) };
+                const response = await app.inject({ method: 'POST', url: '/v4/connect/qualified/provider-account-usage',
+                    headers: { 'x-test-user-id': account.id }, payload: {
+                    source: { ref: credentialRef, bindingKind: 'account' }, expectedCredentialRevision: credentialRevision,
+                    expectedConfigurationRevision: null, recordId: snapshot.recordId, recordKey, status: 'ok',
+                    fetchedAt, staleAfterMs: snapshot.staleAfterMs,
+                    ...(encrypted ? { payloadMode: 'sealed_account_scoped_v1',
+                        sealedPayload: sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes: length => new Uint8Array(length).fill(3) }) }
+                        : { payloadMode: 'plain_json_v1', snapshot }),
+                } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json()).toEqual({ success: true, source: valid
+                    ? { status: 'linked' } : { status: 'skipped', reason: 'ownership_unproven' } });
+                return snapshot.recordId;
+            };
+            // A separate credential proves the real writer/read fixture accepts the matching team.
+            await publish(controlRef, controlCredential.credentialRevision, true, initialObservedAt);
+            const readQuota = (readerAccountId = account.id, readerRef = ref) => app.inject({ method: 'GET',
+                url: '/v4/connect/qualified/quotas', headers: { 'x-test-user-id': readerAccountId },
+                query: { ref: JSON.stringify(readerRef) } });
+            const readSource = (readerAccountId = account.id) => app.inject({ method: 'GET',
+                url: '/v4/connect/qualified/provider-account-usage/sources/resolve',
+                headers: { 'x-test-user-id': readerAccountId }, query: { source: JSON.stringify({ ref, bindingKind: 'account' }) } });
+            const change = buildConnectedServicesAccountChangeV1(service);
+            const readChange = () => db.accountChange.findFirst({ where: {
+                accountId: account.id, kind: change.kind, entityId: change.entityId,
+            } });
+            expect((await readQuota(account.id, controlRef)).statusCode).toBe(200);
+            const beforeRefusal = await readChange();
+            await publish(ref, credential.credentialRevision, false, initialObservedAt + 1_000);
+            for (const response of [await readQuota(), await readSource(), await app.inject({ method: 'POST',
+                url: '/v4/connect/qualified/quotas/refresh', headers: { 'x-test-user-id': account.id }, payload: { ref } })]) {
+                expect(response.statusCode, response.body).toBe(409);
+                expect(response.json()).toEqual({ error: 'ownership_unproven' });
+            }
+            const firstRefusal = await readChange();
+            expect(firstRefusal).toMatchObject({ hint: change.hint });
+            expect(firstRefusal?.cursor ?? 0).toBeGreaterThan(beforeRefusal?.cursor ?? 0);
+            await publish(ref, credential.credentialRevision, false, initialObservedAt + 1_000);
+            expect((await readChange())?.cursor).toBe(firstRefusal?.cursor);
+            const listing = await app.inject({ method: 'GET', url: '/v4/connect/qualified/accounts',
+                headers: { 'x-test-user-id': account.id }, query: { service: JSON.stringify(service) } });
+            expect(listing.statusCode, listing.body).toBe(200);
+            expect(listing.json()).toMatchObject({ accounts: expect.arrayContaining([expect.objectContaining({ ref })]) });
+            const marker = await db.qualifiedConnectedAccountUsageRefusal.findFirst({ where: { accountId: account.id } });
+            expect(marker).toMatchObject({ reason: 'ownership_unproven', observedAt: expect.any(Date) });
+            expect(JSON.stringify(marker)).not.toContain('team-a');
+            expect(JSON.stringify(marker)).not.toContain(buildQualifiedConnectedAccountLocalSubjectId(ref));
+            expect(JSON.stringify(marker)).not.toContain(buildQualifiedPluginContributionKey(service));
+            const otherAccount = await db.account.create({ data: encrypted
+                ? { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' }
+                : { publicKey: null, encryptionMode: 'plain' } });
+            await create(ref, otherAccount.id);
+            const otherQuota = await readQuota(otherAccount.id);
+            expect(otherQuota.statusCode).toBe(404);
+            expect(otherQuota.json()).toEqual({ error: 'no_usage_observed' });
+            expect((await readSource(otherAccount.id)).statusCode).toBe(404);
+            const admittedRecordId = await publish(ref, credential.credentialRevision, true, recoveredAt);
+            expect((await readChange())?.cursor ?? 0).toBeGreaterThan(firstRefusal?.cursor ?? 0);
+            expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: { accountId: account.id } })).toBe(0);
+            const recovered = await readQuota();
+            expect(recovered.statusCode, recovered.body).toBe(200);
+            expect(openQualifiedConnectedAccountQuotaResponseV4({
+                response: QualifiedConnectedAccountQuotaResponseV4Schema.parse(recovered.json()), expectedRef: ref, material,
+            })).toMatchObject({ fetchedAtMs: recoveredAt, meters: [{ remaining: 45 }] });
+            expect((await readSource()).json()).toMatchObject({ fetchedAt: recoveredAt });
+            const previous = await db.providerAccountUsageRecord.findUnique({
+                where: { accountId_recordId: { accountId: account.id, recordId: admittedRecordId } }, include: { history: true },
+            });
+            expect(previous?.history).not.toHaveLength(0);
+            await publish(ref, credential.credentialRevision, false, initialObservedAt + 3_000);
+            // The owner ruling preserves an accepted sample when a later sample cannot prove ownership.
+            expect((await readQuota()).statusCode).toBe(200);
+            expect((await readSource()).json()).toMatchObject({ fetchedAt: recoveredAt });
+            expect(await db.providerAccountUsageRecord.findUnique({
+                where: { accountId_recordId: { accountId: account.id, recordId: admittedRecordId } }, include: { history: true },
+            })).toEqual(previous);
+            const groupRef = { service, groupId: 'unproven-group' };
+            const group = await createQualifiedConnectedAccountGroup({ accountId: account.id, service, group: { groupId: groupRef.groupId } });
+            if (group.status !== 'written') throw new Error('Expected group create');
+            const member = await createQualifiedConnectedAccountGroupMember({ accountId: account.id, mutation: { group: groupRef,
+                connectedAccountId: ref.accountId, expectedGeneration: group.group.generation,
+                expectedRuntimeStateRevision: group.group.runtimeStateRevision } });
+            if (member.status !== 'written') throw new Error('Expected group member create');
+            const groupRead = await app.inject({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/sources/resolve',
+                headers: { 'x-test-user-id': account.id }, query: { source: JSON.stringify({ ref, bindingKind: 'group_member',
+                    groupId: groupRef.groupId, groupGeneration: member.group.generation }) } });
+            expect(groupRead.statusCode, groupRead.body).toBe(409);
+            expect(groupRead.json()).toEqual({ error: 'ownership_unproven' });
+            expect((await readSource()).statusCode).toBe(200);
+            expect(await publish(ref, credential.credentialRevision, true, initialObservedAt + 4_000)).toBe(admittedRecordId);
+            expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: { accountId: account.id } })).toBe(0);
+            await publish(ref, credential.credentialRevision, false, initialObservedAt + 5_000);
+            expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: { accountId: account.id } })).toBe(1);
+            const deleted = await app.inject({ method: 'DELETE', url: '/v4/connect/qualified/credential',
+                headers: { 'x-test-user-id': account.id }, query: { ref: JSON.stringify(ref),
+                    expectedCredentialRevision: credential.credentialRevision, cleanupGroupReferences: 'true' } });
+            expect(deleted.statusCode, deleted.body).toBe(200);
+            expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: { accountId: account.id } })).toBe(0);
+        });
+    });
+
     it.each(['org-b', undefined] as const)('unlinks all usage aliases when the same provider user changes organization context to %s', async organizationId => {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const ref = { service, accountId: 'organization-context' };
@@ -397,9 +530,22 @@ describe("qualified Connected Account usage stored identity", () => {
             fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs });
         await db.serviceAccountToken.update({ where: { id: row.id }, data: { metadata: { ...stored,
             values: { scopes: [], providerIdentity: { accountId: providerAccountId, ...(organizationId ? { organizationId } : {}) } } } } });
-        expect(await readExactQualifiedConnectedServiceUsageSource({ accountId: account.id, source: { ref, bindingKind: 'account' } })).toBeNull();
+        expect(await readExactQualifiedConnectedServiceUsageSource({ accountId: account.id, source: { ref, bindingKind: 'account' } }))
+            .toEqual({ status: 'ownership_unproven' });
         expect(await readQualifiedConnectedAccountUsageRecord({ accountId: account.id, ref })).toBeNull();
         expect(await listQualifiedUsageSourcesForRecord({ accountId: account.id, recordId: snapshot.recordId })).toEqual([]);
+        expect(await db.qualifiedConnectedAccountUsageRefusal.count({ where: { accountId: account.id } })).toBe(0);
+        await withAuthenticatedTestApp(registerQualifiedConnectedAccountCredentialRoutesV4, async app => {
+            for (const response of [
+                await app.inject({ method: 'GET', url: '/v4/connect/qualified/quotas',
+                    headers: { 'x-test-user-id': account.id }, query: { ref: JSON.stringify(ref) } }),
+                await app.inject({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/sources/resolve',
+                    headers: { 'x-test-user-id': account.id }, query: { source: JSON.stringify({ ref, bindingKind: 'account' }) } }),
+            ]) {
+                expect(response.statusCode, response.body).toBe(409);
+                expect(response.json()).toEqual({ error: 'ownership_unproven' });
+            }
+        });
     });
 
     it.each(['page', 'witness'] as const)('releases the history transaction before validating captured %s payloads', async kind => {

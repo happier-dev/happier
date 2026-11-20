@@ -4028,6 +4028,22 @@ accounting format, new writer or released client update floor is introduced.
 
 ## Connected Account authentication facts (0.3 development)
 
+Qualified usage reads distinguish `ownership_unproven` from absent observations
+through an additive closed HTTP409 error variant. The existing storage-mode
+conflict schema remains storage-specific; current readers use the combined
+failure schema. The server remembers its own refused-link decision in an
+additive, credential-scoped refusal table, so an older CLI that drops a skipped
+write outcome does not erase the server's later read reason. A new CLI against
+an older server retains that server's existing answer; it does not infer a
+refusal from credential shape. Matching development server, daemon and UI
+readers load together, after the additive migration is deployed. This adds no
+identity check, history format, wire epoch or released-client update floor.
+Legacy V2/V3 quota adapters keep their existing unavailable response shape for a
+refused source; V2 does not recover a predecessor quota snapshot after that
+refusal. Both adapters consume the qualified repository's ownership decision.
+See [Provider Account Usage history](encryption.md#provider-account-usage-history-03-development)
+for the marker's privacy and accepted-source precedence.
+
 Qualified V4 credential metadata may carry optional `authenticationProvenance`:
 the observed successful authentication time and the executing Machine's qualified
 `{ serverId, machineId }` identity. Here `serverId` is the portable Home server

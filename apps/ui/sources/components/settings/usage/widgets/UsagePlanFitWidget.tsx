@@ -72,12 +72,14 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
     );
   }
   // The rows are revealed together once every first read has answered: added one at a time, a first visit stepped the
-  // page down ten times (R6 #7: 116 → 567 over 11 s). Until then the body is one reading placeholder; a re-read of a
-  // drawn account is not a first read, so its row stays.
+  // page down ten times (R6 #7: 116 → 567 over 11 s). The placeholder holds space for those rows while settled
+  // failures remain visible. A re-read of a drawn account keeps its row.
   if (projection.accounts.some(isUsagePlanAccountFirstReading)) {
     return <View style={styles.body}>
       <UsageBodyReading testID={`${props.testID}.reading`} shape={{ kind: 'meters', rows: projection.accounts.length }}
         waitingOn={{ slice: props.slice, sources: ['quota'] }} />
+      <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
+        onRetry={props.model.refresh} testID={`${props.testID}.state`} pendingInHeadline />
     </View>;
   }
   const insightsOf = (account: UsagePlanAccount) => props.slice.planInsights?.accounts.find(entry => entry.source.ref.accountId === account.accountId

@@ -1,6 +1,8 @@
 import { setTimeout, clearTimeout } from 'node:timers';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
-import { maintainProviderAccountUsageDaySummariesForRecord, persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
+import { isProviderAccountUsageOwnershipRefusalCode, isProviderAccountUsageSourceLinkFailureCode, maintainProviderAccountUsageDaySummariesForRecord, persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
+import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
 import type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 import type { ConnectedServiceRefreshCoordinator } from '../refresh/ConnectedServiceRefreshCoordinator';
@@ -706,13 +708,15 @@ type InBandQuotaPersistencePayload = Readonly<{
 }>;
 
 class InBandQuotaPersistenceRetryError extends Error {
+  readonly code: string;
   readonly reason: string;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
 
-  constructor(params: Readonly<{ reason: string; retryable: boolean; retryAfterMs?: number }>) {
-    super(params.reason);
+  constructor(params: Readonly<{ reason: string; errorCode?: string; retryable: boolean; retryAfterMs?: number }>) {
+    super(params.errorCode ?? params.reason);
     this.name = 'InBandQuotaPersistenceRetryError';
+    this.code = params.errorCode ?? params.reason;
     this.reason = params.reason;
     this.retryable = params.retryable;
     if (typeof params.retryAfterMs === 'number') this.retryAfterMs = params.retryAfterMs;
@@ -725,6 +729,7 @@ function isRetryableQuotaPersistenceError(error: unknown): boolean {
 
 function shouldPauseQuotaPersistenceAfterFailure(error: unknown): boolean {
   if (!(error instanceof InBandQuotaPersistenceRetryError)) return true;
+  if (isProviderAccountUsageSourceLinkFailureCode(error.code)) return false;
   return error.reason !== 'account_mode_unknown'
     && error.reason !== 'offline'
     && error.reason !== 'auth_failed'
@@ -3507,6 +3512,7 @@ export class ConnectedServiceQuotasCoordinator {
     }
     throw new InBandQuotaPersistenceRetryError({
       reason: outcome.classification.kind,
+      errorCode: outcome.classification.errorCode,
       retryable: outcome.classification.retryable,
       retryAfterMs: outcome.classification.retryAfterMs,
     });
@@ -3563,9 +3569,9 @@ export class ConnectedServiceQuotasCoordinator {
           groupContexts: [{ groupId: input.group.ref.groupId, groupGeneration: input.group.generation }],
           qualifiedGroupTargets: [], switchEvaluationTargets: [], emitLiveLifecycle: false,
         });
-      } catch {
+      } catch (error) {
         input.signal?.throwIfAborted();
-        logger.info('[ConnectedServices] Accepted pool quota unavailable', { code: 'quota_observation_unavailable', serviceId, profileId: member.connectedAccountId });
+        logger.info('[ConnectedServices] Accepted pool quota unavailable', { code: readActionErrorCodeV1(error) ?? 'quota_observation_unavailable', serviceId, profileId: member.connectedAccountId });
       }
     }));
   }
@@ -3891,7 +3897,7 @@ export class ConnectedServiceQuotasCoordinator {
     }
     if (outcome.status === 'suppressed') return false;
     throw new InBandQuotaPersistenceRetryError(outcome.status === 'failed'
-      ? { reason: outcome.classification.kind, retryable: outcome.classification.retryable,
+      ? { reason: outcome.classification.kind, errorCode: outcome.classification.errorCode, retryable: outcome.classification.retryable,
           retryAfterMs: outcome.classification.retryAfterMs }
       : { reason: outcome.reason, retryable: true, retryAfterMs: outcome.retryAfterMs });
   }
@@ -4057,7 +4063,13 @@ export class ConnectedServiceQuotasCoordinator {
         providerAccountId: localEntry.snapshot.activeAccountId ?? '',
         credentialFingerprint: localEntry.verifiedCredentialFingerprint })) localSnapshot = localEntry.snapshot;
     }
-    const { response, snapshot } = await this.readStoredQualifiedAccountQuota(profile, usageIdentity, signal);
+    const stored = await this.readStoredQualifiedAccountQuota(profile, usageIdentity, signal).catch(error => {
+      // Refused prior evidence cannot block acquisition of a new provider observation.
+      if (isProviderAccountUsageOwnershipRefusalCode(readActionErrorCodeV1(error))) return null;
+      throw error;
+    });
+    if (!stored) return { response: null, snapshot: null, localSnapshot: null };
+    const { response, snapshot } = stored;
     const newerCloudSnapshot = snapshot && localSnapshot
       && compareConnectedServiceQuotaObservationRecency({ existingObservedAtMs: localSnapshot.fetchedAtMs ?? localSnapshot.fetchedAt,
         incomingObservedAtMs: snapshot.fetchedAtMs ?? snapshot.fetchedAt, nowMs: this.now() }) === 'incoming_newer';
@@ -4070,8 +4082,21 @@ export class ConnectedServiceQuotasCoordinator {
     signal?: AbortSignal,
   ) {
     const readQuota = this.qualifiedConnectedAccountRuntime?.readQuota ?? readQualifiedConnectedAccountQuotaV4;
+    const keyPrefix = `${this.buildQualifiedQuotaPersistenceKey(profile.ref)}\u0000`;
     const response = await readQuota({ token: this.credentials.token, ref: profile.ref,
-      requestPurpose: 'connected-accounts:quota-qualification', signal });
+      requestPurpose: 'connected-accounts:quota-qualification', signal }).catch(error => {
+      signal?.throwIfAborted();
+      if (!canRetainUsageReadFailure(readActionErrorCodeV1(error) ?? undefined)) {
+        const serviceId = buildQualifiedPluginContributionKey(profile.ref.service);
+        this.accountUsageStore?.retainSourcesForProfile({ serviceId, profileId: profile.ref.accountId, context: null });
+        this.runtimeQuotaSnapshots?.retainProfileSnapshots({ serviceId, profileId: profile.ref.accountId,
+          context: null, verifiedCredentialFingerprint: null });
+        for (const key of this.quotaPersistenceStateByKey.keys()) {
+          if (key.startsWith(keyPrefix)) this.quotaPersistenceStateByKey.delete(key);
+        }
+      }
+      throw error;
+    });
     signal?.throwIfAborted();
     const material = response?.content.t === 'encrypted'
       ? requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial())
@@ -4079,7 +4104,6 @@ export class ConnectedServiceQuotasCoordinator {
     const snapshot = response ? openQualifiedConnectedAccountQuotaResponseV4({
       response, expectedRef: profile.ref, material,
     }) : null;
-    const keyPrefix = `${this.buildQualifiedQuotaPersistenceKey(profile.ref)}\u0000`;
     for (const [key, previous] of this.quotaPersistenceStateByKey) {
       if (!key.startsWith(keyPrefix)) continue;
       if (!response || response.metadata.fetchedAt !== previous.fetchedAt

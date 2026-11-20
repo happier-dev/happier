@@ -3124,6 +3124,70 @@ describe('usage query captured Resource adapter', () => {
     expect(reads, 'Capacity still acquires current allowance without quota history').toBeGreaterThan(0);
   });
 
+  it('ownership unproven withdraws previously observed quota and keeps the qualified account recoverable', async () => {
+    const ref = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'team-work' };
+    const source = { bindingKind: 'account' as const, ref };
+    const sourceKey = `quota:${createCanonicalJsonSigningInput(source)}`;
+    const now = Date.now();
+    const recordKey = { providerId: 'vercel', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+    const snapshot = (usedPct: number, observedAtMs: number) => ProviderAccountUsageSnapshotV1Schema.parse({
+      v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'vercel',
+      accountSubject: { kind: 'providerSubject', id: ref.accountId }, observedAtMs, fetchedAtMs: observedAtMs,
+      staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+      meters: [{ meterId: 'weekly', label: 'Weekly', usedPct, utilizationPct: usedPct, used: null, limit: null,
+        unit: 'count', status: 'ok', resetsAt: now + 2 * 86_400_000, windowDurationMs: 7 * 86_400_000 }],
+    });
+    let record = snapshot(20, now - 1000);
+    let ownershipProven = true;
+    const captured = await context(request => {
+      if (request.path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: {
+        connectedServices: { enabled: true, quotas: { enabled: true } },
+      } }));
+      if (request.path === '/v4/connect/qualified/provider-account-usage/sources/resolve') {
+        return ownershipProven
+          ? Response.json({ source, recordId: record.recordId, providerAccountId: ref.accountId,
+            fetchedAt: record.fetchedAtMs, staleAfterMs: record.staleAfterMs })
+          : Response.json({ error: 'ownership_unproven' }, { status: 409 });
+      }
+      if (request.path === '/v4/connect/qualified/provider-account-usage/record') return Response.json({
+        content: { t: 'plain', v: record }, metadata: { fetchedAt: record.fetchedAtMs, staleAfterMs: record.staleAfterMs, status: 'ok' },
+        sources: [source],
+      });
+      return undefined;
+    }, { connectedAccountsV4: [{ ref, status: 'connected', authenticationModeId: 'token', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: false, configurationRevision: null, scopes: [] }] });
+    const query = normalizeUsageQuery({ includeQuota: true, includeAccounting: false, includeQuotaHistory: false,
+      includeComparison: false, includeSessionEvidence: false, includeWorkEvidence: false });
+    const input = { queries: [query] };
+    const { installConnectedAccountDescriptorProjection, retireConnectedAccountDescriptorProjection } =
+      await import('@/sync/domains/connectedServices/connectedServiceRegistry');
+    installConnectedAccountDescriptorProjection({ scopeKey: 'usage-ownership', status: 'ready', conflicts: [], errorReason: null,
+      descriptors: [] }, captured.accountLifetime);
+    try {
+      const warm = await readUiUsageQueryBatch(captured, input);
+      expect(warm.results[0]?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(20);
+
+      ownershipProven = false;
+      const refused = await readUiUsageQueryBatch(captured, input, undefined, warm);
+      const refusedSlice = refused.results[0]!;
+      expect.soft(refusedSlice.sources.find(state => state.source === sourceKey)).toEqual({
+        source: sourceKey, status: 'error', errorCode: 'ownership_unproven',
+      });
+      expect.soft(refusedSlice.quota).toBeUndefined();
+      const projection = projectUsagePlans(refusedSlice.quota, now, refusedSlice.pools, refusedSlice.sources);
+      expect.soft(projection.accounts).toMatchObject([{ accountId: ref.accountId, read: null, windows: [], observedAtMs: null }]);
+      expect.soft(projection.tightest).toBeNull();
+
+      record = snapshot(45, now);
+      ownershipProven = true;
+      const recovered = await readUiUsageQueryBatch(captured, input, undefined, refused);
+      expect(recovered.results[0]?.sources.find(state => state.source === sourceKey)).toMatchObject({ status: 'available' });
+      expect(recovered.results[0]?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(45);
+    } finally {
+      retireConnectedAccountDescriptorProjection(captured.accountLifetime);
+    }
+  });
+
   it('keeps quota-free Resource demand quiet beside a live mixed allowance consumer', async () => {
     const now = Date.now();
     vi.spyOn(Date, 'now').mockReturnValue(now);

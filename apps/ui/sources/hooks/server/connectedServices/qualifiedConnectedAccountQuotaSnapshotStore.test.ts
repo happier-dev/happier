@@ -148,6 +148,41 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
         release();
     });
 
+    it('ownership unproven withdraws the cached quota and record binding until a later successful read', async () => {
+        const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
+        const context = buildContext('server-a', 1);
+        const key = store.buildQualifiedQuotaSnapshotScopeKey(context);
+        const now = Date.now();
+        const quotaAt = (used: number, fetchedAt: number) => quotaTestResponse({
+            v: 1, ref, activeAccountId: 'provider-work', fetchedAt, staleAfterMs: 60_000,
+            planLabel: null, accountLabel: null,
+            meters: [{ meterId: 'weekly', label: 'Weekly', used, limit: 100, unit: 'requests',
+                utilizationPct: used, resetsAt: null, status: 'ok', details: {} }],
+        });
+        const initial = quotaAt(20, now - 1_000);
+        getQuotaMock.mockResolvedValue(Response.json(initial));
+        store.loadQualifiedQuotaSnapshotOnce(key, context);
+        await vi.waitFor(() => expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+            snapshot: { meters: [{ used: 20 }] }, usageRecordId: initial.sourceResolution!.recordId, supported: true, read: true,
+        }));
+
+        getQuotaMock.mockResolvedValue(Response.json({ error: 'ownership_unproven' }, { status: 409 }));
+        await store.reloadQualifiedQuotaSnapshotAfterRecovery(context);
+        const refused = store.getQualifiedQuotaSnapshotEntry(key);
+        expect.soft({ hasSnapshot: refused.snapshot !== null, usageRecordId: refused.usageRecordId, supported: refused.supported,
+            read: refused.read, loading: refused.loading }).toEqual({
+            hasSnapshot: false, usageRecordId: null, supported: true, read: true, loading: false,
+        });
+        expect.soft(refused.error).toMatch(/ownership/i);
+
+        const recovered = quotaAt(45, now);
+        getQuotaMock.mockResolvedValue(Response.json(recovered));
+        await store.reloadQualifiedQuotaSnapshotAfterRecovery(context);
+        expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
+            snapshot: { meters: [{ used: 45 }] }, usageRecordId: recovered.sourceResolution!.recordId, supported: true, error: null,
+        });
+    });
+
     it('keeps settled retain and release quiet, preserving the view and equal snapshot through reload', async () => {
         const store = await import('@/sync/domains/connectedServices/qualifiedConnectedAccountQuotaSnapshotStore');
         const context = buildContext('server-a', 1);
@@ -797,7 +832,7 @@ describe('qualifiedConnectedAccountQuotaSnapshotStore', () => {
             expect(boundary.refresh).toHaveBeenCalledWith(ref);
             expect(store.getQualifiedQuotaSnapshotEntry(key)).toMatchObject({
                 snapshot, refreshing: false,
-                error: resolveConnectedServiceSettingsErrorMessage({ code: 'not_found' }),
+                error: resolveConnectedServiceSettingsErrorMessage({ code: 'not_found' }, { phase: 'usage' }),
             });
         } finally {
             release();

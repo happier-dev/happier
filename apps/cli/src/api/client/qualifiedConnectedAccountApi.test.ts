@@ -78,6 +78,31 @@ function mockAxiosMutationOnce(response: Readonly<{ status: number; data: unknow
 }
 
 describe("qualified Connected Account V4 API", () => {
+    it.each(['quota', 'refresh', 'source', 'record'] as const)('preserves ownership refusal for %s reads', async (operation) => {
+        const response = { status: 409, data: { error: 'ownership_unproven' } };
+        if (operation === 'refresh') {
+            mockAxiosMutationOnce(response);
+        } else {
+            vi.mocked(axios.get).mockImplementationOnce(async (_url, config) => {
+                if (!config?.validateStatus?.(response.status)) {
+                    throw Object.assign(new Error('Request failed with status code 409'), { response, status: 409 });
+                }
+                return response;
+            });
+        }
+        const ref = { service, accountId: 'work' };
+        const result = operation === 'quota'
+            ? readQualifiedConnectedAccountQuotaV4({ token: 'fixture', ref })
+            : operation === 'refresh'
+                ? requestQualifiedConnectedAccountQuotaRefreshV4({ token: 'fixture', ref })
+                : operation === 'source'
+                    ? resolveQualifiedProviderAccountUsageSourceV4({ token: 'fixture', source: { ref, bindingKind: 'account' } })
+                    : readQualifiedProviderAccountUsageRecordV4({ token: 'fixture', recordId: buildProviderAccountUsageRecordId({
+                        providerId: 'codex', accountSubjectId: 'account', subjectKind: 'account', quotaScope: 'account',
+                    }) });
+        await expect(result).rejects.toMatchObject({ status: 409, code: 'ownership_unproven' });
+    });
+
     it('requests only exact qualified account summaries and skips an empty demand', async () => {
         const accounts = [{ service, accountId: 'work' }, {
             service: { ...service, localId: 'second' }, accountId: 'work',

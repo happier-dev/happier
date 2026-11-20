@@ -1,6 +1,6 @@
 import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
-import { QualifiedProviderAccountUsageWriteV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedProviderAccountUsageSourceLinkOutcomeV4Schema, QualifiedProviderAccountUsageWriteV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { mergeProviderAccountSubscription, type ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
@@ -35,6 +35,27 @@ type AccountUsageApi = Readonly<{
   getAccountEncryptionMode: (options?: AccountEncryptionModeReadOptions) => Promise<'plain' | 'e2ee' | 'unknown'>;
 }>;
 
+type ProviderAccountUsageSourceLinkFailureCode = Extract<
+  ReturnType<typeof QualifiedProviderAccountUsageSourceLinkOutcomeV4Schema.parse>,
+  { status: 'skipped' }
+>['reason'];
+
+class ProviderAccountUsageSourceLinkError extends Error {
+  constructor(readonly code: ProviderAccountUsageSourceLinkFailureCode) {
+    super(code);
+    this.name = 'ProviderAccountUsageSourceLinkError';
+  }
+}
+
+export function isProviderAccountUsageSourceLinkFailureCode(code: unknown): code is ProviderAccountUsageSourceLinkFailureCode {
+  const outcome = QualifiedProviderAccountUsageSourceLinkOutcomeV4Schema.safeParse({ status: 'skipped', reason: code });
+  return outcome.success && outcome.data.status === 'skipped';
+}
+
+export function isProviderAccountUsageOwnershipRefusalCode(code: unknown): boolean {
+  return isProviderAccountUsageSourceLinkFailureCode(code) && code === 'ownership_unproven';
+}
+
 /** One publication owner for all key-holding CLI quota producers. A failed
  * summary leaves accepted detail intact for the next maintenance pass. */
 export async function persistProviderAccountUsageWithDaySummaries(input: Readonly<{
@@ -45,6 +66,10 @@ export async function persistProviderAccountUsageWithDaySummaries(input: Readonl
 }>) {
   const result = await (input.writer ?? writeQualifiedProviderAccountUsageV4)({ token: input.token, write: input.write,
     ...(input.material ? { material: input.material } : {}), ...(input.signal ? { signal: input.signal } : {}) });
+  if (result.source?.status === 'skipped') {
+    logger.warnLocalFile('Provider account usage source link skipped', { phase: 'source_link', reason: result.source.reason });
+    throw new ProviderAccountUsageSourceLinkError(result.source.reason);
+  }
   const write = QualifiedProviderAccountUsageWriteV4Schema.parse(input.write);
   const dailySummary = await maintainProviderAccountUsageDaySummariesForRecord({ ...input, recordId: write.recordId,
     accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs: Math.max(input.nowMs, write.fetchedAt ?? 0) });
@@ -333,9 +358,11 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     now: params.now,
     shouldRetry: (error) =>
       !(error instanceof QualifiedConnectedAccountCompatibilityError)
+      && !(error instanceof ProviderAccountUsageSourceLinkError)
       && readHttpStatus(error) !== 409,
     shouldPauseAfterFailure: (error) =>
       !(error instanceof QualifiedConnectedAccountCompatibilityError)
+      && !(error instanceof ProviderAccountUsageSourceLinkError)
       && readHttpStatus(error) !== 409,
   });
 

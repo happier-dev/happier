@@ -11,6 +11,7 @@ import {
   resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId,
 } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import type { StoredCredentials } from '@/persistence';
+import { QualifiedProviderAccountUsageOwnershipError } from '@/api/client/qualifiedConnectedAccountApi';
 
 import {
   buildProviderAccountUsageCurrentSourceKey,
@@ -210,8 +211,8 @@ async function listCurrentSources(input: Readonly<{
 async function resolveSources(input: Readonly<{
   sources: readonly ProviderAccountUsageHydrationSource[];
   resolve: CurrentSourceApi['resolveSource'];
-}>): Promise<Map<string, SourceResolution>> {
-  const resolutions = new Array<SourceResolution>(input.sources.length);
+}>): Promise<Map<string, SourceResolution | QualifiedProviderAccountUsageOwnershipError>> {
+  const resolutions = new Array<SourceResolution | QualifiedProviderAccountUsageOwnershipError>(input.sources.length);
   let nextIndex = 0;
   let firstError: unknown;
   let failed = false;
@@ -225,6 +226,10 @@ async function resolveSources(input: Readonly<{
           source: input.sources[index]!.qualifiedSource,
         });
       } catch (error) {
+        if (error instanceof QualifiedProviderAccountUsageOwnershipError) {
+          resolutions[index] = error;
+          continue;
+        }
         if (!failed) {
           failed = true;
           firstError = error;
@@ -272,7 +277,7 @@ export async function hydrateProviderAccountUsageStoreFromConnectedServiceInvent
   serviceIds: Iterable<ConnectedServiceId>;
   api: CurrentSourceApi;
   credentials: StoredCredentials;
-  store: Pick<ProviderAccountUsageStore, 'recordSnapshot'>;
+  store: Pick<ProviderAccountUsageStore, 'recordSnapshot' | 'removeSource'>;
   nowMs: number;
   resolveUsageIdentity?: ProviderAccountUsageUsageIdentityResolver;
   resolveCurrentProviderAccountIdentityForSource?: ProviderAccountUsageCurrentSourceIdentityResolver;
@@ -286,9 +291,11 @@ export async function hydrateProviderAccountUsageStoreFromConnectedServiceInvent
   const stagingStore = createProviderAccountUsageStore();
   const hydration = await hydrateProviderAccountUsageStoreFromCurrentSources({
     sources,
-    resolveRecordIdForSource: async (source) => (
-      firstResolutions.get(buildQualifiedUsageSourceKey(source)) ?? null
-    ),
+    resolveRecordIdForSource: async (source) => {
+      const resolution = firstResolutions.get(buildQualifiedUsageSourceKey(source)) ?? null;
+      if (resolution instanceof QualifiedProviderAccountUsageOwnershipError) throw resolution;
+      return resolution;
+    },
     api: input.api,
     credentials: input.credentials,
     store: stagingStore,
@@ -309,11 +316,19 @@ export async function hydrateProviderAccountUsageStoreFromConnectedServiceInvent
   for (const source of sources) {
     const key = buildQualifiedUsageSourceKey(source.qualifiedSource);
     const first = firstResolutions.get(key) ?? null;
-    if (first && !resolutionMatches(first, secondResolutions.get(key) ?? null)) {
+    const second = secondResolutions.get(key) ?? null;
+    if (first instanceof QualifiedProviderAccountUsageOwnershipError
+      && second instanceof QualifiedProviderAccountUsageOwnershipError) continue;
+    if (first instanceof QualifiedProviderAccountUsageOwnershipError
+      || second instanceof QualifiedProviderAccountUsageOwnershipError
+      || (first && !resolutionMatches(first, second))) {
       throw new ConnectedServiceCurrentSourceHydrationConflictError(
         'Connected service provider-account usage source changed during hydration',
       );
     }
+  }
+  for (const disposition of hydration.dispositions) {
+    if (disposition.status === 'ownership_unproven') input.store.removeSource(disposition.source);
   }
   for (const recordId of hydration.hydratedRecordIds) {
     const snapshot = stagingStore.resolveRecordId(recordId);

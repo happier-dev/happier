@@ -258,6 +258,15 @@ export const QualifiedProviderAccountUsageReadErrorV4Schema = lazyZodSchema(() =
   error: z.literal('provider_account_usage_storage_mode_mismatch'),
 }));
 
+export const QualifiedProviderAccountUsageOwnershipErrorV4Schema = lazyZodSchema(() => z.strictObject({
+  error: z.literal('ownership_unproven'),
+}));
+
+export const QualifiedProviderAccountUsageReadFailureV4Schema = lazyZodSchema(() => z.union([
+  QualifiedProviderAccountUsageReadErrorV4Schema,
+  QualifiedProviderAccountUsageOwnershipErrorV4Schema,
+]));
+
 export const QualifiedConnectedAccountSuccessV4Schema = lazyZodSchema(() => z.strictObject({
   success: z.literal(true),
 }));

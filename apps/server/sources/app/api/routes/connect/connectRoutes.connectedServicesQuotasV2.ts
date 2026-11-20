@@ -142,7 +142,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
             accountId: userId,
             ref,
         });
-        if (admitted.status === "storage_mode_mismatch") {
+        if (admitted.status === "storage_mode_mismatch" || admitted.status === "ownership_unproven") {
             return reply.code(404).send({ error: "connect_quotas_not_found" });
         }
         if (admitted.status === "not_found") {
@@ -232,6 +232,9 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                     accountId: profileId,
                 },
             });
+        if (result === "ownership_unproven") {
+            return reply.code(404).send({ error: "connect_quotas_not_found" });
+        }
         if (result === "not_found") {
             const predecessorResult =
                 await requestReleasedConnectedServiceQuotaRefresh({

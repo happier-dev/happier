@@ -1300,6 +1300,72 @@ it('greets an Account with nothing connected with the shared empty state, its co
   expect(screen.findHostByTestId('cap.none.coverage')).toBeNull();
 });
 
+it.each([
+  { caseName: 'on its own', sibling: null },
+  { caseName: 'beside a measured plan', sibling: 'measured' },
+  { caseName: 'while another account is still reading', sibling: 'pending' },
+])('ownership unproven names the connected account and its reason in Capacity and Plan Fit $caseName', async ({ sibling }) => {
+  const { createCanonicalJsonSigningInput } = await import('@happier-dev/protocol/crypto/canonicalJson');
+  const now = Date.now();
+  const accountId = 'team-work';
+  const source = { bindingKind: 'account', ref: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId } };
+  const amount = 23;
+  const healthy = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 20,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }], {}, {
+    subscription: { status: 'subscribed', renewal: 'on', observedAtMs: now, staleAfterMs: HOUR,
+      currentPeriodStartAtMs: now - DAY, currentPeriodEndAtMs: now + 10 * DAY,
+      monetaryFacts: [{ kind: 'paid', amount, currency: 'USD', period: { startAtMs: now - DAY, endAtMs: now + 10 * DAY },
+        source: { kind: 'provider', id: 'provider-invoice', version: '1' }, effectiveAtMs: now, asOfMs: now }],
+    },
+  });
+  const refusal = { source: `quota:${createCanonicalJsonSigningInput(source)}`, status: 'error' as const, errorCode: 'ownership_unproven' };
+  const pending = { source: `quota:${createCanonicalJsonSigningInput(healthy.source)}`, status: 'pending' as const };
+  const sliceFor = (quota: Parameters<typeof resolveUsagePageAggregation>[0]['quota']) =>
+    resolveUsagePageAggregation({ queries: [query], nowMs: now, quota }, bundledUsageModelPriceCatalog).results[0]!;
+  const slice = sliceFor({
+    status: sibling === 'measured' ? 'partial' : sibling === 'pending' ? 'pending' : 'error',
+    ...(sibling === 'measured' ? { value: [healthy] } : {}),
+    sources: sibling === 'pending' ? [refusal, pending] : [refusal],
+  });
+  const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const widgets = (slice: ReturnType<typeof sliceFor>) => {
+    const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null, freshness: 'fresh', updatingPreviousPeriod: false,
+      refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
+    const body = { model, slice, query, serverId: mountedHome!.homes.mounted!.id };
+    return wrap(<>
+      <UsageCapacityWidget {...body} id="usage_capacity" testID="cap" />
+      <UsagePlanFitWidget {...body} id="usage_plan_fit" testID="fit" />
+    </>);
+  };
+  const screen = await renderScreen(widgets(slice));
+
+  for (const id of ['cap.state', 'fit.state']) {
+    const line = screen.findAllByType(SurfaceFreshnessLine).find(node => node.props.testID === id);
+    expect.soft(line?.props.reason).toMatch(/Vercel/);
+    expect.soft(line?.props.reason).toMatch(/ownership/i);
+  }
+  expect.soft(screen.findByTestId('cap.none')).toBeFalsy();
+  expect.soft(screen.findByTestId('fit.none')).toBeFalsy();
+  expect.soft(screen.findByTestId(`cap.cell.${accountId}`)).toBeFalsy();
+  expect.soft(screen.findByTestId(`fit.plan.${accountId}`)).toBeFalsy();
+  expect.soft(screen.findByTestId('cap.unread')).toBeFalsy();
+  expect.soft(screen.getTextContent()).not.toContain(t('usage.board.plans.capacityNotRead', { count: 1 }));
+  const headline = screen.findHostByTestId('cap.tightest');
+  if (sibling === 'measured') {
+    expect.soft(headline?.props.accessibilityLabel).toContain('80%');
+    expect(screen.findHostByTestId('fit.plan.work')?.props.accessibilityLabel).toContain(formatUsageCost(amount, 'USD'));
+  } else {
+    expect(headline).toBeFalsy();
+  }
+  if (sibling === 'pending') {
+    expect(screen.findByTestId('fit.reading')).toBeTruthy();
+    await screen.update(widgets(sliceFor({ status: 'pending', sources: [pending] })));
+    expect(screen.findByTestId('fit.reading')).toBeTruthy();
+    expect(screen.findHostByTestId('fit.state')).toBeNull();
+  }
+});
+
 it('says "nothing connected" once: Capacity owns the cause, the widgets derived from it say what they will show (Plans ×4)', async () => {
   const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
   const slice = resolveUsagePageAggregation({ queries: [query], nowMs: Date.now(), quota: { status: 'available', value: [] } }, bundledUsageModelPriceCatalog).results[0]!;

@@ -1374,6 +1374,26 @@ plain/sealed Account-mode representation; an authorized client opens sealed
 content, and mode/content disagreement fails closed. Retention metadata does
 not make the quota or capacity numbers SQL-queryable for E2EE Accounts.
 
+Qualified usage-source admission belongs to the server's existing ownership
+decider in `usageRepository.ts`. A refused link retains only
+`ownership_unproven` and its latest refusal time in
+`QualifiedConnectedAccountUsageRefusal`, keyed by the owning Account, qualified
+identity digest and credential. It stores no refused snapshot, provider
+identity, subject or scope. Account and credential deletion cascade to the
+marker; an accepted link clears it in the same transaction.
+
+Readers first seek an accepted source within the requested selector. A refused
+new observation does not displace a still-valid accepted source. If no accepted
+source exists, either a revalidated ownership refusal or its durable marker
+produces the closed `409 { error: 'ownership_unproven' }` response from V4 quota,
+refresh and source-resolution reads. Retained legacy quota routes map the same
+refusal to their existing unavailable response and do not fall back to an older
+quota snapshot. A refused group source does not withdraw a
+valid account or sibling source. Plans, pool selection, Actions and CLI readers
+keep the connected account listed and expose the refusal as unknown usage,
+never measured zero or `no_usage_observed`. The separate `binding_unavailable`
+write outcome is transient and has no durable refusal marker.
+
 Within the retained detail window, the authorized client can drain exact encrypted history. Current capacity is published before history, entered-price and Pending work settle;
 each accepted page then updates the same Resource. The ordinary progressive
 history adapter keeps the first and last actual observations of an unchanged

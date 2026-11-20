@@ -3,7 +3,7 @@ import { buildConnectedServicesAccountChangeV1, buildProviderAccountUsageRefresh
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from '@/app/changes/markAccountChanged';
 
 import { isProviderAccountUsageIdentityMatch, isProviderAccountUsageOrganizationContextMatch } from '@happier-dev/protocol/connect/accountUsage';
-import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, ProviderAccountUsageRecordKeyV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
+import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, ProviderAccountUsageRecordKeyV1Schema, type ProviderAccountUsageRecordKeyV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { buildQualifiedConnectedAccountLocalSubjectId, QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4, type QualifiedConnectedServiceUsageSourceResolutionV4, type QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
@@ -50,6 +50,12 @@ import {
 import { deleteReleasedConnectedServiceQuotaSnapshotInStorage } from "./legacyQuotaSnapshotCompatibility";
 import { parseQualifiedProviderAccountUsageHistoryEntries } from './usageHistoryStream';
 import {
+    clearQualifiedUsageOwnershipRefusal,
+    readQualifiedUsageOwnershipRefusal,
+    rememberQualifiedUsageOwnershipRefusal,
+    type QualifiedConnectedAccountUsageOwnershipRefusal,
+} from './usageOwnershipRefusal';
+import {
     createQualifiedConnectedAccountGroupDigest,
     createQualifiedConnectedAccountIdentityDigest,
     parseStoredQualifiedConnectedAccountGroupRef,
@@ -65,6 +71,7 @@ type QualifiedUsageStorage = Pick<
     | "connectedServiceAuthGroup"
     | "connectedServiceAuthGroupMember"
     | "connectedServiceUsageSource"
+    | "qualifiedConnectedAccountUsageRefusal"
     | "providerAccountUsageRecord"
     | "serviceAccountQuotaSnapshot"
     | "$queryRaw"
@@ -424,6 +431,7 @@ function assertQualifiedUsageOwnership(params: Readonly<{
     ref: QualifiedConnectedAccountRef;
     providerAccountId: string | null;
     providerOrganizationId: string | null;
+    recordProviderId: ProviderAccountUsageRecordKeyV1["providerId"];
     recordAccountSubjectId: string;
     recordSubjectKind: string;
     recordQuotaScope: string;
@@ -438,6 +446,7 @@ function assertQualifiedUsageOwnership(params: Readonly<{
         && (params.recordQuotaScope === 'account' ? params.recordQuotaScopeId === null : params.recordQuotaScope === 'organization')
         && params.recordAccountSubjectId === buildQualifiedConnectedAccountLocalSubjectId(params.ref)
         && isProviderAccountUsageIdentityMatch({
+            providerId: params.recordProviderId,
             accountSubjectId: params.recordAccountSubjectId,
             subjectKind: 'unknown',
             quotaScope: ProviderAccountUsageRecordKeyV1Schema.shape.quotaScope.parse(params.recordQuotaScope),
@@ -611,23 +620,20 @@ async function readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmiss
         accountId: string;
         source: QualifiedConnectedServiceUsageSourceV4;
     }>,
-    options: Readonly<{
-        allowLegacyUnfencedCredential?: boolean;
-    }> = {},
-): Promise<ExactQualifiedConnectedServiceUsageSource | null> {
+): Promise<ExactQualifiedConnectedServiceUsageSource | QualifiedConnectedAccountUsageOwnershipRefusal | null> {
     try {
         return await inReadSnapshot(async (tx) => {
             const binding =
-                await resolveQualifiedUsageBinding(tx, {
-                    ...params,
-                    allowLegacyUnfencedCredential:
-                        options.allowLegacyUnfencedCredential,
-                });
+                await resolveQualifiedUsageBinding(tx, params);
             const rows = await findQualifiedSourceRows(tx, {
                 accountId: params.accountId,
                 source: binding.source,
             });
-            if (rows.length === 0) return null;
+            if (rows.length === 0) return await readQualifiedUsageOwnershipRefusal(tx, {
+                accountId: params.accountId,
+                qualifiedIdentityDigest: binding.credential.qualifiedIdentityDigest,
+                credentialId: binding.credential.id,
+            });
             if (rows.length > 1) {
                 throw new Error(
                     "Ambiguous qualified Connected Account usage source",
@@ -644,6 +650,7 @@ async function readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmiss
                         },
                     },
                     select: {
+                        providerId: true,
                         accountSubjectId: true,
                         subjectKind: true,
                         quotaScope: true,
@@ -657,6 +664,7 @@ async function readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmiss
                 ref: binding.source.ref,
                 providerAccountId: binding.providerAccountId,
                 providerOrganizationId: binding.providerOrganizationId,
+                recordProviderId: record.providerId,
                 recordAccountSubjectId: record.accountSubjectId,
                 recordSubjectKind: record.subjectKind,
                 recordQuotaScope: record.quotaScope,
@@ -680,7 +688,7 @@ async function readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmiss
         if (
             error instanceof ConnectedServiceUsageSourceOwnershipError
         ) {
-            return null;
+            return { status: 'ownership_unproven' };
         }
         throw error;
     }
@@ -691,21 +699,9 @@ export async function readExactQualifiedConnectedServiceUsageSource(
         accountId: string;
         source: QualifiedConnectedServiceUsageSourceV4;
     }>,
-): Promise<ExactQualifiedConnectedServiceUsageSource | null> {
+): Promise<ExactQualifiedConnectedServiceUsageSource | QualifiedConnectedAccountUsageOwnershipRefusal | null> {
     return await readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmission(
         params,
-    );
-}
-
-export async function readLegacyConnectedServiceQuotaCompatibilitySource(
-    params: Readonly<{
-        accountId: string;
-        source: QualifiedConnectedServiceUsageSourceV4;
-    }>,
-): Promise<ExactQualifiedConnectedServiceUsageSource | null> {
-    return await readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmission(
-        params,
-        { allowLegacyUnfencedCredential: true },
     );
 }
 
@@ -728,6 +724,7 @@ async function upsertQualifiedSourceInTx(
             },
         },
         select: {
+            providerId: true,
             accountSubjectId: true,
             subjectKind: true,
             quotaScope: true,
@@ -743,6 +740,7 @@ async function upsertQualifiedSourceInTx(
         ref: binding.source.ref,
         providerAccountId: binding.providerAccountId,
         providerOrganizationId: binding.providerOrganizationId,
+        recordProviderId: record.providerId,
         recordAccountSubjectId: record.accountSubjectId,
         recordSubjectKind: record.subjectKind,
         recordQuotaScope: record.quotaScope,
@@ -877,16 +875,22 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
     } = params;
     // Source resolution owns revision/currentness admission. Run it before the
     // PAU write so an unfenced credential cannot create usage history.
-    await resolveQualifiedUsageBinding(tx, {
+    const binding = await resolveQualifiedUsageBinding(tx, {
         accountId: params.accountId,
         source,
         allowLegacyUnfencedCredential,
     });
+    const refusalKey = {
+        accountId: params.accountId,
+        qualifiedIdentityDigest: binding.credential.qualifiedIdentityDigest,
+        credentialId: binding.credential.id,
+    };
     await writeProviderAccountUsageRecordWithPolicy({
         ...write,
         client: tx,
     });
     let sourceOutcome: ProviderAccountUsageSourceLinkOutcome;
+    let sourceChanged = false;
     try {
         const sourceReplaced = await upsertQualifiedSourceInTx(tx, {
             accountId: params.accountId,
@@ -895,12 +899,8 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
             allowLegacyUnfencedCredential,
             beforeWrite: params.beforeWrite,
         });
-        if (sourceReplaced) {
-            await markAccountChanged(tx, {
-                accountId: params.accountId,
-                ...buildConnectedServicesAccountChangeV1(source.ref.service),
-            });
-        }
+        const refusalCleared = await clearQualifiedUsageOwnershipRefusal(tx, refusalKey);
+        sourceChanged = sourceReplaced || refusalCleared;
         sourceOutcome = { status: "linked" };
     } catch (error) {
         if (
@@ -915,6 +915,7 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
             error instanceof ConnectedServiceUsageSourceOwnershipError
             && error.kind === "unproven"
         ) {
+            sourceChanged = await rememberQualifiedUsageOwnershipRefusal(tx, refusalKey);
             sourceOutcome = {
                 status: "skipped",
                 reason: "ownership_unproven",
@@ -922,6 +923,12 @@ async function writeQualifiedProviderAccountUsageRecordInTx(
         } else {
             throw error;
         }
+    }
+    if (sourceChanged) {
+        await markAccountChanged(tx, {
+            accountId: params.accountId,
+            ...buildConnectedServicesAccountChangeV1(source.ref.service),
+        });
     }
     const record = (await readProviderAccountUsageRecordWithCurrentGuard({
         accountId: params.accountId,
@@ -1334,7 +1341,7 @@ async function listQualifiedUsageSourcesForRecordInStorage(
                 },
             },
             providerAccountUsageRecord: {
-                select: { accountSubjectId: true, subjectKind: true, quotaScope: true, quotaScopeId: true },
+                select: { providerId: true, accountSubjectId: true, subjectKind: true, quotaScope: true, quotaScopeId: true },
             },
         },
         orderBy: [
@@ -1356,6 +1363,7 @@ async function listQualifiedUsageSourcesForRecordInStorage(
                 ref: source.ref,
                 providerAccountId: metadata.presentation.providerIdentity?.accountId ?? null,
                 providerOrganizationId: metadata.presentation.providerIdentity?.organizationId ?? null,
+                recordProviderId: row.providerAccountUsageRecord.providerId,
                 recordAccountSubjectId: row.providerAccountUsageRecord.accountSubjectId,
                 recordSubjectKind: row.providerAccountUsageRecord.subjectKind,
                 recordQuotaScope: row.providerAccountUsageRecord.quotaScope,
@@ -1599,7 +1607,7 @@ async function readFirstQualifiedSourceForRef(
         createQualifiedConnectedAccountIdentityDigest(ref);
     try {
         const readInStorage = async (tx: QualifiedUsageStorage): Promise<
-            ExactQualifiedConnectedServiceUsageSource | Readonly<{ status: 'no_usage_observed' }>
+            ExactQualifiedConnectedServiceUsageSource | QualifiedConnectedAccountUsageOwnershipRefusal | Readonly<{ status: 'no_usage_observed' }>
         > => {
             const binding = await resolveQualifiedCredential(tx, {
                 accountId: params.accountId,
@@ -1633,6 +1641,7 @@ async function readFirstQualifiedSourceForRef(
                     },
                     providerAccountUsageRecord: {
                         select: {
+                            providerId: true,
                             accountSubjectId: true,
                             subjectKind: true,
                             quotaScope: true,
@@ -1648,6 +1657,7 @@ async function readFirstQualifiedSourceForRef(
                     { id: "asc" },
                 ],
             });
+            let ownershipUnproven = false;
             for (const row of rows) {
                 const record = row.providerAccountUsageRecord;
                 try {
@@ -1655,6 +1665,7 @@ async function readFirstQualifiedSourceForRef(
                         ref,
                         providerAccountId: binding.providerAccountId,
                         providerOrganizationId: binding.providerOrganizationId,
+                        recordProviderId: record.providerId,
                         recordAccountSubjectId: record.accountSubjectId,
                         recordSubjectKind: record.subjectKind,
                         recordQuotaScope: record.quotaScope,
@@ -1664,6 +1675,7 @@ async function readFirstQualifiedSourceForRef(
                     if (
                         error instanceof ConnectedServiceUsageSourceOwnershipError
                     ) {
+                        ownershipUnproven = true;
                         continue;
                     }
                     throw error;
@@ -1676,6 +1688,13 @@ async function readFirstQualifiedSourceForRef(
                     staleAfterMs: record.staleAfterMs,
                 };
             }
+            if (ownershipUnproven) return { status: 'ownership_unproven' };
+            const refusal = await readQualifiedUsageOwnershipRefusal(tx, {
+                accountId: params.accountId,
+                qualifiedIdentityDigest,
+                credentialId: binding.credential.id,
+            });
+            if (refusal) return refusal;
             // Credential binding succeeded, but no matching provider observation exists yet.
             return { status: 'no_usage_observed' as const };
         };
@@ -1690,7 +1709,7 @@ async function readFirstQualifiedSourceForRef(
         if (
             error instanceof ConnectedServiceUsageSourceOwnershipError
         ) {
-            return null;
+            return { status: 'ownership_unproven' as const };
         }
         throw error;
     }
@@ -1716,7 +1735,7 @@ export async function readQualifiedConnectedAccountUsageRecordWithSource(
     status: "resolved";
     sourceResolution: QualifiedConnectedServiceUsageSourceResolutionV4;
     record: StoredProviderAccountUsageRecord;
-}> | Readonly<{ status: "not_found" }> | Readonly<{ status: "no_usage_observed" }> | Readonly<{ status: "storage_mode_mismatch" }>> {
+}> | Readonly<{ status: "not_found" }> | Readonly<{ status: "no_usage_observed" }> | QualifiedConnectedAccountUsageOwnershipRefusal | Readonly<{ status: "storage_mode_mismatch" }>> {
     return await inReadSnapshot(async (tx) => {
         const source = await readFirstQualifiedSourceForRef(params, tx);
         if (!source) return { status: "not_found" as const };
@@ -1737,7 +1756,8 @@ export async function readQualifiedConnectedAccountUsageRecordWithSource(
 /**
  * Reads the released V2 quota projection through the canonical PAU admission
  * owner. The adapter keeps the historical not-found surface while preserving
- * a typed storage-mode mismatch for the route to map to that same 404.
+ * typed ownership and storage-mode refusals so routes cannot restore a
+ * released snapshot after canonical admission refuses its source.
  */
 export async function readLegacyConnectedServiceQuotaCompatibilityRecordWithSource(
     params: Readonly<{
@@ -1748,12 +1768,13 @@ export async function readLegacyConnectedServiceQuotaCompatibilityRecordWithSour
     status: "resolved";
     sourceResolution: ExactQualifiedConnectedServiceUsageSource;
     record: StoredProviderAccountUsageRecord;
-}> | Readonly<{ status: "not_found" }> | Readonly<{ status: "storage_mode_mismatch" }>> {
+}> | Readonly<{ status: "not_found" }> | QualifiedConnectedAccountUsageOwnershipRefusal | Readonly<{ status: "storage_mode_mismatch" }>> {
     return await inReadSnapshot(async (tx) => {
         const source = await readFirstQualifiedSourceForRef({
             ...params,
             allowLegacyUnfencedCredential: true,
         }, tx);
+        if (source && 'status' in source && source.status === 'ownership_unproven') return source;
         if (!source || "status" in source) return { status: "not_found" as const };
         const admitted = await admitQualifiedProviderAccountUsageRecordInTx(
             tx,
@@ -1934,7 +1955,7 @@ export async function requestQualifiedConnectedAccountQuotaRefresh(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-): Promise<"written" | "not_found" | "no_usage_observed" | "storage_mode_mismatch"> {
+): Promise<"written" | "not_found" | "no_usage_observed" | "ownership_unproven" | "storage_mode_mismatch"> {
     return await inTx(async (tx) => {
         const source = await readFirstQualifiedSourceForRef(params, tx);
         if (!source) return "not_found";
@@ -1957,12 +1978,13 @@ export async function requestLegacyConnectedServiceQuotaCompatibilityRefresh(
         accountId: string;
         ref: QualifiedConnectedAccountRef;
     }>,
-): Promise<"written" | "not_found" | "storage_mode_mismatch"> {
+): Promise<"written" | "not_found" | "ownership_unproven" | "storage_mode_mismatch"> {
     return await inTx(async (tx) => {
         const source = await readFirstQualifiedSourceForRef({
             ...params,
             allowLegacyUnfencedCredential: true,
         }, tx);
+        if (source && 'status' in source && source.status === 'ownership_unproven') return source.status;
         if (!source || "status" in source) return "not_found";
         const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, {
             accountId: params.accountId,

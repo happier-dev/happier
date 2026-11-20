@@ -163,6 +163,9 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                 error: "provider_account_usage_storage_mode_mismatch",
             });
         }
+        if (admitted.status === "ownership_unproven") {
+            return reply.code(404).send({ error: "connect_quotas_not_found" });
+        }
         const record = admitted.status === "resolved"
             ? admitted.record
             : null;
@@ -243,7 +246,7 @@ export function registerConnectedServiceQuotaRoutesV3(app: Fastify): void {
                 error: "provider_account_usage_storage_mode_mismatch",
             });
         }
-        if (result === "not_found") {
+        if (result === "not_found" || result === "ownership_unproven") {
             return reply.code(404).send({ error: "connect_quotas_not_found" });
         }
         return reply.send({ success: true });

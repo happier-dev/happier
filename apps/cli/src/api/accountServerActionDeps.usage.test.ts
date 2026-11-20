@@ -558,7 +558,10 @@ describe('CLI and MCP personal usage Account transport', () => {
     const key = { providerId: 'test', accountSubjectId: 'subject', subjectKind: 'account' as const, quotaScope: 'account' as const };
     const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(key), recordKey: key,
       providerId: 'test', accountSubject: { kind: 'providerSubject', id: 'subject' }, observedAtMs: 150, fetchedAtMs: 150,
-      staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] });
+      staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [
+        { meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, unit: 'requests', utilizationPct: 20,
+          resetsAt: null, status: 'ok', details: {} },
+      ] });
     const native = { ...response, coverage: { status: 'complete', reasons: [], sources: [
       { source: 'native', path: 'native', status: 'available', asOfMs: 180, eventCount: 1, historyComplete: true },
     ], missingDimensions: [], range: { startMs: 100, endMs: 200, complete: true }, ranked: [] }, contributions: [
@@ -610,7 +613,9 @@ describe('CLI and MCP personal usage Account transport', () => {
     let mode: 'plain' | 'e2ee' = 'plain';
     let denied = false;
     let includeUnavailableAccount = false;
+    let includeHealthyAccount = false;
     let quotaUnavailable = false;
+    let ownershipRefusal: 'resolve' | 'record' | 'history' | null = null;
     let noUsageObserved = false;
     let pagedHistory = true;
     let rangeHistoryReads = 0;
@@ -623,6 +628,7 @@ describe('CLI and MCP personal usage Account transport', () => {
     let enteredContinuation!: () => void;
     const continuationEntered = new Promise<void>(resolve => { enteredContinuation = resolve; });
     const unavailableSource = { ...source, ref: { ...source.ref, accountId: 'unavailable' } };
+    const healthySource = { ...source, ref: { ...source.ref, accountId: 'healthy' } };
     app.addHook('preHandler', async request => { expect(request.headers.authorization).toBe('Bearer owner-token'); });
     registerAccountingRoutes(app, async request => {
       accountingRequests.push(UsageAnalyticsQueryRequestSchema.parse(request.body));
@@ -638,7 +644,10 @@ describe('CLI and MCP personal usage Account transport', () => {
       credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: true, configurationRevision: '1', scopes: [],
     }, ...(includeUnavailableAccount ? [{ ref: unavailableSource.ref, status: 'connected', authenticationModeId: null,
       revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: true,
-      configurationRevision: '1', scopes: [] }] : [])], connectedAccountGroupsV4: [group] }));
+      configurationRevision: '1', scopes: [] }] : []), ...(includeHealthyAccount ? [{ ref: healthySource.ref,
+      status: 'connected', authenticationModeId: null, revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationReady: true, configurationRevision: '1', scopes: [] }] : [])],
+      connectedAccountGroupsV4: [group] }));
     app.get('/v1/account/encryption/currentness', async () => ({ mode, version: 1, signingKeyFingerprint: null,
       contentKeyFingerprint: null, updatedAt: 1 }));
     app.get('/v1/account/encryption', async () => ({ mode, updatedAt: 1 }));
@@ -655,13 +664,18 @@ describe('CLI and MCP personal usage Account transport', () => {
     app.get('/v4/connect/qualified/provider-account-usage/sources/resolve', async (request, reply) => {
       if (noUsageObserved) return reply.code(404).send({ error: 'provider_account_usage_source_not_found' });
       const requested = QualifiedConnectedServiceUsageSourceV4Schema.parse(JSON.parse(z.object({ source: z.string() }).parse(request.query).source));
+      if (ownershipRefusal === 'resolve' && requested.ref.accountId === source.ref.accountId) {
+        return reply.code(409).send({ error: 'ownership_unproven' });
+      }
       return quotaUnavailable || requested.ref.accountId === unavailableSource.ref.accountId
         ? reply.code(503).send({ error: 'provider_account_usage_read_failed' })
-        : { source, recordId: snapshot.recordId, providerAccountId: 'subject', fetchedAt: record.metadata.fetchedAt, staleAfterMs: 1000 };
+        : { source: requested, recordId: snapshot.recordId, providerAccountId: 'subject', fetchedAt: record.metadata.fetchedAt, staleAfterMs: 1000 };
     });
-    const record = { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 150, staleAfterMs: 1000, status: 'ok' }, sources: [source] };
-    app.get('/v4/connect/qualified/provider-account-usage/record', async () => record);
-    app.get('/v4/connect/qualified/provider-account-usage/history', async request => {
+    const record = { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 150, staleAfterMs: 1000, status: 'ok' }, sources: [source, healthySource] };
+    app.get('/v4/connect/qualified/provider-account-usage/record', async (_request, reply) =>
+      ownershipRefusal === 'record' ? reply.code(409).send({ error: 'ownership_unproven' }) : record);
+    app.get('/v4/connect/qualified/provider-account-usage/history', async (request, reply) => {
+      if (ownershipRefusal === 'history') return reply.code(409).send({ error: 'ownership_unproven' });
       const requested = QualifiedProviderAccountUsageHistoryRequestV4Schema.parse(JSON.parse(z.object({ query: z.string() }).parse(request.query).query));
       if (!('history' in requested)) throw new Error('Expected a range history read');
       rangeHistoryReads += 1;
@@ -807,6 +821,31 @@ describe('CLI and MCP personal usage Account transport', () => {
       expectedSettingsVersion: 1 }, { surface: 'cli', serverId: 'home', authority: 'present_user' }))
       .toMatchObject({ ok: false, errorCode: 'account_settings_conflict' });
     expect((await read()).coach!.findings).toEqual([]);
+    for (const boundary of ['resolve', 'record', 'history'] as const) {
+      record.content = { t: 'plain', v: snapshot };
+      includeHealthyAccount = boundary === 'resolve';
+      const warm = await read();
+      expect(warm.quota?.[0]?.current?.meters[0]?.used).toBe(20);
+      if (includeHealthyAccount) expect(warm.quota).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source, current: snapshot }), expect.objectContaining({ source: healthySource, current: snapshot }),
+      ]));
+      ownershipRefusal = boundary;
+      const refused = await read();
+      if (includeHealthyAccount) {
+        expect(refused.quota).toMatchObject([{ source: healthySource, current: snapshot }]);
+        expect(refused.sources.find(row => row.source === `quota:${createCanonicalJsonSigningInput(healthySource)}`))
+          .toMatchObject({ status: 'available' });
+      } else expect(refused.quota).toBeUndefined();
+      expect(refused.quota?.some(row => createCanonicalJsonSigningInput(row.source) === createCanonicalJsonSigningInput(source)) ?? false).toBe(false);
+      expect(refused.pending).toBe(false);
+      expect(refused.sources.find(row => row.source === `quota:${createCanonicalJsonSigningInput(source)}`))
+        .toMatchObject({ status: 'error', errorCode: 'ownership_unproven' });
+      ownershipRefusal = null;
+      includeHealthyAccount = false;
+      record.content = { t: 'plain', v: { ...snapshot, meters: [{ ...snapshot.meters[0]!, used: 45, utilizationPct: 45 }] } };
+      expect((await read()).quota).toMatchObject([{ source, current: { meters: [{ used: 45, utilizationPct: 45 }] } }]);
+    }
+    record.content = { t: 'plain', v: snapshot };
     includeUnavailableAccount = true;
     const partial = await read();
     expect(partial.quota).toEqual(slice.quota);

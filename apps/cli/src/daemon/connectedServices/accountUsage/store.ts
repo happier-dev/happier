@@ -56,6 +56,7 @@ export type ProviderAccountUsageStore = Readonly<{
     ): ProviderAccountUsageStoreMutationResult;
     resolveRecordId(recordId: string): ProviderAccountUsageSnapshotV1 | null;
     resolveBySource(source: ConnectedServiceUsageSourceV1): ProviderAccountUsageSnapshotV1 | null;
+    removeSource(source: ConnectedServiceUsageSourceV1): void;
     listSnapshots(): readonly ProviderAccountUsageSnapshotV1[];
     retainSourcesForProfile(input: Readonly<{
         serviceId: ConnectedServiceUsageSourceV1['serviceId'];
@@ -430,10 +431,20 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
         }
     }
 
+    function removeSource(source: ConnectedServiceUsageSourceV1): void {
+        const key = sourceKey(source);
+        const recordId = sourceRecordIdsByKey.get(key);
+        if (!recordId) return;
+        sourceRecordIdsByKey.delete(key);
+        const sources = sourcesByRecordId.get(recordId) ?? [];
+        sourcesByRecordId.set(recordId, sources.filter(candidate => sourceKey(candidate) !== key));
+    }
+
     return {
         recordSnapshot,
         resolveRecordId,
         resolveBySource,
+        removeSource,
         listSnapshots,
         retainSourcesForProfile,
         prepareAdoption,

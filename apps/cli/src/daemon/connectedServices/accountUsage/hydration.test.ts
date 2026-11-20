@@ -7,6 +7,11 @@ import {
   type QualifiedConnectedServiceUsageSourceV4,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import {
+  readQualifiedProviderAccountUsageRecordV4,
+  resolveQualifiedProviderAccountUsageSourceV4,
+} from '@/api/client/qualifiedConnectedAccountApi';
 
 import {
   hydrateProviderAccountUsageStoreFromCurrentSources,
@@ -70,6 +75,44 @@ function v4HydrationSource(): ProviderAccountUsageHydrationSource {
 }
 
 describe('hydrateProviderAccountUsageStoreFromCurrentSources', () => {
+  it('withdraws an actually refused exact source while preserving accepted siblings and recovers on the next read', async () => {
+    const snapshot = createSnapshot();
+    const store = createProviderAccountUsageStore();
+    const siblingSource: ConnectedServiceUsageSourceV1 = { ...localGroupSource, groupId: 'accepted-team' };
+    let refused = false;
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (String(url).includes('/sources/resolve?')) return refused
+        ? { status: 409, data: { error: 'ownership_unproven' } }
+        : { status: 200, data: { source: qualifiedGroupSource, recordId: snapshot.recordId,
+          providerAccountId: 'acct-work', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs } };
+      return { status: 200, data: { content: { t: 'plain', v: snapshot },
+        metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' }, sources: [qualifiedGroupSource] } };
+    });
+    const hydrate = () => hydrateProviderAccountUsageStoreFromCurrentSources({
+      sources: [v4HydrationSource()],
+      resolveRecordIdForSource: source => resolveQualifiedProviderAccountUsageSourceV4({ token: 'token', source }),
+      api: { getAccountEncryptionMode: async () => 'plain',
+        readProviderAccountUsageRecord: ({ recordId }) => readQualifiedProviderAccountUsageRecordV4({ token: 'token', recordId }) },
+      credentials: { token: 'token', encryption: null }, store, nowMs: snapshot.fetchedAtMs + 1,
+    });
+    try {
+      expect((await hydrate()).dispositions[0]?.status).toBe('hydrated_fresh');
+      store.recordSnapshot(snapshot, { sources: [siblingSource] });
+      refused = true;
+      await expect(resolveQualifiedProviderAccountUsageSourceV4({ token: 'token', source: qualifiedGroupSource }))
+        .rejects.toMatchObject({ code: 'ownership_unproven', status: 409 });
+      expect((await hydrate()).dispositions).toEqual([{ source: localGroupSource, status: 'ownership_unproven' }]);
+      expect(store.resolveBySource(localGroupSource)).toBeNull();
+      expect(store.resolveBySource(siblingSource)?.recordId).toBe(snapshot.recordId);
+      expect(store.resolveRecordId(snapshot.recordId)?.recordId).toBe(snapshot.recordId);
+      refused = false;
+      expect((await hydrate()).dispositions[0]?.status).toBe('hydrated_fresh');
+      expect(store.resolveBySource(localGroupSource)?.recordId).toBe(snapshot.recordId);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
   it.each([
     ['plain', undefined, 'org-current', false, undefined, undefined],
     ['e2ee', undefined, 'org-current', false, undefined, undefined],

@@ -19,6 +19,7 @@ import {
 } from '@/components/settings/connectedServices/connectedServiceSettingsErrors';
 import { observeUsageProjection } from '@/sync/api/account/usageQueryInvalidation';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { readQuotaProfileChanges } from './quotaProfileChanges';
 
 import {
@@ -346,12 +347,10 @@ async function runLoad(
             // A connected receipt proves a new credential, but an unreadable replacement
             // context is unknown. Ordinary background read failures retain verified data.
             if (credentialMutation && !credentialReadCompleted) clearSnapshot(entry);
-            // Offline/provider errors retain presentation; an authoritative
-            // Account refusal retires the admission and its protected bytes.
-            if (error instanceof ConnectedServiceApiError && (error.status === 401 || error.status === 403)) {
-                entry.supported = false;
-                entry.snapshot = null;
-                entry.usageRecordId = null;
+            if (error instanceof ConnectedServiceApiError) {
+                const accessRefused = error.status === 401 || error.status === 403;
+                if (accessRefused) entry.supported = false;
+                if (accessRefused || !canRetainUsageReadFailure(error.code)) clearSnapshot(entry);
             }
             entry.producerRefreshPending = false;
             entry.error = resolveConnectedServiceSettingsErrorMessage(error, USAGE_READ);

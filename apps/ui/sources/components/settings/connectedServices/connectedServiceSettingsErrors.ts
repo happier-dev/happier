@@ -126,6 +126,8 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
             return t('connectedServices.errors.catalogSignInRequired');
         case 'forbidden':
             return t('connectedServices.errors.accountAccessUnavailable');
+        case 'ownership_unproven':
+            return t('connectedServices.errors.quotaOwnershipUnproven', {});
         case 'unreachable':
             return t('errors.connectedAccountsUnavailable');
         case 'account-inconsistent':

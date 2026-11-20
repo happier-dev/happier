@@ -1,4 +1,5 @@
 import { z } from "zod/mini";
+import { QualifiedProviderAccountUsageOwnershipErrorV4Schema, QualifiedProviderAccountUsageReadFailureV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
@@ -580,7 +581,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 200: QualifiedConnectedAccountQuotaResponseV4Schema,
                 400: z.strictObject({ error: z.literal("invalid-params") }),
                 404: NotFoundResponseSchema,
-                409: QualifiedProviderAccountUsageReadErrorV4Schema,
+                409: QualifiedProviderAccountUsageReadFailureV4Schema,
             },
         },
     }, async (request, reply) => {
@@ -601,6 +602,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             return reply.code(404).send({
                 error: "connect_quotas_not_found",
             });
+        }
+        if ("status" in quota && quota.status === "ownership_unproven") {
+            return reply.code(409).send({ error: quota.status });
         }
         if ("status" in quota && quota.status === "storage_mode_mismatch") {
             return reply.code(409).send({
@@ -663,7 +667,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             response: {
                 200: QualifiedConnectedAccountSuccessV4Schema,
                 404: NotFoundResponseSchema,
-                409: QualifiedProviderAccountUsageReadErrorV4Schema,
+                409: QualifiedProviderAccountUsageReadFailureV4Schema,
             },
         },
     }, async (request, reply) => {
@@ -672,6 +676,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                 accountId: request.userId,
                 ref: request.body.ref,
             });
+        if (result === "ownership_unproven") {
+            return reply.code(409).send({ error: result });
+        }
         if (result === "storage_mode_mismatch") {
             return reply.code(409).send({
                 error: "provider_account_usage_storage_mode_mismatch",
@@ -1259,6 +1266,7 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                         error: z.literal("invalid-params"),
                     }),
                     404: NotFoundResponseSchema,
+                    409: QualifiedProviderAccountUsageOwnershipErrorV4Schema,
                 },
             },
         },
@@ -1285,6 +1293,9 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
                     error:
                         "provider_account_usage_source_not_found",
                 });
+            }
+            if ('status' in resolved) {
+                return reply.code(409).send({ error: resolved.status });
             }
             return reply.send(resolved);
         },

@@ -15,6 +15,8 @@ import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClie
 import { PushNotificationClient } from '@/api/pushNotifications';
 import { logger } from '@/ui/logger';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { readQualifiedConnectedAccountQuotaV4 } from '@/api/client/qualifiedConnectedAccountApi';
+import { projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
 import type { startDaemonConnectedServiceRuntime } from '../../startup/startDaemonRuntimeBootstrap';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import type { createRequesterSessionControlRuntimeFixture } from '../../testkit/requesterSessionControlRuntimeFixture';
@@ -1966,6 +1968,80 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       groupId: 'team',
       groupGeneration: 7,
     })).not.toBeNull();
+  });
+
+  it('withdraws pool usage only on actual typed read refusal and allows an explicit provider probe to recover', async () => {
+    const now = 1_000_000;
+    const profile: QualifiedConnectedAccountProfileV4 = {
+      ref: { service: CODEX_QUALIFIED_SERVICE, accountId: 'backup' }, status: 'connected',
+      authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true,
+      configurationRevision: null, providerIdentity: { accountId: 'provider-backup' }, displayName: 'Backup', scopes: [],
+    };
+    const recordKey = { providerId: CODEX_QUALIFIED_SERVICE_ID, accountSubjectId: 'provider-backup', subjectKind: 'account' as const, quotaScope: 'account' as const };
+    const snapshot: ProviderAccountUsageSnapshotV1 = {
+      v: 1, recordKey, recordId: buildProviderAccountUsageRecordId(recordKey), providerId: CODEX_QUALIFIED_SERVICE_ID,
+      accountSubject: { kind: 'providerSubject', id: 'provider-backup' }, observedAtMs: now, fetchedAtMs: now, staleAfterMs: 300_000,
+      source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: null, accountLabel: null,
+      meters: [{ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, unit: 'count', utilizationPct: 20, remainingPct: 80, resetsAt: null, status: 'ok' }],
+    };
+    const group = buildQualifiedConnectedAccountGroupV4Fixture({ groupId: 'team', activeProfileId: 'backup', memberProfileIds: ['backup'] });
+    const source = { serviceId: CODEX_QUALIFIED_SERVICE_ID, profileId: 'backup', bindingKind: 'group_member' as const, groupId: 'team', groupGeneration: group.generation };
+    const store = createProviderAccountUsageStore();
+    const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    const runtimeSnapshot = projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({ snapshot, source });
+    if (!runtimeSnapshot) throw new Error('Expected projected quota control');
+    runtimeQuotaSnapshots.recordSnapshot({ ...source, snapshot: runtimeSnapshot, verifiedCredentialFingerprint: 'verified-control' });
+    const fixture = await createQualifiedQuotaRuntimeFixture(profile, now, { remainingByProfileId: { backup: 55 } });
+    let readState: 'accepted' | 'transport' | 'refused' = 'accepted';
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (!String(url).includes('/quotas?')) return { status: 404, data: { error: 'not_found' } };
+      if (readState === 'transport') throw new Error('network unavailable');
+      if (readState === 'refused') return { status: 409, data: { error: 'ownership_unproven' } };
+      return { status: 200, data: { ref: profile.ref,
+        sourceResolution: { source: { ref: profile.ref, bindingKind: 'account' }, recordId: snapshot.recordId,
+          providerAccountId: 'provider-backup', fetchedAt: now, staleAfterMs: snapshot.staleAfterMs },
+        content: { t: 'plain', v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot, ref: profile.ref }) },
+        metadata: { fetchedAt: now, staleAfterMs: snapshot.staleAfterMs, status: 'ok' } } };
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api: { getAccountEncryptionMode: async () => 'plain', getConnectedServiceQuotaSnapshotSealed: async () => null,
+        getConnectedServiceCredentialSealed: async () => null } satisfies QuotaApi,
+      credentials: { token: 'happy-token', encryption: null }, quotaFetchers: [], now: () => now,
+      randomBytes: length => new Uint8Array(length),
+      discoveryEnabled: false, accountUsageStore: store, runtimeQuotaSnapshots,
+      qualifiedConnectedAccountRuntime: { resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
+        readQuota: readQualifiedConnectedAccountQuotaV4,
+        listGroupQuotaTargets: async () => [{ profile, groupGeneration: group.generation }],
+        writeProviderAccountUsage: async () => ({ success: true, source: { status: 'linked' } }),
+      } as QualifiedConnectedAccountQuotaRuntime,
+    });
+    try {
+      const hydrate = () => coordinator.hydrateQualifiedGroupQuotaSnapshots({ group, profiles: [profile] });
+      await hydrate();
+      expect(store.resolveBySource(source)?.meters[0]?.utilizationPct).toBe(20);
+      const probe = () => coordinator.probeGroupQuotaSnapshots({ serviceId: CODEX_QUALIFIED_SERVICE_ID, groupId: 'team', profileIds: ['backup'] });
+      expect(await probe()).toMatchObject({ status: 'complete', completedProfileCount: 1 });
+      await hydrate();
+      readState = 'transport';
+      await hydrate();
+      expect(store.resolveBySource(source)?.meters[0]?.utilizationPct).toBe(20);
+      expect(runtimeQuotaSnapshots.getSnapshot(source)).not.toBeNull();
+      readState = 'refused';
+      await expect(readQualifiedConnectedAccountQuotaV4({ token: 'happy-token', ref: profile.ref }))
+        .rejects.toMatchObject({ code: 'ownership_unproven', status: 409 });
+      await hydrate();
+      expect(store.resolveBySource(source)).toBeNull();
+      expect(runtimeQuotaSnapshots.getSnapshot(source)).toBeNull();
+      expect(store.resolveRecordId(snapshot.recordId)).not.toBeNull();
+      expect(await probe())
+        .toMatchObject({ status: 'complete', completedProfileCount: 1 });
+      expect(store.resolveBySource(source)?.meters[0]?.utilizationPct).toBe(45);
+      expect(await readFile(fixture.marker, 'utf8')).toBe('backup\nbackup\n');
+    } finally {
+      coordinator.disposeInBandQuotaPersistence();
+      get.mockRestore();
+    }
   });
 
   it('hydrates a fresh authoritative backup row passively with zero provider work while a stale primary invokes live', async () => {
@@ -5137,6 +5213,47 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     await recoveryFlush;
 
     expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['ownership_unproven', 'binding_unavailable', 'permission_denied'] as const)('recovers the same legacy in-band material after a typed %s refusal without automatic retries', async (reason) => {
+    const now = 1_000_000;
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: {} });
+    const legacyV4 = createLegacyScalarV4PersistenceRuntime({ serviceId: 'openai-codex', profileIds: ['work'] });
+    if (reason === 'permission_denied') {
+      legacyV4.writeProviderAccountUsage.mockRejectedValueOnce(createHttpStatusError(401, 'Access denied', reason));
+    } else {
+      legacyV4.writeProviderAccountUsage.mockResolvedValueOnce({ success: true, source: { status: 'skipped', reason } });
+    }
+    legacyV4.writeProviderAccountUsage.mockResolvedValue({ success: true, source: { status: 'linked' } });
+    const serverWorkScheduler = createDaemonServerWorkScheduler({
+      budget: createDaemonServerWorkBudget({ maxConcurrentWrites: 1 }), now: () => now,
+    });
+    const coordinator = new ConnectedServiceQuotasCoordinator({
+      api: { getAccountEncryptionMode: async () => 'plain',
+        getConnectedServiceQuotaSnapshotSealed: async () => null,
+        getConnectedServiceCredentialSealed: async () => null } satisfies QuotaApi,
+      credentials: { token: 'happy-token', encryption: null },
+      quotaFetchers: [], now: () => now, randomBytes: length => new Uint8Array(length),
+      quotaPersistenceMinIntervalMs: 0, serverWorkScheduler,
+      qualifiedConnectedAccountRuntime: legacyV4.qualifiedConnectedAccountRuntime,
+    });
+    const snapshot: ConnectedServiceQuotaSnapshotV1 = {
+      v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: now,
+      staleAfterMs: 300_000, planLabel: null, accountLabel: null, meters: [],
+    };
+    const observation = { serviceId: 'openai-codex' as const, profileId: 'work', snapshot };
+    try {
+      await coordinator.recordInBandQuotaSnapshot(observation);
+      await coordinator.flushInBandQuotaPersistence(1_000);
+      expect(serverWorkScheduler.getSnapshot().purposes.connectedServiceQuotaPersistence.counters)
+        .toMatchObject({ written: 0, failed: 1, retried: 0 });
+      expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(1);
+      expect(await coordinator.recordInBandQuotaSnapshot(observation)).toMatchObject({ status: 'enqueued' });
+      await coordinator.flushInBandQuotaPersistence(1_000);
+      expect(legacyV4.writeProviderAccountUsage).toHaveBeenCalledTimes(2);
+      expect(await coordinator.recordInBandQuotaSnapshot(observation))
+        .toEqual({ status: 'suppressed', reason: 'unchanged_fresh' });
+    } finally { coordinator.disposeInBandQuotaPersistence(); get.mockRestore(); }
   });
 
   it('refreshes account mode at in-band flush time before choosing quota storage mode', async () => {

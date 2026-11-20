@@ -17,6 +17,8 @@ import {
     readLegacyConnectedServiceQuotaCompatibilityRecordWithSource,
 } from "./qualifiedConnectedAccounts/usageRepository";
 import { resolveLegacyQualifiedConnectedAccountService } from "./qualifiedConnectedAccounts/identity";
+import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 
 async function createConnectedServiceProfileBinding(
     accountId: string,
@@ -82,7 +84,7 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
         await db.account.deleteMany().catch(() => {});
     });
 
-    it("keeps a populated released v0.2.1 sealed quota readable until a canonical write replaces it", async () => {
+    it("keeps released quotas healthy, refuses unproven fallback, and recovers on a canonical write", async () => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
@@ -160,6 +162,37 @@ describe("connectRoutes (connected services quotas v2) sealed quota endpoints", 
         expect(refreshed.json()).toMatchObject({
             metadata: { refreshRequestedAt: expect.any(Number) },
         });
+
+        const ref = { service: resolveLegacyQualifiedConnectedAccountService('openai-codex'), accountId: 'work' };
+        const recordKey = createProviderAccountUsageRecordKey({
+            accountSubjectId: buildQualifiedConnectedAccountLocalSubjectId(ref), subjectKind: 'unknown',
+        });
+        const snapshot = createUsageSnapshot({ fetchedAt: Date.now(), recordKey });
+        const refusedWrite = await app.inject({ method: 'POST', url: '/v4/connect/qualified/provider-account-usage',
+            headers: { 'x-test-user-id': user.id }, payload: {
+                source: { ref, bindingKind: 'account' }, expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+                expectedConfigurationRevision: null, recordId: snapshot.recordId, recordKey,
+                payloadMode: 'sealed_account_scoped_v1', status: 'ok', fetchedAt: snapshot.fetchedAtMs,
+                staleAfterMs: snapshot.staleAfterMs,
+                sealedPayload: sealProviderAccountUsageSnapshot({ snapshot,
+                    material: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+                    randomBytes: length => new Uint8Array(length).fill(3) }),
+            } });
+        expect(refusedWrite.statusCode, refusedWrite.body).toBe(200);
+        expect(refusedWrite.json()).toEqual({ success: true, source: { status: 'skipped', reason: 'ownership_unproven' } });
+        for (const response of [
+            await app.inject({ method: 'GET', url: '/v2/connect/openai-codex/profiles/work/quotas',
+                headers: { 'x-test-user-id': user.id } }),
+            await app.inject({ method: 'POST', url: '/v2/connect/openai-codex/profiles/work/quotas/refresh',
+                headers: { 'x-test-user-id': user.id } }),
+            await app.inject({ method: 'GET', url: '/v3/connect/openai-codex/profiles/work/quotas',
+                headers: { 'x-test-user-id': user.id } }),
+            await app.inject({ method: 'POST', url: '/v3/connect/openai-codex/profiles/work/quotas/refresh',
+                headers: { 'x-test-user-id': user.id } }),
+        ]) {
+            expect.soft(response.statusCode).toBe(404);
+            expect.soft(response.json()).toEqual({ error: 'connect_quotas_not_found' });
+        }
 
         const replacement = await app.inject({
             method: "POST",

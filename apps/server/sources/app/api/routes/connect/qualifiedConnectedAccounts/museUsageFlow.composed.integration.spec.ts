@@ -71,7 +71,7 @@ describe('Muse qualified usage publication through Home', () => {
             payloadMode: 'plain_json_v1', snapshot, status: 'ok', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: 1 });
         expect(result).toMatchObject({ sourceOutcome: { status: 'skipped', reason: 'ownership_unproven' } });
         expect(await readExactQualifiedConnectedServiceUsageSource({ accountId: account.id,
-            source: { ref: otherRef, bindingKind: 'account' } })).toBeNull();
+            source: { ref: otherRef, bindingKind: 'account' } })).toEqual({ status: 'ownership_unproven' });
     });
 
     async function runFlow(encrypted: boolean, flow: 'event' | 'refresh') {

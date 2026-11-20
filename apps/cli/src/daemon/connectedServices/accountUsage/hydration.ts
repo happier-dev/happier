@@ -1,6 +1,8 @@
 import * as z from 'zod/mini';
 import { ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
+import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { isConnectedServiceQuotaObservationFresh } from '@happier-dev/protocol/connect/quotaObservationTime';
 import { ProviderAccountUsageRecordIdSchema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -19,6 +21,7 @@ import {
 import type { StoredCredentials } from '@/persistence';
 
 import type { ProviderAccountUsageStore } from './store';
+import { isProviderAccountUsageOwnershipRefusalCode } from './persistence';
 
 type ProviderAccountUsageV4Record = Readonly<{
   content:
@@ -277,7 +280,7 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
   ) => Promise<ProviderAccountUsageCurrentSourceResolution | null>;
   api: ProviderAccountUsageHydrationApi;
   credentials: StoredCredentials;
-  store: Pick<ProviderAccountUsageStore, 'recordSnapshot'>;
+  store: Pick<ProviderAccountUsageStore, 'recordSnapshot' | 'removeSource'>;
   nowMs: number;
   resolveUsageIdentity?: ProviderAccountUsageUsageIdentityResolver;
   resolveCurrentProviderAccountIdentityForSource?: ProviderAccountUsageCurrentSourceIdentityResolver;
@@ -314,11 +317,29 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
   const accountEncryptionMode = await resolveAccountEncryptionModeForHydration(
     input.api,
   );
+  const refuseSource = (source: ProviderAccountUsageHydrationSource): void => {
+    input.store.removeSource(source.localSource);
+    dispositions.push({ source: source.localSource, status: 'ownership_unproven' });
+    refreshSources.push(source.localSource);
+  };
 
   for (const source of sourcesByKey.values()) {
-    const resolved = await input.resolveRecordIdForSource(
-      source.qualifiedSource,
-    ).catch(() => null);
+    let resolved: ProviderAccountUsageCurrentSourceResolution | null;
+    try {
+      resolved = await input.resolveRecordIdForSource(source.qualifiedSource);
+    } catch (error) {
+      const code = readActionErrorCodeV1(error);
+      if (!canRetainUsageReadFailure(code ?? undefined)) {
+        if (!isProviderAccountUsageOwnershipRefusalCode(code)) {
+          input.store.removeSource(source.localSource);
+          throw error;
+        }
+        refuseSource(source);
+        continue;
+      }
+      if (code) throw error;
+      resolved = null;
+    }
     const parsedRecordId = ProviderAccountUsageRecordIdSchema.safeParse(
       resolved?.recordId,
     );
@@ -337,11 +358,7 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
         resolvedSource.data,
       )
     ) {
-      dispositions.push({
-        source: source.localSource,
-        status: 'ownership_unproven',
-      });
-      refreshSources.push(source.localSource);
+      refuseSource(source);
       continue;
     }
 
@@ -392,11 +409,7 @@ export async function hydrateProviderAccountUsageStoreFromCurrentSources(input: 
       || !freshnessProven
       || !providerCompatible
     ) {
-      dispositions.push({
-        source: source.localSource,
-        status: 'ownership_unproven',
-      });
-      refreshSources.push(source.localSource);
+      refuseSource(source);
       continue;
     }
 

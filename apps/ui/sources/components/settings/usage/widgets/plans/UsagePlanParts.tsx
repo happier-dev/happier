@@ -44,6 +44,10 @@ import { formatMoment } from '@/utils/datetime/formatMoment';
 
 type PlanAccountReadKind = 'failed' | 'pending' | 'partial';
 
+function isOwnershipUnproven(account: UsagePlanAccount): boolean {
+  return account.state.status === 'error' && account.state.errorCode === 'ownership_unproven';
+}
+
 /** One account's read; a current, complete read says nothing. */
 function planAccountReadKind(account: UsagePlanAccount): PlanAccountReadKind | null {
   const status = account.state.status;
@@ -67,26 +71,40 @@ export function readPlanAccountsStatement(
   accounts: readonly UsagePlanAccount[],
   nameOf: (account: UsagePlanAccount) => UsagePlanAccountName,
 ): Readonly<{ kind: PlanAccountReadKind; reason: string; asOf: number | null; accounts: number }> | null {
-  const affected = accounts.flatMap((account) => {
+  const ownershipNames: string[] = [];
+  const affected: { account: UsagePlanAccount; kind: PlanAccountReadKind }[] = [];
+  for (const account of accounts) {
+    if (isOwnershipUnproven(account)) {
+      ownershipNames.push(nameOf(account).title);
+      continue;
+    }
     const kind = planAccountReadKind(account);
-    return kind ? [{ account, kind }] : [];
-  });
-  if (affected.length === 0) return null;
+    if (kind) affected.push({ account, kind });
+  }
+  if (affected.length === 0 && ownershipNames.length === 0) return null;
+
   const kind: PlanAccountReadKind = affected.some((entry) => entry.kind === 'failed') ? 'failed'
     : affected.some((entry) => entry.kind === 'pending') ? 'pending' : 'partial';
-  const sources = kind === 'pending' ? t('connectedServices.purposeTargets.poolAccounts', { count: readPendingPlanAccountCount(accounts) })
-    : affected.length === accounts.length && accounts.length > 1
-    ? usageSourceTitle('quota')
-    : affected.map((entry) => nameOf(entry.account).title).join(', ');
+  const reasons: string[] = [];
+  if (ownershipNames.length > 0) {
+    reasons.push(t('connectedServices.errors.quotaOwnershipUnproven', { accounts: ownershipNames.join(', ') }));
+  }
+  if (affected.length > 0) {
+    const sources = kind === 'pending' ? t('connectedServices.purposeTargets.poolAccounts', { count: readPendingPlanAccountCount(accounts) })
+      : affected.length === accounts.length && accounts.length > 1
+      ? usageSourceTitle('quota')
+      : affected.map((entry) => nameOf(entry.account).title).join(', ');
+    reasons.push(kind === 'partial' ? usagePartialHistoryLabel()
+      : t(kind === 'failed' ? 'usage.board.page.coverageFailed' : 'usage.board.page.coveragePending', { sources }));
+  }
   const times = affected
     .map((entry) => entry.account.read?.current ? entry.account.state.asOfMs ?? entry.account.observedAtMs : null)
     .filter((time): time is number => typeof time === 'number');
   return {
-    kind,
-    reason: kind === 'partial' ? usagePartialHistoryLabel()
-      : t(kind === 'failed' ? 'usage.board.page.coverageFailed' : 'usage.board.page.coveragePending', { sources }),
+    kind: ownershipNames.length > 0 ? 'failed' : kind,
+    reason: reasons.join(' · '),
     asOf: times.length ? Math.min(...times) : null,
-    accounts: affected.length,
+    accounts: affected.length + ownershipNames.length,
   };
 }
 
@@ -111,7 +129,7 @@ export function planAccountStatesMode(
  */
 /** An account never read and not being read now: one collapsed "not read yet" line, never a row or segment (R1). */
 export function isUsagePlanAccountSettledUnread(account: UsagePlanAccount): boolean {
-  return account.observedAtMs === null && account.state.status !== 'pending';
+  return account.observedAtMs === null && account.state.status !== 'pending' && !isOwnershipUnproven(account);
 }
 
 /**

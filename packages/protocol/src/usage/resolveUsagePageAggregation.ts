@@ -630,7 +630,7 @@ export function isUsageQuerySourceOutstanding(query: UsageQuery, source: UsageQu
 }
 
 export function canRetainUsageReadFailure(errorCode?: string): boolean {
-  return !['denied', 'permission_denied', 'unauthorized', 'forbidden', 'stale_surface', 'cancelled', 'plugin_resource_context_unavailable',
+  return !['denied', 'permission_denied', 'unauthorized', 'forbidden', 'ownership_unproven', 'stale_surface', 'cancelled', 'plugin_resource_context_unavailable',
     RPC_ERROR_CODES.FORBIDDEN, RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED,
     RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE].includes(errorCode ?? '');
 }

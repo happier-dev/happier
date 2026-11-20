@@ -7,6 +7,14 @@ import {
   type QualifiedConnectedServiceUsageSourceV4,
 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+
+import {
+  listQualifiedConnectedAccountGroupsV4,
+  listQualifiedConnectedAccountsV4,
+  readQualifiedProviderAccountUsageRecordV4,
+  resolveQualifiedProviderAccountUsageSourceV4,
+} from '@/api/client/qualifiedConnectedAccountApi';
 
 import {
   ConnectedServiceCurrentSourceHydrationConflictError,
@@ -61,10 +69,10 @@ function createGroup(accountId = 'work'): QualifiedConnectedAccountGroupV4 {
   };
 }
 
-function createSnapshot() {
+function createSnapshot(accountId = 'work') {
   const recordKey = {
     providerId: 'codex',
-    accountSubjectId: 'acct-work',
+    accountSubjectId: `acct-${accountId}`,
     subjectKind: 'account' as const,
     quotaScope: 'account' as const,
   };
@@ -73,7 +81,7 @@ function createSnapshot() {
     recordId: buildProviderAccountUsageRecordId(recordKey),
     recordKey,
     providerId: 'codex',
-    accountSubject: { kind: 'providerSubject' as const, id: 'acct-work' },
+    accountSubject: { kind: 'providerSubject' as const, id: `acct-${accountId}` },
     observedAtMs: 1_000,
     fetchedAtMs: 1_000,
     staleAfterMs: 60_000,
@@ -87,6 +95,115 @@ function createSnapshot() {
 }
 
 describe('hydrateProviderAccountUsageStoreFromConnectedServiceInventory', () => {
+  it('keeps a refused source listed without disabling healthy siblings and hydrates it after recovery', async () => {
+    const snapshots = [createSnapshot('work'), createSnapshot('backup')];
+    let ownershipRefused = false;
+    let backupResolutionStatuses: number[] = [];
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (input, config) => {
+      const url = new URL(String(input));
+      let response: { status: number; data: unknown };
+      if (url.pathname.endsWith('/accounts')) {
+        response = { status: 200, data: {
+          service: qualifiedService,
+          accounts: [createProfile('work'), createProfile('backup')],
+        } };
+      } else if (url.pathname.endsWith('/groups')) {
+        response = { status: 200, data: { groups: [] } };
+      } else if (url.pathname.endsWith('/sources/resolve')) {
+        const source: QualifiedConnectedServiceUsageSourceV4 = JSON.parse(url.searchParams.get('source')!);
+        const snapshot = snapshots.find(candidate => candidate.recordKey.accountSubjectId === `acct-${source.ref.accountId}`)!;
+        const status = source.ref.accountId === 'backup'
+          ? backupResolutionStatuses.shift() ?? (ownershipRefused ? 409 : 200)
+          : 200;
+        response = status === 409
+          ? { status, data: { error: 'ownership_unproven' } }
+          : status === 404
+            ? { status, data: {} }
+            : { status: 200, data: {
+            source,
+            recordId: snapshot.recordId,
+            providerAccountId: snapshot.recordKey.accountSubjectId,
+            fetchedAt: snapshot.fetchedAtMs,
+            staleAfterMs: snapshot.staleAfterMs,
+          } };
+      } else if (url.pathname.endsWith('/record')) {
+        const snapshot = snapshots.find(candidate => candidate.recordId === url.searchParams.get('recordId'))!;
+        response = { status: 200, data: {
+          content: { t: 'plain', v: snapshot },
+          metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
+          sources: [{ ref: { service: qualifiedService, accountId: snapshot.recordKey.accountSubjectId.slice('acct-'.length) }, bindingKind: 'account' }],
+        } };
+      } else {
+        throw new Error('Unexpected usage HTTP request');
+      }
+      // Preserve Axios status admission so a discarded 409 body fails this seam.
+      if (!(config?.validateStatus ?? axios.defaults.validateStatus)?.(response.status)) {
+        throw Object.assign(new Error(`HTTP ${response.status}`), { response, status: response.status });
+      }
+      return response;
+    });
+    const source = (profileId: string) => ({
+      serviceId: 'happier.agent.codex/openai-codex', profileId, bindingKind: 'profile' as const,
+    });
+    const hydrate = (store: ReturnType<typeof createProviderAccountUsageStore>) =>
+      hydrateProviderAccountUsageStoreFromConnectedServiceInventory({
+        serviceIds: ['openai-codex'],
+        api: {
+          listAccounts: params => listQualifiedConnectedAccountsV4({ token: 'fixture', ...params }),
+          listGroups: params => listQualifiedConnectedAccountGroupsV4({ token: 'fixture', ...params }),
+          resolveSource: params => resolveQualifiedProviderAccountUsageSourceV4({ token: 'fixture', ...params }),
+          readProviderAccountUsageRecord: params => readQualifiedProviderAccountUsageRecordV4({ token: 'fixture', ...params }),
+          getAccountEncryptionMode: async () => 'plain',
+        },
+        credentials: { token: 'fixture', encryption: null },
+        store,
+        nowMs: 1_001,
+      });
+
+    try {
+      const control = await hydrate(createProviderAccountUsageStore());
+      expect(control.hydration.dispositions.map(item => item.status)).toEqual(['hydrated_fresh', 'hydrated_fresh']);
+
+      ownershipRefused = true;
+      const store = createProviderAccountUsageStore();
+      const refused = await hydrate(store);
+      expect(refused.sources).toEqual([source('work'), source('backup')]);
+      expect(refused.hydration.dispositions).toEqual([
+        { source: source('work'), status: 'hydrated_fresh', recordId: snapshots[0]!.recordId },
+        { source: source('backup'), status: 'ownership_unproven' },
+      ]);
+      expect(refused.hydration.refreshSources).toEqual([source('backup')]);
+      expect(store.resolveBySource(source('work'))?.recordId).toBe(snapshots[0]!.recordId);
+      expect(store.resolveBySource(source('backup'))).toBeNull();
+
+      ownershipRefused = false;
+      const recovered = await hydrate(store);
+      expect(recovered.hydration.dispositions.map(item => item.status)).toEqual(['hydrated_fresh', 'hydrated_fresh']);
+      expect(recovered.hydration.refreshSources).toEqual([]);
+      expect(store.resolveBySource(source('backup'))?.recordId).toBe(snapshots[1]!.recordId);
+
+      ownershipRefused = true;
+      await hydrate(store);
+      expect(store.resolveBySource(source('work'))?.recordId).toBe(snapshots[0]!.recordId);
+      expect(store.resolveBySource(source('backup'))).toBeNull();
+
+      const transitions: unknown[] = [];
+      for (const statuses of [[404, 409], [409, 200]]) {
+        backupResolutionStatuses = [...statuses];
+        await hydrate(store).then(
+          () => { transitions.push('committed'); },
+          (error: unknown) => { transitions.push(error); },
+        );
+      }
+      expect(transitions).toEqual([
+        expect.any(ConnectedServiceCurrentSourceHydrationConflictError),
+        expect.any(ConnectedServiceCurrentSourceHydrationConflictError),
+      ]);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
   it('uses the V4 account/group inventory and source-record owner through both atomic passes', async () => {
     const snapshot = createSnapshot();
     const accountSource: QualifiedConnectedServiceUsageSourceV4 = {

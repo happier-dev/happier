@@ -47,6 +47,7 @@ export type DaemonServerWorkErrorKind =
 export type DaemonServerWorkErrorClassification = Readonly<{
   kind: DaemonServerWorkErrorKind;
   retryable: boolean;
+  errorCode?: string;
   statusCode?: number;
   retryAfterMs?: number;
 }>;

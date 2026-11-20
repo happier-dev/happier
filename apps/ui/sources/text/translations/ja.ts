@@ -5187,6 +5187,7 @@ localTailscale: {
       quotaRefreshMintFailed: "プロバイダーが使用状況の認証情報を発行できませんでした。",
       quotaRefreshRateLimited: "使用状況の更新が制限されています。",
       quotaRefreshFailed: '使用状況を更新できませんでした。',
+      quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `${accounts}の所有者を確認できませんでした。` : 'アカウントの所有者を確認できませんでした。',
       quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} ${time}以降にもう一度お試しください。`,
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: '接続サービスの操作に失敗しました。更新して再試行してください。',
