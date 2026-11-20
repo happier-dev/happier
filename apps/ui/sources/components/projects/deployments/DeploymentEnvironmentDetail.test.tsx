@@ -1086,6 +1086,67 @@ describe('Project deployments page', () => {
     } finally { await act(async () => { Modal.hideAll(); controller.retire(); }); }
   });
 
+  it.each([
+    { target: 'vercel-preview', promoteAvailable: true, rollbackAvailable: false },
+    { target: 'vercel-production', promoteAvailable: true, rollbackAvailable: true },
+    { target: 'pages-preview', promoteAvailable: false, rollbackAvailable: false },
+    { target: 'pages-production', promoteAvailable: false, rollbackAvailable: true },
+  ])('shows only declared rollout Actions from the $target receipt', async ({ target, promoteAvailable, rollbackAvailable }) => {
+    const vercel = target.startsWith('vercel');
+    const { manifest, activateAccount } = vercel
+      ? await import('../../../../../../packages/plugins/deploy-vercel/src/index')
+      : await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { createDeploymentActions } = await import('./deploymentActions');
+    scope.serverId = await homes.addHome({ name: target, serverUrl: `https://${target}.test`,
+      serverIdentityId: `srv_${'7'.repeat(32)}`, accountId: scope.accountId, currentAccount: true });
+    const { accountLifetime: lifetime } = await captureLazyActionAccountContext(scope.serverId);
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest, activate: activateAccount,
+      accountLifetime: lifetime, publishProjection: true });
+    const providerEnvironment = target.endsWith('preview')
+      ? { kind: 'preview' as const, gitBranch: 'main' } : { kind: 'production' as const };
+    const source = { kind: 'plugin' as const, contribution: { pluginId: manifest.id, localId: vercel ? 'runtime' : 'pages' } };
+    const base = environmentDetailForHome();
+    const native = createDeploymentReceiptDetailV1();
+    const sourceIntent = native.content.sourceIntent;
+    if (sourceIntent.kind !== 'repository') throw new Error('Expected repository fixture');
+    const credentialPrincipal = { kind: 'account' as const, accountId: scope.accountId,
+      purpose: { consumer: { pluginId: manifest.id, localId: 'inspect' }, purpose: 'deploy.manage' },
+      target: { kind: 'account' as const, account: { service: { pluginId: manifest.id, localId: 'account' }, accountId: 'connected' } } };
+    const providerIdentity = { providerAccountId: 'account', providerResourceId: 'project',
+      providerEnvironment: providerEnvironment.kind === 'production' ? 'production' : 'preview:main' };
+    const makeReceipt = (id: string, sha: string) => createDeploymentReceiptDetailV1({
+      deployment: createDeploymentReceiptHeaderV1({ id, state: 'succeeded' }),
+      content: { machines: [], images: [], machineResults: [], steps: [], sourceMethod: 'upload',
+        sourceIntent: { ...sourceIntent, sha },
+        platform: { targetLinkRevision: 1, credentialPrincipal, providerIdentity, providerEnvironment,
+          observation: { v: 1, state: 'succeeded', providerDeploymentId: `provider-${id}`, observedAtMs: 1000 } } },
+    });
+    const serving = makeReceipt('serving', 'b'.repeat(40));
+    const retained = makeReceipt('retained', 'a'.repeat(40));
+    const detail = environmentDetailForHome({ targetLinks: base.targetLinks.map(row => ({
+      targetLink: { ...row.targetLink, source, activeDeploymentId: serving.deployment.id, machines: [], members: [],
+        targetKind: vercel ? 'vercel' : 'cloudflare-pages' },
+      content: { credentialPrincipal, providerIdentity, providerEnvironment },
+    })) });
+    const { controller } = controllerFor({ detail, receipt: serving, history: [serving, retained] });
+    const actions = createDeploymentActions(lifetime, scope.projectSourceId);
+    try {
+      const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+        deploymentId={serving.deployment.id} environmentName={target} demand={shown} lifetime={lifetime}
+        accountId={scope.accountId} serverId={scope.serverId} phone={false} onBack={() => {}}
+        rollback={actions.rollback} cancel={null} deploy={null} promote={actions.promote} readLogs={null} linkPath={null}
+        review={noReview} onOpenReceipt={() => {}} />);
+      await waitForContent(screen, 'project-deployments.receipt.header');
+      await act(async () => { await screen.pressByTestIdAsync('project-deployments.receipt.menu'); });
+      await waitForContent(screen, 'project-deployments.receipt.menu.environment');
+      if (promoteAvailable) await waitForContent(screen, 'project-deployments.receipt.promote');
+      expect(screen.findByTestId('project-deployments.receipt.promote') !== null).toBe(promoteAvailable);
+      expect(screen.findByTestId('project-deployments.receipt.rollback') !== null).toBe(rollbackAvailable);
+    } finally { await act(async () => { controller.retire(); await installed.dispose(); }); }
+  });
+
   it.each(['repository', 'platform'] as const)('hides promotion for an unsupported %s receipt and platform header', async kind => {
     const previousPromotionRequests = homes.requestsFor('/v1/actions/deployments.promote').length;
     const base = environmentDetailForHome();

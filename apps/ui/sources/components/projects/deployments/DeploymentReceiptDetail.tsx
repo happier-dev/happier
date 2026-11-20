@@ -80,6 +80,7 @@ import { deploymentAddressExpected, deploymentLiveAddressDemand, formatDeploymen
 import { DomainStateLine } from './DeploymentDomainRow';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { showDeploymentPromotionSheet, type DeploymentPromotionDestination } from './DeploymentPromotionSheet';
+import { useDeploymentPlatformTargets } from './DeploymentPlatformTargetSheet';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
 
 /**
@@ -143,6 +144,15 @@ export const DeploymentReceiptDetail = React.memo(
       props.demand,
     );
     const value = receipt.snapshot.value;
+    const runtime = environmentValue?.runtimeTargetLink;
+    const platformRef = runtime?.source.kind === 'plugin' && value?.deployment.targetLinkId === runtime.id
+      ? runtime.source.contribution : null;
+    const platforms = useDeploymentPlatformTargets(platformRef && (props.promote || props.rollback)
+      && props.demand.mounted && props.demand.visible ? props.lifetime ?? null : null);
+    const platformTarget = platforms.state.status === 'ready' && platformRef
+      ? platforms.state.targets.find(target => target.pluginId === platformRef.pluginId
+        && target.targetId === platformRef.localId && target.targetKind === runtime?.targetKind)
+      : undefined;
     const serving = value !== null && activeId === value.deployment.id
       && environmentValue?.runtimeTargetLink?.id === value.deployment.targetLinkId;
     // Native addresses belong to current Domains; a historical receipt never borrows them.
@@ -236,7 +246,14 @@ export const DeploymentReceiptDetail = React.memo(
     const recordedCause = deployment.state !== 'failed' ? null : facts.failure
       ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
       : t('workflows.recovery.causeNotRecorded');
-    const { rollback, deploy, teardown, promote, environmentId, phone } = props;
+    const { deploy, teardown, promote, environmentId, phone } = props;
+    const mayDeploy = environmentValue?.environment.capabilities.deploy === true;
+    const providerEnvironment = content.platform?.providerEnvironment.kind;
+    const rollback = mayDeploy && (!platform || (platformTarget?.rollback
+      && (providerEnvironment === 'production' || providerEnvironment === 'script'))) ? props.rollback : null;
+    const mayPromote = platform ? mayDeploy && platformTarget?.promote === true
+      && deployment.state === 'succeeded' && Boolean(content.platform?.observation.providerDeploymentId)
+      : canPromoteDeploymentReceipt(value, environmentValue);
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
     const { review } = props;
@@ -412,7 +429,7 @@ export const DeploymentReceiptDetail = React.memo(
         linkPath={props.linkPath}
         environmentName={props.environmentName}
         onOpenEnvironment={onBack}
-        onPromote={environmentValue && canPromoteDeploymentReceipt(value, environmentValue) && promote
+        onPromote={environmentValue && mayPromote && promote
           ? () => showDeploymentPromotionSheet({ controller: props.controller, serverId: props.serverId,
               initialDestination: promotionDestination.current,
               onChooseDestination: (chosen) => { promotionDestination.current = chosen; },

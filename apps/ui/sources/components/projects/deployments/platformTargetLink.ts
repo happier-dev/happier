@@ -44,6 +44,8 @@ export type DeploymentPlatformTarget = Readonly<{
   plans?: DeploymentRuntimeTargetV1['plans'];
   runtimeLogs?: true;
   teardown?: true;
+  promote?: true;
+  rollback?: true;
   /** The provider's own words for what its teardown deletes ("Delete this Vercel project and its deployments?"). */
   teardownConsequence?: string;
   create?: Readonly<{
@@ -169,6 +171,8 @@ export function readDeploymentPlatformTargets(
               ...(normalized.accepts === undefined ? {} : { accepts: normalized.accepts }),
               ...(normalized.needs === undefined ? {} : { needs: normalized.needs }),
               ...(normalized.plans?.length ? { plans: normalized.plans } : {}),
+              ...(normalized.actions.promote ? { promote: true as const } : {}),
+              ...(normalized.actions.rollback ? { rollback: true as const } : {}),
             } : {};
           })(),
           ...(record(target.actions) && text(target.actions.teardown) ? { teardown: true as const,

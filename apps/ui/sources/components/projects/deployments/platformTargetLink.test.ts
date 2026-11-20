@@ -333,6 +333,17 @@ describe('deployment platforms from bundled declarations', () => {
     expect(targets.every((target) => target.title.length > 0)).toBe(true);
   });
 
+  it('projects the installed Vercel, Workers and Pages rollout Actions', async () => {
+    const { manifest: vercelManifest } = await import('../../../../../../packages/plugins/deploy-vercel/src/manifest');
+    const { manifest: cloudflareManifest } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/manifest');
+    const [vercel, workers, pages] = readDeploymentPlatformTargets([vercelManifest, cloudflareManifest]
+      .map(value => ({ manifest: PluginPortableReleaseManifestV1Schema.parse(value) })));
+    expect(vercel).toMatchObject({ promote: true, rollback: true });
+    expect(workers).toMatchObject({ promote: true, rollback: true });
+    expect(pages).toMatchObject({ rollback: true });
+    expect(pages).not.toHaveProperty('promote');
+  });
+
   it('keeps an empty Account read visible with its reason for every bundled platform after Retry', () => {
     for (const target of readTargets()) {
       const fields = disclosePlatformFields(resolveEffectiveActionInputFields({ inputHints: { fields: [...target.fields] } }, {}), {});
