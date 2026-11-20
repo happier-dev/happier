@@ -20,6 +20,7 @@ const DESTROY_RESULT_SCHEMA = defineMachineProvisionerReconciliationSchemas({
 async function activated(loseAcquireReply = false, snapshotCount = 0, createdSandbox: unknown = { id: 'bx_23456789', state: 'provisioning' }, createFailure?: { status: number; code: string }, observedState = 'ready', observedFacts: Readonly<Record<string, unknown>> = {}, scannedHostKey = 'ssh-ed25519 AAAAboat') {
   const handlers = new Map<string, ActionHandler>();
   await exports.PLUGIN.activateAccount({ actions: { register(id: string, handler: ActionHandler) { handlers.set(id, handler); return { dispose() {} }; } },
+    connectedAccounts: { register() { return { dispose() {} }; } },
   } as unknown as PluginAccountApi);
   const requests: Array<{ url: string; method?: string; headers?: Readonly<Record<string, string>>; body?: Uint8Array }> = [];
   const context = { invokedAtMs: 1234, signal: new AbortController().signal, services: {
