@@ -33,12 +33,14 @@ import {
 
 import { ProjectPageBackProvider } from '@/components/projects/detail/projectPageBack';
 import { DetectedLocalServicesPane } from './DetectedLocalServicesPane';
+import { ServicesSpecimen } from '@/components/dev/services/ServicesSpecimen';
 import type { UserProfile } from '@happier-dev/protocol/social/friends';
 import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { commitPreferredLanguage, getPreferredLanguage } from '@/text/preferredLanguage';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { getLocalServiceInventoryState, resetLocalServiceInventoryStoreForTests,
     subscribeLocalServiceInventoryStore } from '@/sync/domains/local/services/inventory/sharedStore';
 
@@ -95,6 +97,15 @@ function inHeaderHost(children: React.ReactNode): React.ReactElement {
 
 const MACBOOK_ONLINE = { name: 'MacBook Pro', homeDir: null, reachability: 'reachable' as const };
 const MACBOOK_OFFLINE = { name: 'MacBook Pro', homeDir: null, reachability: 'unreachable' as const };
+
+it('renders the remote Services specimen with sharing instead of a private Open', async () => {
+    const screen = await renderScreen(<ServicesSpecimen phone={false} remote />);
+    expect(screen.getTextContent()).toContain('web');
+    await expandRow(screen, 'services-specimen-pane-row:inventory:storybook');
+    expect(screen.findAllByTestId('services-specimen-pane-row:inventory:storybook-share').length).toBeGreaterThan(0);
+    expect(screen.findAllByTestId('services-specimen-pane-row:inventory:web-open')).toHaveLength(0);
+    expect(screen.findAllByTestId('services-specimen-pane-row:inventory:storybook-open')).toHaveLength(0);
+});
 
 async function expandRow(screen: Awaited<ReturnType<typeof renderScreen>>, rowTestID: string): Promise<void> {
     await pressTestInstanceAsync(screen.findByTestId(`${rowTestID}-item`), `${rowTestID}-item`);
@@ -249,6 +260,7 @@ describe('DetectedLocalServicesPane', () => {
         const previous = storage.getState();
         const source = createMachineFixture({ id: 'machine-a', active: false, activeAt: 0 });
         const worker = createMachineFixture({ id: 'worker', activeAt: Date.now(), metadata: { ...source.metadata!, displayName: 'Build worker' } });
+        publishMachineActivity(worker, worker, []);
         storage.setState({ machines: { 'machine-a': source, worker }, machineListByServerId: { [serverId]: [source, worker] } });
         const target = { id: 'worker-jobs', source: 'managed_service' as const,
             sourceClass: { kind: 'managed_service' as const, managedServiceId: 'worker-jobs' },
@@ -264,6 +276,7 @@ describe('DetectedLocalServicesPane', () => {
             expect(collectText(screen.findByTestId('worker-pane-row:worker-jobs')!)).not.toContain('Last known');
             await act(async () => {
                 const offlineWorker = { ...worker, active: false, activeAt: 0 };
+                publishMachineActivity(worker, offlineWorker, []);
                 storage.setState({ machines: { 'machine-a': source, worker: offlineWorker }, machineListByServerId: { [serverId]: [source, offlineWorker] } });
             });
             await vi.waitFor(() => expect(collectText(screen.findByTestId('worker-pane-row:worker-jobs')!)).toContain('Last known'));
@@ -272,6 +285,10 @@ describe('DetectedLocalServicesPane', () => {
     });
 
     it('observes worker public policy and create/revoke snapshots without inheriting Source exposures', async () => {
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const accountId = 'worker-public-account';
+        const home = await createPlainArtifactHomeFixture('https://worker-public-services.test', { accountId });
+        const serverId = home.home.id;
         const { resetLocalServicePublicPreviewStoreForTests, publishLocalServicePublicPreviewSnapshot } =
             await import('@/sync/domains/local/services/publicPreview/sharedStore');
         resetLocalServicePublicPreviewStoreForTests();
@@ -293,12 +310,12 @@ describe('DetectedLocalServicesPane', () => {
             exposures: [{ ...exposure, machineId: 'machine-a', sessionId: undefined, publicUrl: 'https://source.test/share' }],
         });
         const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
-        const actions = createLocalServicePublicPreviewActions({ machineId: 'machine-a', serverId: 'home',
+        const actions = createLocalServicePublicPreviewActions({ machineId: 'machine-a', serverId,
             copyToClipboard: async () => false,
             runtimeActionExecute: async (request) => {
                 expect(request.input).toMatchObject({ machineId: 'worker', sessionId: 'worker-session' });
                 const exposures = request.actionId === 'localServices.publicPreview.create' ? [exposure] : [];
-                publishLocalServicePublicPreviewSnapshot({ machineId: 'worker', serverId: 'home', sessionId: 'worker-session' }, {
+                publishLocalServicePublicPreviewSnapshot({ machineId: 'worker', serverId, accountId, sessionId: 'worker-session' }, {
                     ...workerSnapshot, exposures,
                 });
                 return { ok: true };
@@ -306,7 +323,7 @@ describe('DetectedLocalServicesPane', () => {
         try {
             const screen = await renderScreen(<DetectedLocalServicesPane
                 inventoryState={buildLocalServiceInventoryState({ rows: [] })} launcherState={launcherStateWith([workerTarget])}
-                sourceMachineId="machine-a" serverId="home" publicPreviewState={sourceState}
+                sourceMachineId="machine-a" serverId={serverId} publicPreviewState={sourceState}
                 publicPreviewEnabled publicPreviewStatusClient={async ({ request }) => {
                     expect(request.machineId).toBe('worker');
                     return { ok: true, snapshot: workerSnapshot };
@@ -324,7 +341,7 @@ describe('DetectedLocalServicesPane', () => {
             expect(screen.findAllByTestId(`${prefix}-exposure:same-exposure`)).toHaveLength(0);
             expect(screen.findByTestId(shareId)).toBeTruthy();
             await screen.unmount();
-        } finally { resetLocalServicePublicPreviewStoreForTests(); }
+        } finally { resetLocalServicePublicPreviewStoreForTests(); await home.dispose(); }
     });
     it('renders loading state before the first inventory snapshot', async () => {
         const screen = await renderScreen(
@@ -476,9 +493,10 @@ describe('DetectedLocalServicesPane', () => {
         expect(screen.findByTestId('local-services-pane-offline-card')).toBeTruthy();
         expect(screen.findAllByTestId('local-services-pane-error-card')).toHaveLength(0);
         expect(screen.findByTestId('probe-header.subtitle')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('MacBook Pro is offline');
+        expect(screen.getTextContent()).toContain('MacBook Pro is out of reach');
         await pressTestInstanceAsync(screen.findByTestId('local-services-pane-offline-action'), 'offline action');
-        expect(onRefresh).toHaveBeenCalledTimes(1);
+        // The shared checkout recovery owns Retry; an unreachable Machine is not scanned.
+        expect(onRefresh).not.toHaveBeenCalled();
     });
 
     it('keeps last-known rows under one offline line while the machine is unreachable', async () => {

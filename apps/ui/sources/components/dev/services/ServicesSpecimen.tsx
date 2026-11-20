@@ -42,6 +42,7 @@ import { t } from '@/text';
  */
 const MACHINE = 'machine-specimen';
 const SESSION = 'session-specimen';
+const STORYBOOK_SESSION = 'session-specimen-storybook';
 const NOOP = async () => ({ status: 'succeeded' as const });
 
 function inventoryRow(id: string, port: number, command: string): LocalServiceInventoryRow {
@@ -126,7 +127,7 @@ const LAUNCHER = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherSta
     updatedAt: 3_000,
     targets: [
         runningTarget('web', 'web', 5173, SESSION),
-        runningTarget('storybook', 'storybook', 6006, undefined),
+        runningTarget('storybook', 'storybook', 6006, STORYBOOK_SESSION),
         { id: 'package:docs:dev', source: 'package_script', sourceClass: { kind: 'package_script', runTargetId: 'docs:dev', packageName: 'docs', scriptName: 'dev' }, machineId: MACHINE, workspace: { serverId: 'home-specimen', machineId: MACHINE, workspaceId: 'checkout', rootPath: '/work/happier' }, declaration: { workspaceRefId: 'checkout', selection: { kind: 'manifest', name: 'docs' } }, title: 'docs', confidence: 'medium', state: 'available', actions: [], commandPreview: 'yarn docs:dev' } as LocalServiceLaunchTarget,
     ],
 });
@@ -137,7 +138,7 @@ const WEB_TERMINAL = { kind: 'terminal_view' as const, machineId: MACHINE, termi
 const LAUNCHER_PORTS = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
     v: 1, machineId: MACHINE, sessionId: SESSION, updatedAt: 3_000,
     targets: [{ ...runningTarget('web', 'web', 41873, SESSION), terminalView: WEB_TERMINAL },
-        runningTarget('storybook', 'storybook', 44219, undefined)],
+        runningTarget('storybook', 'storybook', 44219, STORYBOOK_SESSION)],
 });
 const PORTS_OWN: WorktreePortsResultV1 = { kind: 'ready', assignment: { ports: [41873, 44219], listenerPorts: {} } };
 const PORTS_UNAVAILABLE: WorktreePortsResultV1 = { kind: 'unavailable', code: 'project_worktree_ports_unavailable', reason: 'state_read_failed' };

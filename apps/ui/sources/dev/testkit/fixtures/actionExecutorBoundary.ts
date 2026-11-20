@@ -2,6 +2,7 @@ export { createActionExecutorBoundaryFixture } from '../../../../../../packages/
 
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 
 /** A fixture host's Account and designed Confirm; protocol admission and transport ports stay real. */
@@ -12,6 +13,7 @@ export function createUiActionExecutorBoundary(deps: ActionExecutorDeps, account
   // The real UI host captures Account settings for ordinary admission as well as Confirm.
   const accountContext = (context: ActionExecutorContext | undefined): ActionExecutorContext => ({
     ...context, runtimeAccountId: accountId, actionCaller: context?.actionCaller ?? { kind: 'host' },
+    authority: context?.authority ?? resolveInvocationAuthority({ credential: 'account', surface: 'ui' }),
     actionsSettings: actionsSettings ?? context?.actionsSettings ?? defaultSettings,
   });
   return {
