@@ -231,20 +231,43 @@ describe('managed Machine inventory', () => {
     });
     // P03-ANDROID-FIX-2: Home hides through Activity, so each return releases and re-takes the inventory. A return
     // with nothing changed while away re-read the list every time; it refreshes on its own change push instead.
-    it('re-takes a released inventory without a list read unless it changed while away', async () => {
+    it('re-takes a settled inventory without a list read and catches up an interrupted push', async () => {
+        const homeId = 'srv_inventory_retake';
+        const active = ManagedMachineV1Schema.parse({
+            id: 'sandbox', homeId, custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Build box', choices: {} },
+            allocation: 'may-exist', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+        });
+        let current = active;
         let reads = 0;
+        let rowReads = 0;
+        let rowReply = createDeferred<Response>();
         const homes = await serveAccountHomes({ homes: [
-            { key: 'a', serverUrl: 'https://inventory-retake.test', serverIdentityId: 'srv_inventory_retake', accountId: 'owner' },
+            { key: 'a', serverUrl: 'https://inventory-retake.test', serverIdentityId: homeId, accountId: 'owner' },
         ], route: request => {
+            if (request.path === '/v1/machines/managed/actions/get') {
+                rowReads += 1;
+                return rowReply.promise;
+            }
             if (request.path !== '/v1/machines/managed/actions/list') return undefined;
             reads += 1;
-            return Response.json({ machines: [] });
+            return Response.json({ machines: current.archivedAt === undefined ? [current] : [] });
         } });
         const serverId = homes.homes.a!.id;
         const account = await captureLazyActionAccountContext(serverId);
         try {
             const first = retainManagedMachineInventory(account.accountLifetime, () => {});
             await waitForHomeGovernance(() => expect(first.getSnapshot().status).toBe('ready'));
+            const settled = first.getSnapshot();
+            const push = () => publishHomeAccountChange(serverId, [active.id], {
+                feedPageConsumed: true, changeKinds: ['account'], managedMachineChangedIds: [active.id],
+            });
+            await act(async () => push());
+            await waitForHomeGovernance(() => expect(rowReads).toBe(1));
+            await act(async () => rowReply.resolve(Response.json(active)));
+            await flushHookEffects({ cycles: 30 });
+            expect(first.getSnapshot()).toBe(settled);
             first.dispose();
             for (let visit = 0; visit < 3; visit += 1) {
                 const again = retainManagedMachineInventory(account.accountLifetime, () => {});
@@ -253,11 +276,24 @@ describe('managed Machine inventory', () => {
                 again.dispose();
             }
             expect(reads).toBe(1);
+            // Leaving while the archive refresh is in flight must leave the retained row stale.
+            const interrupted = retainManagedMachineInventory(account.accountLifetime, () => {});
+            current = { ...active, archivedAt: 1, intentRevision: 2 };
+            rowReply = createDeferred<Response>();
+            await act(async () => push());
+            await waitForHomeGovernance(() => expect(rowReads).toBe(2));
+            interrupted.dispose();
+            await act(async () => rowReply.resolve(Response.json(current)));
+            const reopened = retainManagedMachineInventory(account.accountLifetime, () => {});
+            try {
+                await waitForHomeGovernance(() => expect(reopened.getSnapshot()).toMatchObject({ status: 'ready', machines: [] }));
+                expect(reads).toBe(2);
+            } finally { reopened.dispose(); }
             // A change pushed while nothing holds it is caught up on the next take.
             await act(async () => publishHomeAccountChange(serverId));
             const changed = retainManagedMachineInventory(account.accountLifetime, () => {});
-            await waitForHomeGovernance(() => expect(reads).toBe(2));
-            changed.dispose();
+            try { await waitForHomeGovernance(() => expect(reads).toBe(3)); }
+            finally { changed.dispose(); }
         } finally {
             account.dispose();
             await homes.dispose();

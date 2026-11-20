@@ -35,21 +35,22 @@ export type ManagedMachineInventoryEntry = Readonly<{
 }>;
 
 type InventoryReader = ReturnType<typeof createInventoryReader>;
+type InventoryReceipt = Readonly<{ entry: ManagedMachineInventoryEntry; observedChange: number | undefined }>;
 // The last reader releases transport and observation. Admitted presentation
 // survives route remounts within the incumbent Account lifetime, without demand.
 type InventoryDemand = { readers: Map<string, InventoryReader>; observers: Set<() => void>;
-    retained: WeakMap<ServerAccountScopeLifetime, Map<string, ManagedMachineInventoryEntry>>; unsubscribe?: () => void;
+    retained: WeakMap<ServerAccountScopeLifetime, Map<string, InventoryReceipt>>; unsubscribe?: () => void;
     /**
      * Per Home, how many inventory changes were pushed; a retained receipt notes the count it was read at. A receipt
      * with no change pushed since is current, so re-taking it (each return to a page hidden through Activity) reads nothing.
      */
-    changes: Map<string, number>; receiptChanges: Map<string, number> };
+    changes: Map<string, number> };
 const demandedInventories = new WeakMap<InventoryExecute, InventoryDemand>();
 
 function inventoryDemand(executeAction: InventoryExecute): InventoryDemand {
     let demand = demandedInventories.get(executeAction);
     if (!demand) {
-        demand = { readers: new Map(), observers: new Set(), retained: new WeakMap(), changes: new Map(), receiptChanges: new Map() };
+        demand = { readers: new Map(), observers: new Set(), retained: new WeakMap(), changes: new Map() };
         demandedInventories.set(executeAction, demand);
     }
     return demand;
@@ -121,12 +122,16 @@ function definedFields(entry: ManagedMachineInventoryEntry): ManagedMachineInven
 }
 
 function createInventoryReader(serverId: string, accountId: string, homeId: string, managedId: string | undefined,
-    includeArchived: boolean, executeAction: InventoryExecute, remove: () => void, onPublished: () => void, retained?: ManagedMachineInventoryEntry,
+    includeArchived: boolean, executeAction: InventoryExecute, remove: () => void, onPublished: () => void, readHomeChange: () => number,
+    retained?: InventoryReceipt,
     enrolledMachineId?: string, admitted = false, onRead?: (machines: readonly ManagedMachineV1[], absent?: ReadonlyMap<string, string>, admitMembership?: boolean) => void,
     joinedInitialRead = false) {
     const consumers = new Map<() => void, ServerAccountScopeLifetime>();
+    const previousEntry = retained?.entry;
     let entry: ManagedMachineInventoryEntry = definedFields({ accountId, homeId, managedId, enrolledMachineId, includeArchived,
-        machines: retained?.machines ?? EMPTY_ROWS, ...(retained?.asOf !== undefined ? { asOf: retained.asOf } : {}), status: admitted ? 'ready' : 'loading' });
+        machines: previousEntry?.machines ?? EMPTY_ROWS, ...(previousEntry?.asOf !== undefined ? { asOf: previousEntry.asOf } : {}),
+        status: admitted ? 'ready' : 'loading' });
+    let observedChange = retained?.observedChange;
     let machinesById = new Map(entry.machines.map(machine => [machine.id, machine]));
     let machinesByEnrolledId = new Map(entry.machines.flatMap(machine => machine.enrolledMachineId && machine.archivedAt === undefined
         ? [[machine.enrolledMachineId, machine] as const] : []));
@@ -166,6 +171,7 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
         controller?.abort();
         const cancellation = new AbortController();
         controller = cancellation;
+        const readChange = readHomeChange();
         awaitingApproval = false;
         // Revalidation keeps the settled answer, including failures, until it
         // changes. Initial loading and pending approval have their own transitions.
@@ -220,6 +226,7 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                             }
                         }
                         awaitingApproval = false;
+                        observedChange = readChange;
                         receiveRows(new Map(machines.map(machine => [machine.id, machine])), absent, true, true);
                         onRead?.(machines, absent, true);
                         return;
@@ -234,6 +241,8 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                         // Keep previous recovery rows until the second read settles.
                         const active = result.machines;
                         if (active.some(machine => machine.homeId !== homeId)) throw new Error('managed_response_invalid');
+                        // A joined current-only reader can use this first active answer.
+                        if (entry.asOf === undefined) observedChange = readChange;
                         publish({ ...entry, asOf: Date.now(), machines:
                             [...new Map([...active, ...entry.machines.filter(machine => machine.archivedAt !== undefined)]
                                 .map(machine => [machine.id, machine])).values()] });
@@ -256,6 +265,8 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
                     const machines = result.machines;
                     if (machines.some(machine => machine.homeId !== homeId || (managedId && machine.id !== managedId)
                         || (enrolledMachineId && machine.enrolledMachineId !== enrolledMachineId))) throw new Error('managed_response_invalid');
+                    // An equal result still settles the read. Publication may reuse the entry's identity.
+                    observedChange = readChange;
                     publish({ accountId, homeId, managedId, enrolledMachineId, includeArchived, status: 'ready', asOf: Date.now(), machines });
                     onRead?.(machines);
                 } catch {
@@ -291,13 +302,15 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
         isAwaitingApproval: () => awaitingApproval,
         isRefreshing: () => refreshing,
         get: () => entry,
+        getObservedChange: () => observedChange,
         getMachine: (id: string) => machinesById.get(id),
         getEnrolledMachine: (id: string) => machinesByEnrolledId.get(id),
         isCurrent,
         refresh,
         /** First answer of a joined reader: the joined list read's current rows. */
-        admitJoinedReceipt(machines: readonly ManagedMachineV1[]) {
+        admitJoinedReceipt(machines: readonly ManagedMachineV1[], joinedChange: number | undefined) {
             if (!isCurrent() || entry.asOf !== undefined || refreshing) return;
+            observedChange = joinedChange;
             publish({ ...entry, status: 'ready', errorCode: undefined, asOf: Date.now(), machines });
         },
         receiveRows(sourceServerId: string, sourceAccountId: string, sourceHomeId: string, rows: ReadonlyMap<string, ManagedMachineV1>,
@@ -330,29 +343,26 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
     const inventories = demand.readers;
     const key = inventoryKey(serverId, accountId, homeId, managedId, includeArchived, enrolledMachineId);
     const lifetime = captureActiveServerAccountScopeLifetime();
+    const readHomeChange = () => demand.changes.get(serverId) ?? 0;
     let reader = inventories.get(key);
     const notify = () => {
         if (lifetime?.isCurrent() && reader) {
-            const retained = demand.retained.get(lifetime) ?? new Map<string, ManagedMachineInventoryEntry>();
+            const retained = demand.retained.get(lifetime) ?? new Map<string, InventoryReceipt>();
             const entry = reader.get();
             if (entry.asOf !== undefined && !entry.approval) {
-                retained.set(key, entry);
-                demand.receiptChanges.set(key, demand.changes.get(serverId) ?? 0);
+                retained.set(key, { entry, observedChange: reader.getObservedChange() });
             } else {
                 retained.delete(key);
-                demand.receiptChanges.delete(key);
             }
             demand.retained.set(lifetime, retained);
         }
         if (!managedId) for (const observer of demand.observers) observer();
     };
     if (!reader?.isCurrent()) {
-        current ??= lifetime?.isCurrent() ? demand.retained.get(lifetime)?.get(key) : undefined;
-        let retained = current?.accountId === accountId && current.homeId === homeId && current.managedId === managedId && current.enrolledMachineId === enrolledMachineId
-            && (current.includeArchived ?? false) === includeArchived ? current : undefined;
-        // A receipt read since the last pushed change is still current: re-taking it reads nothing.
-        let admitted = retained !== undefined && retained.status === 'ready'
-            && demand.receiptChanges.get(key) === (demand.changes.get(serverId) ?? 0);
+        const cached = lifetime?.isCurrent() ? demand.retained.get(lifetime)?.get(key) : undefined;
+        let retained = cached ?? (current?.accountId === accountId && current.homeId === homeId && current.managedId === managedId
+            && current.enrolledMachineId === enrolledMachineId && (current.includeArchived ?? false) === includeArchived
+            ? { entry: current, observedChange: undefined } : undefined);
         let joined: InventoryReader | undefined;
         if (!managedId && !includeArchived && !enrolledMachineId && !retained) {
             // The archive-including inventory already read the current list. A settled
@@ -360,8 +370,8 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
             const inventory = inventories.get(inventoryKey(serverId, accountId, homeId, undefined, true));
             const receipt = inventory?.isCurrent() && !inventory.isRefreshing() ? inventory.get() : undefined;
             if (receipt?.status === 'ready' && receipt.asOf !== undefined) {
-                retained = { ...receipt, includeArchived: false, machines: receipt.machines.filter(machine => machine.archivedAt === undefined) };
-                admitted = true;
+                retained = { entry: { ...receipt, includeArchived: false, machines: receipt.machines.filter(machine => machine.archivedAt === undefined) },
+                    observedChange: inventory?.getObservedChange() };
             } else if (inventory?.isCurrent() && inventory.isRefreshing() && inventory.get().asOf === undefined) {
                 // Its first list read is in flight (screens mounting together): join it instead of reading the same list again.
                 joined = inventory;
@@ -375,28 +385,31 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
                 if (!machine || !receipt) continue;
                 // Reuse admission without retaining broad list demand. Future invalidation
                 // is handled by this reader's exact enrolled-Machine query.
-                retained = { ...receipt, managedId, enrolledMachineId, includeArchived, machines: [machine] };
-                admitted = true;
+                retained = { entry: { ...receipt, managedId, enrolledMachineId, includeArchived, machines: [machine] },
+                    observedChange: inventory?.getObservedChange() };
                 break;
             }
         }
+        // Reuse a settled observation only when it includes the latest Home change.
+        const admitted = retained?.entry.status === 'ready' && retained.observedChange === readHomeChange();
         reader = createInventoryReader(serverId, accountId, homeId, managedId, includeArchived, executeAction,
             () => { if (inventories.get(key) === reader) {
                 inventories.delete(key);
                 // The change observation stays while receipts are retained, so a released inventory knows whether
                 // it changed while away; it is one listener per inventory demand.
                 notify();
-            } }, notify, retained, enrolledMachineId, admitted,
+            } }, notify, readHomeChange, retained, enrolledMachineId, admitted,
             (machines, absent, admitMembership) => {
                 const rows = new Map(machines.map(machine => [machine.id, machine]));
                 // A retained destination may remount before its next read settles.
                 // Give it the same admitted rows as live projections, so an old
                 // enrollment cannot redirect back from a confirmed-absent receipt.
                 const receipts = lifetime?.isCurrent() ? demand.retained.get(lifetime) : undefined;
-                for (const [receiptKey, receipt] of receipts ?? []) {
+                for (const [receiptKey, retainedReceipt] of receipts ?? []) {
+                    const receipt = retainedReceipt.entry;
                     if (receipt.accountId !== accountId || receipt.homeId !== homeId) continue;
                     const received = retainKeyedRows(receipt.machines, receivedMachineRows(receipt, rows, absent, admitMembership), machine => machine.id);
-                    if (received !== receipt.machines) receipts?.set(receiptKey, { ...receipt, machines: received });
+                    if (received !== receipt.machines) receipts?.set(receiptKey, { ...retainedReceipt, entry: { ...receipt, machines: received } });
                 }
                 for (const target of inventories.values()) if (target !== reader) target.receiveRows(serverId, accountId, homeId, rows, absent, admitMembership);
             }, joined !== undefined);
@@ -411,7 +424,7 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
                 const answer = source.isCurrent() ? source.get() : undefined;
                 if (answer?.asOf !== undefined && (answer.status === 'ready' || answer.status === 'loading')) {
                     demand.observers.delete(settle);
-                    joining.admitJoinedReceipt(answer.machines.filter(machine => machine.archivedAt === undefined));
+                    joining.admitJoinedReceipt(answer.machines.filter(machine => machine.archivedAt === undefined), source.getObservedChange());
                 } else if (!answer || (answer.status !== 'loading' && answer.status !== 'ready')) {
                     demand.observers.delete(settle);
                     void joining.refresh();
@@ -516,7 +529,7 @@ export function useHomeManagedMachineMembershipSource(serverId: string | undefin
             const reader = demand.readers.get(key);
             const live = reader?.isCurrent() ? reader.get() : undefined;
             const lifetime = live ? null : captureActiveServerAccountScopeLifetime();
-            const entry = live ?? (lifetime?.isCurrent() ? demand.retained.get(lifetime)?.get(key) : undefined);
+            const entry = live ?? (lifetime?.isCurrent() ? demand.retained.get(lifetime)?.get(key)?.entry : undefined);
             return { machines: entry?.machines,
                 firstAnswerPending: entry?.asOf === undefined && (!entry || entry.status === 'loading') };
         };
@@ -589,7 +602,7 @@ export function useManagedMachineInventory<TExecute extends InventoryExecute = F
             const accountId = binding?.isCurrent() ? binding.accountId
                 : (!resolution || resolution === 'resolving') && lifetime?.scope.serverId === serverId ? lifetime.scope.accountId : undefined;
             const cached = accountId ? retained?.get(inventoryKey(serverId, accountId,
-                getServerProfileById(serverId)?.serverIdentityId, managedId, includeArchived, enrolledMachineId)) : undefined;
+                getServerProfileById(serverId)?.serverIdentityId, managedId, includeArchived, enrolledMachineId))?.entry : undefined;
             const entry = entries[serverId] ?? (cached ? { ...cached, status: 'loading' as const } : undefined);
             if (accountId && entry?.accountId === accountId && entry.managedId === managedId && entry.enrolledMachineId === enrolledMachineId
                 && entry.homeId === getServerProfileById(serverId)?.serverIdentityId
