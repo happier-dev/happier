@@ -2,6 +2,7 @@ import type { NativeIrohModule } from '@happier-dev/iroh-native';
 import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { FilesystemDownloadInputSchema, FilesystemUploadInputSchema, FilesystemUploadOutputSchema, type FilesystemUploadInput } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createTargetedActionRpcRequestV1, TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -78,6 +79,8 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     const homes = createHomeGovernanceHarness();
     const serverId = await homes.addHome({ name: 'Workspace download', serverUrl: 'https://workspace-download.example.test',
         serverIdentityId: 'srv_workspace_download', accountId, currentAccount: true });
+    // Transfer and media Actions share the Account's index from their first admission (72aafe1653c).
+    homes.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
     const scope = { serverId, machineId: 'workspace-download-machine', rootPath: '/repo' };
     const features = createRootLayoutFeaturesResponse();
     for (const id of ['machines.transfer', 'machines.transfer.directPeer', 'machines.peerMediation'] as const) {
