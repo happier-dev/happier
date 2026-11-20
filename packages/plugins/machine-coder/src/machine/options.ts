@@ -1,7 +1,7 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import type { MachineProvisionerOptionsResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { coderWorkspaceStatus, type CoderClient } from './nativeClient.js';
+import { coderWorkspaceStatus, routableCoderAgentNames, type CoderClient } from './nativeClient.js';
 import { BILLING, RETENTION, type CoderOptions } from './schemas.js';
 
 const open = { policy: 'additive-open/drop' } as const;
@@ -24,14 +24,15 @@ export async function coderOptions(client: CoderClient, query: CoderOptions): Pr
     const workspaces = await client.listOwnWorkspaces();
     return {
       base: {
-        launch: { parameterValues: [], ...(query.agentName ? { agentName: query.agentName } : {}) },
+        launch: { parameterValues: [] },
         billing: BILLING, retention: RETENTION,
       },
-      dimensions: { ...emptyDimensions(), image: workspaces.map(workspace => {
+      dimensions: { ...emptyDimensions(), image: workspaces.flatMap(workspace => {
         const template = workspace.template_display_name?.trim() || workspace.template_name?.trim();
-        return {
-          id: workspace.id,
-          title: workspace.name,
+        const agents = routableCoderAgentNames(workspace);
+        return agents.filter(agentName => !query.agentName || agentName === query.agentName).map(agentName => ({
+          id: agents.length === 1 ? workspace.id : JSON.stringify([workspace.id, agentName]),
+          title: agents.length === 1 ? workspace.name : `${workspace.name} (${agentName})`,
           nativeFacts: {
             ...(template ? { image: { id: workspace.template_id, title: template } } : {}),
             workspaceStatus: coderWorkspaceStatus(workspace),
@@ -41,8 +42,9 @@ export async function coderOptions(client: CoderClient, query: CoderOptions): Pr
             { path: 'organizationId', value: workspace.organization_id },
             { path: 'templateId', value: workspace.template_id },
             { path: 'templateVersionId', value: workspace.latest_build.template_version_id },
+            { path: 'agentName', value: agentName },
           ],
-        };
+        }));
       }) },
     };
   }

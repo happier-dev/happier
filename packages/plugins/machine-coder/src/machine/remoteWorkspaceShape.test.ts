@@ -24,7 +24,7 @@ const resource = CoderResourceSchema.parse({
   managedId: 'managed',
 });
 
-const workspace = (name: string, transition: 'start' | 'delete' = 'start', status = 'running') => ({
+const workspace = (name: string, transition: 'start' | 'delete' = 'start', status = 'running', agentNames = [resource.agentName]) => ({
   id: resource.workspaceId,
   owner_id: resource.ownerId,
   owner_name: resource.ownerName,
@@ -38,7 +38,7 @@ const workspace = (name: string, transition: 'start' | 'delete' = 'start', statu
     transition,
     status,
     job: { status },
-    resources: [],
+    resources: agentNames.map((name, index) => ({ agents: [{ id: `agent-${index}`, name, status: 'connected' }] })),
   },
 });
 
@@ -47,7 +47,7 @@ function response(value: unknown): Response {
 }
 
 describe('remote workspace provider shape contracts', () => {
-  it('lists Coder account workspaces as selectable attach launches', async () => {
+  it.each([undefined, resource.agentName])('projects a valid Coder attach launch with agent selector %s', async agentName => {
     const client = createCoderClient({
       signal: new AbortController().signal,
       observedAt: 1,
@@ -64,7 +64,7 @@ describe('remote workspace provider shape contracts', () => {
         ], count: 3 });
       },
     });
-    const query = { attachExisting: true, agentName: resource.agentName } as const;
+    const query = { attachExisting: true, ...(agentName === undefined ? {} : { agentName }) } as const;
 
     const options = await coderOptions(client, query);
 
@@ -79,11 +79,45 @@ describe('remote workspace provider shape contracts', () => {
       id: 'starting',
       nativeFacts: { workspaceStatus: 'starting' },
     })]);
-    expect(projectMachineProvisionerSelectionV1({ options, selection: { image: resource.workspaceId },
-      launchSchema: CoderLaunchSchema.jsonSchema })).toMatchObject({
-      kind: 'ready', launch: { existingWorkspaceId: resource.workspaceId, agentName: resource.agentName,
-        organizationId: resource.organizationId, templateId: resource.templateId },
+    const selected = projectMachineProvisionerSelectionV1({ options, selection: { image: resource.workspaceId },
+      launchSchema: CoderLaunchSchema.jsonSchema });
+    expect(selected.kind).toBe('ready');
+    if (selected.kind !== 'ready') throw new Error(selected.kind);
+    expect(CoderLaunchSchema.parse(selected.launch)).toMatchObject({
+      existingWorkspaceId: resource.workspaceId, agentName: resource.agentName,
+      organizationId: resource.organizationId, templateId: resource.templateId,
     });
+    expect(selected.nativeFacts.workspaceStatus).toBe('running');
+  });
+
+  it('offers distinct attach launches for routable agents in one Coder workspace', async () => {
+    const client = createCoderClient({
+      signal: new AbortController().signal,
+      observedAt: 1,
+      waitForObservation: async () => undefined,
+      request: async () => response({ workspaces: [
+        workspace(resource.workspaceName, 'start', 'running', ['main', 'tools', 'duplicate', 'duplicate', 'invalid name']),
+        { ...workspace('without-agents', 'start', 'starting', []), id: 'without-agents' },
+      ], count: 2 }),
+    });
+    const options = await coderOptions(client, { attachExisting: true });
+    const rows = options.dimensions.image;
+    expect(rows.map(row => row.title)).toEqual([
+      `${resource.workspaceName} (main)`,
+      `${resource.workspaceName} (tools)`,
+    ]);
+    expect(new Set(rows.map(row => row.id)).size).toBe(2);
+    for (const [index, row] of rows.entries()) {
+      const selected = projectMachineProvisionerSelectionV1({ options, selection: { image: row.id },
+        launchSchema: CoderLaunchSchema.jsonSchema });
+      expect(selected.kind).toBe('ready');
+      if (selected.kind !== 'ready') throw new Error(selected.kind);
+      expect(CoderLaunchSchema.parse(selected.launch)).toMatchObject({
+        existingWorkspaceId: resource.workspaceId, agentName: ['main', 'tools'][index],
+      });
+    }
+    const unavailable = await coderOptions(client, { attachExisting: true, agentName: 'missing' });
+    expect(unavailable.dimensions.image).toEqual([]);
   });
 
   it.each(['create', 'attach', 'recover attachment'] as const)('F1: Coder %s creates a workspace only when asked to create one', async variant => {

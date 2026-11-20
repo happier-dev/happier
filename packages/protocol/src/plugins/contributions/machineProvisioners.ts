@@ -582,12 +582,13 @@ export function projectMachineProvisionerSelectionV1(input: Readonly<{
       prices.push(fact);
     }
     for (const key of Object.keys(owner?.nativeFacts ?? {}) as (keyof typeof nativeFacts)[]) {
+      if (!Object.hasOwn(ProviderNativeOptionFactsV1Schema.shape, key)) continue;
       const incoming = owner!.nativeFacts![key];
       const existing = nativeFacts[key];
       if (incoming === undefined) continue;
-      if (key === 'monthlyCapStatus') {
+      if (typeof incoming === 'string') {
         if (existing !== undefined && existing !== incoming) invalid = 'conflicting_native_facts';
-        nativeFacts.monthlyCapStatus = incoming as typeof nativeFacts.monthlyCapStatus;
+        Object.assign(nativeFacts, { [key]: incoming });
       } else {
         const fields = incoming as Record<string, unknown>;
         const previous = existing as Record<string, unknown> | undefined;

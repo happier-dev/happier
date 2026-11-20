@@ -3,7 +3,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { projectMachineProvisionerActionFailure as projectExternalActionFailure, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { coderCredentialUnavailable } from './connection.js';
-import { BILLING, CoderOperationSchema, CoderResourceSchema, reference, RECONCILIATION, type CoderAcquireOperation, type CoderDeleteOperation, type CoderLaunch, type CoderResource } from './schemas.js';
+import { BILLING, CoderAgentNameSchema, CoderOperationSchema, CoderResourceSchema, reference, RECONCILIATION, type CoderAcquireOperation, type CoderDeleteOperation, type CoderLaunch, type CoderResource } from './schemas.js';
 
 // Coder v2.39.0 codersdk/{workspaces,workspacebuilds}.go. Decode consumed
 // fields at the HTTP boundary; native response additions remain compatible.
@@ -46,6 +46,14 @@ const resourceFor = (native: Workspace, managedId: string, agentName: string): C
 export function coderWorkspaceStatus(native: Workspace): 'running' | 'stopped' | 'starting' | 'unknown' {
   const status = native.latest_build.status;
   return status === 'running' || status === 'stopped' || status === 'starting' ? status : 'unknown';
+}
+export function routableCoderAgentNames(native: Workspace): string[] {
+  const counts = new Map<string, number>();
+  for (const resource of native.latest_build.resources ?? []) {
+    for (const { name } of resource.agents ?? []) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts].flatMap(([name, count]) =>
+    count === 1 && CoderAgentNameSchema.safeParse(name).success ? [name] : []);
 }
 function powerOf(native: Workspace) {
   const status = coderWorkspaceStatus(native);
@@ -264,8 +272,7 @@ export function createCoderClient(input: { request: (path: string, init?: Reques
       if (!native) throw new PluginError({ code: 'managed_not_found' });
       if (native.dormant_at) throw new PluginError({ code: 'coder_dormant' });
       if (powerOf(native) !== 'running') throw new PluginError({ code: 'managed_power_required' });
-      const agents = (native.latest_build.resources ?? []).flatMap(item => item.agents ?? []).filter(agent => agent.name === resource.agentName);
-      if (agents.length !== 1) throw new PluginError({ code: 'coder_agent_unavailable' });
+      if (!routableCoderAgentNames(native).includes(resource.agentName)) throw new PluginError({ code: 'coder_agent_unavailable' });
       return { ...resource, ownerName: native.owner_name, workspaceName: native.name };
     },
   };
