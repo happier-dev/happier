@@ -16,9 +16,13 @@ export const regressionCompareResultSchema = defineProtocolUnion([
     defineProtocolObject({ ...evidence, status: defineProtocolLiteral('inconclusive'), reasons: defineProtocolArray(text) }, { policy: 'closed' }),
 ]);
 export const regressionScheduleInputSchema = defineProtocolObject({ serverId: text, environmentId: text,
-    deploymentId: text, workflow: text, project: defineProtocolObject({ machineId: text, directory: text }, { policy: 'closed' }),
-    observationDelayMs: duration,
+    deploymentId: text, observationDelayMs: duration,
 }, { policy: 'closed' });
 export const regressionScheduleResultSchema = defineProtocolObject({
-    scheduledAt: defineProtocolNumber({ integer: true, minimum: 0 }), automationId: text, triggerId: text.optional(),
+    kind: defineProtocolLiteral('schedule'),
+    enabled: defineProtocolLiteral(true),
+    schedule: defineProtocolObject({
+        kind: defineProtocolLiteral('once'),
+        scheduledAt: defineProtocolNumber({ integer: true, minimum: 0 }),
+    }, { policy: 'closed' }),
 }, { policy: 'closed' });

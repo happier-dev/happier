@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PluginError, type PluginServices } from '@happier-dev/plugin-sdk';
+import type { PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
 import { localCaptureBackground } from './background.js';
@@ -134,40 +134,20 @@ describe('retained regression Actions', () => {
         } finally { vi.useRealTimers(); await host.dispose(); await lease.release(); fixture.close(); }
     });
 
-    it('computes one absolute instant from the successful receipt and delegates same-Workflow scheduling to the host', async () => {
-        const seen: unknown[] = [];
+    it('returns the receipt-derived once trigger for the Workflow without writing its trigger set', async () => {
         let receiptState = 'succeeded';
-        let refuseSchedule = false;
-        let includeTriggerId = true;
-        const actions = { execute: async (id: string, input: unknown) => {
-            seen.push({ id, input });
-            if (id === 'deployments.receipts.get') return { ok: true, deployment: { id: 'deploy', environmentId: 'env', state: receiptState, settledAtMs: 2000 } };
-            if (refuseSchedule) throw new PluginError({ code: 'workflow_definition_unavailable' });
-            return { set: { automationId: 'same-set' }, ...(includeTriggerId ? { triggerId: 'once' } : {}) };
+        const actions = { execute: async (id: string) => {
+            if (id !== 'deployments.receipts.get') throw new Error(`Unexpected effect: ${id}`);
+            return { ok: true, deployment: { id: 'deploy', environmentId: 'env', state: receiptState, settledAtMs: 2000 } };
         } } as unknown as PluginServices['actions'];
         const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN, services: { actions } });
+        const input = { serverId: 'home', environmentId: 'env', deploymentId: 'deploy', observationDelayMs: 1000 };
         try {
-            expect(await host.invokeAction('capture/regressions/schedule', { serverId: 'home', environmentId: 'env', deploymentId: 'deploy',
-                workflow: 'saved-workflow', project: { machineId: 'machine', directory: '/app' }, observationDelayMs: 1000 }))
-                .toEqual({ scheduledAt: 3000, automationId: 'same-set', triggerId: 'once' });
-            expect(seen).toEqual([
-                { id: 'deployments.receipts.get', input: { serverId: 'home', deploymentId: 'deploy' } },
-                { id: 'workflow.trigger.add', input: { workflow: 'saved-workflow', project: { machineId: 'machine', directory: '/app' },
-                    trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'once', scheduledAt: 3000 } } } },
-            ]);
-            includeTriggerId = false;
-            expect(await host.invokeAction('capture/regressions/schedule', { serverId: 'home', environmentId: 'env', deploymentId: 'deploy',
-                workflow: 'saved-workflow', project: { machineId: 'machine', directory: '/app' }, observationDelayMs: 1000 }))
-                .toEqual({ scheduledAt: 3000, automationId: 'same-set' });
-            receiptState = 'failed'; seen.length = 0;
-            await expect(host.invokeAction('capture/regressions/schedule', { serverId: 'home', environmentId: 'env', deploymentId: 'deploy',
-                workflow: 'saved-workflow', project: { machineId: 'machine', directory: '/app' }, observationDelayMs: 1000 }))
+            expect(await host.invokeAction('capture/regressions/schedule', input))
+                .toEqual({ kind: 'schedule', enabled: true, schedule: { kind: 'once', scheduledAt: 3000 } });
+            receiptState = 'failed';
+            await expect(host.invokeAction('capture/regressions/schedule', input))
                 .rejects.toMatchObject({ code: 'deployment_unavailable' });
-            expect(seen).toHaveLength(1);
-            receiptState = 'succeeded'; refuseSchedule = true;
-            await expect(host.invokeAction('capture/regressions/schedule', { serverId: 'home', environmentId: 'env', deploymentId: 'deploy',
-                workflow: 'saved-workflow', project: { machineId: 'machine', directory: '/app' }, observationDelayMs: 1000 }))
-                .rejects.toMatchObject({ code: 'workflow_definition_unavailable' });
         } finally { await host.dispose(); }
     });
 });

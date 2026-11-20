@@ -1,5 +1,5 @@
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import { isPluginActionApprovalRequestCreated, type PluginActionDefinition, type PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import type { PluginActionDefinition, PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
 import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1, TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1 } from '@happier-dev/database-protocol';
@@ -86,18 +86,8 @@ export const telemetryRegressionActions = {
             if (deployment.environmentId !== input.environmentId || deployment.state !== 'succeeded' || deployment.settledAtMs === undefined) {
                 throw new PluginError({ code: 'deployment_unavailable', message: 'A successful finished deployment is required.' });
             }
-            const scheduledAt = deployment.settledAtMs + input.observationDelayMs;
-            // The existing host owns consent, the saved Workflow's trigger set
-            // and the spent-once lifecycle. No per-deploy state is carried.
-            const scheduled = await context.services.actions.execute('workflow.trigger.add', {
-                workflow: input.workflow, project: input.project,
-                trigger: { kind: 'schedule', enabled: true, schedule: { kind: 'once', scheduledAt } },
-            }, { signal: context.signal });
-            if (isPluginActionApprovalRequestCreated(scheduled)) throw withActionFailureDiagnostic(new PluginError({
-                code: 'approval_required',
-            }), { phase: 'telemetry.regressions.schedule', causeKind: 'native_failure', error: scheduled });
-            return { scheduledAt, automationId: scheduled.set.automationId,
-                ...(scheduled.triggerId === undefined ? {} : { triggerId: scheduled.triggerId }) };
+            return { kind: 'schedule', enabled: true,
+                schedule: { kind: 'once', scheduledAt: deployment.settledAtMs + input.observationDelayMs } };
         },
     },
 } satisfies Record<string, PluginActionDefinition>;

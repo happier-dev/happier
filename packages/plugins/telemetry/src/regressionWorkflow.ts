@@ -21,10 +21,16 @@ export const TELEMETRY_REGRESSION_WORKFLOW_V1: Omit<PluginWorkflowContributionV1
         { name: 'diagnosis', valueType: 'json', required: true, description: 'The Role or Agent and model to investigate a regression.' }],
         blocks: [{ kind: 'if', id: 'occurrence', name: 'After deployment or at the scheduled time',
             when: { kind: 'exists', value: { kind: 'trigger_event', event: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded, path: ['deploymentId'] } },
-            then: [{ kind: 'action', id: 'schedule', name: 'Schedule regression check', actionId: TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1,
-                input: { ...Object.fromEntries(Object.keys(regressionScheduleInputSchema.jsonSchema.properties!)
-                    .map(field => [field, configured(field)])),
-                    deploymentId: { kind: 'trigger_event', event: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded, path: ['deploymentId'] } } }],
+            then: [
+                { kind: 'action', id: 'schedule-input', name: 'Read regression check time',
+                    actionId: TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1,
+                    input: { ...Object.fromEntries(Object.keys(regressionScheduleInputSchema.jsonSchema.properties!)
+                        .map(field => [field, configured(field)])),
+                        deploymentId: { kind: 'trigger_event', event: DEPLOYMENT_RECEIPT_EVENT_REFS_V1.succeeded, path: ['deploymentId'] } } },
+                { kind: 'action', id: 'schedule', name: 'Schedule regression check', actionId: 'workflow.trigger.add',
+                    input: { workflow: configured('workflow'), project: configured('project'),
+                        trigger: { kind: 'result', producer: { blockId: 'schedule-input', scope: { kind: 'current' } }, path: [] } } },
+            ],
             otherwise: [{ kind: 'action', id: 'compare', name: 'Compare retained windows', actionId: TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1,
                 input: Object.fromEntries(Object.keys(regressionCompareInputSchema.jsonSchema.properties!)
                     .map(field => [field, configured(field)])) },
