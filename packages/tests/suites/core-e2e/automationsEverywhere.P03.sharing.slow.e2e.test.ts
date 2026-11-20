@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { connectUiActionClient } from '@happier-tests/ui-action-client';
+import { connectUiActionClient, connectUiPersonActionClient } from '@happier-tests/ui-action-client';
 
 import { ActionPolicyOutputSchemas } from '@happier-dev/protocol/actions/actionPolicyActionFamily';
+import { ActionExecuteResultSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
@@ -13,6 +14,33 @@ import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { waitFor } from '../../src/testkit/timing';
+import { repoRootDir } from '../../src/testkit/paths';
+import { runLoggedCommand } from '../../src/testkit/process/spawnProcess';
+
+type OwnerReviewRequest = Readonly<{
+  serverUrl: string;
+  addressAnchorUrl: string;
+  accountSecret: number[];
+  artifactId: string;
+  teamId: string;
+}>;
+
+const ownerReviewRequestPath = process.env.HAPPIER_E2E_PROFILE_REVOCATION_REVIEW_REQUEST;
+if (ownerReviewRequestPath) {
+  // A separate client process keeps the recipient's live UI Account mounted.
+  // Only this case is registered in the child; it cannot start the fixture again.
+  it('AE.P03.F8 isolated owner review', async () => {
+    const request: OwnerReviewRequest = JSON.parse(await readFile(ownerReviewRequestPath, 'utf8'));
+    const ownerUi = await connectUiPersonActionClient({ serverUrl: request.serverUrl,
+      addressAnchorUrl: request.addressAnchorUrl, accountSecret: Uint8Array.from(request.accountSecret) });
+    try {
+      const result = await ownerUi.executeConfirmed('artifact.access.grants.remove', {
+        artifactId: request.artifactId, principal: { kind: 'team', teamId: request.teamId },
+      }, { surface: 'ui', authority: 'present_user', serverId: ownerUi.serverId, actionCaller: { kind: 'host' } });
+      await writeFile(`${ownerReviewRequestPath}.result`, JSON.stringify(result), { mode: 0o600 });
+    } finally { await ownerUi.close(); }
+  }, 0);
+} else {
 
 describe('Shared approval profiles: recipients', () => {
   let fixture: TeamSetupFFixture;
@@ -63,7 +91,7 @@ describe('Shared approval profiles: recipients', () => {
   async function createSharedProfile() {
     const created = await owner.executeAsPerson('actions.policy.set', { profileChange: { kind: 'create', profile: {
       name: 'Shared stop policy', actions: { 'session.stop': { approvalRequiredSurfaces: [] } },
-      approvalWaivedSurfaces: { 'session.stop': ['agent'] },
+      approvalWaivedSurfaces: { 'session.stop': ['agent', 'mcp'] },
     } } });
     expect(created.ok).toBe(true);
     if (!created.ok) throw new Error(created.errorCode);
@@ -135,6 +163,8 @@ describe('Shared approval profiles: recipients', () => {
 
   it('AE.P03.F8-revoke-edit drops revoked profile rows before the next recipient admission', async () => {
     const profile = await createSharedProfile();
+    expect(await recipient.executeAsPerson('actions.policy.set', { actionId: 'session.stop', audience: 'agent', mode: 'ask_first' }))
+      .toMatchObject({ ok: true, result: { actionId: 'session.stop', mode: 'ask_first' } });
     const spawned = await recipient.executeReviewed('session.spawn_new', {
       executionTarget: machine.target, directory: { kind: 'path', path: machine.workspaceDir },
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
@@ -147,21 +177,44 @@ describe('Shared approval profiles: recipients', () => {
     await connectRecipient();
     expect(await profiles(recipient)).toEqual(expect.arrayContaining([expect.objectContaining({ id: profile.id })]));
     expect(await uiProfiles()).toEqual(expect.arrayContaining([expect.objectContaining({ id: profile.id })]));
-    expect(await owner.executeReviewed('artifact.access.grants.remove', { artifactId: profile.id,
-      principal: { kind: 'team', teamId } })).toMatchObject({ ok: true });
+    const reviewDir = await mkdtemp(join(tmpdir(), 'ae-p03-owner-review-'));
+    const requestPath = join(reviewDir, 'request.json');
+    const request: OwnerReviewRequest = { serverUrl: fixture.actionServerApiUrl,
+      addressAnchorUrl: fixture.server.baseUrl, accountSecret: Array.from(owner.auth.accountSigningSeed),
+      artifactId: profile.id, teamId };
+    await writeFile(requestPath, JSON.stringify(request), { mode: 0o600 });
+    try {
+      await runLoggedCommand({ command: process.execPath,
+        args: ['scripts/run-vitest-with-heartbeat.mjs', '--config', 'vitest.core.slow.config.ts',
+          'suites/core-e2e/automationsEverywhere.P03.sharing.slow.e2e.test.ts',
+          '--testNamePattern', '^AE\\.P03\\.F8 isolated owner review$'],
+        cwd: join(repoRootDir(), 'packages/tests'),
+        env: { ...process.env, HAPPIER_E2E_PROFILE_REVOCATION_REVIEW_REQUEST: requestPath },
+        stdoutPath: join(reviewDir, 'owner-review.stdout.log'), stderrPath: join(reviewDir, 'owner-review.stderr.log'),
+        timeoutMs: null });
+      const revoked = ActionExecuteResultSchema.parse(JSON.parse(await readFile(`${requestPath}.result`, 'utf8')));
+      if (!revoked.ok) throw createActionExecuteFailureError(revoked);
+      expect(revoked).toMatchObject({ ok: true, result: { artifactId: profile.id, changed: true } });
+    } finally {
+      await Promise.all([rm(requestPath, { force: true }), rm(`${requestPath}.result`, { force: true })]);
+    }
     expect(await profiles(recipient)).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: profile.id })]));
     await waitFor(async () => !(await uiProfiles()).some(row => row.id === profile.id), { timeoutMs: 60_000 });
     const caller = { surface: 'mcp' as const, authority: 'account_automation' as const,
-      actionCaller: { kind: 'session' as const, sessionId: session.sessionId } };
+      defaultSessionId: session.sessionId,
+      actionCaller: { kind: 'session' as const, sessionId: session.sessionId, starterDepth: 0, turnDepth: 0 } };
     const expectedMissing = { ok: true, result: { kind: 'approval_request_created',
       approvalProfile: { status: 'missing', requestedId: profile.id } } };
     const cliAdmission = await recipient.execute('session.stop', { sessionId: session.sessionId }, caller);
     expect(cliAdmission, JSON.stringify(cliAdmission)).toMatchObject(expectedMissing);
     const uiAdmission = await ui!.execute('session.stop', { sessionId: session.sessionId }, { ...caller, serverId: ui!.serverId });
     expect(uiAdmission, JSON.stringify(uiAdmission)).toMatchObject(expectedMissing);
-    const refusedRead = await recipient.execute('artifact.get', { artifactId: profile.id });
-    expect(refusedRead).toMatchObject({ ok: false });
-    if (refusedRead.ok) throw new Error('Revoked profile remained readable');
-    expect(refusedRead.errorCode).toBe('artifact_access_forbidden');
+    // Confirm the read so an approval request cannot stand in for the access result.
+    // The Artifact owner withholds inaccessible documents through its nullable read.
+    const refusedRead = await ui!.executeConfirmed('artifact.get', { artifactId: profile.id }, {
+      surface: 'ui', authority: 'present_user', serverId: ui!.serverId, actionCaller: { kind: 'host' },
+    });
+    expect(refusedRead, JSON.stringify(refusedRead)).toEqual({ ok: true, result: { artifact: null } });
   }, 0);
 });
+}
