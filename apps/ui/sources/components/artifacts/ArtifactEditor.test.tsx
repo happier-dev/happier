@@ -67,7 +67,7 @@ vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
                     latestProps.current.onChange(value.current);
                 },
             }), []);
-            return React.createElement('CodeEditor', { testID: props.testID, value: props.value, onReady: props.onReady, onChangeText: (next: string) => {
+            return React.createElement('CodeEditor', { testID: props.testID, value: props.value, language: props.language, onReady: props.onReady, onChangeText: (next: string) => {
                 value.current = next;
                 props.onChange(next);
             } });
@@ -388,6 +388,25 @@ describe('ArtifactEditor', () => {
             expect(saved.id).toBe(artifact!.id);
             expect(navigation.back).toHaveBeenCalledOnce();
         }
+        await screen.unmount();
+    });
+
+    it('edits an existing HTML Artifact as HTML source and preserves its tags on save', async () => {
+        const serverId = await restoreEditorHome('https://artifact-editor-html.test');
+        const persisted = homes.artifacts(serverId);
+        const { sync } = await import('@/sync/sync');
+        const original = '<h2>Original</h2>';
+        const edited = '<main><h2>Updated</h2></main>';
+        const artifactId = await sync.createArtifactWithHeader({ kind: 'html', title: 'HTML preview' }, original);
+        await sync.fetchArtifactWithBody(artifactId);
+        const artifact = getStorage().getState().artifacts[artifactId]!;
+        const ArtifactEditor = await loadArtifactEditor();
+        const screen = await renderScreen(<ArtifactEditor artifact={artifact} mode="edit" />);
+        const source = screen.findHostByTestId('artifact-editor:body:source');
+        expect(source?.props).toMatchObject({ language: 'html', value: original });
+        await act(async () => { changeTextTestInstance(source, edited); });
+        await screen.pressByTestIdAsync('artifact-editor:save');
+        await vi.waitFor(() => expect(persisted.readPlainBody(artifactId)).toBe(edited));
         await screen.unmount();
     });
 

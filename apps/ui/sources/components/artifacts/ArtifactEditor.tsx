@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { HAPPIER_FIELD_BOX_METRICS, HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { CodeEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
@@ -28,7 +29,7 @@ import { presentArtifactActionFailure } from './artifactActionFailure';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
 /**
- * Writing a document: its title edited in the page header, its Markdown below, one Save. A save the
+ * Writing a document: its title edited in the page header, its body below, one Save. A save the
  * server refuses for a budget keeps every edit and names the size and the cap (lab A8p).
  */
 export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | null; mode: 'new' | 'edit' }>): React.ReactElement {
@@ -173,7 +174,6 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
             ) : null}
             {quota ? <ArtifactQuotaNotice testID="artifact-editor:quota" quota={quota} /> : null}
             {/* The source is the page (lab A8p): on the canvas, unframed, filling the window below the header. */}
-            {/* The app's one Markdown source editor (Prompts, Skills and Board notes use it too). */}
             <View onLayout={measureBodyTop}>
                 <PageContentColumn style={BODY_INSET}>
                     <View style={bodyFrame}>
@@ -183,7 +183,7 @@ export function ArtifactEditor(props: Readonly<{ artifact: DecryptedArtifact | n
                             value={body}
                             placeholder={t('artifacts.bodyPlaceholder')}
                             accessibilityLabel={t('artifacts.bodyLabel')}
-                            language="markdown"
+                            language={isArtifactHtmlHeaderV1(opening?.rawHeader ?? opening?.header) ? 'html' : 'markdown'}
                             onChange={setBody}
                             editorRef={editorRef}
                             onReady={focusNewDocument}
