@@ -3444,7 +3444,7 @@ export async function startDaemon(
                 timeWebLatencyPhase('storage.facts.resident-models', () => readResidentVoiceModelPackPaths({ worker: roleActivations?.get('voice')?.worker ?? null, modelPacks: storageModelPacks,
                   packsRootDir: join(activeServerDir, 'voiceInference', 'packs') })),
               ]);
-              const paths = [projectPath(), process.execPath, ...readTrackedSessions().map(session => session.cwd), ...residentModels.paths];
+              const paths = [projectPath(), process.execPath, ...residentModels.paths];
               for (const tracked of trackedSessionsByKey.values()) {
                 const launch = tracked.runnerAgentInvocationContext?.agentCliLaunch?.spec;
                 if (launch) paths.push(launch.resolvedPath, launch.command, ...launch.args.filter(arg => isAbsolute(arg)));
@@ -3455,6 +3455,7 @@ export async function startDaemon(
                 tracked.runnerManagedDependencyRetentionV1?.sourceCustodies.some(source => source.kind === 'managed'));
               return { reliable: residentModels.reliable && processUse.reliable && !unresolvedRetainedRoots,
                 paths, cwdPaths: [...(processUse.cwdPaths ?? []),
+                  ...readTrackedSessions().map(session => session.cwd),
                   ...getSharedTerminalProcessRegistry().listProcesses().map(terminal => terminal.workspacePath)], sessions: processUse.sessions };
             },
             currentLogPaths: async () => [logger.logFilePath, ...await readManagedServiceCurrentLogPaths()],

@@ -1,6 +1,6 @@
 import { access, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 
 import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/specs/workflowEvents';
@@ -231,7 +231,23 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
       ...(removalKind === 'retired' ? { claimedVerdict: row.verdict, reason: row.reason } : {}),
     })) }, { presentUserConfirmation: { actionId } });
     if (!applied.ok) throw new Error(`Storage removal refused (${applied.errorCode})`);
-    expect(PileApplyResultV1Schema.parse(applied.result).outcomes)
+    const outcomes = PileApplyResultV1Schema.parse(applied.result).outcomes;
+    if (outcomes.some(outcome => outcome.status === 'skipped' && outcome.reason?.code === 'changed_since_review')) {
+      const current = await actor.execute('machines.storage.items.check', { ...machine.target,
+        refs: [{ itemId: item.itemId, path: item.path }] });
+      const currentReview = current.ok ? PileReviewV1Schema.parse(current.result) : null;
+      const projectReason = (reason: typeof review.items[number]['reason']) => ({ code: reason.code,
+        ...(typeof reason.detail?.path === 'string' ? { relativePath: relative(physicalRoot, reason.detail.path) } : {}),
+        ...(typeof reason.detail?.sessionId === 'string' ? { sessionId: reason.detail.sessionId } : {}) });
+      const projectReview = (value: typeof review) => ({ items: value.items.map(row => ({ expect: row.expect,
+        identity: row.ref.identity, verdict: row.verdict, reasonCode: row.reason.code,
+        losses: row.loses?.map(projectReason) })), staying: value.staying.map(row => projectReason(row.reason)) });
+      console.error('F6_STORAGE_CURRENTNESS_DIAGNOSTIC', JSON.stringify({ removalKind,
+        reviewed: projectReview(review), current: currentReview ? projectReview(currentReview)
+          : { errorCode: current.ok ? null : current.errorCode }, outcomes }));
+      console.error('F6_STORAGE_DAEMON_DIAGNOSTIC', JSON.stringify(await readDaemonDiagnostics(machine.daemon)));
+    }
+    expect(outcomes)
       .toEqual([{ itemId: item.itemId, status: removalKind === 'retired' ? 'moved' : 'deleted' }]);
     await expect(access(worktree.worktreePath)).rejects.toMatchObject({ code: 'ENOENT' });
     const expectedCount = index + 2;

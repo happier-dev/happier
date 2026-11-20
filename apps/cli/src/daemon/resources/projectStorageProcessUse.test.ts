@@ -31,15 +31,15 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
         if (scratch) await rm(scratch, { recursive: true, force: true });
     });
 
-    it('keeps a folder held as cwd by a standalone same-principal process at Review, and releases it when the holder ends', async () => {
+    it('protects contained cwd and argument holders without claiming unused descendants of a Session workspace', async () => {
         const home = join(scratch, 'home');
         const server = join(home, 'servers', 'fixture');
         const held = join(home, 'cache', 'held-by-standalone');
         await mkdir(held, { recursive: true });
         await mkdir(server, { recursive: true });
         await writeFile(join(held, 'bytes'), Buffer.alloc(8192, 1));
-        // The ambient process is a real Happier lifecycle root. Its cwd alone
-        // must not claim every descendant; an explicit Session workspace does.
+        // A live Session in the parent workspace must not claim an unused
+        // child; removing an ancestor that contains its cwd remains protected.
         let ambientOwner: ProcessOwnerRef = { kind: 'happier' };
         let workspacePath: string | undefined;
         let rootPid: number | undefined;
@@ -105,8 +105,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
             ambientOwner = { kind: 'session', sessionId: 'live-session' };
             workspacePath = home;
             const workspaceHeld = await service.itemsCheck(collected.items, { actor });
-            expect(workspaceHeld.items[0]).toMatchObject({ verdict: 'keep' });
-            expect(workspaceHeld.items[0]?.loses).toContainEqual({ code: 'in_use', detail: { path: home, sessionId: 'live-session' } });
+            expect(workspaceHeld.items[0]).toMatchObject({ verdict: 'safe' });
             workspacePath = undefined;
             expect((await service.itemsCheck(collected.items, { actor })).items[0]).toMatchObject({ verdict: 'safe' });
             holder = childProcess.spawn(testHostExecutable, ['-e', "process.send('ready'); setInterval(() => {}, 60_000);"],
@@ -117,6 +116,24 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
             expect(sessionCwdHeld.items[0]).toMatchObject({ verdict: 'keep' });
             expect(sessionCwdHeld.items[0]?.loses).toContainEqual({ code: 'in_use', detail: { path: held, sessionId: 'live-session' } });
             holder.kill('SIGKILL'); await once(holder, 'exit'); holder = undefined;
+            // An explicit input file remains a real dependency even when the
+            // process's workspace is only the parent of this candidate.
+            holder = childProcess.spawn(testHostExecutable, ['-e', "process.send('ready'); setInterval(() => {}, 60_000);", join(held, 'bytes')],
+                { cwd: home, detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
+            await once(holder, 'message');
+            rootPid = holder.pid;
+            workspacePath = home;
+            const argumentHeld = await service.itemsCheck(collected.items, { actor });
+            expect(argumentHeld.items[0]?.loses).toContainEqual({ code: 'in_use', detail: { path: join(held, 'bytes'), sessionId: 'live-session' } });
+            holder.kill('SIGKILL'); await once(holder, 'exit'); holder = undefined;
+            rootPid = ambient.pid;
+            workspacePath = home;
+            const unusedChild = await service.itemsCheck(collected.items, { actor });
+            expect(unusedChild.items[0]).toMatchObject({ verdict: 'safe' });
+            const removed = await service.deleteNow({ machineId: 'machine', items: unusedChild.items.map(item => ({
+                ref: item.ref, expect: item.expect,
+            })) }, { actor });
+            expect(removed.outcomes).toEqual([{ itemId: item.itemId, status: 'deleted' }]);
         } finally {
             holder?.kill('SIGKILL');
             ambient.kill('SIGKILL');
