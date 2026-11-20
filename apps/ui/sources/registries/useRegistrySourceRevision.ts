@@ -35,7 +35,7 @@ export function useRegistrySourceDescriptor(sourceId: string, enabled = true): R
     const select = React.useCallback((snapshot: PromptLibraryCatalogValueSnapshot<'registry-sources'>) => registrySourceRevision(
         listRegistrySourcesV1({ record: snapshot.value ?? { v: 2, sources: [], disabledSourceIds: [] }, pluginSources }), [sourceId]),
     [pluginSources, sourceId]);
-    const selection = usePromptLibraryCatalogSelection('registry-sources', select, undefined, { enabled: active });
+    const selection = usePromptLibraryCatalogSelection('registry-sources', select, undefined, { enabled: active, rowOnly: true });
     return React.useMemo(() => (JSON.parse(selection) as RegistrySourceDescriptorV1[])[0], [selection]);
 }
 
@@ -67,7 +67,7 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
         const titles = kind === undefined ? [] : matching.map(source => [source.id, source.title]);
         return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, resolving, titles]);
     }, [selectedIds, priorIds, pluginSources, kind, pluginsResolving]);
-    const selection = usePromptLibraryCatalogSelection('registry-sources', select, scope, { enabled: active });
+    const selection = usePromptLibraryCatalogSelection('registry-sources', select, scope, { enabled: active, rowOnly: true });
     const [fingerprint, priorFingerprint, consumedIds, resolving, titles] = React.useMemo(
         () => JSON.parse(selection) as [string, string, string[] | null, boolean, [string, string][]], [selection]);
     const sourceTitles = React.useMemo(() => new Map(titles), [titles]);

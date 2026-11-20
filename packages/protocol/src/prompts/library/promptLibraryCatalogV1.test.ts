@@ -46,6 +46,38 @@ describe('Prompt library destination authority', () => {
     });
     expect(sourceReads).toBe(1);
   });
+  it('transfers only the demanded registry row from Settings and never reseeds its deletion', async () => {
+    const rows: Extract<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>, { status: 'listed' }>['rows'] = [];
+    const readRows = vi.fn(async () => ({ status: 'listed' as const, rows }));
+    const readSourceSnapshot = vi.fn(async () => ({ version: 7, raw: {
+      promptRegistrySourcesV1: { v: 2, sources: [], disabledSourceIds: ['disabled-on-predecessor'] },
+      promptFoldersV1: { v: 1, folders: [{ id: 'unrelated', name: 'Unrelated' }] },
+    } }));
+    const initializeRecords = vi.fn(initializeEach(async ({ record }) => {
+      rows.push({ key: record.key, revision: 1, content: sealPromptLibraryContentV1({ record, mode: 'plain', material: null }) });
+      return { status: 'updated', revision: 1, cursor: 1 };
+    }));
+    const load = () => loadPromptLibraryCatalogV1({ mode: 'plain', material: null, transferKeys: ['registry-sources'],
+      readRows, transfer: { readSourceSnapshot, initializeRecords } });
+
+    expect(readPromptLibraryCatalogRecordV1({ catalog: await load(), key: 'registry-sources' })).toMatchObject({
+      status: 'ready', revision: 1, record: { value: { disabledSourceIds: ['disabled-on-predecessor'] } },
+    });
+    expect(initializeRecords).toHaveBeenCalledTimes(1);
+    expect(initializeRecords.mock.calls[0]?.[0]).toMatchObject({
+      sourceSettingsVersion: 7, records: [{ key: 'registry-sources' }],
+    });
+    expect(readRows).toHaveBeenCalledTimes(2);
+
+    rows[0] = { key: 'registry-sources', revision: 2, content: null };
+    expect(readPromptLibraryCatalogRecordV1({ catalog: await load(), key: 'registry-sources' })).toMatchObject({
+      status: 'ready', revision: 2, record: { value: { disabledSourceIds: [] } },
+    });
+    expect(readSourceSnapshot).toHaveBeenCalledTimes(1);
+    expect(initializeRecords).toHaveBeenCalledTimes(1);
+    expect(readRows).toHaveBeenCalledTimes(3);
+  });
+
   it('classifies retained skills before admitting rule authority, then publishes before cleanup', async () => {
     let release!: () => void;
     const held = new Promise<void>(resolve => { release = resolve; });

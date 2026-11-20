@@ -468,13 +468,13 @@ describe('registry item last-known reads through the Account and HTTP owners', (
             selected: useRegistryItem({ kind: 'plugin', sourceId, itemId: 'sample.plugin' }, enabled),
         }));
         const catalogReads = () => fixture.requests.slice(before).filter(request =>
-            request.method === 'GET' && request.path.split('?')[0] === PROMPT_LIBRARY_ROWS_ROUTE_V1).length;
+            request.method === 'GET' && request.path.startsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1)).map(request => request.path);
         await flushHookEffects();
-        expect(catalogReads()).toBe(0);
+        expect(catalogReads()).toEqual([]);
         enabled = true;
         await hook.rerender();
         await waitForHomeGovernance(() => expect(hook.getCurrent().list.items).toHaveLength(1));
-        expect(catalogReads()).toBe(1);
+        expect(catalogReads()).toEqual([`${PROMPT_LIBRARY_ROWS_ROUTE_V1}/registry-sources`]);
         await hook.unmount();
     });
 

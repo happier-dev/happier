@@ -51,9 +51,11 @@ it('windows theme updates in the existing page while retaining version and revie
     }));
     const persisted = rows.map(row => createPlainArtifactHttpFixture(row, scope.accountId));
     const catalog = createPromptLibraryCatalogBoundary();
-    account.home.answer(home.serverId, 'GET /v1/account/entity-rows/prompt-library', { select: async () => ({
-        body: await (await catalog.handle('/v1/account/entity-rows/prompt-library'))!.json(),
-    }) });
+    for (const path of ['/v1/account/entity-rows/prompt-library', '/v1/account/entity-rows/prompt-library/registry-sources']) {
+        account.home.answer(home.serverId, `GET ${path}`, { select: async () => ({
+            body: await (await catalog.handle(path))!.json(),
+        }) });
+    }
     // Public registry HTTP and Account HTTP are genuine boundaries; the theme tracker stays real.
     setRuntimeFetch(async (input, init) => {
         const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);

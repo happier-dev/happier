@@ -19,6 +19,12 @@ source file or client-supplied source list is an authority. An ordinary daemon
 fetch reads its Account snapshot and installed declarations; an admitted Action
 retains its originating Account's captured context.
 
+UI registry browsing and Registry Actions share the Account's exact
+`registry-sources` read. An active row is read through its own endpoint and
+refreshed on relevant Home changes. If the row is absent, the existing retained
+Settings transfer initializes only this row. Full Prompt Library consumers own
+catalog activation and Settings/history maintenance.
+
 Finite CLI/daemon catalog reads activate missing destination rows and run the
 existing skill migration, then return after Account currentness admission. They
 do not run retained Settings/history cleanup; Account hydration owns that work.

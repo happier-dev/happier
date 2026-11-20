@@ -60,6 +60,8 @@ type PromptLibraryLoadInputV1 = Readonly<{
   hasPendingCleanup?: () => boolean;
   /** Finite reads still activate/migrate destinations, but leave retained-source cleanup to hydration. */
   maintainSource?: false;
+  /** A finite reader activates only the rows its transport enumerates. */
+  transferKeys?: readonly PromptLibraryCatalogKeyV1[];
 }>;
 
 async function readCatalog(input: PromptLibraryLoadInputV1): Promise<PromptLibraryCatalogSnapshotV1> {
@@ -93,11 +95,12 @@ export async function loadPromptLibraryCatalogV1(input: PromptLibraryLoadInputV1
   const transfer = input.transfer;
   const occupied = new Set([...catalog.rows.map(row => row.record.key), ...catalog.tombstones.map(row => row.key),
     ...catalog.diagnostics.map(row => row.key)]);
-  const missing = PromptLibraryCatalogKeyV1Schema.options.filter(key => !occupied.has(key));
+  const maintainSource = input.maintainSource !== false && input.transferKeys === undefined;
+  const missing = (input.transferKeys ?? PromptLibraryCatalogKeyV1Schema.options).filter(key => !occupied.has(key));
   if (missing.length === 0) {
     catalog = await migrateStackSkills(input, catalog);
     if (catalog.status !== 'ready' && catalog.status !== 'partial') return catalog;
-    if (input.maintainSource === false) {
+    if (!maintainSource) {
       await input.onReadyBeforeCleanup?.(catalog);
       return catalog;
     }
@@ -149,7 +152,7 @@ export async function loadPromptLibraryCatalogV1(input: PromptLibraryLoadInputV1
   if (malformed.length) catalog = { ...catalog, status: 'partial', diagnostics: [...catalog.diagnostics, ...malformed] };
   if (missing.length) catalog = await migrateStackSkills(input, catalog);
   if (catalog.status !== 'ready' && catalog.status !== 'partial') return catalog;
-  if (input.maintainSource === false) {
+  if (!maintainSource) {
     await input.onReadyBeforeCleanup?.(catalog);
     return catalog;
   }

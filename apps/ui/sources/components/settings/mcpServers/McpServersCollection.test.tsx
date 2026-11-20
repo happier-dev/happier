@@ -342,6 +342,10 @@ describe('MCP servers collection and tools', () => {
             if (parsed.pathname === '/v1/artifacts') return Response.json([]);
             if (parsed.pathname === PROMPT_LIBRARY_ROWS_ROUTE_V1) return Response.json({ status: 'listed', rows:
                 PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })) });
+            if (parsed.pathname === `${PROMPT_LIBRARY_ROWS_ROUTE_V1}/registry-sources`) {
+                return Response.json({ status: 'present', revision: 1,
+                    content: { t: 'plain', v: emptyPromptLibraryRecordV1('registry-sources') } });
+            }
             if (parsed.pathname === '/v1/account/authoring-memory') return Response.json({ rows: [] });
             if (parsed.pathname === '/v1/account/project-rows/list') return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
             if (parsed.pathname === '/v2/account/settings') {

@@ -62,6 +62,30 @@ async function starterHome(serverUrl: string, catalogResponse?: Promise<Response
   } });
 }
 
+it('opens Deploy an app with one registry-sources read and no Prompt Library catalog activation', async () => {
+  const { PROMPT_LIBRARY_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1');
+  const projectCatalog = vi.fn();
+  const fixture = await starterHome('https://new-app-registry-source-demand.test', undefined, projectCatalog);
+  const start = fixture.requests.length;
+  const screen = await renderScreen(<NewAppScreen onClose={() => {}} starterId="static-website" />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.continue')?.props.disabled).toBe(false));
+    await flushHookEffects({ cycles: 8 });
+    const requests = fixture.requests.slice(start).filter(request => request.method === 'GET');
+    const promptLibraryReads = requests.filter(({ path }) => path === PROMPT_LIBRARY_ROWS_ROUTE_V1
+      || path.startsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1 + '/')).map(({ path }) => path);
+    const settingsReads = requests.filter(({ path }) => path === '/v2/account/settings' || path.startsWith('/v2/account/settings/'));
+    expect({ promptLibraryReads, settingsReads, projectCatalogReads: projectCatalog.mock.calls.length }).toEqual({
+      promptLibraryReads: [PROMPT_LIBRARY_ROWS_ROUTE_V1 + '/registry-sources'],
+      settingsReads: [],
+      projectCatalogReads: 1,
+    });
+  } finally {
+    await screen.unmount();
+    await fixture.dispose();
+  }
+});
+
 it('reads starters only when the gallery opens and keeps the deep-linked starter for configuration', async () => {
   const reads = vi.fn();
   const fixture = await starterHome('https://new-app-starter-demand.test', undefined, reads);

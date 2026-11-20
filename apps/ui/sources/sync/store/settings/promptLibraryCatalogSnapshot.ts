@@ -26,6 +26,15 @@ const loading = Object.freeze({ status: 'loading', value: null, revision: 'absen
 export function subscribePromptLibraryCatalogSnapshots(listener: () => void): () => void {
     listeners.add(listener); return () => { listeners.delete(listener); };
 }
+export function subscribePromptLibraryCatalogRow(scope: ServerAccountScope, key: PromptLibraryCatalogKeyV1, listener: () => void): () => void {
+    let previous = getPromptLibraryCatalogValue(scope, key);
+    return subscribePromptLibraryCatalogSnapshots(() => {
+        const next = getPromptLibraryCatalogValue(scope, key);
+        if (previous === next) return;
+        previous = next;
+        listener();
+    });
+}
 export function getPromptLibraryCatalogValue<K extends PromptLibraryCatalogKeyV1>(scope: ServerAccountScope | null | undefined, key: K): PromptLibraryCatalogValueSnapshot<K> {
     const snapshot = scope ? snapshots.get(serverAccountScopeKeySuffix(scope)) : undefined;
     // Each entry is produced at the same validated key below; the generic preserves caller narrowing.

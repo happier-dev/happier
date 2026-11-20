@@ -84,12 +84,19 @@ type PromptLibraryReadPublication = Readonly<{
     onReady?: (projection: PromptLibraryCatalogProjection, isAccountCurrent: () => boolean) => void;
     hasPendingCleanup?: () => boolean;
 }>;
+async function readPromptLibraryRetainedSource(context: PromptLibraryAccountContext, mode: 'plain' | 'e2ee', signal?: AbortSignal) {
+    const { encryption } = await context.resolveAccountEncryption();
+    const source = await readAccountSettingsBaseline({ credentials: context.credentials, encryption, accountMode: mode,
+        request: (path, init) => context.request(path, { ...init, signal }, { retry: 'none' }) });
+    context.assertCurrent();
+    return { raw: source.raw ?? {}, version: source.version };
+}
 async function readPromptLibraryCatalogWithMaintenanceInContext(context: PromptLibraryAccountContext, signal?: AbortSignal,
     publication?: PromptLibraryReadPublication): Promise<PromptLibraryCatalogProjection> {
     const artifactStore = createRoleArtifactStoreV1({ ...context.workflowArtifacts, read: context.readArtifactContent });
     try {
         return await admit(context, 'identity', async (mode, material) => {
-            const source: { value: Awaited<ReturnType<typeof readAccountSettingsBaseline>> | null } = { value: null };
+            const source: { value: Awaited<ReturnType<typeof readPromptLibraryRetainedSource>> | null } = { value: null };
             const project = async (catalog: PromptLibraryCatalogSnapshotV1): Promise<PromptLibraryCatalogProjection> => {
                 const { encryption } = await context.resolveAccountEncryption();
                 const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
@@ -117,11 +124,8 @@ async function readPromptLibraryCatalogWithMaintenanceInContext(context: PromptL
                     publication.onReady!(projection, context.accountLifetime.isCurrent);
                 } } : {}), transfer: {
                 readSourceSnapshot: async () => {
-                    const { encryption } = await context.resolveAccountEncryption();
-                    source.value = await readAccountSettingsBaseline({ credentials: context.credentials, encryption, accountMode: mode,
-                        request: (path, init) => context.request(path, init, { retry: 'none' }) });
-                    context.assertCurrent();
-                    return { raw: source.value.raw ?? {}, version: source.value.version };
+                    source.value = await readPromptLibraryRetainedSource(context, mode, signal);
+                    return source.value;
                 },
                 initializeRecords: input => initializePromptLibraryRecordsInContext(context, input, signal),
                 replaceSource: async input => {
@@ -184,31 +188,40 @@ export async function readPromptLibraryRowInContext(context: PromptLibraryAccoun
 }
 
 /** Read only demanded active rows, with the same Account admission and envelope decoder as the catalog. */
-export async function readPromptLibraryCatalogRowsProjection(scope: ServerAccountScope, keys: readonly PromptLibraryCatalogKeyV1[]): Promise<Readonly<{
+export async function readPromptLibraryCatalogRowsProjection(scope: ServerAccountScope, keys: readonly PromptLibraryCatalogKeyV1[],
+    options?: Readonly<{ signal?: AbortSignal; activateMissing?: true }>): Promise<Readonly<{
     projection: PromptLibraryCatalogProjection; isAccountCurrent: () => boolean;
 }> | null> {
+    const { signal, activateMissing } = options ?? {};
     try {
-        return await withAccount(scope, undefined, context => admit(context, 'identity', async (mode, material) => {
+        return await withAccount(scope, signal, context => admit(context, 'identity', async (mode, material) => {
             let absent = false;
-            const catalog = await loadPromptLibraryCatalogV1({ mode, material, readRows: async () => {
-                const reads = await Promise.all(keys.map(async key => ({ key, row: await readPromptLibraryRowInContext(context, key) })));
-                const rows: Extract<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>, { status: 'listed' }>['rows'] = [];
-                for (const { key, row } of reads) {
-                    if (row.status === 'absent') { absent = true; continue; }
-                    if (row.status !== 'present' && row.status !== 'deleted') return row;
-                    rows.push({ key, revision: row.revision, content: row.status === 'present' ? row.content : null });
-                }
-                return { status: 'listed', rows };
-            } });
+            const catalog = await loadPromptLibraryCatalogV1({
+                mode, material, signal,
+                ...(activateMissing ? { transferKeys: keys, transfer: {
+                    readSourceSnapshot: () => readPromptLibraryRetainedSource(context, mode, signal),
+                    initializeRecords: input => initializePromptLibraryRecordsInContext(context, input, signal),
+                } } : {}),
+                readRows: async () => {
+                    const reads = await Promise.all(keys.map(async key => ({ key, row: await readPromptLibraryRowInContext(context, key, signal) })));
+                    const rows: Extract<ReturnType<typeof PromptLibraryRowsListResponseV1Schema.parse>, { status: 'listed' }>['rows'] = [];
+                    for (const { key, row } of reads) {
+                        if (row.status === 'absent') { absent = true; continue; }
+                        if (row.status !== 'present' && row.status !== 'deleted') return row;
+                        rows.push({ key, revision: row.revision, content: row.status === 'present' ? row.content : null });
+                    }
+                    return { status: 'listed', rows };
+                },
+            });
             const { encryption } = await context.resolveAccountEncryption();
             const current = await resolveAccountStorageContextForDisclosure(context.credentials, { encryption, request: context.request });
             context.assertCurrent();
             const projection: PromptLibraryCatalogProjection = { catalog: current.mode === mode ? catalog
                 : { status: 'unavailable', reason: 'account-mode-mismatch' }, rawSettings: {}, sourceSettingsVersion: 0 };
-            // An absent destination still needs the canonical source activation/migration path.
-            return absent && current.mode === mode ? null : { projection, isAccountCurrent: context.accountLifetime.isCurrent };
+            // The mixed catalog wake hands absent rows back to its full owner.
+            return absent && !activateMissing && current.mode === mode ? null : { projection, isAccountCurrent: context.accountLifetime.isCurrent };
         }));
-    } catch (error) { return { projection: { catalog: failure(error), rawSettings: {}, sourceSettingsVersion: 0 }, isAccountCurrent: () => true }; }
+    } catch (error) { return { projection: { catalog: failure(error, signal), rawSettings: {}, sourceSettingsVersion: 0 }, isAccountCurrent: () => true }; }
 }
 
 /** One admitted Account's sealed row content and saved-secret reference proofs. */

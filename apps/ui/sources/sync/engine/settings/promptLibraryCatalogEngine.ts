@@ -11,17 +11,29 @@ import { applyPromptLibraryCatalogSnapshot, beginPromptLibraryCatalogLoad, getPr
     type PromptLibraryCatalogValueSnapshot } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { withActionAccountRequestSignal } from '@/sync/ops/actions/actionAccountContext';
-type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope; finite?: true }>;
+type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope; finite?: true; row?: PromptLibraryCatalogKeyV1 }>;
 const targetFor = (scope: ServerAccountScope): Target => ({ key: `prompt-library:${serverAccountScopeKeySuffix(scope)}`, serverId: scope.serverId, scope });
+const rowTargetFor = (scope: ServerAccountScope, row: PromptLibraryCatalogKeyV1): Target => {
+    const target = targetFor(scope);
+    return { ...target, key: `${target.key}:${row}`, row };
+};
 const publicationGuards = new Map<string, () => void>();
 // Demand pending on the existing single-flight loader, consumed by its next pass.
 // null requires a full activation/maintenance pass; numeric hints permit skipping a received revision.
 const pendingRows = new Map<string, Map<PromptLibraryCatalogKeyV1, number | undefined> | null>();
 const loader = createScopedSnapshotLoader<Target>({
     subscribeRetainedInvalidation: subscribeAccountCatalogInvalidation,
-    load: async ({ key, scope, finite }, context) => {
+    load: async ({ key, scope, finite, row }, context) => {
         const guard = publicationGuards.get(key);
         try { guard?.(); } catch { return; }
+        if (row) {
+            beginPromptLibraryCatalogRowsLoad(scope, [row]);
+            const read = await readPromptLibraryCatalogRowsProjection(scope, [row], { signal: context.signal, activateMissing: true });
+            if (read && !context.signal.aborted && read.isAccountCurrent()) {
+                applyPromptLibraryCatalogRowsSnapshot(scope, [row], read.projection, true, !context.isCurrent());
+            }
+            return;
+        }
         const demand = pendingRows.get(key);
         pendingRows.delete(key);
         if (demand) {
@@ -66,11 +78,14 @@ const loader = createScopedSnapshotLoader<Target>({
             getPublication: () => getPromptLibraryCatalogSnapshot(scope),
         });
     },
-    shouldLoadOnObserve: ({ scope }) => getPromptLibraryCatalogSnapshot(scope)?.catalog.status !== 'ready',
+    shouldLoadOnObserve: ({ scope, row }) => row
+        ? !isPromptLibraryCatalogRowHeldCurrent(scope, row)
+        : getPromptLibraryCatalogSnapshot(scope)?.catalog.status !== 'ready',
     invalidateServer: invalidatePromptLibraryCatalogsForServer,
-    invalidateTarget: ({ key, scope }) => {
+    invalidateTarget: ({ key, scope, row }) => {
         const rows = pendingRows.get(key);
-        if (rows) beginPromptLibraryCatalogRowsLoad(scope, [...rows.keys()]);
+        if (row) beginPromptLibraryCatalogRowsLoad(scope, [row]);
+        else if (rows) beginPromptLibraryCatalogRowsLoad(scope, [...rows.keys()]);
         else beginPromptLibraryCatalogLoad(scope);
     },
     // Reach must follow remote edits while unrelated historical changes are
@@ -80,7 +95,17 @@ const loader = createScopedSnapshotLoader<Target>({
     // Content-free wakes still revalidate through the existing lifecycle owner.
     matchesWake: event => event.entityIds === undefined ? homeAccountChangeAffectsPrivateAccountRows(event)
         : event.entityIds.some(id => id === 'self' || parsePromptLibraryPhysicalKeyV1(id) !== null),
-    prepareWake: (event, { key, scope }) => {
+    prepareWake: (event, { key, scope, row }) => {
+        if (row) {
+            if (event.entityIds === undefined) return event.source !== 'catch-up-pending';
+            const id = buildPromptLibraryPhysicalKeyV1(row);
+            if (!event.entityIds.includes(id)) {
+                return event.entityIds.includes('self') && typeof getAcknowledgedPromptLibraryCatalogValue(scope, row).revision !== 'number';
+            }
+            const received = getAcknowledgedPromptLibraryCatalogValue(scope, row).revision;
+            const revision = event.entityRevisions?.[id];
+            return revision === undefined || typeof received !== 'number' || received < revision;
+        }
         const catalog = getPromptLibraryCatalogSnapshot(scope)?.catalog;
         if ((catalog?.status !== 'ready' && catalog?.status !== 'partial') || event.entityIds?.includes('self')
             || (event.entityIds === undefined && event.source !== 'catch-up-pending')) {
@@ -115,7 +140,9 @@ const loader = createScopedSnapshotLoader<Target>({
         return true;
     },
 });
-export function observePromptLibraryCatalog(scope: ServerAccountScope): () => void { return loader.observe(targetFor(scope)); }
+export function observePromptLibraryCatalog(scope: ServerAccountScope, row?: PromptLibraryCatalogKeyV1): () => void {
+    return loader.observe(row ? rowTargetFor(scope, row) : targetFor(scope));
+}
 /** Finite readers borrow current foreground acquisition without starting its retained-source cleanup. */
 export async function readPromptLibraryCatalogInCapturedAccount(account: PromptLibraryAccountContext,
     signal?: AbortSignal, key: PromptLibraryCatalogKeyV1 = 'folders'): Promise<PromptLibraryCatalogProjection> {
@@ -123,7 +150,10 @@ export async function readPromptLibraryCatalogInCapturedAccount(account: PromptL
         throwIfAborted(signal);
         account.assertCurrent();
         const scope = { serverId: account.serverId, accountId: account.accountId };
-        if (!isPromptLibraryCatalogRowHeldCurrent(scope, key)) await loader.refresh({ ...targetFor(scope), finite: true }, signal);
+        if (!isPromptLibraryCatalogRowHeldCurrent(scope, key)) {
+            const target = key === 'registry-sources' ? rowTargetFor(scope, key) : { ...targetFor(scope), finite: true } as const;
+            await loader.refresh(target, signal);
+        }
         throwIfAborted(signal);
         account.assertCurrent();
         const projection = getPromptLibraryCatalogSnapshot(scope);
