@@ -4120,7 +4120,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 ? { executionTarget: placementForPersistence.executionTarget.target } : {}),
             ...(placementForPersistence.placementExplicit === true && effectiveCurrentAuthoringDraft.sessionPlacement
                 ? { sessionPlacement: effectiveCurrentAuthoringDraft.sessionPlacement } : {}),
-            ...(authoredBackendTarget && canonicalAgentTarget ? { agentTarget: canonicalAgentTarget } : {}),
         },
         onStartAnother: input?.onStartAnother,
         authoringOrigin: persistedDraft?.authoringOrigin,
