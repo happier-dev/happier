@@ -86,6 +86,8 @@ describe('Vercel activated controller upload', () => {
       expect(entry.manifest.contributes.deploymentTargets[0].actions.uploadDeploy).toBe('deploy-upload-v1');
       const declaration = entry.manifest.contributes.actions.find(action => action.id === 'deploy-upload-v1');
       expect(declaration?.execution.target).toBe('daemon');
+      await writeFile(join(h.sourceRoot, 'public', 'build-copy.sh'), await readFile(join(h.sourceRoot, 'build.sh')));
+      await chmod(join(h.sourceRoot, 'public', 'build-copy.sh'), 0o644);
       const outcome = await h.invoke();
       expect(DeploymentTargetRoleResultV1ProtocolSchema.parse(outcome)).toMatchObject({ state: 'running', providerDeploymentId: 'dpl_exact',
         uploadProvenance: { sourceManifestFingerprint: 'reviewed-manifest', build: { location: 'provider' } } });
@@ -96,7 +98,7 @@ describe('Vercel activated controller upload', () => {
       expect(payload).toMatchObject({ name: 'example', project: 'prj_exact', target: 'production',
         gitMetadata: { commitSha: input.sourceIntent.sha } });
       expect(payload).not.toHaveProperty('gitSource');
-      expect(payload.files.map((file: { file: string }) => file.file).sort()).toEqual(['build.sh', 'package.json', 'public/binary.bin']);
+      expect(payload.files.map((file: { file: string }) => file.file).sort()).toEqual(['build.sh', 'package.json', 'public/binary.bin', 'public/build-copy.sh']);
       for (const file of payload.files) {
         const bytes = await readFile(join(h.sourceRoot, file.file));
         expect(file.sha).toBe(createHash('sha1').update(bytes).digest('hex'));
@@ -105,7 +107,12 @@ describe('Vercel activated controller upload', () => {
         expect(uploaded?.headers?.['content-length']).toBe(String(bytes.length));
       }
       expect(payload.files.find((file: { file: string }) => file.file === 'build.sh').mode & 0o111).toBe(0o111);
-      expect(h.requests).toHaveLength(4); // One raw-file request per real file and one deployment create.
+      const script = payload.files.find((file: { file: string }) => file.file === 'build.sh');
+      const copy = payload.files.find((file: { file: string }) => file.file === 'public/build-copy.sh');
+      expect(copy).toMatchObject({ sha: script.sha, size: script.size });
+      expect(copy.mode & 0o111).toBe(0);
+      expect(h.requests.filter(request => request.headers?.['x-vercel-digest'] === script.sha)).toHaveLength(1);
+      expect(h.requests).toHaveLength(4); // Three distinct file bodies and one deployment create.
       expect(h.requests.every(request => request.credentialBinding?.kind === 'connectedAccountPurpose'
         && request.credentialBinding.purpose === 'deploy.manage' && request.credentialBinding.origin === 'https://api.vercel.com'
         && request.credentialBinding.method === request.method && new URL(request.url).searchParams.get('teamId') === 'team_exact')).toBe(true);

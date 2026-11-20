@@ -24,6 +24,7 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
   const source = await context.services.deploymentSource.materialize({ environmentId: input.environmentId,
     deploymentId: input.deploymentId }, { signal: context.signal });
   const files: VercelUploadedFile[] = [];
+  const uploadedDigests = new Set<string>();
   async function visit(directory: string, prefix: string): Promise<void> {
     context.signal.throwIfAborted();
     for (const name of await readdir(directory)) {
@@ -41,10 +42,13 @@ async function upload(input: DeploymentTargetUploadDeployInputV1, context: Plugi
       const bytes = stat.isSymbolicLink() ? new TextEncoder().encode(await readlink(absolute))
         : new Uint8Array(await readFile(absolute, { signal: context.signal }));
       const sha = createHash('sha1').update(bytes).digest('hex');
-      const failed = await uploadVercelSourceFile(bytes, sha, input.providerIdentity.providerAccountId, io);
-      if (failed) throw withActionFailureDiagnostic(new PluginError({ code: failed.code, retryable: failed.retryable, details: { phase: failed.phase },
-        failureCause: projectActionFailureCauseV1(failed, `deployment.vercel.${failed.phase}`) }),
-        { phase: `deployment.vercel.${failed.phase}`, causeKind: 'native_failure', error: failed });
+      if (!uploadedDigests.has(sha)) {
+        const failed = await uploadVercelSourceFile(bytes, sha, input.providerIdentity.providerAccountId, io);
+        if (failed) throw withActionFailureDiagnostic(new PluginError({ code: failed.code, retryable: failed.retryable, details: { phase: failed.phase },
+          failureCause: projectActionFailureCauseV1(failed, `deployment.vercel.${failed.phase}`) }),
+          { phase: `deployment.vercel.${failed.phase}`, causeKind: 'native_failure', error: failed });
+        uploadedDigests.add(sha);
+      }
       files.push({ file, sha, size: bytes.byteLength, mode: stat.mode });
     }
   }
