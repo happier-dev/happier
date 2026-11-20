@@ -5,6 +5,7 @@ import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
+import { runCommitGate } from './commitGate.mjs';
 import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, workerTreeRows, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
@@ -647,4 +648,48 @@ test('a worker dispatch that returns no rows falls back to the next worker', asy
   const rows = workerTreeRows({ repo, state, log: () => {}, workers: ['nl3', 'nl1'], lane: 'gate', transport })(treeId, ['packages/plugins/codex'], 'head');
   assert.deepEqual(dispatched, ['nl3', 'nl1']);
   assert.deepEqual(rows.get('packages/plugins/codex'), []);
+});
+
+test('the P03 gate refuses a declaration regression in Protocol or Plugin SDK using the rolling cache', async t => {
+  const { repo, commit } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = join(repo, '.git/typecheck-state');
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
+    HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TREE_GATE: 'off',
+    HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
+  await commit('packages/plugin-sdk/package.json', JSON.stringify({ name: '@x/plugin-sdk', scripts: { typecheck: 'tsc' } }));
+  await commit('packages/plugin-sdk/tsconfig.json', '{}');
+  await commit('packages/plugin-sdk/src/index.ts', 'export function api(): number { return 0; }\n');
+  const judge = (base, tree, options) => runCommitGate({ repo, base, tree, env, label: 'commit-partial', ...options });
+  // Seed the existing worker-result boundary, keeping the Git comparison and gate real.
+  const cache = async (rev, dir, rows) => {
+    const tree = git('rev-parse', `${rev}^{tree}`);
+    const results = join(state, 'results', tree);
+    await mkdir(results, { recursive: true });
+    await writeFile(join(results, `${dir.replaceAll('/', '__')}.prepared-declarations.json`), JSON.stringify({ rows }));
+  };
+  for (const dir of ['packages/protocol', 'packages/plugin-sdk']) {
+    const file = `${dir}/src/index.ts`;
+    const clean = await commit(file, 'export function api(): number { return 1; }\n');
+    const broken = await commit(file, 'export function api() { return 1; }\n');
+    const diagnostic = { file, line: 1, column: 17, code: 9007,
+      text: 'Function must have an explicit return type annotation with --isolatedDeclarations.' };
+    await cache(clean, dir, []);
+    await cache(broken, dir, [diagnostic]);
+    const verdict = await judge(clean, broken);
+    assert.equal(verdict.verdict, 'refused', dir);
+    assert.match(verdict.findings.join('\n'), /TS9007/u);
+    const replay = await judge(clean, broken, { prior: clean, cheapOnly: true });
+    assert.equal(replay.verdict, 'needs-full');
+    assert.equal(replay.check, 'package declarations');
+    assert.equal((await judge(clean, broken, { prior: clean })).verdict, 'refused', dir);
+
+    const inherited = await commit(file, 'export function api() { return 2; }\n');
+    await cache(inherited, dir, [diagnostic]);
+    assert.equal((await judge(broken, inherited)).verdict, 'pass', dir);
+  }
+  const other = await commit('packages/leaf/src/index.ts', 'export const value = 3;\n');
+  const verdict = await judge(`${other}^`, other);
+  assert.equal(verdict.verdict, 'pass');
+  assert.ok(verdict.notes.every(note => !note.includes('package typecheck')));
 });

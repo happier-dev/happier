@@ -354,7 +354,7 @@ export function commitProducerClosure({ repo, base, tree, readView = createRevis
   const records = nul(git(['diff-tree', '-r', '-z', '--no-renames', '--name-status', base, tree]));
   for (let index = 0; index < records.length; index += 2) slice.push({ status: records[index], path: records[index + 1] });
   const sources = slice.filter(({ path }) => SOURCE.test(path));
-  const result = { findings: [], roots: 0, ms: 0 };
+  const result = { findings: [], roots: 0, ms: 0, changedSources: sources };
   const lockfileInputs = slice.some(({ path }) => LOCKFILE_INPUT.test(path));
   if (!sources.length && !lockfileInputs) return { ...result, ms: Date.now() - started };
   ts ??= require('typescript');

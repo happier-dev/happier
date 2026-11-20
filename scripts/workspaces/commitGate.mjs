@@ -20,12 +20,22 @@ import { fileURLToPath } from 'node:url';
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
 import { commitPluginManifests, PLUGIN_MANIFEST_INPUT } from './commitPluginManifests.mjs';
 import { commitLockfile } from './commitLockfile.mjs';
-import { commitProducerClosure, createRevisionViewReader } from './commitProducerClosure.mjs';
+import { commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
 import { commitTreeGateMode, commitTreeEntryLoads, startCommitTreeEntryLoadReport } from './commitTreeEntryLoads.mjs';
 
 export const COMMIT_GATE_EXIT = Object.freeze({ pass: 0, refused: 10, needsFull: 3, unavailable: 75 });
+
+const P03_DECLARATION_PACKAGES = ['packages/protocol', 'packages/plugin-sdk'];
+
+function declarationInputsMoved(repo, prior, tree) {
+  // An SDK declaration can read types from other packages. Reuse the prior verdict when
+  // the replay only brings in changes outside the shared package and dependency inputs.
+  return gitIn(repo)(['diff', '--no-renames', '--name-only', '-z', prior, tree, '--', 'packages',
+    'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json', 'patches'])
+    .split('\0').some(path => /\.(?:[cm]?[jt]sx?|json|ya?ml)$|^patches\//u.test(path));
+}
 
 /**
  * The typecheck delta of touched packages/* workspaces (P03-GATE-TC): `report` (default) checks each landed commit after
@@ -75,11 +85,12 @@ async function judgeCommit({ repo, base, tree, prior, cheapOnly = false, env = p
   };
   const refused = (check, findings) => ({ verdict: 'refused', check, findings, notes });
   // The package typecheck waits for a worker compile, so it runs beside the checks below and is collected after them.
-  const typecheck = typecheckMode === 'block' && !prior ? judge('package typecheck', async () => {
+  const checkTypes = packages => judge('package typecheck', async () => {
     const owner = await import('./commitPackageTypecheck.mjs');
-    const result = await owner.commitGateTypecheck({ repo, base, tree, env });
-    return { refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
-  }) : null;
+    const result = await owner.commitGateTypecheck({ repo, base, tree, env, packages });
+    return { ...result, refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
+  });
+  const typecheck = typecheckMode === 'block' && !prior && !cheapOnly ? checkTypes() : null;
   typecheck?.catch(() => {});
 
   const syntax = await judge('syntax', () => commitSourceSyntax({ repo, base, tree }));
@@ -108,10 +119,20 @@ async function judgeCommit({ repo, base, tree, prior, cheapOnly = false, env = p
   notes.push(`lockfile: ${lockfile.note}`);
   if (lockfile.findings.length) return refused('lockfile', lockfile.findings);
 
-  if (typecheck) {
-    const result = await typecheck;
+  // Board B R2 makes these P03 packet scopes blocking even in the default report mode.
+  const declarationPackages = label === 'commit-partial'
+    ? P03_DECLARATION_PACKAGES.filter(dir => closure.changedSources.some(({ path }) => path.startsWith(`${dir}/src/`)))
+    : [];
+  const checkDeclarations = declarationPackages.length > 0 && (!prior || declarationInputsMoved(repo, prior, tree));
+  if (checkDeclarations && cheapOnly) return { verdict: 'needs-full', check: 'package declarations', findings: [], notes };
+  if (typecheck || checkDeclarations) {
+    const result = await (typecheck ?? checkTypes(declarationPackages));
     notes.push(...result.lines);
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
+    if (checkDeclarations) {
+      const unjudged = declarationPackages.filter(dir => !result.packages.includes(dir) || result.unavailable.includes(dir));
+      if (unjudged.length) throw new CommitGateUnavailable('package declarations', new Error(`missing comparison for ${unjudged.join(', ')}`));
+    }
   }
 
   if (treeMode === 'block') {

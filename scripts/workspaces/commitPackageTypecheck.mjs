@@ -557,9 +557,9 @@ export const COMMIT_GATE_TYPECHECK_ENTRY = 'scripts/workspaces/commitGateTypeche
  * leaves the scope `unavailable`, which never refuses: the rolling HEAD typecheck still covers it. Touched apps are
  * returned as `detached`; the rolling owner checks them once the commit lands (kickRollingHeadTypecheck).
  */
-export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true,
+export async function commitGateTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, record = true, packages,
   workers = (env.HAPPIER_COMMIT_TYPECHECK_WORKERS || GATE_WORKERS.join(' ')).split(/\s+/u).filter(Boolean) }) {
-  const plan = commitGateTypecheckPlan({ repo, base, tree });
+  const plan = packages ? { blocking: packages, detached: [] } : commitGateTypecheckPlan({ repo, base, tree });
   const state = commitPackageTypecheckStateDir(repo, env);
   const result = await commitPackageTypecheck({ repo, base, tree, env, log, packages: plan.blocking,
     remote: remote ?? workerTreeRows({ repo, state, env, log, lane: GATE_LANE, entry: COMMIT_GATE_TYPECHECK_ENTRY,
