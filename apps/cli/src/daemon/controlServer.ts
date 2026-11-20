@@ -117,7 +117,15 @@ import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
 import { createRandomSpawnNonce } from '@/session/shared/spawnNonce';
 import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
+import {
+  SessionConnectedServiceAuthSwitchOptionsResultSchema,
+  SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema,
+  SessionConnectedServiceAuthSwitchReceiptSchema,
+  SessionConnectedServiceAuthSwitchRpcParamsSchema,
+  type SessionConnectedServiceAuthSwitchOptionsResult,
+  type SessionConnectedServiceAuthSwitchReceipt,
+  type SessionConnectedServiceAuthSwitchRpcParams,
+} from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { createProviderErrorV1, ProviderErrorV1Schema } from '@happier-dev/protocol/providers/errors';
 import { ConnectedServiceCredentialRevisionV1Schema, ConnectedServiceUsageSourceV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedServiceAuthGroupIdSchema, ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -137,7 +145,7 @@ import { SessionUsageLimitRecoveryResumePromptModeV1Schema } from '@happier-dev/
 import { SshTunnelEnsureRequestSchema, SshTunnelProbeRequestSchema, SshTunnelReleaseRequestSchema, SshTunnelStopRequestSchema } from '@happier-dev/protocol/ssh/tunnels';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { createUnavailableRuntimeActionExecutor } from '@happier-dev/protocol/actions/executor/dispatch';
-import type { RuntimeActionExecute, ConnectedServiceBindingsV2, ConnectedServiceId, ConnectedServiceQuotaRecoveryCreditConsumeRequestV1, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1, RestartAllSessionRunnersRequestV1, RestartAllSessionRunnersResultV1, RestartSessionRunnerRequestV1, RestartSessionRunnerRequestV2, RestartSessionRunnerResultV1, SessionRunnerStatusGetRequestV1, SessionRunnerRuntimeStateV1, SessionRunnerRuntimeStatusV2, SessionCreationTerminalSpawnErrorDetail, SpawnSessionErrorCode, SpawnSessionErrorDetail, SessionMetadataPublisherPreconditionV1, SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
+import type { RuntimeActionExecute, ConnectedServiceId, ConnectedServiceQuotaRecoveryCreditConsumeRequestV1, ConnectedServiceUsageSourceV1, ProviderAccountUsageSnapshotV1, RestartAllSessionRunnersRequestV1, RestartAllSessionRunnersResultV1, RestartSessionRunnerRequestV1, RestartSessionRunnerRequestV2, RestartSessionRunnerResultV1, SessionRunnerStatusGetRequestV1, SessionRunnerRuntimeStateV1, SessionRunnerRuntimeStatusV2, SessionCreationTerminalSpawnErrorDetail, SpawnSessionErrorCode, SpawnSessionErrorDetail, SessionMetadataPublisherPreconditionV1, SessionUsageLimitRecoveryResumePromptModeV1 } from '@happier-dev/protocol';
 import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import {
@@ -759,6 +767,7 @@ export function createDaemonControlApp({
   runtimeAuthRecoveryScheduler,
   onRuntimeAuthFailureReportIntakeReady,
   handleSessionConnectedServiceAuthSwitch,
+  handleSessionConnectedServiceAuthOptions,
   handleSessionConnectedServiceRuntimeAuthRefresh,
   handleSessionRunnerRestart,
   handleSessionRunnerRestartAll,
@@ -886,16 +895,8 @@ export function createDaemonControlApp({
     sessionId: string;
     attemptId: string;
   }>) => Promise<unknown>;
-  handleSessionConnectedServiceAuthSwitch?: (input: Readonly<{
-    sessionId: string;
-    agentId: string;
-    bindings: ConnectedServiceBindingsV2;
-    expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
-    teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
-    previousTeamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
-    teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
-    accountSettingsVersionHint?: number;
-  }>) => Promise<unknown>;
+  handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
+  handleSessionConnectedServiceAuthOptions?: (sessionId: string) => Promise<SessionConnectedServiceAuthSwitchOptionsResult>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
   handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2, options?: Readonly<{ allowNativeBackgroundInterruption: true }>) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
@@ -1717,7 +1718,7 @@ export function createDaemonControlApp({
       response: {
         200: z.object({
           ok: z.literal(true),
-          result: z.unknown(),
+          result: SessionConnectedServiceAuthSwitchReceiptSchema,
         }),
         401: authSchema401,
         503: daemonAdmissionRefusedRouteResponseSchema,
@@ -1740,30 +1741,21 @@ export function createDaemonControlApp({
         errorCode: 'connected_service_auth_switch_handler_unavailable' as const,
       };
     }
-    const result = await handleSessionConnectedServiceAuthSwitch({
-      sessionId: request.body.sessionId,
-      agentId: request.body.agentId,
-      bindings: request.body.bindings,
-      ...(request.body.rematerializeServiceId === undefined
-        ? {}
-        : { rematerializeServiceId: request.body.rematerializeServiceId }),
-      ...(request.body.expectedGroupGenerationByServiceId === undefined
-        ? {}
-        : { expectedGroupGenerationByServiceId: request.body.expectedGroupGenerationByServiceId }),
-      ...(request.body.teamCredentialBindings === undefined
-        ? {}
-        : { teamCredentialBindings: request.body.teamCredentialBindings }),
-      ...(request.body.previousTeamCredentialBindings === undefined
-        ? {}
-        : { previousTeamCredentialBindings: request.body.previousTeamCredentialBindings }),
-      ...(request.body.teamVisibilityGrantConsent === undefined
-        ? {}
-        : { teamVisibilityGrantConsent: request.body.teamVisibilityGrantConsent }),
-      ...(request.body.accountSettingsVersionHint === undefined
-        ? {}
-        : { accountSettingsVersionHint: request.body.accountSettingsVersionHint }),
-    });
+    const result = await handleSessionConnectedServiceAuthSwitch(request.body);
     return { ok: true as const, result };
+  });
+
+  typed.post('/connected-service-auth/session/options', {
+    schema: {
+      body: SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema,
+      response: { 200: SessionConnectedServiceAuthSwitchOptionsResultSchema, 401: authSchema401 },
+    },
+    preHandler: requireAuth,
+  }, async request => {
+    if (!handleSessionConnectedServiceAuthOptions || isDaemonQuiescing()) {
+      return { ok: false as const, errorCode: 'unavailable' as const };
+    }
+    return await handleSessionConnectedServiceAuthOptions(request.body.sessionId);
   });
 
   typed.post('/connected-service-auth/session/refresh-runtime-auth', {
@@ -4638,6 +4630,7 @@ export function startDaemonControlServer({
   runtimeAuthRecoveryScheduler,
   onRuntimeAuthFailureReportIntakeReady,
   handleSessionConnectedServiceAuthSwitch,
+  handleSessionConnectedServiceAuthOptions,
   handleSessionConnectedServiceRuntimeAuthRefresh,
   handleSessionRunnerRestart,
   handleSessionRunnerRestartAll,
@@ -4765,16 +4758,8 @@ export function startDaemonControlServer({
     sessionId: string;
     attemptId: string;
   }>) => Promise<unknown>;
-  handleSessionConnectedServiceAuthSwitch?: (input: Readonly<{
-    sessionId: string;
-    agentId: string;
-    bindings: ConnectedServiceBindingsV2;
-    expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
-    teamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
-    previousTeamCredentialBindings?: import('@happier-dev/protocol/teams').SessionTeamCredentialBindingIntentListV1;
-    teamVisibilityGrantConsent?: Readonly<{ teamId: string }>;
-    accountSettingsVersionHint?: number;
-  }>) => Promise<unknown>;
+  handleSessionConnectedServiceAuthSwitch?: (input: SessionConnectedServiceAuthSwitchRpcParams) => Promise<SessionConnectedServiceAuthSwitchReceipt>;
+  handleSessionConnectedServiceAuthOptions?: (sessionId: string) => Promise<SessionConnectedServiceAuthSwitchOptionsResult>;
   handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
   handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1 | RestartSessionRunnerRequestV2, options?: Readonly<{ allowNativeBackgroundInterruption: true }>) => Promise<RestartSessionRunnerResultV1>;
   handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
@@ -4858,6 +4843,7 @@ export function startDaemonControlServer({
       runtimeAuthRecoveryScheduler,
   onRuntimeAuthFailureReportIntakeReady,
       handleSessionConnectedServiceAuthSwitch,
+      handleSessionConnectedServiceAuthOptions,
       handleSessionConnectedServiceRuntimeAuthRefresh,
       handleSessionRunnerRestart,
       handleSessionRunnerRestartAll,

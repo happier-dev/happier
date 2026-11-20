@@ -1,5 +1,5 @@
 import { z } from '../../zodRuntimePolicy.js';
-import { type ActionId } from '../actionIds.js';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { type ActionContextualDefaults } from '../contextualDefaults.js';
 
 
@@ -108,8 +108,8 @@ export const CURRENT_SESSION_CONTEXT_ACTION_IDS = new Set<ActionId>([
   'session.user_action.answer',
   'session.mode.set',
   'session.config_option.set',
-  'session.connected_services_auth.set',
-  'session.target.primary.set',
+  SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
+  SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1,
   'session.activity.get',
   'session.messages.recent.get',
   'ui.voice_agent.teleport',

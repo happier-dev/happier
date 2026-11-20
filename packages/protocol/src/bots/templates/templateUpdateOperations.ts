@@ -26,6 +26,7 @@ import type { BotTemplateOperationPortV1 } from './botTemplateOperations.js';
 import { applyBotTemplateMcpSetupV1, prepareBotTemplateSetupV1, buildBotTemplateMachineSetupPlanInputV1 } from './templateSetupV1.js';
 import { bestEffortReportBotTemplateAcceptedVersionV1 } from './templateAcceptedVersionsV1.js';
 import { BOT_TEMPLATE_SETUP_APPLY_ROLE_V1 } from './botTemplateActionIdsV1.js';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '../../actions/actionIds.js';
 
 const fail = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 function failure(error: unknown): ActionExecuteFailure {
@@ -188,7 +189,7 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
         ...setup.mcp.map(item => ({ action: 'session.capabilities.set' as const, role: `template_mcp:${item.key}` }))] : []),
       ...(setupApply ? [{ action: 'machines.setup.apply' as const, role: BOT_TEMPLATE_SETUP_APPLY_ROLE_V1, input: projectNativeJsonValueForTransport(setupApply) },
         { action: 'action.operations.get' as const, role: 'template_setup_wait' }] : []),
-      ...(setup.connectedServices ? [{ action: 'session.connected_services_auth.set' as const, role: 'template_accounts' }] : []),
+      ...(setup.connectedServices ? [{ action: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, role: 'template_accounts' }] : []),
     ];
     return { children, approvalPreview: projectNativeJsonValueForTransport({ ...review, ...(setupPlan ? { softwarePlan: setupPlan } : {}) }),
       executeAdmittedAction: async ({ context }) => {
@@ -215,9 +216,14 @@ export async function prepareBotTemplateUpdateV1(port: BotTemplateOperationPortV
           const { release } = review.upstream;
           if (setup.connectedServices && review.executionTarget) {
             context.operationProgress?.update({ phase: 'connections' });
-            await invoke('session.connected_services_auth.set', 'template_accounts', {
-              ...input.sessionRef, ...review.executionTarget,
-              bindings: { v: 2, bindingsByServiceId: { ...review.connectedServices?.bindingsByServiceId, ...setup.connectedServices.bindingsByServiceId } } });
+            const { machineId, agentId } = review.executionTarget;
+            await invoke(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, 'template_accounts', {
+              ...input.sessionRef, machineId,
+              routing: {
+                agentId,
+                bindings: { v: 2, bindingsByServiceId: { ...review.connectedServices?.bindingsByServiceId, ...setup.connectedServices.bindingsByServiceId } },
+              },
+            });
             applied.push('accounts'); remaining.splice(remaining.indexOf('accounts'), 1);
           }
           context.operationProgress?.update({ phase: 'content' });

@@ -44,8 +44,8 @@ const projection = {
 function authSource(chip: AgentInputExtraActionChip | null) {
     const element = chip?.render({ chipStyle: () => null, iconColor: '#000', showLabel: true,
         textStyle: null, countTextStyle: null, chipAnchorRef: { current: null }, popoverAnchorRef: { current: null },
-    }) as React.ReactElement<{ dataSet?: { authSource?: string } }> | undefined;
-    return element?.props.dataSet?.authSource;
+    }) as React.ReactElement<{ webAttributes?: { dataSet?: { authSource?: string } } }> | undefined;
+    return element?.props.webAttributes?.dataSet?.authSource;
 }
 
 it('previews destination-only armed defaults without inferring Native from unread defaults or demanding them for explicit session auth', async () => {
@@ -81,6 +81,7 @@ it('previews destination-only armed defaults without inferring Native from unrea
     const armed = { agentId: 'codex', agentIdentity: consumer, connectedAccounts: declarations };
     type ArmedTarget = NonNullable<Parameters<typeof useSessionConnectedServicesAuthSwitch>[0]['armedContinuationAgent']>;
     const hook = await renderHook<ReturnType<typeof useSessionConnectedServicesAuthSwitch>, ArmedTarget | null>((target) => useSessionConnectedServicesAuthSwitch({
+        readRoutingOptions: async () => [],
         applyBinding: async () => ({ ok: true, action: 'unchanged' }),
         sessionId: 'armed-session', agentId: 'codex', agentIdentity: consumer, machineId: null, serverId: connection.home.id,
         connectedAccounts: declarations, armedContinuationAgent: target,

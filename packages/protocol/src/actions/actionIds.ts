@@ -65,6 +65,8 @@ export { INBOX_GET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
 
 export const SESSION_RUNTIME_REFRESH_ACTION_ID_V1 = 'session.runtime.refresh' as const;
 export const SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 = 'session.connected_services_auth.set' as const;
+export const SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 = 'session.target.primary.set' as const;
+export const ACTION_OPTIONS_RESOLVE_ACTION_ID_V1 = 'action.options.resolve' as const;
 
 /** Workspace preparation must finish before its containing finite Action can transform its result. */
 export function isScmReviewWorkspaceMaterializationActionIdV1(actionId: string): actionId is 'scm.reviewWorkspace.materializePrepared' {

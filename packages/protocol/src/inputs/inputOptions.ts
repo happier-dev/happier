@@ -37,6 +37,7 @@ import { MachineTargetV1Schema } from '../machines/machineAccessV1.js';
 import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
 import { createProjectAnchorOfKeyV1 } from '../workspaces/workspaceRefResolutionV1.js';
 import { MachineVitalsSnapshotV1Schema } from '../machines/vitals/machineVitalsRpcV1.js';
+import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchOptionsResultSchema } from '../connect/sessionConnectedServiceAuthSwitch.js';
 import { normalizeUsageQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
 import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
   resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
@@ -721,6 +722,23 @@ export async function resolveInputOptions(params: Readonly<{
       }).defaultNarratorEngineId !== null) };
     }
     return { ok: true, result: options };
+  }
+
+  if (optionsSourceId === SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID) {
+    if (!deps.sessionConnectedServicesAuthOptions) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    const sessionId = params.resolveSessionId(input, ctx);
+    if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+    const selectedMachine = ctx.expectedSessionMachineId ?? machineId
+      ?? readNonEmptyString(readRecord(readRecord(await deps.sessionStatusGet?.({ sessionId, serverId, context: ctx })).session).machineId);
+    if (!selectedMachine) return { ok: false, errorCode: 'unavailable', error: 'unavailable' };
+    const result = await deps.sessionConnectedServicesAuthOptions({ sessionId, machineId: selectedMachine, serverId }, ctx);
+    const failure = params.readFailure(result);
+    if (failure) return failure;
+    const options = SessionConnectedServiceAuthSwitchOptionsResultSchema.safeParse(result);
+    if (!options.success || !options.data.ok) return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
+    return { ok: true, result: options.data.options.map(option => ({
+      value: projectNativeJsonValueForTransport(option.routing), label: option.label,
+    })) };
   }
 
   if (optionsSourceId === 'session.modes.available') {

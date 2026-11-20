@@ -1,4 +1,4 @@
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionAddressV1';
 import { ActionApprovalRequestCreatedResultSchema, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionSessionFanoutResultV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
@@ -44,7 +44,7 @@ function projectRow(target: ActionSessionAddressV1, actionId: ActionId, result: 
     const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
     if (approval.success) return { target, actionId, result, state: 'approval_pending', code: 'approval_request_created' };
     const value = readRecord(result.result);
-    if (actionId === 'session.connected_services_auth.set' && value.ok === true && value.action === 'unchanged') {
+    if (actionId === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 && value.ok === true && value.action === 'unchanged') {
         return { target, actionId, result, state: 'skipped', code: 'no_change' };
     }
     if (actionId === 'session.agent.transition' && value.type !== 'accepted') return {
@@ -137,7 +137,7 @@ export async function executeBulkSessionChanges(input: Readonly<{
 export function summarizeBulkSessionChanges(plan: ExistingSessionChangePlan) {
     const count = (actionId: ActionId) => new Set(plan.stages.filter(stage => stage.actionId === actionId)
         .flatMap(stage => stage.targets.map(bulkChangeTargetKey))).size;
-    return { restarts: count('session.connected_services_auth.set'), engineSwitches: count('session.agent.transition'),
+    return { restarts: count(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1), engineSwitches: count('session.agent.transition'),
         messages: count('session.message.send'), skipped: plan.skippedTargets.length,
         hasSettingsChanges: plan.stages.some(stage => stage.actionId !== 'session.message.send'),
         unsupportedFields: plan.unsupportedFields };

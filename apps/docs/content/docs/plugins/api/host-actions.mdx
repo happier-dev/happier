@@ -19606,18 +19606,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `sessionId` (text, required): Session Id
-- `agentId` (text, required): Agent Id
-- `bindings` (json, required): Bindings
-- `rematerializeServiceId` (text): Rematerialize Service Id
-- `expectedGroupGenerationByServiceId` (json): Expected Group Generation By Service Id
-- `teamCredentialBindings` (json): Team Credential Bindings
-- `previousTeamCredentialBindings` (json): Previous Team Credential Bindings
-- `teamVisibilityGrantConsent` (json): Team Visibility Grant Consent
-- `accountSettingsVersionHint` (integer): Account Settings Version Hint
+- `routing` (json): Connected-account routing
+- `sessionId` (json, required): Session Id
 - `machineId` (text, required): Machine Id
 - `serverId` (json): Server Id
-- `clientId` (text): Client Id
 
 ## `session.context.update`
 

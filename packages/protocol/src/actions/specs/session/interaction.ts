@@ -2,11 +2,12 @@ import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { requirePluginBindingCaller } from '../pluginPermissions.js';
 import type { ActionSurfaceBindingContext, PreNormalizedActionSpec } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
+import { SessionTargetV1Schema, withSessionTargetFanoutResultV1 } from '../../sessionTargetV1.js';
 import { SessionNeedsYouRaiseInputV1Schema, SessionNeedsYouRaiseOutputV1Schema } from '../../../sessions/permissions/questionV1.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondPayloadV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
-import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
+import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchRoutingSchema, SessionConnectedServiceAuthSwitchSuccessSchema } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 } from '../../actionIds.js';
 import { SessionPermissionRemoteGrantRevokeInputV1Schema, SessionPermissionRemoteGrantRevokeOutputV1Schema, SessionPermissionRemoteGrantsListInputV1Schema, SessionPermissionRemoteGrantsListOutputV1Schema, SessionPermissionRemotePendingListInputV1Schema, SessionPermissionRemotePendingListOutputV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionPermissionRemoteRespondOutputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionUserActionRemoteAnswerOutputV1Schema } from '../../../sessions/permissions/v1.js';
 import { VoiceTrackedTargetsActionResultV1Schema } from '../../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
 import { VoiceTrackedSessionAddressV1Schema } from '../../../sessions/follow/voiceTrackedSessionAddressV1.js';
@@ -161,9 +162,11 @@ export const SessionConfigOptionSetInputSchema = lazyZodSchema(() => z.strictObj
   valueId: z.nullable(z.string()),
 }));
 
-export const SessionConnectedServicesAuthSetInputSchema = lazyZodSchema(() => z.extend(SessionConnectedServiceAuthSwitchRpcParamsSchema, {
+export const SessionConnectedServicesAuthSetInputSchema = lazyZodSchema(() => z.strictObject({
+  sessionId: z.string().check(z.trim(), z.minLength(1)),
   machineId: z.string().check(z.trim(), z.minLength(1)),
   serverId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
+  routing: SessionConnectedServiceAuthSwitchRoutingSchema,
 }));
 
 export const SessionPrimaryTargetInputSchema = lazyZodSchema(() => z.union([
@@ -653,9 +656,9 @@ function createSessionInteractionActionSpecs() {
     inputSchema: lazyZodSchema(() => z.extend(SessionConfigOptionSetInputSchema, { sessionId: z.optional(SessionTargetV1Schema) })),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.connected_services_auth.set', approval: {result: 'optional',flow: 'deferred'},
+    id: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, approval: {result: 'optional',flow: 'deferred'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
-    executionPlacement: 'client',
+    executionPlacement: 'session',
     approvalPolicy: { uiConfirmation: 'direct' },
     title: 'Set session connected-account routing',
     sideEffectClass: 'write',
@@ -664,12 +667,14 @@ function createSessionInteractionActionSpecs() {
     placements: [],
     bindings: { mcpToolName: 'session_connected_services_auth_set' },
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
-    inputHints: { title: 'Set session connected-account routing', fields: [] },
-    outputSchema: StrictJsonValueSchema,
+    inputHints: { title: 'Set session connected-account routing', fields: [
+      { path: 'routing', title: 'Connected-account routing', widget: 'json', optionsSourceId: SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID },
+    ] },
+    outputSchema: lazyZodSchema(() => withSessionTargetFanoutResultV1(SessionConnectedServiceAuthSwitchSuccessSchema)),
     inputSchema: lazyZodSchema(() => z.extend(SessionConnectedServicesAuthSetInputSchema, { sessionId: SessionTargetV1Schema })),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.target.primary.set', executionPlacement: 'client', approval: {result: 'optional',flow: 'deferred'},
+    id: SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1, executionPlacement: 'client', approval: {result: 'optional',flow: 'deferred'},
     title: 'Set primary action session',
     sideEffectClass: 'write',
     description: 'Set which session the voice assistant should target by default.',

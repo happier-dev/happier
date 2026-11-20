@@ -46,7 +46,10 @@ import { useSessionConnectedServicesAuthSwitch } from "@/components/sessions/age
 import { useExistingSessionCapabilitiesChip } from "@/components/sessions/capabilities/useSessionCapabilitiesChip";
 import { executeSessionLifecycleAction } from "@/components/sessions/actions/sessionActionExecution";
 import type { CurrentUiContextCommandInvocation } from "@/components/appShell/currentUiContext/CurrentUiContextCommands";
-import { type SessionConnectedServiceAuthSwitchResult, setSessionConnectedServiceAuthBinding, readSessionConnectedServiceAuthSwitchActionResult } from "@/sync/ops/connectedServices/sessionAuthSwitch";
+import { type SessionConnectedServiceAuthSwitchResult, readSessionConnectedServiceAuthSwitchActionResult } from "@/sync/ops/connectedServices/sessionAuthSwitch";
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import type { PublicActionInputById, PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
+import { SessionConnectedServiceAuthSwitchRoutingSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
 import { presentSessionCredentialReconnectFailure } from "@/sync/ops/actions/sessionSpawnFailurePresentation";
 import { buildPluginDetailRoute, storeMachineRouteParams } from "@/components/settings/plugins/model/pluginsSurfaceRoutes";
@@ -5179,9 +5182,9 @@ export function useSessionComposerController({
             hiddenSources: providerModelProjection.data?.hiddenSources ?? EMPTY_SESSION_ROUTE_HIDDEN_SOURCES,
         } : undefined, [embedded?.allowedModels, existingSessionSourceBrowse, providerAgentTargetKey, providerModelProjection.data, providersFeatureEnabled]);
         const applySessionConnectedServicesAuthBinding = React.useCallback(async (
-            input: Parameters<typeof setSessionConnectedServiceAuthBinding>[0],
+            input: PublicActionInputById[typeof SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1],
         ): Promise<SessionConnectedServiceAuthSwitchResult> => {
-            const initial = await actionExecutor.execute('session.connected_services_auth.set', input, {
+            const initial = await actionExecutor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, input, {
                 surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
                 defaultSessionId: sessionId, serverId: sessionRouteServerId,
             });
@@ -5190,13 +5193,24 @@ export function useSessionComposerController({
             }
             const settled = await resumeActionExecutionResult({
                 result: initial,
-                actionId: 'session.connected_services_auth.set',
+                actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
                 actionInput: input,
                 scope: sessionAccountScope,
                 onApprovalPending: pendingRecoveryApproval.requestApproval,
             });
             return readSessionConnectedServiceAuthSwitchActionResult(settled);
         }, [actionExecutor, pendingRecoveryApproval.requestApproval, sessionAccountLifetime, sessionAccountScope, sessionId, sessionRouteServerId]);
+        const readSessionConnectedServicesAuthOptions = React.useCallback(async () => {
+            const result = await actionExecutor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
+                actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, fieldPath: 'routing',
+                draftInput: { sessionId, machineId: controlMachineTarget?.machineId },
+            }, { surface: 'ui', authority: 'present_user', defaultSessionId: sessionId, serverId: sessionRouteServerId });
+            if (!result.ok || !sessionAccountLifetime?.isCurrent()) return [];
+            return (result.result as PublicActionResultById[typeof ACTION_OPTIONS_RESOLVE_ACTION_ID_V1]).options.flatMap(option => {
+                const routing = SessionConnectedServiceAuthSwitchRoutingSchema.safeParse(option.value);
+                return routing.success ? [routing.data] : [];
+            });
+        }, [actionExecutor, controlMachineTarget?.machineId, sessionAccountLifetime, sessionId, sessionRouteServerId]);
         const requestedRouteSelection = React.useMemo(() => {
             const requested = effectiveModelTransitionActionRequired?.requestedSelection;
             if (!requested) return null;
@@ -5224,6 +5238,7 @@ export function useSessionComposerController({
             sessionConfiguration: session,
             routeSources: sessionRouteSources,
             nativeAgentTargetKey: providerAgentTargetKey,
+            readRoutingOptions: readSessionConnectedServicesAuthOptions,
             route: sessionAuthRoute,
             sessionId,
             agentId,

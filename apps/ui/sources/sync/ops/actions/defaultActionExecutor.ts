@@ -126,7 +126,7 @@ import { SessionSpawnNewActionResultV1Schema, readSessionSpawnNewActionResultV1 
 import { createUiSessionCapabilityActionDeps } from './sessionCapabilityActionDeps';
 import { createUiMachineRecipesRead } from './machineRecipeActionDeps';
 import { setSessionCapabilityV1 } from '@happier-dev/protocol/actions/executor/sessionCapabilities';
-import { setSessionConnectedServiceAuthBinding } from '@/sync/ops/connectedServices/sessionAuthSwitch';
+import { readSessionConnectedServiceAuthOptions, setSessionConnectedServiceAuthBinding } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import { MACHINE_VITALS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineVitals';
 import { MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineResources';
 import { MACHINE_ROLES_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineRoles';
@@ -4450,6 +4450,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     sessionConfigOptionSet: createUiSessionConfigOptionAction(accountContext ?? undefined, providerActionExecute),
     ...createUiSessionCapabilityActionDeps(accountContext ?? undefined),
     sessionConnectedServicesAuthSet: setSessionConnectedServiceAuthBinding,
+    sessionConnectedServicesAuthOptions: readSessionConnectedServiceAuthOptions,
     sessionModelUnarm: async ({ sessionId, serverId, context }) => {
       accountContext?.assertCurrent();
       const transition = SessionModelTransitionResultV1Schema.parse(await actionSessionRpc({

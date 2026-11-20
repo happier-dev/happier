@@ -431,6 +431,7 @@ export const RPC_METHODS = {
   DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME: 'daemon.connectedServiceQuota.recoveryCredit.consume',
   DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET: 'daemon.connectedServices.pools.selection.get',
   DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH: 'daemon.sessionConnectedServiceAuth.switch',
+  DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS: 'daemon.sessionConnectedServiceAuth.options',
   DAEMON_SESSION_VENDOR_PLUGIN_CATALOG_LIST: 'daemon.sessionVendorPluginCatalog.list',
   DAEMON_SESSION_SKILL_CATALOG_LIST: 'daemon.sessionSkillCatalog.list',
   SESSION_SPAWN_NEW: 'session.spawnNew',

@@ -802,6 +802,9 @@ import {
   createSessionConnectedServiceAccountAdoptionVerifier,
 } from '../connectedServices/sessionAuthSwitch/sessionConnectedServiceAccountAdoptionVerification';
 import { readConnectedServiceChildSelectionsFromEnv } from '../connectedServices/connectedServiceChildEnvironment';
+import { SessionConnectedServiceAuthSwitchReceiptSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
+import { projectSessionConnectedServiceAuthSwitchOptions } from '../connectedServices/sessionAuthSwitch/projectSessionConnectedServiceAuthSwitchOptions';
+import { readSessionTeamCredentialResourceCatalog } from '@/session/services/sessionTeamCredentialCatalog';
 import { parseConnectedServiceBindingSelections } from '../connectedServices/parseConnectedServicesBindings';
 import {
   applyConnectedServiceAuthGenerationToTrackedSession,
@@ -812,6 +815,7 @@ import {
 } from '../connectedServices/sessionAuthSwitch/switchSessionConnectedServiceAuth';
 import {
   applyConnectedServiceCredentialUpdate,
+  readConnectedServiceBindingsOrEmpty,
   readConnectedServiceCredentialApplicationState,
 } from '../connectedServices/sessionAuthSwitch/credentialApplicationState';
 import { resolveTrackedConnectedServiceSwitchContinuityContext, resolveTrackedConnectedServiceVendorResumeId } from '../connectedServices/sessionAuthSwitch/resolveTrackedConnectedServiceSwitchContinuityContext';
@@ -14396,6 +14400,34 @@ export async function startDaemonSessionControlRuntime(
           );
         },
       },
+      handleSessionConnectedServiceAuthOptions: async (sessionId) => {
+        return await withSessionAccountContext(sessionId, async (context) => withSessionAccountHome(context, async () => {
+          await assertSessionAccountCurrent(sessionId, context);
+          const credentials = context?.bootstrap.credentials ?? params.credentials;
+          const tracked = findTrackedSessionByHappySessionId(params.trackedSessionsByKey.values(), sessionId);
+          const inactive = tracked ? null : await resolveInactiveConnectedServiceSessionContext({
+            token: credentials.token, credentials, sessionId, currentMachineId: params.machineId,
+          });
+          if (!tracked && !inactive?.cwd) return { ok: false as const, errorCode: 'session_not_found' as const };
+          const agentId = tracked ? resolveTrackedSessionCatalogAgentId(tracked) : inactive?.agentId;
+          if (!agentId) return { ok: false as const, errorCode: 'agent_mismatch' as const };
+          const bindings = tracked
+            ? readConnectedServiceBindingsOrEmpty(resolveTrackedConnectedServiceBindingsRaw(tracked))
+            : inactive!.connectedServices;
+          const { homeDomainAction } = createAccountServerActionDeps({
+            token: credentials.token,
+            serverId: context?.bootstrap.attribution.serverId ?? params.serverId,
+            serverHttpBaseUrl: context?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl,
+          });
+          const [profile, teamResources] = await Promise.all([
+            fetchAccountProfile({ token: credentials.token }),
+            readSessionTeamCredentialResourceCatalog({
+              homeDomainAction, applications: [], executionMachineId: params.machineId,
+            }),
+          ]);
+          return { ok: true as const, options: projectSessionConnectedServiceAuthSwitchOptions({ agentId, bindings, profile, teamResources }) };
+        }));
+      },
       handleSessionConnectedServiceAuthSwitch: async (input) => {
         return await withSessionAccountContext(input.sessionId, async (accountContext) => {
           const sessionCredentials =
@@ -14725,7 +14757,7 @@ export async function startDaemonSessionControlRuntime(
               serviceIds: Object.keys(input.bindings.bindingsByServiceId),
               result: resultWithDiagnostics,
             });
-            return resultWithDiagnostics;
+            return SessionConnectedServiceAuthSwitchReceiptSchema.parse(resultWithDiagnostics);
           });
         });
       },

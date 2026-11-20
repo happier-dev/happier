@@ -176,7 +176,7 @@ import type {
 import { RestartAllSessionRunnersRequestV1Schema, RestartSessionRunnerRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 import { RestartSessionRunnerRequestV2Schema, RestartSessionRunnerConfirmedBackgroundRequestSchema } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV2';
 import { SessionRunnerStatusGetRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
-import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
+import { SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema, SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
 import {
@@ -193,6 +193,7 @@ import {
   requestDaemonSessionRunnerRestartConfirmedBackground,
   requestDaemonSessionRunnerRestartV2,
   restartAllDaemonSessionRunners,
+  requestDaemonSessionConnectedServiceAuthOptions,
 } from '@/daemon/controlClient';
 import { isUnattestedPublicV1RunnerRolloutMutation } from '@/daemon/plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
@@ -977,12 +978,16 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     const { executeAdmittedClientActionChild } = await import('@/session/actions/admittedClientActionChildren');
     return await executeAdmittedClientActionChild(raw, context);
   });
-  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, async (raw: unknown) => {
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, async (raw: unknown, context) => {
     const parsed = parseSessionConnectedServiceAuthSwitchRpcParams(raw);
     if (!parsed) {
       return { ok: false, errorCode: 'unsupported_service' };
     }
-    return await requestDaemonSessionConnectedServiceAuthSwitch(parsed);
+    return await requestDaemonSessionConnectedServiceAuthSwitch(parsed, { signal: context?.signal });
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, async (raw: unknown, context) => {
+    const { sessionId } = SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema.parse(raw);
+    return await requestDaemonSessionConnectedServiceAuthOptions(sessionId, { signal: context?.signal });
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, async (raw: unknown, context) => {

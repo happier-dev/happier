@@ -3,6 +3,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { isDeepStrictEqual } from 'node:util';
 
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, ConnectedServiceUxDiagnosticCodeV1Schema } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import type { SessionConnectedServiceAuthSwitchErrorCode } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { ConnectedServiceCredentialRevisionV1Schema, isConnectedServiceCredentialHealthStatusReconnectRequired, isConnectedServiceCredentialHealthStatusUsable, normalizeConnectedServiceCredentialHealthStatus } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { ConnectedServiceMaterializationIdentityV1Schema } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
@@ -131,29 +132,7 @@ export type ConnectedServiceRuntimeAuthApplyReason =
 type ConnectedServiceSwitchAttemptAction = 'restart_requested' | 'hot_applied' | 'metadata_updated';
 type ConnectedServiceSwitchAttemptPublicReason = Exclude<ConnectedServiceRuntimeAuthApplyReason, 'diagnostic'>;
 
-export type SessionConnectedServiceAuthSwitchErrorCode =
-  | 'session_not_found'
-  | 'agent_mismatch'
-  | 'unsupported_service'
-  | 'continuity_unsupported'
-  | 'profile_missing'
-  | 'profile_disconnected'
-  | 'profile_action_required'
-  | 'group_missing'
-  | 'group_generation_conflict'
-  | 'provider_state_sharing_required'
-  | 'provider_state_sharing_unavailable'
-  | 'provider_state_sharing_settings_unavailable'
-  | 'provider_session_state_unavailable_for_resume'
-  | 'metadata_update_failed'
-  | 'restart_failed'
-  | 'hot_apply_failed'
-  | 'credential_revision_missing'
-  | 'credential_revision_superseded'
-  | 'hot_apply_succeeded_but_recovery_failed'
-  | 'provider_account_adoption_mismatch'
-  | 'post_switch_verification_failed'
-  | 'partial_applied_pending_reconciliation';
+export type { SessionConnectedServiceAuthSwitchErrorCode } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 
 export type SessionConnectedServiceAuthSwitchDiagnostics = Readonly<{
   failurePhase?:
@@ -887,7 +866,7 @@ function resolveGroupFallbackProfileId(input: Readonly<{
   return input.activeProfileId;
 }
 
-function groupHasEnabledMember(input: Readonly<{
+export function groupHasEnabledMember(input: Readonly<{
   group: QualifiedConnectedAccountGroupV4;
   profileId: string;
 }>): boolean {
@@ -904,10 +883,8 @@ function findTrackedSession(children: ReadonlyArray<TrackedSession>, sessionId: 
 
 function matchesSessionAgentId(requestedId: string, sessionAgentId: CatalogAgentId | null): sessionAgentId is CatalogAgentId {
   if (!sessionAgentId) return false;
-  const requested = requestedId.trim();
-  if (requested === sessionAgentId) return true;
   const agent = readAgentCatalogSnapshot().agentDefinitionsById.get(sessionAgentId);
-  return agent !== undefined && resolveAgentRoutingId(requested, [agent]) === sessionAgentId;
+  return resolveAgentRoutingId(requestedId.trim(), [agent ?? { id: sessionAgentId }]) !== null;
 }
 
 function readExpectedGeneration(

@@ -667,6 +667,13 @@ export async function readDaemonPluginCatalog(
     : parsed;
 }
 
+export async function requestDaemonSessionConnectedServiceAuthOptions(
+  sessionId: string,
+  options: DaemonControlRequestOptions = {},
+): Promise<unknown> {
+  return await daemonPost('/connected-service-auth/session/options', { sessionId }, options);
+}
+
 export async function requestDaemonSessionConnectedServiceAuthSwitch(
   body: Readonly<{
     sessionId: string;

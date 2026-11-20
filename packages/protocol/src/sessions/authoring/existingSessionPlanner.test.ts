@@ -97,8 +97,9 @@ describe('existing Session change planner', () => {
       'session.connected_services_auth.set', 'session.connected_services_auth.set', 'session.connected_services_auth.set',
       'session.capabilities.set', 'session.message.send',
     ]);
-    expect(plan.stages.filter(s => s.actionId === 'session.connected_services_auth.set').map(s => [s.input.agentId, s.input.machineId]))
-      .toEqual(targets.map(target => [target.agentId, target.machineId]));
+    expect(plan.stages.filter(s => s.actionId === 'session.connected_services_auth.set').map(s => s.input))
+      .toEqual(targets.map(target => expect.objectContaining({ machineId: target.machineId,
+        routing: expect.objectContaining({ agentId: target.agentId }) })));
   });
 
   it('supports settings only, clears model explicitly, and reports unsupported authoring fields', () => {
@@ -137,8 +138,9 @@ describe('existing Session change planner', () => {
     expect(transitions.every(stage => !('input' in stage.input))).toBe(true);
     expect(transitions[0].input.selection).toEqual({ v: 1, agentId: 'happier.agent.codex/codex',
       modelSelection: { agentTargetKey: 'happier.agent.codex/codex', modelId: 'model', providerConnectionId: 'provider' } });
-    expect(plan.stages.filter(stage => stage.actionId === 'session.connected_services_auth.set').map(stage => stage.input.agentId))
-      .toEqual(['happier.agent.codex/codex', 'happier.agent.codex/codex']);
+    expect(plan.stages.filter(stage => stage.actionId === 'session.connected_services_auth.set').map(stage => stage.input))
+      .toEqual(['m1', 'm2'].map(machineId => expect.objectContaining({ machineId,
+        routing: expect.objectContaining({ agentId: 'happier.agent.codex/codex' }) })));
     expect(plan.stages.find(stage => stage.actionId === 'session.permission_mode.set')).toMatchObject({
       input: { permissionMode: 'read-only' }, targets: targets.map(target => target.address),
     });

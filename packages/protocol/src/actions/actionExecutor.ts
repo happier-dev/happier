@@ -26,7 +26,7 @@ import { readSessionStopConfirmationFailure } from './executor/session/stopConfi
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
-import { isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
+import { isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
@@ -4245,7 +4245,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ? { ok: false, errorCode: 'cancelled', error: 'cancelled' }
               : await executeCoreTerminal(actionId, (() => {
                   const childInput = replaceActionSessionTargetField(readRecord(admittedInput), snapshot.field, target.sessionId);
-                  if (actionId !== 'session.connected_services_auth.set') return childInput;
+                  if (actionId !== SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1) return childInput;
                   return { ...childInput, serverId: target.serverId,
                     ...(machineId ? { machineId } : {}) };
                 })(),
@@ -4255,7 +4255,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                     // A reviewed/resolved host leaf remains this exact Session
                     // through fresh transport reads, including durable replay.
                     ...(actionId === 'action.invoke' ? {} : { expectedSessionAddress: target }),
-                    ...(actionId === 'session.connected_services_auth.set' && machineId
+                    ...(actionId === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 && machineId
                       ? { expectedSessionMachineId: machineId } : {}),
                     sessionTargetsV1: actionId === 'action.invoke' && sessionTarget.cardinality === 'one'
                       ? snapshot : { ...snapshot, targets: [target], selector: false },

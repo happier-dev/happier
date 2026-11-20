@@ -3533,8 +3533,8 @@ describe('default Action executor mode and catalog contracts', () => {
   it.each(['ui', 'agent', 'mcp'] as const)('routes a confirmed connected-account mutation through its %s Action owner', async (surface) => {
     daemonAnswer = () => ({ ok: true, action: 'metadata_updated' });
     const input = {
-      sessionId: 's1', agentId: 'claude', machineId: 'machine-a', serverId,
-      bindings: { v: 2 as const, bindingsByServiceId: {} },
+      sessionId: 's1', machineId: 'machine-a', serverId,
+      routing: { agentId: 'claude', bindings: { v: 2 as const, bindingsByServiceId: {} } },
     };
     await installActionSettings({}, undefined, { 'session.connected_services_auth.set': ['agent', 'mcp'] });
     installSession('s1', { machineId: 'machine-a', flavor: 'claude' });
@@ -3549,7 +3549,7 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, action: 'metadata_updated' } });
     expect(outgoing).toContainEqual(expect.objectContaining({
       method: `machine-a:${RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH}`,
-      params: expect.objectContaining({ sessionId: 's1', agentId: 'claude', bindings: input.bindings }),
+      params: expect.objectContaining({ sessionId: 's1', ...input.routing }),
     }));
   });
 
@@ -3575,8 +3575,9 @@ describe('default Action executor mode and catalog contracts', () => {
     await installActionSettings({}, undefined, { [actionId]: ['agent', 'mcp'] });
     installSession('s1', { machineId: 'machine-a', flavor: 'muse' });
     const result = await createDefaultActionExecutor().execute(actionId, {
-      sessionId: 's1', agentId: 'muse', machineId: 'machine-a', serverId,
-      bindings: { v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': { source: 'native' } } },
+      sessionId: 's1', machineId: 'machine-a', serverId,
+      routing: { agentId: 'muse',
+        bindings: { v: 2, bindingsByServiceId: { 'happier.agent.muse/muse-account': { source: 'native' } } } },
     }, { ...context(), surface, defaultSessionId: 's1',
       ...(surface === 'agent' ? { authority: 'account_automation' as const,
         actionCaller: { kind: 'session' as const, sessionId: 's1', starterDepth: 0, turnDepth: 0 } } : {}),

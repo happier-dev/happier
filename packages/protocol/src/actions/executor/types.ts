@@ -2874,6 +2874,7 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
   sessionConfigOptionSet?: (args: Readonly<{ sessionId: string; configId: string; valueId: string | null }>, context: ActionExecutorContext) => Promise<unknown>;
   sessionConnectedServicesAuthSet?: (args: SessionConnectedServiceAuthSwitchRpcParams & Readonly<{ machineId: string; serverId?: string | null }>, context: ActionExecutorContext) => Promise<unknown>;
+  sessionConnectedServicesAuthOptions?: (args: Readonly<{ sessionId: string; machineId: string; serverId?: string | null }>, context: ActionExecutorContext) => Promise<unknown>;
   sessionModesList?: (args: Readonly<{ sessionId: string }>) => Promise<unknown>;
 
   // Voice panel targeting + session query tools

@@ -1,6 +1,8 @@
 import { renderHook as renderBaseHook, standardCleanup } from '@/dev/testkit';
 import * as React from 'react';
 import { t, type TranslationKey } from '@/text';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
 import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { SessionConnectedServiceAuthSwitchErrorCode } from '@/sync/ops/connectedServices/sessionAuthSwitch';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -10,7 +12,7 @@ import type { IModal } from '@/modal';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -382,6 +384,67 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputChipLabel', () =>
 // Cold source-module compilation is file setup, not a per-test lifecycle hook.
 await loadSyncSingletonForTests();
 
+const { useSessionConnectedServicesAuthSwitch: useAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
+type AuthSwitchParams = Parameters<typeof useAuthSwitch>[0];
+type RoutingOption = Awaited<ReturnType<AuthSwitchParams['readRoutingOptions']>>[number];
+
+function useSessionConnectedServicesAuthSwitch(params: Omit<AuthSwitchParams, 'readRoutingOptions' | 'applyBinding'> & { applyBinding: typeof setSessionConnectedServiceAuthBindingMock }) {
+    return useAuthSwitch({
+        ...params,
+        // The Home/daemon boundary supplies the switch operands. This fixture
+        // exercises picker behavior with the same accounts used in the UI scenario.
+        readRoutingOptions: async () => {
+            const agentId = params.agentId;
+            if (!agentId) return [];
+            const profile = AccountProfileSchema.parse({ ...profileDefaults, id: 'account-a', ...profileState.current });
+            const serviceIds = [...new Set(params.connectedAccounts.map(item => buildQualifiedPluginContributionKey(item.service)))];
+            const current = {
+                ...Object.fromEntries(serviceIds.map(service => [service, { source: 'native' as const }])),
+                ...readSessionConnectedServiceBindings({ metadata: params.sessionMetadata, agentId })?.bindingsByServiceId,
+            };
+            const options: RoutingOption[] = [];
+            const add = (service: string, binding: RoutingOption['bindings']['bindingsByServiceId'][string],
+                operands: Partial<RoutingOption> = {}) => {
+                options.push({ agentId, selectedServiceId: service, bindings: {
+                    v: 2, bindingsByServiceId: { ...current, [service]: binding },
+                }, ...operands });
+            };
+            for (const service of serviceIds) add(service, { source: 'native' });
+            for (const account of profile.connectedAccountsV4) {
+                add(buildQualifiedPluginContributionKey(account.ref.service), {
+                    source: 'connected', selection: 'profile', profileId: account.ref.accountId,
+                });
+            }
+            for (const group of profile.connectedAccountGroupsV4) {
+                const service = buildQualifiedPluginContributionKey(group.ref.service);
+                add(service, { source: 'connected', selection: 'group', groupId: group.ref.groupId }, {
+                    expectedGroupGenerationByServiceId: { [service]: group.generation },
+                });
+            }
+            for (const resource of params.teamCredentialResources ?? []) {
+                if (resource.sourcePresentation?.kind !== 'connected_service') continue;
+                const service = buildQualifiedPluginContributionKey(resource.sourcePresentation.service);
+                for (const selection of resource.connectedServiceSelections) {
+                    const declaration = params.connectedAccounts.find(item => buildQualifiedPluginContributionKey(item.service) === service);
+                    const slot = params.agentIdentity && declaration ? { kind: 'connected_service_purpose' as const,
+                        purpose: { consumer: params.agentIdentity, purpose: declaration.purpose } } : undefined;
+                    add(service, selection, slot ? {
+                        teamCredentialBindings: [{ v: 1, slot, resourceId: resource.id,
+                            expectedResourceRevision: resource.resourceRevision, deliveryMode: selection.deliveryMode }],
+                        previousTeamCredentialBindings: [{ v: 1, slot, resourceId: null }],
+                        ...(resource.sessionUsePolicy === 'team_visibility_required' ? {
+                            teamVisibilityGrantConsent: { teamId: resource.teamId },
+                        } : {}),
+                    } : {});
+                }
+            }
+            return options;
+        },
+        applyBinding: ({ routing: { selectedServiceId: _selectedServiceId, ...routing }, ...target }) =>
+            params.applyBinding({ ...target, ...routing }),
+    });
+}
+
 type PopoverConnectedBinding = {
     source: 'connected';
     selection: 'profile' | 'group';
@@ -452,7 +515,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('retains absent status badges when only fresh-session configuration changes', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         const base = createSessionFixture({ id: 'status-producer' });
         const session = { ...base, metadata: { ...base.metadata!, flavor: 'codex', path: '/first' } };
         const hook = await renderHook(({ path }: { path: string }) => useSessionConnectedServicesAuthSwitch({
@@ -475,7 +537,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         { machineId: 'machine-1', reason: 'read_only' as const, label: 'connectedServices.authSwitch.readOnlyDisabled' },
         { machineId: null, reason: null, label: 'session.collaboration.readiness.cause.machineMissing' },
     ])('keeps usable personal accounts outside Unavailable while switching is blocked by $reason / $machineId', async ({ machineId, reason, label }) => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
         const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
             applyBinding: setSessionConnectedServiceAuthBindingMock,
@@ -505,7 +566,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('retains the auth chip when the Account profile republishes with equal connected accounts', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         const base = createSessionFixture({ id: 'chip-producer' });
         const session = { ...base, metadata: { ...base.metadata!, flavor: 'codex', path: '/first' } };
         const settings = { connectedServicesDefaultProfileByServiceId: {} };
@@ -528,11 +588,13 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it.each(['provider_session_state_unavailable_for_resume', 'continuity_unsupported'] as const)('opens a fresh editable session under the selected account without retrying %s', async (errorCode) => {
+        let sourceSession: ReturnType<typeof createSessionFixture> | undefined;
         const connection = await restoreServerAccountForTest({ serverUrl: 'http://auth-switch-fresh.example.test', accountId: 'account-a',
             request: async url => {
                 const path = new URL(String(url)).pathname;
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
                 if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+                if (sourceSession && path === `/v2/sessions/${sourceSession.id}`) return Response.json(createPlainSessionByIdResponseFixture(sourceSession));
                 return null;
             } });
         seedCodexProfile();
@@ -550,6 +612,7 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             backendTarget: { kind: 'backend', backendId: 'codex' },
             connectedServices: { v: 2, bindingsByServiceId: { [CODEX_SERVICE_KEY]: previousBinding } },
         } });
+        sourceSession = session;
         storage.getState().applySessions([session]);
         setSessionConnectedServiceAuthBindingMock.mockResolvedValue({ ok: false,
             errorCode, serviceId: CODEX_SERVICE_KEY,
@@ -560,7 +623,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             } },
         });
         try {
-            const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
             const hook = await renderBaseHook(() => useSessionConnectedServicesAuthSwitch({
                 applyBinding: setSessionConnectedServiceAuthBindingMock,
                 sessionId: session.id, sessionConfiguration: session, agentId: 'codex', machineId: 'machine-1',
@@ -574,8 +636,11 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 await Promise.resolve();
             });
             const buttons = modalAlertMock.mock.calls.at(-1)?.[2] as Array<{ text: string; onPress?: () => void }>;
+            const startFresh = buttons.find(button => button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction')?.onPress;
+            expect(startFresh).toBeTypeOf('function');
             await act(async () => {
-                await buttons.find(button => button.text === 'newSession.connectedServiceSwitchUnavailable.startFreshAction')?.onPress?.();
+                startFresh?.();
+                await vi.waitFor(() => expect(routerPushMock).toHaveBeenCalled());
             });
             expect(setSessionConnectedServiceAuthBindingMock).toHaveBeenCalledTimes(1);
             expect(modalConfirmMock).not.toHaveBeenCalled();
@@ -595,7 +660,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it.each(['work', 'missing-profile', null])('previews the armed qualified Agent purpose default without offering source auth changes (%s)', async (profileId) => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' };
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
         const hook = await renderHook(({ withdrawn }: { withdrawn: boolean }) => useSessionConnectedServicesAuthSwitch({
@@ -649,7 +713,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             sessionUsePolicy: 'personal_allowed' as const, providerModels: [],
             connectedServiceSelections: [selection], sourcePresentation: { kind: 'connected_service' as const, service },
         };
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
                 applyBinding: setSessionConnectedServiceAuthBindingMock,
             sessionId: 'session-1', agentId: 'codex', machineId: 'machine-1', connectedAccounts: CODEX_CONNECTED_ACCOUNTS,
@@ -681,7 +744,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('disables changed auth options when no reachable machine target is available', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -714,7 +776,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('routes Gemini native-to-connected session switches to the daemon with the qualified key', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         profileState.current = {
             connectedAccountsV4: [
@@ -788,7 +849,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('offers a NOVEL external plugin service with neutral/public presentation and never a bundled identity', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedNovelProfile();
 
         const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
@@ -863,7 +923,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('settles a novel-service switch from refreshed session state and survives rerender', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedNovelProfile();
 
         const nativeMetadata: unknown = {
@@ -921,7 +980,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('displays bundled legacy persisted bindings through the compatibility adapter while new writes stay qualified', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedClaudeProfile();
 
         const hook = await renderHook(() =>
@@ -987,7 +1045,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
      * account. Malformed and bare keys are a separate contract, asserted below.
      */
     it('offers declared services only while preserving a valid authored undeclared binding', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const preservedNovelBinding = {
@@ -1052,7 +1109,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
      * surface in the picker and never reach the switch payload.
      */
     it('fails closed for bare and malformed persisted service bindings', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1103,7 +1159,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('fails closed with neutral actions when the daemon rejects an unsupported service', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedNovelProfile();
         setSessionConnectedServiceAuthBindingMock.mockResolvedValueOnce({
             ok: false,
@@ -1157,7 +1212,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('enables Codex native-to-connected session switches when provider state sharing is shared', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1226,7 +1280,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('lets the daemon decide Codex native-to-connected switches that require shared provider state', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1290,7 +1343,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             errorCode,
             serviceId: CODEX_SERVICE_KEY,
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1343,7 +1395,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         { agentId: 'codex', serviceId: CODEX_SERVICE_KEY, pluginId: 'happier.agent.codex', localId: 'openai-codex' },
         { agentId: 'acme.review/reviewer', serviceId: NOVEL_SERVICE_KEY, pluginId: 'acme.review', localId: 'reviewer-service' },
     ])('retains the current account and exposes the typed refusal and account recovery for $agentId', async ({ agentId, serviceId, pluginId, localId }) => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         profileState.current = {
             connectedAccountsV4: ['ai3', 'ai1'].map(accountId => v4Account({ pluginId, localId, accountId, kind: 'oauth' })),
             connectedAccountGroupsV4: [], connectedServiceCredentialRevisionsV1: [],
@@ -1402,7 +1453,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 },
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1482,7 +1532,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 },
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1557,7 +1606,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 partialState: 'runtime_auth_partially_applied',
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1614,7 +1662,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 partialState: 'runtime_auth_partially_applied',
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1699,7 +1746,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 partialState: 'runtime_auth_partially_applied',
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1806,7 +1852,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             errorCode,
             serviceId: CODEX_SERVICE_KEY,
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1868,7 +1913,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 },
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -1918,7 +1962,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('routes passive Provider daemon/runtime failures into the incumbent recovery owner', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
@@ -2012,7 +2055,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 },
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -2155,7 +2197,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 },
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -2243,7 +2284,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 },
             },
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -2289,7 +2329,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('recovers the active Codex connected profile from the runtime descriptor when session bindings are missing', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         seedCodexProfile();
 
         const hook = await renderHook(() =>
@@ -2335,7 +2374,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('labels native session auth with the compact native label', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -2362,7 +2400,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('renders a stable existing-session auth chip test id', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -2401,7 +2438,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('opens connected service settings from the existing-session auth chip', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -2491,7 +2527,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
                 service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },
             },
         };
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
                 applyBinding: setSessionConnectedServiceAuthBindingMock,
             sessionId: 'session-1',
@@ -2582,7 +2617,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             switchOrder.push('rpc');
             return Promise.resolve({ ok: true, action: 'restart_requested' });
         });
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -2626,7 +2660,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('delegates active-session consent and mutation to the Action callback', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         const hook = await renderHook(() => useSessionConnectedServicesAuthSwitch({
                 applyBinding: setSessionConnectedServiceAuthBindingMock,
@@ -2663,7 +2696,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('shows a restarting status badge until the switched session is active with the requested binding', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         type HookProps = Readonly<{
             sessionActive: boolean;
@@ -2746,7 +2778,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('clears the restarting badge when daemon materializes the selected group with its active profile id', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         profileState.current = {
             connectedAccountsV4: [
@@ -2889,7 +2920,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it('exposes manual and daemon restart signals as shared restart state', async () => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         const startedAtMs = Date.now();
 
         const hook = await renderHook(() =>
@@ -2939,7 +2969,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockRejectedValueOnce(
             Object.assign(new Error('RPC timeout'), { rpcErrorCode: 'timeout' }),
         );
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         const hook = await renderHook(() =>
             useSessionConnectedServicesAuthSwitch({
@@ -2988,7 +3017,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         setSessionConnectedServiceAuthBindingMock.mockRejectedValueOnce(
             Object.assign(new Error('RPC timeout'), { rpcErrorCode: 'timeout' }),
         );
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
         type HookProps = Readonly<{
             sessionActive: boolean;
@@ -3060,7 +3088,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
     });
 
     it.each(['failed', 'terminal'] as const)('settles a timed-out restart on typed %s evidence without scheduling timers', async (outcome) => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
         try {
@@ -3108,7 +3135,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
         { latestReadyEventAt: 2_500 },
         { latestTurnStatus: 'completed', latestTurnStatusObservedAt: 2_500 },
     ])('consumes typed recovery after restart failure without timers: %j', async (evidence) => {
-        const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
         try {
@@ -3156,7 +3182,6 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             setSessionConnectedServiceAuthBindingMock.mockRejectedValueOnce(
                 Object.assign(new Error('RPC timeout'), { rpcErrorCode: 'timeout' }),
             );
-            const { useSessionConnectedServicesAuthSwitch } = await import('./useSessionConnectedServicesAuthSwitch');
 
             type HookProps = Readonly<{
                 sessionActive: boolean;

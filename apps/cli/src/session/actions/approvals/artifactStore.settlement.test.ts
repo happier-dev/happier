@@ -5,6 +5,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 import {
   API_TOKEN_FULL_GRANT_V1,
@@ -1029,14 +1030,13 @@ describe('approval settlement through the real CLI Artifact store', () => {
         },
       })),
     });
-    const created = await executor.execute('session.connected_services_auth.set', {
-      sessionId: 'origin-session', machineId: 'machine-a', agentId: 'external-agent',
-      bindings: { v: 2, bindingsByServiceId: {} },
+    const created = await executor.execute(SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1, {
+      serverId: uiContext.serverId, sessionId: 'origin-session',
     }, { ...uiContext, surface: 'mcp', authority: 'account_automation',
       defaultSessionId: 'origin-session', defaultSessionMachineId: 'machine-a',
       actionCaller: { kind: 'host' },
       actionsSettings: normalizeActionsSettingsV1({ v: 1,
-        actions: { 'session.connected_services_auth.set': { approvalRequiredSurfaces: ['mcp'] } } }),
+        actions: { [SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1]: { approvalRequiredSurfaces: ['mcp'] } } }),
       externalActionTarget: { kind: 'session', sessionId: 'origin-session' } });
     expect(created).toEqual({ ok: true, result: expect.objectContaining({ kind: 'approval_request_created' }) });
     const artifactId = String((created as { result: { artifactId: string } }).result.artifactId);

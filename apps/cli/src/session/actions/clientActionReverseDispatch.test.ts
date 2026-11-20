@@ -120,7 +120,6 @@ describe('client Action reverse delivery', () => {
       .toEqual({ ok: false, errorCode: 'disabled', error: 'disabled' });
   });
   it.each([
-    { actionId: 'session.connected_services_auth.set', input: { sessionId: 'target-session', machineId: 'machine', agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } } },
     { actionId: 'session.config_option.set', input: { sessionId: 'target-session', configId: 'effort', valueId: 'high' } },
     { actionId: 'session.target.primary.set', input: { serverId: 'home', sessionId: 'target-session' } },
     { actionId: 'session.target.tracked.set', input: { sessionAddresses: [{ serverId: 'home', sessionId: 'target-session' }] } },
@@ -377,8 +376,6 @@ describe('client Action reverse delivery', () => {
   it.each([
     { actionId: 'ui.find', input: { op: 'set', query: 'needle' }, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN },
     { actionId: 'ui.find', input: { op: 'set', query: 'needle' }, errorCode: 'MACHINE_RPC_TIMEOUT' },
-    { actionId: 'session.connected_services_auth.set', input: { sessionId: 'target-session', machineId: 'machine',
-      agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } }, errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN },
   ] as const)('preserves issued $actionId $errorCode through approval settlement', async ({ actionId, input, errorCode }) => {
     const dispatch = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: () => true,

@@ -1615,6 +1615,32 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         expect(ack).toHaveBeenCalledWith({ ok: true, result });
     });
 
+    it.each([
+        [RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, "session.read"],
+        [RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, "session.write"],
+    ])("admits %s for the Session owner and refuses a shared reader", async (rpcMethod, kind) => {
+        const sessionId = "private-session";
+        const method = `machine-1:${rpcMethod}`;
+        const effect = vi.fn(async () => "sealed-receipt");
+        const target = { id: "routing-daemon", data: { clientType: "machine-scoped", machineId: "machine-1" },
+            timeout: () => ({ emitWithAck: effect }) };
+        const { io } = createTargetRoutingIo({ [`rpc:user-1:${method}`]: [target], [target.id]: [target] });
+        const socket = createFakeSocket({ data: { clientType: "user-scoped" } });
+        registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io });
+        const request = { method, params: "sealed-input", authorization: { kind, sessionId } };
+        sessionFindUniqueMock.mockResolvedValue(createOwnedSessionAccessRow(sessionId));
+        const accepted = vi.fn();
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, request, accepted);
+        expect(accepted).toHaveBeenCalledWith({ ok: true, result: "sealed-receipt" });
+        sessionFindUniqueMock.mockResolvedValue({ ...createOwnedSessionAccessRow(sessionId), accountId: "other-owner" });
+        sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({ id: "share-1", accountId: "user-1",
+            accessLevel: "view", canApprovePermissions: false }));
+        const denied = vi.fn();
+        await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, request, denied);
+        expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        expect(effect).toHaveBeenCalledOnce();
+    });
+
     describe("optional SCM Session proof", () => {
         function createScmSessionProofFixture(rpcMethod: string = RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ) {
             const method = `machine-1:${rpcMethod}`;

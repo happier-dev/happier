@@ -1,4 +1,7 @@
-import { buildExistingSessionConnectedServicesAuthActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
+import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchRoutingSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
+import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { readTeamCredentialDeliveryReadinessV1 } from '@happier-dev/protocol/teams/credentials/readinessV1';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
@@ -21,7 +24,6 @@ import type {
     PluginContributionIdentityV1,
 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
-    SessionTeamCredentialBindingIntentListV1,
     TeamCredentialResourceCatalogEntryV1,
 } from '@happier-dev/protocol/teams';
 import { ConnectedAccountServiceKeySchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -75,7 +77,6 @@ import {
     resolveProjectedConnectedAccountServiceKeys,
 } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
 import {
-    type setSessionConnectedServiceAuthBinding,
     type SessionConnectedServiceAuthSwitchErrorCode,
     type SessionConnectedServiceAuthSwitchResult as DaemonSessionConnectedServiceAuthSwitchResult,
 } from '@/sync/ops/connectedServices/sessionAuthSwitch';
@@ -141,7 +142,12 @@ type ProviderSessionUnavailableDiagnosticActionState = Readonly<{
     failureServiceId: string;
 }> | null;
 
+type SwitchInput = PublicActionInputById[typeof SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1];
+type SwitchRouting = SwitchInput['routing'];
+const SWITCH_OPTIONS_FIELD = { path: 'routing', optionsSourceId: SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID } as const;
+
 type SetBindingForServiceOptions = Readonly<{
+    routing?: SwitchRouting;
     rematerializeServiceId?: ConnectedAccountServiceKey;
     /** The user already confirmed this exact Retry/Revert action. */
     skipConfirm?: boolean;
@@ -281,44 +287,6 @@ type SessionConnectedServicesAuthSwitchRetryState = Readonly<{
     expectedBindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding>>;
 }>;
 
-export function buildExistingSessionConnectedServiceCredentialBindingIntents(input: Readonly<{
-    agentIdentity: PluginContributionIdentityV1;
-    connectedAccounts: readonly PluginProjectedAgentConnectedAccountPurposeV2[];
-    serviceId: string;
-    binding: ConnectedServicesServiceBinding | undefined;
-    resources: readonly TeamCredentialResourceCatalogEntryV1[];
-}>): SessionTeamCredentialBindingIntentListV1 | undefined {
-    const declarations = input.connectedAccounts.filter((declaration) => (
-        buildQualifiedPluginContributionKey(declaration.service) === input.serviceId
-    ));
-    if (declarations.length === 0) return undefined;
-    const requestedTeamBinding = input.binding?.source === 'team_resource' ? input.binding : null;
-    const resource = requestedTeamBinding
-        ? input.resources.find((candidate) => (
-            candidate.id === requestedTeamBinding.resourceId
-            && candidate.connectedServiceSelections.some((selection) => (
-                selection.resourceId === requestedTeamBinding.resourceId
-                && teamResourceConnectedServiceSelectionKey(selection) === teamResourceConnectedServiceSelectionKey(requestedTeamBinding)
-            ))
-        ))
-        : undefined;
-    if (requestedTeamBinding && !resource) return undefined;
-    return declarations.map((declaration) => ({
-        v: 1,
-        slot: {
-            kind: 'connected_service_purpose',
-            purpose: { consumer: input.agentIdentity, purpose: declaration.purpose },
-        },
-        ...(resource
-            ? {
-                resourceId: resource.id,
-                expectedResourceRevision: resource.resourceRevision,
-                deliveryMode: requestedTeamBinding!.deliveryMode,
-            }
-            : { resourceId: null }),
-    }));
-}
-
 function areServiceBindingsEqual(
     left: ConnectedServicesServiceBinding | undefined,
     right: ConnectedServicesServiceBinding | undefined,
@@ -392,19 +360,49 @@ function isNonTerminalRestartTimeoutError(value: unknown): boolean {
     return readErrorTokens(value).some((token) => token.toLowerCase().includes('timeout'));
 }
 
-function buildExpectedGroupGenerationByServiceId(params: Readonly<{
-    bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
-    groupOptionsByServiceId: Readonly<Record<string, ReadonlyArray<{ groupId: string; generation?: number }>>>;
-}>): Readonly<Record<string, number>> | undefined {
-    const out: Record<string, number> = {};
-    for (const [serviceId, binding] of Object.entries(params.bindingsByServiceId)) {
-        if (binding?.source !== 'connected' || binding.selection !== 'group' || !binding.groupId) continue;
-        const group = params.groupOptionsByServiceId[serviceId]?.find((candidate) => candidate.groupId === binding.groupId);
-        if (typeof group?.generation === 'number' && Number.isInteger(group.generation) && group.generation >= 0) {
-            out[serviceId] = group.generation;
-        }
-    }
-    return Object.keys(out).length > 0 ? out : undefined;
+function findSwitchRouting(options: readonly SwitchRouting[], serviceId: string, binding: ConnectedServicesServiceBinding): SwitchRouting | undefined {
+    return options.find(option => option.selectedServiceId === serviceId
+        && areServiceBindingsEqual(option.bindings.bindingsByServiceId[serviceId], binding));
+}
+
+function SessionConnectedServicesSwitchSelection({
+    sessionId, machineId, serverId, applyRouting, ...props
+}: React.ComponentProps<typeof NewSessionConnectedServicesSelectionContent> & Readonly<{
+    sessionId: string;
+    machineId?: string | null;
+    serverId?: string | null;
+    applyRouting: (serviceId: string, binding: ConnectedServicesServiceBinding, routing: SwitchRouting) => void;
+}>) {
+    const request = { actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, field: SWITCH_OPTIONS_FIELD };
+    const { state } = useInputFieldOptions({ requests: [request], enabled: Boolean(machineId), machineId, sessionId, serverId });
+    const published = state(SWITCH_OPTIONS_FIELD).options;
+    const options = React.useMemo(() => published.flatMap(option => {
+        const routing = SessionConnectedServiceAuthSwitchRoutingSchema.safeParse(option.value);
+        return routing.success ? [routing.data] : [];
+    }), [published]);
+    const canChoose = (service: string, binding: ConnectedServicesServiceBinding) => Boolean(findSwitchRouting(options, service, binding));
+    return (
+        <NewSessionConnectedServicesSelectionContent
+            {...props}
+            profileOptionsByServiceId={Object.fromEntries(Object.entries(props.profileOptionsByServiceId).map(([service, profiles]) =>
+                [service, profiles.filter(profile => canChoose(service, { source: 'connected', selection: 'profile', profileId: profile.profileId }))]))}
+            groupOptionsByServiceId={Object.fromEntries(Object.entries(props.groupOptionsByServiceId).map(([service, groups]) =>
+                [service, groups.filter(group => canChoose(service, { source: 'connected', selection: 'group', groupId: group.groupId }))]))}
+            teamCredentialResources={props.teamCredentialResources?.flatMap(resource => {
+                const service = resource.sourcePresentation?.kind === 'connected_service'
+                    ? buildQualifiedPluginContributionKey(resource.sourcePresentation.service) : undefined;
+                const selections = service ? resource.connectedServiceSelections.filter(selection => canChoose(service, selection)) : [];
+                return selections.length ? [{ ...resource, connectedServiceSelections: selections }] : [];
+            })}
+            resolveOptionAvailability={input => canChoose(input.serviceId, input.binding)
+                ? props.resolveOptionAvailability?.(input) ?? {}
+                : { disabled: true, subtitle: t('common.unavailable') }}
+            setBindingForService={(serviceId, binding) => {
+                const routing = findSwitchRouting(options, serviceId, binding);
+                if (routing) applyRouting(serviceId, binding, routing);
+            }}
+        />
+    );
 }
 
 export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
@@ -449,7 +447,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     intentionalRestartRecoveryEvidenceAtMs?: number | null;
     /** Passive Provider runtime failures enter the existing generic recovery owner. */
     passiveProviderRecoveryServiceId?: ConnectedAccountServiceKey | null;
-    applyBinding: typeof setSessionConnectedServiceAuthBinding;
+    applyBinding: (input: SwitchInput) => Promise<DaemonSessionConnectedServiceAuthSwitchResult>;
+    readRoutingOptions: () => Promise<readonly SwitchRouting[]>;
 }>): SessionConnectedServicesAuthSwitchResult {
     // Only the connected-account facts auth switching reads; a timestamp-only Account update leaves it still.
     const accountProfile = useProfile(profile => ({
@@ -612,14 +611,23 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         profileOptionsByServiceId, router, supportedConnectedServiceIds]);
 
     const setBindingForService = React.useCallback((serviceId: string, binding: ConnectedServicesServiceBinding, options?: SetBindingForServiceOptions) => {
-        const agentId = typeof params.agentId === 'string' ? params.agentId.trim() : '';
         const machineId = params.machineId;
         const rematerializeServiceId = options?.rematerializeServiceId;
         const forceReapply = options?.forceReapply ?? false;
-        if (!machineId || !agentId) return;
+        if (!machineId) return;
         if (!forceReapply && !rematerializeServiceId && areServiceBindingsEqual(optimisticBindingsByServiceId[serviceId], binding)) return;
         void (async () => {
-            let teamVisibilityGrantConsent: Readonly<{ teamId: string }> | undefined;
+            let routing: SwitchRouting | undefined;
+            try {
+                routing = options?.routing ?? findSwitchRouting(await params.readRoutingOptions(), serviceId, binding);
+            } catch {
+                Modal.alert(t('common.error'), t('common.unavailable'));
+                return;
+            }
+            if (!routing) {
+                Modal.alert(t('common.error'), t('common.unavailable'));
+                return;
+            }
             if (!options?.skipConfirm && binding.source === 'team_resource') {
                 const requestedTeamBinding = binding;
                 const startedServerId = teamCredentialContextRef.current.serverId;
@@ -648,8 +656,12 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                         )),
                 });
                 if (outcome.kind !== 'continue') return;
-                binding = outcome.selection;
-                if (selectedResource.sessionUsePolicy === 'team_visibility_required') {
+                if (!areServiceBindingsEqual(binding, outcome.selection)) {
+                    routing = findSwitchRouting(await params.readRoutingOptions(), serviceId, outcome.selection);
+                    if (!routing) return;
+                    binding = outcome.selection;
+                }
+                if (routing.teamVisibilityGrantConsent) {
                     const confirmed = await Modal.confirm(
                         t('teams.credentials.usePolicy.title'),
                         t('teams.credentials.usePolicy.visibilityNote'),
@@ -662,7 +674,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                         && resource.resourceRevision === selectedResource.resourceRevision
                         && readTeamCredentialDeliveryReadinessV1(resource.readiness, requestedTeamBinding.deliveryMode).kind === 'available'
                     ))) return;
-                    teamVisibilityGrantConsent = { teamId: selectedResource.teamId };
                 }
             }
         const previousBindings = optimisticBindingsByServiceId;
@@ -670,16 +681,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             ...optimisticBindingsByServiceId,
             [serviceId]: binding,
         };
-        const bindings = buildConnectedServicesBindingsPayload({
-            supportedConnectedServiceIds,
-            connectedServiceProfileOptionsByServiceId: profileOptionsByServiceId,
-            connectedServiceAccountGroupOptionsByServiceId: groupOptionsByServiceId,
-            connectedServicesBindingsByServiceId: nextBindings,
-            defaultProfileByServiceId: params.settings.connectedServicesDefaultProfileByServiceId,
-            accountGroupsFeatureEnabled,
-            emitWhenAllNative: true,
-        });
-        if (!bindings) return;
         const attemptId = switchAttemptIdRef.current + 1;
         switchAttemptIdRef.current = attemptId;
         const startedAtMs = Date.now();
@@ -698,33 +699,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         setProviderSessionDiagnosticActionState(null);
         setOptimisticBindingsByServiceId(nextBindings);
 
-        const expectedGroupGenerationByServiceId = buildExpectedGroupGenerationByServiceId({
-            bindingsByServiceId: nextBindings,
-            groupOptionsByServiceId,
-        });
-        const agentIdentity = params.agentIdentity ?? parseQualifiedPluginContributionKey(agentId);
-        const teamCredentialBindings = agentIdentity
-            ? buildExistingSessionConnectedServiceCredentialBindingIntents({
-                agentIdentity,
-                connectedAccounts: params.connectedAccounts,
-                serviceId,
-                binding,
-                resources: teamCredentialContextRef.current.resources,
-            })
-            : undefined;
-        const previousTeamCredentialBindings = agentIdentity
-            ? buildExistingSessionConnectedServiceCredentialBindingIntents({
-                agentIdentity,
-                connectedAccounts: params.connectedAccounts,
-                serviceId,
-                binding: previousBindings[serviceId],
-                resources: teamCredentialContextRef.current.resources,
-            })
-            : undefined;
-        if (binding.source === 'team_resource' && !teamCredentialBindings) {
-            setOptimisticBindingsByServiceId(previousBindings);
-            return;
-        }
         const presentFailure = (errorCode: string | undefined, failureServiceId = serviceId) => {
             Modal.alert(t('common.error'), presentSessionAuthSwitchFailure(errorCode),
                 buildConnectedServiceUxDiagnosticAlertButtons({
@@ -737,18 +711,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
                     translate: t,
                 }));
         };
-        void params.applyBinding(buildExistingSessionConnectedServicesAuthActionInput({
-            sessionId: params.sessionId,
-            agentId,
-            machineId,
-            serverId: params.serverId ?? null,
-            bindings,
-            ...(rematerializeServiceId ? { rematerializeServiceId } : {}),
-            ...(expectedGroupGenerationByServiceId ? { expectedGroupGenerationByServiceId } : {}),
-            ...(teamCredentialBindings ? { teamCredentialBindings } : {}),
-            ...(previousTeamCredentialBindings ? { previousTeamCredentialBindings } : {}),
-            ...(teamVisibilityGrantConsent ? { teamVisibilityGrantConsent } : {}),
-        })).then((result) => {
+        void params.applyBinding({
+            sessionId: params.sessionId, machineId, serverId: params.serverId ?? null,
+            routing: { ...routing, ...(rematerializeServiceId ? { rematerializeServiceId } : {}) },
+        }).then((result) => {
             if (result.ok) {
                 if (switchAttemptIdRef.current === attemptId) {
                     setManualRestartSignal(result.action === 'restart_requested'
@@ -889,9 +855,8 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         })();
     }, [
         coordinateTeamCredentialSelection,
-        accountGroupsFeatureEnabled,
-        groupOptionsByServiceId,
         optimisticBindingsByServiceId,
+        params.readRoutingOptions,
         params.applyBinding,
         params.agentId,
         params.machineId,
@@ -967,7 +932,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         armedNote?: string | null,
         appliedRoute?: ReturnType<typeof resolveSessionRoutePresentation>['applied'],
     ) => (
-        <NewSessionConnectedServicesSelectionContent
+        <SessionConnectedServicesSwitchSelection
+            sessionId={params.sessionId}
+            machineId={params.machineId}
+            serverId={params.serverId}
             armedNote={armedNote}
             routeSources={params.routeSources}
             nativeAgentTargetKey={params.nativeAgentTargetKey ?? undefined}
@@ -988,6 +956,10 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             setBindingForService={(serviceId, binding) => {
                 requestClose();
                 setBindingForService(serviceId, binding);
+            }}
+            applyRouting={(serviceId, binding, routing) => {
+                requestClose();
+                setBindingForService(serviceId, binding, { routing });
             }}
             defaultProfileIdByServiceId={params.settings.connectedServicesDefaultProfileByServiceId}
             resolveOptionAvailability={resolveOptionAvailability}

@@ -23,18 +23,6 @@ describe('setSessionConnectedServiceAuthBinding', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
             action: 'restart_requested',
-            normalizedBindings: {
-                v: 2,
-                bindingsByServiceId: {
-                    anthropic: {
-                        source: 'connected',
-                        selection: 'profile',
-                        profileId: 'work',
-                    },
-                },
-            },
-            continuityByServiceId: { anthropic: 'restart_rematerialize' },
-            warnings: [],
         });
 
         const { setSessionConnectedServiceAuthBinding, SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD } = await import('./sessionAuthSwitch');
@@ -47,35 +35,24 @@ describe('setSessionConnectedServiceAuthBinding', () => {
             bindings: {
                 v: 2,
                 bindingsByServiceId: {
-                    anthropic: {
+                    'happier.agent.claude/anthropic': {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'work',
                     },
                 },
             },
-            expectedGroupGenerationByServiceId: { anthropic: 4 },
+            expectedGroupGenerationByServiceId: { 'happier.agent.claude/anthropic': 4 },
         })).resolves.toEqual({
             ok: true,
             action: 'restart_requested',
-            normalizedBindings: {
-                v: 2,
-                bindingsByServiceId: {
-                    anthropic: {
-                        source: 'connected',
-                        selection: 'profile',
-                        profileId: 'work',
-                    },
-                },
-            },
-            continuityByServiceId: { anthropic: 'restart_rematerialize' },
-            warnings: [],
         });
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith({
             machineId: 'machine-1',
             serverId: 'server-1',
             method: SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD,
+            authorization: { kind: 'session.write', sessionId: 'session-1' },
             onIssued: expect.any(Function),
             payload: {
                 sessionId: 'session-1',
@@ -83,14 +60,14 @@ describe('setSessionConnectedServiceAuthBinding', () => {
                 bindings: {
                     v: 2,
                     bindingsByServiceId: {
-                        anthropic: {
+                        'happier.agent.claude/anthropic': {
                             source: 'connected',
                             selection: 'profile',
                             profileId: 'work',
                         },
                     },
                 },
-                expectedGroupGenerationByServiceId: { anthropic: 4 },
+                expectedGroupGenerationByServiceId: { 'happier.agent.claude/anthropic': 4 },
             },
         });
     });
@@ -99,11 +76,9 @@ describe('setSessionConnectedServiceAuthBinding', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: false,
             errorCode: 'provider_session_state_unavailable_for_resume',
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             diagnostics: {
-                actionRequired: {
-                    kind: 'retry',
-                },
+                failurePhase: 'continuity',
             },
         });
 
@@ -116,7 +91,7 @@ describe('setSessionConnectedServiceAuthBinding', () => {
             bindings: {
                 v: 2,
                 bindingsByServiceId: {
-                    'openai-codex': {
+                    'happier.agent.codex/openai-codex': {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'codex-profile',
@@ -126,11 +101,9 @@ describe('setSessionConnectedServiceAuthBinding', () => {
         })).resolves.toEqual({
             ok: false,
             errorCode: 'provider_session_state_unavailable_for_resume',
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             diagnostics: {
-                actionRequired: {
-                    kind: 'retry',
-                },
+                failurePhase: 'continuity',
             },
         });
     });
@@ -140,12 +113,6 @@ describe('setSessionConnectedServiceAuthBinding', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
             action: 'restart_requested',
-            normalizedBindings: {
-                v: 2,
-                bindingsByServiceId: {},
-            },
-            continuityByServiceId: {},
-            warnings: [],
         });
 
         const { setSessionConnectedServiceAuthBinding, SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD } = await import('./sessionAuthSwitch');
@@ -158,7 +125,7 @@ describe('setSessionConnectedServiceAuthBinding', () => {
             bindings: {
                 v: 2,
                 bindingsByServiceId: {
-                    'openai-codex': {
+                    'happier.agent.codex/openai-codex': {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'work',
@@ -175,6 +142,7 @@ describe('setSessionConnectedServiceAuthBinding', () => {
             machineId: 'machine-1',
             serverId: 'server-1',
             method: SESSION_CONNECTED_SERVICE_AUTH_SWITCH_MACHINE_RPC_METHOD,
+            authorization: { kind: 'session.write', sessionId: 'session-1' },
             onIssued: expect.any(Function),
             payload: {
                 sessionId: 'session-1',
@@ -182,7 +150,7 @@ describe('setSessionConnectedServiceAuthBinding', () => {
                 bindings: {
                     v: 2,
                     bindingsByServiceId: {
-                        'openai-codex': {
+                        'happier.agent.codex/openai-codex': {
                             source: 'connected',
                             selection: 'profile',
                             profileId: 'work',
@@ -198,18 +166,6 @@ describe('setSessionConnectedServiceAuthBinding', () => {
         machineRpcWithServerScopeMock.mockResolvedValueOnce({
             ok: true,
             action: 'restart_requested',
-            normalizedBindings: {
-                v: 2,
-                bindingsByServiceId: {
-                    anthropic: {
-                        source: 'connected',
-                        selection: 'profile',
-                        profileId: 'work',
-                    },
-                },
-            },
-            continuityByServiceId: { anthropic: 'restart_rematerialize' },
-            warnings: [],
         });
 
         const { setSessionConnectedServiceAuthBinding } = await import('./sessionAuthSwitch');
@@ -222,14 +178,14 @@ describe('setSessionConnectedServiceAuthBinding', () => {
             bindings: {
                 v: 2,
                 bindingsByServiceId: {
-                    anthropic: {
+                    'happier.agent.claude/anthropic': {
                         source: 'connected',
                         selection: 'profile',
                         profileId: 'work',
                     },
                 },
             },
-            rematerializeServiceId: 'anthropic',
+            rematerializeServiceId: 'happier.agent.claude/anthropic',
         })).resolves.toEqual(expect.objectContaining({
             ok: true,
             action: 'restart_requested',
@@ -237,7 +193,7 @@ describe('setSessionConnectedServiceAuthBinding', () => {
 
         expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
             payload: expect.objectContaining({
-                rematerializeServiceId: 'anthropic',
+                rematerializeServiceId: 'happier.agent.claude/anthropic',
             }),
         }));
     });

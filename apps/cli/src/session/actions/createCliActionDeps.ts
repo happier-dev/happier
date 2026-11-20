@@ -1073,7 +1073,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     readRegistryAppEnvironment: readOpenedDeploymentEnvironment,
   });
   const { sessionVendorPluginCatalogList, sessionSkillCatalogList } = createCliSessionCatalogActionDeps(params, { callSessionRpcForTransport, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resolveTransportForSession });
-  const { sessionExchangePrepare, sessionExchangeControl, sessionTurnCancel, sessionCompact, sessionRuntimeRefresh, sessionStop, sessionControlSwitch, sessionModeSet, sessionConnectedServicesAuthSet } = createCliControlActionDeps(params, { callMachineAction, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
+  const { sessionExchangePrepare, sessionExchangeControl, sessionTurnCancel, sessionCompact, sessionRuntimeRefresh, sessionStop, sessionControlSwitch, sessionModeSet, sessionConnectedServicesAuthSet, sessionConnectedServicesAuthOptions } = createCliControlActionDeps(params, { callMachineAction, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome });
   const { homeRuntimeTaskRpc, prepareLocalServiceStartApproval, runtimeActionExecute } = createCliLocalServiceActionDeps(params, {
     callMachineAction, projectHomeId, projectHomeAdmission, withProjectHome, executionRunActionFailure,
   });
@@ -1847,6 +1847,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     sessionControlSwitch,
     sessionModeSet,
     sessionConnectedServicesAuthSet,
+    sessionConnectedServicesAuthOptions,
     sessionBoardAction: widgetDeps.sessionBoardAction,
     ...(widgetDeps.sessionBoardPrepareItem ? { sessionBoardPrepareItem: widgetDeps.sessionBoardPrepareItem } : {}),
     readAgentHtmlNetworkPolicy: async () => params.actionsSettingsProvider?.getAccountSettings?.()?.agentHtmlNetworkPolicy ?? 'ask',

@@ -14,11 +14,13 @@ import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondActionDec
 import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
 import { normalizeResolvedOptions } from '../../../inputs/inputOptions.js';
 import { resolveRequestedSessionModeId } from '../../sessionModeIds.js';
-import type { SessionConnectedServiceAuthSwitchRpcParams } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
+import {
+  SessionConnectedServiceAuthSwitchReceiptSchema,
+} from '../../../connect/sessionConnectedServiceAuthSwitch.js';
 import type { ActionExecutorContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorDeps } from '../types.js';
-import { ActionIdSchema, type ActionId } from '../../actionIds.js';
+import { ActionIdSchema, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
 import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
 import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '../../../sessions/permissions/nativeChoicesV1.js';
 
@@ -390,26 +392,26 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
           return completeActionResult(res);
         }
 
-        if (actionId === 'session.connected_services_auth.set') {
+        if (actionId === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1) {
           if (!deps.sessionConnectedServicesAuthSet) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.connected_services_auth.set' };
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           }
-          const input = parsed.data as SessionConnectedServiceAuthSwitchRpcParams & Readonly<{
-            machineId: string;
-            serverId?: string | null;
-          }>;
+          const { sessionId, routing: { selectedServiceId: _selectedServiceId, ...routing }, ...input } = parsed.data as AdmittedActionInputById[typeof actionId];
+          if (typeof sessionId !== 'string') return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const expectedMachineId = ctx.expectedSessionMachineId
             ?? (deps.sessionStatusGet ? readRecord(readRecord(await deps.sessionStatusGet({
-              sessionId: input.sessionId, serverId: ctx.expectedSessionAddress?.serverId ?? ctx.serverId,
+              sessionId, serverId: ctx.expectedSessionAddress?.serverId ?? ctx.serverId,
               context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}),
             })).session).machineId : undefined);
           if (typeof expectedMachineId === 'string' && expectedMachineId.trim() && input.machineId !== expectedMachineId) {
             return { ok: false, errorCode: 'session_address_mismatch', error: 'session_address_mismatch' };
           }
-          const result = await deps.sessionConnectedServicesAuthSet(input, ctx);
-          const completed = completeActionResult(result);
-          // The auth-switch owner supplies the service and executable recovery diagnostic.
-          return completed.ok ? completed : { ...completed, details: result };
+          const receipt = SessionConnectedServiceAuthSwitchReceiptSchema.safeParse(await deps.sessionConnectedServicesAuthSet({ sessionId, ...input, ...routing }, ctx));
+          if (!receipt.success) return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
+          const result = receipt.data;
+          return result.ok
+            ? { ok: true, result }
+            : { ok: false, errorCode: result.errorCode, error: result.errorCode, details: result };
         }
 
         if (actionId === 'session.target.primary.set') {

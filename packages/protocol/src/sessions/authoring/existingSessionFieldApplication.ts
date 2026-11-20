@@ -1,9 +1,9 @@
-import type { ActionId } from '../../actions/actionIds.js';
-import type { SessionCapabilitiesSetInputV1 } from '../../actions/specs/sessionCapabilities.js';
+import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '../../actions/actionIds.js';
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
 import { formatLegacyConfiguredAcpAgentId, readLegacyConfiguredAcpBackendId } from '../../backends/targets/compat/customAcp.js';
 import { buildQualifiedPluginContributionKey } from '../../plugins/contributionKey.js';
+import type { SessionCapabilitiesSetInputV1 } from '../../actions/specs/sessionCapabilities.js';
 import type { WorkflowSessionAuthoringSelection, WorkflowSessionAuthoringSelectionFieldId } from '../../workflows/workflowV1.js';
 
 export type ExistingSessionFieldApplication =
@@ -30,7 +30,7 @@ export const EXISTING_SESSION_FIELD_APPLICATIONS = {
   permissionMode: { via: 'message' },
   acpSessionModeId: { via: 'action', actionId: 'session.mode.set' },
   sessionConfigOptionOverrides: { via: 'action', actionId: 'session.config_option.set' },
-  connectedServices: { via: 'action', actionId: 'session.connected_services_auth.set' },
+  connectedServices: { via: 'action', actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 },
   // The authoring field contributes capabilityDeltas to an ExistingSessionChangeSet.
   capabilitySelection: { via: 'action', actionId: 'session.capabilities.set' },
   transcriptStorage: { via: 'unsupported', reason: 'new_sessions_only' },

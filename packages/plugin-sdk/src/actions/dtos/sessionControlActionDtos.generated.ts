@@ -721,201 +721,202 @@ export type SessionControlActionInputById = {
         clientId?: string | undefined;
     };
     readonly "session.connected_services_auth.set": {
-        agentId: string;
-        bindings: {
-            v: 1;
-            bindingsByServiceId: Record<string, {
-                source: 'connected';
-                profileId: string;
-                selection?: 'profile' | undefined;
-            } | {
-                source: 'connected';
-                selection: 'group';
-                groupId: string;
-                profileId?: string | undefined;
-                appliedProfileId?: string | undefined;
-            } | {
-                source: 'native';
-            }>;
-        } | {
-            v: 1;
-            bindingsByServiceId: Record<string, {
-                source: 'connected';
-                profileId: string;
-                selection?: 'profile' | undefined;
-            } | {
-                source: 'connected';
-                selection: 'group';
-                groupId: string;
-                profileId?: string | undefined;
-                appliedProfileId?: string | undefined;
-            } | {
-                source: 'native';
-            }>;
-        } | {
-            v: 2;
-            bindingsByServiceId?: Record<string, {
-                source: 'connected';
-                profileId: string;
-                selection?: 'profile' | undefined;
-            } | {
-                source: 'connected';
-                selection: 'group';
-                groupId: string;
-                profileId?: string | undefined;
-                appliedProfileId?: string | undefined;
-            } | {
-                source: 'native';
-            } | {
-                source: 'team_resource';
-                resourceId: string;
-                deliveryMode: 'brokered';
-            } | {
-                source: 'team_resource';
-                resourceId: string;
-                deliveryMode: 'direct';
-                disclosedMember: {
-                    service: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    accountId: string;
-                };
-            }> | undefined;
-        };
         machineId: string;
-        sessionId: SessionTargetV1<true>;
-        rematerializeServiceId?: string | undefined;
-        expectedGroupGenerationByServiceId?: Record<string, number> | undefined;
-        teamCredentialBindings?: ({
-            v: 1;
-            slot: {
-                kind: 'connected_service_purpose';
-                purpose: {
-                    consumer: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    purpose: string;
-                };
+        routing: {
+            agentId: string;
+            bindings: {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
             } | {
-                kind: 'provider_model';
-            };
-            resourceId: null;
-        } | {
-            v: 1;
-            slot: {
-                kind: 'connected_service_purpose';
-                purpose: {
-                    consumer: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    purpose: string;
-                };
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
             } | {
-                kind: 'provider_model';
-            };
-            resourceId: string;
-            expectedResourceRevision: number;
-            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-            teamId?: string | undefined;
-            providerModelSelection?: undefined | {
-                agentTargetKey: string;
-                modelId: string;
-                application?: undefined | {
-                    implementationIdentity: {
-                        pluginId: string;
-                        localId: string;
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
                     };
-                    endpointTemplateId: string;
-                    protocol: string;
+                }> | undefined;
+            };
+            teamCredentialBindings?: ({
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: null;
+            } | {
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                } | {
+                    kind: 'provider_model';
+                };
+                resourceId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                teamId?: string | undefined;
+                providerModelSelection?: undefined | {
                     agentTargetKey: string;
+                    modelId: string;
+                    application?: undefined | {
+                        implementationIdentity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        endpointTemplateId: string;
+                        protocol: string;
+                        agentTargetKey: string;
+                    };
+                    executionMachineId?: string | undefined;
+                    nativeSource?: undefined | {
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
                 };
-                executionMachineId?: string | undefined;
-                nativeSource?: undefined | {
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
                     sourceRevision: string;
                     providerTicket: string;
                 };
-            };
-            nativeDelivery?: undefined | {
-                managedId: string;
-                controllerInstallationId: string;
-                guestInstallationId: string;
-                bindingKey: string;
-                placeholderRef: string;
-                sourceRevision: string;
-                providerTicket: string;
-            };
-        })[] | undefined;
-        previousTeamCredentialBindings?: ({
-            v: 1;
-            slot: {
-                kind: 'connected_service_purpose';
-                purpose: {
-                    consumer: {
-                        pluginId: string;
-                        localId: string;
+            })[] | undefined;
+            accountSettingsVersionHint?: number | undefined;
+            rematerializeServiceId?: string | undefined;
+            expectedGroupGenerationByServiceId?: Record<string, number> | undefined;
+            previousTeamCredentialBindings?: ({
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
                     };
-                    purpose: string;
+                } | {
+                    kind: 'provider_model';
                 };
+                resourceId: null;
             } | {
-                kind: 'provider_model';
-            };
-            resourceId: null;
-        } | {
-            v: 1;
-            slot: {
-                kind: 'connected_service_purpose';
-                purpose: {
-                    consumer: {
-                        pluginId: string;
-                        localId: string;
+                v: 1;
+                slot: {
+                    kind: 'connected_service_purpose';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
                     };
-                    purpose: string;
+                } | {
+                    kind: 'provider_model';
                 };
-            } | {
-                kind: 'provider_model';
-            };
-            resourceId: string;
-            expectedResourceRevision: number;
-            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-            teamId?: string | undefined;
-            providerModelSelection?: undefined | {
-                agentTargetKey: string;
-                modelId: string;
-                application?: undefined | {
-                    implementationIdentity: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    endpointTemplateId: string;
-                    protocol: string;
+                resourceId: string;
+                expectedResourceRevision: number;
+                deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                teamId?: string | undefined;
+                providerModelSelection?: undefined | {
                     agentTargetKey: string;
+                    modelId: string;
+                    application?: undefined | {
+                        implementationIdentity: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        endpointTemplateId: string;
+                        protocol: string;
+                        agentTargetKey: string;
+                    };
+                    executionMachineId?: string | undefined;
+                    nativeSource?: undefined | {
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
                 };
-                executionMachineId?: string | undefined;
-                nativeSource?: undefined | {
+                nativeDelivery?: undefined | {
+                    managedId: string;
+                    controllerInstallationId: string;
+                    guestInstallationId: string;
+                    bindingKey: string;
+                    placeholderRef: string;
                     sourceRevision: string;
                     providerTicket: string;
                 };
+            })[] | undefined;
+            teamVisibilityGrantConsent?: undefined | {
+                teamId: string;
             };
-            nativeDelivery?: undefined | {
-                managedId: string;
-                controllerInstallationId: string;
-                guestInstallationId: string;
-                bindingKey: string;
-                placeholderRef: string;
-                sourceRevision: string;
-                providerTicket: string;
-            };
-        })[] | undefined;
-        teamVisibilityGrantConsent?: undefined | {
-            teamId: string;
+            selectedServiceId?: string | undefined;
         };
-        accountSettingsVersionHint?: number | undefined;
+        sessionId: SessionTargetV1<true>;
         serverId?: null | string | undefined;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "session.approval_profile.set": {
         sessionId: string;
@@ -2224,8 +2225,49 @@ export type SessionControlActionResultById = {
     readonly "session.config_option.set": boolean | null | number | readonly JsonValue[] | string | {
         readonly [key: string]: JsonValue;
     };
-    readonly "session.connected_services_auth.set": boolean | null | number | readonly JsonValue[] | string | {
-        readonly [key: string]: JsonValue;
+    readonly "session.connected_services_auth.set": {
+        kind: 'fanout';
+        results: {
+            target: {
+                serverId: string;
+                sessionId: string;
+            };
+            result: {
+                ok: false;
+                errorCode: string;
+                error: string;
+                requestId?: string | undefined;
+                effectAttempted?: boolean | undefined;
+                details?: unknown;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
+                failureCause?: ActionFailureCauseV1 | undefined;
+                goalControlFailure?: undefined | {
+                    phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+                };
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
+            } | {
+                ok: true;
+                result: {
+                    ok: true;
+                    action: 'hot_applied' | 'metadata_updated' | 'restart_requested' | 'unchanged';
+                };
+            };
+        }[];
+    } | {
+        ok: true;
+        action: 'hot_applied' | 'metadata_updated' | 'restart_requested' | 'unchanged';
     };
     readonly "session.approval_profile.set": boolean | null | number | readonly JsonValue[] | string | {
         readonly [key: string]: JsonValue;

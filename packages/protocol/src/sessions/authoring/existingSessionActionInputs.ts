@@ -56,9 +56,10 @@ export function buildExistingSessionCapabilitiesActionInput<T extends SessionTar
 }
 
 export function buildExistingSessionConnectedServicesAuthActionInput<T extends SessionTargetV1>(
-    params: Target<T> & Omit<ConnectedAuthInput, 'sessionId'>,
-): typeof params {
-    return { ...params };
+    params: Target<T> & Pick<ConnectedAuthInput, 'machineId' | 'serverId'> & ConnectedAuthInput['routing'],
+): Target<T> & Omit<ConnectedAuthInput, 'sessionId'> {
+    const { sessionId, machineId, serverId, ...routing } = params;
+    return { sessionId, machineId, ...(serverId === undefined ? {} : { serverId }), routing };
 }
 
 /** The Action owns the request version; its operand is the unversioned request body. */

@@ -17,7 +17,7 @@ const mutations = [
   ['session.config_option.set', { configId: 'reasoning', valueId: 'high' }],
   ['session.mode.set', { modeId: 'plan' }],
   ['session.capabilities.set', { kind: 'skill', id: 'lint', state: 'on' }],
-  ['session.connected_services_auth.set', { machineId: 'machine', agentId: 'codex', bindings: { v: 2, bindingsByServiceId: {} } }],
+  ['session.connected_services_auth.set', { machineId: 'machine', routing: { agentId: 'codex', bindings: { v: 2, bindingsByServiceId: {} } } }],
   ['session.agent.transition', { expectedCurrentAgentId: 'claude', selection: { v: 1, agentId: 'codex' },
     input: { text: 'Continue', localId: 'transition-first-input' } }],
 ] as const;
@@ -33,6 +33,7 @@ function fixture() {
     sessionList: async () => markSessionListQueryResultV1({ sessions: ['a', 'b'].map(id => ({ id, active: false,
       presence: 'offline', updatedAt: 1, manager: { sessionId: 'parent' } })), nextCursor: null, hasNext: false,
       attentionNextCursor: null, attentionHasNext: false }),
+    sessionStatusGet: async ({ sessionId }: { sessionId: string }) => ({ session: { machineId: sessionId === 'a' ? 'machine-a' : sessionId === 'b' ? 'machine-b' : 'machine' } }),
     sessionPermissionModeSet: async input => write(input),
     sessionModelSet: async input => { write(input); return { ok: true, status: 'applied', sessionId: input.sessionId,
       modelId: input.modelId!, activeSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: input.modelId! } }; },
@@ -40,7 +41,8 @@ function fixture() {
     sessionModeSet: async input => write(input),
     sessionConfigOptionSet: async input => write(input),
     sessionConnectedServicesAuthSet: async input => { SessionConnectedServiceAuthSwitchRpcParamsSchema.parse(
-      Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'machineId' && key !== 'serverId'))); return write(input); },
+      Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'machineId' && key !== 'serverId')));
+      write(input); return { ok: true, action: 'metadata_updated' }; },
     sessionAgentTransition: async ({ request, context: child }) => { SessionAgentTransitionRequestV1Schema.parse(request); write(request);
       return { type: 'accepted', localId: request.input?.localId ?? child!.actionRequestId! }; },
     sessionCapabilities: {
@@ -62,14 +64,13 @@ describe('settings Action SessionTarget opt-ins', () => {
     expect(h.writes.map(item => item.sessionId)).toEqual(['single']);
     h.writes.length = 0;
     const group = await h.executor.execute(actionId, { sessionId: { selector: 'workers' }, ...mutation }, context);
+    const receipt = actionId === 'session.connected_services_auth.set'
+      ? { ok: true, result: { ok: true, action: 'metadata_updated' } } : { ok: true };
     expect(group, JSON.stringify(group)).toMatchObject({ ok: true, result: { kind: 'fanout', results: [
-      { target: { serverId: 'home', sessionId: 'a' }, result: { ok: true } },
-      { target: { serverId: 'home', sessionId: 'b' }, result: { ok: true } },
+      { target: { serverId: 'home', sessionId: 'a' }, result: receipt },
+      { target: { serverId: 'home', sessionId: 'b' }, result: receipt },
     ] } });
     expect(h.writes.map(item => item.sessionId)).toEqual(['a', 'b']);
-    if (actionId === 'session.connected_services_auth.set') {
-      expect(h.writes.map(item => (item.input as { machineId: string }).machineId)).toEqual(['machine-a', 'machine-b']);
-    }
     if (actionId === 'session.connected_services_auth.set') {
       expect(h.writes.map(item => (item.input as { machineId: string }).machineId)).toEqual(['machine-a', 'machine-b']);
     }
@@ -80,16 +81,7 @@ describe('settings Action SessionTarget opt-ins', () => {
   it('refuses a direct connected-service auth switch whose machine disagrees with the admitted Session', async () => {
     const h = fixture();
     const result = await h.executor.execute('session.connected_services_auth.set', {
-      sessionId: 'single', machineId: 'wrong-machine', agentId: 'codex', bindings: { v: 2, bindingsByServiceId: {} },
-    }, context);
-    expect(result).toMatchObject({ ok: false, errorCode: 'session_address_mismatch' });
-    expect(h.writes).toEqual([]);
-  });
-
-  it('refuses a direct connected-service auth switch whose machine disagrees with the admitted Session', async () => {
-    const h = fixture();
-    const result = await h.executor.execute('session.connected_services_auth.set', {
-      sessionId: 'single', machineId: 'wrong-machine', agentId: 'codex', bindings: { v: 2, bindingsByServiceId: {} },
+      sessionId: 'single', machineId: 'wrong-machine', routing: { agentId: 'codex', bindings: { v: 2, bindingsByServiceId: {} } },
     }, context);
     expect(result).toMatchObject({ ok: false, errorCode: 'session_address_mismatch' });
     expect(h.writes).toEqual([]);

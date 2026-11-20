@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, RPC_METHODS,
   SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
   SessionOwnerMetadataEnvelopeV1Schema, projectSessionOwnerCompatibilityViewV1, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
-import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
+import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, createAccountTokenForTests } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '../../../../ui/sources/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSessionFixture } from '../../../../ui/sources/dev/testkit/fixtures/sessionFixtures';
@@ -47,7 +48,7 @@ const accountId = 'session-parity-account';
 const sessionId = 'c123456789012345678901234';
 const machineId = 'session-parity-machine';
 const credentials = { token: createAccountTokenForTests(accountId), encryption: null } as const;
-const controls = ['session.config_option.set', 'session.connected_services_auth.set'] as const;
+const controls = ['session.config_option.set', SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1] as const;
 
 beforeEach(async () => {
   await homes.reset();
@@ -129,13 +130,21 @@ describe('CLI current-Session control owners', () => {
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: storage.getState().settings }) });
     const context = { surface, authority: 'account_automation' as const, defaultSessionId: sessionId };
     const config = { sessionId, configId: 'effort', valueId: 'high' };
-    const auth = { sessionId, machineId, serverId, agentId: 'external-agent', bindings: { v: 2 as const, bindingsByServiceId: {} } };
+    const service = 'happier.agent.codex/openai-codex';
+    const routing = { agentId: 'external-agent', selectedServiceId: service,
+      bindings: { v: 2 as const, bindingsByServiceId: { [service]: { source: 'native' as const } } } };
+    const auth = { sessionId, machineId, serverId, routing };
     const applied: unknown[] = [];
     daemonAnswer = (method, raw) => {
+      if (method === `${machineId}:${RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS}`) {
+        expect(raw).toEqual({ sessionId });
+        return { ok: true, options: [{ label: 'Native sign-in', routing }] };
+      }
       expect(method).toBe(`${machineId}:${RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH}`);
       const input = SessionConnectedServiceAuthSwitchRpcParamsSchema.parse(raw);
       applied.push(input);
-      return { ok: true, action: 'metadata_updated' };
+      return { ok: true, action: 'metadata_updated', materializedTargetByServiceId: { internal: '/private/runtime' },
+        verificationByServiceId: { internal: { accountId: 'another-account' } } };
     };
     try {
       expect(await executor.execute('session.config_option.set', config, context)).toMatchObject({ ok: true });
@@ -143,19 +152,29 @@ describe('CLI current-Session control owners', () => {
       if (owner.t !== 'plain') throw new Error('Expected plain Account metadata');
       const visible = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(row.metadata), ownerMetadata: owner.v });
       expect(visible.acpConfigOptionOverridesV1).toMatchObject({ overrides: { effort: { value: 'high' } } });
-      expect(await executor.execute('session.connected_services_auth.set', auth, context))
-        .toEqual({ ok: true, result: { ok: true, action: 'metadata_updated' } });
-      expect(applied).toEqual([expect.objectContaining({ sessionId, agentId: 'external-agent', bindings: auth.bindings })]);
+      expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
+        .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
+      expect(applied).toEqual([expect.objectContaining({ sessionId, agentId: routing.agentId, bindings: routing.bindings })]);
       expect(await executor.execute('session.config_option.set', { ...config, valueId: 'unadvertised' }, context))
         .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
       current = false;
-      expect(await executor.execute('session.connected_services_auth.set', auth, context))
-        .toEqual({ ok: true, result: { ok: true, action: 'metadata_updated' } });
+      expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
+        .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
       connected = false;
+      const options = await executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
+        actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
+        fieldPath: 'routing',
+        optionsSourceId: SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID,
+        sessionId,
+        draftInput: { machineId },
+      }, context);
+      expect(options).toMatchObject({ ok: true, result: { options: [{ label: 'Native sign-in', value: routing }] } });
       expect(await executor.execute('session.config_option.set', config, context))
         .toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
-      expect(await executor.execute('session.connected_services_auth.set', auth, context))
-        .toEqual({ ok: true, result: { ok: true, action: 'metadata_updated' } });
+      if (!options.ok) throw new Error('Expected eligible routing choices');
+      const published = options.result as { options: Array<{ value: unknown }> };
+      expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, { ...auth, routing: published.options[0].value }, context))
+        .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
       expect(applied).toHaveLength(3);
     } finally { release(); }
   });

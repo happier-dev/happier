@@ -1,7 +1,7 @@
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { autonomousExchangePath, readAutonomousExchangeStatus, mutateAutonomousExchangeControl } from '@/api/sessionAutonomousExchangeTransport';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
@@ -20,7 +20,7 @@ import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rp
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionCompact' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet' | 'sessionConnectedServicesAuthSet'>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionCompact' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet' | 'sessionConnectedServicesAuthSet' | 'sessionConnectedServicesAuthOptions'>;
 
 export function createCliControlActionDeps(
   params: CliActionDepsParams,
@@ -41,9 +41,16 @@ export function createCliControlActionDeps(
     sessionConnectedServicesAuthSet: async ({ machineId, serverId, ...request }, context) => callMachineAction({
       machineId, ...(serverId ? { serverId } : {}),
       method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,
-      request, context, authority: context.authority, effectActionId: 'session.connected_services_auth.set',
+      request, context, authority: context.authority, effectActionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
       exactMachine: true, ...(context.signal ? { signal: context.signal } : {}),
-      ...(context.rpcSessionAuthorization ? { authorization: context.rpcSessionAuthorization } : {}),
+      authorization: { kind: SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS.SESSION_WRITE, sessionId: request.sessionId },
+    }),
+    sessionConnectedServicesAuthOptions: async ({ machineId, serverId, sessionId }, context) => callMachineAction({
+      machineId, ...(serverId ? { serverId } : {}),
+      method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS,
+      request: { sessionId }, context, authority: context.authority, effectActionId: ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, exactMachine: true,
+      ...(context.signal ? { signal: context.signal } : {}),
+      authorization: { kind: 'session.read', sessionId },
     }),
 
     sessionExchangePrepare: async ({ sessionId, originInputLocalId, context, serverId, signal }) => {

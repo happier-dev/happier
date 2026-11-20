@@ -6,6 +6,8 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent,
   encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { TargetActionApprovalRequestV1Schema } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import { createTargetActionApprovalDecision } from '@happier-dev/protocol/actions/targetActionApprovalDecision';
 import { admitTargetActionApprovalTransition } from '@happier-dev/protocol/approvals/targetActionApprovalRequestTransition';
@@ -199,11 +201,12 @@ describe('remote person approval through credentialed CLI and registered daemon 
             contributionLocalId: pluginCaller.contributionLocalId, sourceCustody: pluginCaller.sourceCustody } : { kind: 'host' },
           serverId, serverIdentityId: 'srv_home', accountId: 'owner', machineId: 'origin-machine',
           actionId: 'account.apiTokens.create', requestId: 'app-token' } });
-      else if (mcpClient) expect(await daemon.execute('session.connected_services_auth.set', {
-        sessionId: managerSessionId, agentId: 'codex', machineId: 'origin-machine',
-        bindings: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': {
-          source: 'connected', selection: 'profile', profileId: 'profile' } } },
+      else if (mcpClient) expect(await daemon.execute(SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1, {
+        serverId, sessionId: managerSessionId,
       }, { ...originContext, surface: 'mcp', actionCaller: { kind: 'host' },
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+          [SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1]: { approvalRequiredSurfaces: ['mcp'] },
+        } }),
         externalActionTarget: { kind: 'session', sessionId: managerSessionId } }))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       else if (!target) expect(await daemon.execute('approval.request.create', {
@@ -461,7 +464,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
         expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
         expect(effects).toHaveLength(1);
         expect(effects[0]).toMatchObject({ input: { sessionId: managerSessionId },
-          actionId: 'session.connected_services_auth.set' });
+          actionId: SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 });
         expect(transport).not.toHaveBeenCalled();
         expect(signedAdmissions).toBe(1);
         expect(signedDeliveries).toBe(1);
@@ -526,7 +529,7 @@ describe('remote person approval through credentialed CLI and registered daemon 
     await approveGoal(externalActionClient);
   });
 
-  it('replays a deferred MCP Session-targeted client switch once through the original executor', async () => {
+  it('replays a deferred MCP primary Session selection once through the original executor', async () => {
     await approveGoal(false, 'mcp_client');
   });
 

@@ -3608,7 +3608,8 @@ describe('createActionExecutor (session control)', () => {
       { id: 'session.permission.remote.grants.list', input: { sessionId: 's1' } },
       { id: 'session.permission.remote.grants.revoke', input: { sessionId: 's1', turnId: 'turn', requestId: 'request', grantId: 'grant' } },
       { id: 'session.config_option.set', input: { sessionId: 's1', configId: 'effort', valueId: 'high' } },
-      { id: 'session.connected_services_auth.set', input: { sessionId: 's1', machineId: 'machine', agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } } },
+      { id: 'session.connected_services_auth.set', input: { sessionId: 's1', machineId: 'machine',
+        routing: { agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } } } },
     ] as const;
     let effects = 0;
     const executor = createExecutor({
@@ -3618,7 +3619,7 @@ describe('createActionExecutor (session control)', () => {
           : { status: 'revoked', grantId: 'grant' };
       },
       clientActionExecute: async () => { effects++; return { ok: true, result: { ok: true } }; },
-      sessionConnectedServicesAuthSet: async () => { effects++; return { ok: true }; },
+      sessionConnectedServicesAuthSet: async () => { effects++; return { ok: true, action: 'metadata_updated' }; },
     });
     for (const surface of ['agent', 'mcp'] as const) {
       const discovered = listActionSpecsForCatalogSurface({ surface }).map(spec => spec.id);

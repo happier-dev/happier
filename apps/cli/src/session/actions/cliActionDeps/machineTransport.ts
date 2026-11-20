@@ -135,6 +135,8 @@ export function createCliMachineActionTransport(
     // Session folder preflight selects native requester custody. An owner
     // Workflow's local Action context carries no receiving Machine admission.
     RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+    RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,
+    RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS,
     // Native account descriptions use the daemon custodian’s Account. Enter
     // Home's custodian-only route even when the selected daemon is local.
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
