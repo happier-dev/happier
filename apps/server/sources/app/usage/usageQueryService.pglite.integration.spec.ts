@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import type { Prisma } from '@prisma/client';
-import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryBatchResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryBatchResponseSchema, type UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import * as usageContracts from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { applyPostgresMigrations } from '../../../scripts/prismaMigrations';
@@ -14,10 +15,12 @@ import { prismaRuntime } from '@/storage/prisma';
 import { inTx, type Tx } from '@/storage/inTx';
 import { applyEnvValues, restoreEnv, snapshotEnv } from '@/testkit/env';
 import { TEAM_CREDENTIAL_ONLY_USAGE_SOURCES } from './usageSourceClassifier';
-import { captureUsageAnalyticsInTx, projectUsageAnalytics } from './usageQueryService';
+import { captureUsageAnalyticsInTx, projectUsageAnalytics, projectUsageAnalyticsAsync } from './usageQueryService';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerAccountUsageRoutes } from '@/app/api/routes/account/registerAccountUsageRoutes';
-import { loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
+import { loadRetainedLegacyUsageReports, loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
+import { captureUsageModelPriceCatalogInTx, USAGE_MODEL_PRICE_CACHE_KEY } from './usageModelPriceCatalog';
+import { loadUsageMessageCountsBySessionInTx } from './query/loadUsageMessageStatsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 import { captureUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
 
@@ -378,30 +381,250 @@ describe('Usage analytics PostgreSQL event transport', () => {
         }
     });
 
+    // This full-path cost contract is reproduced and tracked separately from the summary widening.
+    it.fails('bounds Accounting decodes and admissions by the requested rows and cumulative anchors', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const prefix = 'accounting-window-work-';
+        const request = UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: { startMs: 1_000, endMs: 2_000 },
+            filters: { machineIds: ['selected-machine'] },
+            breakdowns: ['model'], includeMessageStats: false,
+        });
+        const event = (index: number, at: number, machineId: string, totalTokens: number) => ({
+            id: prefix + index, accountId: account.id, observedAt: new Date(at), createdAt: new Date(at),
+            source: 'native', scope: 'session_cumulative', isCumulative: true, agentId: 'codex',
+            machineId, modelId: 'counted-model', inputTokens: totalTokens, totalTokens,
+            metadata: {
+                captureCountMarker: prefix,
+                accountingSubject: { kind: 'native', machineId, agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                    sourceRootKey: 'counted-root', nativeSessionKey: machineId },
+                usageAccounting: { path: 'native', status: 'available', historyComplete: true },
+            },
+        });
+        const required = [
+            event(0, 900, 'selected-machine', 100),
+            event(1, 1_000, 'selected-machine', 103),
+            event(2, 1_250, 'selected-machine', 106),
+            event(3, 1_500, 'selected-machine', 110),
+        ];
+        const historySize = 256;
+        await db.usageEvent.createMany({ data: required });
+
+        async function measure() {
+            let packedDecodes = 0;
+            let admissions = 0;
+            const parse = JSON.parse;
+            const readMetadata = usageContracts.readUsageAccountingMetadata;
+            const decode = vi.spyOn(JSON, 'parse').mockImplementation((...args: Parameters<typeof JSON.parse>) => {
+                const value: unknown = parse(...args);
+                if (Array.isArray(value) && (value[0] === 'body' || value[0] === 'evidence')
+                    && typeof value[1] === 'string' && value[1].startsWith(prefix)) packedDecodes++;
+                return value;
+            });
+            const admit = vi.spyOn(usageContracts, 'readUsageAccountingMetadata').mockImplementation(metadata => {
+                if (metadata && typeof metadata === 'object' && Reflect.get(metadata, 'captureCountMarker') === prefix) admissions++;
+                return readMetadata(metadata);
+            });
+            try {
+                const captured = await inTx(tx => captureUsageAnalyticsInTx(tx, account.id, request), { readOnly: true });
+                const value = await projectUsageAnalyticsAsync(captured, request);
+                return { value, work: { packedDecodes, admissions } };
+            } finally {
+                decode.mockRestore();
+                admit.mockRestore();
+            }
+        }
+
+        const small = await measure();
+        await db.usageEvent.createMany({ data: Array.from({ length: historySize }, (_, index) =>
+            event(index + required.length, index + 1, 'unrelated-machine', index + 1)) });
+        const large = await measure();
+        expect(small.value.totals.tokens.total).toBe(10);
+        expect(large.value).toEqual(small.value);
+        expect({ noUnrelatedHistory: small.work, withUnrelatedHistory: large.work },
+            'three in-window rows and their one required anchor are each decoded and admitted once').toEqual({
+            noUnrelatedHistory: { packedDecodes: required.length, admissions: required.length },
+            withUnrelatedHistory: { packedDecodes: required.length, admissions: required.length },
+        });
+    });
+
+    it('matches full Accounting replay over retained reports, mixed sources and mutable history', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const day = 86_400_000;
+        const end = Date.UTC(2026, 8, 1);
+        const start = end - 90 * day;
+        const createSession = (tag: string) => db.session.create({ data: {
+            accountId: account.id, tag, encryptionMode: 'e2ee', metadata: 'fixture',
+        } });
+        const [legacy, competing, deleted] = await Promise.all([
+            createSession('retained-report'), createSession('competing-report'), createSession('deleted-usage'),
+        ]);
+        const subject = { kind: 'native', machineId: 'replay-machine',
+            agent: { pluginId: 'happier.agent.claude', localId: 'claude' }, sourceRootKey: 'replay-root', nativeSessionKey: 'replay-native' };
+        const facts = (source: 'runtime' | 'native', subjectKey: string, options: Prisma.InputJsonObject = {}) => ({
+            accountingSubject: { ...subject, nativeSessionKey: subjectKey },
+            usageAccounting: { path: source, status: 'available', historyComplete: true, ...options },
+        });
+        const event = (key: string, at: number, overrides: Partial<Prisma.UsageEventCreateManyInput> = {}) => ({
+            id: 'window-reference-' + key, accountId: account.id, observedAt: new Date(at), createdAt: new Date(at),
+            source: 'runtime', scope: 'turn_delta', agentId: 'claude', modelId: 'synthetic-priced',
+            machineId: subject.machineId, inputTokens: 5, outputTokens: 0, reasoningTokens: 0,
+            cacheReadTokens: 0, cacheWriteTokens: 0, totalTokens: 5,
+            reportedCostUsd: 0.05, costSource: 'provider_reported',
+            metadata: facts('runtime', key), ...overrides,
+        });
+        const cumulative = (key: string, at: number, tokens: number, runtime: string, sequence: number, epoch: string) =>
+            event(key, at, { scope: 'session_cumulative', isCumulative: true, inputTokens: tokens, totalTokens: tokens,
+                reportedCostUsd: tokens / 100, metadata: facts('runtime', 'persistent-counter', {
+                    counterEpoch: epoch, runtimeEventOrder: { runtimeIncarnationId: runtime, sequence },
+                }) });
+        await db.usageEvent.createMany({ data: [
+            cumulative('old-runtime-anchor', start - 2 * day, 100, 'before-restart', 7, 'before-reset'),
+            event('before-detail-boundary', start - 1),
+            cumulative('new-runtime', start, 118, 'after-restart', 1, 'before-reset'),
+            cumulative('reset', start + day, 4, 'after-restart', 2, 'after-reset'),
+            event('overlap-runtime', start + 2 * day, { sessionId: competing.id,
+                metadata: facts('runtime', 'overlap', { inferenceId: 'one-inference',
+                    runtimeEventOrder: { runtimeIncarnationId: 'same-runtime', sequence: 3 } }) }),
+            event('overlap-native', start + 2 * day + 1, { source: 'native', sessionId: competing.id,
+                inputTokens: 9_000, totalTokens: 9_000, metadata: JSON.stringify(facts('native', 'overlap', {
+                    inferenceId: 'one-inference',
+                })) }),
+            event('unpriced', end - 5 * day, { modelId: 'synthetic-unpriced', reportedCostUsd: null, costSource: null }),
+            event('unknown', end - 4 * day, { modelId: 'synthetic-unpriced', inputTokens: null,
+                totalTokens: null, reportedCostUsd: null, costSource: null }),
+            event('deleted-session', end - 3 * day, { sessionId: deleted.id }),
+            event('team', end - 2 * day, { source: TEAM_CREDENTIAL_ONLY_USAGE_SOURCES[0], totalTokens: 50_000 }),
+            event('exclusive-end', end, { totalTokens: 50_000 }),
+        ] });
+        await db.usageReport.createMany({ data: [legacy, competing].map((session, index) => ({
+            accountId: account.id, sessionId: session.id, key: 'v02-accounting',
+            data: { tokens: { total: index ? 80_000 : 7, input: index ? 80_000 : 7 }, cost: { total: 0.07 } },
+            createdAt: new Date(start - 3 * day), updatedAt: new Date(start + 3 * day),
+        })) });
+        const request = (startMs: number, endMs: number, sessionId?: string) => UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: { startMs, endMs }, filters: sessionId ? { sessionIds: [sessionId] } : undefined,
+            breakdowns: ['model', 'source'], includeActivity: true, includeSeries: true, includePriceCatalog: true,
+            includeMessageStats: false,
+        });
+        function withUnorderedCoverage(value: UsageAnalyticsQueryResponse): UsageAnalyticsQueryResponse {
+            if (!value.coverage) return value;
+            return { ...value, coverage: { ...value.coverage, sources: [...value.coverage.sources]
+                .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))) } };
+        }
+        async function compare(query: ReturnType<typeof request>) {
+            const { candidate, reference } = await inTx(async tx => ({
+                candidate: await captureUsageAnalyticsInTx(tx, account.id, query),
+                // Use the entire retained prefix independently of candidate-body or scope selection.
+                reference: {
+                    rows: await loadUsageEventsForQuery(tx, account.id, query),
+                    legacyReports: await loadRetainedLegacyUsageReports(tx, account.id, query),
+                    priceCatalog: await captureUsageModelPriceCatalogInTx(tx),
+                    messageCountsBySession: query.includeMessageStats || query.includeInsights
+                        ? await loadUsageMessageCountsBySessionInTx(tx, account.id, query) : undefined,
+                },
+            }), { readOnly: true, isolationLevel: 'Serializable' });
+            const referenceAnswer = await projectUsageAnalyticsAsync(reference, query);
+            const candidateAnswer = await projectUsageAnalyticsAsync(candidate, query);
+            expect(withUnorderedCoverage(candidateAnswer)).toEqual(withUnorderedCoverage(referenceAnswer));
+            return referenceAnswer;
+        }
+
+        const detail = request(start, end);
+        const first = await compare(detail);
+        expect(first.totals.tokens.total).toBeGreaterThan(25);
+        expect(first.totals.tokens.total).toBeLessThan(100);
+        expect(first.coverage?.sources?.length).toBeGreaterThan(0);
+        expect((await compare(request(start, end, legacy.id))).totals.tokens.total).toBe(7);
+        expect((await compare(request(end - day, end))).totals.tokens.total).toBe(0);
+        expect((await compare(request(start - 10 * day, start - day))).totals.tokens.total).toBe(100);
+        expect((await compare(request(start - 20 * day, start - 10 * day))).totals.tokens.total).toBe(0);
+
+        await db.usageEvent.update({ where: { id: 'window-reference-overlap-runtime' },
+            data: { inputTokens: 8, totalTokens: 8, reportedCostUsd: 0.08 } });
+        const corrected = await compare(detail);
+        expect(corrected.totals.tokens.total).toBe((first.totals.tokens.total ?? 0) + 3);
+        await db.usageEvent.create({ data: cumulative('late-anchor', start - day, 105, 'before-restart', 8, 'before-reset') });
+        const withLateAnchor = await compare(detail);
+        expect(withLateAnchor.totals.tokens.total).toBe((corrected.totals.tokens.total ?? 0) - 5);
+        await db.session.delete({ where: { id: deleted.id } });
+        const afterDeletion = await compare(detail);
+        expect(afterDeletion.totals.tokens.total).toBe(withLateAnchor.totals.tokens.total);
+        expect((await compare(request(start, end, deleted.id))).totals.tokens.total).toBe(0);
+
+        // Preserve sparse category and cost baselines, decreasing counters in
+        // one epoch, settlement, and a later snapshot from the same subject.
+        const sparse = (key: string, at: number, values: Partial<Prisma.UsageEventCreateManyInput>) =>
+            event(key, at, { scope: 'session_cumulative', isCumulative: true, source: 'native',
+                metadata: facts('native', 'sparse-native-no-Session', { counterEpoch: 'same-epoch' }), ...values });
+        await db.usageEvent.createMany({ data: [
+            sparse('sparse-baseline', start - day, { inputTokens: 45, outputTokens: 5, totalTokens: 50 }),
+            sparse('sparse-snapshot', start + day, { inputTokens: null, outputTokens: 8, totalTokens: 53,
+                reportedCostUsd: null }),
+            sparse('decrease-reset', start + 2 * day, { inputTokens: 1, outputTokens: null, totalTokens: 1 }),
+            sparse('native-final', start + 3 * day, { scope: 'session_final', inputTokens: 7, totalTokens: 7 }),
+            sparse('native-post-final', start + 4 * day, { inputTokens: 20, totalTokens: 20 }),
+            event('delayed-duplicate', start + 5 * day, { sessionId: competing.id, inputTokens: 6, totalTokens: 6,
+                metadata: facts('runtime', 'overlap', { inferenceId: 'one-inference',
+                    runtimeEventOrder: { runtimeIncarnationId: 'same-runtime', sequence: 1 } }) }),
+        ] });
+        await compare(detail);
+        await compare({ ...detail, dateRange: { startMs: start + day, endMs: end + day } });
+        await db.usageEvent.deleteMany({ where: { accountId: account.id, observedAt: { lt: new Date(start) } } });
+        await compare(detail);
+        const historicalCoverage = await compare(request(end - day, end));
+        expect(historicalCoverage.coverage?.sources.length).toBeGreaterThan(0);
+
+        const activity = { ...detail, includeMessageStats: true, includeInsights: true,
+            includeModelTimeline: true, includeLeaders: true };
+        const noMessages = await compare(activity);
+        expect(noMessages.messageStats?.messageCount).toBe(0);
+        await db.sessionMessage.create({ data: { sessionId: competing.id, seq: 1, content: 'fixture',
+            createdAt: new Date(start + 5 * day) } });
+        expect((await compare(activity)).messageStats?.messageCount).toBe(1);
+
+        applyEnvValues({ HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED: 'true' });
+        const catalog = (inputUsdPerMillion: number) => JSON.stringify({ v: 1,
+            models: { 'synthetic-priced': { inputUsdPerMillion, outputUsdPerMillion: 4 } },
+            provenance: { source: 'litellm', origin: 'fetched', asOfMs: 1000,
+                revision: 'differential-catalog', fetchStatus: 'ready' } });
+        try {
+            await db.simpleCache.create({ data: { key: USAGE_MODEL_PRICE_CACHE_KEY, value: catalog(2) } });
+            const priceQuery = { ...detail, costMode: 'api_equivalent' as const };
+            const beforeTariff = await compare(priceQuery);
+            await db.simpleCache.update({ where: { key: USAGE_MODEL_PRICE_CACHE_KEY }, data: { value: catalog(3) } });
+            expect((await compare(priceQuery)).costPresentation?.effectiveUsd)
+                .not.toBe(beforeTariff.costPresentation?.effectiveUsd);
+        } finally {
+            await db.simpleCache.deleteMany({ where: { key: USAGE_MODEL_PRICE_CACHE_KEY } });
+            applyEnvValues({ HAPPIER_USAGE_MODEL_PRICE_FETCH_ENABLED: 'false' });
+        }
+    });
+
     it('reads full bodies only for demanded histories while retaining thin historical coverage', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.$executeRaw`INSERT INTO "UsageEvent" ("id", "accountId", "observedAt", "agentId", "source", "scope",
             "inputTokens", "totalTokens", "estimatedCostUsd", "updatedAt")
             SELECT 'scale-' || n::text, ${account.id}, to_timestamp(n) AT TIME ZONE 'UTC', 'codex', 'runtime',
-                'turn_delta', 1, 1, 0.01, now() FROM generate_series(1, 33658) AS n`;
+                'turn_delta', 1, 1, 0.01, now() FROM generate_series(1, 101518) AS n`;
         await db.$executeRawUnsafe('ANALYZE "UsageEvent"');
         const request = UsageAnalyticsQueryRequestSchema.parse({
-            dateRange: { startMs: 26397_000, endMs: 33659_000 },
+            dateRange: { startMs: 68017_000, endMs: 101519_000 },
         });
         const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0 };
         const captured = await inTx(tx => captureUsageAnalyticsInTx(countUsageEventReads(tx, count),
             account.id, request), { readOnly: true, isolationLevel: 'Serializable' });
         // Option A ruling: complete demanded histories, rather than all historical bodies.
-        expect(count.bodyRows).toBe(7_262);
-        expect(captured.rows).toHaveLength(7_262);
-        expect(prepareUsageAnalyticsSnapshot(captured, request).rows).toHaveLength(7_262);
+        expect(count.bodyRows).toBe(33_502);
+        expect(captured.rows).toHaveLength(33_502);
+        expect(prepareUsageAnalyticsSnapshot(captured, request).rows).toHaveLength(33_502);
         const baselineRows = await inTx(tx => loadUsageEventsForQuery(tx, account.id, request),
             { readOnly: true, isolationLevel: 'Serializable' });
-        expect(baselineRows).toHaveLength(33_658);
+        expect(baselineRows).toHaveLength(101_518);
         expect(projectUsageAnalytics(captured, request)).toEqual(projectUsageAnalytics({
             rows: baselineRows, legacyReports: captured.legacyReports, priceCatalog: captured.priceCatalog,
             messageCountsBySession: undefined,
         }, request));
-        expect(count).toMatchObject({ reads: 1, ormRows: 0, rowCounts: [33_658], metadataRows: 33_658, bodyRows: 7_262 });
+        expect(count).toMatchObject({ reads: 1, ormRows: 0, rowCounts: [101_518], metadataRows: 101_518, bodyRows: 33_502 });
     });
 });
