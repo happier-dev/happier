@@ -201,6 +201,137 @@ async function createQualifiedQuotaRuntimeFixture(profile: QualifiedConnectedAcc
   };
 }
 
+it.each(['covered-observation', 'exhausted-backoff'] as const)('bounds unchanged qualified quota work after %s', async scenario => {
+  const retryMs = 120_000;
+  let now = 1_000_000;
+  let profile: QualifiedConnectedAccountProfileV4 = {
+    ref: { service: { pluginId: 'example.quota-work', localId: 'account' }, accountId: 'quota-account' },
+    status: 'connected', authenticationModeId: 'manual', revisionSemantics: 'revisioned',
+    credentialRevision: 'csr_abcdefghijklmnopqrstuv', configurationRevision: null, configurationReady: true,
+    providerIdentity: { accountId: 'provider-quota-account' }, scopes: [],
+  };
+  const failing = scenario === 'exhausted-backoff';
+  const fixture = await createQualifiedQuotaRuntimeFixture(profile, now, { retryAfterMs: retryMs });
+  const providerId = buildQualifiedPluginContributionKey(profile.ref.service);
+  const recordKey: ProviderAccountUsageRecordKeyV1 = {
+    providerId, accountSubjectId: 'provider-quota-account', subjectKind: 'account', quotaScope: 'account',
+  };
+  const recordId = buildProviderAccountUsageRecordId(recordKey);
+  let fetchedAt = failing ? now - 130_000 : now;
+  let summariesAvailable = true;
+  const requests = { accounts: 0, quotas: 0, summaries: 0 };
+  const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+    switch (new URL(String(url)).pathname) {
+      case '/v4/connect/qualified/accounts':
+        requests.accounts++;
+        return { status: 200, data: { service: profile.ref.service, accounts: [profile] } };
+      case '/v4/connect/qualified/quotas': {
+        requests.quotas++;
+        const snapshot: ProviderAccountUsageSnapshotV1 = {
+          v: 1, providerId, recordKey, recordId, accountSubject: { kind: 'providerSubject', id: recordKey.accountSubjectId },
+          observedAtMs: fetchedAt, fetchedAtMs: fetchedAt, staleAfterMs: 120_000, source: 'providerHttp',
+          confidence: 'confirmed', state: 'loaded_empty', meters: [],
+        };
+        return { status: 200, data: { ref: profile.ref,
+          sourceResolution: { source: { ref: profile.ref, bindingKind: 'account' }, recordId,
+            providerAccountId: recordKey.accountSubjectId, fetchedAt, staleAfterMs: snapshot.staleAfterMs },
+          content: { t: 'plain', v: projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4({ snapshot, ref: profile.ref }) },
+          metadata: { fetchedAt, staleAfterMs: snapshot.staleAfterMs, status: 'ok' },
+        } };
+      }
+      case '/v4/connect/qualified/provider-account-usage/day-summaries':
+        requests.summaries++;
+        return summariesAvailable
+          ? { status: 200, data: { summaries: [], missingDays: [] } }
+          : { status: 503, data: {} };
+      default:
+        throw new Error('Unexpected quota fixture route');
+    }
+  });
+  onTestFinished(() => get.mockRestore());
+  const inventory = createDaemonConnectedAccountPurposeBindingRuntime({
+    reloadController: fixture.reloadController, establishedRuntimeOwner: fixture.owner,
+    resolveQualifiedConnectedAccountV4Support: () => 'advertised', coordinatorInventoryIsObserved: () => true,
+    qualifiedApi: {
+      listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token: fixture.credentials.token, service, signal }),
+      listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token: fixture.credentials.token, services, signal }),
+      listGroups: async () => ({ groups: [] }), readGroup: async () => null,
+    },
+  });
+  const coordinator = new ConnectedServiceQuotasCoordinator({
+    credentials: fixture.credentials, quotaFetchers: [], discoveryEnabled: false,
+    now: () => now, randomBytes: length => new Uint8Array(length),
+    api: { getAccountEncryptionMode: async () => 'plain',
+      getConnectedServiceQuotaSnapshotSealed: async () => null,
+      getConnectedServiceCredentialSealed: async () => null },
+    qualifiedConnectedAccountRuntime: {
+      resolvePeerClass: () => 'advertised_v4', establishedRuntimeOwner: fixture.owner,
+      listScheduledAccounts: (_service, signal) => inventory.listCoordinatorAccounts(signal, profile.ref.service),
+      writeProviderAccountUsage: async () => ({ success: true }),
+    },
+  });
+  onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
+  const release = inventory.subscribeInvalidations(event => coordinator.invalidateInventory(event));
+  onTestFinished(release);
+  const tick = () => runWithServerHttpBaseUrl('https://quota-work.test', () => coordinator.tickOnce());
+  const initial = await tick();
+  expect({ initial, requests }).toEqual({
+    initial: { nextAutomaticRunAfterMs: failing ? retryMs : null },
+    requests: { accounts: 1, quotas: 1, summaries: failing ? 2 : 1 },
+  });
+  const providerInvocations = () => readFile(fixture.marker, 'utf8').catch(() => '');
+
+  if (failing) {
+    expect(await providerInvocations()).toBe('quota-account\n');
+    profile = { ...profile, status: 'needs_reauth' };
+    now += retryMs;
+    inventory.invalidate();
+  }
+  const due = await tick();
+  for (let wake = 0; wake < 5; wake++) {
+    now++;
+    await tick();
+  }
+
+  // A terminal credential refusal consumes the expired retry. It cannot arm
+  // another immediate pass over the same stored evidence.
+  expect({ due, requests, provider: await providerInvocations() }).toEqual({
+    due: { nextAutomaticRunAfterMs: null },
+    requests: { accounts: failing ? 2 : 1, quotas: failing ? 2 : 1, summaries: failing ? 2 : 1 },
+    provider: failing ? 'quota-account\n' : '',
+  });
+
+  const refresh = () => inventory.invalidate({ quotaRefreshOnly: true, quotaRefreshRecordIds: [recordId] });
+  refresh();
+  await tick();
+  await tick();
+  expect(requests).toEqual({ accounts: failing ? 2 : 1, quotas: failing ? 3 : 2, summaries: failing ? 2 : 1 });
+
+  fetchedAt = now;
+  refresh();
+  await tick();
+  await tick();
+  expect(requests).toEqual({ accounts: failing ? 2 : 1, quotas: failing ? 4 : 3, summaries: failing ? 3 : 2 });
+
+  if (!failing) {
+    summariesAvailable = false;
+    fetchedAt = ++now;
+    refresh();
+    await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS });
+    for (let wake = 0; wake < 5; wake++) {
+      now++;
+      await tick();
+    }
+    expect(requests).toEqual({ accounts: 1, quotas: 4, summaries: 3 });
+    now = fetchedAt + DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS;
+    summariesAvailable = true;
+    await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: null });
+    await tick();
+    expect(requests).toEqual({ accounts: 1, quotas: 5, summaries: 4 });
+  }
+  expect(await providerInvocations()).toBe(failing ? 'quota-account\n' : '');
+});
+
 it('polls actual group members through shared inventory without expanding every scheduled account into every group', async () => {
   const now = 1_000_000;
   const service = { pluginId: 'example.group-inventory', localId: 'account' };
@@ -2806,6 +2937,17 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     });
 
     try {
+      if (!['usage_notice_requester', 'deadline_no_quota', 'deadline_no_quota_needs_reauth'].includes(recoveryMode)) {
+        // These cases control quota and usage I/O independently. Their V4 summary
+        // coverage is settled unless a case supplies its own repair fixture.
+        const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+          if (new URL(String(url)).pathname !== '/v4/connect/qualified/provider-account-usage/day-summaries') {
+            throw new Error('Unexpected quota recovery fixture read');
+          }
+          return { status: 200, data: { summaries: [], missingDays: [] } };
+        });
+        onTestFinished(() => get.mockRestore());
+      }
       // A running pool Session on this Machine is the only background-polling demand (ruling 2026-11-04 (5)).
       const registerRunningPoolSession = (target: Pick<typeof coordinator, 'registerSpawnTarget'>) => target.registerSpawnTarget({
         pid: 123, sessionId: 'active-group',
@@ -3053,13 +3195,16 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         return;
       }
       if (recoveryMode === 'quota_stale_basis') {
+        readQuota.mockRejectedValueOnce(new Error('Quota source transport unavailable'));
+        await expect(coordinator.tickOnce()).resolves.toEqual({ nextAutomaticRunAfterMs: 60_000 });
+        now += 60_000;
         const pending = coordinator.tickOnce();
         try {
           await vi.waitFor(async () => expect(await readFile(quotaInvocationMarker, 'utf8')).toBe('invoked'));
           runtimeCurrent = false;
         } finally {
           await writeFile(automaticRefusalRelease, 'release');
-          await pending;
+          await expect(pending).resolves.toEqual({ nextAutomaticRunAfterMs: 60_000 });
         }
         expect(writeProviderAccountUsage).not.toHaveBeenCalled();
         expect(accountUsageStore.listSnapshots()).toEqual([]);

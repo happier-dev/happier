@@ -160,6 +160,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
       return await withHome(() => api.getAccountEncryptionMode({ signal }));
     },
   });
+  let releaseConnectedAccountObservation: (() => void) | undefined;
   const { established, qualifiedConnectedAccountApi, purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
     serverId: bootstrap.attribution.serverId, operationContext: savedSecrets, accountId: bootstrap.attribution.accountId, machineId: bootstrap.attribution.machineId,
     reloadController: pluginReloadController,
@@ -168,6 +169,8 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     isCurrent: savedSecrets.isCurrent, signal: lifetime.signal,
     allowNativeAccountCredentials: bootstrap.allowNativeAccountCredentials === true, openTeamDirect: directMaterial.open,
     resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
+    coordinatorInventoryIsObserved: () => releaseConnectedAccountObservation !== undefined
+      && bootstrap.hasCurrentConnectedAccountChangesObserver(),
   });
   const providerAccountUsageStore = input.providerAccountUsageStore;
   const providerAccountUsagePersistence = createProviderAccountUsagePersistenceScheduler({
@@ -184,7 +187,6 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   const { activeServerDir, connectedServicesMaterializationBaseDir } = resolveRequesterSessionRuntimeDirectories({
     activeServerDir: input.activeServerDir, connectedServicesMaterializationBaseDir: input.connectedServicesMaterializationBaseDir,
     attribution: bootstrap.attribution });
-  let releaseConnectedAccountObservation: (() => void) | undefined;
   let coordinators: Awaited<ReturnType<typeof startDaemonConnectedServiceRuntime>> | null = null;
   let retirement: Promise<void> | undefined;
   const dispose = () => retirement ??= (async () => {

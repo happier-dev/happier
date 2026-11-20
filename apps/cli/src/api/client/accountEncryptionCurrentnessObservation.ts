@@ -57,6 +57,7 @@ type Observation = Readonly<{
     subscribeSessionFollowRules(listener: (change?: RequesterSessionFollowRuleInvalidation) => void): () => void;
     subscribeRunFollowAvailability(listener: (change: RunFollowAvailability) => void): () => void;
     subscribeConnectedAccounts(listener: (event: RequesterConnectedAccountObservation) => void): () => void;
+    hasCurrentConnectedAccountChangesObserver(): boolean;
     /** Exact Session invalidation; null rebuilds demanded ranges after a gap/reconnect. */
     subscribeSessionFollowSources(listener: FollowSourceListener, receiverRecovery?: FollowReceiverRecovery): () => void;
     subscribeSessionInventory(listener: (event: RequesterSessionInventoryObservation) => void): () => void;
@@ -308,6 +309,7 @@ export function acquireRequesterAccountEncryptionCurrentness(scope: Scope): Obse
             subscriptions.add(release);
             return () => { subscriptions.delete(release); release(); };
         },
+        hasCurrentConnectedAccountChangesObserver: () => !released && owned.hasCurrentConnectedAccountChangesObserver(),
         attachFeedOwner() {
             if (released) throw new AccountEncryptionCurrentnessUnavailableError();
             const detach = owned.attachFeedOwner();
@@ -759,6 +761,8 @@ function createObservation(scope: Scope): SharedObservation {
             if (!alreadyDemanded) syncFollowChanges();
             return () => { sourceListeners.delete(listener); };
         },
+        hasCurrentConnectedAccountChangesObserver: () => !disposed && connected
+            && connectedAccountListeners.size > 0 && followCursorAcknowledged && !followSyncPending,
         subscribeConnectedAccounts(listener) {
             const alreadyDemanded = hasFollowDemand();
             connectedAccountListeners.add(listener);

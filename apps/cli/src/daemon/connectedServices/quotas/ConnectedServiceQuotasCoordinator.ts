@@ -866,6 +866,7 @@ export class ConnectedServiceQuotasCoordinator {
   private readonly failureStateByBindingKey = new Map<string, FailureState>();
   private readonly qualifiedQuotaScheduleByKey = new Map<string, Readonly<{
     basis: string; at: number | null; recordId: string | null;
+    summaryMaintenance?: Readonly<{ basis: string; retryAt: number | null }>;
     credentialRevision: QualifiedConnectedAccountProfileV4['credentialRevision'];
     configurationRevision: QualifiedConnectedAccountProfileV4['configurationRevision'];
     providerAccountId: string | null; providerOrganizationId: string | null;
@@ -4469,7 +4470,7 @@ export class ConnectedServiceQuotasCoordinator {
       // Ruling 2026-11-04 (5): staleness re-reads only while a pool Session runs on this Machine.
       // Reset deadlines, explicit refresh requests and limit signals still observe the Account.
       const refreshWhenStale = poolSessionRunning;
-      const basis = JSON.stringify([profile.credentialRevision, profile.configurationRevision,
+      const basis = JSON.stringify([input.accountMode, profile.credentialRevision, profile.configurationRevision,
         profile.authenticationModeId, profile.status, profile.kind, profile.expiresAt,
         profile.providerIdentity?.accountId, profile.providerIdentity?.organizationId,
         groupContextsByAccountKey.get(qualifiedAccountQuotaKey(profile.ref)) ?? [],
@@ -4487,7 +4488,8 @@ export class ConnectedServiceQuotasCoordinator {
           && !this.failureStateByBindingKey.get(key)?.providerDirected) {
           this.failureStateByBindingKey.delete(key);
         }
-        schedule = { basis, ...identity, at: -Infinity, recordId: null };
+        schedule = { basis, ...identity, at: -Infinity, recordId: null,
+          summaryMaintenance: schedule?.summaryMaintenance };
         this.qualifiedQuotaScheduleByKey.set(key, schedule);
       }
       if (schedule.at === null || schedule.at > input.now) {
@@ -4497,6 +4499,8 @@ export class ConnectedServiceQuotasCoordinator {
       }
       let nextProbeAt: number | null = null;
       let recordId = schedule.recordId;
+      let summaryMaintenance = schedule.summaryMaintenance;
+      let observationIncomplete = false;
       try {
         const usageIdentity = await this.qualifiedConnectedAccountRuntime?.resolveUsageIdentity?.(profile.ref.service, input.signal);
         input.signal?.throwIfAborted();
@@ -4516,12 +4520,22 @@ export class ConnectedServiceQuotasCoordinator {
         // plugin has no quota acquisition capability. Account keys own history;
         // provider credential health only gates acquiring another observation.
         if (existing && existingSnapshot) {
-          await maintainProviderAccountUsageDaySummariesForRecord({
-            token: this.credentials.token, recordId: existing.sourceResolution.recordId,
-            accountMode: input.accountMode, nowMs: Math.max(input.now, existing.metadata.fetchedAt),
-            randomBytes: this.randomBytes, signal: input.signal,
-            ...(input.accountMode === 'e2ee' ? { material: requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial()) } : {}),
-          });
+          const summaryBasis = JSON.stringify([existing.sourceResolution.recordId, input.accountMode,
+            profile.credentialRevision, profile.configurationRevision, existing.metadata.fetchedAt,
+            existing.metadata.staleAfterMs, existing.metadata.status]);
+          if (summaryMaintenance?.basis !== summaryBasis
+            || summaryMaintenance.retryAt !== null && summaryMaintenance.retryAt <= input.now) {
+            const result = await maintainProviderAccountUsageDaySummariesForRecord({
+              token: this.credentials.token, recordId: existing.sourceResolution.recordId,
+              accountMode: input.accountMode, nowMs: Math.max(input.now, existing.metadata.fetchedAt),
+              randomBytes: this.randomBytes, signal: input.signal,
+              ...(input.accountMode === 'e2ee' ? { material: requireQuotaCredentialOpenMaterial(this.resolveCredentialOpenMaterial()) } : {}),
+            });
+            summaryMaintenance = { basis: summaryBasis, retryAt: result.status === 'written' || result.status === 'unsupported'
+              ? null : this.now() + this.probeIntervalMs };
+          }
+        } else {
+          summaryMaintenance = undefined;
         }
         if (!isConnectedServiceCredentialHealthStatusUsable(profile.status)) continue;
         // Register saved Accounts as well as newly settled ones. Home Refresh is
@@ -4612,7 +4626,10 @@ export class ConnectedServiceQuotasCoordinator {
           nextProbeAt = null;
           continue;
         }
-        if (!invocation?.result || !invocation.basis.isCurrent()) continue;
+        if (!invocation?.result || !invocation.basis.isCurrent()) {
+          observationIncomplete = true;
+          continue;
+        }
         profile = invocation.profile;
         const incomingSnapshot =
           buildProviderAccountUsageSnapshotFromPluginConnectedAccountQuota({
@@ -4657,19 +4674,33 @@ export class ConnectedServiceQuotasCoordinator {
         this.failureStateByBindingKey.delete(key);
       } catch (error) {
         input.signal?.throwIfAborted();
+        observationIncomplete = true;
         const failedAt = this.now();
         if ((this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? 0) <= failedAt) {
           this.applyFailureBackoff({ now: failedAt, key, error });
         }
       } finally {
         await settleHealth();
-        const deadline = this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? nextProbeAt;
-        // A Refresh arriving during the async probe replaces this schedule. Do not
-        // overwrite that pending demand with the completed probe's deadline.
+        // A Refresh arriving during the async probe replaces this schedule.
         if (this.qualifiedQuotaScheduleByKey.get(key) === schedule) {
-          this.qualifiedQuotaScheduleByKey.set(key, { ...schedule, at: deadline, recordId });
+          const settledAt = this.now();
+          const failure = this.failureStateByBindingKey.get(key);
+          if (failure && failure.nextAllowedAt <= settledAt) {
+            if (observationIncomplete) this.applyFailureBackoff({ now: settledAt, key });
+            else this.failureStateByBindingKey.delete(key);
+          } else if (!failure && observationIncomplete) {
+            this.applyFailureBackoff({ now: settledAt, key });
+          }
+          if (summaryMaintenance?.retryAt != null && summaryMaintenance.retryAt <= settledAt) {
+            summaryMaintenance = { ...summaryMaintenance, retryAt: settledAt + this.probeIntervalMs };
+          }
+          const quotaDeadline = this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? nextProbeAt;
+          const summaryDeadline = summaryMaintenance?.retryAt ?? null;
+          const deadline = quotaDeadline === null ? summaryDeadline
+            : summaryDeadline === null ? quotaDeadline : Math.min(quotaDeadline, summaryDeadline);
+          this.qualifiedQuotaScheduleByKey.set(key, { ...schedule, at: deadline, recordId, summaryMaintenance });
+          if (deadline !== null) input.scheduleAt(deadline);
         }
-        if (deadline !== null) input.scheduleAt(deadline);
       }
     }
 

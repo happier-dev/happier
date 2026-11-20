@@ -825,19 +825,27 @@ describe('requester Account currentness over the installed socket wiring', () =>
         let release: (() => void) | undefined;
         try {
             await observation.read();
+            expect(observation.hasCurrentConnectedAccountChangesObserver()).toBe(false);
             release = observation.subscribeConnectedAccounts(event => { publications.push(event); });
-            await vi.waitFor(() => expect(cursors).toEqual([0]));
+            await vi.waitFor(() => expect(observation.hasCurrentConnectedAccountChangesObserver()).toBe(true));
+            expect(cursors).toEqual([0]);
             pending = true;
             await channel.hintAccountChange();
             await vi.waitFor(() => expect(publications).toEqual([{ quotaRefreshRecordIds: [recordId],
                 ...(mixed ? {} : { quotaRefreshOnly: true }) }]));
             expect(cursors).toContain(200);
             // A full page is progress, not a reset of every quota deadline.
+            await channel.disconnect();
+            expect(observation.hasCurrentConnectedAccountChangesObserver()).toBe(false);
+            await channel.reconnect();
+            await vi.waitFor(() => expect(observation.hasCurrentConnectedAccountChangesObserver()).toBe(true));
+            expect(publications).toHaveLength(2);
             release();
+            expect(observation.hasCurrentConnectedAccountChangesObserver()).toBe(false);
             const reads = cursors.length;
             await channel.hintAccountChange();
             expect(cursors).toHaveLength(reads);
-            expect(publications).toHaveLength(1);
+            expect(publications).toHaveLength(2);
         } finally { release?.(); await observation.dispose(); await channel.close(); }
     });
 

@@ -26,6 +26,7 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
   isCurrent(signal?: AbortSignal): Promise<boolean>;
   signal?: AbortSignal;
   resolveQualifiedConnectedAccountV4Support: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['resolveQualifiedConnectedAccountV4Support'];
+  coordinatorInventoryIsObserved?: () => boolean;
   allowNativeAccountCredentials: boolean;
   openTeamDirect?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['openTeamDirect'];
   executeTeamCredentialBrokerAction?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['executeTeamCredentialBrokerAction'];
@@ -85,6 +86,7 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
     openTeamDirect: input.openTeamDirect ?? (request => directMaterial.open(request)),
     executeTeamCredentialBrokerAction: input.executeTeamCredentialBrokerAction,
     resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
+    coordinatorInventoryIsObserved: input.coordinatorInventoryIsObserved,
     resolveConnectedAccountEndpoints: async request => await withHome(() => established.readConfiguredEndpoints(request)),
     qualifiedApi: {
       listAccountsForServices: async (services, signal) => {

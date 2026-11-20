@@ -351,6 +351,7 @@ export type AdmittedRequesterSessionBootstrap = Readonly<{
   subscribeAccountSettings: SavedSecretOperationContextV1['subscribeAccountSettings'];
   subscribeSessionFollowRules: ReturnType<typeof acquireRequesterAccountEncryptionCurrentness>['subscribeSessionFollowRules'];
   subscribeConnectedAccounts: ReturnType<typeof acquireRequesterAccountEncryptionCurrentness>['subscribeConnectedAccounts'];
+  hasCurrentConnectedAccountChangesObserver: ReturnType<typeof acquireRequesterAccountEncryptionCurrentness>['hasCurrentConnectedAccountChangesObserver'];
   subscribeSessionFollowSources: ReturnType<typeof acquireRequesterAccountEncryptionCurrentness>['subscribeSessionFollowSources'];
   /** Admitted custody, local Home and encryption identity; never a Machine re-admission. */
   isCurrent(signal?: AbortSignal): Promise<boolean>;
@@ -549,6 +550,7 @@ export async function prepareRequesterSessionBootstrap(input: Readonly<{
         && await approvalProfilePublication.ensureCurrent(signal), subscribeAccountSettings: settingsPublication.subscribe,
       subscribeSessionFollowRules: accountObservation.subscribeSessionFollowRules,
       subscribeConnectedAccounts: accountObservation.subscribeConnectedAccounts,
+      hasCurrentConnectedAccountChangesObserver: accountObservation.hasCurrentConnectedAccountChangesObserver,
       subscribeSessionFollowSources: accountObservation.subscribeSessionFollowSources,
       refreshAccountSettings: settingsPublication.refresh,
       bindRuntimeMachineAdmissionCurrentness: (current: (signal?: AbortSignal) => Promise<boolean>,
