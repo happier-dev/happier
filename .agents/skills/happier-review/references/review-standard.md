@@ -87,6 +87,7 @@ Activate when external input, protected resources, credentials, execution, files
 - secret exposure in logs, prompts, reports, artifacts, client bundles, and errors;
 - privacy-minimized responses and diagnostics;
 - fail-closed gates and explicit encryption envelopes;
+- a dependency that enforces approval, authorization or encryption is a required parameter of its consumer and fails closed when absent; an optional one lets a host that omits it skip the check silently;
 - dependency risk only for changed/new dependency surface;
 - A request that loses its admitted scope (workspace, Machine, Account) fails typed unavailable; it never falls back to a local default.
 - for an admission or binding fix, every sibling read, write and effect admitted under the same signed root, in one pass. One sibling per review round is the failure mode to avoid.
