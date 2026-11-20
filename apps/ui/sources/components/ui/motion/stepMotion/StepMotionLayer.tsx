@@ -23,14 +23,27 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     style?: StyleProp<ViewStyle>;
 }>>;
 
+function focusStepTarget(target: FocusReturnTarget, fallback?: FocusReturnTarget) {
+    if (Platform.OS === 'web' && target instanceof HTMLElement && !target.hasAttribute('tabindex')) target.tabIndex = -1;
+    restoreFocusToBestTarget({ current: target }, { current: fallback });
+}
+
 export function StepMotionLayer(props: StepMotionLayerProps) {
     const stage = useStepMotionStage();
     const root = React.useRef<View>(null);
     const ownHeading = React.useRef<FocusReturnTarget>(null);
     const ownFocal = React.useRef<FocusReturnTarget>(null);
+    const awaitingFocalFrom = React.useRef<HTMLElement | null>(null);
+    const registerFocal = React.useCallback((target: FocusReturnTarget) => {
+        ownFocal.current = target;
+        if (!target || !awaitingFocalFrom.current) return;
+        const previous = awaitingFocalFrom.current;
+        awaitingFocalFrom.current = null;
+        if (previous.ownerDocument.activeElement === previous) focusStepTarget(target, previous);
+    }, []);
+    const ownFocals = React.useMemo(() => ({ heading: ownHeading, focal: ownFocal, awaitingFocalFrom, registerFocal }), [registerFocal]);
     const parentFocals = React.useContext(StepFocalContext);
-    const heading = props.shareFocalWithParent && parentFocals ? parentFocals.heading : ownHeading;
-    const focal = props.shareFocalWithParent && parentFocals ? parentFocals.focal : ownFocal;
+    const focals = props.shareFocalWithParent && parentFocals ? parentFocals : ownFocals;
     const [fadeOpacity] = React.useState(() => new Animated.Value(1));
     const [surfaceOpacity, setSurfaceOpacity] = React.useState<Animated.Value | Animated.AnimatedInterpolation<number>>(fadeOpacity);
     const webElement = React.useCallback(() => {
@@ -49,13 +62,15 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         focal(returnTo) {
             const web = webElement();
             const preferred = returnTo ? web ? findWebStepAnchor(web, returnTo) : findNativeStepAnchor(root.current, returnTo) : null;
-            return preferred ?? focal.current ?? heading.current ?? web?.querySelector<HTMLElement>('[role="heading"], h1, h2');
+            return preferred ?? focals.focal.current ?? focals.heading.current ?? web?.querySelector<HTMLElement>('[role="heading"], h1, h2');
         },
-        focus(returnTo) {
+        focus(returnTo, allowLateFocal) {
             const web = webElement();
             const target = this.focal(returnTo);
-            if (web && target instanceof HTMLElement && !target.hasAttribute('tabindex')) target.tabIndex = -1;
-            restoreFocusToBestTarget({ current: target }, { current: this.focal() });
+            // A late QR can take over the heading while it still owns browser focus.
+            focals.awaitingFocalFrom.current = allowLateFocal && web && !focals.focal.current && target instanceof HTMLElement
+                ? target : null;
+            focusStepTarget(target, this.focal());
         },
         paintOpacity(values, durationMs, delayMs) {
             const web = webElement();
@@ -89,8 +104,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             animation.start(({ finished }) => { if (finished) onSettled(); });
             return () => { animation.stop(); fadeOpacity.setValue(1); };
         },
-    }), [layerKey, backTestID, compact, fadeOpacity, focal, heading, notice, warmOnMount, webElement]);
-    const focals = React.useMemo(() => ({ heading, focal }), [heading, focal]);
+    }), [layerKey, backTestID, compact, fadeOpacity, focals, notice, warmOnMount, webElement]);
     React.useLayoutEffect(() => stage?.attach(layer), [stage, layer]);
     React.useLayoutEffect(() => { stage?.commit(layer); }, [stage, layer, props.stepKey]);
     const onTouchStart = React.useCallback((event: GestureResponderEvent) => {

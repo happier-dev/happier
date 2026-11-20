@@ -375,7 +375,7 @@ function createStepMotionStage(
                 }
                 return;
             }
-            if (pending.kind === 'step' || pending.kind === 'back') layer.focus(pending.returnTo?.testID);
+            if (pending.kind === 'step' || pending.kind === 'back') layer.focus(pending.returnTo?.testID, pending.kind === 'step');
             pending.layoutReady = true;
             // Personal Home's composer is already laid out under the held setup frame.
             const releasingExistingHome = pending.kind === 'home' && alreadyCommitted && laidOutLayers.has(layer);

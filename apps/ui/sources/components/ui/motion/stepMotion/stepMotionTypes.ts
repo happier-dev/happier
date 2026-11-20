@@ -47,6 +47,6 @@ export type StepMotionLayerHandle = Readonly<{
     nativeElement: () => View | null;
     focal: (returnTo?: string) => FocusReturnTarget;
     paintOpacity: (values: readonly number[], durationMs: number, delayMs: number) => () => void;
-    focus: (returnTo?: string) => void;
+    focus: (returnTo?: string, allowLateFocal?: boolean) => void;
     fadeIn: (onSettled: () => void) => () => void;
 }>;

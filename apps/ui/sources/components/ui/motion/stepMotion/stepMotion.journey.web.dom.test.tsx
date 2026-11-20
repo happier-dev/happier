@@ -9,6 +9,7 @@ import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionP
 
 import { StepMotionLayer } from './StepMotionLayer';
 import { runStepMove, StepMotionStage } from './StepMotionStage';
+import { useStepFocal } from './useStepFocal';
 
 vi.mock('react-native', async () => await vi.importActual('react-native-web'));
 vi.mock('react-native-unistyles', async () => {
@@ -99,6 +100,48 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         container.remove();
         window.matchMedia = previousMatchMedia;
         Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: previousAnimate });
+        vi.unstubAllGlobals();
+    }
+});
+
+it.each([false, true])('hands focus to the arriving QR only if it stayed on the heading (user moved: %s)', async (userMoved) => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    setReducedMotionPreferenceOverride(true);
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    let showQr = () => {};
+    function Approve() {
+        const focal = useStepFocal();
+        const [ready, setReady] = React.useState(false);
+        showQr = () => setReady(true);
+        return <>
+            <h1>Approve</h1>
+            {ready && <div ref={focal} data-testid="approval-code" />}
+            <button>Use a recovery key</button>
+        </>;
+    }
+    function Journey() {
+        const [approve, setApprove] = React.useState(false);
+        return <StepMotionStage>
+            <StepMotionLayer layerKey="workflow" stepKey={approve ? 'approve' : 'welcome'}>
+                {approve ? <Approve /> : <button onClick={() => runStepMove({
+                    layer: 'workflow', kind: 'step', commit: () => setApprove(true),
+                })}>Log in</button>}
+            </StepMotionLayer>
+        </StepMotionStage>;
+    }
+    try {
+        await act(async () => root.render(<Journey />));
+        await act(async () => container.querySelector('button')!.click());
+        expect(document.activeElement).toBe(container.querySelector('h1'));
+        if (userMoved) container.querySelector('button')!.focus();
+        await act(async () => showQr());
+        expect(document.activeElement).toBe(container.querySelector(userMoved ? 'button' : '[data-testid="approval-code"]'));
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        setReducedMotionPreferenceOverride(null);
         vi.unstubAllGlobals();
     }
 });
