@@ -308,16 +308,21 @@ describe('createClaudeNativeRuntime', () => {
       await oldProcess.emit({ type: 'system', subtype: 'init', session_id: 'local-resume-native' });
       await oldProcess.emit({ type: 'system', subtype: 'task_started', session_id: 'local-resume-native',
         task_id: 'same-resumed-task', task_type: 'local_agent', is_backgrounded: true });
+      const resume = { hook_event_name: 'SubagentStart', session_id: 'local-resume-native', agent_id: 'same-resumed-task' };
+      await exec.emitSessionHook('local-resume-native', resume);
       await oldProcess.emit({ type: 'result', subtype: 'success', is_error: false, session_id: 'local-resume-native',
         result: 'foreground complete', queued_turn_count: 0, num_turns: 1, total_cost_usd: 0, duration_ms: 1, duration_api_ms: 1 });
       await operations.waitForProviderTurnCompletion();
       await oldProcess.exitWith({ exitCode: 0, signal: null });
+      const emitLateSdkHook = (input: Record<string, unknown>) => oldProcess.emit({
+        type: 'control_request', request_id: 'late-sdk-hook', request: {
+          subtype: 'hook_callback', callback_id: 'happier-session-hook', input,
+        },
+      });
       await vi.waitFor(() => expect(activity.at(-1)).toMatchObject({ state: 'idle', activeCount: 0 }));
-      const oldHook = hooks.service.startServer.mock.calls[0]?.[0];
       const presentation = await runtime.prepareTerminalPresentation!();
       if (presentation.kind !== 'terminal_launch') throw new Error('Expected the SDK local terminal plan');
       const localHook = hooks.service.startServer.mock.calls.at(-1)?.[0];
-      const resume = { hook_event_name: 'SubagentStart', session_id: 'local-resume-native', agent_id: 'same-resumed-task' };
       // Preparing resources is not evidence that the host launched a provider.
       await localHook.onSessionHook('local-resume-native', resume);
       expect(activity.at(-1)).toMatchObject({ state: 'idle', activeCount: 0 });
@@ -325,10 +330,8 @@ describe('createClaudeNativeRuntime', () => {
       if (typeof observe === 'function') await observe({ kind: 'started', plan: presentation.plan });
       await localHook.onSessionHook('local-resume-native', resume);
       await vi.waitFor(() => expect(activity.at(-1)).toMatchObject({ state: 'active', activeCount: 1 }));
-      expect(localHook).not.toBe(oldHook);
-      await oldHook.onSessionHook('local-resume-native', resume);
-      await oldHook.onSessionHook('local-resume-native', { hook_event_name: 'PostToolUse',
-        session_id: 'local-resume-native', tool_name: 'TaskStop', tool_input: { task_id: 'same-resumed-task' },
+      await emitLateSdkHook({ hook_event_name: 'PostToolUse', session_id: 'local-resume-native',
+        tool_name: 'TaskStop', tool_input: { task_id: 'same-resumed-task' },
         tool_response: { task_id: 'same-resumed-task', status: 'stopped' } });
       expect(activity.at(-1)).toMatchObject({ state: 'active', activeCount: 1 });
       if (typeof observe === 'function') await observe({ kind: outcome, plan: presentation.plan,
@@ -337,7 +340,7 @@ describe('createClaudeNativeRuntime', () => {
         state: outcome === 'provider_stopped' ? 'idle' : 'unknown', activeCount: 0,
       }));
       await localHook.onSessionHook('local-resume-native', resume);
-      await oldHook.onSessionHook('local-resume-native', resume);
+      await emitLateSdkHook(resume);
       expect(activity.at(-1)).toMatchObject({ state: outcome === 'provider_stopped' ? 'idle' : 'unknown', activeCount: 0 });
     } finally {
       subscription.dispose();
