@@ -25,7 +25,7 @@ function presentPluginActionFailure(kind: 'failed' | 'stale' | 'unavailable' | '
     if (failure) {
         const details = typeof failure.details === 'object' && failure.details !== null
             ? failure.details as Readonly<Record<string, unknown>> : null;
-        const presentation = presentActionExecutionFailure({ ...failure, errorCode: failure.code, message: failure.message ?? message });
+        const presentation = presentActionExecutionFailure({ ...failure, errorCode: failure.code }, message);
         alertActionFailure({
             reason: presentation.reason,
             code: failure.code,

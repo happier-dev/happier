@@ -69,6 +69,19 @@ function submittingForm(): ActionInputForm {
 }
 
 describe('ActionInputFormModal', () => {
+    it('retains an authored repair message from a settled Action failure', async () => {
+        const form = createActionInputForm({
+            presentation: { title: 'Configure', description: null, inputHints: { fields: [] } },
+            submit: async () => ({ ok: false, code: 'configuration_missing', message: 'Choose a configured connection.' }),
+        });
+        const setChrome = vi.fn();
+        const screen = await renderScreen(<ActionInputFormModal form={form} onClose={vi.fn()} setChrome={setChrome} />);
+        const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
+        if (!submit) throw new Error('Expected form submit');
+        await act(async () => { submit.props.onPress?.(); await Promise.resolve(); });
+        expect(screen.getTextContent()).toContain('Choose a configured connection.');
+    });
+
     it.each(['unavailable', 'settled'] as const)('retains the typed %s refusal in the shared diagnostic disclosure', async (kind) => {
         const form: ActionInputForm<ActionInputFormSubmissionResult, string, string> = {
             ...failedForm(),

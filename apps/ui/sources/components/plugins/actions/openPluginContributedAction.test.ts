@@ -102,7 +102,10 @@ describe('openPluginContributedAction', () => {
         expect(actionForm.retire).toHaveBeenCalledTimes(1);
     });
 
-    it('preserves a failed dispatch outcome and presents failure rather than startup feedback', async () => {
+    it.each([
+        ['unavailable', 'pluginRuntime.actionFailed'],
+        ['machine_unavailable', 'errors.daemonUnavailableBody'],
+    ] as const)('preserves a failed %s dispatch and uses its existing failure explanation', async (code, copyKey) => {
         const descriptor = { ...action(), inputHints: null, kind: 'direct' as const };
         const controller = {
             list: () => [],
@@ -110,7 +113,7 @@ describe('openPluginContributedAction', () => {
             open: vi.fn().mockResolvedValue({
                 kind: 'direct',
                 action: descriptor,
-                outcome: { ok: false, code: 'unavailable', reason: 'do-not-present-this' },
+                outcome: { ok: false, code, reason: 'do-not-present-this' },
             }),
             isReferenceAvailable: () => false,
             isSessionReferenceAvailable: () => false,
@@ -126,7 +129,7 @@ describe('openPluginContributedAction', () => {
         expect(Modal.show).not.toHaveBeenCalled();
         expect(Modal.alert).toHaveBeenCalledWith(
             t('common.error'),
-            t('pluginRuntime.actionFailed'),
+            t(copyKey),
             expect.any(Array),
         );
     });

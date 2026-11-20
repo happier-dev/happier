@@ -23,7 +23,8 @@ export type ActionInputFormSubmissionResult = Readonly<{
     /** Displayed as diagnostic text. Action owners may provide their own operation phase. */
     phase?: string;
 }
-    & Partial<Pick<PluginUiHostApiErrorPayloadV1, 'code' | 'layer' | 'retryable'>>>;
+    & Partial<Pick<PluginUiHostApiErrorPayloadV1,
+        'code' | 'layer' | 'retryable' | 'message' | 'remediation' | 'details' | 'requestId' | 'effectAttempted' | 'failureCause'>>>;
 
 /**
  * The transient form signal is distinct from the Action invocation signal.

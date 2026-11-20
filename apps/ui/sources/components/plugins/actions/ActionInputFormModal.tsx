@@ -133,7 +133,10 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 const code = outcome.kind === 'settled' ? outcome.outcome.code : outcome.reason;
                 const message = code ? resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: code }).body
                     : t('pluginRuntime.unavailableGeneric');
-                const presentation = presentActionExecutionFailure({ ok: false, errorCode: code ?? 'action_failed' }, message);
+                const presentation = presentActionExecutionFailure({
+                    ...(outcome.kind === 'settled' ? outcome.outcome : { ok: false }),
+                    errorCode: code ?? 'action_failed',
+                }, message);
                 setError({ ...presentation, technicalDetails: [...presentation.technicalDetails,
                     ...(outcome.kind === 'settled' && outcome.outcome.phase ? [{ key: 'phase',
                         label: t('approvals.failureTechnicalLabels.causePhase'), value: outcome.outcome.phase }] : []),
