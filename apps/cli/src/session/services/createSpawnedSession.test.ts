@@ -203,6 +203,18 @@ describe('createSpawnedSession settlement', () => {
     expect(validateStoredAuthTokenAgainstActiveServer).not.toHaveBeenCalled();
   });
 
+  it('returns a typed invalid request before dispatch for a model of another Agent', async () => {
+    await expect(createSpawnedSession({ credentials, directory: '/repo', machineId: 'machine-1',
+      backendTarget: { kind: 'backend', backendId: 'muse', sourceKind: 'built_in' },
+      modelSelection: { v: 1, updatedAt: 1, ref: {
+        agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'codex-model',
+      } },
+    })).rejects.toMatchObject({ code: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST });
+
+    expect(callMachineRpc).not.toHaveBeenCalled();
+    expect(spawnDaemonSession).not.toHaveBeenCalled();
+  });
+
   it.each(['session', 'run_step', 'workflow_producer', 'role_snapshot', 'explicit_off', 'parent_off', 'recipient', 'target_home', 'creation_recipe', 'creation_recipe_off'] as const)('inherits the lead Context memory at %s birth without copying instructions or Bot identity', async (path) => {
     const originKind = path === 'workflow_producer' || path === 'run_step' ? 'run_step' : 'session';
     const hasCreationRecipe = path === 'creation_recipe' || path === 'creation_recipe_off';

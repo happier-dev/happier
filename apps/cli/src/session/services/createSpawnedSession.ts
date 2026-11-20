@@ -440,6 +440,15 @@ function createCodedError(message: string, code: string, details?: unknown): Err
   return error;
 }
 
+function parseDaemonSpawnRequest(input: unknown): SpawnDaemonSessionRequest {
+  const result = SpawnDaemonSessionRequestSchema.safeParse(input);
+  if (!result.success) {
+    const code = SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST;
+    throw createCodedError(code, code);
+  }
+  return result.data;
+}
+
 type LegacyMetadataLabelWriteParams = Readonly<
   Omit<Parameters<typeof updateSessionMetadataWithRetry>[0], 'updater'> & {
     legacyMetadataLabel?: string;
@@ -626,7 +635,7 @@ async function dispatchCommittedSpawn(args: Readonly<{
   } = args.spawnRequestInput;
   try {
     const response = await args.dispatchSpawnRequest(
-      SpawnDaemonSessionRequestSchema.parse({
+      parseDaemonSpawnRequest({
         ...attachSpawnRequestInput,
         existingSessionId: args.sessionId,
         freshSessionCreation: args.createdHere,
@@ -1078,12 +1087,12 @@ export async function createSpawnedSession(
   // Deferred birth is trusted host input, not a daemon spawn request: an asleep
   // Machine has not resolved its managed directory yet. Actual dispatch still
   // goes through the canonical strict daemon parser.
-  let spawnRequest = params.deferLaunch ? spawnRequestInput : SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
+  let spawnRequest = params.deferLaunch ? spawnRequestInput : parseDaemonSpawnRequest(spawnRequestInput);
   const applyIsolation = (prepared: Awaited<ReturnType<NonNullable<CreateSpawnedSessionParams['prepareSessionIsolation']>>>) => {
     if (!prepared) return;
     params = { ...params, ...prepared };
     spawnRequestInput = { ...spawnRequestInput, ...prepared };
-    spawnRequest = params.deferLaunch ? spawnRequestInput : SpawnDaemonSessionRequestSchema.parse(spawnRequestInput);
+    spawnRequest = params.deferLaunch ? spawnRequestInput : parseDaemonSpawnRequest(spawnRequestInput);
   };
   const isProviderBound = spawnRequest.modelSelection !== undefined
     && readSessionModelSelectionProviderConnectionId(spawnRequest.modelSelection) !== null;
@@ -1436,7 +1445,7 @@ export async function createSpawnedSession(
   const birthSpawnRequestInput = { ...spawnRequestInput, ...birthContext,
     ...(preparedFinalSessionId ? { preparedFinalSessionId } : {}),
     ...(preparedInitialTriggers !== undefined ? { initialTriggers: preparedInitialTriggers } : {}) };
-  const birthSpawnRequest = params.deferLaunch ? birthSpawnRequestInput : SpawnDaemonSessionRequestSchema.parse(birthSpawnRequestInput);
+  const birthSpawnRequest = params.deferLaunch ? birthSpawnRequestInput : parseDaemonSpawnRequest(birthSpawnRequestInput);
   async function dispatchSpawnRequest(request: SpawnDaemonSessionRequest): Promise<unknown> {
     try {
       if ((params.creationAuthorization || params.callerInputConstraints) && !params.directTransport) {
@@ -1540,7 +1549,7 @@ export async function createSpawnedSession(
   if (params.resumeOnly === true) {
     spawnResponse = { success: true as const, status: 'pending' as const, sessionIdStatus: 'pending' as const, spawnNonce };
   } else {
-    spawnResponse = await dispatchSpawnRequest(SpawnDaemonSessionRequestSchema.parse(birthSpawnRequest));
+    spawnResponse = await dispatchSpawnRequest(parseDaemonSpawnRequest(birthSpawnRequest));
   }
   async function resolveSpawnSessionByNonce(
     nonce: string,

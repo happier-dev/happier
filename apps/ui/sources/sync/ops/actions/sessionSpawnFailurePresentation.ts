@@ -128,6 +128,9 @@ export function resolveSessionSpawnNewResultFailureMessageKey(
 export function resolveSessionSpawnNewActionFailureMessage(
     result: Extract<SessionSpawnNewActionResult, Readonly<{ ok: false }>>,
 ): string {
+    const refusal = readSessionSpawnNewFailure(result);
+    if (refusal) return resolveSessionSpawnNewResultFailureMessage(refusal, result.requestId);
+
     const key = resolveSessionSpawnNewActionFailureMessageKey(result);
     const message = t(key);
     return key === 'newSession.failedToStart'

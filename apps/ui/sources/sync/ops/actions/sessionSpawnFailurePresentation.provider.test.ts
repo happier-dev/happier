@@ -6,10 +6,23 @@ import { presentProviderError } from '@/providers/connection/errorPresentation';
 
 installReactNativeWebMock();
 const { preloadTranslations, t } = await import('@/text');
-const { resolveSessionSpawnNewResultFailureMessage } = await import('./sessionSpawnFailurePresentation');
+const { resolveSessionSpawnNewActionFailureMessage, resolveSessionSpawnNewResultFailureMessage } = await import('./sessionSpawnFailurePresentation');
 const { createPresentedFirstTurnSettlement } = await import('@/components/sessions/new/modules/presentedFirstTurnSettlement');
 
 describe('Provider causes in Session-start failures', () => {
+    it('presents the typed reconnect reason in a direct Action refusal', async () => {
+        await preloadTranslations('en');
+        const code = 'connected_service_credential_reconnect_required';
+        const refusal = SessionSpawnNewResultV1Schema.parse({ type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code, message: 'PRIVATE_NATIVE_DIAGNOSTIC' },
+        });
+        if (refusal.type !== 'error') throw new Error('Expected a launch refusal');
+        const message = resolveSessionSpawnNewActionFailureMessage({ ok: false, errorCode: refusal.code,
+            error: 'PRIVATE_NATIVE_DIAGNOSTIC', details: refusal });
+        expect(message).toContain(code);
+        expect(message).not.toContain('PRIVATE_NATIVE_DIAGNOSTIC');
+    });
+
     it('presents the refused launch Profile and its typed reason with the Action request', async () => {
         await preloadTranslations('en');
         const profileId = 'foreign-default-profile';
