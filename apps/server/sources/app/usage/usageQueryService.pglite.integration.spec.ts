@@ -142,6 +142,48 @@ describe('Usage analytics PostgreSQL event transport', () => {
         } finally { db.$transaction = transaction; }
     });
 
+    it('checks the reader between packed Accounting decode slices and stops decoding after cancellation', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const prefix = 'capture-slice-fixture-';
+        const rowCount = 10;
+        await db.usageEvent.createMany({ data: Array.from({ length: rowCount }, (_, index) => ({
+            id: prefix + index, accountId: account.id, observedAt: new Date(100 + index),
+            source: 'runtime', scope: 'turn_delta', agentId: 'codex', totalTokens: 1,
+        })) });
+        const request = UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: { startMs: 100, endMs: 200 }, includeSeries: false, includeMessageStats: false,
+        });
+        // Logical time advances only on a real packed-row decode. This
+        // exercises the existing 20ms budget without depending on host speed.
+        let decoded = 0;
+        const parse = JSON.parse;
+        const clock = vi.spyOn(performance, 'now').mockImplementation(() => decoded * 5);
+        const decode = vi.spyOn(JSON, 'parse').mockImplementation((...args: Parameters<typeof JSON.parse>) => {
+            const value: unknown = parse(...args);
+            if (Array.isArray(value) && value[0] === 'body' && typeof value[1] === 'string'
+                && value[1].startsWith(prefix)) decoded++;
+            return value;
+        });
+        try {
+            const checks: number[] = [];
+            const result = await captureUsageAnalyticsBatch(account.id, [request], () => { checks.push(decoded); return false; });
+            expect(result.snapshots.values().next().value?.rows).toHaveLength(rowCount);
+            const completedRows = decoded;
+            const betweenSlices = [...new Set(checks.filter(count => count > 0 && count < rowCount))];
+
+            decoded = 0;
+            await expect(captureUsageAnalyticsBatch(account.id, [request], () => decoded >= 4))
+                .rejects.toThrow('Usage reader closed');
+            expect({ completedRows, betweenSlices, cancelledRows: decoded }).toEqual({
+                completedRows: rowCount, betweenSlices: [4, 8], cancelledRows: 4,
+            });
+        } finally {
+            decode.mockRestore();
+            clock.mockRestore();
+            await db.account.delete({ where: { id: account.id } });
+        }
+    });
+
     it('keeps same-population detail in one accounting capture and isolates distinct compact-summary snapshots', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(100),

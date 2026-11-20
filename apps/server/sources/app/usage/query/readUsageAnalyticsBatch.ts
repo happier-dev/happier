@@ -14,7 +14,8 @@ import { loadRetainedLegacyUsageReports, loadUsageEventEvidenceForQuery, loadUsa
 import { createScopedUsageEvidenceRowNormalizer, toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
-import { loadUsageAccountingRowsForQuery, type CapturedUsageAccountingRow } from './loadUsageAccountingRowsForQuery';
+import { decodePackedUsageAccountingRows, loadUsageAccountingRowsForQuery, readPackedUsageAccountingRows,
+    type CapturedUsageAccountingRow } from './loadUsageAccountingRowsForQuery';
 import { canSummarizeUsageActivity, captureUsageActivitySummaryInTx, publishUsageActivitySummary,
     projectUsageActivitySummarySteps, type CapturedUsageActivitySummary } from './usageActivitySummary';
 import type { CapturedUsageModelPriceCatalog } from '../usageModelPriceCatalog';
@@ -168,14 +169,18 @@ export async function captureUsageAnalyticsBatch(accountId: string, queries: rea
         captured.snapshots.set(getUsageAnalyticsQueryRequestKey(summaryQuery), activitySummary.snapshot);
         return { ...captured, activitySummary };
     }
-    const [captured, priceCatalog, counts] = await Promise.all([
-        queries.length ? inReadSnapshot(tx => loadUsageAccountingRowsForQuery(tx, accountId, queries), { singleStatementRead: true }) : [],
+    const [packed, priceCatalog, counts] = await Promise.all([
+        queries.length ? inReadSnapshot(tx => readPackedUsageAccountingRows(tx, accountId, queries), { singleStatementRead: true }) : [],
         captureUsageModelPriceCatalog(),
         // Only publication/count demand needs a composing read snapshot.
         queries.some(hasUsageMessageCountDemand)
             ? inReadSnapshot(tx => captureUsageBatchMessageCountsInTx(tx, accountId, queries))
             : new Map<string, NonNullable<UsageAnalyticsSnapshot['messageCountsBySession']>>(),
     ]);
+    // The statement and supporting snapshots have returned before any decode
+    // slice yields, so a disconnected reader releases work without holding a connection.
+    const captured = await completeUsageAnalyticsProjection(
+        decodePackedUsageAccountingRows(packed, usageQuerySliceMs), isReaderClosed);
     return assemblePostgresUsageBatch(captured, queries, { priceCatalog, counts }, isReaderClosed);
 }
 

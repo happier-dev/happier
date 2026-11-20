@@ -11,13 +11,19 @@ export type CapturedUsageAccountingRow = ({ captureKind: 'body' } & UsageQueryEv
     | { captureKind: 'report'; id: string; sessionId: string | null; createdAt: Date;
         reportKey: string; reportData: unknown; reportUpdatedAt: Date };
 
+type PackedUsageAccountingRow = { payload: string; observedAt: Date | null;
+    createdAt: Date; reportUpdatedAt: Date | null };
+
+const payloadKeys = ['captureKind', ...Object.keys(usageEventSelect)
+    .filter(key => key !== 'observedAt' && key !== 'createdAt'), 'reportKey', 'reportData'];
+
 /**
  * One statement owns the coherent mutable event/report view. SQL only selects
  * conservative body candidates; canonical metadata admission and replay happen
  * after capture. Native timestamps remain native columns, not JSON strings.
  */
-export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
-    queries: readonly UsageAnalyticsQueryRequest[]): Promise<CapturedUsageAccountingRow[]> {
+export async function readPackedUsageAccountingRows(tx: Tx, accountId: string,
+    queries: readonly UsageAnalyticsQueryRequest[]): Promise<PackedUsageAccountingRow[]> {
     const endMs = queries.reduce((latest, query) => Math.max(latest, query.dateRange?.endMs ?? Infinity), -Infinity);
     const end = Number.isFinite(endMs)
         ? prismaRuntime.sql`AND "observedAt" < CAST(${new Date(endMs).toISOString()} AS timestamp)` : prismaRuntime.empty;
@@ -104,15 +110,15 @@ export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
     // Prisma materializes a native result cell for every selected column. Keep
     // accounting values in one text cell, with field order derived from the
     // select owner, while dates retain the database driver's native decoding.
-    const payloadKeys = ['captureKind', ...Object.keys(usageEventSelect)
-        .filter(key => key !== 'observedAt' && key !== 'createdAt'), 'reportKey', 'reportData'];
-    const rows = await tx.$queryRaw<Array<{ payload: string; observedAt: Date | null;
-        createdAt: Date; reportUpdatedAt: Date | null }>>(prismaRuntime.sql`
+    return tx.$queryRaw<PackedUsageAccountingRow[]>(prismaRuntime.sql`
         SELECT jsonb_build_array(${prismaRuntime.join(payloadKeys.map(key => prismaRuntime.raw(`c."${key}"`)))})::text AS payload,
             c."observedAt", c."createdAt", c."reportUpdatedAt"
         FROM (${capture}) c`);
+}
+
+function createPackedUsageAccountingRowDecoder() {
     const entries: Array<[string, unknown]> = payloadKeys.map(key => [key, undefined]);
-    return rows.map(row => {
+    return (row: PackedUsageAccountingRow) => {
         const values: unknown[] = JSON.parse(row.payload);
         for (let index = 0; index < entries.length; index++) entries[index]![1] = values[index];
         // The statement above owns the shape; fromEntries retains shared object
@@ -122,5 +128,26 @@ export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
         captured.createdAt = row.createdAt;
         captured.reportUpdatedAt = row.reportUpdatedAt;
         return captured as unknown as CapturedUsageAccountingRow;
-    });
+    };
+}
+
+/** Composing callers still own the enclosing transaction. */
+export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
+    queries: readonly UsageAnalyticsQueryRequest[]): Promise<CapturedUsageAccountingRow[]> {
+    return (await readPackedUsageAccountingRows(tx, accountId, queries)).map(createPackedUsageAccountingRowDecoder());
+}
+
+export function* decodePackedUsageAccountingRows(rows: readonly PackedUsageAccountingRow[], sliceMs: number):
+    Generator<void, CapturedUsageAccountingRow[], void> {
+    const decode = createPackedUsageAccountingRowDecoder();
+    const captured: CapturedUsageAccountingRow[] = [];
+    let startedAt = performance.now();
+    for (const row of rows) {
+        captured.push(decode(row));
+        if (performance.now() - startedAt >= sliceMs) {
+            yield;
+            startedAt = performance.now();
+        }
+    }
+    return captured;
 }
