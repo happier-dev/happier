@@ -240,18 +240,16 @@ export function HomeHero(
     : props.phone ? HOME_PHONE_HERO_FOOT_PX : props.showComposer ? HERO_COMPOSER_FOOT_PX : HOME_HERO_FOOT_PX;
   React.useLayoutEffect(() => { frame.measure(); }, [frame.measure, props.rise, top, foot]);
   const atmosphereBoundary = React.useMemo(() => ({
-    // Home measures its existing composer wrapper; only focus crosses this boundary here.
-    ref: undefined,
+    ref: frame.composerRef,
     onLayout: frame.measure,
     onFocusChange: frame.onComposerFocusChange,
-  }), [frame.measure, frame.onComposerFocusChange]);
+  }), [frame.composerRef, frame.measure, frame.onComposerFocusChange]);
   const composerHero = React.useMemo(
     () => ({
-      composerRef: frame.composerRef,
       suggestionsRef: frame.suggestionsRef,
       onLayout: frame.measure,
     }),
-    [frame.composerRef, frame.measure, frame.suggestionsRef],
+    [frame.measure, frame.suggestionsRef],
   );
   return (
     // Home's Bot moons stand under the hero: its empty space passes presses through to them.

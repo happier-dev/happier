@@ -3,6 +3,7 @@ import { expect, test, type Page, type Request } from '@playwright/test';
 import { resolveTestDbProvider, startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
+import { assertSameHomeComposerRestingBox, measureHomeComposerRestingBox } from '../../src/testkit/uiE2e/homeComposerRestingBox';
 import { gotoCommittedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { secretBearingBrowserCapturePolicy } from '../../src/testkit/uiE2e/secretBearingBrowserCapture';
 
@@ -181,6 +182,26 @@ test('firstOpen.F1.newHere | firstOpen.03.F1 provisions one Account and reaches 
     // A reload proves the real landing persisted an Account on this device.
     await page.reload({ waitUntil: 'commit' });
     await expectHome(page);
+});
+
+test('Home reserves the resting composer box before opening the editor', async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: 'reduce', colorScheme: 'light' });
+    await openApp(page);
+    await page.getByTestId('welcome-primary-start').click();
+    await expectHome(page);
+
+    const closed = page.getByTestId('hub-composer.open');
+    const seat = page.getByTestId('hub-composer.intent');
+    const editor = seat.getByTestId('agent-input-composer');
+    await expect(closed).toBeVisible();
+    await expect(closed.getByTestId('agent-input-document-preview-text')).toHaveText(/\S/);
+    await expect(editor).toHaveCount(0);
+    await page.evaluate(async () => { await document.fonts.ready; });
+    const before = await measureHomeComposerRestingBox(page);
+    await closed.press('Enter');
+    await expect(editor).toBeVisible();
+    await expect(closed).toHaveCount(0);
+    assertSameHomeComposerRestingBox(before, await measureHomeComposerRestingBox(page));
 });
 
 test('firstOpen.01.F2.write changes Home background once and keeps the selection after reload', async ({ page }) => {

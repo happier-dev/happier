@@ -23,6 +23,7 @@ import {
 const FIELD_TEXT_STYLE = { fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE } as const;
 const FIELD_PADDING_Y = 10;
 const PARAGRAPH_STYLE = { margin: 0 } as const;
+const ONE_LINE_STYLE = { ...PARAGRAPH_STYLE, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } as const;
 const OFFSET_ATTRIBUTE = 'data-preview-offset';
 const END_ATTRIBUTE = 'data-preview-end';
 
@@ -126,6 +127,7 @@ export function AgentInputDocumentPreviewText(
     [onPointerSelection],
   );
   const empty = props.value.length === 0;
+  const inlinePlaceholder = empty && props.singleLine;
   return (
     <div
       ref={rootRef}
@@ -136,11 +138,11 @@ export function AgentInputDocumentPreviewText(
     >
       <div style={COMPOSER_EDITOR_CONTENT_STYLE}>
         <p
-          data-empty={empty ? 'true' : undefined}
-          data-placeholder={props.placeholder}
-          style={PARAGRAPH_STYLE}
+          data-empty={empty && !inlinePlaceholder ? 'true' : undefined}
+          data-placeholder={inlinePlaceholder ? undefined : props.placeholder}
+          style={props.singleLine ? ONE_LINE_STYLE : PARAGRAPH_STYLE}
         >
-          {splitAgentInputDocumentPreviewText(
+          {inlinePlaceholder ? <span style={{ color: placeholderInk }}>{props.placeholder}</span> : splitAgentInputDocumentPreviewText(
             props.value,
             props.references,
           ).map((segment) =>

@@ -2,6 +2,8 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { useAtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
+import { AgentInputNewSessionRestingBox } from '@/components/sessions/agentInput/components/AgentInputNewSessionRestingBox';
 import { ComposerBannerCollapseProvider } from '@/components/sessions/composerBanners/ComposerBannerCollapseProvider';
 import { NewSessionScreen } from '@/components/sessions/new/NewSessionScreen';
 import { useNewSessionDraftDockPresentation } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
@@ -43,10 +45,9 @@ type HubComposerSectionProps = Readonly<{
     suggestions: HubComposerSuggestionsPresentation;
     /**
      * `hero`: under Home's atmosphere the composer stands in the hero's own column (it supplies the
-     * width and rhythm). Refs let the hero measure it.
+     * width and rhythm). The hero measures its suggestions separately from the composer band.
      */
     hero?: Readonly<{
-        composerRef: React.Ref<View>;
         suggestionsRef: React.Ref<View>;
         onLayout: () => void;
     }>;
@@ -122,6 +123,7 @@ function HubComposerStack(props: HubComposerSectionProps & Readonly<{ composer: 
  */
 function HubComposerHeld(props: HubComposerSectionProps & Readonly<{ height: number | undefined }>) {
     const { theme } = useUnistyles();
+    const boundary = useAtmosphereBandBoundary();
     const shell = useNewSessionShellHost()!;
     const { open, host: { setParams } } = shell;
     const fill = React.useCallback((suggestion: HomeComposerSuggestionFill) => {
@@ -129,7 +131,7 @@ function HubComposerHeld(props: HubComposerSectionProps & Readonly<{ height: num
         open();
     }, [open, setParams]);
     return <HubComposerStack {...props} onFill={fill} composer={(
-        <Pressable ref={props.hero?.composerRef} onLayout={props.hero?.onLayout} testID="hub-composer-held" accessibilityRole="button" onPress={() => open()}>
+        <Pressable ref={boundary?.ref} onLayout={boundary?.onLayout} testID="hub-composer-held" accessibilityRole="button" onPress={() => open()}>
             <GlassSurface surfaceGroup="card" finishRole="composer" style={[styles.held, { height: props.height }]}>
                 <Text variant="body" style={{ color: theme.colors.text.secondary }}>{t('homeComposer.draftOpenBelow')}</Text>
             </GlassSurface>
@@ -147,10 +149,9 @@ function HubComposerClosed(props: Readonly<{ draftId: string | null; onOpen: () 
     return (
         <Pressable testID="hub-composer.open" accessibilityRole="button" accessibilityLabel={label}
             accessibilityValue={draftBadge ? { text: draftBadge } : undefined} onPress={props.onOpen}>
-            <GlassSurface surfaceGroup="card" finishRole="composer" style={[styles.held, styles.closed]}>
-                <Text variant="body" style={{ color: theme.colors.text.secondary }}>{label}</Text>
-                {draftBadge ? <Text variant="body" style={{ color: theme.colors.text.secondary }}>{draftBadge}</Text> : null}
-            </GlassSurface>
+            <AgentInputNewSessionRestingBox placeholder={label} trailing={draftBadge
+                ? <Text variant="meta" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>{draftBadge}</Text>
+                : null} />
         </Pressable>
     );
 }
@@ -177,7 +178,6 @@ function HubComposerSectionContent(props: HubComposerSectionProps & Readonly<{ c
     const hero = props.hero;
     const composer = (
         <View
-            ref={hero?.composerRef}
             onLayout={(event) => {
                 props.composerHeight.current = event.nativeEvent.layout.height;
                 hero?.onLayout();
@@ -204,11 +204,6 @@ const styles = StyleSheet.create((theme) => ({
         justifyContent: 'flex-start',
         padding: theme.space.s16,
         borderRadius: theme.parts.composer.radius,
-    },
-    closed: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        gap: theme.space.s16,
     },
     // Lab `at-links`: the suggestions sit 12 px under the composer.
     heroStack: {

@@ -4,8 +4,10 @@ import type { UnistylesThemes } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
-import { resolveGlassRimStyle } from '@/shadowElevation';
+import { buildGlassCastShadowStyle, resolveGlassRimStyle } from '@/shadowElevation';
+import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
 import { COMPOSER_PHONE_CARD_CONTENT_INSET } from '../composerContentInset';
+import { resolveComposerSurfacePaint } from '../composerSurfaceStyle';
 
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
@@ -51,6 +53,7 @@ export const AGENT_INPUT_PANEL_PADDING_BOTTOM = 8;
  * line sits as far down as it sits in: 12 on a phone (lab D13's content inset), 18 on wider layouts.
  */
 export const AGENT_INPUT_FIELD_PADDING_Y = 5;
+export const AGENT_INPUT_NATIVE_FIELD_PADDING_Y = 8;
 /**
  * The step from the field's row to the first chip rail, past the field's own padding: live, document and reading
  * cards alike. The typed text breathes above the controls while the rails themselves stay one block (owner
@@ -80,10 +83,56 @@ export function resolveAgentInputPanelLayoutStyle(theme: Theme) {
     };
 }
 
+export function resolveAgentInputPhonePanelLayoutStyle(theme: Theme) {
+    const paddingHorizontal = resolveAgentInputPhonePanelPaddingX(theme);
+    return { paddingHorizontal, paddingTop: resolveAgentInputPanelPaddingTop(paddingHorizontal) };
+}
+
+export function resolveAgentInputBandStyle(theme: Theme) {
+    return { alignItems: 'center' as const, width: '100%' as const, paddingTop: theme.space.s8, paddingBottom: theme.space.s8 };
+}
+
+export function resolveAgentInputPanelMaterial(input: Readonly<{
+    theme: Theme;
+    glass: boolean;
+    surfaceGroup?: GlassSurfaceGroup;
+    embedded?: boolean;
+    customBackground?: unknown;
+}>) {
+    const { theme, glass, surfaceGroup = 'card', embedded = false, customBackground } = input;
+    return {
+        surfaceGroup,
+        nested: surfaceGroup === 'card',
+        solidColor: resolveComposerSurfacePaint({ theme, glass, embedded, customBackground }).color,
+        finishRole: 'composer' as const,
+        ...(embedded ? { noCoat: true } : {}),
+    };
+}
+
+export function resolveAgentInputPanelShadowStyle(theme: Theme, glass: boolean) {
+    return {
+        borderRadius: theme.parts.composer.radius,
+        ...(glass ? buildGlassCastShadowStyle(theme.colors.shadowLevels[4], theme.colors.glass.castShadow, true) : {}),
+    };
+}
+
+export function resolveAgentInputPanelInnerShadowStyle(theme: Theme) {
+    return { boxShadow: theme.colors.glass.composerInnerShadow };
+}
+
 /** The field's and the chip rail's own leading inset inside the card: the typed line and an icon chip's glyph. */
 export const AGENT_INPUT_CARD_CONTENT_LEADING_INSET = 8;
 /** The field row's own inset above and below the field (`AgentInput` `inputContainer`). */
 export const AGENT_INPUT_FIELD_CONTAINER_PADDING_Y = 4;
+export const AGENT_INPUT_FIELD_CONTAINER_STYLE = {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    borderWidth: 0,
+    paddingLeft: AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
+    paddingRight: AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
+    paddingVertical: AGENT_INPUT_FIELD_CONTAINER_PADDING_Y,
+    minHeight: 40,
+};
 
 /**
  * The card's top padding for a given side padding: the typed line stands as far below the card's top edge as
@@ -115,6 +164,9 @@ export function resolveAgentInputPanelStyle(theme: Theme) {
  * 05–07: the 32 pt chips of 0.2 left the rows far apart). Hit areas still meet across the 1 px gap.
  */
 export const AGENT_INPUT_ACTION_CHIP_HEIGHT_PX = 28;
+
+/** The setup and placement rails of a full New Session composer, each one chip tall at rest. */
+export const NEW_SESSION_RESTING_RAILS_HEIGHT_PX = 2 * AGENT_INPUT_ACTION_CHIP_HEIGHT_PX + NATIVE_ACTION_CHIP_GAP_Y;
 
 export const AGENT_INPUT_ACTION_CHIP_STYLE = {
     flexDirection: 'row' as const,

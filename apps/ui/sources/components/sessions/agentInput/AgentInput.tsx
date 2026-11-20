@@ -214,10 +214,9 @@ import {
     useComposerApprovalRequests,
 } from '@/components/tools/shell/approvals/failedApprovalDismissal';
 import { Text, TextSelectabilityScope } from '@/components/ui/text/Text';
-import { buildGlassCastShadowStyle } from '@/shadowElevation';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
-import { isGlassComposerSurface, resolveComposerSurfacePaint } from './composerSurfaceStyle';
+import { isGlassComposerSurface } from './composerSurfaceStyle';
 import { resolveComposerSelectionRestore } from './composerSelectionRestore';
 import {
     AGENT_INPUT_ACTION_CHIP_ICON_ONLY_STYLE,
@@ -225,6 +224,8 @@ import {
     AGENT_INPUT_ACTION_CHIP_PRESSED_STYLE,
     AGENT_INPUT_ACTION_CHIP_STYLE,
     AGENT_INPUT_FIELD_PADDING_Y,
+    AGENT_INPUT_NATIVE_FIELD_PADDING_Y,
+    AGENT_INPUT_FIELD_CONTAINER_STYLE,
     AGENT_INPUT_FIELD_TO_CHIP_RAIL_GAP_PX,
     AGENT_INPUT_PANEL_PADDING_BOTTOM,
     AGENT_INPUT_ACTION_CHIP_GAP_X,
@@ -233,8 +234,14 @@ import {
     resolveAgentInputPanelPaddingTop,
     resolveAgentInputPhonePanelPaddingX,
     NATIVE_ACTION_CHIP_GAP_Y,
+    NEW_SESSION_RESTING_RAILS_HEIGHT_PX,
     resolveAgentInputActionChipTextStyle,
+    resolveAgentInputBandStyle,
     resolveAgentInputPanelLayoutStyle,
+    resolveAgentInputPanelMaterial,
+    resolveAgentInputPanelInnerShadowStyle,
+    resolveAgentInputPanelShadowStyle,
+    resolveAgentInputPhonePanelLayoutStyle,
 } from './components/agentInputChromeStyles';
 import { resolveComposerCardContentInsetX } from './composerContentInset';
 import { AgentInputChipRowReach, resolveAgentInputChipRailHitReach } from './definitions/agentInputChipRowReach';
@@ -916,12 +923,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         borderBottomWidth: 1,
         borderBottomColor: theme.colors.border.default,
     },
-    container: {
-        alignItems: 'center',
-        width: '100%',
-        paddingBottom: theme.space.s8,
-        paddingTop: theme.space.s8,
-    },
+    container: resolveAgentInputBandStyle(theme),
     /** A document card: the document's own rhythm places it (`panelPresentation="document"`). */
     containerDocument: {
         paddingTop: 0,
@@ -935,28 +937,13 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
     // background + hairline surface border, no drop shadow.
     unifiedPanel: resolveAgentInputPanelLayoutStyle(theme),
     // A phone's card puts its content on the composer's phone line (card on 16, content on 28).
-    unifiedPanelPhone: {
-        paddingHorizontal: resolveAgentInputPhonePanelPaddingX(theme),
-        paddingTop: resolveAgentInputPanelPaddingTop(resolveAgentInputPhonePanelPaddingX(theme)),
-    },
+    unifiedPanelPhone: resolveAgentInputPhonePanelLayoutStyle(theme),
     // The composer style changes its shadow; the Elements material owns its fill and
     // `resolveGlassRimStyle` its edge: no lip, no line on light (DESIGN.md, owner 2026-11-16).
     // The cast shadow lives on the `panelShadow` wrapper (glass mode only).
-    unifiedPanelGlass: {
-        // Composer-only fainter inner shadow (the other glass surfaces keep `glass.innerShadow`).
-        boxShadow: theme.colors.glass.composerInnerShadow,
-    },
-    // Cast-shadow wrapper (un-clipped) for the glass composer — the two-layer pattern
-    // the tab bar uses so the soft drop shadow renders around the clipped surface.
-    // `buildGlassCastShadowStyle` uses native shadow* on iOS and the cross-platform
-    // boxShadow on Android/web (never Android `elevation`), damped further on web.
-    panelShadow: {
-        borderRadius: theme.parts.composer.radius,
-    },
-    // Match the cockpit tab bar that sits beside the composer: same level, softened.
-    panelShadowGlass: {
-        ...buildGlassCastShadowStyle(theme.colors.shadowLevels[4], theme.colors.glass.castShadow, true),
-    },
+    unifiedPanelGlass: resolveAgentInputPanelInnerShadowStyle(theme),
+    panelShadow: resolveAgentInputPanelShadowStyle(theme, false),
+    panelShadowGlass: resolveAgentInputPanelShadowStyle(theme, true),
     headerControlsLine: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -964,15 +951,7 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         columnGap: theme.space.s6,
         minWidth: 0,
     },
-    inputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        borderWidth: 0,
-        paddingLeft: AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
-        paddingRight: AGENT_INPUT_CARD_CONTENT_LEADING_INSET,
-        paddingVertical: AGENT_INPUT_CONTAINER_VERTICAL_PADDING,
-        minHeight: 40,
-    },
+    inputContainer: AGENT_INPUT_FIELD_CONTAINER_STYLE,
     readOnlyInputContent: {
         flexDirection: 'column',
         alignItems: 'stretch',
@@ -1170,6 +1149,9 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         flex: 1,
         minWidth: 0,
         ...(Platform.OS === 'web' ? { gap: WEB_ACTION_BAR_ROW_GAP_Y } : {}),
+    },
+    actionButtonsColumnTwoRails: {
+        minHeight: NEW_SESSION_RESTING_RAILS_HEIGHT_PX,
     },
     actionButtonsRow: {
         flexDirection: 'row',
@@ -1397,11 +1379,10 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const chipTint = theme.colors.composer.chipTint;
     const composerSurfaceStyleSetting = useSetting('composerSurfaceStyle');
     const isGlassComposer = !documentPanel && isGlassComposerSurface({ setting: composerSurfaceStyleSetting });
-    const surfaceGroup = props.surfaceGroup ?? 'card';
-    const composerSurfaceColor = resolveComposerSurfacePaint({ theme, glass: isGlassComposer,
-        embedded: embeddedPanel, customBackground: props.panelStyle?.backgroundColor }).color;
-    const panelMaterialProps = { surfaceGroup, nested: surfaceGroup === 'card', solidColor: composerSurfaceColor, finishRole: 'composer' as const,
-        ...(embeddedPanel ? { noCoat: true } : {}) };
+    const panelMaterialProps = resolveAgentInputPanelMaterial({
+        theme, glass: isGlassComposer, surfaceGroup: props.surfaceGroup,
+        embedded: embeddedPanel, customBackground: props.panelStyle?.backgroundColor,
+    });
     const keyboardShortcutsV2Enabled = useSetting('keyboardShortcutsV2Enabled') === true;
     const keyboardSingleKeyShortcutsEnabled = useSetting('keyboardSingleKeyShortcutsEnabled') === true;
     const keyboardShortcutOverridesV1 = useSetting('keyboardShortcutOverridesV1') ?? {};
@@ -4357,7 +4338,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     );
     // Embedded, the host card's rhythm places the text: the field adds no inset above or below it.
     const fieldPaddingY = embeddedPanel ? 0 : AGENT_INPUT_FIELD_PADDING_Y;
-    const nativeFieldPaddingY = embeddedPanel ? 0 : 8;
+    const nativeFieldPaddingY = embeddedPanel ? 0 : AGENT_INPUT_NATIVE_FIELD_PADDING_Y;
     // Embedded, the footer's controls end the prompt's own line instead of adding a rail under it: "+" and
     // any chips, then the field tools, then the trailing cluster. Every node here is the footer's own, placed
     // once, so "+" keeps its menu, attachments and anchors.
@@ -4547,6 +4528,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                     style={[
                         screenWidth < 420 ? styles.actionButtonsColumnNarrow : styles.actionButtonsColumn,
                         isMobileLayoutWidth(screenWidth) ? styles.actionButtonsColumnMobile : null,
+                        showSecondaryControlsRow ? styles.actionButtonsColumnTwoRails : null,
                         armedFooterOwnsRow ? styles.actionButtonsColumnArmedRow : null,
                     ]}
                 >{[
@@ -4683,7 +4665,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 {/* Box 2: Action Area (Input + Send) */}
                 <WebDropTargetView
                     ref={composerEntityDropRef}
-                    style={[styles.panelShadow, isGlassComposer ? styles.panelShadowGlass : null]}
+                    style={isGlassComposer ? styles.panelShadowGlass : styles.panelShadow}
                     onLayout={(event) => {
                         updateNullableLayoutHeight(setPanelHeightPx, event.nativeEvent.layout.height);
                         measureComposerDrop();

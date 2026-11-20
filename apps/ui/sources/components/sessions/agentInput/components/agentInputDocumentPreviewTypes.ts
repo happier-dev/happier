@@ -25,6 +25,7 @@ export type AgentInputDocumentPreviewTextProps = Readonly<{
    * outside any field (a row that already gives the text its room) passes `false`.
    */
   fieldInset?: boolean;
+  singleLine?: boolean;
   /**
    * Receives where in the text a pointer went down, so the live composer that replaces the picture
    * opens with its caret there. `null` when the point maps to no text position.

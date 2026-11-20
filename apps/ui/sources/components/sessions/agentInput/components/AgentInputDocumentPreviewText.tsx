@@ -8,6 +8,7 @@ import {
   MULTI_TEXT_INPUT_BASE_LINE_HEIGHT,
 } from '@/components/ui/forms/multiTextInputTypography';
 import { Typography } from '@/constants/Typography';
+import { AGENT_INPUT_NATIVE_FIELD_PADDING_Y } from './agentInputChromeStyles';
 
 import {
   splitAgentInputDocumentPreviewText,
@@ -15,16 +16,13 @@ import {
   type AgentInputDocumentPreviewTextProps,
 } from './agentInputDocumentPreviewTypes';
 
-/** The native field's vertical inset (`MultiTextInput` in `AgentInput`). */
-const FIELD_PADDING_Y = 8;
-
 const styles = StyleSheet.create((theme) => ({
   text: {
     ...Typography.default(),
     fontSize: MULTI_TEXT_INPUT_BASE_FONT_SIZE,
     lineHeight: MULTI_TEXT_INPUT_BASE_LINE_HEIGHT,
     color: theme.colors.input.text,
-    paddingVertical: FIELD_PADDING_Y,
+    paddingVertical: AGENT_INPUT_NATIVE_FIELD_PADDING_Y,
   },
   outsideField: {
     paddingVertical: 0,
@@ -68,11 +66,13 @@ export function AgentInputDocumentPreviewText(
 ): React.ReactElement {
   if (props.value.length === 0) {
     return (
-      <Text style={[styles.text, styles.placeholder]}>{props.placeholder}</Text>
+      <Text testID="agent-input-document-preview-text" numberOfLines={props.singleLine ? 1 : undefined}
+        style={[styles.text, styles.placeholder, props.fieldInset === false ? styles.outsideField : null]}>{props.placeholder}</Text>
     );
   }
   return (
-    <Text testID="agent-input-document-preview-text" style={[styles.text, props.fieldInset === false ? styles.outsideField : null]}>
+    <Text testID="agent-input-document-preview-text" numberOfLines={props.singleLine ? 1 : undefined}
+      style={[styles.text, props.fieldInset === false ? styles.outsideField : null]}>
       {splitAgentInputDocumentPreviewText(props.value, props.references).map(
         (segment) =>
           segment.kind === 'text' ? (
