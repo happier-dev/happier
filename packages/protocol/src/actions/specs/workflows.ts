@@ -5,16 +5,11 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowActionInputSchemasV1, WorkflowActionOutputSchemasV1, type WorkflowActionIdV1 } from '../../workflows/actionsV1.js';
-import { WORKFLOW_ACTION_IDS_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from '../actionIds.js';
-import { WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 } from '../actionIds.js';
+import { WORKFLOW_ACTION_IDS_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, WORKFLOW_DANGER_ACTION_IDS, WORKFLOW_READ_ACTION_IDS } from '../actionIds.js';
 import { getWorkflowInputHints, WORKFLOW_AUTOMATION_REMOVAL_WARNING } from './workflowInputHints.js';
 
 
-export const WORKFLOW_DANGER_ACTION_IDS = new Set<WorkflowActionIdV1>([
-  'workflow.run.delete', 'workflow.definition.delete',
-  'workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove',
-  'workflow.trigger.run_now',
-]);
+export { WORKFLOW_DANGER_ACTION_IDS, WORKFLOW_READ_ACTION_IDS } from '../actionIds.js';
 
 export const WORKFLOW_ACTION_TITLES: Readonly<Record<WorkflowActionIdV1, string>> = {
   'workflow.validate': 'Validate workflow',
@@ -86,13 +81,6 @@ export function bindWorkflowInvocationRetryCliInputV1(value: unknown): unknown {
   const { retryInput, ...rest } = WorkflowInvocationRetryCliInputV1Schema.parse(value);
   return { ...rest, input: retryInput };
 }
-
-export const WORKFLOW_READ_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new Set([
-  'workflow.validate', WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
-  'workflow.run.invocations.list', 'workflow.run.invocations.get',
-  'workflow.definition.list', 'workflow.definition.get', 'workflow.definition.import', 'workflow.definition.export', 'workflow.definition.capture',
-  WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1, 'workflow.trigger.list',
-]);
 
 function removesWholeTriggerSet(input: unknown): boolean {
   return typeof readRecord(input).triggerId !== 'string';
