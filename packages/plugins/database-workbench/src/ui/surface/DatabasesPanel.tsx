@@ -20,8 +20,7 @@ import {
   useWorkbenchMount,
   type WorkbenchLaunchInput,
 } from './mount.js';
-import { encodeWorkbenchPageSubPath } from './subPath.js';
-import { WORKBENCH_PAGE_VIEW_ID } from './views.js';
+import { openWorkbenchPage } from './openWorkbench.js';
 
 const PANEL_LOCATION = Object.freeze({
   targetKey: '',
@@ -99,10 +98,8 @@ function DatabaseRows(
   );
   const open = React.useCallback(
     (target: WorkbenchTarget) => {
-      void props.context.hostApi.openSurface(WORKBENCH_PAGE_VIEW_ID, undefined, {
-        // The database's root: the Overview beside the rail; on a phone the rail itself (lab tablesp).
-        subPath: encodeWorkbenchPageSubPath(instance.target(target.targetKey)),
-      });
+      // The database's root: the Overview beside the rail; on a phone the rail itself (lab tablesp).
+      void openWorkbenchPage(props.context.hostApi, instance.target(target.targetKey));
     },
     [instance, props.context.hostApi],
   );

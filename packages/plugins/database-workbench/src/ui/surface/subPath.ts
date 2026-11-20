@@ -1,15 +1,15 @@
 import { DatabaseTargetV1Schema, type DatabaseDescriptorV1, type DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
-import { decodeBase64, encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
+import { decodeBase64, defineProtocolLiteral, defineProtocolUnion, encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import type { WorkbenchLocation } from '../models.js';
-import { workbenchTargetKey } from '../workbench.js';
+import { workbenchTargetKey } from '../../targetIdentity.js';
 
-const MODES: readonly WorkbenchLocation['mode'][] = [
-  'data',
-  'structure',
-  'console',
-  'overview',
-  'insights',
-];
+export const WorkbenchModeSchema = defineProtocolUnion([
+  defineProtocolLiteral('data'),
+  defineProtocolLiteral('structure'),
+  defineProtocolLiteral('console'),
+  defineProtocolLiteral('overview'),
+  defineProtocolLiteral('insights'),
+]);
 
 export type WorkbenchPlace = Pick<WorkbenchLocation, 'mode' | 'relation'>;
 
@@ -60,7 +60,8 @@ export function decodeWorkbenchSubPath(
       parts.splice(0, 2);
     }
     const [mode, schema, name, database] = parts.map((part) => decodeURIComponent(part));
-    const known = MODES.find((candidate) => candidate === mode) ?? 'overview';
+    const parsed = WorkbenchModeSchema.safeParse(mode);
+    const known = parsed.success ? parsed.data : 'overview';
     const place: WorkbenchPlace = name && schema
       ? { mode: known, relation: { ...(database ? { database } : {}), schema, name } }
       : { mode: known === 'data' || known === 'structure' ? 'overview' : known };

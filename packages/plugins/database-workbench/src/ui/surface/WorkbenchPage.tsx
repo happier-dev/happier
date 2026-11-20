@@ -221,3 +221,4 @@ function WorkbenchLayout(props: Readonly<{ targetKey: string; scope: WorkbenchLa
 
 export const renderSurface = defineUiSurface(WorkbenchPage);
 export { encodeWorkbenchPageSubPath } from './subPath.js';
+export { activateWorkbenchClientActions as activate } from './openWorkbench.js';

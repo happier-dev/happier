@@ -8,6 +8,7 @@ import { createDatabaseConnectionResourceRuntime, DATABASE_CONNECTION_RESOURCE_I
 import { createDatabaseRuntime } from './runtime.js';
 import { createDatabaseInsightProducers } from './insights/findings.js';
 import { createDatabaseWorkbenchPlacements } from './ui/placements.js';
+import { openWorkbenchActions } from './ui/surface/openWorkbench.js';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID, databaseFindingEvent,
     databaseFindingEventSetupAction } from './insights/events.js';
 import {
@@ -121,7 +122,7 @@ export const plugin = definePlugin({
         forgetTarget(input, context) {
             return manualTargets(context).forget({ target: input.target, signal: context.signal });
         },
-    }), [DATABASE_FINDING_SETUP_LOCAL_ID]: databaseFindingEventSetupAction },
+    }), ...openWorkbenchActions, [DATABASE_FINDING_SETUP_LOCAL_ID]: databaseFindingEventSetupAction },
     resources: {
         [DATABASE_CONNECTION_RESOURCE_ID_V1]: {
             source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
