@@ -2178,6 +2178,54 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     } finally { await hook.unmount(); }
   });
 
+  it('keeps a refused draft and consumes the successful retry before publishing Session started', async () => {
+    const context = await setupTaskHarness();
+    const { writeNewSessionDraft, listNewSessionDraftProjections } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const { newSessionBackgroundLaunches } = await import('../modules/newSessionBackgroundLaunches');
+    const scope = context.scope;
+    const draftId = 'retry-background-draft';
+    const sessionId = 'retry-background-session';
+    const prompt = 'Keep this prompt on failure';
+    const listed = () => listNewSessionDraftProjections(scope).some(draft => draft.draftId === draftId);
+    writeNewSessionDraft({ scope, draftId, patch: { text: prompt }, materializationIntent: 'userEdit' });
+    expect(listed()).toBe(true);
+    context.storageState.applySessions([createSessionFixture({ id: sessionId, serverId: scope.serverId, encryptionMode: 'plain' })]);
+    context.sessionSpawnNewActionBoundarySpy
+      .mockResolvedValueOnce({ type: 'error', code: 'spawn_failed', retryable: false })
+      .mockResolvedValueOnce({ ...spawnSuccess(sessionId), executionTarget: { serverId: scope.serverId, machineId: 'm1' } });
+    const router = { push: vi.fn(), replace: vi.fn() };
+    const hook = await renderHook(() => context.useCreateNewSession(createRetryParams(context.storageState.settings, {
+      draftScope: scope, targetAccountScope: scope, targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId],
+      draftId, promptStore: createNewSessionPromptStore(prompt), router,
+    })));
+    const listedAtStart: boolean[] = [];
+    newSessionBackgroundLaunches.resetForTests();
+    const unsubscribe = newSessionBackgroundLaunches.subscribe(() => {
+      if (newSessionBackgroundLaunches.read().latest?.kind === 'started') listedAtStart.push(listed());
+    });
+    const create = () => hook.getCurrent().handleCreateSession({ initialMessage: 'skip', deferAcceptedDraftClearToDocument: true });
+    try {
+      await act(create);
+      expect(context.sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
+      expect(listed()).toBe(true);
+      expect(router.replace).not.toHaveBeenCalled();
+
+      await act(async () => {
+        const retry = create();
+        hook.getCurrent().handOffLaunchToBackground();
+        await retry;
+      });
+      expect(context.sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(2);
+      expect(listedAtStart).toEqual([false]);
+      expect(listed()).toBe(false);
+      expect(router.replace).not.toHaveBeenCalled();
+    } finally {
+      unsubscribe();
+      newSessionBackgroundLaunches.resetForTests();
+      await hook.unmount();
+    }
+  });
+
   it.each(['accepted', 'refused'] as const)('presents the committed Session at commit with a launch-owned first message, then settles it %s on the destination', async outcome => {
     const context = await setupTaskHarness();
     const { storage } = await import('@/sync/domains/state/storageStore');

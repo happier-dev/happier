@@ -51,9 +51,9 @@ export type NewSessionLaunchApproval = Readonly<{
 }>;
 
 /**
- * A durable Action operation rejoined without its mounted creation completion: present the
- * created session once, then retire the draft and the launch custody. False when presentation was
- * abandoned because the surface went away.
+ * A durable Action operation rejoined without its mounted creation completion: consume the
+ * submitted draft on success, then present the Session and retire launch custody.
+ * False when presentation was abandoned because the surface went away.
  */
 async function settleCreatedNewSessionLaunch(input: Readonly<{
     sessionId: string;
@@ -91,33 +91,34 @@ async function settleCreatedNewSessionLaunch(input: Readonly<{
             });
         }
         if (!isStillActive()) return false;
+        const destinationAccountId = input.operation?.snapshot.scope.accountId ?? draftScope.accountId;
+        if (capturedFirstTurnText && !initialInputLocalId) {
+            preserveCreatedSessionDraftAfterUnacceptedFirstTurn({
+                scope: { serverId: destinationServerId, accountId: destinationAccountId },
+                sessionId,
+                draftText: capturedFirstTurnText,
+            });
+        }
+        input.disableDraftPersistence();
+        await clearCapturedNewSessionDraftAfterLaunch({
+            scope: draftScope,
+            draftId: input.draftId,
+            launchUserAttemptId: requestId,
+        });
         const presentation = await presentCreatedNewSession({
             sessionId,
             serverId: destinationServerId,
-            accountId: input.operation?.snapshot.scope.accountId ?? draftScope.accountId,
+            accountId: destinationAccountId,
             requestId: input.operation?.snapshot.requestId ?? requestId,
             router: input.router,
             isStillActive,
             ...(input.operation ? { operation: input.operation } : {}),
-            prepareDestination: capturedFirstTurnText
-                ? () => {
-                    if (initialInputLocalId) {
-                        projectAcceptedNewSessionFirstTurn({
-                            sessionId,
-                            localId: initialInputLocalId,
-                            text: capturedFirstTurnText,
-                        });
-                        return;
-                    }
-                    preserveCreatedSessionDraftAfterUnacceptedFirstTurn({
-                        scope: {
-                            serverId: destinationServerId,
-                            accountId: input.operation?.snapshot.scope.accountId ?? draftScope.accountId,
-                        },
-                        sessionId,
-                        draftText: capturedFirstTurnText,
-                    });
-                }
+            prepareDestination: capturedFirstTurnText && initialInputLocalId
+                ? () => projectAcceptedNewSessionFirstTurn({
+                    sessionId,
+                    localId: initialInputLocalId,
+                    text: capturedFirstTurnText,
+                })
                 : undefined,
         });
         if (presentation !== 'opened') {
@@ -127,16 +128,10 @@ async function settleCreatedNewSessionLaunch(input: Readonly<{
             return false;
         }
         if (!isStillActive()) return false;
-        input.disableDraftPersistence();
-        await clearCapturedNewSessionDraftAfterLaunch({
-            scope: draftScope,
-            draftId: input.draftId,
-            launchUserAttemptId: requestId,
-        });
         await settleSpawnAttemptCustodyFromActionOperation({
             scope: {
                 serverId: destinationServerId,
-                accountId: input.operation?.snapshot.scope.accountId ?? draftScope.accountId,
+                accountId: destinationAccountId,
             },
             userAttemptId: requestId,
             createdSessionId: sessionId,

@@ -1859,15 +1859,17 @@ export function useCreateNewSession(params: Readonly<{
                             : {}),
                     });
                 }
-                // A committed Session is presented at commit only where nothing else must still run on
-                // the launcher before presentation (attachments, actions, origin, host/in-place creation).
-                // An in-place (docked) host presents through the same router owner (its "Session started"
-                // notice) and renews its draft; this launch's progress stays bound to the submitted draft.
+                // A committed Session can open with a pending first turn when no launcher follow-up
+                // is needed. A docked or background "Session started" receipt waits for terminal success.
                 const presentsAtCommit = !hostSpawnExecutorRef.current
                     && !opts?.afterCreated && !current.authoringOrigin && !managedCreation
                     && resolvedInitialMessage?.kind !== 'action';
+                const canOpenCommittedSession = () => isLaunchScopeStillActive()
+                    && !sourceDraftCancellation.signal.aborted
+                    && !launchOutlivesSurfaceRef.current
+                    && (!presentsInPlaceRef.current || opensDestination);
                 const presentCommittedSession = async (receipt: SessionSpawnNewCommittedReceipt): Promise<void> => {
-                    if (!isLaunchScopeStillActive() || sourceDraftCancellation.signal.aborted) return;
+                    if (!canOpenCommittedSession()) return;
                     // Creation now belongs to the committed Session. Route unmount
                     // retires the launcher, while its Account still owns settlement.
                     launchAbortRef.current = null;
@@ -1883,7 +1885,7 @@ export function useCreateNewSession(params: Readonly<{
                             ?? launchAttempt.attemptId,
                         router: launchRouter,
                         href,
-                        isStillActive: () => isLaunchScopeStillActive() && !sourceDraftCancellation.signal.aborted,
+                        isStillActive: canOpenCommittedSession,
                         // The launch still owns the first input: unconfirmed, and no optimistic thinking.
                         prepareDestination: firstTurnLocalId ? () => projectLaunchingNewSessionFirstTurn({
                             sessionId: receipt.sessionId,
@@ -2452,14 +2454,6 @@ export function useCreateNewSession(params: Readonly<{
                 const createdSessionCompletion = createCreatedNewSessionCompletion({
                     ...(current.authoringOrigin || opts?.afterCreated ? { followUp: runAfterCreatedFollowUp } : {}),
                     present: () => presentCreatedSessionRoute(),
-                    // Once the Session exists the sent draft leaves Drafts on every route; only the captured
-                    // fields clear, so edits made after Send stay in the draft.
-                    clearCapturedDraft: async () => {
-                        if (!opts?.deferAcceptedDraftClearToDocument && mountedRef.current && submittedLaunch.isSubmittedDraftShown()) {
-                            current.disableDraftPersistence?.();
-                        }
-                        await clearCompletedDraft(launchAttempt.attemptId);
-                    },
                 });
 
                 const runBuiltInPostSpawnFollowUp = async (): Promise<void> => {
@@ -2626,6 +2620,12 @@ export function useCreateNewSession(params: Readonly<{
                         });
                     }
                     launchAttempt = markNewSessionLaunchAttemptComplete(launchAttempt);
+                    // Draft consumption belongs to successful launch settlement. Destination hydration
+                    // and opening are independent, and later edits still belong to the draft.
+                    if (!opts?.deferAcceptedDraftClearToDocument && mountedRef.current && submittedLaunch.isSubmittedDraftShown()) {
+                        current.disableDraftPersistence?.();
+                    }
+                    await clearCompletedDraft(launchAttempt.attemptId);
                     if (opts?.onAfterCreatedSettled && isLaunchScopeStillActive()) {
                         reportAfterCreatedSettlement(initialInputWasNotAccepted
                             ? { status: 'rejected' }
@@ -2650,7 +2650,6 @@ export function useCreateNewSession(params: Readonly<{
                     manualActionCustody = null;
                 }
                 submittedLaunch.attempt(null);
-                await createdSessionCompletion.clearCapturedDraft();
             } else {
                 throw new Error('Created session ID is required to complete launch.');
             }

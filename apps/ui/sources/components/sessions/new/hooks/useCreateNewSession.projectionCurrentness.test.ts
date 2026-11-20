@@ -1499,33 +1499,6 @@ describe('useCreateNewSession (projection currentness admission)', () => {
             expect(hook.getCurrent().managedMachineCreationProgress.kind).not.toBe('failed');
         } finally { await hook.unmount(); }
     });
-    // JOURNEY-UX-1107 (live, Account B): a Docked Send created its Session, but the sent draft stayed in Drafts with its
-    // text, because the composer-document route left settlement to a document that had already moved on.
-    it('settles a sent draft out of Drafts once its Session exists on the composer-document route', async () => {
-        const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
-        const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
-        const scope = { serverId: runtime.serverId, accountId: 'account-a' };
-        const draftId = '5c1f0e2a-8d4b-4c6e-9a3f-2b7d1e0c9f41';
-        writeNewSessionDraftToRepository({ scope, draftId, materializationIntent: 'seeded', draft: { input: 'Fix the flaky test', selectedMachineId: 'm1',
-            selectedPath: '/tmp', agentType: agentId, backendTarget: spawnTarget, selectedProfileId: null, selectedSecretId: null,
-            permissionMode: 'default', acpSessionModeId: null, updatedAt: 1 } });
-        expect(readNewSessionDraftFromRepository({ scope, draftId })?.input).toBe('Fix the flaky test');
-        const hook = await mount(await readCurrentProjection(), false, { draftScope: scope, draftId,
-            promptStore: createNewSessionPromptStore('Fix the flaky test') });
-        try {
-            let send: Promise<void> | undefined;
-            await act(async () => { send = startCreation(hook, { initialMessage: 'skip', deferAcceptedDraftClearToDocument: true }); });
-            await vi.waitFor(() => expect(spawnRequests).toHaveLength(1));
-            const { storage } = await import('@/sync/domains/state/storageStore');
-            storage.getState().applySessions([createSessionFixture({ id: 'created-session', serverId: runtime.serverId,
-                metadata: { machineId: 'm1', path: '/tmp', host: 'test' } })]);
-            spawnResult.resolve(SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: 'created-session',
-                executionTarget: { serverId: runtime.serverId, machineId: 'm1' },
-                organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }));
-            await send;
-            await vi.waitFor(() => expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.materialized ?? false).toBe(false));
-        } finally { await hook.unmount(); }
-    });
     it('keeps post-create follow-up alive across route unmount and retires it with the captured Account', async () => {
         const hook = await mount(await readCurrentProjection(), false);
         const entered = createDeferred<void>();

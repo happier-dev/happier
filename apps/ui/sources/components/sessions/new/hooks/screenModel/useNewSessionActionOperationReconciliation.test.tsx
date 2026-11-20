@@ -214,7 +214,7 @@ describe('useNewSessionActionOperationReconciliation', () => {
         },
     );
 
-    it('projects the accepted first turn on the source Home, routes once, then clears the scoped draft after terminal success', async () => {
+    it('clears the scoped draft on terminal success before projecting and opening the Session', async () => {
         const presentationOrder: string[] = [];
         clearCapturedDraftMock.mockImplementationOnce(async () => {
             presentationOrder.push('clear');
@@ -251,10 +251,6 @@ describe('useNewSessionActionOperationReconciliation', () => {
         }));
 
         await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
-        expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalledWith(
-            'session-created',
-            { forceRefresh: true, serverId: 'server-a' },
-        );
         expect(disableDraftPersistence).toHaveBeenCalledTimes(1);
         expect(clearCapturedDraftMock).toHaveBeenCalledWith({
             scope: draftScope,
@@ -281,14 +277,14 @@ describe('useNewSessionActionOperationReconciliation', () => {
                 deliveryStatus: 'accepted',
             }),
         );
-        expect(presentationOrder).toEqual(['project', 'route', 'clear']);
+        expect(presentationOrder).toEqual(['clear', 'project', 'route']);
         expect(resetLaunchRequestId).not.toHaveBeenCalled();
 
         act(() => mergeOperations([operation('succeeded', { revision: 3 })]));
         expect(router.replace).toHaveBeenCalledTimes(1);
     });
 
-    it('does not clear or route terminal success before bounded route readiness is proven', async () => {
+    it('clears the successful launch draft even when the Session is not yet available to open', async () => {
         vi.useFakeTimers();
         try {
             storageState.sessions = {};
@@ -308,9 +304,9 @@ describe('useNewSessionActionOperationReconciliation', () => {
             }));
 
             await vi.advanceTimersByTimeAsync(10_000);
-            expect(ensureSessionVisibleForMessageRouteMock.mock.calls.length).toBeGreaterThan(1);
-            expect(disableDraftPersistence).not.toHaveBeenCalled();
-            expect(clearNewSessionDraftMock).not.toHaveBeenCalled();
+            expect(ensureSessionVisibleForMessageRouteMock).toHaveBeenCalled();
+            expect(disableDraftPersistence).toHaveBeenCalledOnce();
+            expect(clearCapturedDraftMock).toHaveBeenCalledOnce();
             expect(router.replace).not.toHaveBeenCalled();
         } finally {
             vi.useRealTimers();
@@ -348,12 +344,12 @@ describe('useNewSessionActionOperationReconciliation', () => {
         });
 
         expect(router.replace).not.toHaveBeenCalled();
-        expect(disableDraftPersistence).not.toHaveBeenCalled();
-        expect(clearCapturedDraftMock).not.toHaveBeenCalled();
+        expect(disableDraftPersistence).toHaveBeenCalledOnce();
+        expect(clearCapturedDraftMock).toHaveBeenCalledOnce();
         expect(presentationAcknowledgeRequestMock).not.toHaveBeenCalled();
     });
 
-    it('preserves an outcome-unknown first turn instead of projecting it as accepted', async () => {
+    it('preserves an outcome-unknown first turn before consuming the draft even when the Session cannot open yet', async () => {
         mergeOperations([operation('succeeded', {
             result: projectSessionSpawnNewActionResultV1({
                 type: 'success',
@@ -368,6 +364,10 @@ describe('useNewSessionActionOperationReconciliation', () => {
                 },
             }),
         })]);
+        ensureSessionVisibleForMessageRouteMock.mockResolvedValue({ kind: 'missing' });
+        const draftSettlementOrder: string[] = [];
+        preserveCreatedDraftMock.mockImplementationOnce(() => { draftSettlementOrder.push('preserve'); });
+        clearCapturedDraftMock.mockImplementationOnce(async () => { draftSettlementOrder.push('clear'); });
         const router = { replace: vi.fn() };
 
         await renderHook(() => useNewSessionActionOperationReconciliation({
@@ -380,13 +380,15 @@ describe('useNewSessionActionOperationReconciliation', () => {
             router,
         }));
 
-        await vi.waitFor(() => expect(router.replace).toHaveBeenCalledTimes(1));
+        await vi.waitFor(() => expect(clearCapturedDraftMock).toHaveBeenCalledOnce());
+        expect(draftSettlementOrder).toEqual(['preserve', 'clear']);
         expect(preserveCreatedDraftMock).toHaveBeenCalledWith({
             scope: { serverId: 'server-a', accountId: 'account-a' },
             sessionId: 'session-created',
             draftText: 'Persisted first turn',
         });
         expect(upsertPendingMessageMock).not.toHaveBeenCalled();
+        expect(router.replace).not.toHaveBeenCalled();
     });
 
     it('ignores a colliding request from another account', async () => {
