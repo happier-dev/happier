@@ -7,8 +7,10 @@ import { ingestPluginManifestV2, UsageEventIngestRequestSchema } from '@happier-
 import { resolveExternalSessionsSourceKeyForDeclaration } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { PLUGIN_MANIFEST } from '@happier-dev/plugins-claude/manifest';
 import { PLUGIN_MANIFEST as PI_MANIFEST } from '@happier-dev/plugins-pi/manifest';
+import { PLUGIN_MANIFEST as MUSE_MANIFEST } from '@happier-dev/plugins-muse/manifest';
 import { createPiExternalSessionsContribution } from '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution';
 import { resolvePiExternalSessionSource } from '../../../../../packages/plugins/pi/src/agent/externalSessions/source';
+import { museExternalSessionsContribution } from '../../../../../packages/plugins/muse/src/agent/externalSessions';
 import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
 import { createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
@@ -35,6 +37,34 @@ vi.mock('node:fs/promises', async importOriginal => {
 afterEach(() => { vi.unstubAllEnvs(); });
 
 describe('native source metadata discovery', () => {
+    it('reports transcript-only Agents as unsupported without starting their reader', async () => {
+        const ingestion = ingestPluginManifestV2(MUSE_MANIFEST);
+        if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
+        const { manifest } = ingestion;
+        const agents = manifest.contributes.agents.map(definition => projectManifestAgentContribution({
+            definition, pluginId: manifest.id, provenance: 'first_party', source: { kind: 'bundled' },
+        }));
+        const retirement = new AbortController();
+        const createInvocationExec = vi.fn(async () => createUnavailablePluginServices().exec);
+        const externalSessions = createBoundedAgentExternalSessionsContribution({
+            contribution: museExternalSessionsContribution,
+            identity: { pluginId: manifest.id, agentId: 'muse', occurrenceId: 'current',
+                contributionQualifiedId: `${manifest.id}/agents/muse`, sourceCustody: { kind: 'development', registeredRootId: 'root' } },
+            retirementSignal: retirement.signal, isCurrent: () => true, createInvocationExec,
+        });
+
+        const sources = await discoverNativeUsageSourceMetadata({ agents, account: { connectedServicesV2: [] },
+            activeServerId: 'home', activeServerDir: '/happier/home', signal: new AbortController().signal,
+            resolveBoundary: async () => ({ catalogEntry: null, externalSessions, occurrenceId: 'current',
+                retirementSignal: retirement.signal, isCurrent: () => true }),
+        });
+
+        expect(createInvocationExec).not.toHaveBeenCalled();
+        expect(sources).toEqual([expect.objectContaining({ agent: { pluginId: manifest.id, localId: 'muse' },
+            source: { kind: 'museNative' }, root: null, supported: false })]);
+        expect(sources[0]).not.toHaveProperty('error');
+    });
+
     it('keeps discovery-only configured identity out of sealed accounting custody', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-source-custody-'));
         try {

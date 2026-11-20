@@ -95,14 +95,18 @@ export async function discoverNativeUsageSourceMetadata(input: Readonly<{
         const configured = admitted.declaration.instances?.some(instance => (instance.kind === 'agentSetting' || instance.kind === 'agentSettingOverride')
             && typeof admitted.source[instance.field] === 'string');
         const rootKind = hasConnectedProfile ? 'materialized' : configured ? 'configured' : 'default';
-        const resolved = boundary
+        // A transcript-only contribution may need a running Agent to resolve its history home.
+        // Its admitted declaration is enough to report unsupported native accounting.
+        const unsupported = boundary?.externalSessions.supportsAccounting === false;
+        const resolved = boundary && !unsupported
             ? await resolveNativeUsageSourceMetadata({ ...input, agentId: candidate.agentId, source: admitted.source, boundary }, admitted)
             : null;
         if (!resolved) {
             if (input.signal.aborted || boundary?.retirementSignal.aborted) continue;
             const agent = input.agents.find(agent => agent.id === candidate.agentId)?.identity;
             if (agent) sources.push({ agent, source: admitted.source, sourceKey: admitted.sourceKey, root: null,
-                rootKind, configuredSourceKey: admitted.sourceKey, supported: false, error: boundary ? 'source_unavailable' : 'agent_unavailable' });
+                rootKind, configuredSourceKey: admitted.sourceKey, supported: false,
+                ...(unsupported ? {} : { error: boundary ? 'source_unavailable' : 'agent_unavailable' }) });
             continue;
         }
         sources.push({ ...resolved.descriptor, rootKind, configuredSourceKey: admitted.sourceKey });
