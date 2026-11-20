@@ -4152,7 +4152,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         && (proof.path === '/v1/artifacts'
             || /^\/v1\/artifacts\/[^/?#]+(?:\/access\/(?:grants|recipients|key-envelopes))?$/u.test(proof.path)
                 && (proof.method.toUpperCase() !== 'GET' || proof.path.includes('/access/')));
-    const reviewedCandidateArtifact = verified.acceptedDeploymentReceipt ? undefined
+    // An admitted receipt retains the candidate ID as its stages advance.
+    // Its child reads use the receipt's custody.
+    const reviewedCandidateArtifact = verified.acceptedDeploymentReceipt || verified.deploymentChildAdmission?.acceptedReceipt ? undefined
         : readReviewedDeploymentCandidateArtifactPurpose(verified.binding, verified.effectActionId, proof);
     const domainPreparation = verified.deploymentChildRouting ? null
         : await readDeploymentDomainPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof,

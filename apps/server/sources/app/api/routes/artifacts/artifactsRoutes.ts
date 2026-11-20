@@ -28,7 +28,7 @@ import { ArtifactHttpReadV1Schema, ArtifactCreateHttpResponseV1Schema, ArtifactH
 import { Fastify } from "../../types";
 import { z } from "zod/mini";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import { log } from "@/utils/logging/log";
+import { log, warn } from "@/utils/logging/log";
 import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
 import { listArtifactBodyRevisions, restoreArtifactBodyRevision } from "@/app/artifacts/artifactRevisionService";
@@ -428,6 +428,10 @@ export function artifactsRoutes(app: Fastify) {
             admittedContent: request.externalActionDeploymentChildArtifactRead });
         if (!read.ok) {
             const refusal = projectArtifactHttpReadFailure(read, userId);
+            if (refusal.status === 500) {
+                warn({ module: 'artifact-read', statusCode: refusal.status, reason: read.error, artifactId: id,
+                    httpRequestId: request.id, requestId: request.externalActionExecutionRequestId }, 'Artifact content unavailable');
+            }
             return reply.code(refusal.status).send({ error: refusal.error });
         }
         return reply.send(projectArtifactHttpRead(read.artifact));
