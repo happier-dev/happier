@@ -67,6 +67,8 @@ type WhenHappierUpdates = NonNullable<PresetPreparation['whenHappierUpdates']>;
 
 function MachinePresetPrepareSection(props: Readonly<{
     serverId: string; preset: OpenedManagedMachinePresetV1; canManage: boolean; busy: boolean; onChanged: () => void;
+    /** Whether the receipt's billing fact bills anyone; a No bill preset drops the provider charge clause. */
+    bills: boolean;
     /** The preference as it will be after any edit still being saved; the switch and the update choice edit it. */
     preparation: PresetPreparation;
     onPreparationChange?: (next: PresetPreparation) => void;
@@ -113,7 +115,8 @@ function MachinePresetPrepareSection(props: Readonly<{
     const statusLine = building ? startedAt != null ? t('machinePresets.prepareStarted', { time: formatAsOfTime(startedAt) }) : null
         : describePreparedImageBuilt(summary);
     const steps = building || retry ? projectPresetPreparationSteps(preparation.steps) : [];
-    return <ItemGroup testID="machine-preset.prepare" title={t('machinePresets.prepareSection')} description={t('machinePresets.prepareSectionHelp')}>
+    return <ItemGroup testID="machine-preset.prepare" title={t('machinePresets.prepareSection')}
+        description={t(props.bills ? 'machinePresets.prepareSectionHelp' : 'machinePresets.prepareSectionHelpLocal')}>
         {/* A standing preference of the preset: a switch, and building is its consequence (lab scene 5). */}
         <Item testID="machine-preset.prepare.keep" title={t('machinePresets.prepareKeep')} subtitle={t('machinePresets.prepareKeepHelp')}
             subtitleLines={0} mode="info" showChevron={false}
@@ -474,7 +477,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         ...(!archived && (provisioner?.descriptor.preparation || visiblePreset.preparation?.enabled || visiblePreset.prepared)
             ? { prepare: <MachinePresetPrepareSection serverId={props.serverId}
                 preset={visiblePreset} canManage={canManage} busy={busy} onChanged={detail.refresh}
-                preparation={desiredPreparation}
+                preparation={desiredPreparation} bills={receipt.cost?.kind !== 'local'}
                 {...(canManage && !approval.approvalPending ? { onPreparationChange: (preparation: PresetPreparation) => editContent({ preparation }) } : {})} /> } : {}),
         ...archiveActions,
         archivePending: busy, notice,

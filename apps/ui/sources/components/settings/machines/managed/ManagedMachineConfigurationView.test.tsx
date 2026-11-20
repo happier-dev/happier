@@ -464,6 +464,14 @@ describe('mounted managed configurator', () => {
       // Nor how many run at once: one machine's own sandbox preset leaves that to its Isolation, as its preset page does.
       if (presetFor === 'isolation') expect(screen.findByTestId('managed-config.limit')).toBeNull();
       else expect(screen.findByTestId('managed-config.limit')).not.toBeNull();
+      if (presetFor === undefined) {
+        const { t } = await import('@/text');
+        // A Docker container bills nobody: Prepare ahead is titled as on the saved preset and states no provider
+        // charge beside the receipt's No bill (L12 review 2, A-1).
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.prepare.switch')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(t('machinePresets.prepareSection'));
+        expect(screen.getTextContent()).not.toContain(t('machinePresets.prepareSectionHelp'));
+      }
       if (presetFor === 'isolation') {
         // In a sheet the form is one column, and its Save is the sheet's footer rather than an aside card's.
         expect(screen.findByTestId('managed-config.receipt-aside')).toBeNull();

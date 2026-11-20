@@ -992,13 +992,17 @@ describe('reachable preset detail', () => {
     await screen.unmount();
   });
 
-  it('keeps the running limit billing warning off a preset that runs on its controller and bills nobody', async () => {
+  it('keeps every billing warning off a preset that runs on its controller and bills nobody', async () => {
     const serverId = await seed();
-    const local = { ...preset, launch: { ...preset.launch, provider: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' } } } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
+    const local = { ...preset, preparation: { enabled: true },
+      launch: { ...preset.launch, provider: { pluginId: 'happier.machine.cua', localId: 'local-sandbox' } } } satisfies Parameters<typeof createPlainManagedMachinePresetFixture>[0];
     harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: createPlainManagedMachinePresetFixture(local) } });
     const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
     await waitForHomeGovernance(() => expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.cost?.kind).toBe('local'));
     expect(screen.getTextContent()).not.toContain(t('machinePresets.limitHelp'));
+    // The receipt says No bill, so Prepare ahead keeps its reason and drops the provider charge (L12 review 2, A-1).
+    expect(screen.findByTestId('machine-preset.prepare.keep')).not.toBeNull();
+    expect(screen.getTextContent()).not.toContain(t('machinePresets.prepareSectionHelp'));
     await screen.unmount();
   });
 

@@ -1379,10 +1379,13 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         {draft && props.presetOnly ? <MachineSetupSection testID="managed-config.setup" setup={draft.setup} name={draft.name}
             editable={!!catalogProvisioner && catalogPlacementAvailable && !busy} scope={activeBinding?.scope ?? null}
             onChange={setup => setDraft(current => current ? { ...current, setup } : current)} /> : null}
-        {draft && props.presetOnly && catalogProvisioner?.descriptor.preparation ? <ItemGroup
-            testID="managed-config.prepare" description={t('machinePresets.prepareAheadHelp')}>
-            <Item testID="managed-config.prepare.row" title={t('machinePresets.prepareAhead')} showChevron={false}
-                rightElement={<Switch testID="managed-config.prepare.switch" accessibilityLabel={t('machinePresets.prepareAhead')}
+        {/* The saved preset's Prepare ahead section; a provider charge is said only where the receipt bills (L12 A-1). */}
+        {draft && props.presetOnly && catalogProvisioner?.descriptor.preparation ? <ItemGroup testID="managed-config.prepare"
+            title={t('machinePresets.prepareSection')}
+            description={t(receipt.cost?.kind === 'local' ? 'machinePresets.prepareSectionHelpLocal' : 'machinePresets.prepareSectionHelp')}>
+            <Item testID="managed-config.prepare.row" title={t('machinePresets.prepareKeep')} subtitle={t('machinePresets.prepareKeepHelp')}
+                subtitleLines={0} showChevron={false}
+                rightElement={<Switch testID="managed-config.prepare.switch" accessibilityLabel={t('machinePresets.prepareKeep')}
                     value={draft.preparation?.enabled === true} disabled={busy || !teamWritable}
                     onValueChange={enabled => setDraft(current => current ? { ...current, preparation: { ...current.preparation, enabled } } : current)} />} />
         </ItemGroup> : null}
