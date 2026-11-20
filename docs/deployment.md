@@ -958,12 +958,15 @@ Managed writes bind an existing PostgreSQL connection Saved Secret through
 `deployments.bindings.set`, with `purpose: 'dataRole'`, the selected
 `targetLinkId`, and `role: 'write'`. The existing credential owner opens only
 that binding under the signed Action's write access class and checks its engine
-and database against the admitted selection. A missing binding returns
+and database against the selected contribution's declared engine and the admitted
+database. A missing binding returns
 `write_connection_setup_required`; setup does not acquire an administrator login
-or create a new secret. Read-class work cannot acquire this write credential and
-keeps the restricted provider read transport. The daemon's existing database
-engine service opens the shared PostgreSQL driver for managed edits and ordered
-write lists, preserving native fields and transaction commit and rollback.
+or create a new secret. Read-class work uses the target's dedicated read role or
+restricted read-only endpoint. In 0.3 development source, a managed target
+receives the daemon's existing database engine service for both read and write
+opens. The target adapter selects its transport and supplies the credential for
+the admitted access class. The shared driver preserves native fields and
+transaction commit and rollback for direct connections.
 
 The canonical psql input admission API has explicit query and dump modes.
 Dump mode accepts multiple SQL statements and PostgreSQL plain-text COPY data

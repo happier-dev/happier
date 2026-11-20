@@ -79,7 +79,8 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
         const contribution = input.contributes.deploymentTargets.find(entry => entry.pluginId === source.pluginId
             && entry.definition.id === source.localId && entry.definition.role === 'data'
             && entry.definition.targetKind === link.targetKind);
-        if (!contribution || contribution.definition.role !== 'data' || !contribution.definition.dataV1?.database) {
+        const database = contribution?.definition.role === 'data' ? contribution.definition.dataV1?.database : undefined;
+        if (!contribution || !database) {
             return refuse('deployment_target_role_unavailable');
         }
         const environment = admission.detail.environment;
@@ -91,11 +92,11 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             environment: { serverId: environment.serverId, projectSourceId: environment.projectSourceId, environmentId: environment.id },
             targetLinkId: link.id, contribution: { pluginId: contribution.pluginId, contributionId: contribution.definition.id },
             platformProjectId: identity.providerResourceId, branchId: identity.providerEnvironment };
-        return { selected, contribution, target, providerIdentity: identity, providerEnvironment, principal };
+        return { selected, contribution, target, engine: database.engineId, providerIdentity: identity, providerEnvironment, principal };
     };
 
     const bind = async (admission: Awaited<ReturnType<typeof readEnvironment>>, selected: ReturnType<typeof selectLink>,
-        operation: DatabaseOperationClassV1 = 'read', database?: string) => {
+        open?: Readonly<{ access: DatabaseOperationClassV1; database: string }>) => {
         const { host, detail } = admission;
         const { contribution } = selected;
         await input.prepareTarget?.(contribution.pluginId, contribution.definition.id);
@@ -143,7 +144,8 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             contribution: { id: contribution.definition.id, qualifiedId: `${contribution.pluginId}/deploymentTargets/${contribution.definition.id}` },
             occurrenceId: registration.occurrenceId, sourceCustody: input.readCurrentSourceCustody?.(contribution.pluginId) ?? undefined,
             deploymentDatabases: undefined, actionInput: undefined, isOccurrenceCurrent: isCurrent,
-            readDataRole: createManagedDataRoleSecretReaderForHost({ host, environment: detail, access: operation, database,
+            readDataRole: createManagedDataRoleSecretReaderForHost({ host, environment: detail,
+                access: open?.access, database: open?.database, engine: selected.engine,
                 query: { targetLinkId: selected.target.targetLinkId, expectedRevision: detail.environment.revision }, context: admission.context }) };
         const diagnostic = { pluginId: contribution.pluginId, occurrenceId: seed.occurrenceId, correlationId: seed.correlationId };
         const dispose = () => { lease.dispose(); input.completeDiagnosticScope?.(diagnostic); };
@@ -155,7 +157,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                 exactPurposeBindingSubjectId: lease.subjectId });
             const accountInvocation = createAccountInvocationContext({ ...seed, invokedAtMs: Date.now(), services },
                 { serverId: host.serverId, accountId: host.credentialOwnerAccountId });
-            const invocation = operation === 'write' ? Object.freeze({
+            const invocation = open ? Object.freeze({
                 ...accountInvocation,
                 services: Object.freeze({ ...accountInvocation.services, databaseEngines: services.databaseEngines }),
             }) : accountInvocation;
@@ -274,7 +276,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             }
             const { target, admission, summary } = admitted;
             const selected = admitted.selected ?? refuse('target_mismatch');
-            const bound = await bind(admission, selected, operation, target.database);
+            const bound = await bind(admission, selected, { access: operation, database: target.database });
             try {
                 const resolved = await bound.runtime.open({ preparation: bound.preparation, target, access: operation,
                     placement: bound.placement }, bound.invocation);

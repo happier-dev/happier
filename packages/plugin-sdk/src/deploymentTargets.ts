@@ -96,7 +96,7 @@ export interface DeploymentTargetDatabaseRuntimeV1 {
         access: DatabaseOperationClassV1;
         placement: DatabaseDescriptorV1['placement'];
     }>, context: PluginAccountActionContext & Readonly<{
-        /** The daemon's native engine service, when available for the admitted write. */
+        /** The daemon's native engine service, when available for the admitted open. */
         services: Readonly<{ databaseEngines?: DatabaseEnginesServiceV1 }>;
     }>): Promise<DeploymentDatabaseResolutionV1>;
 }

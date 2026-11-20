@@ -25,13 +25,14 @@ describe('managed data-role secret reader', () => {
             installationId: 'installation-a', publicKey: encodeBase64(keys.publicKey, 'base64url'), privateKey: encodeBase64(keys.secretKey, 'base64url') });
     }
 
-    function reader(bindings: readonly EnvironmentSecretBindingV1[], access: 'read' | 'write' = 'read') {
+    function reader(bindings: readonly EnvironmentSecretBindingV1[], access: 'read' | 'write' = 'read',
+        engine: 'postgresql' | 'mysql' = 'postgresql') {
         const environment = createDeploymentEnvironmentDetailV1({ content: {
             ...createDeploymentEnvironmentDetailV1().content, bindings: [...bindings],
         } });
         return createManagedDataRoleSecretReaderForHost({ host: { credentials: { token, encryption: null }, serverId: 'home',
             serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a', installationId: 'installation-a' }, environment, query,
-            database: 'neondb', context: {}, access });
+            engine, database: 'neondb', context: {}, access });
     }
 
     it('lazily opens only the admitted managed-link binding through P42', async () => {
@@ -95,14 +96,19 @@ describe('managed data-role secret reader', () => {
         expect(sent).toHaveLength(1);
     });
 
-    it.each(['postgresql://writer:private@selected/neighbor', 'mysql://writer:private@selected/neondb'])(
-        'refuses a same-link write URL for a different database or engine (%s)', async value => {
+    it.each([
+        { description: 'a different database', value: 'postgresql://writer:private@selected/neighbor', matches: false },
+        { description: 'a different engine', value: 'mysql://writer:private@selected/neondb', matches: false },
+        { description: 'the declared MySQL engine and database', value: 'mysql://writer:private@selected/neondb', matches: true },
+    ])('checks the reviewed write URL for $description', async ({ value, matches }) => {
         install();
         const write: EnvironmentSecretBindingV1 = { ...binding, role: 'write' };
         const grant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: 'environment-staging',
             machineId: 'machine-a', installationId: 'installation-a', resourceId: 'managed-read-role', resourceRevision: 1 },
         installationPublicKey: keys.publicKey, content: { kind: 'secret', value } });
         vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, grants: [grant] } });
-        await expect(reader([write], 'write')({ role: 'write' })).rejects.toMatchObject({ code: 'target_mismatch' });
+        const read = reader([write], 'write', matches ? 'mysql' : 'postgresql')({ role: 'write' });
+        if (matches) await expect(read).resolves.toBe(value);
+        else await expect(read).rejects.toMatchObject({ code: 'target_mismatch' });
     });
 });

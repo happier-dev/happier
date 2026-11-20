@@ -35,6 +35,7 @@ export function createManagedDataRoleSecretReaderForHost(input: Readonly<{
     query: Readonly<{ targetLinkId: string; expectedRevision: number }>;
     context: ActionExecutorContext;
     access?: DatabaseOperationClassV1;
+    engine: string;
     database?: string;
 }>): NonNullable<SecretsService['readDataRole']> {
     return async (options) => {
@@ -64,7 +65,7 @@ export function createManagedDataRoleSecretReaderForHost(input: Readonly<{
             const value = prepared.operationalValues.get(environmentSecretBindingIdentityV1(use)) ?? missing();
             if (role === 'write') {
                 const selected = parseDatabaseConnectionUrl(value);
-                if (selected.engine !== 'postgresql' || selected.database !== input.database) {
+                if (selected.engine !== input.engine || selected.database !== input.database) {
                     throw new PluginError({ code: 'target_mismatch' });
                 }
             }
