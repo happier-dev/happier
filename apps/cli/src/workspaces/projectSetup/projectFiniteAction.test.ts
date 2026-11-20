@@ -2009,6 +2009,56 @@ describe('authenticated finite Project Action owner', () => {
         expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
     });
 
+    it('runs a fresh explicit Setup after an earlier completed run for the same effect', async () => {
+        const manifest = { version: 1, workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } };
+        const h = await harness(manifest);
+        const scope = { accountId: 'owner', machineId: 'machine' };
+        const input = { workspace: h.address, phase: 'setup' };
+        try {
+            h.waiveSetupApproval();
+            const first = ProjectCommandActionOutputV1Schema.parse(await h.invoke('projects.prepare', input)).operation;
+            await expect.poll(() => h.spawned.length).toBe(1);
+            h.spawned[0]!.pty.exit(0);
+            expect(await h.operationRuntime.runner.waitForTerminal(scope, first.operationId)).toMatchObject({ state: 'succeeded' });
+
+            h.askSetupApproval();
+            const fresh = ProjectCommandActionOutputV1Schema.parse(await h.invoke('projects.prepare', input,
+                { ...h.context, transportRequestId: 'run-again' })).operation;
+            expect(fresh.operationId).not.toBe(first.operationId);
+            const observeFresh = () => h.operationRuntime.store.get(scope, fresh.operationId);
+            await expect.poll(() => observeFresh()?.setupReview?.code ?? observeFresh()?.state)
+                .toBe('project_setup_consent_required');
+            expect(h.spawned).toHaveLength(1);
+
+            h.waiveSetupApproval();
+            expect(await h.rpcInvoke('projects.prepare', { ...input, heldOperationId: fresh.operationId,
+                expectedEffectDigest: observeFresh()!.setupReview!.reviewedEffectDigest, consentScope: 'thisTime',
+            }, { ...h.context, callerAuthority: 'present_user', transportRequestId: 'approve-run-again' }))
+                .toMatchObject({ operation: { operationId: fresh.operationId } });
+            await expect.poll(() => h.spawned.length).toBe(2);
+            h.spawned[1]!.pty.output(Buffer.from('second setup\r\n'));
+            h.spawned[1]!.pty.exit(0);
+            expect(await h.operationRuntime.runner.waitForTerminal(scope, fresh.operationId)).toMatchObject({
+                state: 'succeeded',
+                domainRef: { purpose: 'setup', terminalId: expect.any(String), steps: [{ index: 0, state: 'succeeded' }] },
+            });
+            const output = await executeActionOperationActionV1({ actionId: 'projects.execution.output.read',
+                input: { serverId: 'home', machineId: 'machine', operationId: fresh.operationId, byteOffset: 0 },
+                transport: async request => {
+                    if (request.method === 'actionOperation.get.v2') return h.operationRuntime.handlers.getV2(request.payload, h.context);
+                    if (request.method !== RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES) throw new Error(request.method);
+                    const { TerminalStreamReadRequestSchema } = await import('@happier-dev/protocol/terminal/stream');
+                    return h.terminalSessions.readByteStream(TerminalStreamReadRequestSchema.parse(request.payload));
+                } });
+            const replay = TerminalStreamReadResponseSchema.parse(output);
+            if (!replay.ok) throw new Error(replay.code);
+            expect(Buffer.concat(replay.frames.flatMap(frame => frame.t === 'bytes' ? [decodeTerminalStreamBytesFrame(frame)] : []))
+                .toString('utf8')).toBe('second setup\r\n');
+        } finally {
+            await h.operationRuntime.runner.retireProjectFiniteOperations();
+        }
+    });
+
     it('settles no-launch preparation on the same admitted operation without making a Session', async () => {
         const h = await harness();
         expect(await h.invoke('projects.prepare', { workspace: h.address, phase: 'setup' })).toMatchObject({ operation: { operationId: 'operation' } });

@@ -202,6 +202,8 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const parsed = PROJECT_ACTION_INPUT_SCHEMAS_V1[args.actionId].safeParse(args.input);
         if (!parsed.success) return failure('invalid_parameters');
         const request = { actionId: args.actionId, input: parsed.data } as FiniteRequest;
+        const setupRequestedAtMs = request.actionId === 'projects.prepare' && request.input.phase === 'setup'
+            ? Date.now() : undefined;
         // Remembered consent is an approving-Account effect. Native preparation
         // cannot reinterpret it as This time or become a second Trust writer.
         if (request.actionId === 'projects.prepare' && request.input.consentScope === 'untilChanged') {
@@ -509,6 +511,7 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
             nativeIo: runtime.nativeIo, signal: nativeExecutionSignal(),
             retainNativeInvocation,
             ...(runtime.successHomeDir ? { successHomeDir: runtime.successHomeDir } : {}),
+            setupRequestedAtMs,
             ...(secretEnvironment ? { secretEnvironment } : {}),
             ...(runtime.configEnvironment ? { configEnvironment: runtime.configEnvironment } : {}),
             ...(runtime.plugins ? { plugins: runtime.plugins } : {}),

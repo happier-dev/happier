@@ -2052,8 +2052,11 @@ target, platform, reviewed effect, setup inputs and environment references.
 In development source, each observed zero exit checkpoints the confirmed command
 prefix; an explicit retry skips that prefix only after matching its reviewed basis
 at admission. Setup is complete after every declared command and required native
-environment finishes successfully. Changed bases
-and explicit teardown invalidate prior progress. A checkpoint write failure leaves
+environment finishes successfully. A new explicit Setup request reviews and
+runs the setup again when it was already complete. An exact completion produced
+while the request was waiting can satisfy it. Dependent Script, Agent and
+Service launches can reuse an already completed setup. Changed bases and
+explicit teardown invalidate prior progress. A checkpoint write failure leaves
 the outcome uncertain and does not emit setup settlement. Consent is not completion.
 
 Development-source SCM removal, PR temporary-worktree disposal, Storage checkout deletion/retirement and committed

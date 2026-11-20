@@ -79,6 +79,8 @@ export type ProjectSetupPreparationInput = Readonly<{
     /** The containing accepted operation owns these invocations through actual settlement. */
     retainNativeInvocation?: (production: import('@/plugins/runtime/invocation/services/exec').ProjectNativeEffectCaptureForHost) => void;
     successHomeDir?: string;
+    /** Explicit Setup may reuse only a completion produced after the request began. */
+    setupRequestedAtMs?: number;
     /** Supplied only by the admitted host decision producer, never raw Action params or custodian credentials. */
     effectDecision?: Readonly<{ project: QualifiedProjectTrustProjectV1; reviewedEffectDigest: string }>;
     /** The admitted host's original surface and Account policy, never Project Action input. */
@@ -627,10 +629,14 @@ export async function admitReviewedProjectSetup(input: ProjectSetupPreparationIn
     if (input.skipForInvocation) return { kind: 'skippedForInvocation', plan };
     if (!hasProjectSetupAdmissionEffect(plan)) return { kind: 'notRequired', plan };
     try {
-        const checkpoint = input.purpose === 'setup' && input.successHomeDir !== undefined
+        const matchingCheckpoint = input.purpose === 'setup' && input.successHomeDir !== undefined
             ? await createProjectSetupSuccessStore({ homeDir: input.successHomeDir }).readMatching({
                 serverId: plan.workspace.serverId, machineId: plan.workspace.machineId, workspaceRefId: plan.workspace.id,
             }, plan.successBasis) : null;
+        // An earlier successful Run never satisfies a new explicit Setup. Keep an exact
+        // partial checkpoint for Retry and accept completion while a Run was waiting.
+        const checkpoint = matchingCheckpoint?.completedAtMs !== undefined && input.setupRequestedAtMs !== undefined
+            && matchingCheckpoint.completedAtMs <= input.setupRequestedAtMs ? null : matchingCheckpoint;
         const previousSuccess = checkpoint?.completedAtMs !== undefined;
         const confirmedCommandCount = checkpoint?.confirmedCommandCount !== undefined
             && checkpoint.confirmedCommandCount <= plan.commands.length ? checkpoint.confirmedCommandCount : 0;
