@@ -13,6 +13,11 @@ import { StyleSheet } from 'react-native';
 
 const confirmDeleteDraft = vi.hoisted(() => vi.fn(async () => true));
 
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock();
+});
+
 // The shared press owner's motion tokens build their easing curves at import.
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
@@ -35,10 +40,6 @@ vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: unknown) => [
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 
 installSessionShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({ Platform: { OS: 'web' } });
-    },
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
         return createModalModuleMock({ spies: { confirm: confirmDeleteDraft } }).module;
@@ -159,7 +160,7 @@ describe('SessionItem existing-session draft presentation', () => {
         const session = createSessionFixture({ id: 'embedded-roster-row', active: false });
         const screen = await renderScreen(
             <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper' }}>
-                <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('clear') }}>
+                <GlassMaterialSettingsProvider value={{ glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('clear') }}>
                     <GlassSurface surfaceGroup="floating" finishRole={null}>
                         <SessionItem session={session} rowViewModel={createSessionItemRowViewModel({ session })} embedded />
                     </GlassSurface>
