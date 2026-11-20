@@ -1,159 +1,24 @@
-import { classifySimulatorRuntimeActionBackingV1, isSimulatorRuntimeActionIdV1, type SimulatorRuntimeActionIdV1 } from '@happier-dev/protocol/devices/simulator/runtimeActionBacking';
-import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { isSimulatorDeviceOperationRuntimeActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
-import { isBackedSimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/actionBuilders';
-import type { RuntimeActionExecute, RuntimeActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
-import type { SimulatorSidebandKindV1 } from '@happier-dev/protocol/devices/simulator/sidebandV1';
+import {
+    createSimulatorPreviewRuntimeActionExecutorV1,
+    type CreateSimulatorPreviewRuntimeActionExecutorV1Input,
+} from '@happier-dev/protocol/devices/simulator/runtimeActionClient';
+import type { RuntimeActionExecute } from '@happier-dev/protocol/actions/executor/types';
 
 import {
     dispatchSimulatorPreviewActionViaMachineRpc,
     fetchSimulatorPreviewSnapshotViaMachineRpc,
-    type SimulatorPreviewActionClientInput,
-    type SimulatorPreviewActionClientResult,
-    type SimulatorPreviewSnapshotClientInput,
-    type SimulatorPreviewSnapshotClientResult,
 } from '../machineRpc';
 
-type CreateSimulatorPreviewRuntimeActionExecutorInput = Readonly<{
-    resolveMachineId: (args: RuntimeActionExecuteArgs) => string | null | undefined;
-    fetchSnapshot?: (input: SimulatorPreviewSnapshotClientInput) => Promise<SimulatorPreviewSnapshotClientResult>;
-    dispatchAction?: (input: SimulatorPreviewActionClientInput) => Promise<SimulatorPreviewActionClientResult>;
-    executeOnMachine?: RuntimeActionExecute;
-    fallback?: RuntimeActionExecute;
-}>;
+type CreateSimulatorPreviewRuntimeActionExecutorInput = Omit<CreateSimulatorPreviewRuntimeActionExecutorV1Input, 'fetchSnapshot' | 'dispatchAction'>
+    & Partial<Pick<CreateSimulatorPreviewRuntimeActionExecutorV1Input, 'fetchSnapshot' | 'dispatchAction'>>;
 
-type SimulatorPreviewRouteFailureReason =
-    | Extract<SimulatorPreviewSnapshotClientResult, { ok: false }>['reason']
-    | Extract<SimulatorPreviewActionClientResult, { ok: false }>['reason'];
-
-const unbackedSimulatorActionResult = {
-    ok: false,
-    errorCode: 'runtime_action_disabled',
-    error: 'runtime_action_disabled:devices.simulator:simulator_runtime_action_unbacked',
-} as const;
-
-const unbackedSimulatorSidebandResult = {
-    ok: false,
-    errorCode: 'runtime_action_disabled',
-    error: 'runtime_action_disabled:devices.simulator:simulator_sideband_unbacked',
-} as const;
-
-const machineUnavailableResult = {
-    ok: false,
-    errorCode: 'runtime_action_disabled',
-    error: 'runtime_action_disabled:devices.simulator:simulator_machine_unavailable',
-} as const;
-
-const machineActionUnavailableResult = {
-    ok: false,
-    errorCode: 'runtime_action_disabled',
-    error: 'runtime_action_disabled:devices.simulator:simulator_action_route_unavailable',
-} as const;
-
-const invalidParametersResult = {
-    ok: false,
-    errorCode: 'invalid_parameters',
-    error: 'invalid_parameters',
-} as const;
-
-function normalizeId(value: unknown): string {
-    return typeof value === 'string' ? value.trim() : '';
-}
-
-function isSimulatorRuntimeAction(actionId: RuntimeActionExecuteArgs['actionId']): boolean {
-    return resolveRuntimeActionExecutionFamily(actionId) === 'devices.simulator';
-}
-
-function parseRuntimeActionInput(args: RuntimeActionExecuteArgs): Readonly<
-    | { ok: true; input: unknown }
-    | { ok: false; result: typeof invalidParametersResult }
-> {
-    const spec = getActionSpec(args.actionId);
-    const parsed = spec.inputSchema.safeParse(args.input ?? {});
-    return parsed.success
-        ? { ok: true, input: parsed.data }
-        : { ok: false, result: invalidParametersResult };
-}
-
-function isUnbackedSimulatorRuntimeAction(actionId: RuntimeActionExecuteArgs['actionId']): boolean {
-    // The UI client has no direct backing path: it forwards statically-backed and resource-gated
-    // ids to the daemon (the sole platform-adapter authority, which makes the final resource-gated
-    // decision). Only statically-unbacked ids fail closed here. This keeps the UI verdict a strict
-    // subset of — never a contradiction with — the daemon's classifier verdict.
-    return isSimulatorRuntimeActionIdV1(actionId)
-        && classifySimulatorRuntimeActionBackingV1(actionId as SimulatorRuntimeActionIdV1) === 'statically-unbacked';
-}
-
-function isUnbackedSimulatorSidebandRuntimeAction(input: unknown): boolean {
-    return typeof input === 'object'
-        && input !== null
-        && 'type' in input
-        && input.type === 'simulator.sideband.request'
-        && 'kind' in input
-        && !isBackedSimulatorSidebandKindV1(input.kind as SimulatorSidebandKindV1);
-}
-
-function routeUnavailableResult(reason: SimulatorPreviewRouteFailureReason) {
-    return {
-        ok: false as const,
-        errorCode: 'runtime_action_disabled',
-        error: `runtime_action_disabled:devices.simulator:${reason}`,
-    };
-}
-
+/** The app reaches the shared simulator client through its captured-Account Machine RPC. */
 export function createSimulatorPreviewRuntimeActionExecutor(
     input: CreateSimulatorPreviewRuntimeActionExecutorInput,
 ): RuntimeActionExecute {
-    const fallback = input.fallback ?? createUnavailableRuntimeActionExecutor();
-    const fetchSnapshot = input.fetchSnapshot ?? fetchSimulatorPreviewSnapshotViaMachineRpc;
-    const dispatchAction = input.dispatchAction ?? dispatchSimulatorPreviewActionViaMachineRpc;
-
-    return async (args) => {
-        if (!isSimulatorRuntimeAction(args.actionId)) {
-            return await fallback(args);
-        }
-
-        const parsed = parseRuntimeActionInput(args);
-        if (!parsed.ok) return parsed.result;
-
-        if (isUnbackedSimulatorRuntimeAction(args.actionId)) {
-            return unbackedSimulatorActionResult;
-        }
-        if (args.actionId === 'devices.simulator.sideband.request' && isUnbackedSimulatorSidebandRuntimeAction(parsed.input)) {
-            return unbackedSimulatorSidebandResult;
-        }
-
-        const target = args.context.externalActionTarget;
-        const machineId = normalizeId(target?.kind === 'machine' ? target.machineId : input.resolveMachineId(args));
-        if (!machineId) {
-            return machineUnavailableResult;
-        }
-
-        if (isSimulatorDeviceOperationRuntimeActionIdV1(args.actionId)) {
-            if (!input.executeOnMachine) return machineActionUnavailableResult;
-            return await input.executeOnMachine({
-                ...args,
-                input: parsed.input,
-                context: {
-                    ...args.context,
-                    externalActionTarget: target?.kind === 'machine'
-                        ? { ...target, machineId }
-                        : { kind: 'machine', machineId },
-                },
-            });
-        }
-
-        const serverId = normalizeId(args.context.serverId);
-        const serverScope = { ...(serverId ? { serverId } : {}), signal: args.context.signal };
-
-        if (args.actionId === 'devices.simulator.list') {
-            const result = await fetchSnapshot({ machineId, ...serverScope });
-            return result.ok ? result.snapshot : routeUnavailableResult(result.reason);
-        }
-
-        const event = parsed.input as SimulatorPreviewActionClientInput['event'];
-        const result = await dispatchAction({ machineId, ...serverScope, event });
-        return result.ok ? result.result : routeUnavailableResult(result.reason);
-    };
+    return createSimulatorPreviewRuntimeActionExecutorV1({
+        ...input,
+        fetchSnapshot: input.fetchSnapshot ?? fetchSimulatorPreviewSnapshotViaMachineRpc,
+        dispatchAction: input.dispatchAction ?? dispatchSimulatorPreviewActionViaMachineRpc,
+    });
 }

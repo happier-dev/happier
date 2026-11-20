@@ -54,6 +54,7 @@ import { createCliMetadataActionDeps } from '@/session/services/cliMetadataActio
 import { createCliTasksActionDeps } from './cliActionDeps/tasks';
 import { createCliPendingActionDeps } from '@/session/services/cliPendingActionDeps';
 import { createCliLocalServiceActionDeps } from './cliActionDeps/localServices';
+import { createCliSimulatorRuntimeActionExecute } from './cliActionDeps/simulator';
 import { prepareProjectServiceMoveChildren } from '@/daemon/local/services/actions/projectServiceMoveChildren';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
@@ -1451,7 +1452,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
         operationContext: params.savedSecretOperationContext, signal: context.signal });
       return params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, activate) : activate();
     },
-    runtimeActionExecute,
+    runtimeActionExecute: createCliSimulatorRuntimeActionExecute({ callMachineAction }, runtimeActionExecute),
     ...(approvalsStore ? { memoryLibrary: {
       serverId: actionHomeId,
       isSameServerId: isSameActionHomeId,

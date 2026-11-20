@@ -1137,14 +1137,16 @@ describe('createCliActionExecutorHarness', () => {
     });
 
     expect(harness.deps.runtimeActionExecute).toBeDefined();
+    // Simulator Actions reach their Machine through Machine transport; with no
+    // addressed or Session Machine the bridge fails closed before any transport.
     await expect(harness.deps.runtimeActionExecute?.({
-      actionId: 'devices.simulator.input.tap',
-      input: {},
+      actionId: 'devices.simulator.list',
+      input: { type: 'simulator.devices.list' },
       context: {},
     })).resolves.toEqual({
       ok: false,
       errorCode: 'runtime_action_disabled',
-      error: 'runtime_action_disabled:devices.simulator:runtime_family_unimplemented',
+      error: 'runtime_action_disabled:devices.simulator:simulator_machine_unavailable',
     });
   });
 

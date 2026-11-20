@@ -264,7 +264,10 @@ export function createCliActionExecutorHarness(
     readActionsSettings,
     readApprovalOwner,
     runtimeActionExecute: async args => {
-      if (resolveRuntimeActionExecutionFamily(args.actionId) === 'localServices'
+      // Browser and Computer use this host's authenticated daemon IPC. Every other
+      // runtime family addresses its Machine through the canonical Machine transport deps.
+      const family = resolveRuntimeActionExecutionFamily(args.actionId);
+      if (family !== 'browser' && family !== 'computer'
         && baseDepsForRuntime.runtimeActionExecute) return await baseDepsForRuntime.runtimeActionExecute(args);
       const { createCliBrowserRuntimeActionExecutor } = await import('@/daemon/browser/actions/controlTransport');
       return await createCliBrowserRuntimeActionExecutor({ sessionId: browserSessionId })(args);
