@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { rehydratePluginContributionPointSemanticsV1 } from '@happier-dev/protocol/plugins/contributions/targeted';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { projectTargetedContributionActionDefinition, resolveAdmittedTargetedContributions } from '@happier-dev/cli-common/plugins/registration';
+import { evaluatePluginAuthorSource } from '../../../../apps/cli/src/plugins/authoring/sourceModule';
 
 import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import {
@@ -130,6 +131,7 @@ function contributorManifest(): JsonRecord {
 
 function targetDaemonModule(): string {
   return [
+    `export const manifest = ${JSON.stringify(targetManifest())};`,
     'let retainedOperation = null;',
     'export function activate(api) {',
     `  api.actions.register(${JSON.stringify(TARGET_ACTION_LOCAL_ID)}, async (input, context) => {`,
@@ -158,6 +160,7 @@ function targetDaemonModule(): string {
 
 function contributorDaemonModule(marker: string): string {
   return [
+    `export const manifest = ${JSON.stringify(contributorManifest())};`,
     'export function activate(api) {',
     `  api.actions.register(${JSON.stringify(CONTRIBUTOR_SETUP_ACTION_LOCAL_ID)}, async () => ({ providerId: 'github', marker: ${JSON.stringify(marker)} }));`,
     '}',
@@ -183,6 +186,7 @@ async function writeFixturePlugin(params: Readonly<{
     version: '1.0.0',
     private: true,
     type: 'module',
+    main: './daemon.mjs',
   }, null, 2)}\n`, 'utf8');
 }
 
@@ -229,7 +233,18 @@ describe('core e2e: plugin demand activation through the real daemon boundary', 
     }
   });
 
-  it('uses a canonically rehydratable target protocol in the cold manifests', () => {
+  it('uses a canonically rehydratable target protocol in the cold manifests', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-demand-activation-authoring-'));
+    temporaryRoots.push(fixtureRoot);
+    for (const fixture of [
+      { pluginId: TARGET_PLUGIN_ID, manifest: targetManifest(), daemonModule: targetDaemonModule() },
+      { pluginId: CONTRIBUTOR_PLUGIN_ID, manifest: contributorManifest(), daemonModule: contributorDaemonModule('one') },
+    ]) {
+      const pluginRoot = join(fixtureRoot, fixture.pluginId);
+      await writeFixturePlugin({ ...fixture, pluginRoot });
+      const authored = await evaluatePluginAuthorSource({ locator: pluginRoot });
+      expect(authored.manifest.id).toBe(fixture.pluginId);
+    }
     const targetContributes = PluginManifestV2Schema.parse(targetManifest()).contributes;
     const contributorContributes = PluginManifestV2Schema.parse(contributorManifest()).contributes;
     const point = targetContributes.pluginContributionPoints[0];
