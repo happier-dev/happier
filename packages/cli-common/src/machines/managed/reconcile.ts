@@ -333,6 +333,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     let startPending = false;
     const provisioner = input.provisioner;
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return machine;
+    if (machine.enrolledMachineId && input.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && !provisioner?.bootstrapTransport) {
+        throw new ManagedMachineControllerError(provisioner ? 'guest_update_not_supported' : 'provider_unavailable');
+    }
     if (machine.enrolledMachineId && input.action !== MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) {
         if (input.action !== 'machines.managed.acquire') return machine;
         if (!machine.observation?.reason?.startsWith('bootstrap.')) {
@@ -355,7 +358,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         machine = await reconcileManagedAcquisitionIdentity(input, machine, invoke);
         if (!machine.resource) return machine;
     }
-    if (machine.enrolledMachineId && (input.action === 'machines.managed.acquire' || !provisioner?.bootstrapTransport)) {
+    if (machine.enrolledMachineId && input.action === 'machines.managed.acquire') {
         if (!machine.resource) return machine;
         const observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: machine.resource.value }));
         if (observation.availability === 'present') await input.bootstrap.complete?.(machine);

@@ -13968,10 +13968,12 @@ unchanged.
 ## Managed guest authority (unreleased 0.3)
 
 Managed guest CLI updates use the connected Home's guest payload through the
-existing bootstrap retry operation, including acquire and repair. A missing
-payload is a typed `guest_payload_missing` refusal rather than a fallback to a
-public 0.2 release. Inspect recognizes the released 0.2 doctor-only JSON shape
-when the guest lacks the diagnostic collector and returns
+existing bootstrap retry operation. Updating an enrolled guest requires a
+provider with a native bootstrap transport. Other providers return
+`guest_update_not_supported` before any native work. Initial enrollment and
+inspection still use their existing paths. A missing payload returns the typed
+`guest_payload_missing` refusal. Inspect recognizes the released 0.2 doctor-only
+JSON shape when the guest lacks the diagnostic collector and returns
 `guest_cli_incompatible` at `guest_capability`; malformed collector output still
 returns `invalid_action_output`. No wire or persisted shape changes are involved.
 

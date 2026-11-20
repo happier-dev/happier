@@ -335,7 +335,7 @@ describe('portable managed reconciliation', () => {
         expect(inspections).toBe(200);
     });
 
-    it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)(
+    it.each(['machines.managed.acquire', 'machines.managed.inspect'] as const)(
         'recovers the same enrolled resource after both final reports return 503 through %s', async action => {
             const run = boundary();
             let rejectFinalReports = true;
@@ -741,7 +741,17 @@ describe('portable managed reconciliation', () => {
         expect(run.roles).toEqual(['bootstrap', 'inspect']);
         expect(run.events).not.toContain('submit');
     });
-    it('confirms the same enrolled SSH resource after a transient final report failure', async () => {
+    it('refuses an enrolled guest update without a native bootstrap transport before any provider or Home effect', async () => {
+        const enrolled = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'bound', resource, enrolledMachineId: 'guest' });
+        const run = boundary(enrolled);
+        await expect(reconcileManagedMachine({ ...run.input, action: 'machines.managed.bootstrap.retry',
+            provisioner: { ...provisioner, bootstrapTransport: undefined, bootstrapCredential: { kind: 'ssh' } },
+        })).rejects.toMatchObject({ code: 'guest_update_not_supported' });
+        expect(run.roles).toEqual([]);
+        expect(run.events).toEqual([]);
+        expect(run.read()).toEqual(enrolled);
+    });
+    it('confirms the same enrolled SSH resource through Inspect after a transient final report failure', async () => {
         const run = boundary();
         let failConfirmation = true;
         const home = { ...run.input.home, row: async (path: string, body: unknown) => {
@@ -759,7 +769,7 @@ describe('portable managed reconciliation', () => {
         expect(retained).toMatchObject({ enrolledMachineId: 'guest', resource,
             observation: { availability: 'unavailable', reason: 'bootstrap.database_transaction_timeout' } });
         const recovered = await reconcileManagedMachine({ ...run.input, home, machine: retained,
-            provisioner: { ...provisioner, bootstrapTransport: undefined }, action: 'machines.managed.bootstrap.retry' });
+            provisioner: { ...provisioner, bootstrapTransport: undefined }, action: 'machines.managed.inspect' });
         expect(recovered).toMatchObject({ enrolledMachineId: 'guest', resource, observation: { availability: 'present' } });
         expect(recovered.observation?.reason).toBeUndefined();
         expect(run.roles.filter(role => role === 'acquire')).toHaveLength(1);

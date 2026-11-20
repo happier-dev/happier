@@ -3483,7 +3483,10 @@ describe('managed acquisition durable custody', () => {
         expect(requests[2]).toEqual(requests[0]);
         expect(writes.some(path => /\/(submit|create-bootstrap-credential|enrollment-context)$/u.test(path))).toBe(false);
     });
-    it('routes enrolled service-managed native Retry to the installer and retains its failure on the same resource', async () => {
+    it.each([
+        { nativeTransport: true, errorCode: 'remote_command_failed', expectedRoles: ['bootstrap', 'exec'] },
+        { nativeTransport: false, errorCode: 'guest_update_not_supported', expectedRoles: [] },
+    ])('settles enrolled Retry with $errorCode (native transport: $nativeTransport)', async ({ nativeTransport, errorCode, expectedRoles }) => {
         const homeId = 'srv_managed_native_update';
         const retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', enrolledMachineId: 'ordinary-machine',
             resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
@@ -3494,7 +3497,7 @@ describe('managed acquisition durable custody', () => {
             return { status: 200, data: { machine: retained, ...(String(url).endsWith('/context') ? { requestId: 'original-request' } : {}) } };
         });
         const roles: string[] = [];
-        const native = nativeFixture({ privateNative: true, nativeRoleResults: {
+        const native = nativeFixture({ privateNative: true, nativeTransport, nativeRoleResults: {
             bootstrap: { kind: 'native', transport: { contributionRef: input.selection.launch.provider, schemaVersion: 1 } },
             // Native process IO is the boundary: platform inspection fails before delivery.
             exec: { termination: { observed: { kind: 'exit', exitCode: 1 }, requestedBy: { kind: 'none' } },
@@ -3513,12 +3516,12 @@ describe('managed acquisition durable custody', () => {
                 work = nativeDriver.execute('machines.managed.bootstrap.retry', retry, { requestId: 'update-request', context, signal: context.signal });
                 return { ok: true, result: await work };
             } })).resolves.toMatchObject({ ok: true, result: { managedId: retained.id, operation: { operationId: 'native-update' } } });
-        await expect(work).rejects.toMatchObject({ code: 'remote_command_failed' });
+        await expect(work).rejects.toMatchObject({ code: errorCode });
         expect(await operations.handlers.getV2({ operationId: 'native-update', waitForTerminal: true })).toMatchObject({
-            kind: 'found', operation: { state: 'failed', domainRef: { kind: 'managedMachine', id: retained.id,
-                controller: retained.controller, resource: retained.resource } },
+            kind: 'found', operation: { state: 'failed', error: { errorCode }, domainRef: { kind: 'managedMachine', id: retained.id,
+                ...(nativeTransport ? { controller: retained.controller, resource: retained.resource } : {}) } },
         });
-        expect(roles).toEqual(['bootstrap', 'exec']);
+        expect(roles).toEqual(expectedRoles);
         expect(writes.some(url => /\/(submit|create-bootstrap-credential|enrollment-context)$/u.test(url))).toBe(false);
     });
     it('does not lend managed bootstrap credentials to an ordinary contributed Action', async () => {
