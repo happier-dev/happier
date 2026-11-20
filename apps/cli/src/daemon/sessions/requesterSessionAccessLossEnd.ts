@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { MachineAccessLossCustodyResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 import type { SessionInputLiveWork } from '@/agent/runtime/session/input/_types';
@@ -34,7 +35,7 @@ export function createRequesterSessionAccessLossEnd(
       signal: AbortSignal,
     ): Promise<boolean>;
     /** The ordinary Stop owner for this exact runner, with the requester's metadata authority. */
-    stopSession(tracked: TrackedSession): Promise<StopSessionResult>;
+    stopSession(tracked: TrackedSession, reason: SessionLifecycleStateReason): Promise<StopSessionResult>;
     /** Admitted turns outlive the access-loss RPC; only daemon shutdown cancels the wait. */
     lifetimeSignal: AbortSignal;
   }>,
@@ -96,7 +97,7 @@ export function createRequesterSessionAccessLossEnd(
     if (signal.aborted) return 'incomplete';
     if (!isTracked(tracked)) return 'ended';
     const result = await ports
-      .stopSession(tracked)
+      .stopSession(tracked, 'machine_access_withdrawn')
       .catch((): StopSessionResult => ({
         status: 'incomplete',
         reason: 'runner_signal_incomplete',

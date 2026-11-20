@@ -407,6 +407,7 @@ export function mergeSessionMetadataForStartup(opts: {
         ...(opts.current.runtimeDescriptorV1 !== undefined
             ? { runtimeDescriptorV1: opts.current.runtimeDescriptorV1 }
             : {}),
+        lifecycleStateReason: undefined,
         lifecycleState: 'running',
         lifecycleStateSince: opts.nowMs,
     };

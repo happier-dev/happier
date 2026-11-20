@@ -40,6 +40,10 @@ export function readSessionAuthoredDisplayV1(work: unknown) {
   return value.statusReason !== undefined || value.statusProgress !== undefined ? value : undefined;
 }
 
+/** Content-free explanation attached to the existing Session lifecycle. */
+export const SessionLifecycleStateReasonSchema = z.literal('machine_access_withdrawn');
+export type SessionLifecycleStateReason = z.infer<typeof SessionLifecycleStateReasonSchema>;
+
 /** Closed recipient-safe display facts. Request ledgers and private metadata never enter this leaf. */
 export const SessionSharedDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -48,6 +52,7 @@ export const SessionSharedDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   bot: z.optional(SessionBotV1Schema),
   botFace: z.optional(SessionBotFaceV1Schema),
   externalSessionOperationPresentationV1: z.optional(ExternalSessionOperationSharedPresentationV1Schema),
+  lifecycleStateReason: z.optional(SessionLifecycleStateReasonSchema),
   sessionGuardStateV1: z.optional(SessionGuardStateV1Schema),
 }));
 export type SessionSharedDisplayV1 = z.infer<typeof SessionSharedDisplayV1Schema>;

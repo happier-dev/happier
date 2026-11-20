@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { classifySessionTupleApplyCurrentness, reconcileSessionRequestProjection, reconcileSessionTupleProjection, sessionTupleProjectionFields } from '../sessionTupleApplyCurrentness';
 import { reconcileSessionLifecycleProjection, sessionLifecycleProjectionFields } from '../sessionLifecycleProjection';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -95,6 +96,7 @@ export interface SessionListRenderableMetadata {
     sessionUsageLimitRecoveryV1?: SessionUsageLimitRecoveryV1 | SessionUsageLimitRecoveryDisplayV1 | null;
     /** Process lifecycle fact, retained for the shared status presenter. */
     lifecycleState?: string;
+    lifecycleStateReason?: SessionLifecycleStateReason;
     projectId?: string | null;
     workspaceId?: string | null;
     sessionWorkspaceLocationV1?: SessionWorkspaceLocationV1 | null;

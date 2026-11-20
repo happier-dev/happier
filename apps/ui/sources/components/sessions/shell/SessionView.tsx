@@ -2449,8 +2449,8 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                       <WarningActionBanner
                           testID="session-requester-access-removed"
                           tone="warning"
-                          title={t('machineRequester.accessRemoved', { machine: machineName })}
-                          body={t('machineRequester.resumeElsewhere', { machine: machineName })}
+                          title={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('common.inactive') : t('machineRequester.accessRemoved', { machine: machineName })}
+                          body={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('session.accessWithdrawn') : t('machineRequester.resumeElsewhere', { machine: machineName })}
                           actionTestID="session-requester-continue-elsewhere"
                           actionLabel={t('common.continue')}
                           actionAccessibilityLabel={t('common.continue')}
@@ -2521,7 +2521,7 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                   sessionId={sessionId}
                   // With a composer on screen its status line states this cause once; the notice
                   // speaks only where no composer does (a Session that cannot take input).
-                  bottomNotice={shouldShowInput ? null : bottomNotice}
+                  bottomNotice={shouldShowInput || (sessionMachineAccessRemoved && inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn') ? null : bottomNotice}
                   controlledByUserOverride={isLocallyAttached}
                   controlSwitchTo={controlSwitchTo}
                   onRequestSwitchToRemote={isHiddenSystemSessionSession || !canReleaseLocalControl ? undefined : handleRequestSwitchToRemote}

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { t } from '@/text';
 
 import { resolveSessionViewExternalControlFooter } from './resolveSessionViewExternalControlFooter';
 import { resolveSessionViewRuntimeDisplayState } from './resolveSessionViewRuntimeDisplayState';
@@ -43,6 +44,18 @@ function resolveNotice(overrides: Partial<RuntimeInput>) {
 }
 
 describe('resolveSessionViewRuntimeDisplayState not-resumable notice', () => {
+    it('shows the shared access-withdrawal reason in the existing transcript notice', () => {
+        const session = createSessionFixture({
+            id: 'withdrawn-runtime-display', active: false,
+            metadata: { path: '/repo', host: 'host', lifecycleState: 'stopped', lifecycleStateReason: 'machine_access_withdrawn' },
+        });
+        expect(resolveNotice({ session })).toEqual({
+            title: t('common.inactive'), body: t('session.accessWithdrawn'),
+        });
+        expect(resolveNotice({ session: { ...session, metadata: { ...session.metadata!, lifecycleStateReason: undefined } } }))
+            .not.toEqual(expect.objectContaining({ body: t('session.accessWithdrawn') }));
+    });
+
     it('yields to the external control row whenever that row speaks the way forward', () => {
         expect(importingFooter).not.toBeNull();
         expect(resolveNotice({ externalControlFooter: importingFooter })).toBeNull();

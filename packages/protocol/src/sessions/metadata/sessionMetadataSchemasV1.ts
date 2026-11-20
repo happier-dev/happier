@@ -1,3 +1,5 @@
+import { SessionLifecycleStateReasonSchema } from './sessionDisplaySchemasV1.js';
+export { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from './sessionDisplaySchemasV1.js';
 import { UsageSessionTimingV1Schema } from '../../usage/usageTimingV1.js';
 import { SessionStatusProgressV1Schema } from '../work/state/sessionWorkStatePrimary.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -527,6 +529,7 @@ export const SessionSharedMetadataV1Schema = lazyZodSchema(() => z.strictObject(
   publicAgentState: z.optional(SessionPublicAgentStateV1Schema),
   actionConfirmationsV1: z.optional(SessionActionConfirmationsV1Schema),
   forkVisualsV1: z.optional(SessionForkVisualsV1Schema),
+  lifecycleStateReason: z.optional(SessionLifecycleStateReasonSchema),
   sessionGuardStateV1: z.optional(SessionGuardStateV1Schema),
   sessionTurnProgressV1: z.optional(SessionTurnProgressV1Schema),
   teamShareStatementV1: z.optional(SessionTeamShareStatementV1Schema),
@@ -1548,6 +1551,7 @@ const SessionOwnerCompatibilityRuntimeDescriptorV1Schema =
  */
 export const SessionOwnerCompatibilityViewV1Schema = lazyZodSchema(() => z.strictObject({
   botFace: SessionSharedMetadataV1Schema.shape.botFace,
+  lifecycleStateReason: z.optional(SessionLifecycleStateReasonSchema),
   sessionGuardStateV1: z.optional(SessionGuardStateV1Schema),
   sessionTurnProgressV1: z.optional(SessionTurnProgressV1Schema),
   teamShareStatementV1: z.optional(SessionTeamShareStatementV1Schema),
@@ -1826,6 +1830,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
   const externalSessionOperationPresentationV1 =
     projectOperationPresentation(metadata);
   const publicAgentState = projectPublicAgentState(params.agentState);
+  const lifecycleStateReason = SessionLifecycleStateReasonSchema.safeParse(metadata.lifecycleStateReason);
   const sessionGuardStateV1 = createStoredReadSchema(SessionGuardStateV1Schema).safeParse(metadata.sessionGuardStateV1);
   const sessionTurnProgressV1 = SessionTurnProgressV1Schema.safeParse(metadata.sessionTurnProgressV1);
   const teamShareStatementV1 = SessionTeamShareStatementV1Schema.safeParse(metadata.teamShareStatementV1);
@@ -1851,6 +1856,7 @@ export function projectSessionSharedMetadataV1(params: Readonly<{
       ? { actionConfirmationsV1: actionConfirmationsV1.data }
       : {}),
     ...(forkVisualsV1.success ? { forkVisualsV1: forkVisualsV1.data } : {}),
+    ...(lifecycleStateReason.success ? { lifecycleStateReason: lifecycleStateReason.data } : {}),
     ...(sessionGuardStateV1.success ? { sessionGuardStateV1: sessionGuardStateV1.data } : {}),
     ...(sessionTurnProgressV1.success ? { sessionTurnProgressV1: sessionTurnProgressV1.data } : {}),
     ...(teamShareStatementV1.success ? { teamShareStatementV1: teamShareStatementV1.data } : {}),
@@ -1932,6 +1938,7 @@ export function projectAdmittedSessionOwnerCompatibilityViewV1(
     sessionAgentActivityHeadlineV1, ...privateWork } = ownerMetadata.work ?? {};
 
   const canonical = SessionOwnerCompatibilityViewV1Schema.parse({
+    ...(sharedMetadata.lifecycleStateReason ? { lifecycleStateReason: sharedMetadata.lifecycleStateReason } : {}),
     ...(sharedMetadata.sessionGuardStateV1 ? { sessionGuardStateV1: sharedMetadata.sessionGuardStateV1 } : {}),
     ...(sharedMetadata.sessionTurnProgressV1 ? { sessionTurnProgressV1: sharedMetadata.sessionTurnProgressV1 } : {}),
     ...(sharedMetadata.teamShareStatementV1 ? { teamShareStatementV1: sharedMetadata.teamShareStatementV1 } : {}),
@@ -1993,6 +2000,7 @@ const SHARED_ONLY_METADATA_KEYS = new Set([
   'botFace',
   'summary',
   'agentPresentation',
+  'lifecycleStateReason',
   'sessionGuardStateV1',
   'sessionTurnProgressV1',
   'teamShareStatementV1',

@@ -1,13 +1,15 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 export type InactiveSessionNoticeKind = 'none' | 'not-resumable' | 'machine-offline';
 
 export type InactiveSessionUiState = Readonly<{
     shouldShowInput: boolean;
-    inactiveStatusTextKey: 'session.inactiveResumable' | 'session.inactiveArchived' | 'session.inactiveMachineOffline' | 'session.inactiveNotResumable' | null;
+    inactiveStatusTextKey: 'session.inactiveResumable' | 'session.inactiveArchived' | 'session.inactiveMachineOffline' | 'session.inactiveNotResumable' | 'session.accessWithdrawn' | null;
     noticeKind: InactiveSessionNoticeKind;
 }>;
 
 export function getInactiveSessionUiState(opts: {
     isSessionActive: boolean;
+    lifecycleStateReason?: SessionLifecycleStateReason;
     /** Null means the viewer has no owner facts; it is not an unsupported-context verdict. */
     isResumable: boolean | null;
     isMachineOnline: boolean | null;
@@ -23,6 +25,11 @@ export function getInactiveSessionUiState(opts: {
 }): InactiveSessionUiState {
     if (opts.isSessionActive) {
         return { shouldShowInput: true, inactiveStatusTextKey: null, noticeKind: 'none' };
+    }
+
+    if (opts.lifecycleStateReason === 'machine_access_withdrawn') {
+        return { shouldShowInput: opts.allowInputWhileInactive === true || opts.isResumable === true,
+            inactiveStatusTextKey: 'session.accessWithdrawn', noticeKind: 'none' };
     }
 
     if (opts.allowInputWhileInactive) {

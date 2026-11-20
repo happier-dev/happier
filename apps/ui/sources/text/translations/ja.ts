@@ -9136,6 +9136,7 @@ localTailscale: {
       loadSessionFalse:
         "エージェントはセッションの読み込みをサポートしていません。",
     },
+    accessWithdrawn: "このマシンへのアクセスが取り消されました。所有者が再び許可できます。",
     inactiveResumable: "非アクティブ（再開可能）",
     inactiveArchived: "アーカイブ済み",
     inactiveMachineOffline: "非アクティブ（マシンがオフライン）",

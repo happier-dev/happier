@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { StoredCredentials } from '@/persistence';
 import { assertSessionMetadataMutationCurrentness, updateSessionMetadataWithRetry, verifySessionMetadataMutationCurrentness,
     type SessionMetadataMutationCurrentness } from '@/session/metadata/updateSessionMetadataWithRetry';
@@ -67,6 +68,7 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
     resolveAuthorizationHeaders?: Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders'];
     /** Supplied only by the Stop owner after positive runner or hosted Session retirement. */
     stoppedAt?: number;
+    lifecycleStateReason?: SessionLifecycleStateReason;
 }> & TerminalControlServiceabilityRetirementTarget): Promise<ExactTerminalControlServiceabilityRetirement> {
     const matchesRetirementTarget = (metadata: Readonly<Record<string, unknown>>) => {
         if (params.expectedPlainRetirement !== undefined) {
@@ -115,8 +117,12 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
     let projectionAlreadyAbsent = false;
     const withStoppedLifecycle = (metadata: Record<string, unknown>) => params.stoppedAt === undefined
         || metadata.lifecycleState === 'stopped' && typeof metadata.lifecycleStateSince === 'number'
+            && (params.lifecycleStateReason === undefined || metadata.lifecycleStateReason === params.lifecycleStateReason)
         ? metadata
-        : { ...metadata, lifecycleState: 'stopped', lifecycleStateSince: params.stoppedAt };
+        : { ...metadata, lifecycleState: 'stopped',
+            lifecycleStateSince: metadata.lifecycleState === 'stopped' && typeof metadata.lifecycleStateSince === 'number'
+                ? metadata.lifecycleStateSince : params.stoppedAt,
+            ...(params.lifecycleStateReason ? { lifecycleStateReason: params.lifecycleStateReason } : {}) };
     const updated = await updateSessionMetadataWithRetry({
         token: params.credentials.token,
         credentials: params.credentials,

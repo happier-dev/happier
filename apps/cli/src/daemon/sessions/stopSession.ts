@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 import { logger } from '@/ui/logger';
 import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -62,6 +63,7 @@ export type ExactTrackedRunnerStopWitness = Readonly<{
 }>;
 
 export type StopSessionOptions = SessionStopRequestDiagnostics & Readonly<{
+  lifecycleStateReason?: SessionLifecycleStateReason;
   /** Captured authenticated metadata authority for this Stop; never transported. */
   metadataContext?: Pick<Parameters<typeof retireExactTerminalControlServiceability>[0],
     'credentials' | 'currentness' | 'resolveAuthorizationHeaders'>;
@@ -190,18 +192,21 @@ export function createStopSession(params: Readonly<{
     attachmentInfo: ExactTerminalHostAttachmentInfo;
     terminalMode: TerminalMode;
     stoppedAt: number;
+    lifecycleStateReason?: SessionLifecycleStateReason;
   }>) => Promise<ExactTerminalControlServiceabilityRetirement | void>;
   retireAbsentTerminalControlServiceability?: (input: Readonly<{
     metadataContext?: StopSessionOptions['metadataContext'];
     sessionId: string;
     trackedSession: TrackedSession;
     stoppedAt: number;
+    lifecycleStateReason?: SessionLifecycleStateReason;
   }>) => Promise<RetainedPlainRunnerRetirement>;
   recoverStrandedTerminalControlServiceability?: (input: Readonly<{
     metadataContext?: StopSessionOptions['metadataContext'];
     sessionId: string;
     expectedAttachmentId?: string;
     stoppedAt: number;
+    lifecycleStateReason?: SessionLifecycleStateReason;
   }>) => Promise<StopSessionResult | null>;
   expectedTerminalAttachmentId?: string;
   requireTerminalTopologyProof?: boolean;
@@ -494,6 +499,7 @@ export function createStopSession(params: Readonly<{
             const retirement = await observeStopPhase('plain_control_serviceability_retirement', () =>
               params.retireAbsentTerminalControlServiceability!({ sessionId: normalizedSessionId, trackedSession,
                 stoppedAt: Date.now(),
+                ...(options?.lifecycleStateReason ? { lifecycleStateReason: options.lifecycleStateReason } : {}),
                 ...(options?.metadataContext ? { metadataContext: options.metadataContext } : {}) }));
             if (retirement === 'deferred' && [...trackedSessionsByKey.values()].includes(trackedSession)) {
               return retirementFailure();
@@ -510,6 +516,7 @@ export function createStopSession(params: Readonly<{
             const recovered = await params.recoverStrandedTerminalControlServiceability?.({
               sessionId: normalizedSessionId,
               stoppedAt: Date.now(),
+              ...(options?.lifecycleStateReason ? { lifecycleStateReason: options.lifecycleStateReason } : {}),
               ...(options?.metadataContext ? { metadataContext: options.metadataContext } : {}),
             });
             return recovered ?? retirementFailure();
@@ -600,6 +607,7 @@ export function createStopSession(params: Readonly<{
           const recovered = await params.recoverStrandedTerminalControlServiceability({
             sessionId: normalizedSessionId,
             stoppedAt: Date.now(),
+            ...(options?.lifecycleStateReason ? { lifecycleStateReason: options.lifecycleStateReason } : {}),
             ...(options?.metadataContext ? { metadataContext: options.metadataContext } : {}),
             ...(attachmentInfo?.version === 2
               ? { expectedAttachmentId: attachmentInfo.attachmentId }
@@ -886,6 +894,7 @@ export function createStopSession(params: Readonly<{
                 attachmentInfo: currentAttachmentInfo,
                 terminalMode: retiredTerminalMode,
                 stoppedAt: Date.now(),
+                ...(options?.lifecycleStateReason ? { lifecycleStateReason: options.lifecycleStateReason } : {}),
               });
               logger.infoFile('[DAEMON STOP] Borrowed control serviceability retirement completed', {
                 sessionId: normalizedSessionId,
@@ -941,6 +950,7 @@ export function createStopSession(params: Readonly<{
               attachmentInfo: currentAttachmentInfo,
               terminalMode: retiredTerminalMode,
               stoppedAt: Date.now(),
+              ...(options?.lifecycleStateReason ? { lifecycleStateReason: options.lifecycleStateReason } : {}),
             });
           }
           logger.infoFile('[DAEMON STOP] Control serviceability retirement completed', {

@@ -3986,13 +3986,14 @@ export async function startDaemonSessionControlRuntime(
   const stopSessionCore = createStopSession({
     ownerRemainder,
     trackedSessionsByKey: params.trackedSessionsByKey,
-    retireAbsentTerminalControlServiceability: async ({ sessionId, trackedSession, metadataContext, stoppedAt }) =>
+    retireAbsentTerminalControlServiceability: async ({ sessionId, trackedSession, metadataContext, stoppedAt, lifecycleStateReason }) =>
       await retireStoppedPlainRunnerControlServiceability({ sessionId, trackedSession,
         publishRetirement: expectedRunner => retireTerminalControlServiceabilityForCurrentAccount({
         sessionId,
         ...(metadataContext ? { metadataContext } : {}),
         terminalMode: 'plain',
         stoppedAt,
+        lifecycleStateReason,
         expectedRunner,
       }, trackedSession.requesterWorkAttributionV1 ?? trackedSession.spawnOptions?.requesterWorkAttributionV1) }),
     retireUpstreamAuthorityBeforeProcessStop: async (trackingKey) =>
@@ -4006,6 +4007,7 @@ export async function startDaemonSessionControlRuntime(
       expectedAttachmentId,
       metadataContext,
       stoppedAt,
+      lifecycleStateReason,
     }) =>
       await recoverStrandedTerminalControlServiceability({
         credentials: metadataContext?.credentials ?? params.credentials,
@@ -4015,6 +4017,7 @@ export async function startDaemonSessionControlRuntime(
         sessionId,
         expectedAttachmentId,
         stoppedAt,
+        lifecycleStateReason,
         loadTerminalHostAdapters: async () =>
           (await params.loadTerminalHostAdapters?.()) ?? {},
         retireExactTerminalControlServiceability: async (input) =>
@@ -4049,12 +4052,14 @@ export async function startDaemonSessionControlRuntime(
       terminalMode,
       metadataContext,
       stoppedAt,
+      lifecycleStateReason,
     }) => {
       return await retireTerminalControlServiceabilityForCurrentAccount({
         sessionId,
         attachmentId: attachmentInfo.attachmentId,
         terminalMode,
         stoppedAt,
+        lifecycleStateReason,
         ...(metadataContext ? { metadataContext } : {}),
       });
     },
@@ -9385,8 +9390,8 @@ export async function startDaemonSessionControlRuntime(
         subscribeLiveWork: (sessionId, listener) => sessionLiveWorkProducer.subscribe(listener, sessionId),
         isRequesterAccessCurrent: async (tracked, signal) =>
           await tracked.requesterSessionRuntimeContext?.bootstrap.verifyRuntimeMachineAdmissionCurrent?.(signal) ?? false,
-        stopSession: tracked => withSessionStopMetadataContext(tracked.happySessionId!, async metadataContext =>
-          await stopSession(tracked.happySessionId!, { metadataContext, expectedTrackedRunner: {
+        stopSession: (tracked, lifecycleStateReason) => withSessionStopMetadataContext(tracked.happySessionId!, async metadataContext =>
+          await stopSession(tracked.happySessionId!, { metadataContext, lifecycleStateReason, expectedTrackedRunner: {
             tracked, sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
             processCommandHash: tracked.processCommandHash,
           } }, undefined, undefined, metadataContext.credentials),

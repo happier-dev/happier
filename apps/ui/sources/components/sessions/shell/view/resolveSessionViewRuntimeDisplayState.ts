@@ -48,6 +48,7 @@ function buildCacheKey(input: Input): string {
         input.session.access ?? null,
         input.session.active ? 1 : 0,
         input.session.archivedAt != null ? 1 : 0,
+        input.session.metadata?.lifecycleStateReason ?? null,
         input.session.presence ?? '',
         input.session.agentState?.controlledByUser === true ? 1 : 0,
         input.session.agentState?.localControl ?? null,
@@ -76,6 +77,7 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
         presence: input.session.presence,
     });
     const inactiveUi = getInactiveSessionUiState({
+        lifecycleStateReason: input.session.metadata?.lifecycleStateReason,
         isSessionActive: input.isSessionActive,
         isResumable: input.isResumable,
         isMachineOnline: input.machineReachability === 'unknown' ? null : input.isMachineReachable,
@@ -84,7 +86,9 @@ export function resolveSessionViewRuntimeDisplayState(input: Input): SessionView
         externalWayForward: hasExternalWayForward(input),
     });
 
-    const bottomNotice = inactiveUi.noticeKind === 'not-resumable'
+    const bottomNotice = inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn'
+        ? { title: t('common.inactive'), body: t('session.accessWithdrawn') }
+        : inactiveUi.noticeKind === 'not-resumable'
         ? {
             title: t('session.inactiveNotResumableNoticeTitle'),
             body: t('session.inactiveNotResumableNoticeBody', { provider: input.providerName }),

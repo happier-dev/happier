@@ -1,3 +1,4 @@
+import type { SessionLifecycleStateReason } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isPidProvablyAbsent } from '@happier-dev/cli-common/process';
 import type { TerminalHostAdapter } from '@happier-dev/agents';
 import { SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
@@ -29,12 +30,14 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
   expectedAttachmentId?: string;
   /** Explicit Stop request evidence; observational recovery leaves lifecycle unchanged. */
   stoppedAt?: number;
+  lifecycleStateReason?: SessionLifecycleStateReason;
   loadTerminalHostAdapters: () => Promise<Readonly<Partial<Record<TerminalHostAdapter['kind'], TerminalHostAdapter>>>>;
   fetchSession?: typeof fetchSessionByIdCompat;
   resolveAccountEncryptionMode?: (token: string) => Promise<'plain' | 'e2ee'>;
   retireExactTerminalControlServiceability: (input: Readonly<{
     sessionId: string;
     stoppedAt?: number;
+    lifecycleStateReason?: SessionLifecycleStateReason;
   }> & TerminalControlServiceabilityRetirementTarget) => Promise<'retired' | 'superseded'>;
 }>): Promise<StopSessionResult | null> {
   const currentMachineId = params.currentMachineId.trim();
@@ -95,7 +98,7 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
     if (params.stoppedAt === undefined) return { status: 'stopped' };
     try {
       const retirement = await params.retireExactTerminalControlServiceability({
-        sessionId: params.sessionId, stoppedAt: params.stoppedAt, ...target,
+        sessionId: params.sessionId, stoppedAt: params.stoppedAt, lifecycleStateReason: params.lifecycleStateReason, ...target,
       });
       return retirement === 'retired' ? { status: 'stopped' } : incompleteStopSession('attachment_mismatch');
     } catch {
@@ -134,7 +137,7 @@ export async function recoverStrandedTerminalControlServiceability(params: Reado
       sessionId: params.sessionId,
       attachmentId,
       terminalMode: terminal.mode,
-      ...(params.stoppedAt === undefined ? {} : { stoppedAt: params.stoppedAt }),
+      ...(params.stoppedAt === undefined ? {} : { stoppedAt: params.stoppedAt, lifecycleStateReason: params.lifecycleStateReason }),
     });
     return retirement === 'retired'
       ? { status: 'stopped' }

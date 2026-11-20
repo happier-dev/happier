@@ -50,11 +50,12 @@ describe('mergeSessionMetadataForStartup', () => {
     });
     it('retires old plain-runner absence evidence when a new runner starts without a terminal', () => {
         const merged = mergeSessionMetadataForStartup({ mode: 'attach', nowMs: 2,
-            current: createTestMetadata({ hostPid: 1, terminal: { mode: 'plain', controlServiceabilityV1: {
+            current: createTestMetadata({ lifecycleStateReason: 'machine_access_withdrawn', hostPid: 1, terminal: { mode: 'plain', controlServiceabilityV1: {
                 v: 1, state: 'unknown', observedAt: 1, retired: true, reason: 'attachment_retired',
             } } }), next: createTestMetadata({ hostPid: 2 }),
         });
         expect(merged.terminal).toBeUndefined();
+        expect(merged.lifecycleStateReason).toBeUndefined();
     });
     it.each(['same-runner', 'hosted-attachment'] as const)('preserves %s terminal evidence during startup merge', kind => {
         const terminal = { mode: 'plain' as const, controlServiceabilityV1: { v: 1 as const, state: 'unknown' as const,

@@ -10316,6 +10316,7 @@ const enSession = {
     acpProbeFailed: 'ACP probe failed.',
     loadSessionFalse: 'Agent does not support loading sessions.',
   },
+  accessWithdrawn: "Access to this Machine was withdrawn. The owner can grant it again.",
   inactiveResumable: 'Inactive (resumable)',
   inactiveArchived: 'Archived',
   inactiveMachineOffline: 'Inactive (machine offline)',

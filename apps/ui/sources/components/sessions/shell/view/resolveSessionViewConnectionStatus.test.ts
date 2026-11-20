@@ -20,6 +20,15 @@ const baseInput = {
 } as const;
 
 describe('resolveSessionViewConnectionStatus', () => {
+    it.each([false, true])('keeps the withdrawal explanation while using existing resume availability (%s)', available => {
+        const status = resolveSessionViewConnectionStatus({ ...baseInput, endedReasonText: 'withdrawal explanation',
+            inactiveResumeAvailable: available,
+            pendingQueue: { line: { text: 'queued', action: 'resume', color: 'quiet' }, countText: null } });
+        expect(status?.text).toBe('withdrawal explanation');
+        expect(status?.inactiveAction).toBe(available ? 'resume' : undefined);
+        expect(status?.pendingQueueAction).toBeUndefined();
+    });
+
     it('says a signed-out Account before any other cause, with Sign in as the one way forward', () => {
         const line = resolveSessionViewConnectionStatus({
             ...baseInput,

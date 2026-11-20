@@ -1578,7 +1578,9 @@ const SessionItemContent = React.memo(
         const contextCheckout = !isSessionIdentityLoading ? rowContext?.checkout ?? null : null;
         const lineTextScale = typeof uiFontScale === 'number' ? uiFontScale : undefined;
         // Line text: the draft being written, else the now line (or an external Session's own line), else the branch.
-        const workText = draft && draftPreview && draft.hasPreview ? (
+        const workText = !session.active && session.metadata?.lifecycleStateReason === 'machine_access_withdrawn' ? (
+            <SessionRowLineText tone="secondary">{t('session.accessWithdrawn')}</SessionRowLineText>
+        ) : draft && draftPreview && draft.hasPreview ? (
             <SessionRowDraftPreviewLine source={draftPreview} rowTestID={`session-list-draft-preview:${occurrenceTestId}`}
                 density={collectionRowDensity} textScale={lineTextScale} style={styles.detailLineText} />
         ) : nowLine ? (

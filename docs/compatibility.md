@@ -14351,3 +14351,14 @@ at `9d13311c372a320c3fb82ea83981612cf1fa0102` has none of these three owners
 (`machines/machineIsolationV1.ts`, `projects/openProjectV1.ts`,
 `sessions/creation/sessionProjectFilesOpenV1.ts`), and no scoped dirty changes,
 so it supplies no predecessor reader for this unreleased choice.
+
+## Session access-withdrawal end reason (unreleased 0.3)
+
+The existing Session lifecycle carries optional `lifecycleStateReason` with the
+closed value `machine_access_withdrawn`. The access-loss Stop supplies it to the
+ordinary stopped-lifecycle metadata publisher. It is a content-free shared
+metadata fact, projected into the existing list and transcript state, so either
+person who can view the Session can understand the end. A new runner clears it.
+It does not authorize or refuse Resume; existing Machine selection remains the
+authority. Existing records without the reason remain valid. Matching development
+CLI and UI sources load together; no 0.3 mixed-version shim or migration is added.

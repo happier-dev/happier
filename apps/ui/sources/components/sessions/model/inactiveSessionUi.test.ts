@@ -3,6 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
 
 describe('getInactiveSessionUiState', () => {
+    it('explains access withdrawal instead of inviting an unavailable resume', () => {
+        expect(getInactiveSessionUiState({ isSessionActive: false, isResumable: true,
+            isMachineOnline: true, lifecycleStateReason: 'machine_access_withdrawn' }))
+            .toMatchObject({ shouldShowInput: true, inactiveStatusTextKey: 'session.accessWithdrawn', noticeKind: 'none' });
+        expect(getInactiveSessionUiState({ isSessionActive: false, isResumable: true,
+            isMachineOnline: false, lifecycleStateReason: 'machine_access_withdrawn' }))
+            .toMatchObject({ shouldShowInput: true, inactiveStatusTextKey: 'session.accessWithdrawn', noticeKind: 'none' });
+        expect(getInactiveSessionUiState({ isSessionActive: false, isResumable: false,
+            isMachineOnline: true, lifecycleStateReason: 'machine_access_withdrawn' }))
+            .toMatchObject({ shouldShowInput: false, inactiveStatusTextKey: 'session.accessWithdrawn', noticeKind: 'none' });
+        expect(getInactiveSessionUiState({ isSessionActive: true, isResumable: true,
+            isMachineOnline: true, lifecycleStateReason: 'machine_access_withdrawn' }))
+            .toMatchObject({ shouldShowInput: true, inactiveStatusTextKey: null });
+    });
     it('does not claim unsupported context when eligibility is unknown and input is not authorized', () => {
         expect(getInactiveSessionUiState({
             isSessionActive: false, isResumable: null, isMachineOnline: null,

@@ -8516,6 +8516,7 @@ export const zhHans: TranslationStructure = {
       acpProbeFailed: "ACP 检查失败。",
       loadSessionFalse: "代理不支持加载会话。",
     },
+    accessWithdrawn: "对此机器的访问权限已被撤回。所有者可以重新授予权限。",
     inactiveResumable: "未激活（可恢复）",
     inactiveArchived: "已归档",
     inactiveMachineOffline: "未激活（机器离线）",

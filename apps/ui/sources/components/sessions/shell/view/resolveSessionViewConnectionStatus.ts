@@ -85,6 +85,7 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
     restartingText: string;
     switchFailedText: string;
     inactiveStatusText: string | null;
+    endedReasonText?: string | null;
     /** Current write, native-resume and reachable-machine facts from the Session owner. */
     inactiveResumeAvailable?: boolean;
     /** Why the Session is inactive and what to do, read on the line rather than in a card beside it. */
@@ -122,6 +123,9 @@ export function resolveSessionViewConnectionStatus(input: Readonly<{
         return { text: signedOut.text, detail: signedOut.detail, color: signedOut.color, dotColor: signedOut.color,
             isPulsing: false, accountAction: 'sign_in' };
     }
+    if (input.endedReasonText) return { text: input.endedReasonText, color: input.sessionStatusColor,
+        dotColor: input.sessionStatusDotColor, isPulsing: false,
+        ...(input.inactiveResumeAvailable ? { inactiveAction: 'resume' as const } : {}) };
     const guard = input.guard?.state ?? null;
     // A restart or a failed account switch is the more urgent fact; otherwise the guard's word leads.
     const restartActive = input.connectedServicesRestartState?.status === 'restarting'

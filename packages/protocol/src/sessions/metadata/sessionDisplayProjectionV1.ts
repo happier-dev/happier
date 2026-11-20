@@ -23,6 +23,7 @@ export function projectSessionDisplayV1(input: Readonly<{
     ...(shared.bot ? { bot: shared.bot } : {}),
     ...(shared.botFace ? { botFace: shared.botFace } : {}),
     ...(shared.externalSessionOperationPresentationV1 ? { externalSessionOperationPresentationV1: shared.externalSessionOperationPresentationV1 } : {}),
+    ...(shared.lifecycleStateReason ? { lifecycleStateReason: shared.lifecycleStateReason } : {}),
     ...(shared.sessionGuardStateV1 ? { sessionGuardStateV1: shared.sessionGuardStateV1 } : {}),
   });
   const owner = input.ownerMetadata;

@@ -19,6 +19,17 @@ const canonicalExternalSessionLink = {
 };
 
 describe('sessionListRenderableMetadataComparison', () => {
+    it('publishes the end reason to mounted rows and preserves unchanged row identity', () => {
+        const metadata = { path: '/repo', host: 'host', lifecycleState: 'stopped' };
+        const before = buildSessionListRenderableMetadataComparison(metadata);
+        const withdrawn = { ...metadata, lifecycleStateReason: 'machine_access_withdrawn' as const };
+        const ended = buildSessionListRenderableMetadataComparison(withdrawn, before);
+        expect(ended?.lifecycleStateReason).toBe('machine_access_withdrawn');
+        expect(ended).not.toBe(before);
+        expect(buildSessionListRenderableMetadataComparison(withdrawn, ended)).toBe(ended);
+        expect(buildSessionListRenderableMetadataComparison(metadata, ended)?.lifecycleStateReason).toBeUndefined();
+    });
+
     it('retains external unread inputs through compact metadata reconciliation', () => {
         const metadata = { path: '/repo', host: 'host', externalSessionV1: canonicalExternalSessionLink,
             externalSessionAttentionV1: { v: 1 as const, observedProgressToken: '20:msg-2',

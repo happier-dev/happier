@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import axios from 'axios';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { SessionMetadataTuplePatchV1Schema, SessionSharedMetadataV1Schema } from '@happier-dev/protocol';
+import { retireExactTerminalControlServiceability } from './retireTerminalControlServiceability';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -46,6 +50,24 @@ function fixture() {
   const tracked: TrackedSessionMap = new Map();
   const activity = new Map<string, SessionInputLiveWork>();
   const events: string[] = [];
+  // The Home HTTP transport is the persistence boundary; run the real Stop metadata writer.
+  const recorded = new Map<string, unknown>();
+  vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
+    data: String(url).includes('/v2/sessions/') ? { session: createSessionRecordFixture({
+      id: 'guest-session', encryptionMode: 'plain', metadataLayoutVersion: 0, metadataVersion: 1,
+      metadata: JSON.stringify({ path: '/repo', terminal: { mode: 'plain' }, lifecycleState: 'running' }),
+    }) } : { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }));
+  vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
+    const patch = SessionMetadataTuplePatchV1Schema.parse(body);
+    if (patch.mode === 'shared_editor') throw new Error('Expected owner metadata mutation');
+    const sharedEnvelope = patch.mode === 'owner_migration' ? patch.target.sharedMetadata : patch.sharedMetadata;
+    const shared = SessionSharedMetadataV1Schema.parse(JSON.parse(sharedEnvelope.ciphertext));
+    recorded.set('guest-session', shared.lifecycleStateReason);
+    const metadataVersion = patch.mode === 'owner_migration' ? patch.source.metadata.version : patch.sharedMetadata.expectedVersion;
+    const agentStateVersion = patch.mode === 'owner_migration' ? patch.source.agentState.version : patch.agentState.expectedVersion;
+    return { status: 200, data: { success: true, metadataLayoutVersion: 1,
+      sharedMetadata: { version: metadataVersion + 1 }, agentState: { version: agentStateVersion } } };
+  });
   const accessRestored = new Set<string>();
   const producer = createSessionLiveWorkProducer({
     readSessions: () => [...tracked.values()],
@@ -97,6 +119,9 @@ function fixture() {
     readHostAttachmentState: async () => ({ status: 'absent' }),
     readTerminalAttachmentInfo: async () => null,
     waitForTrackedRunnersExit: async () => true,
+    retireAbsentTerminalControlServiceability: async ({ sessionId, stoppedAt, lifecycleStateReason }) =>
+      retireExactTerminalControlServiceability({ credentials: { token: 'fixture', encryption: null },
+        sessionId, stoppedAt, lifecycleStateReason, terminalMode: 'plain', expectedPlainRetirement: null }),
   });
   const endSessions = createRequesterSessionAccessLossEnd({
     serverId: 'home',
@@ -110,8 +135,9 @@ function fixture() {
       producer.subscribe(listener, sessionId),
     isRequesterAccessCurrent: async (session) =>
       accessRestored.has(session.requesterWorkAttributionV1!.accountId),
-    stopSession: (session) =>
+    stopSession: (session, lifecycleStateReason) =>
       stopSession(session.happySessionId!, {
+        lifecycleStateReason,
         expectedTrackedRunner: { tracked: session },
       }),
     lifetimeSignal: lifetime.signal,
@@ -159,6 +185,7 @@ function fixture() {
   const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
   return {
     host,
+    recorded,
     withdraw,
     census: () => call({ kind: 'requesters' }),
     finishTurn,
@@ -173,6 +200,7 @@ function fixture() {
 
 let current: ReturnType<typeof fixture> | null = null;
 afterEach(() => {
+  vi.restoreAllMocks();
   current?.dispose();
   current = null;
 });
@@ -191,6 +219,7 @@ describe('withdrawn guest Sessions end at their natural boundary', () => {
       'other-session',
     ]);
     expect(f.events).toEqual(['end:guest-session']);
+    expect(f.recorded.get('guest-session')).toBe('machine_access_withdrawn');
   });
 
   it('lets a running turn finish and deliver its result before the Session ends', async () => {
@@ -203,6 +232,7 @@ describe('withdrawn guest Sessions end at their natural boundary', () => {
     f.finishTurn('guest-session');
     expect(await outcome).toEqual({ kind: 'settled' });
     expect(f.events).toEqual(['result:guest-session', 'end:guest-session']);
+    expect(f.recorded.get('guest-session')).toBe('machine_access_withdrawn');
     expect(f.running()).toEqual([]);
   });
 
@@ -224,6 +254,7 @@ describe('withdrawn guest Sessions end at their natural boundary', () => {
     expect(await outcome).toEqual({ kind: 'settled' });
     expect(f.running()).toEqual(['guest-session']);
     expect(f.events).toEqual(['result:guest-session']);
+    expect(f.recorded.size).toBe(0);
   });
 
   it('reaches a withdrawal missed while the daemon was offline through the reconnect census', async () => {

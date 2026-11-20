@@ -234,6 +234,15 @@ describe('SessionItem activity time', () => {
         storageModule.storage.setState(previousStorageState, true);
     });
 
+    it('shows the recorded access-withdrawal cause on an ended Session row', async () => {
+        const session = createSessionFixture({ id: 'withdrawn-row', active: false,
+            metadata: { path: '/repo', host: 'host', lifecycleState: 'stopped', lifecycleStateReason: 'machine_access_withdrawn' } });
+        const rowViewModel = createSessionItemRowViewModel({ session, serverId: 'server_a' });
+        const screen = await renderScreen(<ArchiveProgressSessionItem session={session} rowViewModel={rowViewModel}
+            serverId="server_a" pinned={false} selected={false} compact={false} />);
+        expect(screen.getTextContent()).toContain(t('session.accessWithdrawn'));
+    });
+
     it('shows shared archive progress on an already mounted row and clears it when the operation settles', async () => {
         const { act } = await import('react-test-renderer');
         const session = createSession('archiving-row');

@@ -9286,6 +9286,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       acpProbeFailed: "Не удалось выполнить ACP-проверку.",
       loadSessionFalse: "Агент не поддерживает загрузку сессий.",
     },
+    accessWithdrawn: "Доступ к этой машине отозван. Владелец может предоставить его снова.",
     inactiveResumable: "Неактивна (можно возобновить)",
     inactiveArchived: "В архиве",
     inactiveMachineOffline: "Неактивна (машина не в сети)",

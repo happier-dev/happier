@@ -5520,6 +5520,7 @@ export function useSessionComposerController({
             restartingText: t('connectedServices.authSwitch.status.restarting'),
             switchFailedText: t('connectedServices.authSwitch.switchFailed'),
             inactiveStatusText: launchStarting ? t('newSession.startingSession') : inactiveStatusText,
+            endedReasonText: inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('session.accessWithdrawn') : null,
             inactiveResumeAvailable: !launchStarting && !isSessionActive && isResumable && isMachineReachable
                 && hasWriteAccess && canOpenSession && !sessionMachineAccessRemoved,
             // The inactive cause's explanation rides the line while the composer shows it.
@@ -5567,6 +5568,7 @@ export function useSessionComposerController({
             theme.colors.text.tertiary,
             connectedServicesRestartState,
             inactiveStatusText,
+            inactiveUi.inactiveStatusTextKey,
             launchStarting,
             launchOutcomeShown,
             isSessionActive,
