@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { ALWAYS_ACTIVE } from '@/utils/react/activeGatedExternalStore';
 import { createSessionItemRowViewModel } from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { StyleSheet } from 'react-native';
@@ -119,7 +120,7 @@ describe('SessionItem existing-session draft presentation', () => {
                 draft: { hasPreview: true },
             },
         });
-        const draftPreview = { live: true, subscribe: () => () => undefined, getPreview: () => 'Fix the flaky release test' };
+        const draftPreview = { gate: ALWAYS_ACTIVE, subscribe: () => () => undefined, getPreview: () => 'Fix the flaky release test' };
         const screen = await renderScreen(
             <SessionItem session={session} rowViewModel={rowViewModel} onDeleteDraft={onDeleteDraft} draftPreview={draftPreview} />,
         );

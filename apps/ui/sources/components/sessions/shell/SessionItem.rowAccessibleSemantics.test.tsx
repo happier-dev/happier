@@ -121,7 +121,7 @@ const ROW_STATE_CASES: readonly RowStateCase[] = [
     {
         label: 'permission required',
         session: { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: NOW_MS },
-        spoken: 'Permission',
+        spoken: ROW_STATUS_COPY['status.permissionRequired']!,
     },
     {
         label: 'action required',
@@ -223,10 +223,12 @@ describe('SessionItem outer row accessible semantics', () => {
             />)}</>;
         }
         const screen = await renderScreen(<NativeMirrorRows />);
+        expect(screen.findAllByType('ContextMenu')).toHaveLength(0);
+        const initiatingRow = screen.findAll(node => typeof node.type === 'string' && typeof node.props.onLongPress === 'function')[0];
+        expect(initiatingRow).toBeDefined();
+        await act(async () => { initiatingRow!.props.onLongPress(); });
         const menus = screen.findAllByType('ContextMenu');
-        expect(menus).toHaveLength(2);
-        await act(async () => { menus[0]!.props.onOpenChange(true); });
-        expect(screen.findAllByType('ContextMenu').map(menu => menu.props.open)).toEqual([true, false]);
+        expect(menus.map(menu => menu.props.open)).toEqual([true]);
     });
 
     it('exposes distinct accessible hit targets for shelf and cross-Home base occurrences', async () => {
