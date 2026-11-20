@@ -2,21 +2,21 @@ import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountS
 
 import { accountDirectoryAuthClient, type AccountDirectoryAuthTransport, type AccountDirectoryAuthenticationAction, type AccountDirectoryOAuthStartResult, type VerifiedAccountServiceAuthority } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
-import { getAuthProvider } from '@/auth/providers/registry';
 import { TokenStorage, type PendingAccountDirectoryAuth } from '@/auth/storage/tokenStorage';
 import { prepareAccountCredentialJourney } from '@/auth/flows/accountCredentialJourney';
 import { openExternalAuthenticationUrl, type OAuthBrowserHandoff } from '@/auth/flows/openExternalAuthenticationUrl';
-import { asIconName } from '@/components/ui/icons/asIconName';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
-import { describeHomeAuthenticationAction } from './homeAuthenticationActionPresentation';
+import { describeHomeAuthenticationAction, describeOAuthProvider } from './homeAuthenticationActionPresentation';
 
 type OAuthExecution = Extract<AccountDirectoryAuthenticationAction['execution'], { kind: 'oauth' }>;
+type OAuthProviderPresentation = AccountDirectoryAuthenticationAction['method']['presentation'];
 
 async function startAccountServiceOAuthAuthentication(input: Readonly<{
     authority: VerifiedAccountServiceAuthority;
     execution: OAuthExecution;
+    presentation?: OAuthProviderPresentation;
     intent: AccountContinuationIntent;
     returnTo: string;
     accountEntryReturnTo?: string;
@@ -28,6 +28,7 @@ async function startAccountServiceOAuthAuthentication(input: Readonly<{
         endpointServerIdentityId: input.authority.serverIdentityId,
         canonicalServerUrl: input.authority.canonicalServerUrl,
         providerId: input.execution.providerId,
+        presentation: input.presentation,
         mode: input.execution.mode,
         entryIntent: input.intent,
         returnTo: input.returnTo,
@@ -54,13 +55,14 @@ export async function cancelAccountServiceOAuth(pending: PendingAccountDirectory
 export async function launchAccountServiceOAuthAuthentication(input: Readonly<{
     authority: VerifiedAccountServiceAuthority;
     execution: OAuthExecution;
+    presentation?: OAuthProviderPresentation;
     intent: AccountContinuationIntent;
     returnTo: string;
     accountEntryReturnTo?: string;
     transport?: AccountDirectoryAuthTransport;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
-    onBrowserHandoff?: (handoff: OAuthBrowserHandoff) => void;
+    onBrowserHandoff?: (handoff: OAuthBrowserHandoff & ReturnType<typeof describeOAuthProvider>) => void;
 }>): Promise<AccountServiceOAuthLaunchOutcome> {
     if (input.isCurrent?.() === false) return 'cancelled';
     let started: AccountDirectoryOAuthStartResult | null = null;
@@ -80,7 +82,9 @@ export async function launchAccountServiceOAuthAuthentication(input: Readonly<{
         const handoff = await openExternalAuthenticationUrl(started.url, pending.desktopAttemptId);
         // Once the browser owns the URL, a return may have already unmounted the launcher.
         if (input.signal?.aborted || input.isCurrent?.() === false) return 'cancelled';
-        if (handoff === 'system_browser') input.onBrowserHandoff?.({ cancel });
+        if (handoff === 'system_browser') {
+            input.onBrowserHandoff?.({ cancel, ...describeOAuthProvider(pending.provider, pending.presentation) });
+        }
         return 'opened';
     } catch {
         if (started) {
@@ -99,24 +103,13 @@ export type AccountServiceAuthenticationActionPresentation = Readonly<{
     accentColor?: string;
 }>;
 
-/** The provider's name and mark for both the method control and its browser wait. */
-export function describeAccountServiceAuthenticationProvider(method: AccountDirectoryAuthenticationAction['method']) {
-    const provider = getAuthProvider(method.id, method.presentation ? {
-        displayName: method.presentation.displayName,
-        ...(method.presentation.iconHint ? { badgeIconName: method.presentation.iconHint } : {}),
-        connectButtonColor: method.presentation.connectButtonColor ?? null,
-    } : undefined);
-    const providerName = method.presentation?.displayName ?? provider?.displayName ?? method.id;
-    return { providerName, badgeIconName: asIconName(provider?.badgeIconName) ?? asIconName(method.presentation?.iconHint) };
-}
-
 /** How the advertised method reads in the account-entry cards and the Account page's method strip. */
 export function describeAccountServiceAuthenticationAction(
     entry: AccountDirectoryAuthenticationAction,
     serviceName: string,
 ): AccountServiceAuthenticationActionPresentation {
     const { method, action, execution } = entry;
-    const { providerName, badgeIconName } = describeAccountServiceAuthenticationProvider(method);
+    const { providerName, badgeIconName } = describeOAuthProvider(method.id, method.presentation);
     const base = describeHomeAuthenticationAction({ execution, providerName });
     const iconName = execution.kind === 'oauth'
         ? badgeIconName ?? base.iconName

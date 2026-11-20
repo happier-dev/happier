@@ -136,23 +136,31 @@ describe('AccountServiceAuthenticationFlow', () => {
         expect(screen.findByTestId('account-directory-key-provision-pending') ?? screen.findByTestId('account-directory-key-provision-failed')).not.toBeNull();
     });
 
-    it.each(['ios', 'android'])('opens the GitHub wait on %s and goes Back to the methods', async (os) => {
+    it.each([
+        ['ios', 'github', { displayName: 'GitHub' }],
+        ['android', 'acme-sso', { displayName: 'Acme SSO', iconHint: 'shield-check', providerKind: 'oidc' }],
+    ] as const)('opens the %s browser wait for %s and goes Back to the methods', async (os, providerId, presentation) => {
         host.os = os;
         vi.stubGlobal('window', { location: { assign: host.sameTab } });
-        const screen = await renderScreen(<AccountServiceAuthenticationFlow service={service} intent={intent}
+        const { authenticationActions } = projectAuthEntryMethodCapabilities(AuthEntryProjectionV1Schema.parse({
+            v: 1, state: 'ready', scope: { kind: 'home' }, autoRedirect: null,
+            actions: [{ kind: 'authenticate', methodId: providerId, action: 'login', mode: 'keyless', origin: 'home', presentation }],
+        }));
+        const screen = await renderScreen(<AccountServiceAuthenticationFlow service={{ ...service, authenticationActions }} intent={intent}
             onPostAuthContinuation={() => {}} returnTo="/setup/wizard" onResult={vi.fn()}
             onExternalAuthStarted={vi.fn()} onBack={vi.fn()} />);
 
-        await screen.pressByTestIdAsync('account-service-auth-github-login-keyless');
+        const method = `account-service-auth-${providerId}-login-keyless`;
+        await screen.pressByTestIdAsync(method);
 
         expect(linking.openURL).toHaveBeenCalledExactlyOnceWith('https://oauth.example.test/start');
         expect(host.sameTab).not.toHaveBeenCalled();
         expect(screen.findByTestId('oauth-browser-wait-title')).toBeTruthy();
-        expect(screen.findByTestId('account-service-auth-github-login-keyless')).toBeNull();
-        expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toMatchObject({ returnTo: '/setup/wizard' });
+        expect(screen.findByTestId(method)).toBeNull();
+        expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toMatchObject({ provider: providerId, returnTo: '/setup/wizard', presentation });
 
         await screen.pressByTestIdAsync('oauth-browser-wait-back');
-        expect(screen.findByTestId('account-service-auth-github-login-keyless')).toBeTruthy();
+        expect(screen.findByTestId(method)).toBeTruthy();
         expect(await TokenStorage.getPendingAccountDirectoryAuth(target)).toBeNull();
     });
 

@@ -56,6 +56,7 @@ export type AccountDirectoryOAuthStartInput = Readonly<{
     endpointServerIdentityId: string;
     canonicalServerUrl: string;
     providerId: string;
+    presentation?: ProjectedAuthenticationMethod['presentation'];
     mode: 'keyed' | 'keyless';
     entryIntent: AccountContinuationIntent;
     returnTo: string;
@@ -871,6 +872,7 @@ export const accountDirectoryAuthClient = {
             entryIntent: intent,
             provider: providerId,
             purpose: start.purpose,
+            ...(input.presentation ? { presentation: input.presentation } : {}),
             ...(start.desktopAttemptId ? { desktopAttemptId: start.desktopAttemptId } : {}),
             createdAt: Date.now(),
             expiresAt: start.expiresAt,

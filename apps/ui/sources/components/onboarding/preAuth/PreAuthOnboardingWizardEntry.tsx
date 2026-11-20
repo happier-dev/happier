@@ -8,7 +8,7 @@ import {
 import { Modal } from '@/modal';
 import { accountDirectoryAuthClient } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import type { AccountDirectoryKeyLoginOutcome } from '@/components/account/auth/AccountDirectoryKeyLoginForm';
-import { describeAccountServiceAuthenticationProvider, launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
+import { launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
 import type { WelcomeAuthenticationMethod } from '@/components/onboarding/preAuth/composeWelcomeEntryModel';
 import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountService';
 import { useWelcomeAuthEntryOptions } from '@/components/account/auth/useAuthEntryOptions';
@@ -130,6 +130,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         const outcome = await launchAccountServiceOAuthAuthentication({
             authority: service,
             execution: request.execution,
+            presentation: request.method.presentation,
             intent: accountContinuationIntent,
             returnTo: AUTHENTICATED_ACCOUNT_ENTRY_ROUTE,
             accountEntryReturnTo: resolveAuthReturnToRoute(),
@@ -137,7 +138,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             signal: context.signal,
             onBrowserHandoff: (handoff) => context.presentOAuthBrowserWait?.({
                 ...handoff,
-                ...describeAccountServiceAuthenticationProvider(request.method),
                 destination: { kind: 'find_homes' },
             }),
         });

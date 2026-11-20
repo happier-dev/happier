@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
-import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { setAccountServiceEndpoint } from '@/sync/domains/server/serverProfiles';
@@ -35,7 +35,7 @@ describe('Account Directory callback route contraction', () => {
     let restore: () => void;
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     beforeEach(async () => {
-        restore = installLocalStorageMock().restore;
+        restore = (await installBrowserRuntimeForTests({ url: 'https://app.example.test/oauth/github' })).restore;
         fixture = createDirectoryHttpFixture();
         boundary.request.mockImplementation(fixture.request);
         navigation.replace.mockClear();
@@ -75,6 +75,27 @@ describe('Account Directory callback route contraction', () => {
             pathname: '/setup/wizard', params: expect.objectContaining({ accountServiceReturn: '1' }),
         })));
         expect(fixture.state.calls.map(({ path }) => path)).toEqual(['/v1/features', '/v1/auth/external/github/finalize-keyless']);
+    });
+
+    it('keeps the advertised SSO mark on an Account Service failure after a cold return', async () => {
+        const target = { endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId };
+        await TokenStorage.clearPendingAccountDirectoryAuth(target);
+        navigation.params = { ...navigation.params, provider: 'acme-sso', error: 'service-unavailable' };
+        expect(await TokenStorage.setPendingAccountDirectoryAuth({
+            ...target, canonicalServerUrl: fixture.service.canonicalServerUrl,
+            purpose: 'account_directory', credentialTarget: 'account_directory',
+            provider: 'acme-sso', mode: 'keyless', proof: 'bound-proof', createdAt: Date.now(), expiresAt: Date.now() + 60_000,
+            entryIntent: { kind: 'enter', target: { kind: 'automatic' } }, returnTo: '/setup/wizard',
+            presentation: { displayName: 'Acme SSO', iconHint: 'shield-check', providerKind: 'oidc' },
+        })).toBe(true);
+
+        screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthReturn /></AuthProvider>);
+
+        await vi.waitFor(() => expect(screen!.findByTestId('oauth-account-directory-failure')).toBeTruthy());
+        expect(screen.findByTestId('oauth-account-directory-failure')?.findAllByType(StepMark)
+            .map((mark) => mark.props.iconName)).toContain('shield-check');
+        await screen.pressByTestIdAsync('unauth-shell-back-chevron');
+        expect(navigation.replace).toHaveBeenCalledWith('/setup/wizard');
     });
 
     it.each([

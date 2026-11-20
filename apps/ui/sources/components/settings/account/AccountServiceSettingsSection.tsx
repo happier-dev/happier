@@ -8,7 +8,6 @@ import { AccountServiceHomeAuthenticationAdapter } from '@/components/account/au
 import { describeAccountDirectoryMutationFailure, describeAccountHomeUnlinkFailure, describeAccountServiceFailure } from '@/components/account/auth/accountServiceFailurePresentation';
 import {
     launchAccountServiceOAuthAuthentication,
-    describeAccountServiceAuthenticationProvider,
     projectAccountServiceMethodStrip,
     describeAccountServiceAuthenticationAction,
 } from '@/components/account/auth/accountServiceAuthenticationActions';
@@ -464,6 +463,7 @@ export function AccountServiceSettingsSection(): React.ReactElement {
             const outcome = await launchAccountServiceOAuthAuthentication({
                 authority: createVerifiedAccountServiceAuthority(discovery),
                 execution,
+                presentation: method.method.presentation,
                 intent: { kind: 'refresh' },
                 returnTo: AUTHENTICATED_ACCOUNT_ENTRY_ROUTE,
                 accountEntryReturnTo: '/settings/account',
@@ -471,7 +471,6 @@ export function AccountServiceSettingsSection(): React.ReactElement {
                 isCurrent: () => serviceKeyRef.current === serviceKey,
                 onBrowserHandoff: (handoff) => setBrowserWait({ serviceKey, wait: {
                     ...handoff,
-                    ...describeAccountServiceAuthenticationProvider(method.method),
                     destination: { kind: 'find_homes' },
                 } }),
             });

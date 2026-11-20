@@ -1,5 +1,5 @@
 import React from 'react';
-import { Linking, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -36,7 +36,7 @@ import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
 import { createHomeOAuthRequestContext } from '@/auth/providers/homeExternalAuthTarget';
 import { accountDirectoryAuthClient, acquireAccountServiceAuthTransport, createVerifiedAccountServiceAuthority } from '@/auth/accountDirectory/accountDirectoryAuthClient';
 import { HomeRecoveryAuthenticationFlow } from '@/components/account/auth/HomeRecoveryAuthenticationFlow';
-import { cancelAccountServiceOAuth, describeAccountServiceAuthenticationProvider, launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
+import { cancelAccountServiceOAuth, launchAccountServiceOAuthAuthentication } from '@/components/account/auth/accountServiceAuthenticationActions';
 import { OAuthBrowserWaitStep, type OAuthBrowserWait } from '@/components/account/auth/OAuthBrowserWaitStep';
 import { openExternalAuthenticationUrl } from '@/auth/flows/openExternalAuthenticationUrl';
 import { buildContentKeyBinding } from '@/auth/oauth/contentKeyBinding';
@@ -51,7 +51,7 @@ import { trackAccountCreated, trackAccountRestored } from '@/track';
 
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
-import { oauthProviderIconName } from '@/components/account/auth/homeAuthenticationActionPresentation';
+import { describeOAuthProvider, oauthProviderIconName } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { admitInternalRouteHref, admitOpaqueInternalReturnPath, normalizeInternalReturnPath } from '@/utils/path/routeUtils';
@@ -106,7 +106,7 @@ type HomeOAuthRetry = Readonly<{
 }>;
 type AccountDirectoryCallbackState =
     | Readonly<{ kind: 'progress'; stage: AccountDirectoryCallbackStage; providerName: string; endpointUrl: string }>
-    | Readonly<{ kind: 'error'; failure: AccountServiceFailureCode; providerName: string; endpointUrl: string }>
+    | Readonly<{ kind: 'error'; failure: AccountServiceFailureCode; providerName: string; badgeIconName?: IconName; endpointUrl: string }>
     | Readonly<{ kind: 'browser_wait'; wait: OAuthBrowserWait; returnTo: string }>;
 type ExternalSignInFailure = Readonly<{
     presentation: ReturnType<typeof describeOAuthSignInFailure>;
@@ -958,7 +958,7 @@ function OAuthProviderReturnBody() {
                 const directoryProvider = providerId
                     ? getAuthProvider(providerId)
                     : null;
-                const providerName = directoryProvider?.displayName ?? providerId;
+                const providerPresentation = describeOAuthProvider(providerId, pendingDirectoryAuth?.presentation);
                 accountDirectoryAttemptRef.current = {
                     controller,
                     target: directoryTarget,
@@ -976,7 +976,7 @@ function OAuthProviderReturnBody() {
                     safeSetDirectoryJourney({
                         kind: 'progress',
                         stage,
-                        providerName,
+                        ...providerPresentation,
                         endpointUrl: directoryEndpoint ?? resolvedEndpointUrl ?? '',
                     });
                 };
@@ -987,7 +987,7 @@ function OAuthProviderReturnBody() {
                         safeSetDirectoryJourney({
                             kind: 'error',
                             failure: { source: 'oauth_callback', code: 'credential_storage_failed' },
-                            providerName,
+                            ...providerPresentation,
                             endpointUrl: directoryEndpoint ?? resolvedEndpointUrl ?? '',
                         });
                         return;
@@ -1002,14 +1002,14 @@ function OAuthProviderReturnBody() {
                         }
                         const failure = classifyOAuthProviderRejection(error);
                         if (failure === 'cancelled') {
-                            publishCancelledSignIn(oauthProviderIconName(providerId));
+                            publishCancelledSignIn(providerPresentation.badgeIconName ?? 'sign-in');
                             safeReplace(admitInternalRouteHref(pendingDirectoryAuth?.accountEntryReturnTo ?? directoryReturnTo));
                             return;
                         }
                         safeSetDirectoryJourney({
                             kind: 'error',
                             failure,
-                            providerName,
+                            ...providerPresentation,
                             endpointUrl: directoryEndpoint ?? resolvedEndpointUrl ?? '',
                         });
                         return;
@@ -1029,7 +1029,7 @@ function OAuthProviderReturnBody() {
                         safeSetDirectoryJourney({
                             kind: 'error',
                             failure: { source: 'oauth_callback', code: 'invalid_request' },
-                            providerName,
+                            ...providerPresentation,
                             endpointUrl: directoryEndpoint ?? resolvedEndpointUrl ?? '',
                         });
                         return;
@@ -1086,6 +1086,7 @@ function OAuthProviderReturnBody() {
                                 endpointServerIdentityId: directoryIdentity,
                                 canonicalServerUrl: pendingDirectoryAuth.canonicalServerUrl,
                                 providerId,
+                                presentation: pendingDirectoryAuth.presentation,
                                 mode: 'keyed',
                                 entryIntent: pendingDirectoryAuth.entryIntent,
                                 returnTo: pendingDirectoryAuth.returnTo,
@@ -1098,20 +1099,17 @@ function OAuthProviderReturnBody() {
                                 throw new Error('Invalid keyed Account Service OAuth URL');
                             }
                             const keyedPending = keyedStart.pending;
-                            if (keyedPending.desktopAttemptId) {
-                                await openExternalAuthenticationUrl(keyedStart.url, keyedPending.desktopAttemptId);
+                            const handoff = await openExternalAuthenticationUrl(keyedStart.url, keyedPending.desktopAttemptId);
+                            if (handoff === 'system_browser') {
                                 safeSetDirectoryJourney({
                                     kind: 'browser_wait',
                                     returnTo: keyedPending.accountEntryReturnTo ?? directoryReturnTo,
                                     wait: {
-                                        providerName,
-                                        badgeIconName: oauthProviderIconName(providerId),
+                                        ...providerPresentation,
                                         destination: { kind: 'find_homes' },
                                         cancel: () => cancelAccountServiceOAuth(keyedPending),
                                     },
                                 });
-                            } else {
-                                await Linking.openURL(keyedStart.url);
                             }
                             return;
                         } catch {
@@ -1121,7 +1119,7 @@ function OAuthProviderReturnBody() {
                             safeSetDirectoryJourney({
                                 kind: 'error',
                                 failure: { source: 'oauth_callback', code: 'token_exchange_failed' },
-                                providerName,
+                                ...providerPresentation,
                                 endpointUrl: directoryEndpoint,
                             });
                             return;
@@ -1144,7 +1142,7 @@ function OAuthProviderReturnBody() {
                         failure: result.kind === 'relink_required'
                             ? { source: 'oauth_callback', code: 'directory_link_conflict' }
                             : classifyAccountServiceOAuthCallbackFailure(result.code),
-                        providerName,
+                        ...providerPresentation,
                         endpointUrl: directoryEndpoint ?? resolvedEndpointUrl ?? '',
                     });
                 } finally {
@@ -1800,12 +1798,13 @@ function OAuthProviderReturnBody() {
                         if (method?.execution.kind === 'oauth') {
                             const result = await launchAccountServiceOAuthAuthentication({
                                 authority: createVerifiedAccountServiceAuthority(discovery), execution: method.execution,
+                                presentation: method.method.presentation,
                                 intent: pending.entryIntent, returnTo: attempt.returnTo,
                                 accountEntryReturnTo: pending.accountEntryReturnTo, transport, signal,
                                 onBrowserHandoff: (handoff) => setAccountDirectoryJourney({
                                     kind: 'browser_wait',
                                     returnTo: pending.accountEntryReturnTo ?? attempt.returnTo,
-                                    wait: { ...handoff, ...describeAccountServiceAuthenticationProvider(method.method), destination: { kind: 'find_homes' } },
+                                    wait: { ...handoff, destination: { kind: 'find_homes' } },
                                 }),
                             });
                             if (result !== 'failed') return;
@@ -1948,7 +1947,7 @@ function OAuthProviderReturnBody() {
                 <AuthRouteStepFrame
                     testID="oauth-account-directory-failure"
                     status
-                    mark={<StepMark iconName={oauthProviderIconName(resolvedProviderId)} />}
+                    mark={<StepMark iconName={visibleAccountDirectoryJourney.badgeIconName ?? 'sign-in'} />}
                     title={directoryFailure.title}
                     subtitle={directoryFailure.body}
                     onBack={() => { void cancelAccountDirectoryJourney(); }}

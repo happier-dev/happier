@@ -910,6 +910,8 @@ export type PendingAccountDirectoryAuth = Readonly<{
     canonicalServerUrl: string;
     provider: string;
     purpose: 'account_directory';
+    /** Display fields from the advertised method, retained for a cold browser return. */
+    presentation?: AuthEntryProviderPresentationV1;
     /** Server-generated post-provider handle; absent before the provider redirect completes. */
     pending?: string;
     desktopAttemptId?: string;
@@ -940,6 +942,7 @@ export type PendingAccountDirectoryAuthInput = Readonly<{
     canonicalServerUrl: string;
     provider: string;
     purpose: 'account_directory';
+    presentation?: AuthEntryProviderPresentationV1;
     pending?: string;
     desktopAttemptId?: string;
     createdAt: number;
@@ -963,6 +966,7 @@ type NormalizedPendingAccountDirectoryAuth = Readonly<{
     canonicalServerUrl: string;
     provider: string;
     purpose: 'account_directory';
+    presentation?: AuthEntryProviderPresentationV1;
     pending?: string;
     desktopAttemptId?: string;
     createdAt: number;
@@ -1115,6 +1119,7 @@ function matchesPendingExternalAuthExact(current: PendingExternalAuth, expected:
 export interface PendingExternalConnect {
     provider: string;
     /** As on `PendingExternalAuth`: the start-time Home presentation, when one was projected. */
+    presentation?: AuthEntryProviderPresentationV1;
     returnTo: string;
     serverId?: string;
     serverUrl?: string;
@@ -1338,6 +1343,7 @@ const PendingAccountDirectoryAuthSchema = z.strictObject({
     endpoint: z.string(), serverIdentityId: z.string(), canonicalServerUrl: z.string(),
     credentialTarget: z.literal('account_directory'), purpose: z.literal('account_directory'),
     entryIntent: AccountContinuationIntentSchema, provider: z.string(), pending: z.optional(z.string()),
+    presentation: z.optional(AuthEntryProviderPresentationV1Schema),
     desktopAttemptId: z.optional(z.string().check(z.minLength(1))),
     createdAt: z.number(), expiresAt: z.number(), mode: z.optional(z.enum(['keyed', 'keyless'])),
     proof: z.optional(z.string()), secret: z.optional(z.string()), returnTo: z.optional(z.string()),
@@ -1371,6 +1377,7 @@ function normalizePendingAccountDirectoryAuth(
         canonicalServerUrl,
         provider: value.provider.trim(),
         purpose: 'account_directory',
+        ...(value.presentation ? { presentation: value.presentation } : {}),
         ...(value.pending ? { pending: value.pending.trim() } : {}),
         ...(value.desktopAttemptId ? { desktopAttemptId: value.desktopAttemptId } : {}),
         createdAt: value.createdAt,

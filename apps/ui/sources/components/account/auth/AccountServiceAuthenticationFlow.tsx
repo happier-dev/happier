@@ -7,7 +7,7 @@ import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeAction
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { AccountDirectoryKeyLoginForm, type AccountDirectoryKeyLoginOutcome } from './AccountDirectoryKeyLoginForm';
 import { t } from '@/text';
-import { describeAccountServiceAuthenticationAction, describeAccountServiceAuthenticationProvider, launchAccountServiceOAuthAuthentication } from './accountServiceAuthenticationActions';
+import { describeAccountServiceAuthenticationAction, launchAccountServiceOAuthAuthentication } from './accountServiceAuthenticationActions';
 import { OAuthBrowserWaitStep, type OAuthBrowserWait } from './OAuthBrowserWaitStep';
 import type { AccountPostAuthInput, AccountPostAuthResult } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
 
@@ -128,6 +128,7 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
                     const outcome = await launchAccountServiceOAuthAuthentication({
                         authority: props.service.authority,
                         execution,
+                        presentation: entry.method.presentation,
                         intent: props.intent,
                         returnTo: props.returnTo,
                         accountEntryReturnTo: props.accountEntryReturnTo,
@@ -136,7 +137,6 @@ export function AccountServiceAuthenticationFlow(props: AccountServiceAuthentica
                         isCurrent: props.isCurrent,
                         onBrowserHandoff: (handoff) => setBrowserWait({
                             ...handoff,
-                            ...describeAccountServiceAuthenticationProvider(entry.method),
                             destination: { kind: 'find_homes' },
                         }),
                     });
