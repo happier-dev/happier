@@ -151,6 +151,18 @@ it('associates the email problem with the field that owns it', async () => {
         .toContain(error?.props.nativeID);
 });
 
+it('shows an inline Back from the initial reset request only when the host can go back', async () => {
+    screen = await renderPanel({ passwordReset: 'email', initialView: 'forgot' });
+    expect(screen.findByTestId('email-password-request-reset')).not.toBeNull();
+    expect(screen.findByTestId('email-password-forgot-back')).toBeNull();
+    await screen.unmount();
+
+    const onBack = vi.fn();
+    screen = await renderPanel({ passwordReset: 'email', initialView: 'forgot', onBack });
+    await screen.pressByTestIdAsync('email-password-forgot-back');
+    expect(onBack).toHaveBeenCalledOnce();
+});
+
 it('shows the reset request its own field error and submits from the address field', async () => {
     screen = await renderPanel({ action: 'login', passwordReset: 'email' });
     await screen.pressByTestIdAsync('email-password-forgot');

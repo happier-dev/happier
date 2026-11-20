@@ -795,14 +795,14 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                         });
                     }}
                 />
-                <WelcomeActionCard
+                {stepBack ? <WelcomeActionCard
                     testID="email-password-forgot-back"
                     presentation="link"
                     title={t('common.back')}
                     iconName="arrow-left"
                     escape
-                    onPress={props.initialView === 'forgot' ? props.onBack : () => setView({ kind: props.action })}
-                />
+                    onPress={stepBack}
+                /> : null}
             </View>
             </WelcomeActionAdmissionContext.Provider>
         );
