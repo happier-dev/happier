@@ -49,7 +49,7 @@ import { isSessionBoardVisibleInDetails } from "@/components/sessions/board/sess
 import { useSessionExecutionRunsSupported } from "@/hooks/server/useSessionExecutionRunsSupported";
 import { Modal } from "@/modal";
 import { COMPOSER_SETTLED_APPROVAL_PRESENTATIONS, TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from "@/components/tools/shell/approvals/transcriptSettledApprovalPresentations";
-import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useComposerApprovalArtifactsForSession, useEndpointConnectivity, useIsDataReady, useLocalSetting, useTranscriptApprovalArtifactsForSession, useSessionPendingMessages, useSessionTranscriptCommittedPresence, useSessionTranscriptIds, useSessionVisibleReadSeq, useServerScopedMachineLabel, useSetting, useSyncError } from "@/sync/domains/state/storage";
+import { useWorkspaceRefs, storage, useEnabledAutomationsCountForSession, useComposerApprovalArtifactsForSession, useEndpointConnectivity, useIsDataReady, useLocalSetting, useTranscriptApprovalArtifactsForSession, useSessionPendingMessages, useSessionSelector, useSessionTranscriptCommittedPresence, useSessionTranscriptIds, useSessionVisibleReadSeq, useServerScopedMachineLabel, useSetting, useSyncError } from "@/sync/domains/state/storage";
 import type { SessionRouteHydrationState } from "@/sync/domains/session/sessionRouteHydrationState";
 import { readSessionContentAvailability } from "@/sync/domains/session/encryptedContentAvailability";
 import { appendSessionDraftText } from "@/components/sessions/composer/sessionDraftAppendAction";
@@ -102,6 +102,7 @@ import { safeRouterBack } from "@/utils/navigation/safeRouterBack";
 import { useAutomationsSupport } from "@/hooks/server/useAutomationsSupport";
 import { buildExactTurnAutomationRouteParams, EXACT_TURN_AUTOMATION_HEADER_ACTION_ID, readExactActiveParentTurn } from "@/components/automations/sessionLifecycle/exactTurnAutomationPrefill";
 import { SESSION_WORK_STATE_STATUS_BADGE_KEY } from "@/components/sessions/workState/sessionWorkStatePresentation";
+import { projectUiSessionAwareness } from "@/sync/domains/session/awareness/sessionAwareness";
 import { SessionWorkSourcesProvider, useSessionWorkSourcesOwner, useStableWorkSummary } from "@/components/sessions/work/sessionWorkSources";
 import type { SessionRunnerRuntimeStatusSnapshot } from "@/sync/domains/sessionRunnerRuntime/sessionRunnerRuntimeStatusRetention";
 import { useSessionRunnerRuntimeStatusRetention } from "@/components/sessions/sessionRunner/useSessionRunnerRuntimeStatusRetention";
@@ -1328,10 +1329,15 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const { counts: subagentCounts, participantTargets } = sessionAgentActivity;
     // The one owner of this Session's Work sources (ORC R-09): the header strip reads its summary,
     // the Work tab and the Session body read the same sources through context.
+    const runningWorkCount = useSessionSelector(acceptedSessionId, expectedRouteServerId ?? session?.serverId, current =>
+        current ? projectUiSessionAwareness(current, nowServerMs(), {
+            includeTitle: false, includeWorkspace: false, includeWork: false,
+        }).runningWorkCount : undefined);
     const sessionWorkSources = useSessionWorkSourcesOwner({
         sessionId: acceptedSessionId,
         serverId: expectedRouteServerId ?? session?.serverId ?? null,
         ownerMetadata,
+        runningWorkCount,
         agentActivity: sessionAgentActivity,
         enabled: acceptedSessionId !== '',
     });
@@ -1644,7 +1650,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         sessionExecutionRunsSupported,
         showAutomations,
         shouldShowSubagentsButton,
-        subagentActiveCount: subagentCounts.live,
+        runningWorkCount,
         workSummary,
         navigateWithBlurOnWeb,
         handleHeaderExtraItemSelect,
@@ -1732,7 +1738,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
         sessionId,
         shouldShowSubagentsButton,
         showAutomations,
-        subagentCounts.live,
+        runningWorkCount,
         workSummary,
         theme.colors.chrome.header.foreground,
         theme.colors.status.error,

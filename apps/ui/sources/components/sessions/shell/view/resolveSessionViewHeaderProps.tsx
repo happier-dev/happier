@@ -128,7 +128,7 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     sessionExecutionRunsSupported: boolean;
     showAutomations: boolean;
     shouldShowSubagentsButton: boolean;
-    subagentActiveCount: number;
+    runningWorkCount?: number;
     /** The Work projection's closed summary (ORC R-09): the in-row strip reads nothing else. */
     workSummary?: WorkSummary;
     navigateWithBlurOnWeb: (action: () => void) => void;
@@ -318,8 +318,8 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const destinationsInMenu = input.actionRailVisible !== true;
     const resolvedFoldedHeaderItems = resolveSessionViewHeaderActionItems({
         destinationsInMenu,
-        workAvailable: input.shouldShowSubagentsButton || (input.workSummary?.outstanding ?? 0) > 0,
-        workCount: input.workSummary?.outstanding ?? input.subagentActiveCount,
+        workAvailable: input.shouldShowSubagentsButton || (input.runningWorkCount ?? 0) > 0 || (input.workSummary?.outstanding ?? 0) > 0,
+        workCount: input.runningWorkCount ?? 0,
         terminalAvailable: !input.mobileTerminalTabAvailable,
         browserAvailable: input.browserMenuEntryAvailable === true,
         showAutomations: input.showAutomations,

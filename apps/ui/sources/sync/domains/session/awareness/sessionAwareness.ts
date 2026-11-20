@@ -26,6 +26,8 @@ export type UiSessionAwarenessOptions = UiSessionManagedWakeFacts & Readonly<{
     includeTitle?: boolean;
     /** Summary consumers do not display or reuse the private folder. */
     includeWorkspace?: boolean;
+    /** Chrome that only shows running work does not read the task list. */
+    includeWork?: boolean;
     hasPendingUserMessages?: boolean;
     optimisticPendingUserMessageAt?: number | null;
     hasPendingPermissionRequests?: boolean;
@@ -64,7 +66,7 @@ export function createUiSessionAwarenessInput(
     const source = options.presentationSource;
     const hydrated = 'agentState' in session;
     const ownerMetadata = source ? readSessionListPresentationOwnerMetadata(source) : hydrated ? readSessionOwnerMetadataView(session) : null;
-    const ownerWork = source && !source.metadataFromRow ? readSessionListPresentationOwnerMetadataField(source, 'work')
+    const ownerWork = options.includeWork === false ? null : source && !source.metadataFromRow ? readSessionListPresentationOwnerMetadataField(source, 'work')
         : source ? readSessionListRenderableOwnerMetadataView(source.row)?.work
             : hydrated ? ownerMetadata?.work : readSessionListRenderableOwnerMetadataView(session)?.work;
     const presentationMetadata = hydrated ? readSessionListRenderableSourceMetadata(session) : null;
@@ -89,7 +91,7 @@ export function createUiSessionAwarenessInput(
             : ownerMetadata?.terminal?.controlServiceabilityV1
             : hydrated ? ownerMetadata?.terminal?.controlServiceabilityV1 : metadata?.terminalControlServiceabilityV1,
     );
-    const workflowHeadline = source && !source.metadataFromRow ? ownerMetadata?.sessionWorkflowActivityHeadlineV1
+    const workflowHeadline = options.includeWork === false ? null : source && !source.metadataFromRow ? ownerMetadata?.sessionWorkflowActivityHeadlineV1
         : hydrated ? ownerMetadata?.sessionWorkflowActivityHeadlineV1 : null;
     const workflow = workflowHeadline == null ? null : SessionWorkflowActivityHeadlineV1Schema.safeParse(workflowHeadline);
     const fork = hasReadableMetadata
@@ -129,10 +131,10 @@ export function createUiSessionAwarenessInput(
         turnRetry: source ? source.metadata?.sessionTurnProgressV1 ?? source.metadataFallback?.sessionTurnProgressV1
             : hydrated ? session.metadata?.sessionTurnProgressV1 : undefined,
         viewerUnread: session.viewer?.attention.reasons.includes('unread'),
-        work: source ? metadata ? source.metadataFromRow ? source.row.workDisplay
+        work: options.includeWork === false ? null : source ? metadata ? source.metadataFromRow ? source.row.workDisplay
             : readSessionWorkStateV1FromMetadata(metadata) : null
             : hydrated ? metadata ? session.workDisplay !== undefined ? session.workDisplay : readSessionWorkStateV1FromMetadata(metadata) : null : session.workDisplay,
-        workflowHeadline: source ? metadata ? source.metadataFromRow ? source.row.workflowHeadline : workflow?.success ? workflow.data : null : null
+        workflowHeadline: options.includeWork === false ? null : source ? metadata ? source.metadataFromRow ? source.row.workflowHeadline : workflow?.success ? workflow.data : null : null
             : hydrated ? workflow?.success ? workflow.data : null : session.workflowHeadline,
         // A no-folder session's private folder is not a workspace to show or reuse.
         workspace: options.includeWorkspace !== false && metadata && readSessionDirectoryKind(metadata) !== 'managed'

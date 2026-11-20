@@ -22,7 +22,7 @@ function summary(overrides: Partial<WorkSummary> = {}): WorkSummary {
     return { outstanding: 0, needsYou: 0, stalled: 0, sessions: 0, runs: 0, ...overrides };
 }
 
-function input(sessionId: string, workSummary: WorkSummary, subagentActiveCount = 0) {
+function input(sessionId: string, workSummary: WorkSummary, runningWorkCount = 0) {
     const session = createSessionFixture({
         id: sessionId,
         metadata: { path: '/tmp/project', host: 'test-host' },
@@ -40,7 +40,7 @@ function input(sessionId: string, workSummary: WorkSummary, subagentActiveCount 
         sessionExecutionRunsSupported: false,
         showAutomations: false,
         shouldShowSubagentsButton: false,
-        subagentActiveCount,
+        runningWorkCount,
         workSummary,
         navigateWithBlurOnWeb: (action: () => void) => action(),
         handleHeaderExtraItemSelect: () => false,
@@ -57,14 +57,15 @@ function menuItems(props: ReturnType<typeof resolveSessionViewHeaderProps>): Rea
 }
 
 describe('resolveSessionViewHeaderProps Work entry', () => {
-    it('leaves the Work count to the rail, and carries the same count in ⋯ when the rail is not on screen', () => {
+    it('carries the awareness running count in the Work entry when the rail is folded', () => {
         const work = summary({ outstanding: 3, needsYou: 1, sessions: 2, runs: 2 });
-        const withRail = resolveSessionViewHeaderProps({ ...input('work-lead', work, 2), actionRailVisible: true });
+        const session = input('work-lead', work, 4);
+        const withRail = resolveSessionViewHeaderProps({ ...session, actionRailVisible: true });
         expect(menuItems(withRail).map((item) => item.id)).not.toContain('header.openSubagents');
 
-        const withoutRail = resolveSessionViewHeaderProps({ ...input('work-lead', work, 2), actionRailVisible: false });
+        const withoutRail = resolveSessionViewHeaderProps({ ...session, actionRailVisible: false });
         const entry = menuItems(withoutRail).find((item) => item.id === 'header.openSubagents');
-        expect(entry?.title).toContain('3');
+        expect(entry?.title).toContain('4');
         // A settled lead with no outstanding work and no subagents has no Work entry to offer.
         const settled = resolveSessionViewHeaderProps({ ...input('work-settled', summary()), actionRailVisible: false });
         expect(menuItems(settled).map((item) => item.id)).not.toContain('header.openSubagents');

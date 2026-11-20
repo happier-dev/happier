@@ -70,6 +70,7 @@ import {
 export type SessionWorkSources = Readonly<{
     sessionId: string;
     serverId: string | null;
+    runningWorkCount?: number;
     workflowActivity: SessionWorkflowActivityState;
     managedRuns: SessionManagedWorkflowRunsState;
     agentActivity: SessionAgentActivityState;
@@ -198,6 +199,7 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
     serverId: string | null;
     ownerMetadata: unknown;
     agentActivity: SessionAgentActivityState;
+    runningWorkCount?: number;
     enabled?: boolean;
 }>): SessionWorkSources {
     const enabled = params.enabled ?? true;
@@ -299,8 +301,9 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
         workflowActivity,
         managedRuns,
         agentActivity: params.agentActivity,
+        runningWorkCount: params.runningWorkCount,
         projection,
-    }), [managedRuns, params.agentActivity, params.serverId, params.sessionId, projection, workflowActivity]);
+    }), [managedRuns, params.agentActivity, params.runningWorkCount, params.serverId, params.sessionId, projection, workflowActivity]);
 }
 
 /**

@@ -1030,16 +1030,18 @@ export const SessionActionRail = React.memo(() => {
     usePublishRightSidebarActions(sideActions);
     const executeNavigation = model.executeNavigation;
     const { terminal, computer } = model;
-    // The Work tab's badge is the Work projection's outstanding count (D-S4): the same number the
-    // header strip shows, read from the one owner the Session host mounted — never a second count.
-    const workProjection = useSessionWorkSources()?.projection;
-    const outstandingCount = workProjection?.summary.outstanding ?? 0;
+    const workSources = useSessionWorkSources();
+    const workProjection = workSources?.projection;
+    const runningWorkCount = workSources?.runningWorkCount ?? 0;
     const workStatus = workProjection ? readWorkSummaryPresentation(workProjection.summary) : null;
-    const workLabel = workStatus && workStatus.count > 0 ? t('sessionWork.strip.a11y', { summary:
-        workStatus.bucket === 'needs_you' ? t('sessionWork.strip.needsYou', { count: workStatus.count })
-            : workStatus.bucket === 'working' ? t('sessionWork.strip.stillWorking', { count: workStatus.count })
-                : `${workStatus.count} · ${t('status.offline')}`,
-    }) : t('sessionWork.title');
+    const workAttention = workStatus?.bucket === 'needs_you' || workStatus?.bucket === 'offline' ? workStatus : null;
+    const workBadgeCount = runningWorkCount || workAttention?.count;
+    const workLabel = runningWorkCount > 0
+        ? t('sessionWork.strip.a11y', { summary: t('sessionWork.strip.stillWorking', { count: runningWorkCount }) })
+        : workAttention ? t('sessionWork.strip.a11y', { summary:
+            workAttention.bucket === 'needs_you' ? t('sessionWork.strip.needsYou', { count: workAttention.count })
+                : `${workAttention.count} · ${t('status.offline')}`,
+        }) : t('sessionWork.title');
     // Scripts counts this Session's own finite runs that are still working (the same Work operations).
     const runningScripts = workProjection?.projectCommands.filter((item) => item.status.bucket === 'working').length ?? 0;
     const contentFacts = useRightSidebarContentFacts({
@@ -1051,7 +1053,7 @@ export const SessionActionRail = React.memo(() => {
     const actions: RightSidebarRailAction[] = [];
     for (const tab of model.rightPanelTabs) {
         if (tab.navigation?.kind === 'page' || tab.id === 'companion' || tab.hiddenInLauncher || tab.id === model.mainTabId) continue;
-        const badgeCount = tab.id === 'agents' ? outstandingCount : tab.id === 'scripts' ? runningScripts : undefined;
+        const badgeCount = tab.id === 'agents' ? workBadgeCount : tab.id === 'scripts' ? runningScripts : undefined;
         const active = Boolean(model.scopeState?.right.isOpen && !rightPaneHiddenByDetails && model.activeTab === tab.id);
         actions.push({
             id: tab.id,

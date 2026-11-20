@@ -263,7 +263,9 @@ describe('Voice brief from the mounted Inbox', () => {
     ])('keeps report buckets truthful in the spoken session context: %j', (reports) => {
         const inbox = source();
         const candidates = [...inbox.sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate),
-            ...inbox.sessionPresentation.readySessions].map(candidate => ({ ...candidate, session: { ...candidate.session, managedSessions: reports } }));
+            ...inbox.sessionPresentation.readySessions].map(candidate => buildSessionActivityAttention({
+                session: { ...candidate.session, managedSessions: reports }, nowMs: 1_000,
+            }));
         const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation: buildInboxSessionPresentation({
             overview: buildActivityOverviewFromCandidates(candidates),
         }) }, settings: { voice: { privacy: { shareSessionSummary: true } } } });

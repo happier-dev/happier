@@ -11,7 +11,7 @@ import { readSessionListPresentationRuntime } from '@/sync/domains/session/listi
 /**
  * What an Inbox session row says under its title: what the session needs from the person first (the
  * Session row's own words for its attention state, "ready for review", "Mentioned you"), then a
- * lead's working reports (ORC R-10), then where it runs. The Home is named only when the Inbox spans
+ * running Session work, then where it runs. The Home is named only when the Inbox spans
  * more than one Home; otherwise it would repeat down every row. A worker reporting to a lead says
  * that instead of where it runs (every report runs beside its lead, so the place only repeats down
  * the list): its latest update, then "Reports to <lead>" (lab `inbox-I1`). Pure, so the Voice brief
@@ -50,16 +50,15 @@ export function buildInboxSessionContextLine(
     joinHappierFacts(
       need,
       presentSessionAwarenessNowLineV1(candidate.awareness),
-      readWorkingReports(candidate),
+      readRunningWork(candidate),
       reportsTo ? options.worker?.headline ?? null : null,
       reportsTo ?? context,
     ) || undefined
   );
 }
 
-function readWorkingReports(candidate: InboxSessionAttentionEntry['candidate']): string | null {
-  const reports = candidate.presentationSource ? candidate.presentationSource.relations.managedSessions : candidate.session.managedSessions;
-  const working = reports?.working ?? 0;
+function readRunningWork(candidate: InboxSessionAttentionEntry['candidate']): string | null {
+  const working = candidate.awareness.runningWorkCount ?? 0;
   return working > 0 ? t('sessionWork.strip.stillWorking', { count: working }) : null;
 }
 
@@ -81,7 +80,7 @@ export function buildInboxSessionReasonLine(
     if (!reason && candidate.reasons.hasBlockedPendingDelivery) reason = t('session.pendingMessages.deliveryBlockedReasons.unknown');
     reason ??= readInboxSessionNeed(candidate);
   }
-  return joinHappierFacts(reason, readWorkingReports(candidate)) || undefined;
+  return joinHappierFacts(reason, readRunningWork(candidate)) || undefined;
 }
 
 /**

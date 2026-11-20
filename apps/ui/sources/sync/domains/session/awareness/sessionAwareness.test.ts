@@ -34,7 +34,7 @@ describe('UI Session awareness acquisition adapter', () => {
         const row = buildSessionListRenderableFromSession(session, undefined, []);
         expect(row).toHaveProperty('workDisplay', { v: 1, primaryItem: {
             id: task.id, kind: task.kind, title: task.title, status: task.status, statusReason: task.statusReason,
-        }, hasActiveGoal: true });
+        }, hasActiveGoal: true, currentGoalTitle: goal.title, taskProgress: { done: 1, total: 2 } });
         expect(row).not.toHaveProperty('workState');
         expect(JSON.stringify(row)).not.toContain(history.title);
         expect(projectUiSessionAwareness(row, 1_000).currentWork)
@@ -97,6 +97,30 @@ describe('UI Session awareness acquisition adapter', () => {
         const row = projectUiSessionAwareness(buildSessionListRenderableFromSession(session, undefined, []), 1_000);
         expect(detail.title).toBe('Current summary');
         expect(row.title).toBe(detail.title);
+    });
+
+    it('projects the running count for folded chrome without visiting checklist items', () => {
+        let itemReads = 0;
+        const session = createSessionFixture({
+            active: true, presence: 'online', runtimeActivityState: 'active', runtimeActivityActiveCount: 3,
+            metadata: { path: '/work', host: 'host', sessionWorkStateV1: {
+                v: 1, backendId: 'claude', updatedAt: 100,
+                get items() {
+                    itemReads += 1;
+                    return [{ id: 'step', kind: 'todo', origin: 'vendor', status: 'active', title: 'Write test', updatedAt: 100 }];
+                },
+            } },
+        });
+        const full = projectUiSessionAwareness(session, 100);
+        expect(full.taskProgress).toEqual({ done: 0, total: 1 });
+        expect(itemReads).toBeGreaterThan(0);
+        itemReads = 0;
+        const chrome = projectUiSessionAwareness(session, 100, {
+            includeTitle: false, includeWorkspace: false, includeWork: false,
+        });
+        expect(chrome.runningWorkCount).toBe(3);
+        expect(chrome.runningWorkCount).toEqual(full.runningWorkCount);
+        expect(itemReads).toBe(0);
     });
 
     it('projects the same status facts without reading a title for summary consumers', () => {

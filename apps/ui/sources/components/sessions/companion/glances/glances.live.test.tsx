@@ -188,12 +188,14 @@ function homeServicesFixture(descriptor = readWidgetDescriptor(null, homeService
 
 describe('Companion glance consumed owners', () => {
     it.each([
-        { statuses: ['waiting'], fact: 'sessionWork.strip.needsYou(count=1)' },
-        { statuses: ['running'], fact: 'sessionWork.strip.stillWorking(count=1)' },
-        { statuses: ['waiting', 'running', 'running'], fact: 'sessionWork.strip.needsYou(count=1)' },
-        { statuses: [], fact: null },
-    ] as const)('uses the Work owner summary for its pane link with $statuses', async ({ statuses, fact }) => {
-        session = createSessionFixture({ ...session, active: true, activeAt: Date.now(), metadata: { ...session.metadata!,
+        { statuses: ['waiting'], runtimeCount: 0, fact: 'sessionWork.strip.needsYou(count=1)' },
+        { statuses: ['running'], runtimeCount: 4, fact: 'sessionWork.strip.stillWorking(count=4)' },
+        { statuses: ['waiting', 'running', 'running'], runtimeCount: 0, fact: 'sessionWork.strip.needsYou(count=1)' },
+        { statuses: [], runtimeCount: 0, fact: null },
+    ] as const)('shows awareness running work separately from Work attention with $statuses', async ({ statuses, runtimeCount, fact }) => {
+        const { useSessionAwareness } = await import('@/sync/domains/session/awareness/useSessionAwareness');
+        session = createSessionFixture({ ...session, active: true, activeAt: Date.now(),
+            runtimeActivityState: runtimeCount ? 'active' : 'idle', runtimeActivityActiveCount: runtimeCount, metadata: { ...session.metadata!,
             [SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY]: SessionAgentActivityHeadlineV1Schema.parse({
                 v: 1, backendId: 'claude', updatedAt: Date.now(),
                 activeEntries: statuses.map((status, index) => ({
@@ -205,8 +207,9 @@ describe('Companion glance consumed owners', () => {
         storage.getState().applySessions([session]);
         function WorkGlance() {
             const agentActivity = useSessionAgentActivity({ sessionId: session.id, serverId: runtime.serverId, session });
+            const { awareness } = useSessionAwareness(session.id, runtime.serverId, session);
             const sources = useSessionWorkSourcesOwner({ sessionId: session.id, serverId: runtime.serverId,
-                ownerMetadata: session.metadata, agentActivity });
+                ownerMetadata: session.metadata, agentActivity, runningWorkCount: awareness.runningWorkCount });
             return <SessionWorkSourcesProvider value={sources}>
                 {React.createElement('WorkSummaryProbe', { summary: sources.projection.summary })}
                 <SessionCompanionGlance

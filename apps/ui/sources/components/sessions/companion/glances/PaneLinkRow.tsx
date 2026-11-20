@@ -98,7 +98,8 @@ export function sessionCompanionPaneLabel(paneId: string): string {
 function usePaneRailFact(paneId: string, sessionId: string, serverId: string | null): string | null {
     const scmStatus = useSessionProjectScmStatus(paneId === 'git' ? sessionId : null, serverId);
     const mode = useSetting('tabBarGitBadgeMode');
-    const workSummary = useSessionWorkSources()?.projection.summary;
+    const workSources = useSessionWorkSources();
+    const workSummary = workSources?.projection.summary;
     if (paneId === 'git') {
         const badge = resolveGitTabBadge(mode, scmStatus);
         if (!badge) return null;
@@ -106,11 +107,13 @@ function usePaneRailFact(paneId: string, sessionId: string, serverId: string | n
             ? t('widgetGlances.changedCount', { count: badge.value })
             : `+${badge.added} −${badge.removed}`;
     }
+    if (paneId === 'agents' && workSources?.runningWorkCount) {
+        return t('sessionWork.strip.stillWorking', { count: workSources.runningWorkCount });
+    }
     if (paneId === 'agents' && workSummary) {
         const { bucket, count } = readWorkSummaryPresentation(workSummary);
-        if (count === 0) return null;
+        if (count === 0 || bucket === 'working') return null;
         if (bucket === 'needs_you') return t('sessionWork.strip.needsYou', { count });
-        if (bucket === 'working') return t('sessionWork.strip.stillWorking', { count });
         return `${count} · ${t('status.offline')}`;
     }
     return null;

@@ -71,13 +71,28 @@ describe('Inbox session row line', () => {
     expect(line).toContain('0.3');
   });
 
+  it('reads the running count from the candidate awareness projection', () => {
+    const ready = readyCandidate();
+    const session = {
+      ...ready.session,
+      runtimeActivityState: 'active' as const,
+      runtimeActivityActiveCount: 4,
+      runtimeActivityObservedAt: 1000,
+      runtimeActivityRevision: 1,
+    };
+    const candidate = buildSessionActivityAttention({ session, nowMs: 1000 });
+    expect(buildInboxSessionContextLine(candidate))
+      .toContain(t('sessionWork.strip.stillWorking', { count: 4 }));
+  });
+
   it.each([
     { total: 2, working: 0, needsYou: 0, stalled: 2, finished: 0, attentionPrimary: 'disconnected' as const },
     { total: 2, working: 0, needsYou: 2, stalled: 0, finished: 0, attentionPrimary: 'permission_required' as const },
     { total: 6, working: 2, needsYou: 1, stalled: 3, finished: 0, attentionPrimary: 'permission_required' as const },
   ])('labels only server-bucketed working reports as still working: %j', (reports) => {
     const candidate = readyCandidate();
-    const line = buildInboxSessionContextLine({ ...candidate, session: { ...candidate.session, managedSessions: reports } }) ?? '';
+    const session = { ...candidate.session, managedSessions: reports };
+    const line = buildInboxSessionContextLine(buildSessionActivityAttention({ session, nowMs: 1000 })) ?? '';
     if (reports.working === 0) {
       expect(line).not.toContain(t('sessionWork.strip.stillWorking', { count: reports.total }));
     } else {
