@@ -119,7 +119,7 @@ import { ManagedMachineError } from '@/app/machines/managed/managedRows';
 import type { PendingActivationFailureDetailsV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import { SessionMessageReplyAdmissionV1Schema, SessionMessageReplyProgressV1Schema,
     deriveSessionMessageReplyReturnLocalIdV1, type SessionMessageReplyAdmissionV1, type SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
-import { createSessionInputReplyProgressInTx, bindSessionInputReplyAcceptedTurnInTx, settleUnacceptedSessionInputReplyInTx } from '@/app/session/messages/sessionMessageReply';
+import { createSessionInputReplyProgressInTx, bindSessionInputReplyAcceptedTurnInTx, projectSessionInputRepliesFromTurnInTx, settleUnacceptedSessionInputReplyInTx } from '@/app/session/messages/sessionMessageReply';
 import { admitDiscussionFollowAddressingInTx, acknowledgeDiscussionFollowInputInTx, admitSessionFollowRelationsForInputInTx } from '@/app/session/follow/sessionFollowEdgeService';
 import { deriveDiscussionFollowInputLocalIdV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import type { SessionPendingEnqueueByMachineRequestV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
@@ -3652,6 +3652,7 @@ type PendingDeliveryResolutionInput = Readonly<{
     position: number;
     inputAdmissionReceipt?: unknown;
     requestEqualityEvidenceV1?: unknown;
+    replyDisposition?: string | null;
 }>;
 
 type PendingDeliveryBlockRowInput = Readonly<{
@@ -3807,13 +3808,12 @@ async function commitResolvedPendingDelivery(
     // Acceptance can precede the independently queued begin. Keep Pending until
     // the exact primary turn exists, including an already terminal turn. Runs
     // have a separate turn owner; historical opaque acceptance has no identity.
-    if (acceptedTurn && params.existing.targetExecutionRunId == null) {
-        const publishedTurn = await tx.sessionTurn.findUnique({
-            where: { sessionId_turnId: { sessionId: params.sessionId, turnId: acceptedTurn.turnId } },
-            select: { id: true },
-        });
-        if (!publishedTurn) return { ok: false, error: "turn-publication-pending" };
-    }
+    const primaryTurn = params.existing.targetExecutionRunId == null ? acceptedTurn : undefined;
+    const publishedTurn = primaryTurn && await tx.sessionTurn.findUnique({
+        where: { sessionId_turnId: { sessionId: params.sessionId, turnId: primaryTurn.turnId } },
+        select: { sessionId: true, turnId: true, status: true, transcriptAnchorsJson: true },
+    });
+    if (primaryTurn && !publishedTurn) return { ok: false, error: "turn-publication-pending" };
 
     if (params.target.reason === 'provider_accepted' && !await bindSessionInputReplyAcceptedTurnInTx(tx, {
         sessionId: params.sessionId, localId: params.localId,
@@ -3905,6 +3905,9 @@ async function commitResolvedPendingDelivery(
             await reconcileAutonomousExchangeAcceptedTurnInTx(tx, {
                 sessionId: params.sessionId, turnId: acceptedTurn.turnId,
             });
+            if (publishedTurn && params.existing.replyDisposition != null) {
+                await projectSessionInputRepliesFromTurnInTx(tx, publishedTurn, params.localId);
+            }
         }
     }
     const readyProjection = committed.didWrite
@@ -4024,6 +4027,7 @@ export async function resolveAcceptedPendingDelivery(params: {
                         position: true,
                         inputAdmissionReceipt: true,
                         requestEqualityEvidenceV1: true,
+                        replyDisposition: true,
                     },
                 });
 

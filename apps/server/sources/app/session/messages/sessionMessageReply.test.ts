@@ -9,7 +9,8 @@ import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/
 import { SessionMessageReplyMutationV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 
 const boundary = createDbMocks({ sessionMessage: ['findMany', 'findUnique', 'findFirst', 'updateMany'],
-    sessionPendingMessage: ['findMany', 'findUnique'], session: ['findUnique', 'findFirst'], machine: ['findUnique', 'findMany'], accessKey: ['findUnique'] });
+    sessionPendingMessage: ['findMany', 'findUnique'], session: ['findUnique', 'findFirst', 'findMany'], machine: ['findUnique', 'findMany'],
+    accessKey: ['findUnique'], teamMembership: ['findFirst'] });
 const transactions = createDbTransactionMock(() => ({ ...boundary.db, ...inTxPostgresControlStatementMock }));
 // Only Prisma's persistent connection is replaced; custody, strict parsing,
 // transaction context, final selection and replay decisions remain production code.
@@ -20,12 +21,14 @@ const { projectSessionInputRepliesFromTurnInTx, mutateSessionMessageReplyInTx } 
 beforeEach(() => { boundary.reset(); vi.stubEnv('HAPPIER_DB_PROVIDER', 'postgres'); });
 afterEach(() => vi.unstubAllEnvs());
 
-it.each(['partial', 'empty', 'explicit', 'late-partial', 'late-returned'] as const)('retains the exact cancelled foreground outcome through replay (%s)', async kind => {
+it.each(['partial', 'empty', 'explicit', 'late-partial', 'late-returned', 'witness-cancelled', 'witness-failed', 'witness-completed'] as const)('settles only the accepted foreground input through replay (%s)', async kind => {
+    const witnessOnly = kind.startsWith('witness-');
     const progress: SessionMessageReplyProgressV1 = { v: 1, mode: 'wait', acceptedTurnId: 'stopped-turn', disposition: 'observing',
         ...(kind === 'explicit' ? { outcome: { kind: 'pass' } } : {}) };
     const input = { id: 'input-row', sessionId: 'session', seq: 1, localId: 'input', messageRole: 'user', sidechainId: null,
+        acceptedTurnId: 'stopped-turn', turnStartWitnessId: 'stopped-turn',
         targetExecutionRunId: null, replyDisposition: 'observing', inputAdmissionReceipt: null, replyProgress: progress };
-    const foreign: typeof input = { ...input, id: 'foreign-input', seq: 4, localId: 'foreign',
+    const foreign: typeof input = { ...input, id: 'foreign-input', seq: 4, localId: 'foreign', turnStartWitnessId: 'another-turn',
         replyProgress: { ...progress, acceptedTurnId: 'another-turn' } };
     const final = { id: 'stopped-partial', sessionId: 'session', seq: 2, localId: 'partial', messageRole: 'agent', sidechainId: null };
     const rows = [input, foreign, final, { ...final, id: 'unrelated-later', seq: 5 }];
@@ -42,8 +45,9 @@ it.each(['partial', 'empty', 'explicit', 'late-partial', 'late-returned'] as con
         row.replyProgress = data.replyProgress;
         return { count: 1 };
     });
-    const stopped = { sessionId: 'session', turnId: 'stopped-turn', status: 'cancelled',
-        transcriptAnchorsJson: JSON.stringify({ userMessageSeqs: [1, 4], ...(kind !== 'empty' ? { finalAssistantMessageSeq: 2 } : {}) }) };
+    const stopped = { sessionId: 'session', turnId: 'stopped-turn',
+        status: kind === 'witness-failed' ? 'failed' : kind === 'witness-completed' ? 'completed' : 'cancelled',
+        transcriptAnchorsJson: witnessOnly ? null : JSON.stringify({ userMessageSeqs: [1, 4], ...(kind !== 'empty' ? { finalAssistantMessageSeq: 2 } : {}) }) };
     if (kind === 'late-partial' || kind === 'late-returned') {
         await inTx(tx => projectSessionInputRepliesFromTurnInTx(tx, {
             ...stopped, transcriptAnchorsJson: JSON.stringify({ userMessageSeqs: [1, 4] }),
@@ -53,7 +57,9 @@ it.each(['partial', 'empty', 'explicit', 'late-partial', 'late-returned'] as con
     }
     await inTx(tx => projectSessionInputRepliesFromTurnInTx(tx, stopped));
     await inTx(tx => projectSessionInputRepliesFromTurnInTx(tx, stopped));
-    expect(input.replyProgress.outcome).toEqual(kind === 'explicit' ? { kind: 'pass' } : kind === 'empty' || kind === 'late-returned' ? { kind: 'cancelled' }
+    expect(input.replyProgress.outcome).toEqual(kind === 'explicit' ? { kind: 'pass' } : kind === 'witness-failed' ? { kind: 'failed' }
+        : kind === 'witness-completed' ? { kind: 'terminal_no_result' }
+        : kind === 'empty' || kind === 'late-returned' || kind === 'witness-cancelled' ? { kind: 'cancelled' }
         : { kind: 'cancelled', result: { sessionId: 'session', messageId: 'stopped-partial' } });
     expect(foreign.replyProgress).toEqual({ ...progress, acceptedTurnId: 'another-turn' });
     expect(JSON.stringify(input.replyProgress)).not.toContain('partialText');
@@ -72,11 +78,13 @@ it('proves a native cancelled partial by its exact admitted Run, sidechain, turn
     const result = { id: 'partial', sessionId: session.id, localId: 'native-partial', seq: 3, sidechainId: 'sidechain', messageRole: 'agent' };
     boundary.db.session.findUnique.mockResolvedValue(session);
     boundary.db.session.findFirst.mockResolvedValue(session);
+    boundary.db.session.findMany.mockResolvedValue([session]);
+    boundary.db.teamMembership.findFirst.mockResolvedValue(null);
     boundary.db.machine.findUnique.mockResolvedValue(machine);
     boundary.db.machine.findMany.mockResolvedValue([machine]);
     boundary.db.accessKey.findUnique.mockResolvedValue({ session, machine });
-    boundary.db.sessionPendingMessage.findUnique.mockResolvedValue(null);
-    boundary.db.sessionMessage.findUnique.mockResolvedValue(input);
+    boundary.db.sessionPendingMessage.findMany.mockResolvedValue([]);
+    boundary.db.sessionMessage.findMany.mockImplementation(async ({ where }: { where: unknown }) => matchesDbMockWhere(input, where) ? [input] : []);
     boundary.db.sessionMessage.findFirst.mockImplementation(async ({ where }: { where: unknown }) => matchesDbMockWhere(result, where) ? result : null);
     boundary.db.sessionMessage.updateMany.mockImplementation(async ({ data }: { data: { replyProgress: SessionMessageReplyProgressV1 } }) => {
         input.replyProgress = data.replyProgress; return { count: 1 };

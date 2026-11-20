@@ -5597,6 +5597,7 @@ describe("pendingMessageService (shared sessions)", () => {
         const localId = `publication-input-${randomUUID()}`;
         const turnId = `publication-turn-${randomUUID()}`;
         expect(await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId,
+            ...(status === "completed" ? { reply: { mode: "wait" as const } } : {}),
             ...(status === "plain-only"
                 ? { content: { t: "plain" as const, v: { role: "user", content: { type: "text", text: "publication-prompt" } } } }
                 : { ciphertext: "publication-prompt" }), messageRole: "user" })).toMatchObject({ ok: true });
@@ -5620,6 +5621,7 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toEqual(sessionBefore);
         expect((await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: {
             v: 1, sessionId: session.id, mutationId: randomUUID(), action: "begin", turnId, observedAt: 10,
+            ...(status === "completed" ? { startingInputId: localId } : {}),
         } })).ok).toBe(true);
         if (status === "completed") {
             // Terminal publication is existing persistent-boundary setup; this
@@ -5633,6 +5635,10 @@ describe("pendingMessageService (shared sessions)", () => {
             pendingCount: 0, message: { localId } });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id, localId } })).toBe(0);
         expect(await db.sessionMessage.count({ where: { sessionId: session.id, localId } })).toBe(1);
+        if (status === "completed") {
+            expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+                .toMatchObject({ replyProgress: { acceptedTurnId: turnId, outcome: { kind: "terminal_no_result" } } });
+        }
         expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({
             latestTurnId: turnId, latestTurnStatus: status === "completed" ? "completed" : "in_progress", pendingCount: 0,
         });

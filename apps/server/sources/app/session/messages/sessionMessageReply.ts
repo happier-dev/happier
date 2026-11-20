@@ -842,15 +842,25 @@ async function releaseDiscussionWatchReturnInTx(tx: Tx, progress: SessionMessage
 /** Runs inside the canonical turn transaction: exact inputs, exact final, no latest-text inference. */
 export async function projectSessionInputRepliesFromTurnInTx(tx: Tx, turn: Readonly<{
     sessionId: string; turnId: string; status: string; transcriptAnchorsJson: string | null;
-}>): Promise<void> {
+}>, lateAcceptedLocalId?: string): Promise<void> {
+    const terminal = ['completed', 'failed', 'cancelled'].includes(turn.status);
+    if (!terminal && lateAcceptedLocalId !== undefined) return;
     const anchors = parseStoredSessionTurnTranscriptAnchors(turn.transcriptAnchorsJson);
-    const inputs = anchors?.userMessageSeqs?.length ? await tx.sessionMessage.findMany({
-        where: { sessionId: turn.sessionId, seq: { in: [...anchors.userMessageSeqs] }, messageRole: 'user', targetExecutionRunId: null,
-            sidechainId: null, replyDisposition: { not: null } },
+    const anchoredInputs = anchors?.userMessageSeqs ?? [];
+    // The accepted foreground input can be committed before a terminal turn
+    // with no transcript anchors. Its indexed turn and start witness still
+    // identify the exact reply to settle.
+    const inputs = terminal || anchoredInputs.length > 0 ? await tx.sessionMessage.findMany({
+        where: { sessionId: turn.sessionId, messageRole: 'user', targetExecutionRunId: null,
+            sidechainId: null, replyDisposition: { not: null },
+            ...(lateAcceptedLocalId === undefined ? {} : { localId: lateAcceptedLocalId }),
+            OR: [
+                ...(anchoredInputs.length > 0 ? [{ seq: { in: [...anchoredInputs] } }] : []),
+                ...(terminal ? [{ acceptedTurnId: turn.turnId, turnStartWitnessId: turn.turnId }] : []),
+            ] },
         select: { localId: true },
     }) : [];
-    const terminal = ['completed', 'failed', 'cancelled'].includes(turn.status);
-    const final = terminal && typeof anchors?.finalAssistantMessageSeq === 'number'
+    const final = inputs.length > 0 && terminal && typeof anchors?.finalAssistantMessageSeq === 'number'
         ? await tx.sessionMessage.findFirst({ where: { sessionId: turn.sessionId, seq: anchors.finalAssistantMessageSeq,
             sidechainId: null, messageRole: { in: ['agent', 'assistant'] } }, select: { id: true } }) : null;
     for (const input of inputs) {
@@ -872,7 +882,7 @@ export async function projectSessionInputRepliesFromTurnInTx(tx: Tx, turn: Reado
         if (terminal) progress = await releaseDiscussionWatchReturnInTx(tx, progress);
         await writeOriginal(tx, original, progress);
     }
-    if (terminal) await releaseSessionInputReplyObserversForSourceInTx(tx, turn.sessionId, turn.turnId);
+    if (terminal && lateAcceptedLocalId === undefined) await releaseSessionInputReplyObserversForSourceInTx(tx, turn.sessionId, turn.turnId);
 }
 
 async function releaseSessionInputReplyObserversForSourceInTx(tx: Tx, sessionId: string, turnId: string): Promise<void> {
