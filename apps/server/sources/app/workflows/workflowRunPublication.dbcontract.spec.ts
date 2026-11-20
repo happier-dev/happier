@@ -25,7 +25,8 @@ import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { encodeAutomationSessionLifecycleConfiguration } from "@/app/automations/automationSessionLifecycleConfigurationCodec";
 import { updateAutomationTrigger } from "@/app/automations/automationCrudService";
 import { workflowRunAttentionSql, workflowRunAttentionWhere, workflowRunSqlIdentifier } from './workflowRunAttention';
-import { prismaRuntime } from '@/storage/prisma';
+import { createDbMaintenanceClient, onDbClientQuery, prismaRuntime } from '@/storage/prisma';
+import { databaseLatch } from '@/testkit/postgresAccountCursorContention';
 
 const provider = process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER ?? "postgres";
 
@@ -143,12 +144,33 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
         expect(await membership(source.owner.id)).toBe(true);
         expect(await membership(f.accounts[2].id)).toBe(false);
         const before = await db.account.findMany({ where: { id: { in: f.runAudience.map(account => account.id) } }, select: { id: true, seq: true } });
-        await workflowStorage.setWorkflowRunReadState({ accountId: source.owner.id, runId: source.run.id, revision: 2, failedAt: failedAt.toISOString() });
-        const after = await db.account.findMany({ where: { id: { in: before.map(account => account.id) } }, select: { id: true, seq: true } });
+        const request = { accountId: source.owner.id, runId: source.run.id, revision: 2, failedAt: failedAt.toISOString() };
+        const receipt = { runId: source.run.id, attentionSeenFailureAt: request.failedAt };
+        if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
+            || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
+            throw new Error('Use the disposable PostgreSQL DB-contract harness');
+        }
+        const statements: string[] = [];
+        const counted = await createDbMaintenanceClient('postgres', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        onDbClientQuery(counted, ({ query }) => statements.push(query));
+        const originalTransaction = db.$transaction;
+        db.$transaction = new Proxy(originalTransaction, { apply(_target, _receiver, args) {
+            return Reflect.apply(counted.$transaction, counted, args);
+        } });
+        try {
+            await expect(workflowStorage.setWorkflowRunReadState(request)).resolves.toEqual(receipt);
+        } finally {
+            db.$transaction = originalTransaction;
+            await counted.$disconnect();
+        }
+        const after = await db.account.findMany({ where: { id: { in: before.map(account => account.id) } }, select: { id: true, seq: true }, orderBy: { id: 'asc' } });
         for (const account of after) expect(account.seq).toBe(before.find(row => row.id === account.id)!.seq + (account.id === source.owner.id ? 1 : 0));
         expect(await db.automationRun.count({ where: { automationId: f.watcher.id } })).toBe(1);
         await db.automationRun.update({ where: { id: source.run.id }, data: { revision: 3, workflowCustodyState: 'settled' } });
         expect(await membership(source.owner.id)).toBe(false);
+        await expect(workflowStorage.setWorkflowRunReadState(request)).resolves.toEqual(receipt);
+        expect(await db.account.findMany({ where: { id: { in: after.map(account => account.id) } }, select: { id: true, seq: true }, orderBy: { id: 'asc' } }))
+            .toEqual(after);
         const summary = await workflowStorage.summarizeWorkflowRuns({ accountId: source.owner.id,
             sourceArtifactIds: [source.artifact.id], recent: 1, pageByteLimit: 1_000_000 });
         expect(summary.summaries[0]).toMatchObject({ needsYouCount: 0,
@@ -157,6 +179,44 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
             sequence: 0n, memberOrdinal: 0n, lifecycle: 'waiting_for_review', contentEnvelope: '{}' } });
         expect(await membership(source.owner.id)).toBe(true);
         expect(await membership(f.accounts[2].id)).toBe(true);
+        const newerFailure = new Date('2026-10-23T11:00:00.000Z');
+        const held = databaseLatch();
+        const release = databaseLatch();
+        let writerPid = 0;
+        const writer = db.$transaction(async tx => {
+            await tx.automationRun.update({ where: { id: source.run.id }, data: { revision: 4, finishedAt: newerFailure } });
+            [{ pid: writerPid }] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+            held.release();
+            await release.promise;
+        });
+        const writerOutcome = Promise.allSettled([writer]);
+        await Promise.race([held.promise, writer]);
+        const staleReceipt = expect(workflowStorage.setWorkflowRunReadState(request)).rejects.toMatchObject({ code: 'currentness_conflict' });
+        const readerOutcome = Promise.allSettled([staleReceipt]);
+        try {
+            await expect.poll(async () => {
+                const [{ blocked }] = await db.$queryRaw<Array<{ blocked: boolean }>>`SELECT EXISTS (
+                    SELECT 1 FROM pg_stat_activity WHERE datname = current_database()
+                    AND ${writerPid}::int = ANY(pg_blocking_pids(pid))) AS blocked`;
+                return blocked;
+            }).toBe(true);
+        } finally {
+            release.release();
+            await writerOutcome;
+            await readerOutcome;
+        }
+        await writer;
+        await staleReceipt;
+        expect(await db.automationRun.findUnique({ where: { id: source.run.id }, select: { finishedAt: true, attentionSeenFailureAt: true } }))
+            .toEqual({ finishedAt: newerFailure, attentionSeenFailureAt: failedAt });
+        const cost = {
+            statements: statements.filter(query => !/^\s*(BEGIN|COMMIT|ROLLBACK|SET|SHOW)\b/i.test(query)).length,
+            watchers: statements.filter(query => query.includes('"AutomationTrigger"')).length,
+            followers: statements.filter(query => query.includes('"SessionFollowEdge"')).length,
+        };
+        expect(cost.statements).toBeGreaterThan(0);
+        console.info('WORKFLOW_MARK_SEEN_SQL', cost);
+        expect(cost).toMatchObject({ watchers: 0, followers: 0 });
     });
 
     it.each(["initialize", "allocate", "publish", "review", "transition", "pause", "resume", "cancel", "recover", "withdraw", "trigger-update", "automation-cancel", "exhaustion"] as const)(

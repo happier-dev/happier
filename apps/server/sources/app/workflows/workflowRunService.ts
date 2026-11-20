@@ -25,7 +25,7 @@ import { publishWorkflowRunMachineWakeInTx } from './workflowRunMachineRouting';
 import { readWorkflowRunFrontierContinuationsInTx } from './workflowRunFrontierContinuation';
 
 import { markAccountsChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
-import { acquireWorkflowPublicationLocksInTx } from "./acquireWorkflowPublicationLocksInTx";
+import { acquireWorkflowPublicationLocksInTx, acquireWorkflowRunOwnerPublicationLocksInTx } from "./acquireWorkflowPublicationLocksInTx";
 import { invalidateRunFollowDestinationsInTx } from '@/app/session/follow/sessionFollowEdgeService';
 import { markAccountChangesForSessionAccounts } from "@/app/session/changeTracking/markAccountChangesForSessionAccounts";
 import { publishManagedRunWakeInTx, publishManagedContextWakeInTx } from '@/app/machines/managed/managedWake';
@@ -972,7 +972,7 @@ export async function setWorkflowRunReadState(params: Readonly<{ accountId: stri
     return inTx(async tx => {
         const access = await resolveWorkflowRunAccessTx(tx, { actorAccountId: params.accountId, runId: params.runId });
         if (access.ownerAccountId !== params.accountId) throw new WorkflowRunServiceError('run_access_denied');
-        await acquireWorkflowPublicationLocksInTx(tx, { accountId: params.accountId, runIds: [params.runId] });
+        await acquireWorkflowRunOwnerPublicationLocksInTx(tx, params);
         const row = await tx.automationRun.findFirst({ where: workflowRunIdentityWhere(params),
             select: { state: true, revision: true, finishedAt: true, attentionSeenFailureAt: true, updatedAt: true } });
         if (!row) throw new WorkflowRunServiceError('run_not_found');
