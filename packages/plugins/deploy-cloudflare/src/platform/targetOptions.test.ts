@@ -97,7 +97,7 @@ it.each([
         ...account }, fieldPath: project.path },
       readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) }));
     expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
-      .toEqual({ options: [expected] });
+      .toEqual({ options: [expected], ...(targetKind === 'cloudflare-pages' ? { nextCursor: '2' } : {}) });
     expect(requests.map(request => new URL(request.url).pathname)).toEqual([`/client/v4/accounts/account${endpoint}`]);
   } finally { await kit.dispose(); }
 });
@@ -257,6 +257,60 @@ it.each([
         providerEnvironment: environment }, fieldPath: 'providerIdentity.providerResourceId' },
       readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }) }));
     expect(JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes)))
-      .toEqual({ options: [expected] });
+      .toEqual({ options: [expected], ...(environment.kind === 'production' ? { nextCursor: '2' } : {}) });
+  } finally { await kit.dispose(); }
+});
+
+it('continues one Pages option page at a time without totals and checks the echoed page', async () => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    const page = new URL(request.url).searchParams.get('page');
+    if (page === '2') return json([], { page: 2 });
+    if (page === '3') return json([{ id: 'wrong', name: 'wrong' }], { page: 2, total_pages: 4 });
+    return json([{ id: 'project', name: 'project' }]);
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    const resource = kit.registration('resources', 'target-options');
+    if (!resource) throw new Error('Missing target-options Resource');
+    const open = async (cursor?: string) => {
+      const bytes = await resource.read(createTestResourceInvocationContext({
+        query: { draftInput: draft, fieldPath: 'providerIdentity.providerResourceId', cursor },
+        readAction: async (ref, input) => ({ ok: true, result: await kit.invokeAction(ref.localId, input) }),
+      }));
+      return JSON.parse(typeof bytes === 'string' ? bytes : new TextDecoder().decode(bytes));
+    };
+    expect(await open()).toEqual({ options: [{ value: 'project', label: 'project' }], nextCursor: '2' });
+    expect(requests).toHaveLength(1);
+    expect(await open('2')).toEqual({ options: [] });
+    expect(requests).toHaveLength(2);
+    await expect(open('3')).rejects.toMatchObject({ code: 'provider_response_invalid' });
+    expect(requests).toHaveLength(3);
+  } finally { await kit.dispose(); }
+});
+
+it('binds a draft Worker tag to the native script before producing Link content', async () => {
+  const requests: HttpRequest[] = [];
+  const http = createPluginHttpFixture({ async request(request) {
+    requests.push(request);
+    return json([{ id: 'worker-a', tag: 'native-a' }, { id: 'worker-b', tag: 'native-b' }]);
+  } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  const inspect = (providerResourceId: string) => kit.invokeAction('workers-inspect', {
+    v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+    credentialRef, credentialPrincipal: { ...credentialPrincipal,
+      purpose: { ...credentialPrincipal.purpose, consumer: { pluginId: entry.manifest.id, localId: 'workers-inspect' } } },
+    product: 'workers', sourceMethod: 'upload',
+    providerIdentity: { providerAccountId: 'account', providerResourceId, providerEnvironment: 'script:worker-b' },
+    providerEnvironment: { kind: 'script', scriptName: 'worker-b' },
+    repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' },
+  });
+  try {
+    await expect(inspect('native-b')).resolves.toMatchObject({ providerIdentity: { providerResourceId: 'native-b' } });
+    await expect(inspect('native-a')).rejects.toMatchObject({ code: 'deployment_unavailable' });
+    expect(requests.map(request => new URL(request.url).pathname)).toEqual([
+      '/client/v4/accounts/account/workers/scripts', '/client/v4/accounts/account/workers/scripts',
+    ]);
   } finally { await kit.dispose(); }
 });

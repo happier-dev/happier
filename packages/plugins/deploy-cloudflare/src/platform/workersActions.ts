@@ -83,8 +83,11 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
       throw new PluginError({ code: 'unsupported_action', details: { phase: 'source' } });
     }
     const accountId = request.providerIdentity ? request.providerIdentity.providerAccountId : request.providerAccountId;
-    const workerTag = request.providerIdentity?.providerResourceId ?? await resolveWorkerTag(accountId, environment.scriptName, io(context));
+    const workerTag = await resolveWorkerTag(accountId, environment.scriptName, io(context));
     if (typeof workerTag !== 'string') refuse(workerTag);
+    if (request.providerIdentity && request.providerIdentity.providerResourceId !== workerTag) {
+      throw new PluginError({ code: 'deployment_unavailable', details: { phase: 'link' } });
+    }
     if (request.sourceMethod === 'upload') {
       const preview = environment.kind === 'preview' ? await inspectPreviewIdentity({ accountId,
         scriptName: environment.scriptName, previewName: environment.previewName }, io(context)) : null;

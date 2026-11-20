@@ -52,7 +52,9 @@ it('deletes the legacy discovery/link producer’s Worker ID without force, then
       providerEnvironment: linked.providerEnvironment, preparedNative: linked.preparedNative })))
       .toMatchObject({ state: 'succeeded', providerResourceAbsent: true });
     expect(requests.map(request => [request.method, request.url])).toEqual([
-      ['GET', `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`], ['DELETE', root], ['GET', root],
+      ['GET', `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`],
+      ['GET', `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts`],
+      ['DELETE', root], ['GET', root],
     ]);
     expect(requests.every(request => request.credentialBinding?.kind === 'connectedAccountPurpose'
       && request.credentialBinding.purpose === 'deploy.manage')).toBe(true);

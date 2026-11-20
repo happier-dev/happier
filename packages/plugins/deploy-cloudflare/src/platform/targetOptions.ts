@@ -1,10 +1,11 @@
 import { PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
-import { DeploymentTargetPreparationBaseV1ProtocolSchema, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
+import { DeploymentTargetPreparationBaseV1ProtocolSchema, projectNativeJsonValueForTransport, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { DeploymentTargetRoleInputProtocolSchemasV1, type DefinePluginInput, type DeploymentTargetRoleFailureV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request, requestAccounts, type DeploymentContext } from './deploymentHttp.js';
+import { cloudflareHasNextPage, CloudflareProviderRefusal } from './cloudflareRoutes.js';
 import { readWorkerScripts, resolveWorkerTag } from './workers.js';
 
 const pluginId = 'happier.deploy.cloudflare';
@@ -106,19 +107,20 @@ async function read(input: Input, context: DeploymentContext) {
     }
     return invalid();
   });
-  if (selectedScript) rows.unshift({ value: { kind: 'script', scriptName: selectedScript }, label: selectedScript });
-  const page = reply.resultInfo;
   let nextCursor: string | undefined;
-  if (page !== undefined) {
-    if (!isObject(page)) invalid();
-    for (const key of ['page', 'per_page', 'total_count', 'total_pages']) {
-      if (page[key] !== undefined && !Number.isSafeInteger(page[key])) invalid();
+  // Worker scripts and triggers are unpaged. Collection endpoints may omit all page metadata.
+  if (input.fieldPath !== 'triggerUuid') {
+    const page = Number(input.cursor ?? 1);
+    try {
+      if (cloudflareHasNextPage({ result: rows,
+        ...(reply.resultInfo === undefined ? {} : { result_info: projectNativeJsonValueForTransport(reply.resultInfo) }),
+      }, page, 'target options')) nextCursor = String(page + 1);
+    } catch (error) {
+      if (error instanceof CloudflareProviderRefusal) invalid();
+      throw error;
     }
-    // Accounts omit total_pages; all collection metadata is optional in the vendor schema.
-    const totalPages = page.total_pages ?? (typeof page.total_count === 'number' && typeof page.per_page === 'number' && page.per_page > 0
-      ? Math.ceil(page.total_count / page.per_page) : undefined);
-    if (typeof page.page === 'number' && typeof totalPages === 'number' && page.page < totalPages) nextCursor = String(page.page + 1);
   }
+  if (selectedScript) rows.unshift({ value: { kind: 'script', scriptName: selectedScript }, label: selectedScript });
   return { options: options(rows, input.query), ...(nextCursor ? { nextCursor } : {}) };
 }
 

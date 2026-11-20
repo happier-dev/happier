@@ -76,7 +76,8 @@ async function fixture(mode: 'success' | 'buildFailure' | 'cancel' | 'lost' | 'd
     requests.push(request);
     if (mode === 'lost') throw new Error('private-provider-detail');
     let value: unknown = { id: 'app', deployment_id: mode === 'compactVersion' ? versionId.replaceAll('-', '') : versionId };
-    if (request.url.endsWith('/assets-upload-session')) value = { jwt: 'asset-upload-token',
+    if (request.url.endsWith('/workers/scripts')) value = [{ id: 'app', tag: 'worker-tag' }];
+    else if (request.url.endsWith('/assets-upload-session')) value = { jwt: 'asset-upload-token',
       buckets: mode === 'assetsCached' ? [] : [[mode === 'unknownAsset' ? 'unknown-hash' : 'asset-hash']] };
     else if (request.url.includes('/workers/assets/upload')) value = { jwt: 'asset-completion-token' };
     else if (request.url.endsWith('/previews/pr-1')) value = { id: previewId, name: 'pr-1' };
@@ -102,7 +103,7 @@ it('inspects and links explicit Workers upload without native Git access or a bu
     expect(inspected).not.toHaveProperty('repositoryAccess');
     if (!inspected || typeof inspected !== 'object' || Array.isArray(inspected)) throw new Error('Expected prepared Worker');
     expect(await h.kit.invokeAction('workers-link', { ...preparation, ...inspected })).toEqual(inspected);
-    expect(h.requests).toEqual([]);
+    expect(h.requests.map(request => new URL(request.url).pathname)).toEqual(['/client/v4/accounts/account/workers/scripts']);
   } finally { await h.dispose(); }
 });
 
@@ -261,7 +262,7 @@ it('uploads executable modules and Static Assets only to the captured native Pre
     expect(prepared).not.toHaveProperty('repositoryAccess');
     if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Expected prepared Worker');
     expect(await h.kit.invokeAction('workers-link', { ...preparation, ...prepared })).toMatchObject({ preparedNative: { previewId } });
-    expect(h.requests).toHaveLength(1);
+    expect(h.requests).toHaveLength(2);
     const observed = await h.invoke(preview);
     expect(observed).toMatchObject({ state: 'running', providerDeploymentId: 'preview-deployment:preview-deployment' });
     const publishes = h.requests.filter(request => request.url.endsWith('/deployments') && request.method === 'POST');
