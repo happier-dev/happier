@@ -42,17 +42,20 @@ function makeParticles(source: GlyphRect, target: GlyphRect, focalInk?: StepFoca
     const cols = Math.max(1, Math.round(Math.sqrt(count * Math.max(1, target.width) / Math.max(1, target.height))));
     const rows = Math.ceil(count / cols);
     const particles = new Float32Array(count * 8);
-    // A small control's digits fill it and thin out over twice its halo on every side (a box convolved with a
-    // triangle), so the dissolving control never reads as a hard-edged block.
+    // Digits without ink to follow (a small control, a target whose ink has not arrived) fill their rect and thin
+    // out over twice the halo on every side (a box convolved with a triangle), so they never read as a hard-edged block.
     const feather = (i: number, salt: number) => (scatter(i, salt) + scatter(i, salt + 104) - 1) * 2 * t.smallHalo;
     for (let i = 0; i < count; i++) {
         const x = (i % cols + 0.5) / cols;
         const y = (Math.floor(i / cols) + 0.5) / rows;
         const left = small ? source.x + scatter(i, 3) * source.width + feather(i, 101) : source.x + x * source.width;
         const top = small ? source.y + scatter(i, 5) * source.height + feather(i, 307) : source.y + y * source.height;
-        const [targetX, targetY] = focalInk?.[Math.floor(i * focalInk.length / count)] ?? [x, y];
-        const right = target.x + targetX * target.width;
-        const bottom = target.y + targetY * target.height;
+        const ink = focalInk?.[Math.floor(i * focalInk.length / count)];
+        // Without ink each digit keeps its relative place, shaken within its grid cell so no lattice shows.
+        const right = ink ? target.x + ink[0] * target.width
+            : target.x + (x + (scatter(i, 503) - 0.5) / cols) * target.width + feather(i, 601);
+        const bottom = ink ? target.y + ink[1] * target.height
+            : target.y + (y + (scatter(i, 709) - 0.5) / rows) * target.height + feather(i, 811);
         const variation = ((Math.imul(i + 1, 2654435761) >>> 0) % 65536) / 65536;
         const stagger = t.stagger * (0.65 * variation + 0.35 * y) * (small ? 0.6 : 1);
         particles.set([

@@ -99,6 +99,26 @@ describe('first-open glyph choreography', () => {
         expect(count(0.3)).toBe(before);
     });
 
+    it('lands on a target without focal ink (a late QR) as a soft cloud, not a grid block', () => {
+        const forward = scene({ grammar: 'morph', from: 0, to: 1, secondsPerProgress: 0.92 });
+        // At p = 0.9 every digit has landed and is still visible.
+        const layer = forward(0.9 * 0.92).find(layer => layer.kind === 'traveller');
+        if (!layer) throw new Error('The digits should still be resolving on the target');
+        const at = createGlyphFrameSampler()({ view: { w: 390, h: 844 }, dpr: 1, theme: 'light', layers: [layer] }).sprites.at;
+        const { x, y, width, height } = geometry.target;
+        const columns = new Set<number>();
+        let beyond = 0;
+        for (let index = 0; index < at.length; index += 2) {
+            columns.add(Math.round(at[index]));
+            if (Math.max(x - at[index], at[index] - x - width, y - at[index + 1], at[index + 1] - y - height) > 2) beyond++;
+        }
+        const landed = at.length / 2;
+        // A lattice lands every digit on a few columns, all inside the rect, ending at a hard edge.
+        expect(columns.size).toBeGreaterThan(landed / 4);
+        expect(beyond / landed).toBeGreaterThan(0.02);
+        expect(beyond / landed).toBeLessThan(0.25);
+    });
+
     it('clears outgoing Home digits before revealing Home and leaves an empty scene at settle', () => {
         const home = scene({ grammar: 'home', from: 0, to: 1, secondsPerProgress: 3.4 });
         const modes = (seconds: number) => home(seconds).flatMap(layer => layer.kind === 'front' ? [layer.mode] : []);
