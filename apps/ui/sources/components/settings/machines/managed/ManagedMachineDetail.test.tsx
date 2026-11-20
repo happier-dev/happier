@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { AgentActionButton } from '@happier-dev/plugin-ui/components';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -44,7 +43,7 @@ import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntim
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedCreationProgress } from './ManagedCreationProgress';
 import { ManagedMachineSections, ManagedMachineResizeResult, ManagedEnrolledMachineSections, useManagedMachineHeaderIdentity, type ManagedMachineHeaderIdentity } from './ManagedMachineSections';
 import { ManagedReceiptPageLayout } from './ManagedReceiptPageLayout';
@@ -87,7 +86,6 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { Item } from '@/components/ui/lists/Item';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { MachineProvisionersListResultV1Schema, MachineProvisionerOptionsResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { V2SessionRecordSchema, encodeV2SessionListCursorV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { commitWebServerUrlOverride } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
@@ -1059,32 +1057,6 @@ describe('managed Machine detail', () => {
                     managedCreation: { homeId: ownership === 'different-home' ? 'unrelated-home' : machine.homeId,
                         managedId: machine.id, controller: { machineId: 'controller', installationId: 'installation' } } } } } });
         let triggerReads = 0;
-        const boundRule = bound ? AutomationDefinitionDetailSchema.parse({
-            id: 'birth-archive-rule', name: 'Archive rule', description: null, enabled: true, workflowDefinitionId: null,
-            scopeSessionId: null, targetType: null, existingSessionId: null, templateVersion: 1, lastRunAt: null,
-            createdAt: 1, updatedAt: 1, assignments: [{ machineId: machine.controller.machineId, enabled: true, priority: 0, updatedAt: 1 }],
-            executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
-                workspace: { directory: '~' }, executionTarget: { kind: 'detached_run' }, inlineDefinition: {
-                    version: 1, defaults: {}, inputs: [], blocks: [{ kind: 'action', id: 'managed-scope-end',
-                        actionId: ownership === 'unloaded-delete' ? 'machines.managed.delete' : 'machines.managed.power.set', input: { homeId: { kind: 'literal', value: machine.homeId },
-                            managedId: { kind: 'literal', value: machine.id }, when: { kind: 'literal', value: 'after-idle' },
-                            intent: { kind: 'literal', value: ownership === 'unloaded-delete' ? 'delete' : 'stop' },
-                            ...(ownership === 'unloaded-delete' ? { reviewedDependencies: { kind: 'literal', value: true } } : {}) } }],
-                },
-            } } },
-            triggers: [{ id: 'birth-trigger', revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'sessionLifecycle',
-                sourceSessionId: source.id, events: ['sessionArchived'], policy: { kind: 'everyMatch' },
-                remainingOccurrences: null, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }],
-        }) : null;
-        // /query requests details:true. Feed the canonical detail producer shape,
-        // including the inline recipe FIN must decode before recognizing a rule.
-        const rules = boundRule ? [boundRule] : [];
-        if (matching && boundRule) rules.push(AutomationDefinitionDetailSchema.parse({
-            ...boundRule, id: 'birth-task-rule', triggers: [{ id: 'birth-task-trigger', revision: 1,
-                enabled: true, createdAt: 1, updatedAt: 1, kind: 'runLifecycle',
-                source: { kind: 'workflow_run', runId: '11111111-1111-4111-8111-111111111111' }, condition: 'terminal',
-                remainingOccurrences: 1, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: null }],
-        }));
         const finRequests: string[] = [];
         const ownerMetadata = createSessionOwnerMetadataV1({ metadata: source.metadata! });
         if (!ownerMetadata.ok) throw new Error('Source fixture must have canonical owner metadata');
@@ -1120,17 +1092,12 @@ describe('managed Machine detail', () => {
             }
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated')
                 return Response.json(createRootLayoutFeaturesResponse({ features: { workflows: { enabled: true } } }));
-            if (url.pathname === '/v3/automations' || url.pathname === '/v3/automations/query') {
+            if (url.pathname === '/v3/automations/query') {
                 expect(url.origin).toBe(target.serverUrl);
-                if (url.pathname === '/v3/automations/query') triggerReads += 1;
-                return ownership === 'fin-read-failed' ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
-                    : Response.json({ automations: rules, nextCursor: null });
+                triggerReads += 1;
+                return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
             }
-            if (url.pathname === '/v3/automations/birth-archive-rule') {
-                expect(url.origin).toBe(target.serverUrl);
-                return Response.json(boundRule);
-            }
-            // The source Session/rules above are the only retained Account data.
+            // The source Session is the only retained Account data in this fixture.
             // Other bootstrap owners still receive their canonical empty wire;
             // unclaimed Session batches remain with the full-record adapter.
             return createEmptyAccountBootstrapHttpResponse(url.pathname, init);
@@ -1467,17 +1434,15 @@ describe('managed Machine detail', () => {
             expect(screen.getTextContent()).toContain(failed.error!.errorCode);
             expect(screen.findByTestId('managed-machine.installation-retry')).not.toBeNull();
             expect(retries).toEqual([]);
-            // An unavailable catalog cannot authorize Start now; Review still offers setup through the shared owner.
+            // Investigate sits beside Retry. With Triage unavailable, its catalog owner offers recovery
+            // without a launch control.
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
-                expect(screen.findAllByType(AgentActionButton)[0]!.props.startUnavailableReason).toBeTruthy();
-            });
-            // A failed install task is evidence: Investigate sits beside Retry and hands this exact operation to
-            // configured Triage. This Home has none, so the shared owner's typed refusal is shown (D5).
-            await act(async () => { screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('review'); });
-            await waitForHomeGovernance(async () => {
-                await flushHookEffects();
-                expect(screen.findByTestId('managed-machine.investigate.unavailable')).not.toBeNull();
+                const investigation = screen.findByTestId('managed-machine.investigate');
+                expect(investigation).not.toBeNull();
+                const catalog = investigation?.findAllByType(SurfaceStateCard)
+                    .find(node => node.props.testID === 'investigation.agentActions.unavailable');
+                expect(catalog?.props.action?.onPress).toEqual(expect.any(Function));
             });
             expect(retries).toEqual([]);
             await screen.pressByTestIdAsync('managed-machine.installation-retry');
@@ -2765,24 +2730,27 @@ describe('managed Machine detail', () => {
             if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [machine] });
             if (url.pathname === '/v1/machines/managed/actions/get') {
                 if (authority === 'read-unavailable-after-review' && confirmedDelete) throw new TypeError('Managed row temporarily unavailable');
-                if (authority === 'stalled-target' && reviewingDelete) return new Promise<Response>((_resolve, reject) => {
-                    // A silent HTTP peer is a network boundary; the real read owner must end the wait.
-                    init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
-                });
+                if (authority === 'stalled-target' && reviewingDelete) {
+                    // Deliver headers but leave the response body pending so the read owner can detect inactivity.
+                    return new Response(new ReadableStream<Uint8Array>(), {
+                        headers: { 'content-type': 'application/json' },
+                    });
+                }
                 return Response.json(machine);
             }
             if (url.pathname === bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.delete')) {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
                 minted.push(request);
+                const managedAdmission = request.envelope.v === 1
+                    ? projectExternalActionManagedAdmissionV1('machines.managed.delete', request.envelope.input)
+                    : request.envelope.managedAdmission;
+                if (managedAdmission?.actionId !== 'machines.managed.delete') throw new Error('Expected managed Delete admission');
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'test-native-issuer-authorization', binding: {
                     accountId: 'owner', authentication, serverIdentityId: machine.homeId,
                     machineId: controller.machineId, custodianAccountId: 'foreign-owner', installationId: controller.installationId,
                     accountEncryptionMode: 'plain', actionId: 'machines.managed.delete', requestId: request.envelope.requestId,
                     target: request.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
-                    // Home's one creator decision for this exact Delete (externalActionManagedAdmission → auth.ts).
-                    ...(creatorOnly && request.envelope.v === 1 ? { managedAdmission: {
-                        ...projectExternalActionManagedAdmissionV1('machines.managed.delete', request.envelope.input),
-                        authority: 'creator_recovery' } } : {}),
+                    managedAdmission: creatorOnly ? { ...managedAdmission, authority: 'creator_recovery' } : managedAdmission,
                 } });
                 authorizations.push(authorization);
                 return Response.json(authorization);
@@ -2797,9 +2765,12 @@ describe('managed Machine detail', () => {
                         error: 'managed_controller_request_failed', details: { kind: 'managedControllerRequest',
                             path: '/v1/machines/managed/controller/submit-intent', category: 'status', status: 409, code: 'intent_changed' } } });
                 if (envelope.v !== 1 || envelope.target?.kind !== 'machine') throw new Error('Expected the plain controller request');
-                const invocation = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
-                    purpose: { kind: 'external_action' }, machineId: controller.machineId, installationId: controller.installationId,
-                    serverIdentityId: machine.homeId, installationPrivateKey: installation.privateKey, includeInvocation: true })?.invocation;
+                const context = { authorization: request.executionAuthorization, machineId: controller.machineId,
+                    installationId: controller.installationId, serverIdentityId: machine.homeId, installationPrivateKey: installation.privateKey };
+                const codec = openManagedControllerActionCodecV1({ ...context, includeInvocation: true });
+                expect(codec?.material.machineKey).toHaveLength(32);
+                expect(openExternalActionRequesterAccountContextV1({ ...context, purpose: { kind: 'external_action' } })).toBeNull();
+                const invocation = codec?.invocation;
                 const execution = await nativeExecutor.execute('machines.managed.delete', envelope.input, {
                     surface: 'ui', authority: 'present_user', actionCaller: invocation?.caller ?? { kind: 'host' },
                     runtimeAccountId: 'owner', serverId: machine.homeId, actionRequestId: envelope.requestId,
@@ -3802,7 +3773,7 @@ describe('managed Machine detail', () => {
         const screen = await renderScreen(<ManagedCreationProgress machine={machine} guestPayloadStale={stale}
             {...(enrolled ? { enrolledMachine: { machineId: 'guest', installationId: 'guest-installation', online, serviceManaged: true } } : {})}
             handlers={{ reinstall: () => pressed.push('recovery') }} />);
-        const rows = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation' && typeof node.props.title === 'string');
+        const rows = screen.tree.findAllByType(Item).filter(node => node.props.testID === 'managed-machine.installation');
         expect(rows.map(row => row.props.title)).toEqual([title()]);
         if (enrolled) {
             // One row (TH N6): what the press does and when it was seen join the line; no separate freshness row.
@@ -4570,7 +4541,8 @@ describe('managed Machine detail', () => {
             current.sources[2],
         ];
         const expected = MachineSetupApplyInputV1Schema.parse({ homeId, machineId: machine.enrolledMachineId,
-            targets: [{ homeId, machineId: machine.enrolledMachineId, sources, desiredRevision: current.desiredRevision, recipePlans: [], exclusions: [] }],
+            targets: [{ homeId, machineId: machine.enrolledMachineId, sources, desiredRevision: current.desiredRevision,
+                preset: { id: machine.preset!.id, revision: machine.preset!.revision }, recipePlans: [], exclusions: [] }],
         });
         const releasePlan = createDeferred<void>();
         const plans: unknown[] = [];
