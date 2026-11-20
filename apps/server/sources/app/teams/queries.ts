@@ -1,4 +1,4 @@
-import { countScopedTeamProjectSourcesInTx } from '@/app/projects/sources/projectSourceQuery';
+import { readScopedTeamProjectSourcePresenceInTx } from '@/app/projects/sources/projectSourceQuery';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { TEAM_DIRECTORY_PAGE_LIMIT_DEFAULT_V1, decodeTeamDirectoryCursorV1, encodeTeamDirectoryCursorV1, teamDirectoryQueryKeyV1, type TeamsListInputV1, type TeamsPageV1 } from '@happier-dev/protocol/teams/projections';
 
@@ -202,12 +202,14 @@ export async function listTeamsForActorInTx(
             && context.teamCapabilities.viewTeam && qualifications.get(context.team.id)?.ok).map(context => context.team.id),
     });
 
+    // Suspension withdraws Team reads but preserves native self-leave.
+    // Apply the same summary admission as the point read before asking Sources.
+    const visibleContexts = contexts.filter(context => toTeamViewer(context) !== null);
+    const sources = await readScopedTeamProjectSourcePresenceInTx(tx, {
+        actorAccountId: input.actorAccountId, authentication: input.authentication, admittedTeamActors: visibleContexts,
+    });
     const items: TeamsPageV1["items"] = [];
-    for (const context of contexts) {
-        // Suspension withdraws Team reads but preserves native self-leave.
-        // Use the same summary admission as the point read; a source-managed
-        // suspended lifetime with neither capability has no readable destination.
-        if (toTeamViewer(context) === null) continue;
+    for (const context of visibleContexts) {
         // Qualification is per Team because the authentication policy is per
         // Team. A Team whose accepted method this credential does not satisfy
         // keeps its row and loses its Team-derived capabilities; it must not
@@ -219,10 +221,6 @@ export async function listTeamsForActorInTx(
         // so the withheld row is recomposed by the same capability owner with
         // the membership removed rather than re-decided here.
         const qualified = qualifications.get(context.team.id)?.ok ?? false;
-        const sources = await countScopedTeamProjectSourcesInTx(tx, {
-            actorAccountId: input.actorAccountId, sharedWithTeamId: context.team.id,
-            authentication: input.authentication, admittedTeamActor: context,
-        });
         items.push(projectTeamSummaryV1({
             counts: counts.get(context.team.id)!,
             managedDefaultsGroupIds: managedDefaultsGroupIds.get(context.team.id) ?? [],
@@ -230,7 +228,7 @@ export async function listTeamsForActorInTx(
             team: context.team,
             viewerRole: context.membership?.role ?? null,
             viewerJoinedAt: context.membership?.joinedAt ?? null,
-            hasSetup: sources.ok ? sources.count > 0 : null,
+            hasSetup: sources.get(context.team.id) ?? null,
             capabilities: qualified
                 ? context.capabilities
                 : resolveTeamCapabilitiesV1({

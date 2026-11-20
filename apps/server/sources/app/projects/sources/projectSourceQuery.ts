@@ -12,6 +12,7 @@ const dialect = () => resolveDbSqlDialect(getDbProviderFromEnv(process.env, 'pos
 const column = (name: string) => prismaRuntime.raw(dialect() === 'mysql'
     ? `s.\`${name}\`` : `s."${name}"`);
 const either = (arms: readonly Prisma.Sql[]) => arms.length ? prismaRuntime.sql`(${prismaRuntime.join([...arms], ' OR ')})` : prismaRuntime.sql`1 = 0`;
+const sourceTable = () => prismaRuntime.raw(dialect() === 'mysql' ? '`ProjectSource`' : '"ProjectSource"');
 
 /** JSON admission remains in the database, before ordering, cursor and limit.
  * PostgreSQL containment consumes the Source owner's partial GIN indexes. */
@@ -28,6 +29,48 @@ function contains(columnName: 'owner' | 'audience', principal: PrincipalRefV1): 
             WHERE ${match(prismaRuntime.raw("json_extract(grant_entry.value, '$.principal')"))})`;
 }
 
+async function resolveSourceVisibilityInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string;
+    authentication?: Partial<TeamOperationAuthenticationContext>;
+    admittedTeamActors?: readonly TeamActorContext[];
+}>) {
+    const memberships = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE,
+        accountId: input.actorAccountId }, select: { teamId: true } });
+    const grants = memberships.map(({ teamId }) => ({ principal: { kind: 'team' as const, teamId }, level: 'view' as const }));
+    const owner = { kind: 'account' as const, accountId: input.actorAccountId };
+    const admission = await resolveProjectSourceAdmissionInTx(tx, input.actorAccountId, grants, input.authentication ?? {}, [owner], input.admittedTeamActors);
+    if (!admission.active) return null;
+    const principals = admission.effectivePrincipals(owner, grants);
+    const readable = either([
+        prismaRuntime.sql`(${column('owner')} IS NULL AND ${column('createdByAccountId')} = ${input.actorAccountId})`,
+        ...principals.flatMap(principal => principal.kind === 'group'
+            ? [contains('audience', principal)] : [contains('owner', principal), contains('audience', principal)]),
+    ]);
+    const membershipTeamIds = new Set(memberships.map(({ teamId }) => teamId));
+    const groupsByTeam = new Map<string, Extract<PrincipalRefV1, { kind: 'group' }>[]>();
+    for (const principal of principals) {
+        if (principal.kind !== 'group') continue;
+        const groups = groupsByTeam.get(principal.teamId) ?? [];
+        groups.push(principal);
+        groupsByTeam.set(principal.teamId, groups);
+    }
+    return {
+        readable,
+        selectTeam(teamId: string) {
+            if (!admission.admittedTeam(teamId)) {
+                return membershipTeamIds.has(teamId) ? { kind: 'unavailable' } as const : { kind: 'empty' } as const;
+            }
+            const groups = groupsByTeam.get(teamId) ?? [];
+            const team = { kind: 'team', teamId } as const;
+            return {
+                kind: 'selected' as const,
+                where: either([contains('owner', team), contains('audience', team), ...groups.map(group => contains('audience', group))]),
+                groupIds: groups.map(group => group.groupId),
+            };
+        },
+    };
+}
+
 /** Shared by Source pages, Source counts and Source-context Artifact classification.
  * The returned predicate always binds ProjectSource as alias `s`. */
 export async function resolveProjectSourceQueryScopeInTx(tx: Tx, input: Readonly<{
@@ -38,30 +81,47 @@ export async function resolveProjectSourceQueryScopeInTx(tx: Tx, input: Readonly
     /** The summary's same-transaction structural admission; Source qualification remains native. */
     admittedTeamActor?: TeamActorContext;
 }>): Promise<Readonly<{ ok: true; where: Prisma.Sql; sharedWithTeamGroupIds: ReadonlySet<string> }> | Readonly<{ ok: false; error: ProjectSourcesFailureV1['error'] }>> {
-    const memberships = await tx.teamMembership.findMany({ where: { ...EFFECTIVE_TEAM_MEMBERSHIP_WHERE,
-        accountId: input.actorAccountId }, select: { teamId: true } });
-    const grants = memberships.map(({ teamId }) => ({ principal: { kind: 'team' as const, teamId }, level: 'view' as const }));
-    const owner = { kind: 'account' as const, accountId: input.actorAccountId };
-    const admission = await resolveProjectSourceAdmissionInTx(tx, input.actorAccountId, grants, input.authentication ?? {}, [owner], input.admittedTeamActor);
-    if (!admission.active) return { ok: false, error: 'source_unavailable' };
-    if (input.sharedWithTeamId && !admission.admittedTeam(input.sharedWithTeamId)) {
-        return memberships.some(({ teamId }) => teamId === input.sharedWithTeamId)
-            ? { ok: false, error: 'source_unavailable' } : { ok: true, where: prismaRuntime.sql`1 = 0`, sharedWithTeamGroupIds: new Set<string>() };
+    const visibility = await resolveSourceVisibilityInTx(tx, {
+        ...input, admittedTeamActors: input.admittedTeamActor ? [input.admittedTeamActor] : undefined,
+    });
+    const selection = input.sharedWithTeamId ? visibility?.selectTeam(input.sharedWithTeamId) : undefined;
+    if (!visibility || selection?.kind === 'unavailable') return { ok: false, error: 'source_unavailable' };
+    const selected = selection?.kind === 'selected' ? selection.where : selection?.kind === 'empty'
+        ? prismaRuntime.sql`1 = 0` : prismaRuntime.sql`1 = 1`;
+    return { ok: true, where: prismaRuntime.sql`${input.includeDeleted ? prismaRuntime.empty : prismaRuntime.sql`${column('deletedAt')} IS NULL AND `}${visibility.readable} AND ${selected}`,
+        sharedWithTeamGroupIds: new Set(selection?.kind === 'selected' ? selection.groupIds : []) };
+}
+
+/** The directory asks for presence, with one admission and one native read per projected page. */
+export async function readScopedTeamProjectSourcePresenceInTx(tx: Tx, input: Readonly<{
+    actorAccountId: string;
+    authentication?: Partial<TeamOperationAuthenticationContext>;
+    admittedTeamActors: readonly TeamActorContext[];
+}>): Promise<ReadonlyMap<string, boolean | null>> {
+    const presence = new Map<string, boolean | null>();
+    if (input.admittedTeamActors.length === 0) return presence;
+    const visibility = await resolveSourceVisibilityInTx(tx, input);
+    if (!visibility) return presence;
+    const table = sourceTable();
+    const selections: Prisma.Sql[] = [];
+    for (const { team: { id } } of input.admittedTeamActors) {
+        const selection = visibility.selectTeam(id);
+        presence.set(id, selection.kind === 'unavailable' ? null : false);
+        if (selection.kind !== 'selected') continue;
+        // Each requested Team can use the native containment indexes before the
+        // shared reader predicate is applied. The same Source can match multiple Teams.
+        selections.push(prismaRuntime.sql`SELECT ${id} AS team_id, ${column('id')} AS source_id
+            FROM ${table} s WHERE ${column('deletedAt')} IS NULL AND ${selection.where}`);
     }
-    const principals = admission.effectivePrincipals(owner, grants);
-    const readable = either([
-        prismaRuntime.sql`(${column('owner')} IS NULL AND ${column('createdByAccountId')} = ${input.actorAccountId})`,
-        ...principals.flatMap(principal => principal.kind === 'group'
-            ? [contains('audience', principal)] : [contains('owner', principal), contains('audience', principal)]),
-    ]);
-    const selectedGroups = principals.flatMap(principal => principal.kind === 'group' && principal.teamId === input.sharedWithTeamId ? [principal] : []);
-    const selectedTeam = input.sharedWithTeamId ? either([
-        contains('owner', { kind: 'team', teamId: input.sharedWithTeamId }),
-        contains('audience', { kind: 'team', teamId: input.sharedWithTeamId }),
-        ...selectedGroups.map(principal => contains('audience', principal)),
-    ]) : prismaRuntime.sql`1 = 1`;
-    return { ok: true, where: prismaRuntime.sql`${input.includeDeleted ? prismaRuntime.empty : prismaRuntime.sql`${column('deletedAt')} IS NULL AND `}${readable} AND ${selectedTeam}`,
-        sharedWithTeamGroupIds: new Set(selectedGroups.map(principal => principal.groupId)) };
+    if (selections.length === 0) return presence;
+    const rows = await tx.$queryRaw<Readonly<{ team_id: string }>[]>(prismaRuntime.sql`
+        SELECT DISTINCT matching.team_id
+        FROM (${prismaRuntime.join(selections, ' UNION ALL ')}) matching
+        JOIN ${table} s ON ${column('id')} = matching.source_id
+        WHERE ${visibility.readable}
+    `);
+    for (const { team_id } of rows) presence.set(team_id, true);
+    return presence;
 }
 
 export function projectSourceListFiltersSql(input: ProjectSourcesListInputV1): Prisma.Sql {
@@ -87,7 +147,6 @@ export async function countScopedTeamProjectSourcesInTx(tx: Tx, input: Readonly<
 }>): Promise<Readonly<{ ok: true; count: number }> | Readonly<{ ok: false; error: ProjectSourcesFailureV1['error'] }>> {
     const scope = await resolveProjectSourceQueryScopeInTx(tx, input);
     if (!scope.ok) return scope;
-    const table = prismaRuntime.raw(dialect() === 'mysql' ? '`ProjectSource`' : '"ProjectSource"');
-    const rows = await tx.$queryRaw<Readonly<{ count: bigint | number }>[]>(prismaRuntime.sql`SELECT COUNT(*) AS count FROM ${table} s WHERE ${scope.where}`);
+    const rows = await tx.$queryRaw<Readonly<{ count: bigint | number }>[]>(prismaRuntime.sql`SELECT COUNT(*) AS count FROM ${sourceTable()} s WHERE ${scope.where}`);
     return { ok: true, count: Number(rows[0]?.count ?? 0) };
 }

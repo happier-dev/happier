@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { listTeamsForActorInTx } from '@/app/teams/queries';
 import { createProjectSourceInTx, readProjectSourceInTx, updateProjectSourceInTx, listProjectSourcesInTx } from './projectSourceService';
 import { runPostgresMigrationDeploy } from '../../../../scripts/migrate.full.deploy';
 import { runMysqlMigrationDeployMain } from '../../../../scripts/migrate.mysql.deploy';
@@ -23,6 +24,28 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Source owner p
         connected = true;
     });
     afterAll(async () => { if (connected) await db.$disconnect(); });
+
+    it('projects one shared Source onto both Teams while hiding a Group the viewer cannot read', async () => {
+        const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const author = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const [owner, direct, groupOnly] = await Promise.all(['Source owner', 'Direct grant', 'Group only']
+            .map(name => db.team.create({ data: { name } })));
+        await db.teamMembership.createMany({ data: [owner, direct, groupOnly]
+            .map(team => ({ accountId: viewer.id, teamId: team.id, role: 'member' as const })) });
+        const hidden = await db.teamGroup.create({ data: { name: 'Other Group', teamId: groupOnly.id } });
+        await db.projectSource.create({ data: { name: 'Shared Source', createdByAccountId: author.id,
+            owner: { kind: 'team', teamId: owner.id }, attachments: [], audience: [
+                { principal: { kind: 'team', teamId: direct.id }, level: 'view' },
+                { principal: { kind: 'group', teamId: groupOnly.id, groupId: hidden.id }, level: 'view' },
+            ] } });
+
+        const page = await inTx(tx => listTeamsForActorInTx(tx, {
+            actorAccountId: viewer.id, v: 1, scope: 'member', archived: 'active',
+        }));
+        if (!page.ok) throw new Error(page.error);
+        expect(Object.fromEntries(page.page.items.map(({ id, hasSetup }) => [id, hasSetup])))
+            .toEqual({ [owner.id]: true, [direct.id]: true, [groupOnly.id]: false });
+    });
 
     it('creates, attaches and clears a repository with real SQL null, then preserves rows across two canonical deploys', async () => {
         const creator = await db.account.create({ data: { encryptionMode: 'plain' } });

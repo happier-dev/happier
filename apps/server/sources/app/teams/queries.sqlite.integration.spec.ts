@@ -120,7 +120,7 @@ describe('Team directory (SQLite integration)', () => {
     ]) } });
   });
 
-  it('uses one native Source count per requested Team for the hasSetup projection', async () => {
+  it('uses one native Source query per directory page for the hasSetup projection', async () => {
     const viewer = await account();
     const teams = Array.from({ length: 100 }, (_, index) => ({ id: crypto.randomUUID(), name: `Page ${index}` }));
     await db.team.createMany({ data: teams });
@@ -139,7 +139,7 @@ describe('Team directory (SQLite integration)', () => {
           const value = Reflect.get(target, property, receiver);
           if (property === '$queryRaw' && typeof value === 'function') return (...args: unknown[]) => {
             const sql = (args[0] as { strings?: readonly string[] }).strings?.join(' ') ?? '';
-            if (sql.includes('COUNT(*) AS count FROM') && sql.includes('ProjectSource')) sourceReads++;
+            if (sql.includes('SELECT') && sql.includes('ProjectSource')) sourceReads++;
             return Reflect.apply(value, target, args);
           };
           return typeof value === 'function' ? value.bind(target) : value;
@@ -154,11 +154,11 @@ describe('Team directory (SQLite integration)', () => {
         expect(measured.result).toMatchObject({ ok: true });
         if (!measured.result.ok) throw new Error(measured.result.error);
         expect(measured.result.page.items).toHaveLength(limit);
-        expect(measured.sourceReads).toBe(limit);
         if (limit === 100) expect(measured.result.page.items.filter(row => row.hasSetup)).toHaveLength(1);
         measurements.push({ teams: limit, sourceQueries: measured.sourceReads, elapsedMs: measured.elapsedMs });
       }
       console.info('hasSetup native count cost', JSON.stringify(measurements));
+      expect(measurements.map(({ sourceQueries }) => sourceQueries)).toEqual([1, 1, 1]);
     } finally {
       await db.projectSource.deleteMany({ where: { id: sourceId } });
       await db.team.deleteMany({ where: { id: { in: teams.map(row => row.id) } } });
