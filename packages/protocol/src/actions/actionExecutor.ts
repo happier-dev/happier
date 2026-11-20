@@ -2331,6 +2331,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (!title) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const res = await deps.sessionTitleSet({ sessionId, title, ...(serverId ? { serverId } : {}) });
+          const failure = readActionExecuteFailure(res);
+          if (failure) return { ok: false, ...failure };
           return { ok: true, result: res };
         }
 

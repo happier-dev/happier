@@ -109,6 +109,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
         settings: this.getAccountSettingsSnapshot() ?? {},
         session: this.session,
       }),
+      sessionMetadata: this.session.getMetadataSnapshot?.() ?? null,
       toolName,
       input,
     });
