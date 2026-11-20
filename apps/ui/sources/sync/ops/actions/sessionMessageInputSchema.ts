@@ -1,5 +1,7 @@
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { createActionExecuteFailureError, isActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readCompleteActionSpecV1 } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
+import { log } from '@/log';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { readHomeAccountDepartures } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
@@ -44,8 +46,17 @@ export async function readSessionMessageInputSchema(params: Readonly<{
     return selected.pending.run('session.message.send', async physicalSignal => {
         const execute = createUiAccountAction({ account });
         const advertised = await readCompleteActionSpecV1({ actionId: 'session.message.send', includeOutputSchema: false, signal: physicalSignal,
-            read: input => execute({ actionId: 'action.spec.get', input,
-                context: { ...context, signal: physicalSignal }, signal: physicalSignal }) });
+            read: async input => {
+                const result = await execute({ actionId: 'action.spec.get', input,
+                    context: { ...context, signal: physicalSignal }, signal: physicalSignal });
+                if (isActionExecuteFailure(result)) throw createActionExecuteFailureError(result);
+                return result;
+            } }).catch(error => {
+            if (!physicalSignal.aborted) {
+                log.log(`[session-input-schema] ${JSON.stringify(projectActionFailureCauseV1(error, 'session.message.input_schema'))}`);
+            }
+            throw error;
+        });
         account.assertCurrent();
         selected.inputSchema = advertised.inputSchema;
         return advertised.inputSchema;

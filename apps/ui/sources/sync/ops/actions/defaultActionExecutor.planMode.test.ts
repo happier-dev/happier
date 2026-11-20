@@ -1148,6 +1148,14 @@ describe('default Action executor mode and catalog contracts', () => {
       // must not throw it into Triage's genuinely ambiguous transport catch.
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'rejected',
         code: client === 'triage_schema_unavailable' ? 'session_input_target_unavailable' : 'session_input_target_update_required' } });
+      if (client === 'triage_schema_unavailable') {
+        const { log } = await import('@/log');
+        const prefix = '[session-input-schema] ';
+        const diagnostic = log.getLogs().find(line => line.startsWith(prefix));
+        expect(diagnostic && JSON.parse(diagnostic.slice(prefix.length))).toMatchObject({
+          phase: 'session.message.input_schema', errorCode: 'plugin_action_execution_placement_unavailable',
+        });
+      }
       expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(0);
       expect(homes.requestsFor('/v2/sessions/ask-session/pending')).toHaveLength(0);
       expect(outgoing.some(request => request.method.endsWith(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CLAIM))).toBe(false);
