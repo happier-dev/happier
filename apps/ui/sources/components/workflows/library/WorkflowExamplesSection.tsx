@@ -26,7 +26,7 @@ import { Modal } from '@/modal';
 import { getPreferredLanguage, t, tLoose } from '@/text';
 import { en } from '@/text/translations/en';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { listWorkflowStarters, resolveWorkflowStarter } from '@/sync/domains/workflows/resolveWorkflowStarter';
@@ -259,9 +259,12 @@ function ExampleSessionChooser(props: Readonly<{
     onUse: (example: WorkflowStarterExampleSelection) => void;
 }>) {
     const mounted = useMountedRef();
-    const scope = useActiveServerAccountScope();
-    const { existingSessions, sessionOptionsStatus, retrySessionOptions } = useWorkflowExistingSessionOptions({ serverId: scope?.serverId ?? null, machineId: null });
-    const sessions = scope === null || !props.lifetime?.isCurrent() ? [] : existingSessions;
+    const { lifetime } = props;
+    const isCurrent = lifetime?.isCurrent() === true;
+    const { existingSessions, sessionOptionsStatus, retrySessionOptions } = useWorkflowExistingSessionOptions({
+        serverId: lifetime?.scope.serverId ?? null, machineId: null, enabled: isCurrent,
+    });
+    const sessions = isCurrent ? existingSessions : [];
     const choice = resolveWorkflowSessionChoice(sessionOptionsStatus, sessions.length > 0);
     const menu = workflowSessionMenuState(choice, tLoose('workflows.examples.noSessions'));
     return <View style={styles.chooser}>
@@ -275,11 +278,10 @@ function ExampleSessionChooser(props: Readonly<{
                 accessibilityLabel={`${t('workflows.examples.chooseSession')}: ${tLoose(props.example.titleKey)}`} onPress={toggle} />}
             onSelect={(sessionId) => {
                 if (sessionId === WORKFLOW_SESSION_RETRY_ITEM_ID) { retrySessionOptions(); return; }
-                const lifetime = props.lifetime;
                 if (!lifetime?.isCurrent()) return;
                 const session = sessions.find(candidate => candidate.sessionId === sessionId);
                 if (!session) return;
-                const serverId = resolvePortableServerIdentityForRoutingId(scope?.serverId);
+                const serverId = resolvePortableServerIdentityForRoutingId(lifetime.scope.serverId);
                 void resolveWorkflowStarter({ key: props.example.key, accountLifetime: lifetime,
                     session: { ...session, ...(serverId === null ? {} : { serverId }) }, timezone: readDeviceTimeZone(),
                 }).then(selection => {

@@ -1336,6 +1336,47 @@ describe('editor workflow composer', () => {
         }
     });
 
+    it('offers Sessions from the addressed starter Home while another Home is focused', async () => {
+        const { WorkflowExamplesSection } = await import('../library/WorkflowExamplesSection');
+        const { WorkflowAccountLifetimeProvider } = await import('../workflowAccountScope');
+        const { reportCollectionLayout } = await import('@/dev/testkit/harness/collectionLayoutHarness');
+        const { resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime } =
+            await import('@/sync/domains/scope/serverCredentialAccountScope');
+        const addressedHome = await home.addHome({
+            name: 'Starter peer', serverUrl: 'https://workspace-peer.test', accountId: 'peer-account', active: false,
+        });
+        const emptySessions = { body: { sessions: [], nextCursor: null, hasNext: false } };
+        for (const serverId of [appliedHome.serverId, addressedHome]) {
+            home.answer(serverId, '/v2/sessions', emptySessions);
+            home.answer(serverId, '/v2/sessions/archived', emptySessions);
+        }
+        const resolution = await resolveServerCredentialAccountScope(addressedHome);
+        if (resolution.kind !== 'bound') throw new Error('Expected an addressed Home credential');
+        const lifetime = captureServerCredentialAccountScopeLifetime(resolution);
+        const screen = await renderScreen(<AppPaneProvider>
+            <WorkflowAccountLifetimeProvider value={lifetime}>
+                <WorkflowExamplesSection />
+            </WorkflowAccountLifetimeProvider>
+        </AppPaneProvider>);
+        try {
+            const collectionId = 'workflow-examples:cards';
+            await waitForHomeGovernance(() => {
+                expect(screen.findByTestId('workflow-examples-load-failed')).toBeNull();
+                expect(screen.findByTestId(`${collectionId}:stage`)).not.toBeNull();
+            });
+            await reportCollectionLayout(screen.root, collectionId);
+            const earlier = home.requests.length;
+            await screen.pressByTestIdAsync('workflow-examples:notify-when-agent-waits:use');
+            const readPeers = () => home.requests.slice(earlier)
+                .filter(request => request.path.startsWith('/v2/sessions') || request.path.startsWith('/v1/sessions'))
+                .map(request => request.serverId);
+            await waitForHomeGovernance(() => expect(readPeers().length).toBeGreaterThan(0));
+            expect(readPeers()).toEqual(Array(readPeers().length).fill(addressedHome));
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('reopens the catalog composer with recovery enabled and rejoins its exact unresolved admission', async () => {
         const [{ getBuiltinWorkflowCatalogV1}, { WorkflowRunStartRequestV1Schema, WorkflowRunGetResultV1Schema}] = await Promise.all([import('@happier-dev/protocol/workflows/builtins/catalog'), import('@happier-dev/protocol/workflows/actionsV1')]);
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
