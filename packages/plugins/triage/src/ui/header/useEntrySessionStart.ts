@@ -25,11 +25,20 @@ export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOpti
     return React.useMemo(() => ({ ...snapshot, settleAction }), [snapshot, settleAction]);
 }
 
+/**
+ * The last settled default target per action shape, so a detail opened after the first one keeps "Fix with Claude"
+ * while its own read revalidates instead of drawing "Fix" and growing (last-known value while refreshing).
+ */
+const LAST_DEFAULT_TARGETS = new Map<string, TriageEntrySessionStartTargetV1>();
+
 export function useTriageEntrySessionStartChoices(
     input: TriageEntrySessionStartChoiceInputV1 & Readonly<{ menuOpen: boolean }>,
 ): Readonly<{ defaultTarget: TriageEntrySessionStartTargetV1; recentSessions: TriageRecentSessionsV1 }> {
     const host = usePluginHostApi() as unknown as TriageEntrySessionStartChoicesHostV1;
-    const [defaultTarget, setDefaultTarget] = React.useState<TriageEntrySessionStartTargetV1>({ status: 'idle' });
+    const targetKey = [input.action?.profileId, input.action?.workspaceMode, input.repository?.kind,
+        input.repository?.deployment, input.repository?.repository].map((part) => String(part ?? '')).join('\u001f');
+    const [defaultTarget, setDefaultTarget] = React.useState<TriageEntrySessionStartTargetV1>(
+        () => LAST_DEFAULT_TARGETS.get(targetKey) ?? { status: 'idle' });
     const [recentSessions, setRecentSessions] = React.useState<TriageRecentSessionsV1>({ status: 'idle' });
     const profileId = input.action?.profileId;
     const workspaceMode = input.action?.workspaceMode;
@@ -39,15 +48,20 @@ export function useTriageEntrySessionStartChoices(
     React.useEffect(() => {
         if (profileId === undefined || workspaceMode === undefined) { setDefaultTarget({ status: 'idle' }); return; }
         const lifetime = new AbortController();
-        setDefaultTarget({ status: 'loading' });
+        const lastKnown = LAST_DEFAULT_TARGETS.get(targetKey);
+        setDefaultTarget(lastKnown ?? { status: 'loading' });
         // The reader uses only these action facts; unrelated row objects do not create new demand.
         void readTriageEntrySessionStartTargetV1(host, {
             action: { profileId, workspaceMode },
             ...(kind === undefined || deployment === undefined || repository === undefined ? {}
                 : { repository: { kind, deployment, repository } }),
-        }, { signal: lifetime.signal }).then((result) => { if (!lifetime.signal.aborted) setDefaultTarget(result); });
+        }, { signal: lifetime.signal }).then((result) => {
+            if (lifetime.signal.aborted) return;
+            if (result.status === 'ready') LAST_DEFAULT_TARGETS.set(targetKey, result);
+            setDefaultTarget(result);
+        });
         return () => lifetime.abort();
-    }, [host, profileId, workspaceMode, kind, deployment, repository]);
+    }, [host, profileId, workspaceMode, kind, deployment, repository, targetKey]);
     React.useEffect(() => {
         if (!input.menuOpen) { setRecentSessions({ status: 'idle' }); return; }
         const lifetime = new AbortController();

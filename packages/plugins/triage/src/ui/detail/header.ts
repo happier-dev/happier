@@ -170,6 +170,8 @@ export type TriageDetailHeaderInputV1 = Readonly<{
    * reads). Absent for every entry whose source reads no such status.
    */
   pullRequestStatus?: TriagePullRequestStatusV1 | null;
+  /** That status has not arrived yet because the source is still reading it: the cells say "Reading…". */
+  pullRequestStatusReading?: boolean;
   /** The reader's words, for the author line ("You"); English fallbacks when absent. */
   text?: TriageEntryDisplayTextV1;
 }>;
@@ -232,7 +234,8 @@ export function projectTriageDetailHeaderV1(
     linkedSessions: input.linkedSessions,
     linkedSessionsHasMore: input.linkedSessionsHasMore,
     pullRequestFacts: kind?.workflowSubject !== 'pullRequest' ? null
-      : projectPullRequestStatusFactsV1(input.pullRequestStatus ?? null, readPullRequestLinkState(present?.snapshot.state.presentation)),
+      : projectPullRequestStatusFactsV1(input.pullRequestStatus ?? null, readPullRequestLinkState(present?.snapshot.state.presentation),
+        { reading: input.pullRequestStatusReading === true }),
   });
 }
 
@@ -262,7 +265,7 @@ export function readTriageDetailContextSegmentsV1(
     opened,
     header.connectionLabel === null || header.sourceConnections < 2
       ? null
-      : text('plugins.triage.surface.detail.via', 'via {name}', { name: header.connectionLabel }),
+      : text('plugins.triage.surface.detail.via', 'via {name}', { name: readOwnConnectionName(header) }),
   ].filter((part): part is string => part !== null && part.length > 0);
   return parts;
 }
@@ -273,6 +276,16 @@ export function readTriageDetailContextSegmentsV1(
  */
 export function readTriageDetailAttentionBadgeV1(header: TriageDetailHeaderV1): TriageDetailHeaderV1['attention'] {
   return header.attention?.reviewRequested === true && header.pullRequestFacts !== null ? null : header.attention;
+}
+
+/**
+ * The connection's own name: the window labels a connection "{source} · {name}", and the source is already the
+ * mark leading this line, so it is not said again in words.
+ */
+function readOwnConnectionName(header: TriageDetailHeaderV1): string {
+  const label = header.connectionLabel ?? '';
+  const prefix = header.sourceLabel === null ? null : `${header.sourceLabel} · `;
+  return prefix !== null && label.startsWith(prefix) && label.length > prefix.length ? label.slice(prefix.length) : label;
 }
 
 /** The same facts as one line, for a single-line text (the inline header); a host header takes the segments. */

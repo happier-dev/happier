@@ -71,8 +71,8 @@ const sameLine = (a: WebLayoutRect, b: WebLayoutRect) =>
   Math.abs((a.top + a.bottom) / 2 - (b.top + b.bottom) / 2) <= 3;
 
 describe("a phone header's wrapped facts, as a browser lays them out", () => {
-  it("aligns every line to the header's right edge and never opens or closes a line with a separator", async () => {
-    // Owner 2026-11-10 (PR detail header): the facts under the title sit on the header's right side.
+  it("starts every line on the title's text edge and never opens or closes a line with a separator", async () => {
+    // The facts start where the title's text starts (labs cshead H1, ideas-1118 PR header); no ruling puts them right.
     const layout = await measureLargeLine(300);
     const column = layout.rect('column');
     const clip = layout.rect('header.subtitle');
@@ -82,12 +82,10 @@ describe("a phone header's wrapped facts, as a browser lays them out", () => {
     expect(sameLine(crumb, facts[0]!)).toBe(true);
     const wrapped = facts.filter((fact) => !sameLine(fact, crumb));
     expect(wrapped.length).toBeGreaterThan(0);
-    // Each line ends at the column's right edge.
+    // Each line starts at the column's left edge (the title's text edge).
     for (const line of [[crumb, ...facts.filter((fact) => sameLine(fact, crumb))], wrapped]) {
-      expect(Math.max(...line.map((word) => word.right))).toBeCloseTo(column.right, 0);
+      expect(Math.min(...line.map((word) => word.left))).toBeCloseTo(column.left, 0);
     }
-    // The first line does not start at the title's edge (it is right-aligned, not left).
-    expect(crumb.left).toBeGreaterThan(column.left + 0.5);
     // Every separator a reader can see sits between two facts on its own line.
     const visibleDots = layout
       .textRects('·')
@@ -119,8 +117,8 @@ describe("a phone header's wrapped facts, as a browser lays them out", () => {
         .textRects('·')
         .filter((dot) => dot.left < layout.rect('header.subtitle').right - 0.5 && dot.right > layout.rect('header.subtitle').left + 0.5),
     ).toHaveLength(FACTS.length);
-    // One line, ending at the column's right edge.
-    expect(layout.textRects(FACTS[FACTS.length - 1]!)[0]!.right).toBeCloseTo(layout.rect('column').right, 0);
+    // One line, starting at the column's left edge (the title's text edge).
+    expect(crumb.left).toBeCloseTo(layout.rect('column').left, 0);
   });
 
   it('wraps the final fact\'s own trailing words with it, never floating them beside the facts', async () => {

@@ -169,6 +169,31 @@ export function TriageFixPullRequests(props: Readonly<{
     />
   );
 
+  // What became of a link, and a read that could not check every Session: said inside the step, on its text edge.
+  const notes = (
+    <>
+      {state.refusal === 'conflict' ? (
+        <Status
+          tone="warning"
+          labelKey="plugins.triage.surface.detail.fixPr.conflict"
+          label="That link was changed somewhere else. Showing the current state."
+        />
+      ) : state.refusal === 'failed' ? (
+        <Status
+          tone="danger"
+          labelKey="plugins.triage.surface.detail.fixPr.failed"
+          label="Happier cannot reach your account right now, so the link was not changed."
+        />
+      ) : null}
+      {state.incomplete ? (
+        <Status
+          tone="neutral"
+          labelKey="plugins.triage.surface.detail.fixPr.incomplete"
+          label="Some linked sessions were not checked for pull requests."
+        />
+      ) : null}
+    </>
+  );
   return (
     <Stack gap="small">
       {lead === null ? (
@@ -181,11 +206,13 @@ export function TriageFixPullRequests(props: Readonly<{
               value={text('plugins.triage.surface.detail.fixPr.none', 'No pull request is linked as the fix yet.')}
             />
             {offers.length === 0 ? null : linkMenu}
+            {notes}
           </Stack>
         </Step>
       ) : (
         // The fix is a step of the entry's story: its number names it, its state is the marker, its card says the rest.
-        <Step marker={fixMarker(lead, text)} title={fixHeading(lead, text)} testID="triage-story-fix-pr"
+        // A chapter keeps its number once a fix is found (the card says its state); a lone fix step wears the state.
+        <Step marker={props.chapter === undefined ? fixMarker(lead, text) : unsettled} title={fixHeading(lead, text)} testID="triage-story-fix-pr"
           {...(props.checksSummary?.kind !== 'status' || lead !== state.primary ? {} : {
             trailing: <Text variant="micro" tone={resolveTriageRowFactStatusToneV1(props.checksSummary.tone)} value={props.checksSummary.value} />,
           })}>
@@ -253,29 +280,10 @@ export function TriageFixPullRequests(props: Readonly<{
                 })}
               </ItemGroup>
             )}
+            {notes}
           </Stack>
         </Step>
       )}
-      {state.refusal === 'conflict' ? (
-        <Status
-          tone="warning"
-          labelKey="plugins.triage.surface.detail.fixPr.conflict"
-          label="That link was changed somewhere else. Showing the current state."
-        />
-      ) : state.refusal === 'failed' ? (
-        <Status
-          tone="danger"
-          labelKey="plugins.triage.surface.detail.fixPr.failed"
-          label="Happier cannot reach your account right now, so the link was not changed."
-        />
-      ) : null}
-      {state.incomplete ? (
-        <Status
-          tone="neutral"
-          labelKey="plugins.triage.surface.detail.fixPr.incomplete"
-          label="Some linked sessions were not checked for pull requests."
-        />
-      ) : null}
     </Stack>
   );
 }

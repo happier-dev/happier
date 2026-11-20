@@ -1,7 +1,14 @@
 import type { TextTone, usePluginTranslation } from '@happier-dev/plugin-ui';
-import type { PullRequestGlanceChecksV1, PullRequestGlanceReviewV1, PullRequestGlanceMergeV1, PullRequestGlanceWatchV1 } from './glanceModel.js';
+import type { PullRequestGlanceChecksV1, PullRequestGlanceReviewV1, PullRequestGlanceMergeV1, PullRequestGlanceUnknownV1, PullRequestGlanceWatchV1 } from './glanceModel.js';
 
 type Translate = ReturnType<typeof usePluginTranslation>;
+
+/** The quiet line of a fact nobody has read: the one loading word while its read runs, else "Not read yet". */
+function unknownSub(text: Translate, fact: PullRequestGlanceUnknownV1): string {
+  return fact.reading === true
+    ? text('plugins.triage.prGlance.reading', 'Reading…')
+    : text('plugins.triage.prGlance.checks.unknown', 'Not read yet');
+}
 
 export function capitalizeFirst(value: string): string {
   return value.length === 0
@@ -96,7 +103,7 @@ export function checksFact(
       return {
         value: '—',
         tone: 'secondary',
-        sub: text('plugins.triage.prGlance.checks.unknown', 'Not read yet'),
+        sub: unknownSub(text, checks),
         lead: null,
       };
     case 'none':
@@ -135,19 +142,12 @@ export function checksFact(
               { done: checks.done, total: checks.total },
             )
           : null;
-      const cancelled =
-        checks.cancelled > 0
-          ? text(
-              'plugins.triage.prGlance.checks.cancelled',
-              '{count} cancelled',
-              { count: checks.cancelled },
-            )
-          : null;
+      // Cancelled and skipped runs are no news, as the checks step counts them: never a second count beside its own.
       return {
         value: text('plugins.triage.prGlance.checks.running', 'Running'),
         tone: 'neutral',
         lead: 'running',
-        sub: [done, cancelled].filter(Boolean).join(' · ') || null,
+        sub: done,
       };
     }
     case 'passed':
@@ -160,14 +160,7 @@ export function checksFact(
               }),
         tone: 'neutral',
         lead: 'passed',
-        sub:
-          checks.cancelled > 0
-            ? text(
-                'plugins.triage.prGlance.checks.cancelled',
-                '{count} cancelled',
-                { count: checks.cancelled },
-              )
-            : null,
+        sub: null,
       };
   }
 }
@@ -186,7 +179,7 @@ export function reviewFact(
       return {
         value: '—',
         tone: 'secondary',
-        sub: text('plugins.triage.prGlance.checks.unknown', 'Not read yet'),
+        sub: unknownSub(text, review),
         person: null,
       };
     case 'none':
@@ -240,7 +233,14 @@ export function mergeFact(
       return {
         value: '—',
         tone: 'secondary',
-        sub: text('plugins.triage.prGlance.checks.unknown', 'Not read yet'),
+        sub: unknownSub(text, merge),
+      };
+    case 'checksFailing':
+      // The forge states no readiness: say what is known, never a guess at ready or blocked.
+      return {
+        value: text('plugins.triage.prGlance.merge.checksFailing', 'Checks failing'),
+        tone: 'danger',
+        sub: into,
       };
     case 'merged':
       return {
@@ -301,7 +301,10 @@ export function mergeFact(
                 'plugins.triage.prGlance.merge.autoMerge',
                 'merges when ready',
               )
-            : into].filter(Boolean).join(' · ') || null,
+            // Ready beside failing checks says why it still merges, so the two never read as a contradiction.
+            : merge.failingChecks === true
+              ? text('plugins.triage.prGlance.merge.failingNotRequired', 'failing checks aren’t required')
+              : into].filter(Boolean).join(' · ') || null,
       };
     case 'blocked': {
       const sub = merge.blocker !== undefined ? merge.blocker
@@ -311,7 +314,7 @@ export function mergeFact(
               'check and review',
             )
           : merge.why === 'checks'
-            ? text('plugins.triage.prGlance.merge.whyChecks', 'failing check')
+            ? text('plugins.triage.prGlance.merge.whyRequiredCheck', 'a required check failed')
             : merge.why === 'review'
               ? text(
                   'plugins.triage.prGlance.merge.whyReview',
@@ -323,9 +326,10 @@ export function mergeFact(
                     'checks still running',
                   )
                 : null;
+      // A required failing check is a failure, in its ink (lab ideas-1118 "Blocked · a required check failed").
       return {
         value: text('plugins.triage.sessionLinks.status.blocked', 'Blocked'),
-        tone: 'neutral',
+        tone: merge.why === 'checks' || merge.why === 'checksAndReview' ? 'danger' : 'neutral',
         sub,
       };
     }

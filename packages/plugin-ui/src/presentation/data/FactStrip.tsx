@@ -53,7 +53,8 @@ export type HappierFactStripProps = Readonly<{
   scale?: 'headline';
   /**
    * Every fact keeps its quiet line's room, empty while its detail is unknown, so a strip whose values arrive after
-   * first paint (a pull request's checks) fills in place and moves nothing below it.
+   * first paint (a pull request's checks) fills in place and moves nothing below it. Side by side only: two to a row
+   * (`narrow`), a fact without a quiet line draws none, so a phone card never ends on an empty band.
    */
   reserveDetail?: boolean;
   testID?: string;
@@ -172,7 +173,7 @@ export const HappierFactStrip = memo(function HappierFactStrip(
             </View>
           )}
           {fact.detail === undefined || fact.detail === null ? (
-            props.reserveDetail === true ? <Text role="detail" numberOfLines={1}>{NO_BREAK_SPACE}</Text> : null
+            props.reserveDetail === true && props.narrow !== true ? <Text role="detail" numberOfLines={1}>{NO_BREAK_SPACE}</Text> : null
           ) : (
             <Text
               role="detail"

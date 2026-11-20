@@ -814,6 +814,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const sourceDescriptor = props.lastKnown === true ? null : readTriageSourceDescriptorV1(context, row.entryRef.source);
   // The header's change facts read the source's own live status offer, the value its write carries: never a second read.
   const pullRequestStatus = sourceStatus === null || sourceStatus.kind === 'unavailable' ? null : sourceStatus.value;
+  // No status offered yet: the source's read is under way (a failed read arrives as `unavailable`).
+  const statusReading = sourceStatus === null;
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
     row,
     lanes: props.lanes,
@@ -822,8 +824,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     linkedSessions,
     linkedSessionsHasMore,
     pullRequestStatus,
+    pullRequestStatusReading: statusReading,
     text,
-  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, pullRequestStatus, row, sourceDescriptor, text]);
+  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, pullRequestStatus, row, sourceDescriptor, statusReading, text]);
 
   const completePostMutation = props.completePostMutation;
   const refreshLinkedSessions = detail?.kind === 'ready' ? detail.refreshLinkedSessions : undefined;

@@ -4007,7 +4007,8 @@ describe('opening a row into the source detail', () => {
         expect(firstLabel).toContain('Example account');
         await expect(shell.getByText('example/repository #17')).resolves.toBeDefined();
         await expect(shell.getByText(openedFixtureEntry())).resolves.toBeDefined();
-        await expect(shell.getByText(`via ${secondLabel}`)).resolves.toBeDefined();
+        // The line names the connection by its own name: the source's mark leads the line already (H4).
+        await expect(shell.getByText('via Second account')).resolves.toBeDefined();
         await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
         // Exact-only opens may prepare the launched connection, but never the window's tie-break connection.
         expect(harness.readDetailInstanceIds).toEqual([SECOND_INSTANCE]);

@@ -176,7 +176,7 @@ describe('the detail header line (lab meta: where the entry lives, then who open
         sourceInstanceId, source: SOURCE, health: { kind: 'unavailable' }, exhausted: false,
     });
 
-    function lineFor(input: Readonly<{ outcome?: ReturnType<typeof observed>; second?: boolean; secondConfigured?: boolean }>) {
+    function lineFor(input: Readonly<{ outcome?: ReturnType<typeof observed>; second?: boolean; secondConfigured?: boolean; connectionLabel?: string }>) {
         const outcome = input.outcome ?? observed();
         const base = row();
         const entry: TriageListRowV1 = {
@@ -190,7 +190,7 @@ describe('the detail header line (lab meta: where the entry lives, then who open
         const projected = projectTriageDetailHeaderV1({
             row: entry,
             lanes: [lane(INSTANCE), ...(input.second === true || input.secondConfigured === true ? [lane(OTHER)] : [])],
-            connectionLabel: 'Example account',
+            connectionLabel: input.connectionLabel ?? 'Example account',
             sourceDescriptor: DESCRIPTOR,
             linkedSessions: [],
             linkedSessionsHasMore: false,
@@ -221,6 +221,11 @@ describe('the detail header line (lab meta: where the entry lives, then who open
     it('says when it was opened without inventing who, when the source names nobody', () => {
         expect(lineFor({ outcome: observed(testkitViewer(), null) }))
             .toBe('example/repository #17 · Opened 42 minutes ago');
+    });
+
+    it('names a second connection by its own name, without the source name the line\'s mark already says', () => {
+        expect(lineFor({ second: true, connectionLabel: 'Example forge · Example account' }))
+            .toBe('example/repository #17 · Mara Oduya opened 42 minutes ago · via Example account');
     });
 
     it('names the connection only when the reader has more than one connection to this source', () => {
@@ -258,7 +263,7 @@ describe('the change request cells', () => {
     const REVIEW_REQUESTED = { level: 'required', fromSourceInstanceId: INSTANCE, reasonId: 'involvement/review-requested', reasonLabel: 'Review requested' } as const;
 
     const project = (input: Readonly<{ kindId?: string; pullRequestStatus?: TriagePullRequestStatusV1 | null;
-        presentation?: 'active' | 'resolved' | 'closed'; attention?: TriageListRowV1['attention'] }>) => {
+        presentation?: 'active' | 'resolved' | 'closed'; attention?: TriageListRowV1['attention']; reading?: boolean }>) => {
         const base = row();
         const outcome = testkitPresentOutcome({
             locator: testkitLocator(),
@@ -274,6 +279,7 @@ describe('the change request cells', () => {
             lanes: [HEALTHY_LANE], connectionLabel: null, sourceDescriptor: DESCRIPTOR,
             linkedSessions: [], linkedSessionsHasMore: false,
             ...(input.pullRequestStatus === undefined ? {} : { pullRequestStatus: input.pullRequestStatus }),
+            ...(input.reading === undefined ? {} : { pullRequestStatusReading: input.reading }),
         });
     };
 
@@ -284,6 +290,8 @@ describe('the change request cells', () => {
 
     it('holds a pull request\'s cells from first paint, unknown until its status read lands', () => {
         expect(project({}).pullRequestFacts).toEqual({ branch: null, checks: { kind: 'unknown' }, review: { kind: 'unknown' }, merge: { kind: 'unknown' } });
+        // While the source's read runs, every cell says so with the one loading word.
+        expect(project({ reading: true }).pullRequestFacts?.checks).toEqual({ kind: 'unknown', reading: true });
     });
 
     it('fills them from the PR facts owner once the status read lands', () => {

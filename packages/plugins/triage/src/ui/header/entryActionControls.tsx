@@ -429,7 +429,10 @@ export function TriageEntryActionControls(
   const actionItemId = (action: TriageActionV1) => `${ACTION_ITEM_PREFIX}${action.actionId}`;
   // The Start split (lab t1 `tasks-start`): the primary agent action can also go to the agent and machine the
   // reader chooses, or to a Session already running. Same action, same controller; only the destination differs.
-  const startDestinations = primary !== null && primary.target.kind === 'agent' && !isBlocked(primary);
+  // The split stands from first paint, pending while the entry's preparation or its default agent is still being
+  // read, so the row never swaps one button for another as they land (only a source that can never prepare falls back).
+  const startDestinations = primary !== null && primary.target.kind === 'agent' && !(sourceCannotPrepare && isBlocked(primary));
+  const startPending = primary !== null && (isBlocked(primary) || startChoices.defaultTarget.status === 'loading');
   const startTarget = startChoices.defaultTarget.status === 'ready' ? startChoices.defaultTarget : null;
   const primaryWords = primary === null ? '' : (() => {
     const key = readTriageActionTitleKeyV1(primary);
@@ -564,6 +567,7 @@ export function TriageEntryActionControls(
           launchMode={readTriageActionLaunchModeV1(primary)}
           {...(startUnavailable === undefined ? {} : { startUnavailableReason: startUnavailable })}
           compact={compact}
+          pending={startPending}
           groups={startGroups}
           showGroupLabels={recentRows.length > 0}
           onMenuOpenChange={setStartOpen}

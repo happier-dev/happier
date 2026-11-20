@@ -106,4 +106,25 @@ describe('fix-PR relationship read states', () => {
       expect(opened).toBe(1);
     } finally { await fixture.dispose(); }
   });
+
+  it('keeps its chapter number once a fix is found, and says an unchecked Session inside its own step', async () => {
+    const entryRef = { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '33' };
+    const candidate = { entryRef, origins: ['user' as const], status: 'open' as const,
+      display: { title: 'QA33 pull request 2', scopeLabel: 'example/repository', displayPath: 'example/repository #33' } };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fix-pr-chapter', mountNonce: 'fix-pr-chapter-mount' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageFixPullRequests pickable={[]} chapter={2} state={{
+        kind: 'ready', candidates: [candidate], primary: candidate, incomplete: true, busy: false, refusal: null,
+        link: () => undefined, unlink: () => undefined, unlinkControl: () => ({ prepare: () => null, onSettled() {} }),
+      }} />),
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+    });
+    try {
+      const step = document.querySelector('[data-testid="triage-story-fix-pr"]');
+      expect(step?.textContent).toMatch(/^2/u);
+      expect(step?.textContent).toContain('Some linked sessions were not checked for pull requests.');
+    } finally { await fixture.dispose(); }
+  });
 });

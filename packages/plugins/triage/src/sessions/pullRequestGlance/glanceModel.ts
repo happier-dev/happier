@@ -12,8 +12,10 @@ import type { TriageSessionPullRequestBindingV1 } from '../sessionPullRequestSta
  * linked PR. Pure projection of the one admitted Resource binding: no reads, no clocks, no second readiness
  * vocabulary. Unknown stays unknown; a stale read keeps its facts and says how old they are.
  */
+/** `reading`: no status yet because its read is under way, so the words say "Reading…" rather than "not read yet". */
+export type PullRequestGlanceUnknownV1 = Readonly<{ kind: 'unknown'; reading?: true }>;
 export type PullRequestGlanceChecksV1 =
-  | Readonly<{ kind: 'unknown' }>
+  | PullRequestGlanceUnknownV1
   | Readonly<{ kind: 'none' }>
   | Readonly<{
       kind: 'failing';
@@ -29,15 +31,19 @@ export type PullRequestGlanceChecksV1 =
     }>
   | Readonly<{ kind: 'passed'; count: number | null; cancelled: number }>;
 export type PullRequestGlanceReviewV1 =
-  | Readonly<{ kind: 'unknown' }>
+  | PullRequestGlanceUnknownV1
   | Readonly<{ kind: 'none' }>
   | Readonly<{
       kind: 'changesRequested' | 'approved' | 'reviewRequired';
       people: readonly string[];
     }>;
 export type PullRequestGlanceMergeV1 =
-  | Readonly<{ kind: 'unknown' | 'merged' | 'closed' | 'draft' | 'conflicts' }>
-  | Readonly<{ kind: 'ready'; queued: boolean; autoMerge: boolean; partial?: true }>
+  | PullRequestGlanceUnknownV1
+  | Readonly<{ kind: 'merged' | 'closed' | 'draft' | 'conflicts' }>
+  /** The forge states no readiness, but its checks are failing: that, never a guess at ready or blocked. */
+  | Readonly<{ kind: 'checksFailing' }>
+  /** `failingChecks`: mergeable although checks fail, so none of the failing ones is required. */
+  | Readonly<{ kind: 'ready'; queued: boolean; autoMerge: boolean; partial?: true; failingChecks?: true }>
   /** The last successful read said it could merge, but that read is no longer current: never drawn as Ready. */
   | Readonly<{ kind: 'stale' }>
   | Readonly<{
@@ -166,10 +172,11 @@ function projectMerge(
       kind: 'ready',
       queued: merge?.queue != null,
       autoMerge: merge?.autoMerge?.enabled === true,
+      ...(checks.kind === 'failing' ? { failingChecks: true as const } : {}),
       ...(status?.projectionTruncated === true || status?.checks?.incomplete === true || status?.review?.incomplete === true
         ? { partial: true as const } : {}),
     };
-  if (operations?.readiness !== 'blocked') return { kind: 'unknown' };
+  if (operations?.readiness !== 'blocked') return checks.kind === 'failing' ? { kind: 'checksFailing' } : { kind: 'unknown' };
   const checkBlocks = operations.unmetRequirements.some(requirement => requirement.kind === 'check');
   const reviewBlocks = operations.unmetRequirements.some(requirement => requirement.kind === 'review');
   const why =
@@ -222,19 +229,27 @@ function projectWatch(
   return { kind: 'watching', mode };
 }
 
-/** The shared status facts from one admitted 06 status (null when it could not be read). */
+const READING: PullRequestGlanceUnknownV1 = Object.freeze({ kind: 'unknown', reading: true });
+
+/**
+ * The shared status facts from one admitted 06 status. `null` when it could not be read; with `reading`, when its
+ * read is still under way, so every fact says "Reading…" until it lands (the one loading word on the page).
+ */
 export function projectPullRequestStatusFactsV1(
   value: TriagePullRequestStatusV1 | null,
   linkState?: TriageSessionPullRequestBindingV1['link']['state'],
+  options: Readonly<{ reading?: boolean }> = {},
 ): PullRequestStatusFactsV1 {
-  const checks = projectChecks(value?.checks ?? null);
-  const review = projectReview(value?.review ?? null);
+  const reading = value === null && options.reading === true;
+  const checks = reading ? READING : projectChecks(value?.checks ?? null);
+  const review = reading ? READING : projectReview(value?.review ?? null);
+  const merge = projectMerge(linkState, value, checks);
   return {
     branch: value?.branch?.head !== undefined && value.branch.base !== undefined
       ? { head: value.branch.head, base: value.branch.base } : null,
     checks,
     review,
-    merge: projectMerge(linkState, value, checks),
+    merge: reading && merge.kind === 'unknown' ? READING : merge,
   };
 }
 

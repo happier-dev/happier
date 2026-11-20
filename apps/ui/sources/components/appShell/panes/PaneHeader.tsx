@@ -179,10 +179,10 @@ export const PaneHeaderLineView = React.memo(function PaneHeaderLineView(props: 
     const bandSeparator = (index: number): string => index === 0 || !line ? ''
         : isToneSegment(line.segments[index]!) && isToneSegment(line.segments[index - 1]!) ? NO_BREAK_SPACE : `${NO_BREAK_SPACE}·${NO_BREAK_SPACE}`;
     if (large && line && (line.segments.length > 0 || line.leading)) {
-        // A large header: the leading words and the facts are one quiet row on the header's right side (owner
-        // 2026-11-10, PR detail header), wrapping onto right-aligned lines. Every item carries its separator in a
-        // fixed-width box after it, and the row ends one box to the right under the clip, so a separator that
-        // would close a line never shows.
+        // A large header: the leading words and the facts are one quiet row under the title, starting on the
+        // title's own text edge (labs cshead H1, ideas-1118 PR header; no ruling puts them on the right), wrapping
+        // onto lines that start there too. Every item carries its separator in a fixed-width box after it, and the
+        // row ends one box to the right under the clip, so a separator that would close a line never shows.
         const items: React.ReactNode[][] = [];
         // Items that hold a pending fact's room: their separator stays unseen with them.
         const pendingItems = new Set<number>();
@@ -397,7 +397,8 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                 </View>
             ) : null}
             </View> : null}
-            {large ? null : lineView}
+            {/* The live line starts on the title's own text edge, beneath it, in the band and the large header. */}
+            {lineView}
         </View>
         </View>
     );
@@ -465,9 +466,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
             columnMaxWidthPx === null ? null : styles.bandOverColumn,
             // On the navigation plane (a side panel standing on the canvas) the band takes the plane's paint.
             { backgroundColor: onNavigationPlane ? 'transparent' : materialColor(theme.colors.surface.base, 'transparent') }]}>
-            {/* The facts run beneath the title and its controls at the header's full width, from the mark's edge:
-                a long facts line never leaves a gutter under the mark or the controls. */}
-            {large ? <><View style={styles.largeTop}>{contents}</View>{lineView}</> : columnMaxWidthPx === null ? contents : (
+            {large ? <View style={styles.largeTop}>{contents}</View> : columnMaxWidthPx === null ? contents : (
                 <View testID={`${testID}.column`} style={[styles.column, { maxWidth: columnMaxWidthPx }]}>{contents}</View>
             )}
             {props.shade === false ? null : <PaneHeaderShade />}
@@ -612,8 +611,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginTop: 0,
         flexGrow: 1,
     },
-    // The large header's one row of leading words and facts, right-aligned: it ends one separator box to the
-    // right of the clip.
+    // The large header's one row of leading words and facts, from the title's text edge: it ends one separator box
+    // to the right of the clip.
     largeFlow: {
         flexGrow: 1,
         flexShrink: 1,
@@ -621,7 +620,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         flexWrap: 'wrap',
         alignItems: 'center',
-        justifyContent: 'flex-end',
+        justifyContent: 'flex-start',
         marginRight: -theme.space.s16,
     },
     largeItem: {
