@@ -9,6 +9,16 @@ vi.mock('@/text', async () => {
 });
 
 describe('ActiveRelaySummary', () => {
+    it('presents the complete accessible address while allowing its middle to give way', async () => {
+        const { HomeContextLine } = await import('./ActiveRelaySummary');
+        const address = 'https://long-hostname.example.test:8443';
+        const screen = await renderScreen(<HomeContextLine
+            address={address} testID="home-context" lineTestID="home-address"
+        />);
+        expect(screen.findByTestId('home-context')?.props.accessibilityLabel).toBe(address);
+        expect(screen.findByTestId('home-address')?.props).toMatchObject({ numberOfLines: 1, ellipsizeMode: 'middle' });
+    });
+
     it('distinguishes the active relay from a not-yet-active selection', async () => {
         const { ActiveRelaySummary } = await import('./ActiveRelaySummary');
         const active = await renderScreen(

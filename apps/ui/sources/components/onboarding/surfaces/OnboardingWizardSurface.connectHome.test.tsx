@@ -172,6 +172,8 @@ describe('first-run custom Home address connection', () => {
         expect(added[0]).toMatchObject({ serverUrl: 'https://connected-home.example.test', serverIdentityId: 'srv_onboarding_connected' });
         // The Home's own sign-in follows in the same step; the add-a-Home owner focuses it once signed in.
         await vi.waitFor(() => expect(screen.findByTestId('already-use-happier.pane.home-sign-in')).toBeTruthy());
+        const context = screen.findByTestId('welcome-home-context');
+        expect(context?.props.accessibilityLabel).toBe('https://connected-home.example.test');
     });
 
     it.each(['typed', 'supplied'] as const)('connects a %s Directory-capable Home without selecting it as the sign-in service', async (entry) => {

@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { resolveHomeDisplayNameForRelayUrl } from '@/components/settings/server/homeDisplayName';
@@ -49,9 +50,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s6,
         minWidth: 0,
+        maxWidth: '100%',
     },
     lineValue: {
         flexShrink: 1,
+        minWidth: 0,
         color: theme.colors.text.secondary,
         ...Typography.variant('meta', 'semiBold'),
     },
@@ -61,25 +64,25 @@ const stylesheet = StyleSheet.create((theme) => ({
  * The one quiet line naming the Home a signed-out step acts on, above the step's heading. Callers
  * pass the Home's label from the Home label owner (`homeDisplayName`).
  */
-export function HomeContextLine(props: Readonly<{
-    label: string;
+export function HomeContextLine({ label, address, accessibilityLabel, testID, lineTestID }: Readonly<{
     accessibilityLabel?: string;
     testID?: string;
     lineTestID?: string;
-}>) {
+}> & (Readonly<{ label: string; address?: never }> | Readonly<{ label?: string; address: string }>)) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     return (
         <View
-            testID={props.testID}
+            testID={testID}
             style={styles.line}
             accessible
-            accessibilityLabel={props.accessibilityLabel ?? props.label}
+            accessibilityLabel={accessibilityLabel ?? (label && address ? `${label} · ${address}` : address ?? label)}
         >
             <Icon name="house" size={14} color={theme.colors.text.secondary} />
-            <Text testID={props.lineTestID} numberOfLines={1} style={styles.lineValue}>
-                {props.label}
-            </Text>
+            {label ? <Text testID={address ? undefined : lineTestID} numberOfLines={1} style={styles.lineValue}>
+                {address ? `${label} ·` : label}
+            </Text> : null}
+            {address ? <MiddleEllipsisText testID={lineTestID} value={address} style={styles.lineValue} /> : null}
         </View>
     );
 }

@@ -40,6 +40,7 @@ export function HomeSignInPane(props: Readonly<{
     const { profile } = props;
     const catalog = useExactSavedHomeAuthenticationCatalog(profile);
     const label = resolveHomeDisplayLabel(profile, profile.id);
+    const address = toServerUrlDisplay(profile.canonicalServerUrl ?? profile.serverUrl);
     const paneBack = props.backControl !== 'host';
     const compact = useViewportClass() === 'compact';
     const returning = useHasCompletedAuthOnce();
@@ -78,7 +79,7 @@ export function HomeSignInPane(props: Readonly<{
             retentionDisclosure: undefined,
             authEntryUnavailable: false,
         },
-        place: { label: `${label} · ${toServerUrlDisplay(profile.canonicalServerUrl ?? profile.serverUrl)}` },
+        place: { address, label: label === address ? undefined : label },
         showGreeting: true,
         terminalWaiting: false,
         returningGreeting: NO_RETURNING_GREETING,

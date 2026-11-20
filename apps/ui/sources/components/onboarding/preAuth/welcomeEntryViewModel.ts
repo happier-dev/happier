@@ -36,7 +36,7 @@ export type WelcomeHomeFacts = Pick<AuthEntryOptions, 'homeLabel' | 'serverAvail
 
 export type WelcomeEntryViewModel = Readonly<{
     /** The one quiet line naming the Home this welcome belongs to, above its heading (a Home reached by address). */
-    context?: Readonly<{ label: string }>;
+    context?: Readonly<{ label?: string; address: string }>;
     /** `compact`: the phone's own two lines where they differ (direction A greets a phone with the welcome question). */
     heading?: Readonly<{ title: string; subtitle: string; intro?: string; compact?: Readonly<{ title: string; subtitle: string }> }>;
     /** The quiet line under the doors on a greeting (direction A): what Happier is, in three facts. */
@@ -146,7 +146,7 @@ export function projectWelcomeEntryViewModel(
         returningGreeting: { title: string; subtitle: string };
         options: WelcomeHomeFacts;
         /** This welcome is one exact Home's own (reached by address), not the focused Home's greeting. */
-        place?: Readonly<{ label: string }>;
+        place?: WelcomeEntryViewModel['context'];
         hasHome: boolean;
         serviceName: string | null;
         canRetryService: boolean;
@@ -223,7 +223,7 @@ export function projectWelcomeEntryViewModel(
         });
     }
     return {
-        ...(input.place ? { context: { label: input.place.label } } : {}),
+        ...(input.place ? { context: input.place } : {}),
         heading: !input.showGreeting ? undefined : input.place
             ? { title: t('welcome.placeHeadingTitle'), subtitle: t('welcome.placeHeadingSubtitle') }
             : input.terminalWaiting

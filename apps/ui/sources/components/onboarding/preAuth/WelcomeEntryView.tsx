@@ -93,7 +93,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                 lift > 0 ? { transform: [{ translateY: -lift }] } : null]}>
                 {model.heading ? <View style={styles.headingBlock}>
                     {model.context ? <View style={styles.context}>
-                        <HomeContextLine testID="welcome-home-context" label={model.context.label} />
+                        <HomeContextLine testID="welcome-home-context" {...model.context} />
                     </View> : null}
                     <Text accessibilityRole="header" style={[styles.title, compact ? styles.headlineCompact : null]}>
                         {compact && model.heading.compact ? model.heading.compact.title : model.heading.title}
@@ -256,9 +256,11 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s16,
     },
     context: {
+        maxWidth: '100%',
         marginBottom: theme.space.s12,
     },
     headingBlock: {
+        maxWidth: '100%',
         alignItems: 'center',
         // No vertical gap between the two title lines — matches the brand
         // tagline's `Start coding anywhere. / Continue everywhere.` rhythm, where
