@@ -16,6 +16,8 @@ import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { t, usePreferredLanguage } from '@/text';
+import { resolveWorkflowRunRowDetails, type WorkflowRunRowDetails } from '../library/workflowLibraryCells';
+import { readWorkflowRunTook } from '../library/WorkflowRunsHome';
 
 import type {
   WorkflowRunCollection,
@@ -39,6 +41,10 @@ export const WorkflowRunsColumnRows = React.memo(
     const language = usePreferredLanguage();
     // A hidden Runs view releases its read; it keeps showing the rows it last presented (a switch never rebuilds a list).
   const model = usePresentedValue(props.model);
+    // The Run display owner's Lines and Row details (B1 list review 2), read once for every row.
+    const rowDisplay = React.useMemo((): RunRowDisplay => ({ lines: model.display.lines,
+        details: resolveWorkflowRunRowDetails(model.display.details), readPluginDetail: model.readPluginDetail }),
+    [model.display.details, model.display.lines, model.readPluginDetail]);
     const time = React.useMemo(
       () => new Intl.DateTimeFormat(language, { timeStyle: 'short' }),
       [language],
@@ -105,6 +111,7 @@ export const WorkflowRunsColumnRows = React.memo(
                       row={row}
                       selected={selected}
                       time={time}
+                      display={rowDisplay}
                       testID={`${props.testIDPrefix}:row:${row.key}`}
                       onOpen={() => router.push(row.route as never)}
                     />
@@ -124,6 +131,7 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
     row: WorkflowRunCollectionRow;
     selected: boolean;
     time: Intl.DateTimeFormat;
+    display: RunRowDisplay;
     testID: string;
     onOpen: () => void;
   }>,
@@ -138,7 +146,16 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
     status?.bucket === 'working' || row.createdAt === undefined
       ? null
       : props.time.format(row.createdAt);
-  const line = row.subject;
+  // Lines 1 is the name alone; Lines 2 adds the run's subject (and a plugin's context detail); Lines 3 adds who started
+  // it and how long it took when those details are on. The sidebar row has one line under its name, so they share it.
+  const { lines, details, readPluginDetail } = props.display;
+  const line = lines === 1 ? null : [
+    row.subject,
+    lines === 3 && details.startedBy ? row.startedBy : null,
+    lines === 3 && details.took ? readWorkflowRunTook(row) : null,
+    readPluginDetail(row, 'context'),
+  ].filter(Boolean).join(' · ') || null;
+  const pluginMark = readPluginDetail(row, 'mark');
   const stateWord = status?.word ?? row.result;
   return (
     <CollectionNavigationRow
@@ -146,9 +163,14 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
       title={row.title}
       {...(line ? { subtitle: line } : {})}
       status={
-        mark !== null || when !== null ? (
+        mark !== null || when !== null || pluginMark !== null ? (
           <View style={styles.end}>
             {mark}
+            {pluginMark === null ? null : (
+              <Text variant="meta" numberOfLines={1} style={styles.when}>
+                {pluginMark}
+              </Text>
+            )}
             {when === null ? null : (
               <Text variant="meta" numberOfLines={1} style={styles.when}>
                 {when}
@@ -163,6 +185,12 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
     />
   );
 });
+
+type RunRowDisplay = Readonly<{
+  lines: 1 | 2 | 3;
+  details: WorkflowRunRowDetails;
+  readPluginDetail: (row: WorkflowRunCollectionRow, slot: 'context' | 'mark') => string | null;
+}>;
 
 const styles = StyleSheet.create((theme) => ({
   end: {

@@ -524,6 +524,79 @@ describe('WorkflowsColumn', () => {
         expect({ library: screen.findByTestId('workflows-column:group:library'), shared: screen.findByTestId('workflows-column:group:sharedWithYou') })
             .toEqual({ library: null, shared: null });
     });
+    // B1 list review 3: the sidebar consumes the same Row details the page and the View menu offer.
+    it('draws a sidebar workflow row\'s step count at Lines 3 when its Steps detail is on', async () => {
+        answerLists();
+        const answer = executeMock.getMockImplementation()!;
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => actionId === 'workflow.definition.list'
+            ? Promise.resolve({ ok: true, result: { definitions: [
+                { kind: 'workflow-definition.v1', definitionId: 'stepped', metadata: { title: 'Stepped recipe' }, revision: { headerVersion: 1, bodyVersion: 1 },
+                    contentStatus: 'available', stepCount: 3, ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null },
+            ] } satisfies WorkflowDefinitionListResultV1 }) : answer(actionId, input));
+        const { settings } = storage.getState();
+        storage.setState({ settings: { ...settings, collectionDisplayPreferencesV1: { ...settings.collectionDisplayPreferencesV1,
+            workflow: { ...settings.collectionDisplayPreferencesV1.workflow, lines: 3, details: { steps: true } } } } });
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            expect(screen.findHostByTestId('workflows-column:library:stepped')).not.toBeNull();
+        });
+        const text = screen.findHostByTestId('workflows-column:library:stepped')!.findAll((node) => typeof node.props.children === 'string')
+            .map((node) => node.props.children).join('\n');
+        expect(text).toContain('workflows.examples.stepCount');
+    });
+    // B1 list review 2: Run rows read the Run display projection (Lines and Row details).
+    it('draws a sidebar Run row at the Run Lines, with its Started by detail on Lines 3', async () => {
+        answerLists();
+        const subtitleOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) =>
+            node.props?.testID === 'workflows-column:runs:row:run-live' && 'title' in node.props)[0]?.props.subtitle as string | undefined;
+        const render = async (workflowRun: Readonly<Record<string, unknown>>) => {
+            const { settings } = storage.getState();
+            storage.setState({ settings: { ...settings, collectionDisplayPreferencesV1: { ...settings.collectionDisplayPreferencesV1, workflowRun } } });
+            const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+            await pressView(screen, 'runs');
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(screen.findHostByTestId('workflows-column:runs:row:run-live')).not.toBeNull();
+            });
+            const subtitle = subtitleOf(screen);
+            await screen.unmount();
+            return subtitle;
+        };
+        const oneLine = await render({ lines: 1 });
+        const threeLines = await render({ lines: 3, details: { startedBy: true } });
+        const threeLinesOff = await render({ lines: 3, details: { startedBy: false } });
+        expect(oneLine).toBeUndefined();
+        expect(threeLines).toBeDefined();
+        expect(threeLines).not.toBe(threeLinesOff);
+    });
+    // B1 list review 2: the Runs table chooses its Columns through the one Collection Columns owner.
+    it('lets the Runs table choose its Columns, so a default-hidden column can be turned on', async () => {
+        answerLists();
+        routeState.pathname = '/workflows/runs';
+        try {
+            const { HostCollection } = await import('@happier-dev/plugin-ui');
+            const { CollectionColumnsMenuButton } = await import('@/components/ui/lists/collection/CollectionColumnsMenu');
+            const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <WorkflowsRunsRoute />
+            </AppShellColumnContext.Provider>, { wrapper: TestAuth });
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(screen.findAllByType(HostCollection).find((node) => node.props.testID === 'workflow-runs:collection')).toBeDefined();
+            });
+            const table = screen.findAllByType(HostCollection).find((node) => node.props.testID === 'workflow-runs:collection')!;
+            const collectionId = table.props.columns?.collectionId;
+            expect(collectionId).toEqual(expect.any(String));
+            const menu = screen.findAllByType(CollectionColumnsMenuButton)[0];
+            expect(menu?.props.collectionId).toBe(collectionId);
+            // Every declared field (contributed columns included) is a choice in the menu.
+            const fieldKeys = (table.props.anatomy.fields ?? []).map((field: { key: string }) => field.key);
+            const choices = (menu?.props.columns ?? []).map((column: { id: string }) => column.id);
+            expect(choices).toEqual(expect.arrayContaining(fieldKeys));
+        } finally {
+            routeState.pathname = '/workflows';
+        }
+    });
     it('keeps the Library index alive from the shared run summaries: needs you and running speak, every row keeps its strip', async () => {
         answerLists();
         const answer = executeMock.getMockImplementation()!;
@@ -619,6 +692,10 @@ describe('WorkflowsColumn', () => {
             && rowIds.has(String(node.props.testID ?? ''))).map(node => [String(node.props.testID), node.props]));
         await vi.waitFor(() => expect(rowProps().size).toBe(ids.length));
         await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 50)); });
+        // One cause, one message: the column says what the library home says, from the same copy.
+        const failedText = screen.getTextContent();
+        expect(failedText).toContain('workflows.loadFailedTitle');
+        expect(failedText).toContain('workflows.loadFailedBody');
         const before = rowProps();
         const changed = ids[3]!;
         const { encodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');
@@ -692,10 +769,6 @@ describe('WorkflowsColumn', () => {
         const http = boundary!;
         setRuntimeFetch(async (url, init) => {
             const target = new URL(String(url));
-        // One cause, one message: the column says what the library home says, from the same copy.
-        const failedText = screen.getTextContent();
-        expect(failedText).toContain('workflows.loadFailedTitle');
-        expect(failedText).toContain('workflows.loadFailedBody');
             if (target.pathname === '/v1/artifacts' && (target.searchParams.get('kind') === 'other'
                 || target.searchParams.get('kinds')?.includes('workflow-definition.v1'))) {
                 artifactRequests.push(target.href);

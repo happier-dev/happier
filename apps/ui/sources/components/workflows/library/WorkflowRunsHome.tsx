@@ -25,7 +25,9 @@ import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { t, usePreferredLanguage } from '@/text';
-import { WorkflowRunsViewMenu } from './WorkflowsViewMenu';
+import { WorkflowRunsViewGroupBy } from './WorkflowsViewMenu';
+import { resolveWorkflowRunRowDetails } from './workflowLibraryCells';
+import { CollectionColumnsMenuButton, collectionColumnsMenuColumns } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 
 import {
   useWorkflowRunCollection,
@@ -75,7 +77,7 @@ export function WorkflowRunsHome(): React.ReactElement {
     'section',
   );
   return (
-    <WorkflowRunsPage model={model} head={<>
+    <WorkflowRunsPage model={model} head={(columnsMenu) => <>
       <PageHeader
         testID="workflow-runs:header"
         title={t('workflows.tabs.runs')}
@@ -94,7 +96,7 @@ export function WorkflowRunsHome(): React.ReactElement {
         />
         <View style={styles.grow} />
         {header.filterButton}
-        <WorkflowRunsViewMenu groupBy={model.display.groupBy} onGroupBy={model.display.setGroupBy} trigger="labelled" testID="workflow-runs:view" />
+        {columnsMenu}
       </View>
       <View style={styles.spaceStrip}>{header.strip}</View>
       {header.conditionRow ? (
@@ -110,8 +112,15 @@ export function WorkflowRunsHome(): React.ReactElement {
  * toolbar) or a phone's main-screen head, which owns the title, search and View. A phone's Runs are a page, so they
  * take the page list's rows and group labels, as the Workflows index does (UI refinements 21:44Z, item 4).
  */
-export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection; head?: React.ReactNode }>): React.ReactElement {
+export function WorkflowRunsPage(props: Readonly<{
+  model: WorkflowRunCollection;
+  /** The wide page's head; it places the table's View menu (Group by, then Columns) in its toolbar. */
+  head?: (columnsMenu: React.ReactNode) => React.ReactNode;
+}>): React.ReactElement {
   const { model } = props;
+  const { lines } = model.display;
+  const runDetails = React.useMemo(() => resolveWorkflowRunRowDetails(model.display.details), [model.display.details]);
+  const { readPluginDetail } = model;
   const router = useRouter();
   const language = usePreferredLanguage();
   const open = React.useCallback(
@@ -177,7 +186,13 @@ export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection;
         glyph: () => null,
         loadingGlyph: false,
         title: (row) => row.title,
-        byline: (row) => row.subject,
+        // A list row (a phone, a narrow page) reads the Run Lines and Row details (B1 list review 2): Lines 2 adds the
+        // subject; Lines 3 adds who started it and how long it took on their own line. The table names them Columns.
+        byline: lines === 1 ? undefined : (row) => [row.subject, readPluginDetail(row, 'context')].filter(Boolean).join(' · ') || null,
+        description: lines === 3 ? (row) => [
+          runDetails.startedBy ? row.startedBy : null,
+          runDetails.took ? readWorkflowRunTook(row) : null,
+        ].filter(Boolean).join(' · ') || null : undefined,
         bylineLead: (row) => {
           const { status } = row;
           return status === null || (status.tone === 'neutral' && status.bucket !== 'working')
@@ -193,7 +208,7 @@ export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection;
         testID: (row) => `workflow-runs:row:${row.key}`,
         columnTitles: { title: t('workflows.destination.columns.run') },
       };
-    }, [language, model.extensions.columns]);
+    }, [language, lines, model.extensions.columns, readPluginDetail, runDetails]);
 
   const failed = model.runs.status === 'failed' && model.rows.length === 0;
   const empty = failed ? (
@@ -222,11 +237,27 @@ export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection;
     />
   ) : null;
 
+  // The table chooses its Columns through the one Collection Columns owner, so a contributed default-hidden column can
+  // be turned on (B1 list review 2); the View menu leads with Group by.
+  const [fittedColumns, setFittedColumns] = React.useState<readonly string[] | null>(null);
+  const columns = React.useMemo(() => ({ collectionId: WORKFLOW_RUNS_COLLECTION_ID, onColumnsFit: setFittedColumns }), []);
+  const menuColumns = React.useMemo(() => collectionColumnsMenuColumns(
+    { id: 'title', title: t('workflows.destination.columns.run') }, anatomy.fields ?? [],
+  ), [anatomy.fields]);
+  const columnsMenu = props.head ? <CollectionColumnsMenuButton
+    testID="workflow-runs:view"
+    trigger="labelled"
+    collectionId={WORKFLOW_RUNS_COLLECTION_ID}
+    columns={menuColumns}
+    fittedIds={fittedColumns}
+    label={t('workflows.destination.columns.view')}
+    beforeColumns={<WorkflowRunsViewGroupBy groupBy={model.display.groupBy} onGroupBy={model.display.setGroupBy} testID="workflow-runs:view" />}
+  /> : null;
   return (
     <ItemList pageColumn="wide">
       <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
         <PageContentColumn>
-          {props.head}
+          {props.head?.(columnsMenu)}
           <Collection<WorkflowRunCollectionRow>
             testID="workflow-runs:collection"
             model={collection}
@@ -235,6 +266,7 @@ export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection;
             presentation="table"
             detail="none"
             scroll="page-virtualized"
+            columns={columns}
             minListWidth={RUNS_MIN_WIDTH_PX}
             minDetailWidth={RUNS_MIN_WIDTH_PX}
             preferredListRatio={1}
@@ -245,6 +277,9 @@ export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection;
     </ItemList>
   );
 }
+
+/** The Runs table's one stable Collection id: its Columns choice is kept under it. */
+const WORKFLOW_RUNS_COLLECTION_ID = 'workflows.runs';
 
 /** The narrowest readable run row at normal text size (the library page's own floor). */
 const RUNS_MIN_WIDTH_PX = 320;

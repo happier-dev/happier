@@ -59,7 +59,7 @@ import {
 } from './workflowLibraryReads';
 import { WorkflowRunStripView } from './WorkflowRunStripView';
 import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkflowListExtensions';
-import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, readWorkflowRowStrip, resolveWorkflowRowDetails,
+import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, readWorkflowRowStrip, resolveWorkflowRowDetails, workflowLibraryExtensionFacts, workflowRowDetailChoices,
     WorkflowLibraryStateWord, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
 import { WorkflowsViewGroupBy, WorkflowsViewNewSection, WorkflowsViewRowDetails } from './WorkflowsViewMenu';
@@ -318,7 +318,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                 afterColumns={newSectionOption}
             /> : <CollectionColumnsMenuTrigger testID="workflows-home:view" trigger="labelled" label={t('workflows.destination.columns.view')}>
                 {groupOptions}
-                <WorkflowsViewRowDetails details={display.details} onChange={display.setDetail} pluginDetails={pluginDetails}
+                <WorkflowsViewRowDetails choices={workflowRowDetailChoices(display.details, pluginDetails)} onChange={display.setDetail}
                     testIDPrefix="workflows-home:view:detail" />
                 {newSectionOption}
             </CollectionColumnsMenuTrigger>}
@@ -382,7 +382,7 @@ export function WorkflowsLibraryHome(): React.ReactElement {
                     {/* The content column sits inside the Collection scope, so its sections and the rows take one inset. */}
                     <CoreCollectionScope renderPageScroller={passThroughPageScroller}>
                     <PageContentColumn>
-                        {header}
+                            {header}
                             {libraryStateBesideRows ? empty : null}
                             <Collection<LibraryRow>
                                 testID="workflows-home:collection"
@@ -447,11 +447,7 @@ function useLibraryAnatomy(
     const openRunRef = React.useRef(openRun);
     openRunRef.current = openRun;
     const rowDetails = React.useMemo(() => resolveWorkflowRowDetails(details), [details]);
-    const readableFacts = React.useMemo(() => new Map<string, (row: LibraryRow) => unknown>([
-        ['stepCount', row => readFacts(row).stepCount],
-        ['lastRunAt', row => readFacts(row).lastRunAt],
-        ['state', row => readFacts(row).state],
-    ]), [readFacts]);
+    const readableFacts = React.useMemo(() => workflowLibraryExtensionFacts(readFacts), [readFacts]);
     const extensions = useWorkflowListExtensions('workflow', readableFacts);
     const card = React.useMemo(() => {
         const base = buildWorkflowLibraryCard(readFacts, (runId) => openRunRef.current(runId), rowDetails);

@@ -4,6 +4,8 @@ import { admitPluginListFilterFieldV1, admitPluginListFilterFieldValueV1, type A
 import { useAppShellPluginUiDeclarationProjection, useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { t, usePreferredLanguage } from '@/text';
 
+import { readWorkflowLibraryRowFacts, workflowLibraryExtensionFacts, type WorkflowLibraryItem, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
+
 type Reader<Row> = (row: Row) => unknown;
 type RowDetail<Row> = Readonly<{
     id: string;
@@ -105,4 +107,21 @@ export function readWorkflowPluginDetails<Row>(
         const value = detail.render(row);
         return value === null ? [] : [`${detail.title}: ${value}`];
     }).join(' · ') || null;
+}
+
+/**
+ * A workflow list's admitted plugin details and columns for a surface that keeps no facts reading of its own (the
+ * sidebar, the phone View sheet): the same held facts the library page offers (`workflowLibraryExtensionFacts`).
+ */
+export function useWorkflowLibraryRowExtensions(): WorkflowListExtensions<WorkflowLibraryItem> {
+    const readFacts = React.useMemo(() => {
+        const facts = new WeakMap<WorkflowLibraryItem, WorkflowLibraryRowFacts>();
+        return (row: WorkflowLibraryItem) => {
+            let read = facts.get(row);
+            if (read === undefined) { read = readWorkflowLibraryRowFacts(row); facts.set(row, read); }
+            return read;
+        };
+    }, []);
+    const readableFacts = React.useMemo(() => workflowLibraryExtensionFacts(readFacts), [readFacts]);
+    return useWorkflowListExtensions('workflow', readableFacts);
 }

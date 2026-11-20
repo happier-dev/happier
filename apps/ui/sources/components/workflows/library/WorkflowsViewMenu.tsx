@@ -11,11 +11,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
 
-import {
-  resolveWorkflowRowDetails,
-  WORKFLOW_ROW_DETAILS,
-  workflowRowDetailTitle,
-} from './workflowLibraryCells';
+import type { RowDetailChoice } from './workflowLibraryCells';
 
 type CollectionLines = 1 | 2 | 3;
 const LINES: readonly CollectionLines[] = [1, 2, 3];
@@ -61,36 +57,27 @@ export function WorkflowsViewLines(
   );
 }
 
-/** "Row details" for rows and cards: one switch per declared detail, then the plugin details the list declares. */
+/**
+ * "Row details" for rows and cards: one switch per detail the list kind declares, its built-ins then the plugin details
+ * it admits (`workflowRowDetailChoices`, `workflowRunRowDetailChoices`): every surface lists the same choices.
+ */
 export function WorkflowsViewRowDetails(
   props: Readonly<{
-    details: Readonly<Record<string, boolean>> | undefined;
+    choices: readonly RowDetailChoice[];
     onChange: (id: string, enabled: boolean) => void;
-    pluginDetails: readonly Readonly<{ id: string; title: string }>[];
     testIDPrefix: string;
   }>,
 ): React.ReactElement {
-  const resolved = resolveWorkflowRowDetails(props.details);
   return (
     <ActionListSection
       title={t('workflows.destination.display.rowDetails')}
-      actions={[
-        ...WORKFLOW_ROW_DETAILS.map((detail) => ({
-          id: detail.id,
-          testID: `${props.testIDPrefix}:${detail.id}`,
-          label: workflowRowDetailTitle(detail.id),
-          checked: resolved[detail.id],
-          onPress: () => props.onChange(detail.id, !resolved[detail.id]),
-        })),
-        ...props.pluginDetails.map((detail) => ({
-          id: detail.id,
-          testID: `${props.testIDPrefix}:${detail.id}`,
-          label: detail.title,
-          checked: props.details?.[detail.id] === true,
-          onPress: () =>
-            props.onChange(detail.id, props.details?.[detail.id] !== true),
-        })),
-      ]}
+      actions={props.choices.map((detail) => ({
+        id: detail.id,
+        testID: `${props.testIDPrefix}:${detail.id}`,
+        label: detail.title,
+        checked: detail.on,
+        onPress: () => props.onChange(detail.id, !detail.on),
+      }))}
     />
   );
 }
@@ -129,10 +116,33 @@ export function useWorkflowGroupTabs(): readonly Readonly<{ id: 'source' | 'proj
 type WorkflowRunGrouping = 'date' | 'project' | 'workflow';
 const RUN_GROUPINGS: readonly WorkflowRunGrouping[] = ['date', 'project', 'workflow'];
 
-/** Runs' View menu (scene 8 Runs, D2): Group by Date, Project or Workflow; no sections, pins or cards. */
+/** Group by for Runs (scene 8 Runs, D2): Date, Project or Workflow. */
+export function WorkflowRunsViewGroupBy(props: Readonly<{
+    groupBy: WorkflowRunGrouping;
+    onGroupBy: (groupBy: WorkflowRunGrouping) => void;
+    testID: string;
+}>): React.ReactElement {
+    return <ActionListSection title={t('workflows.destination.display.groupBy')} actions={RUN_GROUPINGS.map(groupBy => ({
+        id: groupBy, testID: `${props.testID}:group:${groupBy}`,
+        label: t(`workflows.destination.display.${groupBy}`), selected: props.groupBy === groupBy,
+        onPress: () => props.onGroupBy(groupBy),
+    }))} />;
+}
+
+/**
+ * Runs' View menu for its rows (the sidebar and a phone): Group by, then Lines and Row details from the Run display
+ * owner (B1 list review 2). The Runs table names its fields Columns instead (`WorkflowRunsHome`). No sections, pins
+ * or cards.
+ */
 export function WorkflowRunsViewMenu(props: Readonly<{
     groupBy: WorkflowRunGrouping;
     onGroupBy: (groupBy: WorkflowRunGrouping) => void;
+    rows: Readonly<{
+        lines: CollectionLines;
+        onLines: (lines: CollectionLines) => void;
+        details: readonly RowDetailChoice[];
+        onDetail: (id: string, enabled: boolean) => void;
+    }>;
     trigger: 'icon' | 'labelled';
     /** A phone's sheet leads with Filters. */
     onFilters?: () => void;
@@ -143,15 +153,13 @@ export function WorkflowRunsViewMenu(props: Readonly<{
     if (props.onFilters) return <CollectionColumnsMenuTrigger testID={props.testID} trigger={props.trigger} iconName="sliders-horizontal"
         phoneSheet label={t('workflows.destination.columns.view')}>
         <WorkflowsViewSheetBody<WorkflowRunGrouping> onFilters={props.onFilters} groupTabs={groupTabs} groupBy={props.groupBy}
-            onGroupBy={props.onGroupBy} testIDPrefix={props.testID} />
+            onGroupBy={props.onGroupBy} rows={props.rows} testIDPrefix={props.testID} />
     </CollectionColumnsMenuTrigger>;
     return <CollectionColumnsMenuTrigger testID={props.testID} trigger={props.trigger} iconName="sliders-horizontal"
         label={t('workflows.destination.columns.view')}>
-        <ActionListSection title={t('workflows.destination.display.groupBy')} actions={RUN_GROUPINGS.map(groupBy => ({
-            id: groupBy, testID: `${props.testID}:group:${groupBy}`,
-            label: t(`workflows.destination.display.${groupBy}`), selected: props.groupBy === groupBy,
-            onPress: () => props.onGroupBy(groupBy),
-        }))} />
+        <WorkflowRunsViewGroupBy groupBy={props.groupBy} onGroupBy={props.onGroupBy} testID={props.testID} />
+        <WorkflowsViewLines lines={props.rows.lines} onChange={props.rows.onLines} testIDPrefix={`${props.testID}:lines`} />
+        <WorkflowsViewRowDetails choices={props.rows.details} onChange={props.rows.onDetail} testIDPrefix={`${props.testID}:detail`} />
     </CollectionColumnsMenuTrigger>;
 }
 
@@ -178,18 +186,17 @@ export function WorkflowsViewSheetBody<Group extends string>(props: Readonly<{
     groupTabs: readonly Readonly<{ id: Group; label: string }>[];
     groupBy: Group;
     onGroupBy: (groupBy: Group) => void;
-    /** Rows only (workflows): Lines, Row details and New section. Runs have none of them (D2). */
+    /** Rows: Lines and Row details (every list kind), and New section where the kind has sections (workflows). */
     rows?: Readonly<{
         lines: CollectionLines;
         onLines: (lines: CollectionLines) => void;
-        details: Readonly<Record<string, boolean>> | undefined;
+        details: readonly RowDetailChoice[];
         onDetail: (id: string, enabled: boolean) => void;
-        onNewSection: () => void;
+        onNewSection?: () => void;
     }>;
     testIDPrefix: string;
 }>): React.ReactElement {
     const { rows } = props;
-    const resolved = resolveWorkflowRowDetails(rows?.details);
     const lineTabs = React.useMemo(() => LINES.map(lines => ({ id: String(lines), label: String(lines) })), []);
     // A configuration sheet takes the page anatomy: its section labels stand on the cards' edge (acceptance item 5).
     return <ItemList presentation="page">
@@ -207,11 +214,11 @@ export function WorkflowsViewSheetBody<Group extends string>(props: Readonly<{
                     accessibilityLabel={t('settingsSession.sessionList.densityMenuTitle')} />} /> : null}
         </ItemGroup>
         {rows ? <ItemGroup title={t('workflows.destination.display.rowDetails')}>
-            {WORKFLOW_ROW_DETAILS.map(detail => <Item key={detail.id} testID={`${props.testIDPrefix}:detail:${detail.id}`}
-                title={workflowRowDetailTitle(detail.id)}
-                rightElement={<Switch value={resolved[detail.id]} onValueChange={(value) => rows.onDetail(detail.id, value)} />} />)}
+            {rows.details.map(detail => <Item key={detail.id} testID={`${props.testIDPrefix}:detail:${detail.id}`}
+                title={detail.title}
+                rightElement={<Switch value={detail.on} onValueChange={(value) => rows.onDetail(detail.id, value)} />} />)}
         </ItemGroup> : null}
-        {rows ? <ItemGroup>
+        {rows?.onNewSection ? <ItemGroup>
             <Item testID={`${props.testIDPrefix}:new-section`} title={t('sessionsList.newSection')} onPress={rows.onNewSection} />
         </ItemGroup> : null}
     </ItemList>;

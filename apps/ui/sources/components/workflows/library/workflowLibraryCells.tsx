@@ -208,6 +208,61 @@ export function workflowRowDetailTitle(id: WorkflowRowDetailId): string {
   }
 }
 
+/** One Row details choice as a View menu or phone sheet lists it: its id, its name, whether it is on. */
+export type RowDetailChoice = Readonly<{ id: string; title: string; on: boolean }>;
+type PluginRowDetail = Readonly<{ id: string; title: string }>;
+
+/** A workflow row's details for every View menu and sheet: the built-ins, then the plugin details the list admits. */
+export function workflowRowDetailChoices(
+  stored: Readonly<Record<string, boolean>> | undefined,
+  pluginDetails: readonly PluginRowDetail[],
+): readonly RowDetailChoice[] {
+  const resolved = resolveWorkflowRowDetails(stored);
+  return [
+    ...WORKFLOW_ROW_DETAILS.map(detail => ({ id: detail.id, title: workflowRowDetailTitle(detail.id), on: resolved[detail.id] })),
+    ...pluginDetails.map(detail => ({ id: detail.id, title: detail.title, on: stored?.[detail.id] === true })),
+  ];
+}
+
+/**
+ * The details a Run row can draw (B1 list review 2: every list kind has Lines and Row details): its subject is its
+ * second line; Started by and how long it took join a third line. The table names its fields Columns instead.
+ */
+export const WORKFLOW_RUN_ROW_DETAILS = Object.freeze([
+  { id: 'startedBy', defaultOn: false },
+  { id: 'took', defaultOn: false },
+] as const);
+export type WorkflowRunRowDetailId = (typeof WORKFLOW_RUN_ROW_DETAILS)[number]['id'];
+export type WorkflowRunRowDetails = Readonly<Record<WorkflowRunRowDetailId, boolean>>;
+
+export function resolveWorkflowRunRowDetails(stored: Readonly<Record<string, boolean>> | undefined): WorkflowRunRowDetails {
+  return Object.fromEntries(WORKFLOW_RUN_ROW_DETAILS.map(detail => [detail.id, stored?.[detail.id] ?? detail.defaultOn])) as WorkflowRunRowDetails;
+}
+
+export function workflowRunRowDetailChoices(
+  stored: Readonly<Record<string, boolean>> | undefined,
+  pluginDetails: readonly PluginRowDetail[],
+): readonly RowDetailChoice[] {
+  const resolved = resolveWorkflowRunRowDetails(stored);
+  return [
+    { id: 'startedBy', title: t('workflows.destination.display.startedBy'), on: resolved.startedBy },
+    { id: 'took', title: t('workflows.destination.columns.took'), on: resolved.took },
+    ...pluginDetails.map(detail => ({ id: detail.id, title: detail.title, on: stored?.[detail.id] === true })),
+  ];
+}
+
+/**
+ * The held facts a workflow list extension may read (`ui.listExtensions` `factKey`), for the page and the sidebar
+ * alike, over the caller's one facts reading per row.
+ */
+export function workflowLibraryExtensionFacts<Row>(readFacts: (row: Row) => WorkflowLibraryRowFacts) {
+  return new Map<string, (row: Row) => unknown>([
+    ['stepCount', row => readFacts(row).stepCount],
+    ['lastRunAt', row => readFacts(row).lastRunAt],
+    ['state', row => readFacts(row).state],
+  ]);
+}
+
 /** What a workflow uses, as marks: what starts it, then the Agents once the list owner carries them. */
 export function readWorkflowLibraryRowMarks(
   facts: WorkflowLibraryRowFacts,

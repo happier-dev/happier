@@ -21,6 +21,8 @@ import { CollectionColumnsMenuTrigger } from '@/components/ui/lists/collection/C
 import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
 import { useWorkflowGroupTabs, WorkflowRunsViewMenu, WorkflowsViewSheetBody } from '../library/WorkflowsViewMenu';
 import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
+import { useWorkflowLibraryRowExtensions } from '../library/useWorkflowListExtensions';
+import { workflowRowDetailChoices, workflowRunRowDetailChoices } from '../library/workflowLibraryCells';
 import {
   WorkflowsColumnLibraryContext,
   type WorkflowsColumnLentLibrary,
@@ -57,9 +59,12 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
   const display = useCollectionDisplayOptions('workflow', true);
   const workflowGroupTabs = useWorkflowGroupTabs();
   const createSection = libraryView.workflowSections.create;
+  // The same Row details the page and the sidebar offer: the built-ins, then the plugin details the list admits.
+  const extensions = useWorkflowLibraryRowExtensions();
   const sheetRows = React.useMemo(() => ({
-    lines: display.lines, onLines: display.setLines, details: display.details, onDetail: display.setDetail, onNewSection: createSection,
-  }), [createSection, display.details, display.lines, display.setDetail, display.setLines]);
+    lines: display.lines, onLines: display.setLines, details: workflowRowDetailChoices(display.details, extensions.details),
+    onDetail: display.setDetail, onNewSection: createSection,
+  }), [createSection, display.details, display.lines, display.setDetail, display.setLines, extensions.details]);
   const runs = useWorkflowRunCollection(presented && runsShown);
   const runHeader = useWorkflowRunCollectionHeader(runs, 'workflows-column-runs-space');
   const runSearchQuery = runs.binding.searchQuery;
@@ -127,6 +132,8 @@ export const WorkflowsPhonePage = React.memo(function WorkflowsPhonePage(
                 </CollectionColumnsMenuTrigger>
               ) : runsShown ? (
                 <WorkflowRunsViewMenu groupBy={runs.display.groupBy} onGroupBy={runs.display.setGroupBy} trigger="icon"
+                  rows={{ lines: runs.display.lines, onLines: runs.display.setLines,
+                    details: workflowRunRowDetailChoices(runs.display.details, runs.extensions.details), onDetail: runs.display.setDetail }}
                   onFilters={runHeader.openFilters} testID="workflows-phone:runs-view" />
               ) : null}
               <WorkflowsColumnActions

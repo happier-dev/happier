@@ -35,10 +35,10 @@ import { WorkflowColumnRow, WorkflowColumnRowDisplayContext } from './WorkflowCo
 import { resolveSessionSectionDisplayTitle } from '@/sync/domains/session/organization/sections';
 import { CollectionColumnsMenuTrigger } from '@/components/ui/lists/collection/CollectionColumnsMenu';
 import { useCollectionDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
-import { resolveWorkflowRowDetails } from '../library/workflowLibraryCells';
+import { resolveWorkflowRowDetails, workflowRowDetailChoices, workflowRunRowDetailChoices } from '../library/workflowLibraryCells';
+import { useWorkflowLibraryRowExtensions } from '../library/useWorkflowListExtensions';
 import { WorkflowRunsViewMenu, WorkflowsViewLines, WorkflowsViewNewSection, WorkflowsViewRowDetails } from '../library/WorkflowsViewMenu';
 
-const EMPTY_PLUGIN_DETAILS: readonly Readonly<{ id: string; title: string }>[] = Object.freeze([]);
 import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
 import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
 import type { WorkflowLibraryItem } from '../library/workflowLibraryCells';
@@ -215,17 +215,21 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
     const shownHeader = definitions ? header : runsShown ? runHeader : null;
     // The sidebar's View menu (scene 8 column): Lines and Row details for its workflow rows, New section; Runs group by.
     const display = useCollectionDisplayOptions('workflow', false);
-    const rowDisplay = React.useMemo(() => ({ lines: display.lines, details: resolveWorkflowRowDetails(display.details) }),
-        [display.details, display.lines]);
+    // The same Row details the page and the phone sheet offer: the built-ins, then the plugin details the list admits.
+    const extensions = useWorkflowLibraryRowExtensions();
+    const rowDisplay = React.useMemo(() => ({ lines: display.lines, details: resolveWorkflowRowDetails(display.details),
+        stored: display.details, pluginDetails: extensions.details }), [display.details, display.lines, extensions.details]);
     const viewMenu = definitions ? (
         <CollectionColumnsMenuTrigger testID="workflows-column:view-menu" iconName="sliders-horizontal" label={t('workflows.destination.columns.view')}>
             <WorkflowsViewLines lines={display.lines} onChange={display.setLines} testIDPrefix="workflows-column:view-menu:lines" />
-            <WorkflowsViewRowDetails details={display.details} onChange={display.setDetail} pluginDetails={EMPTY_PLUGIN_DETAILS}
+            <WorkflowsViewRowDetails choices={workflowRowDetailChoices(display.details, extensions.details)} onChange={display.setDetail}
                 testIDPrefix="workflows-column:view-menu:detail" />
             <WorkflowsViewNewSection onPress={libraryView.workflowSections.create} testID="workflows-column:view-menu:new-section" />
         </CollectionColumnsMenuTrigger>
     ) : runsShown ? (
-        <WorkflowRunsViewMenu groupBy={runs.display.groupBy} onGroupBy={runs.display.setGroupBy} trigger="icon" testID="workflows-column:runs-view-menu" />
+        <WorkflowRunsViewMenu groupBy={runs.display.groupBy} onGroupBy={runs.display.setGroupBy} trigger="icon" testID="workflows-column:runs-view-menu"
+            rows={{ lines: runs.display.lines, onLines: runs.display.setLines,
+                details: workflowRunRowDetailChoices(runs.display.details, runs.extensions.details), onDetail: runs.display.setDetail }} />
     ) : null;
     const { searchQuery, setSearchQuery } = libraryView;
     const runSearchQuery = runs.binding.searchQuery;

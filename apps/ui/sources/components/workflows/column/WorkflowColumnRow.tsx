@@ -16,12 +16,22 @@ import {
   type WorkflowRowDetails,
 } from '../library/workflowLibraryCells';
 import { WorkflowRunStripView } from '../library/WorkflowRunStripView';
+import { readWorkflowPluginDetails, type WorkflowListExtensions } from '../library/useWorkflowListExtensions';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
 import { formatNextScheduledRun } from '../triggers/formatTriggerSummary';
 
-/** The sidebar's Lines and Row details, from the one display owner (scene 8 View menu). */
-export type WorkflowColumnRowDisplay = Readonly<{ lines: 1 | 2 | 3; details: WorkflowRowDetails }>;
-const DEFAULT_DISPLAY: WorkflowColumnRowDisplay = Object.freeze({ lines: 2, details: resolveWorkflowRowDetails(undefined) });
+/**
+ * The sidebar's Lines and Row details, from the one display owner (scene 8 View menu): the built-ins resolved, the
+ * stored choices as set, and the plugin details the list admits (`ui.listExtensions`), as the library page reads them.
+ */
+export type WorkflowColumnRowDisplay = Readonly<{
+  lines: 1 | 2 | 3;
+  details: WorkflowRowDetails;
+  stored: Readonly<Record<string, boolean>> | undefined;
+  pluginDetails: WorkflowListExtensions<WorkflowLibraryItem>['details'];
+}>;
+const DEFAULT_DISPLAY: WorkflowColumnRowDisplay = Object.freeze({ lines: 2, details: resolveWorkflowRowDetails(undefined),
+  stored: undefined, pluginDetails: Object.freeze([]) });
 export const WorkflowColumnRowDisplayContext = React.createContext<WorkflowColumnRowDisplay>(DEFAULT_DISPLAY);
 
 /**
@@ -44,7 +54,7 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
     onPress: () => void;
   }>,
 ) {
-  const { lines, details } = React.useContext(WorkflowColumnRowDisplayContext);
+  const { lines, details, stored, pluginDetails } = React.useContext(WorkflowColumnRowDisplayContext);
   const facts = React.useMemo(() => readWorkflowLibraryRowFacts(props.row), [props.row]);
   const marks = details.icons ? readWorkflowLibraryRowMarks(facts, props.row) : [];
   const trigger = !details.trigger ? null
@@ -52,7 +62,10 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
       : (facts.triggerLine ?? props.fallbackLine ?? null);
   const nextRunAt = 'definition' in props.row ? props.row.definition.nextRunAt : null;
   const nextRun = lines === 3 && details.nextRun && nextRunAt !== null ? formatNextScheduledRun(nextRunAt) : null;
-  const line = lines === 1 ? null : [trigger, nextRun].filter(Boolean).join(' · ') || null;
+  const steps = lines === 3 && details.steps && facts.stepCount !== null ? t('workflows.examples.stepCount', { count: facts.stepCount }) : null;
+  const pluginContext = lines === 1 ? null : readWorkflowPluginDetails(pluginDetails, stored, props.row, 'context');
+  const pluginMark = readWorkflowPluginDetails(pluginDetails, stored, props.row, 'mark');
+  const line = lines === 1 ? null : [trigger, steps, nextRun, pluginContext].filter(Boolean).join(' · ') || null;
   const lastRun = lines === 3 && details.lastRun && facts.lastRunAt !== null
     ? t('workflows.destination.lastRun', { age: formatRelativeTimeShort(facts.lastRunAt, Date.now()) }) : null;
   const stateWord =
@@ -71,11 +84,12 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
   const strip = details.recentRuns && facts.strip !== null && !(lines === 1 && stateText !== null)
     ? <WorkflowRunStripView strip={facts.strip} /> : null;
   const endState = lines === 1 && stateText !== null ? <Text variant="meta" numberOfLines={1}>{stateText}</Text> : null;
-  const end = marks.length > 0 || strip !== null || endState !== null || lastRun !== null ? (
+  const end = marks.length > 0 || strip !== null || endState !== null || lastRun !== null || pluginMark !== null ? (
     <View style={lines === 1 ? styles.endOneLine : styles.end}>
-      {marks.length > 0 || endState !== null ? (
+      {marks.length > 0 || endState !== null || pluginMark !== null ? (
         <View style={styles.endLine}>
           {endState}
+          {pluginMark === null ? null : <Text variant="meta" numberOfLines={1} style={styles.quiet}>{pluginMark}</Text>}
           {marks.length > 0 ? <WorkflowMarks layout="cluster" marks={marks} /> : null}
         </View>
       ) : null}
