@@ -32,9 +32,12 @@ import { useStorePresets } from './useStorePresets';
 import { StorePresetsReadFailure } from './StorePresetsReadFailure';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useStoreListingPaneTitle } from '../storeListingPaneTitle';
+import { foldOfflineSoftwareTargets, SoftwareMachineMark, softwareMachineFacts, softwareMachineName, useSoftwareMachines } from '../StoreSoftwareTargets';
 
 const NO_SERVERS: readonly string[] = [];
 const NEW_PRESET = 'store.preset.new';
+const RUN_ON_MACHINE = 'store.preset.runOn:';
+const NO_CHOSEN_MACHINES: ReadonlySet<string> = new Set();
 
 /** A preset's one line: what it sets up, in the receipt's own words (the Setup tab says it the same way). */
 export function describeStorePreset(preset: OpenedManagedMachinePresetV1): string {
@@ -63,6 +66,18 @@ export function StoreAddToPresetButton(
     name: string;
     onChoose: (choice: StorePresetChoice) => void;
     testID: string;
+    /**
+     * The same item can also run now (a plugin's setup recipe, lab ideas-1118-platform "Use on a machine"): the one
+     * control then offers the Account's Machines first, then the presets. Its words come from the caller.
+     */
+    /** A row's trailing control is small (a setup checklist row); a page's is normal. */
+    size?: 'small' | 'normal';
+    runNow?: Readonly<{
+      title: string;
+      machinesTitle: string;
+      presetsTitle: string;
+      onRun: (machineId: string) => void;
+    }>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -82,8 +97,25 @@ export function StoreAddToPresetButton(
       props.item ? projectAddToPresetChoices(presets.rows, props.item) : [],
     [presets.rows, props.item],
   );
+  // Store state only (the reach owner, no daemon reads); offline Machines fold away, as on the listing.
+  const softwareMachines = useSoftwareMachines();
+  const runOn = props.runNow;
+  const machineItems = React.useMemo(
+    (): DropdownMenuItem[] => runOn
+      ? foldOfflineSoftwareTargets(softwareMachines.targets, NO_CHOSEN_MACHINES).shown.map((entry) => ({
+        id: `${RUN_ON_MACHINE}${entry.machine.machineId}`,
+        testID: `${props.testID}.machine.${entry.machine.machineId}`,
+        title: softwareMachineName(entry.machine),
+        subtitle: softwareMachineFacts(entry.machine),
+        icon: <SoftwareMachineMark entry={entry} />,
+        category: 'machines',
+      }))
+      : [],
+    [props.testID, runOn, softwareMachines.targets],
+  );
   const items = React.useMemo(
     (): DropdownMenuItem[] => [
+      ...machineItems,
       ...choices.map((choice) => ({
         id: choice.preset.id,
         testID: `${props.testID}.preset.${choice.preset.id}`,
@@ -115,7 +147,11 @@ export function StoreAddToPresetButton(
         category: 'new',
       },
     ],
-    [choices, props.testID, theme.colors.text.secondary],
+    [choices, machineItems, props.testID, theme.colors.text.secondary],
+  );
+  const categoryTitles = React.useMemo(
+    () => runOn ? { machines: runOn.machinesTitle, presets: runOn.presetsTitle } : undefined,
+    [runOn],
   );
   const waiting =
     demanded && (!state || (state.loading && state.value == null));
@@ -129,9 +165,10 @@ export function StoreAddToPresetButton(
       }}
       items={
         waiting || state?.error
-          ? items.filter((entry) => entry.id === NEW_PRESET)
+          ? items.filter((entry) => entry.id === NEW_PRESET || entry.category === 'machines')
           : items
       }
+      {...(categoryTitles ? { categoryTitles } : {})}
       emptyLabel={null}
       // While presets load, the menu says so: "New preset" alone would read as having none (and invite a duplicate).
       header={state?.error ? <StorePresetsReadFailure testID={`${props.testID}.state`} error={state.error} onRetry={presets.refresh} />
@@ -141,6 +178,10 @@ export function StoreAddToPresetButton(
       matchTriggerWidth={false}
       onSelect={(id) => {
         setOpen(false);
+        if (runOn && id.startsWith(RUN_ON_MACHINE)) {
+          runOn.onRun(id.slice(RUN_ON_MACHINE.length));
+          return;
+        }
         if (id === NEW_PRESET) {
           if (props.serverId) props.onChoose({ serverId: props.serverId, preset: null });
           return;
@@ -151,14 +192,14 @@ export function StoreAddToPresetButton(
       trigger={({ toggle }) => (
         <RoundButton
           testID={props.testID}
-          size="normal"
+          size={props.size ?? 'normal'}
           display="secondary"
-          title={t('capabilities.store.softwarePage.addToPreset')}
+          title={runOn?.title ?? t('capabilities.store.softwarePage.addToPreset')}
           accessibilityHint={t(
             'capabilities.store.softwarePage.addToPresetTitle',
             { name: props.name },
           )}
-          disabled={!props.item || !props.serverId}
+          disabled={!props.item || (!props.serverId && !runOn)}
           onPress={toggle}
         />
       )}

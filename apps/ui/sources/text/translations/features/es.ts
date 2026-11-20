@@ -12290,6 +12290,7 @@ const pluginSettingsPresentationTranslations = { es: {
             setupChoose: 'Elegir',
             setupUseOnMachine: 'Usar en una máquina',
             setupRunNow: 'Ejecutarlo ahora',
+            setupAddToPresetSetup: 'Añadirlo a la configuración de un preajuste',
             setupAccountFallback: 'Cuenta',
             setupRecipeFallback: 'Receta de máquina',
             setupSkip: 'Omitir',

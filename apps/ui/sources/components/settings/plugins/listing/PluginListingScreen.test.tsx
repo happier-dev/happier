@@ -121,6 +121,9 @@ describe('PluginListingScreen', () => {
         expect(screen.findByTestId('settings.plugins.listing.manage')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.listing.setup.progress')).not.toBeNull();
         expect(screen.getTextContent()).toContain('Set up build tools');
+        // One "Use on a machine" control carries the recipe's two outcomes (lab round 4), not a second button.
+        expect(screen.getTextContent()).toContain('Use on a machine');
+        expect(screen.getTextContent()).not.toContain('Add to a preset…');
     });
 
     it('says the listing is gone, with a retry, once the source answered without it', async () => {

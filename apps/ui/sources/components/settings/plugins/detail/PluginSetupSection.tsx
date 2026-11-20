@@ -16,6 +16,8 @@ import {
   useCurrentUiContextLocalCommands,
   type CurrentUiContextLocalCommand,
 } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { StoreAddToPresetButton, type StorePresetChoice } from '@/components/store/presets/StoreAddToPreset';
+import type { StorePresetDoorItem } from '@/components/store/presets/storePresetDoor';
 import { t } from '@/text';
 
 import type {
@@ -96,12 +98,17 @@ export function PluginSetupSection(
     machineId: string | null;
     serverId: string | null;
     settings?: readonly PluginSettingSetupObservation[];
+    /**
+     * A recipe's second outcome (lab ideas-1118-platform round 4, "Use on a machine"): add it to a preset's Setup.
+     * The host swaps in the one preset editor (`StorePresetEditorHandoff`), whose Save owns the write.
+     */
+    onAddToPreset?: (choice: StorePresetChoice, item: StorePresetDoorItem) => void;
     testID?: string;
   }>,
 ) {
   const { theme } = useUnistyles();
   const localizePluginText = useProjectedPluginLocalizedTextResolver();
-  const { rows, steps, progress, open, skip } = useInstalledPluginSetup({
+  const { rows, steps, progress, open, skip, recipeScope } = useInstalledPluginSetup({
     pluginId: props.pluginId,
     host: props.host,
     installed: true,
@@ -175,16 +182,35 @@ export function PluginSetupSection(
                         onPress: () => skip(row) }]}
                     />
                   ) : null}
-                  <RoundButton
-                    testID={`${testID}.${row.id}.action`}
-                    size="small"
-                    display={index === 0 ? 'default' : 'secondary'}
-                    title={presentation.action}
-                    accessibilityLabel={`${presentation.action}: ${presentation.title}`}
-                    onPress={() => {
-                      void open(row, presentation.title);
-                    }}
-                  />
+                  {row.kind === 'machineRecipe' && props.onAddToPreset ? (
+                    // "Use on a machine" (lab ideas-1118-platform round 4): one control with the recipe's two outcomes,
+                    // run it now on a chosen Machine (its Setup review) or add it to a preset's Setup (the preset editor).
+                    <StoreAddToPresetButton
+                      testID={`${testID}.${row.id}.use`}
+                      size="small"
+                      serverId={recipeScope?.serverId ?? null}
+                      item={row.item}
+                      name={presentation.title}
+                      onChoose={(choice) => props.onAddToPreset?.(choice, row.item)}
+                      runNow={{
+                        title: presentation.action,
+                        machinesTitle: t('settingsPlugins.surfaces.setupRunNow'),
+                        presetsTitle: t('settingsPlugins.surfaces.setupAddToPresetSetup'),
+                        onRun: (machineId) => { void open(row, presentation.title, machineId); },
+                      }}
+                    />
+                  ) : (
+                    <RoundButton
+                      testID={`${testID}.${row.id}.action`}
+                      size="small"
+                      display={index === 0 ? 'default' : 'secondary'}
+                      title={presentation.action}
+                      accessibilityLabel={`${presentation.action}: ${presentation.title}`}
+                      onPress={() => {
+                        void open(row, presentation.title);
+                      }}
+                    />
+                  )}
                 </View>
               }
             />

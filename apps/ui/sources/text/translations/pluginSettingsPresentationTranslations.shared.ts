@@ -62,6 +62,7 @@ export const english = {
         setupChoose: 'Choose',
         setupUseOnMachine: 'Use on a machine',
         setupRunNow: 'Run it now',
+        setupAddToPresetSetup: 'Add it to a preset’s Setup',
         setupAccountFallback: 'Account',
         setupRecipeFallback: 'Machine recipe',
         setupSkip: 'Skip',

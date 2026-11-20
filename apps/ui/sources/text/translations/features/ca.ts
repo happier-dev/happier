@@ -12395,6 +12395,7 @@ const pluginSettingsPresentationTranslations = { ca: {
             setupChoose: 'Tria',
             setupUseOnMachine: 'Fes-lo servir en una màquina',
             setupRunNow: 'Executa-ho ara',
+            setupAddToPresetSetup: 'Afegeix-ho a la configuració d’un preajust',
             setupAccountFallback: 'Compte',
             setupRecipeFallback: 'Recepta de màquina',
             setupSkip: 'Omet',

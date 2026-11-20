@@ -12423,6 +12423,7 @@ const pluginSettingsPresentationTranslations = { ru: {
             setupChoose: 'Выбрать',
             setupUseOnMachine: 'Использовать на машине',
             setupRunNow: 'Запустить сейчас',
+            setupAddToPresetSetup: 'Добавить в настройку пресета',
             setupAccountFallback: 'Аккаунт',
             setupRecipeFallback: 'Рецепт машины',
             setupSkip: 'Пропустить',

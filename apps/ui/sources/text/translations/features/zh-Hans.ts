@@ -12286,6 +12286,7 @@ const pluginSettingsPresentationTranslations = { 'zh-Hans': {
             setupChoose: '选择',
             setupUseOnMachine: '在机器上使用',
             setupRunNow: '立即运行',
+            setupAddToPresetSetup: '添加到预设的设置',
             setupAccountFallback: '账户',
             setupRecipeFallback: '机器配方',
             setupSkip: '跳过',

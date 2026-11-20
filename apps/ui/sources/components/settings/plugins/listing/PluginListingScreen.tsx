@@ -37,6 +37,8 @@ import { PluginListingAddsSection, PluginListingFacts } from './PluginListingFac
 import { usePluginInstallOnMachines } from './PluginInstallOnMachines';
 import { PluginProjectScopeItem } from '../detail/PluginProjectScopeItem';
 import { PluginSetupSection } from '../detail/PluginSetupSection';
+import { StorePresetEditorHandoff, type StorePresetChoice } from '@/components/store/presets/StoreAddToPreset';
+import type { StorePresetDoorItem } from '@/components/store/presets/storePresetDoor';
 
 /**
  * A marketplace listing before install (lab PL4): identity, what it is for and what it adds; beside
@@ -136,6 +138,9 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
             )}
         />
     ) : null;
+    // A recipe added to a preset's Setup opens the one preset editor here, where it was chosen; its Save writes.
+    const [presetHandoff, setPresetHandoff] = React.useState<Readonly<{ choice: StorePresetChoice; item: StorePresetDoorItem }> | null>(null);
+    const closePresetHandoff = React.useCallback(() => setPresetHandoff(null), []);
     // Once installed the listing reads as the installed plugin: what it still needs, then who can use it and the
     // way into its full management.
     const installedSetup = entry && installed ? (
@@ -147,6 +152,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
                 projection={state.pluginProjectionV2}
                 machineId={state.executionMachineId}
                 serverId={state.executionServerId}
+                onAddToPreset={(choice, item) => setPresetHandoff({ choice, item })}
                 testID="settings.plugins.listing.setup"
             />
             <ItemGroup>
@@ -165,6 +171,9 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
             tone="secondary" indicator={false} />
     ) : null;
 
+    if (presetHandoff) {
+        return <StorePresetEditorHandoff choice={presetHandoff.choice} item={presetHandoff.item} onReturn={closePresetHandoff} />;
+    }
     return (
         <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.listing" {...(pane ? {} : { pageColumn: 'wide' as const })}>
             {pane ? null : <HappierBreadcrumb style={[styles.crumbs, maxWidthStyle]} accessibilityRole="toolbar"

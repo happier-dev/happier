@@ -1,10 +1,13 @@
 import * as React from 'react';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
 import {
   MultiSelectField,
   type MultiSelectCandidate,
 } from '@/components/ui/forms/dropdown/MultiSelectField';
+import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
+import { Item } from '@/components/ui/lists/Item';
 import { t } from '@/text';
 
 import { usePluginProjectScopeControl } from '../model/usePluginProjectScopeControl';
@@ -24,6 +27,7 @@ export function PluginProjectScopeItem(
 ) {
   const control = usePluginProjectScopeControl(props.pluginId);
   const projects = useProjectPickerOptions();
+  const { theme } = useUnistyles();
   const allProjectsLabel = t('capabilities.store.allProjects');
   const candidates = React.useMemo<readonly MultiSelectCandidate[]>(
     () => [
@@ -45,11 +49,10 @@ export function PluginProjectScopeItem(
   const labelOf = (projectKey: string) =>
     projects.find((project) => project.projectKey === projectKey)?.label ??
     projectKey;
+  const testID = props.testID ?? `settings.plugins.detail.${props.pluginId}.projectScope`;
   return (
     <MultiSelectField
-      testID={
-        props.testID ?? `settings.plugins.detail.${props.pluginId}.projectScope`
-      }
+      testID={testID}
       optionTestIDPrefix={`settings.plugins.detail.${props.pluginId}.projectScope.option`}
       title={t('settingsPlugins.surfaces.whoCanUse')}
       candidates={candidates}
@@ -65,6 +68,26 @@ export function PluginProjectScopeItem(
       }}
       emptySubtitle={allProjectsLabel}
       searchPlaceholder={t('projects.searchPlaceholder')}
+      // The row keeps a compact value on its right (lab ideas-1118-platform round 4); the full list is the menu.
+      renderTrigger={({ toggle, open, disabled }) => (
+        <Item
+          testID={testID}
+          title={t('settingsPlugins.surfaces.whoCanUse')}
+          rightElement={renderDropdownItemTriggerRightElement({
+            detail: control.summary.kind === 'all'
+              ? allProjectsLabel
+              : control.summary.kind === 'project'
+                ? labelOf(control.summary.projectKey)
+                : t('settingsPlugins.surfaces.projectScopeCount', { count: control.summary.count }),
+            open,
+            detailColor: theme.colors.text.secondary,
+            chevronColor: theme.colors.text.secondary,
+          })}
+          onPress={disabled ? undefined : toggle}
+          disabled={disabled}
+          showChevron={false}
+        />
+      )}
       onCommit={async (ids) => {
         const projectKeys = ids.filter((id) => id !== ALL_PROJECTS_ID);
         await control.setProjectScope(

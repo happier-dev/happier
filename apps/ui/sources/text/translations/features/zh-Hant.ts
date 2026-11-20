@@ -12286,6 +12286,7 @@ const pluginSettingsPresentationTranslations = { 'zh-Hant': {
             setupChoose: '選擇',
             setupUseOnMachine: '在機器上使用',
             setupRunNow: '立即執行',
+            setupAddToPresetSetup: '加入預設的設定',
             setupAccountFallback: '帳戶',
             setupRecipeFallback: '機器配方',
             setupSkip: '略過',

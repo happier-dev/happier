@@ -46,6 +46,8 @@ import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
 import { PluginEnablementSection } from './PluginEnablementSection';
 import { PluginProjectScopeItem } from './PluginProjectScopeItem';
 import { PluginSetupSection } from './PluginSetupSection';
+import { StorePresetEditorHandoff, type StorePresetChoice } from '@/components/store/presets/StoreAddToPreset';
+import type { StorePresetDoorItem } from '@/components/store/presets/storePresetDoor';
 import type { PluginSettingSetupObservation } from '../model/installedPluginSetup';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PluginUpdatePolicySection } from './PluginUpdatePolicySection';
@@ -87,6 +89,9 @@ function PluginDetailCurrentContent(props: Readonly<{
         if (index >= 0 && current[index]!.status === observation.status) return current;
         return index >= 0 ? current.map((entry, at) => at === index ? observation : entry) : [...current, observation];
     }), []);
+    // A recipe added to a preset's Setup opens the one preset editor here, where it was chosen; its Save writes.
+    const [presetHandoff, setPresetHandoff] = React.useState<Readonly<{ choice: StorePresetChoice; item: StorePresetDoorItem }> | null>(null);
+    const closePresetHandoff = React.useCallback(() => setPresetHandoff(null), []);
     const accountReleaseVersion = installed?.version ?? props.projection?.version ?? null;
     const capabilities = installed ? projectInstalledPluginLifecycleCapabilities(installed) : null;
     const actionsDisabled = !state.canRefreshInstalledPlugins
@@ -114,6 +119,9 @@ function PluginDetailCurrentContent(props: Readonly<{
             onSelect: () => runAction('rollback'),
         }] : []),
     ];
+    if (presetHandoff) {
+        return <StorePresetEditorHandoff choice={presetHandoff.choice} item={presetHandoff.item} onReturn={closePresetHandoff} />;
+    }
     return (
         <ItemList style={{ paddingTop: 0 }}>
             {/*
@@ -171,6 +179,7 @@ function PluginDetailCurrentContent(props: Readonly<{
                     machineId={state.executionMachineId}
                     serverId={state.executionServerId}
                     settings={setupSettings}
+                    onAddToPreset={(choice, item) => setPresetHandoff({ choice, item })}
                 />
             ) : null}
             {installed && !scopedEnablement ? (

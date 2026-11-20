@@ -12346,6 +12346,7 @@ const pluginSettingsPresentationTranslations = { ja: {
             setupChoose: '選択',
             setupUseOnMachine: 'マシンで使う',
             setupRunNow: '今すぐ実行',
+            setupAddToPresetSetup: 'プリセットのセットアップに追加',
             setupAccountFallback: 'アカウント',
             setupRecipeFallback: 'マシンレシピ',
             setupSkip: 'スキップ',

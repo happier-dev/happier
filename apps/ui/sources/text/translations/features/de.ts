@@ -12415,6 +12415,7 @@ const pluginSettingsPresentationTranslations = { de: {
             setupChoose: 'Auswählen',
             setupUseOnMachine: 'Auf einem Rechner nutzen',
             setupRunNow: 'Jetzt ausführen',
+            setupAddToPresetSetup: 'Zur Einrichtung einer Vorlage hinzufügen',
             setupAccountFallback: 'Konto',
             setupRecipeFallback: 'Rechner-Rezept',
             setupSkip: 'Überspringen',
