@@ -55,6 +55,7 @@ import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/a
 import { createExternalContributionFixtures, createNativeAgentRuntimeSessionPlanFixture, createLease as createReplacementLease, createSessionHostServiceOwners as createReplacementHostOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
+import { createNativeAgentHostSessionRuntimePlan } from '@/plugins/runtime/runtimeCore/plugin/session';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { readSessionCapabilityApplyChange, sessionCapabilityApplyNotice } from '../../../../../../ui/sources/components/sessions/capabilities/sessionCapabilityApplyNotice';
 import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -5687,7 +5688,7 @@ describe('runHostSessionRuntime', () => {
     }
   });
 
-  it.each(['environment', 'runtime', 'runtime-mismatched-selection'] as const)('uses only the exact Connected Account Provider handoff for a native model selection (%s)', async (admission) => {
+  it.each(['environment', 'runtime', 'runtime-successor', 'runtime-mismatched-selection'] as const)('uses only the exact Connected Account Provider handoff for a native model selection (%s)', async (admission) => {
     const harness = createHarness();
     harness.queue.pushIsolate({ text: 'Original request', localId: 'connected-account-original' }, { permissionMode: 'default' });
     const selection = { agentTargetKey: 'agent:happier.agent.qwen/qwen', providerConnectionId: null,
@@ -5704,17 +5705,58 @@ describe('runHostSessionRuntime', () => {
     harness.opts.backendTarget = { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' };
     harness.opts.modelSelection = { v: 1, updatedAt: 1, ref: admission === 'runtime-mismatched-selection'
       ? { ...selection, modelId: 'subscription/other-model' } : selection };
-    const createRuntime = vi.fn(() => ({ operations: harness.runtime, nativeRuntime: harness.runtime,
-      ...(admission !== 'environment' ? { admittedProviderBindingHandoff: handoff } : {}) }));
+    let runtimeOpens = 0;
+    const createRuntime = vi.fn(() => {
+      const admittedHandoff = ++runtimeOpens > 1 ? { ...handoff,
+        providerBinding: { ...handoff.providerBinding, upstream: { ...handoff.providerBinding.upstream,
+          normalizedUrl: 'http://127.0.0.1:43124/v1' } } } : handoff;
+      return { operations: harness.runtime, nativeRuntime: harness.runtime,
+        ...(admission !== 'environment' ? { admittedProviderBindingHandoff: admittedHandoff } : {}) };
+    });
     harness.config.createSessionRuntime = createRuntime;
     if (admission !== 'environment') harness.config.providerBindingAdmission = 'runtime';
     else harness.opts.environmentVariables = {
       [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]: serializeProviderBindingLaunchHandoffForEnv(handoff),
     };
+    const modelSnapshot = { currentModelId: selection.modelId,
+      models: [{ id: selection.modelId, name: 'Native model' }] };
+    harness.runtime.models = { read: () => modelSnapshot, subscribe: listener => {
+      listener(modelSnapshot); return { dispose() {} };
+    } };
+    harness.runtime.readAppliedTeamCredentialModel = () => null;
+    if (admission === 'runtime-successor') {
+      harness.deps.createPermissionModeQueueStateFn = createPermissionModeQueueState;
+      harness.runtime.updateSessionRuntimeConfig.mockResolvedValue({ status: 'applied' });
+      const contributions = createExternalContributionFixtures('qwen');
+      const plan = await createNativeAgentHostSessionRuntimePlan({
+        backend: contributions.backend, agent: contributions.agent, policyAgentId: 'qwen',
+        createSessionRuntime: createRuntime,
+        sessionInput: buildPluginSessionBindingInput({ credentials: harness.opts.credentials, directory: harness.opts.directory }),
+      });
+      harness.config.createSessionRuntime = plan.config.createSessionRuntime;
+    }
+    let controls: SessionRuntimeControls | null = null;
+    harness.session.setSessionRuntimeControls = next => { controls = next; };
     let enteredPromptLoop = false;
-    harness.deps.runPermissionModePromptLoopFn = async () => {
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
       enteredPromptLoop = true;
       expect(harness.session.getMetadataSnapshot().providerBindingV1).toBeUndefined();
+      if (!controls?.readAppliedChildSelection) throw new Error('Applied parent reader missing');
+      const readAppliedChildSelection = controls.readAppliedChildSelection;
+      expect(await readAppliedChildSelection()).toMatchObject({
+        status: 'applied', modelId: selection.modelId, modelSelection: selection,
+      });
+      if (admission === 'runtime-successor') {
+        if (!params.transitionModelSelectionBeforePrompt) throw new Error('Model transition owner missing');
+        await expect(params.transitionModelSelectionBeforePrompt(selection, async transfer => {
+          await transfer({ abortSignal: new AbortController().signal, dispatch: async () => {} });
+        }, { required: true,
+          run: () => params.runtime.resetOrDisposeRuntime('runtime_recovery', { kind: 'create' }),
+        })).resolves.toMatchObject({ ok: true, status: 'applied' });
+        await vi.waitFor(async () => expect(await readAppliedChildSelection()).toMatchObject({
+          status: 'applied', modelId: selection.modelId, modelSelection: selection,
+        }));
+      }
     };
     if (admission === 'runtime-mismatched-selection') {
       await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
@@ -5722,7 +5764,40 @@ describe('runHostSessionRuntime', () => {
       expect(enteredPromptLoop).toBe(false);
       return;
     }
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    // The daemon HTTP boundary and existing harness prompt-loop checkpoint are
+    // substituted; admission, readback, replacement lifecycle, authorization
+    // binding, coordinator and installed child-selection reader stay real.
+    const server = createServer((request, response) => {
+      request.resume();
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(request.url === CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH
+        ? { status: 'applied', connectedServices: { v: 2, bindingsByServiceId: {} } }
+        : { success: true }));
+    });
+    const home = await mkdtemp(join(tmpdir(), 'connected-account-parent-selection-'));
+    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+    try {
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Daemon boundary did not bind');
+      envScope.patch({ HAPPIER_HOME_DIR: home });
+      reloadConfiguration();
+      // The temporary Home changes the canonical Account cache scope too.
+      const snapshot = getActiveAccountSettingsSnapshot();
+      if (!snapshot) throw new Error('Account fixture snapshot missing');
+      const scopedSnapshot = { ...snapshot, scopeKey: resolveAccountSettingsScopeKey(harness.opts.credentials) };
+      setActiveAccountSettingsSnapshot(scopedSnapshot);
+      harness.opts.accountSettingsContext = { ...scopedSnapshot, whenRefreshed: null };
+      writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(),
+        startedWithCliVersion: 'test', controlToken: 'test-token' });
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    } finally {
+      await clearDaemonStateForTestTeardown();
+      envScope.restore();
+      reloadConfiguration();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+      await rm(home, { recursive: true, force: true });
+    }
     expect(enteredPromptLoop).toBe(true);
     expect(createRuntime).toHaveBeenCalled();
     if (admission === 'environment') expect(createRuntime).toHaveBeenCalledWith(expect.objectContaining({

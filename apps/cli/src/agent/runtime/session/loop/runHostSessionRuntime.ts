@@ -3466,9 +3466,9 @@ async function runHostedSessionRuntime(
     runtimeBindingBasis:
       activeProviderBindingHandoff?.sessionBindingMetadata?.runtimeBindingBasis
       ?? null,
-    // This basis exists only so the canonical authorizer can bind its current
-    // authorization proof before the target is published or coordinator-owned.
-    revalidateBeforeEffect: async () => false,
+    // The exact launch handoff already admitted Connected Account custody.
+    // The canonical authorizer binds native and external Provider route proofs.
+    revalidateBeforeEffect: async () => true,
   };
   const createActiveSelectionFact = (
     target: AuthorizedSessionModelTransitionTarget,
@@ -3918,7 +3918,7 @@ async function runHostedSessionRuntime(
       sessionBindingMetadata: handoff.sessionBindingMetadata ?? null,
       runtimeBindingBasis:
         handoff.sessionBindingMetadata?.runtimeBindingBasis ?? null,
-      revalidateBeforeEffect: async () => false,
+      revalidateBeforeEffect: async () => true,
     });
     await coordinator.admitReplacementTarget(admittedTarget);
   };
