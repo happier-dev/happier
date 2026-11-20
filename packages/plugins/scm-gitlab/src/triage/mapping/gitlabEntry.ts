@@ -14,6 +14,7 @@
 import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import { buildGitlabEntryIdentity } from '../identity.js';
+import { readNonEmptyString } from '../mutations/rowValues.js';
 import type { GitlabConfiguredOrigin } from '../origin.js';
 import type {
   GitlabActor,
@@ -224,14 +225,14 @@ export function decodeGitlabRow(input: GitlabRowDecodeInput): GitlabRowDecodeRes
   // commit, because that is the value `sources/SCM.md` §2.6 requires a merge and
   // a mark-ready to carry and the one GitLab's merge endpoint consumes as its own
   // `sha` precondition. An issue has no head, so it publishes GitLab's
-  // `updated_at` byte — unparsed, because the pin is compared for equality and a
-  // parsed clock would make two spellings of one instant compare equal.
+  // `updated_at` string using the same reader as write preflight. Parsing it
+  // as a clock would make two different spellings of one instant compare equal.
   const reviewRevision = isMergeRequest
     ? readGitlabMergeRequestReviewRevision(row)
     : null;
   const nativeRevision = isMergeRequest
     ? reviewRevision?.nativeRevision ?? readGitlabMergeRequestHeadSha(row)
-    : readString(row.updated_at);
+    : readNonEmptyString(row.updated_at);
   const commentCount = typeof row.user_notes_count === 'number' ? row.user_notes_count : null;
 
   const involvement: GitlabInvolvementFact[] = input.laneInvolvement

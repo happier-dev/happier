@@ -10,7 +10,7 @@
  * `revision` is the load-bearing one. An issue has no head commit, so
  * `sources/SCM.md` §4.7 makes GitLab's `updated_at` the currentness gate, and
  * this reader is the one that produces the value the caller's pin is compared
- * against. It is read as the RAW string the scan/get mapper publishes as
+ * against. It uses the same trimmed string the scan/get mapper publishes as
  * `nativeRevision`, never as a parsed instant: the comparison is an equality,
  * and two spellings of one timestamp must not compare equal.
  */
@@ -47,7 +47,7 @@ export function decodeGitlabIssueStateRow(body: unknown): GitlabIssueRowDecoding
     return Object.freeze({ ok: false as const });
   }
 
-  // The SAME byte the scan/get mapper publishes as an issue's `nativeRevision`,
+  // The same string the scan/get mapper publishes as an issue's `nativeRevision`,
   // unparsed. One rule owns both sides of the comparison.
   const revision = readNonEmptyString(record.updated_at);
   const closedAtMs = readTimestampMs(record.closed_at);

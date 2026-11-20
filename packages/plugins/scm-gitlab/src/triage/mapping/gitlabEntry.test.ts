@@ -202,11 +202,11 @@ describe('observed revision', () => {
     expect(entry.snapshot.title).toBe('Fix login page CSS paddings');
   });
 
-  it('publishes an issue’s updated_at byte, because an issue has no head', () => {
+  it('publishes the same trimmed issue revision as write preflight', () => {
     const decoded = decodeGitlabRow({
       kindId: 'issue',
       origin: GITLAB_COM,
-      row: issueList[0],
+      row: { ...rowOf(issueList[0]), updated_at: ' 2026-08-09T15:31:51.081Z ' },
       laneInvolvement: 'assignee',
     });
     if (decoded.kind !== 'mapped') throw new Error(decoded.reason);
