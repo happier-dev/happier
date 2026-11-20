@@ -34,7 +34,7 @@ import { MachineReadBatchRequestV1Schema, MachineReadBatchResponseV1Schema } fro
 import { finiteHealthCheckResult } from '@/deployments/healthChecks/finiteHealthCheckResult';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { HealthCheckDefinitionV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import { MachineServiceIdentityV1Schema } from '@happier-dev/protocol';
+import { buildDeploymentAccountChangeV1, MachineServiceIdentityV1Schema } from '@happier-dev/protocol';
 import { readCarrierMutation } from '@/api/artifacts/accountArtifactStore.testkit';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -970,13 +970,27 @@ describe('managed-services SVC09 owner', () => {
             expect(released).toBe(1);
         } finally { await owner.dispose(); }
     });
-    it.each(['account', 'team', 'native Environment aggregate'] as const)('projects current deployment health into one retained C1 item and recovers after reattachment for %s ownership', async ownership => {
+    it.each(['account', 'team', 'native Environment aggregate', 'first rollout', 'later joining member'] as const)('projects current deployment health into one retained C1 item and recovers after reattachment for %s', async ownership => {
         const aggregate = ownership === 'native Environment aggregate';
+        const joining = ownership === 'first rollout' || ownership === 'later joining member';
         const { owner } = createLifecycleHarness([], 'daemon');
         const accountId = 'account-owner';
         const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
         const serverHttpBaseUrl = 'http://health-adapter.test';
         const environment = createDeploymentEnvironmentDetailV1();
+        const target = environment.targetLinks[0].targetLink;
+        const member = target.members[0];
+        if (joining) {
+            member.state = 'joining';
+            target.activeDeploymentId = ownership === 'first rollout' ? null : 'previous-good';
+            if (ownership === 'later joining member') {
+                target.machines.push('machine-b');
+                target.members.push({ machineId: 'machine-b', installationId: 'installation-b', state: 'active' });
+            }
+        } else if (ownership === 'account') {
+            // Subsequent rollouts attach to a Machine that already serves the link.
+            target.activeDeploymentId = 'previous-good';
+        }
         const edge = createCurrentDomainEdgeObservation();
         const environmentInstanceId = resolveOwnServerDeploymentEnvironmentInstanceIdForHost('home', environment.environment.id);
         if (aggregate) environment.environment.ingress = { kind: 'edgeCaddy', edgeMachineId: 'machine-edge' };
@@ -1014,6 +1028,7 @@ describe('managed-services SVC09 owner', () => {
         let nativePhase: 'running' | 'stopped' = 'running';
         let current = true;
         let writes = 0;
+        const changes: Array<ReturnType<typeof buildDeploymentAccountChangeV1> & { cursor: number; changedAt: number }> = [];
         const stored = new Map<string, { id: string } & Record<string, unknown>>();
         // The cross-Machine RPC transport is the network boundary. All C1
         // commit/currentness and managed-service publication logic stays real.
@@ -1028,7 +1043,12 @@ describe('managed-services SVC09 owner', () => {
         // HTTP and native process observations are the only substituted boundaries.
         // C1 storage, identity, mode admission and health subscriptions remain real.
         const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
-            const path = new URL(url).pathname;
+            const { pathname: path, searchParams } = new URL(url);
+            if (path === '/v2/changes') {
+                const after = Number(searchParams.get('after') ?? 0);
+                return { status: 200, data: { changes: changes.filter(change => change.cursor > after),
+                    nextCursor: changes.length } };
+            }
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (path === '/v1/account/encryption/currentness') return { status: 200, data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
             if (path === '/v1/machines/machine-a') return { status: 200, data: { machine: namedMachine('machine-a', 'Production server') } };
@@ -1091,7 +1111,7 @@ describe('managed-services SVC09 owner', () => {
             const neighbor = await supervise('worker');
             if (neighbor.kind !== 'environment') throw new Error('Expected neighboring Environment service');
             const handles = [handle, neighbor] satisfies Parameters<typeof attachDeploymentServiceHealthNotices>[0]['handles'];
-            const readEnvironment = vi.fn(async () => environment);
+            const readEnvironment = vi.fn(async () => joining ? structuredClone(environment) : environment);
             const subject = aggregate ? { kind: 'environment', environmentId: environment.environment.id,
                 targetLinkId: environment.environment.runtimeTargetLinkId, condition: 'health' } : handle.identity;
             const attach = () => attachDeploymentServiceHealthNotices({ credentials: { token, encryption: null }, serverId: 'home', homeServerIdentityId: 'home',
@@ -1101,16 +1121,56 @@ describe('managed-services SVC09 owner', () => {
                     async *receipts() { receiptReads++; yield receipt; yield previous; } } } : {}) });
             attachment = attach();
             await attachment.settled();
-            if (!aggregate) expect(readEnvironment, 'one Environment admission at attachment').toHaveBeenCalledTimes(1);
+            if (!aggregate && !joining) expect(readEnvironment, 'one Environment admission at attachment').toHaveBeenCalledTimes(1);
             expect(stored.size, 'a healthy baseline is not an outage or recovery item').toBe(0);
             // Source withdrawal takes effect at the next deploy/attachment;
             // this user's already-admitted Machine still reports its outage.
             if (ownership === 'team') environment.environment.capabilities.read = false;
-            nativeHealth = 'not_ready';
-            await handle.inspectCurrentOccurrence();
-            await attachment.settled();
+            if (joining) {
+                let delivered: readonly string[] = [];
+                const releaseDeliveryWitness = holder.subscribeEnvironmentAccess(event => {
+                    if (event.kind === 'changes') delivered = event.environmentIds;
+                });
+                const publishChange = async (environmentId: string) => {
+                    delivered = [];
+                    const cursor = changes.length + 1;
+                    changes.push({ ...buildDeploymentAccountChangeV1({ environmentId, revision: environment.environment.revision }),
+                        cursor, changedAt: cursor });
+                    await channel.hintAccountChange(cursor);
+                    await vi.waitFor(() => expect(delivered).toContain(environmentId));
+                };
+                try {
+                    await attachment.settled();
+                    const joiningReads = readEnvironment.mock.calls.length;
+                    await publishChange('unrelated-environment');
+                    await attachment.settled();
+                    expect(readEnvironment).toHaveBeenCalledTimes(joiningReads);
+                    nativePhase = 'stopped';
+                    await handle.inspectCurrentOccurrence();
+                    await attachment.settled();
+                    expect(stored.size, 'a joining member cannot publish a serving outage').toBe(0);
+                    member.state = 'active';
+                    target.activeDeploymentId = handle.deploymentId;
+                    await publishChange(environment.environment.id);
+                    await attachment.settled();
+                    expect(stored.size, 'the now-serving generation publishes its cached native stop').toBe(1);
+                    expect(readEnvironment).toHaveBeenCalledTimes(joiningReads + 1);
+                    await publishChange(environment.environment.id);
+                    await attachment.settled();
+                    expect(readEnvironment, 'a serving attachment releases the membership subscription').toHaveBeenCalledTimes(joiningReads + 1);
+                    nativePhase = 'running';
+                    nativeHealth = 'not_ready';
+                    await handle.inspectCurrentOccurrence();
+                    await attachment.settled();
+                } finally { releaseDeliveryWitness(); }
+            } else {
+                nativeHealth = 'not_ready';
+                await handle.inspectCurrentOccurrence();
+                await attachment.settled();
+            }
+            const admittedReads = readEnvironment.mock.calls.length;
             expect(stored.size, 'an admitted unhealthy observation must commit its C1 item').toBe(1);
-            expect(readEnvironment, 'health transitions reuse the admitted Environment').toHaveBeenCalledTimes(1);
+            if (!joining) expect(readEnvironment, 'health transitions reuse the admitted Environment').toHaveBeenCalledTimes(1);
             const artifactId = [...stored.keys()][0];
             const readHeader = () => {
                 const header = stored.get(artifactId)?.header;
@@ -1133,7 +1193,7 @@ describe('managed-services SVC09 owner', () => {
             await handle.inspectCurrentOccurrence();
             await attachment.settled();
             expect(writes, 'equal native health publishes no new C1 revision').toBe(outageWrites);
-            expect(readEnvironment).toHaveBeenCalledTimes(1);
+            expect(readEnvironment).toHaveBeenCalledTimes(admittedReads);
             if (aggregate) {
                 // A newer healthy sibling and the public edge cannot recover the unhealthy app.
                 nativeHealth = 'ready';
@@ -1168,7 +1228,7 @@ describe('managed-services SVC09 owner', () => {
             environment.environment.capabilities.read = true;
             attachment = attach();
             await attachment.settled();
-            expect(readEnvironment, 'reattachment is the next Environment admission').toHaveBeenCalledTimes(2);
+            expect(readEnvironment, 'reattachment is the next Environment admission').toHaveBeenCalledTimes(admittedReads + 1);
             expect(stored.size).toBe(1);
             expect(readHeader()).toMatchObject({ source: { subject }, healthPhase: 'recovered', type: 'update', resolved: false });
             expect(readHeader()).not.toHaveProperty('recoveryChoices');

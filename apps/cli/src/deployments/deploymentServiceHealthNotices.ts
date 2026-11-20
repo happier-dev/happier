@@ -5,6 +5,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { ProjectManagedServiceHandle, EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { MachineDeploymentServiceIdentityV1Schema } from '@happier-dev/protocol';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { logger } from '@/ui/logger';
@@ -200,18 +201,73 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
     };
     let health = input.health;
     const currentHealth = () => !controller.signal.aborted && health?.isCurrent() === true;
-    let pending = services.length === 0 && !currentHealth() && !input.nativeWorkload ? Promise.resolve() : input.readEnvironment(controller.signal).then(async fresh => {
+    const retainedHandles = input.nativeWorkload?.handles ?? input.handles;
+    const installationId = input.nativeWorkload?.installationId ?? retainedHandles[0]?.release.installationId;
+    const environmentId = input.environment.environment.id;
+    const isRetained = (handle: (typeof retainedHandles)[number]) => !handle.retirementSignal.aborted && handle.isCurrent();
+    let pending = Promise.resolve();
+    let releaseServingSubscription: (() => void) | undefined;
+
+    const reportAdmissionFailure = (error: unknown) => {
+        if (!controller.signal.aborted) logger.warnLocalFile('[deploymentHealth] Notice admission failed', {
+            failureCause: projectActionFailureCauseV1(error, 'deployment.notice.admission', { allowUnknownErrorCode: false }),
+        });
+    };
+    const stopWaitingForServing = () => {
+        releaseServingSubscription?.();
+        releaseServingSubscription = undefined;
+    };
+    function waitForServing() {
+        if (releaseServingSubscription || !retainedHandles.some(isRetained)) return;
+        const currentness = acquireRequesterAccountEncryptionCurrentness({
+            accountId, token: input.credentials.token, serverBaseUrl: input.serverHttpBaseUrl,
+        });
+        // Settlement already publishes this Environment after changing its members.
+        const unsubscribe = currentness.subscribeEnvironmentAccess(event => {
+            if (event.kind !== 'reset' && (event.kind !== 'changes' || !event.environmentIds.includes(environmentId))) return;
+            pending = pending.catch(() => {}).then(async () => {
+                if (releaseServingSubscription) await admit();
+            });
+            void pending.catch(reportAdmissionFailure);
+        });
+        const retire = () => { if (!retainedHandles.some(isRetained)) stopWaitingForServing(); };
+        releaseServingSubscription = () => {
+            unsubscribe();
+            for (const handle of retainedHandles) handle.retirementSignal.removeEventListener('abort', retire);
+            void currentness.dispose().catch(reportAdmissionFailure);
+        };
+        for (const handle of retainedHandles) handle.retirementSignal.addEventListener('abort', retire, { once: true });
+    }
+    async function admit() {
+        if (controller.signal.aborted || admittedEnvironment) return;
+        const waitingForServing = releaseServingSubscription !== undefined;
+        const fresh = await input.readEnvironment(controller.signal);
         const environment = fresh.environment;
-        if (!controller.signal.aborted && environment.id === input.environment.environment.id
-            && environment.serverId === input.serverId
-            && environment.projectSourceId === input.environment.environment.projectSourceId
-            && environment.capabilities.read && fresh.targetLinks.some(({ targetLink }) =>
-                targetLink.id === environment.runtimeTargetLinkId && targetLink.members.some(member =>
-                    member.machineId === input.machineId && member.state === 'active'))) {
-            admittedEnvironment = fresh;
+        if (controller.signal.aborted || environment.id !== environmentId || environment.serverId !== input.serverId
+            || environment.projectSourceId !== input.environment.environment.projectSourceId
+            || environment.runtimeTargetLinkId !== input.environment.environment.runtimeTargetLinkId || !environment.capabilities.read) {
+            stopWaitingForServing();
+            return;
         }
+        const targetLink = fresh.targetLinks.find(({ targetLink }) => targetLink.id === environment.runtimeTargetLinkId)?.targetLink;
+        const member = targetLink?.members.find(member => member.machineId === input.machineId
+            && (installationId === undefined || member.installationId === installationId));
+        if (member?.state === 'joining') {
+            waitForServing();
+            return;
+        }
+        const becameServing = !waitingForServing || retainedHandles.some(handle =>
+            isRetained(handle) && handle.deploymentId === targetLink?.activeDeploymentId);
+        stopWaitingForServing();
+        if (member?.state !== 'active' || !becameServing) return;
+
+        admittedEnvironment = fresh;
+        // Attaching replays the retained service owner's last native state.
+        // A stop observed while joining is therefore visible once serving.
+        for (const service of services) attachService(service);
+        if (health) attachHealth(health, accountId);
         const native = input.nativeWorkload;
-        if (!admittedEnvironment || !native || environment.controllerMachineId !== input.machineId) return;
+        if (!native || environment.controllerMachineId !== input.machineId) return;
         receiptHistory = await readDeploymentNoticeHistory(native.receipts(fresh, controller.signal));
         const owned = await observeNativeWorkload({ environment: fresh,
             receipts: (async function* () { yield* receiptHistory; })(), signal: controller.signal, observedAtMs: Date.now(),
@@ -223,15 +279,14 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
                     && handle.identity.machineId === identity.machineId) ?? null },
         });
         if (!owned) return;
+        if (controller.signal.aborted) {
+            owned.dispose();
+            return;
+        }
         health = owned;
         cleanups.push(() => owned.dispose());
         attachHealth(owned, accountId);
-    });
-    void pending.catch(error => {
-        if (!controller.signal.aborted) logger.warnLocalFile('[deploymentHealth] Notice admission failed', {
-            failureCause: projectActionFailureCauseV1(error, 'deployment.notice.admission', { allowUnknownErrorCode: false }),
-        });
-    });
+    }
     function attachHealth(health: DeploymentHealthAggregateLeaseV1, accountId: string) {
         if (!currentHealth()) return;
         const signal = AbortSignal.any([controller.signal, health.retirementSignal]);
@@ -288,8 +343,7 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
         health.retirementSignal.addEventListener('abort', retire, { once: true });
         cleanups.push(() => { observation.dispose(); health.retirementSignal.removeEventListener('abort', retire); });
     }
-    if (health) attachHealth(health, accountId);
-    for (const { handle, subject } of services) {
+    function attachService({ handle, subject }: (typeof services)[number]) {
         const signal = AbortSignal.any([controller.signal, handle.retirementSignal]);
         const isCurrent = () => !signal.aborted && handle.isCurrent();
         const observation = handle.observeHealth(snapshot => {
@@ -345,8 +399,16 @@ export function attachDeploymentServiceHealthNotices(input: DeploymentServiceHea
         handle.retirementSignal.addEventListener('abort', retire, { once: true });
         cleanups.push(() => { observation.dispose(); handle.retirementSignal.removeEventListener('abort', retire); });
     }
+    if (services.length > 0 || currentHealth() || input.nativeWorkload) {
+        pending = admit();
+        void pending.catch(reportAdmissionFailure);
+    }
     return {
-        dispose() { controller.abort(); for (const cleanup of cleanups) cleanup(); },
+        dispose() {
+            controller.abort();
+            stopWaitingForServing();
+            for (const cleanup of cleanups) cleanup();
+        },
         async settled() {
             let tail: Promise<void>;
             do { tail = pending; await tail; } while (tail !== pending);
