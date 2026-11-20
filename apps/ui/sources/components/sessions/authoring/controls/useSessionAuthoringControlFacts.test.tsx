@@ -5,6 +5,8 @@ import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contribut
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { getStorage } from '@/sync/domains/state/storageStore';
 
+import { useSessionAuthoringControlFacts } from './useSessionAuthoringControlFacts';
+
 const capabilityState = vi.hoisted(() => ({
     value: { status: 'idle' } as Record<string, unknown>,
 }));
@@ -61,7 +63,6 @@ describe('useSessionAuthoringControlFacts', () => {
                 codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { ...open, workspaceWrites: 'deny' } } },
             },
         }) });
-        const { useSessionAuthoringControlFacts } = await import('./useSessionAuthoringControlFacts');
         const hook = await renderHook(() => {
             const target = { machineId: 'machine-1', serverId: 'server-1', directory: 'C:\\repo' };
             return [
@@ -70,13 +71,12 @@ describe('useSessionAuthoringControlFacts', () => {
             ] as const;
         });
         const [ordinary, restricted] = hook.getCurrent();
+        await hook.unmount();
         expect(ordinary.agentTargets?.map(option => option.agentId)).toEqual(expect.arrayContaining(['pi', 'codex']));
         expect(restricted.agentTargets?.map(option => option.agentId)).toEqual(['codex']);
-        await hook.unmount();
     });
 
     it('projects the incumbent New Session Windows Terminal capability and fails closed without it', async () => {
-        const { useSessionAuthoringControlFacts } = await import('./useSessionAuthoringControlFacts');
         const hook = await renderHook(() => useSessionAuthoringControlFacts({
             machineId: 'machine-1',
             serverId: 'server-1',
@@ -109,8 +109,6 @@ describe('useSessionAuthoringControlFacts', () => {
     });
 
     it('reports the Account profile read as loading while it has not answered, never as an empty answer', async () => {
-        const { getStorage } = await import('@/sync/domains/state/storageStore');
-        const { useSessionAuthoringControlFacts } = await import('./useSessionAuthoringControlFacts');
         const read = () => useSessionAuthoringControlFacts({ machineId: 'machine-1', serverId: 'server-1', directory: 'C:\\repo' });
 
         const noAccount = await renderHook(read);
