@@ -7,7 +7,9 @@ import { createManagedCredentialSelectionV1, type ManagedControllerV1 } from '@h
 
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
-import { readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { t } from '@/text';
+import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useManagedControllerScope } from './useManagedControllerScope';
 import { useManagedProvisioners } from './useManagedProvisioners';
 import { attachRemoteWorkspace, readAttachableRemoteWorkspaces,
@@ -48,12 +50,13 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     const controller = controllerScope.controller;
     const machineId = controller?.machineId;
     const installationId = controller?.installationId;
-    // The controller as the Machine list names it, never its id ("via nl3").
-    const controllerName = readDisplayedMachineName(controllerScope.machine);
+    const controllerName = machineId
+        ? getMachineDisplayName(controllerScope.machine ?? { id: machineId, absence: 'unlisted' })
+        : null;
     const catalog = useManagedProvisioners(input.serverId, onApprovalPending, controller, { enabled: input.open && !!controller });
     const { binding, current, homeId, provisioners, isCurrentFor } = catalog;
     const candidates = React.useMemo<readonly Candidate[]>(() => {
-        if (!input.open || !binding?.isCurrent() || !current || !homeId || !machineId || !installationId) return [];
+        if (!input.open || !binding?.isCurrent() || !current || !homeId || !machineId || !installationId || !controllerName) return [];
         const selectedController = { machineId, installationId };
         return provisioners.flatMap(provisioner => {
             const { descriptor, contribution } = provisioner;
@@ -70,7 +73,7 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
                 return [{
                     account: {
                         bindingId: JSON.stringify([selectedController, provisioner.occurrenceId, purpose, value]),
-                        title: label, controller: { ...selectedController, name: controllerName || machineId },
+                        title: label, controller: { ...selectedController, name: controllerName },
                     },
                     request: { scope: binding.scope, homeId, controller: selectedController, contribution, descriptor,
                         credentials: [createManagedCredentialSelectionV1(purpose, value)], selectors: attachSelectors },
@@ -101,9 +104,14 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     currentSelection.current = selection;
     React.useEffect(() => () => { currentSelection.current = undefined; }, []);
     if (!input.open) return { kind: 'loading' };
-    if ((!controller && controllerScope.machineList === 'unavailable') || catalog.error) {
-        return { kind: 'failed', code: catalog.error ?? 'target_unavailable', message: null, retry: catalog.refresh };
+    const controllerOffline = controllerScope.machineList === 'settled'
+        && controllerScope.hasCandidates && !controllerScope.hasOnlineCandidate;
+    if (!controller && (controllerScope.machineList === 'unavailable' || controllerOffline)) {
+        return { kind: 'failed', code: 'target_unavailable',
+            message: controllerOffline ? t('errors.machineNotAnswering') : null,
+            retry: () => { void getSyncSingleton().refreshMachines({ serverId: input.serverId }).catch(() => {}); } };
     }
+    if (catalog.error) return { kind: 'failed', code: catalog.error, message: null, retry: catalog.refresh };
     if (!controller && controllerScope.machineList === 'settled') return { kind: 'choose_account', accounts: [] };
     if (!binding || !current) return { kind: 'loading' };
     // An empty account list is an answer only once the provisioner catalog has settled, never while it loads.

@@ -1276,6 +1276,42 @@ describe('provisioner picker demand', () => {
     return { serverId, reads, release, provisioners };
   }
 
+  it('keeps the attachment accounts loading until the catalog settles and never shows a retained controller id', async () => {
+    const home = 'attachment-controller-label';
+    const { serverId, provisioners } = await arrangeCatalog({ home });
+    const controller = createControllerMachineFixture({ id: 'controller', installationId: 'controller-installation',
+      activeAt: Date.now(), kind: 'persistent' });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [controller]);
+    const offer = provisioners[0]!;
+    const { PLUGIN_MANIFEST: coder } = await import('../../../../../../../packages/plugins/machine-coder/src/manifest');
+    const attachment = coder.contributes.machineProvisioners[0]!;
+    const catalog = createDeferred<void>();
+    await answerControllerAction(serverId, '/v1/actions/machines.provisioners.list', {
+      select: async value => {
+        const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+        await catalog.promise;
+        return { body: { v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
+          execution: { ok: true, result: { controller: { machineId: controller.id, installationId: controller.installationId },
+            provisioners: [{ ...offer, credentialPurposes: [{ purpose: { consumer: offer.contribution, purpose: 'native-session' },
+              options: [{ label: 'Saved workspace account', value: { service: offer.contribution, accountId: 'workspace-account' } }] }],
+              descriptor: { ...attachment, id: offer.contribution.localId } }] } } } };
+      },
+    });
+    const { getMachineDisplayName } = await import('@/utils/sessions/machineDisplayNames');
+    const { t } = await import('@/text');
+    const { useAttachableRemoteWorkspaces } = await import('./useAttachableRemoteWorkspaces');
+    const hook = await renderHook(() => useAttachableRemoteWorkspaces({ serverId, open: true }));
+    try {
+      expect(hook.getCurrent()).toEqual({ kind: 'loading' });
+      await act(async () => catalog.resolve());
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ kind: 'choose_account',
+        accounts: [{ title: 'Saved workspace account', controller: { name: getMachineDisplayName(controller) } }] }));
+      await act(async () => publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []));
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ kind: 'choose_account',
+        accounts: [{ title: 'Saved workspace account', controller: { name: t('machine.unlistedMachine') } }] }));
+    } finally { catalog.resolve(); await hook.unmount(); }
+  });
+
   it('keeps Account creation offers when the selected controller catalog fails', async () => {
     const { serverId } = await arrangeCatalog({ home: 'failed-controller-account-offers' });
     const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
@@ -2031,6 +2067,23 @@ describe('provisioner picker demand', () => {
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.no-online-controller')).not.toBeNull());
     await screen.unmount();
+  });
+  it('reports an offline controller to the remote-workspace attachment chooser', async () => {
+    const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://offline-attachment.example',
+      serverIdentityId: 'srv_offline_attachment', accountId: 'owner', currentAccount: true });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+      createControllerMachineFixture({ id: 'studio', installationId: 'studio-installation', active: false, activeAt: 0 }),
+    ]);
+    await publishNoAccountProvisioners(serverId);
+    const { useAttachableRemoteWorkspaces } = await import('./useAttachableRemoteWorkspaces');
+    const hook = await renderHook(() => useAttachableRemoteWorkspaces({ serverId, open: true }));
+    try {
+      const { t } = await import('@/text');
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ kind: 'failed', code: 'target_unavailable',
+        message: t('errors.machineNotAnswering') }));
+      await act(async () => publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []));
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ kind: 'choose_account', accounts: [] }));
+    } finally { await hook.unmount(); }
   });
   it('offers the Account providers with every machine offline, never saying nothing is online (D21)', async () => {
     await installBundledMachinePlugins();
