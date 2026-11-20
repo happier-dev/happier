@@ -370,14 +370,14 @@ describe('deployment UI Action callbacks', () => {
                 .toEqual({ ok: true, value: { inspectedRevision: 1 } });
             expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 3 }))
                 .toMatchObject({ ok: false, code: 'approval_request_created', approvalArtifactId: 'managed-review' });
-            expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 2 }))
-                .toEqual({ ok: false, code: 'credential_unavailable',
+            expect(await actions.inspectPlatformTarget(actionId, { expectedRevision: 2 }, { actionRequestId: 'inspect-credential-request' }))
+                .toEqual({ ok: false, code: 'credential_unavailable', requestId: 'inspect-credential-request',
                     details: { requiredFact: 'connectedAccountCredential',
                         remedy: 'The selected connection has no usable credential. Reconnect it before finding zones.' },
                     failureCause: { phase: 'execution_authorization', errorClass: 'Error',
                         errorCode: 'credential_unavailable', httpStatus: null } });
-            expect(await actions.inspectPlatformTarget(actionId, {}))
-                .toEqual({ ok: false, code: 'plugin_action_input_schema_invalid',
+            expect(await actions.inspectPlatformTarget(actionId, {}, { actionRequestId: 'inspect-invalid-input-request' }))
+                .toMatchObject({ ok: false, code: 'plugin_action_input_schema_invalid', requestId: 'inspect-invalid-input-request',
                     failureCause: { phase: 'dispatch', errorClass: 'Error',
                         errorCode: 'plugin_action_input_schema_invalid', httpStatus: null } });
             expect(await actions.inspectPlatformTarget('not-a-qualified-action', {}))
@@ -418,8 +418,8 @@ describe('deployment UI Action callbacks', () => {
         try {
             const actions = createDeploymentActions(account.accountLifetime, 'source');
             const actionId = 'happier.deploy.cloudflare/actions/cloudflare-named/selections-read';
-            const refused = await actions.inspectPlatformTarget(actionId, {});
-            expect(refused).toMatchObject({ ok: false, code: 'activation_failed',
+            const refused = await actions.inspectPlatformTarget(actionId, {}, { actionRequestId: 'find-zones-activation-request' });
+            expect(refused).toMatchObject({ ok: false, code: 'activation_failed', requestId: 'find-zones-activation-request',
                 details: { requiredFact: 'pluginAccountActivation', remedy: expect.any(String) },
                 failureCause: { phase: 'plugin.account.activate', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
             if (refused.ok) throw new Error('Unavailable activation reached the read');

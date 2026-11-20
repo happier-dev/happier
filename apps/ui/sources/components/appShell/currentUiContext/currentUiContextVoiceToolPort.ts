@@ -74,6 +74,7 @@ export type CurrentUiContextVoiceInvocationOutcome =
         retryable?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['retryable'];
         remediation?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['remediation'];
         details?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['details'];
+        requestId?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['requestId'];
         effectAttempted?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['effectAttempted'];
         failureCause?: Extract<PluginSurfaceActionDispatchOutcome, { ok: false }>['failureCause'] }>;
 
@@ -388,11 +389,13 @@ export function createCurrentUiContextVoiceToolPort(
                 isCurrent: () => isCurrent() && resource?.isCurrent?.() !== false && retainedInvocation?.isCurrent?.() !== false,
             });
             if (outcome.ok) return { ok: true, result: outcome.result };
+            const requestId = outcome.requestId ?? input.hostAction?.context?.actionRequestId;
             const author = {
                 ...(outcome.message === undefined ? {} : { message: outcome.message }),
                 ...(outcome.retryable === undefined ? {} : { retryable: outcome.retryable }),
                 ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
                 ...(outcome.details === undefined ? {} : { details: outcome.details }),
+                ...(requestId === undefined ? {} : { requestId }),
                 ...(outcome.effectAttempted === undefined ? {} : { effectAttempted: outcome.effectAttempted }),
                 ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
             };

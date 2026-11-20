@@ -182,6 +182,7 @@ export function projectCurrentUiContextActionOutcome(outcome: CurrentUiContextVo
         ...outcome, code: errorCode, reason: errorCode,
     }));
     return { ok: false, ...failure,
+        ...(outcome.requestId === undefined ? {} : { requestId: outcome.requestId }),
         ...(outcome.effectAttempted === undefined ? {} : { effectAttempted: outcome.effectAttempted }),
         ...(outcome.actionHandlerInvocation ? { details: {
             ...(failure.details !== null && typeof failure.details === 'object' && !Array.isArray(failure.details) ? failure.details : {}),

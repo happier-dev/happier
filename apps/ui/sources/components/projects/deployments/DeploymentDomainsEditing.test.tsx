@@ -934,7 +934,7 @@ describe('Environment → Domains: a Find zones refusal names its own cause (PAG
     const details = { requiredFact: 'cloudflarePermissions', remedy: 'Ask the Cloudflare account owner to restore zone access.' };
     const inspectPlatformTarget = vi.fn(async () => source === 'provider-output'
       ? { ok: true as const, value: { kind: 'unavailable', options: [], reason, ...details } }
-      : { ok: false as const, code: reason, details });
+      : { ok: false as const, code: reason, details, requestId: 'find-zones-request-1' });
     const { screen, controller, settle } = await renderDomains(detail, [], { ...domainActions(detail), inspectPlatformTarget });
     try {
       expect(await settle(id)).not.toBeNull();
@@ -948,6 +948,7 @@ describe('Environment → Domains: a Find zones refusal names its own cause (PAG
       await screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
       const card = screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === `${id}.ingress.zones.error`);
       expect(card?.props.diagnosticCode).toBe(reason);
+      if (source === 'action-failure') expect(card?.props.diagnosticDetail).toContain('find-zones-request-1');
       expect(card?.props.title).toBe(details.remedy);
       expect(screen.findByTestId(`${id}.ingress.zones.retry`)).not.toBeNull();
       await screen.pressByTestIdAsync(`${id}.ingress.zones.retry`);

@@ -2823,13 +2823,16 @@ describe('Account Action placement through the executable dispatcher', () => {
         { placement: 'declaration', explicitTarget: false, refuses: false },
         { placement: 'explicit target', explicitTarget: true, refuses: false },
         { placement: 'typed refusal', explicitTarget: false, refuses: true },
+        { placement: 'before dispatch', explicitTarget: false, refuses: true },
         { placement: 'global catalog form', explicitTarget: false, refuses: false },
     ])('submits a global catalog Account Action form or direct Machine-hosted request through its public owner ($placement)', async ({ placement, explicitTarget, refuses }) => {
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
         const lifetime = clientAccountLifetime();
         const identity = { pluginId: 'acme.placement', localId: 'read' };
+        const beforeDispatch = placement === 'before dispatch';
         const action = { ...createClientTargetAction({ identity, accountPlacement: true }),
+            ...(beforeDispatch ? { readOnly: true as const } : {}),
             placementBindings: ['commandPalette'] as const,
             inputHints: { fields: [{ path: 'subject', title: 'Subject', widget: 'text' as const, required: true }] },
             hostOrigin: { ...CLIENT_ACTION_HOST_ORIGIN, executionOrigin: clientActionExecutionOrigin(identity.pluginId) } };
@@ -2852,12 +2855,20 @@ describe('Account Action placement through the executable dispatcher', () => {
             ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
         accountBrowserRelay.enabled = true;
         const controller = new AbortController();
+        if (beforeDispatch) {
+            const previous = getStorage().getState();
+            getStorage().setState({ machines: {}, machineListByServerId: { [lifetime.scope.serverId]: [] },
+                machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
+            onTestFinished(() => getStorage().setState({ machines: previous.machines,
+                machineListByServerId: previous.machineListByServerId, machineListStatusByServerId: previous.machineListStatusByServerId }));
+        }
         const port = createCurrentUiContextVoiceToolPort({ invocationSurface: 'ui', readProjection: () => projection,
             readNavigationBinding: () => null,
             reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
             hostAction: { execute: async () => { throw new Error('No local Action effect'); }, context: {
                 serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
                 runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user',
+                ...(refuses ? { actionRequestId: 'account-form-request-1' } : {}),
                 ...(explicitTarget ? { externalActionTarget: { kind: 'machine' as const, machineId: boundary.machine.id } } : {}),
             } },
         });
@@ -2891,9 +2902,14 @@ describe('Account Action placement through the executable dispatcher', () => {
                 if (submitted.kind !== 'settled') throw new Error('Account form did not settle');
                 return submitted.outcome;
             })() : await port.invokeAction!({ action: identity, input: { subject: 'receipt' }, signal: controller.signal });
-            if (refuses) expect(outcome).toMatchObject({ ok: false, errorCode: 'admission_unavailable', failureCause });
+            if (refuses) {
+                expect(outcome).toMatchObject({ ok: false, requestId: 'account-form-request-1',
+                    ...(beforeDispatch ? { errorCode: 'target_unavailable' } : { errorCode: 'admission_unavailable', failureCause }) });
+                const { projectCurrentUiContextActionOutcome } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+                expect(projectCurrentUiContextActionOutcome(outcome)).toMatchObject({ requestId: 'account-form-request-1' });
+            }
             else expect(outcome).toEqual({ ok: true, result: payload });
-            expect(received).toHaveLength(1);
+            expect(received).toHaveLength(beforeDispatch ? 0 : 1);
         } finally { controller.abort(); release(); accountBrowserRelay.enabled = false; }
     });
 
@@ -3014,15 +3030,16 @@ describe('Account Action placement through the executable dispatcher', () => {
             const result = await invocation.invoke({}, { handler: () => executeAccountActionAtRuntimeHost({
                 accountScope: lifetime.scope, action: { pluginId: 'acme.releases', localId: 'publish' },
                 execution: { target: 'account', account: { artifactId: 'fixture', exportName: 'publish' } }, input: {},
-                context: { surface: 'plugin', authority: 'account_automation',
+                context: { surface: 'plugin', authority: 'account_automation', actionRequestId: 'account-refusal-request-1',
                     externalActionTarget: { kind: 'machine', machineId: boundary.machine.id } },
                 signal: new AbortController().signal, executeLocal: () => { throw new Error('Expected relay'); },
             }) });
             expect(result.status).toBe('failed');
             if (result.status === 'executed') throw new Error('Expected refusal');
             const outcome = projectClientActionInvocationFailure(result, declaration, {});
+            expect(outcome).toMatchObject({ requestId: 'account-refusal-request-1' });
             expect(triageTaskWriteInvocationFailureV1(createPluginSurfaceActionFailureError(outcome)))
-                .toEqual({ kind: 'refused', reason: code });
+                .toMatchObject({ kind: 'refused', reason: code, requestId: 'account-refusal-request-1' });
         } finally { lifetime.retire(); }
     });
 

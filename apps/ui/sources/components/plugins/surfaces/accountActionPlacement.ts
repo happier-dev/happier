@@ -89,7 +89,9 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
             const dispatch = async (context: ActionExecutorContext) => {
                 const response = await execute({ actionId: ACTION_INVOKE_ACTION_ID_V1, input, signal: params.signal, context });
                 const parsed = ActionExecuteResultSchema.safeParse(response);
-                return parsed.success && !parsed.data.ok ? parsed.data : { ok: true as const, result: response };
+                return parsed.success && !parsed.data.ok
+                    ? { ...parsed.data, requestId: parsed.data.requestId ?? context.actionRequestId }
+                    : { ok: true as const, result: response };
             };
             const result = await dispatch(context);
             // Present the receiver's exact review before projecting it into an author error.
@@ -106,7 +108,10 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
             if (!settled.ok) {
                 const failure = settled;
                 const authored = readPluginActionFailureAuthorPayload(failure.details);
+                const details = authored.details;
                 const data = { code: failure.errorCode, message: failure.error, ...authored,
+                    ...(failure.requestId && (details === undefined || (details !== null && typeof details === 'object' && !Array.isArray(details)))
+                        ? { details: { ...details, requestId: failure.requestId } } : {}),
                     ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
                     failureCause: failure.failureCause ?? authored.failureCause
                         ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') };

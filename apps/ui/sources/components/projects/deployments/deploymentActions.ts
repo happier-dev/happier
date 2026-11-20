@@ -457,9 +457,11 @@ export function createDeploymentActions(lifetime: ServerAccountScopeLifetime, pr
                 const code = (error as { code?: unknown } | null)?.code;
                 const details = error instanceof HappyError ? error.details : undefined;
                 const failureCause = error instanceof HappyError ? error.failureCause : undefined;
+                const requestId = error instanceof HappyError ? error.requestId : undefined;
                 return { ok: false as const, code: typeof code === 'string' && code ? code : 'unknown_error',
                     ...(approval ? { approvalArtifactId: approval.artifactId } : {}),
                     ...(details !== undefined ? { details } : {}),
+                    ...(requestId !== undefined ? { requestId } : {}),
                     ...(failureCause !== undefined ? { failureCause } : {}) };
             }
         },

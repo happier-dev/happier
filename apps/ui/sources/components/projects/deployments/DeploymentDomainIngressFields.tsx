@@ -129,8 +129,11 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         ? value.reason : !result.ok ? result.code : 'invalid_provider_output';
       const cause = !result.ok ? result.failureCause : undefined;
       const providerStatus = isRecord(value) && typeof value.providerStatus === 'number' ? value.providerStatus : cause?.httpStatus;
-      const diagnosticDetail = providerStatus ? `HTTP ${providerStatus}`
+      const failureDetail = providerStatus ? `HTTP ${providerStatus}`
         : cause ? `${cause.phase}: ${cause.errorCode ?? cause.errorClass}` : undefined;
+      const requestId = result.ok ? undefined : result.requestId;
+      const diagnosticDetail = [failureDetail, requestId ? `${t('approvals.failureTechnicalLabels.requestId')}: ${requestId}` : undefined]
+        .filter(Boolean).join('\n');
       const unavailable = { kind: 'unavailable' as const, reason,
         remedy: readDeploymentFailureRecoveryV1(reason, result.ok ? value : result.details).remedy,
         ...(diagnosticDetail ? { diagnosticDetail } : {}) };
