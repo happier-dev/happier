@@ -667,8 +667,6 @@ const stylesheet = StyleSheet.create((theme) => ({
     largeSubtitle: {
         ...happierPageTextMetrics('pageDescription'),
         marginTop: 0,
-        // The large header's facts sit on its right side, so a fact that wraps inside itself ends its lines there too.
-        textAlign: 'right',
     },
     emphasis: {
         ...Typography.default('semiBold'),
