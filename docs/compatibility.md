@@ -12840,6 +12840,15 @@ development readers preserve this field. Earlier development readers drop it
 through the existing additive diagnostic projection. V1 reads and pushes
 keep their released failure projection. No retained storage format changes.
 
+Combined Machine Setup Apply projects the reviewed Agent install input digest
+and destination Machine into its signed preparation admission. Home matches a
+Workflow install leaf to that selection before issuing its authorization. The
+receiving daemon uses the same digest to open the exact install input. The new
+optional field under the closed development admission schema requires matching
+Protocol, Home and daemon readers. Previously minted Setup roots lack the
+Agent selection and need a fresh review to admit an Agent install. No retained
+storage format changes.
+
 Managed controller failures in the current development V2 read retain a strict
 `managedControllerRequest` diagnostic: the static request path, failure category,
 observed HTTP status when available, and safe machine-readable code when supplied.

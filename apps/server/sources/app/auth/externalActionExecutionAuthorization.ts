@@ -693,12 +693,15 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
     const scope = binding.deploymentPreparationAdmission ?? spawnSetupScope;
     const target = input.target ?? binding.target;
     if (target.kind !== 'machine') return null;
-    // The sealed reviewed Agent leaf has no deployment operands. Its signed
-    // receiver spends only a Machine already in the admitted Setup scope.
-    const child: typeof input.preparationAdmission = declaredAgent ? { operation: 'setup', machineTargets: [target.machineId], deployments: [] }
-        : input.preparationAdmission;
-    // Every child operand spends a reviewed parent fact, never new permission.
-    if (scope?.operation !== 'setup' || child?.operation !== 'setup'
+    if (scope?.operation !== 'setup') return null;
+    const child = input.preparationAdmission;
+    if (declaredAgent) {
+        // The receiver opens the leaf against this same digest. Home only
+        // matches the proof to an operand the exact Apply Plan admitted.
+        if (!scope.machineTargets?.includes(target.machineId)
+            || !scope.agentInstalls?.some(selection => selection.machineId === target.machineId
+                && selection.inputDigest === reviewedChild?.inputDigest)) return null;
+    } else if (child?.operation !== 'setup'
         || !child.machineTargets?.includes(target.machineId)
         || !child.machineTargets.every(machineId => scope.machineTargets?.includes(machineId))
         || !child.deployments.every(selected => scope.deployments.some(admitted => sameManagedInput(admitted, selected)))

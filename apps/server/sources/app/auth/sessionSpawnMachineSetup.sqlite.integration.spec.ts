@@ -453,6 +453,15 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                     headers: { authorization: `Bearer ${f.presentUserToken}` }, payload });
                 expect(refused.statusCode, refused.body).toBe(403);
             }
+            if (kind === 'declared Agent') {
+                const unreviewed = { ...install, agentId: 'pi' };
+                const origin = { ...workflowActionOrigin, reviewedChild: { ...reviewedChild,
+                    inputDigest: computeActionInputApprovalDigestV1(agentAction, unreviewed) } };
+                const response = await f.app.inject({ method: 'POST', url: path,
+                    headers: { authorization: `Bearer ${f.presentUserToken}` },
+                    payload: buildRequest(f.account.id, origin, f.machine.installationId!, { ...envelope, input: unreviewed }) });
+                expect(response.statusCode).toBe(403);
+            }
             const response = await f.app.inject({ method: 'POST', url: path,
                 headers: { authorization: `Bearer ${f.presentUserToken}` }, payload: buildRequest(f.account.id) });
             expect(response.statusCode, response.body).toBe(200);

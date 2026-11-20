@@ -15,6 +15,7 @@ import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, 
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
 import { MACHINE_SERVICE_ADOPT_ACTION_ID } from '../local/services/actionIdsV1.js';
 import { DeploymentNewProjectV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, hasOneDeploymentProjectV1 } from './storedAppInputV1.js';
+import { computeActionInputApprovalDigestV1 } from '../actions/decisionAuthority.js';
 
 export function deploymentPreparationOperationForActionV1(value: string): 'prepare' | 'template' | 'catalog' | 'setup' | 'create' | undefined {
   // Adopting a watched service is an Environment-creating root: it spends Create's preparation admission.
@@ -50,7 +51,8 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     candidate: DeploymentArtifactContentReferenceV1Schema,
   })), catalogSources: z.optional(z.array(z.strictObject({ machineId: id, source: z.strictObject({ id }) })).check(z.minLength(1))),
     connectorGrants: z.optional(z.array(z.strictObject({ machineId: id, grantRef: id })).check(z.minLength(1))),
-    machineTargets: z.optional(z.array(id).check(z.minLength(1))) }),
+    machineTargets: z.optional(z.array(id).check(z.minLength(1))),
+    agentInstalls: z.optional(z.array(z.strictObject({ machineId: id, inputDigest: id })).check(z.minLength(1))) }),
   z.strictObject({ operation: z.literal('prepare'), source,
     environment: z.optional(z.strictObject({ id })), workspace: z.strictObject({ kind: z.literal('workspace-ref'), id }) }),
   z.strictObject({ operation: z.literal('template'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
@@ -159,11 +161,16 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
         ? [{ machineId: target.machineId, grantRef: step.content.grantRef }] : [])));
     const machineTargets = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
       ? [...new Set(targets.map(target => target.machineId))] : undefined;
+    const agentInstalls = machineTargets ? targets.flatMap(target => (target.appChildren ?? []).flatMap(child =>
+      child.actionId === managedActionIds.SESSION_AGENT_READINESS_CHILDREN_V1.acquire.action
+        ? [{ machineId: target.machineId, inputDigest: computeActionInputApprovalDigestV1(child.actionId, child.input) }]
+        : [])) : [];
     if (!machineTargets && deployments.length === 0 && catalogSources.length === 0 && connectorGrants.length === 0) return undefined;
     return DeploymentPreparationAdmissionV1Schema.parse({ operation, deployments,
       ...(machineTargets ? { machineTargets } : {}),
       ...(catalogSources.length ? { catalogSources } : {}),
-      ...(connectorGrants.length ? { connectorGrants } : {}) });
+      ...(connectorGrants.length ? { connectorGrants } : {}),
+      ...(agentInstalls.length ? { agentInstalls } : {}) });
   }
   if (actionId === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
     const environment = readRecord(value.environment);
