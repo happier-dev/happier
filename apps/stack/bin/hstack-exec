@@ -314,7 +314,7 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
       --projects=*) heavyweight_admission_projects=${1#--projects=} ;;
       # The worker client gets the authored command identity and the same
       # validation inputs used for workspace preparation.
-      --identity-arg=*|--identity-cwd=*|--component-relative-dir=*|--validation-kind=*|--preparation-scope=*|--repo-dir=*|--required-tools=*)
+      --identity-arg=*|--identity-cwd=*|--judged-trees=*|--judged-file=*|--component-relative-dir=*|--validation-kind=*|--preparation-scope=*|--repo-dir=*|--required-tools=*)
         if [ "${1%%=*}" = --required-tools ]; then
           policy_requiredTools=$heavyweight_declared_tools
           native_add_required_tools "${1#--required-tools=}" || exit $?

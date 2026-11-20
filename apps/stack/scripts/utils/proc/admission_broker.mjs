@@ -20,6 +20,17 @@ export { brokerAddress } from './admission_socket.mjs';
 // (2026-11-13 provenance census; includes preparation/admission). Give backfills
 // this measured opportunity window, then accumulate releases for the old head.
 const HEAD_RESERVATION_DELAY_MS = 1_344_000;
+const RECENT_JUDGMENT_WINDOW_MS = 15 * 60 * 1000;
+const GIT_TREE_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const COMMAND_DIGEST = /^[0-9a-f]{64}$/;
+
+function queueJudgment(value) {
+  if (typeof value?.commandDigest !== 'string' || !COMMAND_DIGEST.test(value.commandDigest)) {
+    return { treeIds: [], commandDigest: null };
+  }
+  const validTrees = Array.isArray(value.treeIds) && value.treeIds.every(id => typeof id === 'string' && GIT_TREE_ID.test(id));
+  return { treeIds: validTrees ? [...new Set(value.treeIds)].sort() : [], commandDigest: value.commandDigest };
+}
 
 // Systemic 18:47Z: work that unblocks every lane is served before ordinary
 // waiters: first the shared runtime producer (one build at a time under its
@@ -219,6 +230,8 @@ export function createAdmissionBroker({ root,
     ? admitWorkerDiskBudget({ ...request, commandClass: request.className }) : { admitted: true } } = {}) {
   const slots = new Map();
   const waiting = [];
+  const observedSince = Date.now();
+  const recentlyFinished = [];
   const controls = new Set();
   const pendingConnections = new Set();
   const subscribers = new Map();
@@ -548,6 +561,17 @@ export function createAdmissionBroker({ root,
       expectedStartMs: projectedArrivalStartMs(now),
       activeCount: slots.size, waitingCount: waiting.filter(item => !item.slot).length, sampleCount };
   }
+  function pruneFinished(now) {
+    while (recentlyFinished[0]?.finishedAt < now - RECENT_JUDGMENT_WINDOW_MS) recentlyFinished.shift();
+  }
+
+  function queueSnapshot() {
+    const sampledAt = Date.now();
+    pruneFinished(sampledAt);
+    return { sampledAt, observedSince: Math.max(observedSince, sampledAt - RECENT_JUDGMENT_WINDOW_MS),
+      waiting: waiting.filter(item => !item.slot).map(item => item.judgment), recentlyFinished };
+  }
+
   const send = (socket, value, snapshot = status()) => { if (!socket.destroyed) socket.write(JSON.stringify({ ...snapshot, ...value }) + '\n'); };
   function recordFailure(error) {
     // Keep only a symbolic code and a source location, never exception text,
@@ -986,7 +1010,7 @@ export function createAdmissionBroker({ root,
       const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: fitting?.workers, control: item.socket,
         slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: key,
         memoryWarmupMs: recordedMemoryWarmupMs(key), pressureExempt,
-        arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
+        arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder, judgment: item.judgment };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
       availableCpuCores = Math.max(0, availableCpuCores - cpuCores);
@@ -1042,10 +1066,18 @@ export function createAdmissionBroker({ root,
         return;
       }
       if (metadata.kind === 'slot-completed') {
-        if (metadata.status === 0) enqueue(() => {
-          slot.succeeded = true;
-          if (Number.isSafeInteger(metadata.cpuMilliCores) && metadata.cpuMilliCores > 0) {
-            slot.cpuMilliCores = metadata.cpuMilliCores;
+        if (Number.isSafeInteger(metadata.status)) enqueue(() => {
+          if (!slot.judgmentFinished) {
+            const finishedAt = Date.now();
+            pruneFinished(finishedAt);
+            recentlyFinished.push({ ...(slot.judgment ?? queueJudgment()), finishedAt });
+            slot.judgmentFinished = true;
+          }
+          if (metadata.status === 0) {
+            slot.succeeded = true;
+            if (Number.isSafeInteger(metadata.cpuMilliCores) && metadata.cpuMilliCores > 0) {
+              slot.cpuMilliCores = metadata.cpuMilliCores;
+            }
           }
         });
         return;
@@ -1057,6 +1089,7 @@ export function createAdmissionBroker({ root,
             || metadata.projects.some(project => typeof project !== 'string')))) return;
         enqueue(async () => {
           slot.identityKey ??= identityKey(metadata);
+          slot.judgment ??= queueJudgment(metadata.judgment);
           const key = slot.recovered ? slot.identityKey : null;
           if (slot.recovered) slot.memoryWarmupMs = recordedMemoryWarmupMs(key);
           const peaks = recordedIdentityPeaks().get(key);
@@ -1122,9 +1155,11 @@ export function createAdmissionBroker({ root,
         const valid = identity && typeof identity.resourceClass === 'string' && typeof identity.component === 'string'
           && typeof identity.entry === 'string' && Number.isSafeInteger(identity.floorKiB) && identity.floorKiB > 0
           && Array.isArray(identity.projects) && identity.projects.every(project => typeof project === 'string');
-        send(socket, { kind: 'sample', ...(valid ? { identityFloorKiB: recordedIdentityFloorKiB({ resourceClass: identity.resourceClass,
+        const snapshot = status();
+        send(socket, { kind: 'sample', ...(request.includeQueue === true ? { queue: queueSnapshot() } : {}),
+          ...(valid ? { identityFloorKiB: recordedIdentityFloorKiB({ resourceClass: identity.resourceClass,
           className: identity.resourceClass, component: identity.component, entry: identity.entry,
-          projects: identity.projects, floorKiB: identity.floorKiB }) } : {}) });
+          projects: identity.projects, floorKiB: identity.floorKiB }) } : {}) }, snapshot);
         socket.end(); return;
       }
       if (request.kind === 'check') {
@@ -1193,7 +1228,8 @@ export function createAdmissionBroker({ root,
         socket.end();
         return;
       }
-      item = { ...request, socket, locks: request.locks ?? [], env: request.env ?? {}, settled: false,
+      item = { ...request, socket, judgment: queueJudgment(request.judgment),
+        locks: request.locks ?? [], env: request.env ?? {}, settled: false,
         arrivedAt: request.arrivedAt ?? Date.now(), arrivalOrder: ++arrivalOrder, ownPriority: headPriorityRank(request),
         preparedPriority: preparedRank(request) };
       item.headPriority = Math.max(item.ownPriority, item.preparedPriority);

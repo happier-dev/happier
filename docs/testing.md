@@ -640,6 +640,18 @@ A request larger than the host receives
 `HSTACK_CPU_CAPACITY`; a nonwaiting request without current room receives
 `HSTACK_CPU_BUSY`.
 
+For duplicate-demand measurement, run the native admission client with
+`--root=<host-admission-root> --queue-snapshot` on a Linux execution host.
+The sample includes waiting entries and terminal completions observed in the
+last 15 minutes of this broker's lifetime. `observedSince` and `sampledAt`
+describe the covered interval. A complete key uses one of an entry's Git
+`treeIds` and its `commandDigest`. The digest covers the command, working
+directory, and selected inputs without publishing their names.
+Exact-tree compiler workers supply the Git tree IDs they judge. Commands
+running against a moving mirror and older clients can appear with an empty
+`treeIds` array. Count those entries as unknown when calculating duplicate
+demand. Admission continues to schedule each request independently.
+
 A nested Linux command uses the parent's grant when it retains the admission
 environment. If it sends a new acquire request, the broker checks the
 requesting PID's ancestry against its live and recovered slots and refuses with

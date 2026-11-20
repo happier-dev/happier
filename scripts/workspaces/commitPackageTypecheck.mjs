@@ -1084,7 +1084,8 @@ async function workerRows(argv, entry) {
       if (prepared.error) throw prepared.error;
       if (prepared.status !== 0) return prepared.status ?? 2;
     }
-    const command = admittedCommand(state, payload, false, projects);
+    const command = admittedCommand(state, payload, false, projects, 'compilation',
+      { trees: request.trees, files: request.packages });
     const result = spawnSync(command[0], command.slice(1), { env: workerEnv, stdio: 'inherit' });
     if (result.error) throw result.error;
     return result.status ?? 2;
@@ -1150,14 +1151,16 @@ export function kickRollingHeadTypecheck({ repo, env = process.env, commit }) {
 }
 
 let rollingOwner = false;
-function admittedCommand(repo, payload, cached, projects, className = 'compilation') {
+function admittedCommand(repo, payload, cached, projects, className = 'compilation', judgment) {
   // Native Windows has no shell admission; it runs the payload directly (as the checker does).
   // The admitted argv is the admission identity: only stable arguments, so the broker sizes it from
   // this identity's recorded kernel peak; the request travels in env.
   // The rolling owner compiles nothing here: its rows come from a worker that admits there (workerTreeRows).
   return cached || rollingOwner || process.platform === 'win32' ? payload : [fileURLToPath(new URL('../../apps/stack/bin/hstack-exec', import.meta.url)),
     '--heavyweight-admission', `--class=${className}`, `--machine=${process.env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? 'worker' : 'local'}`,
-    ...(projects ? [`--projects=${projects}`] : []), '--exec-admitted', '--', ...payload];
+    ...(projects ? [`--projects=${projects}`] : []),
+    ...(judgment ? [`--judged-trees=${judgment.trees.join(',')}`, ...judgment.files.map(file => `--judged-file=${file}`)] : []),
+    '--exec-admitted', '--', ...payload];
 }
 
 /** The next scope a rolling pass compiles: packages (minutes) whenever it is behind and did not run last, so its

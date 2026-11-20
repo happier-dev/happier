@@ -1,11 +1,12 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { lstat } from 'node:fs/promises';
 import { createConnection, createServer } from 'node:net';
 import { constants } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { basename, relative, resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
@@ -134,7 +135,7 @@ async function runPayload({ command, args, env, signal }) {
  */
 export async function runAdmittedTask({ root, className, floorKiB, machine,
   locks = [], noWait = false, requireInherited = false, failureId, repoDir = process.cwd(),
-  exportMode, exportWorkers, requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, readJobPeakKiB,
+  exportMode, exportWorkers, requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, judgment, readJobPeakKiB,
   cacheBaseDir = process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, env = process.env, signal } = {}, action) {
   if (typeof action !== 'function') throw new TypeError('Admission requires a task callback');
   const cancellation = new AbortController();
@@ -222,7 +223,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       cpuCost,
       requestedCpuCores: requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt: Date.now(),
-      repoDir, cacheBaseDir, noWait, locks, projects,
+      repoDir, cacheBaseDir, noWait, locks, projects, judgment,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
       // The routed run this preparation step belongs to; the broker ranks a preparation class by it.
       ...(env.HAPPIER_ADMISSION_PREPARES_CLASS ? { preparesClass: env.HAPPIER_ADMISSION_PREPARES_CLASS } : {}),
@@ -285,7 +286,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               if (admittedDuration) socket.write(JSON.stringify(admittedDuration) + '\n');
               // A successor can use this identity's local duration and peak history.
               if (request.entry !== undefined) socket.write(JSON.stringify({ kind: 'slot-identity', className: request.className,
-                resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry }) + '\n');
+                resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry,
+                judgment: request.judgment }) + '\n');
             });
             await new Promise((ready, reject) => {
               slotServer.once('error', reject);
@@ -331,6 +333,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
                   ? Math.ceil((finalCpuUsec - initialCpuUsec) / elapsedMs) : undefined;
                 await report({ kind: 'slot-completed', status: 0,
                   ...(Number.isSafeInteger(cpuMilliCores) ? { cpuMilliCores } : {}) });
+              } else if (Number.isSafeInteger(result) && !cancellation.signal.aborted) {
+                await report({ kind: 'slot-completed', status: result });
               }
               return result;
             }).finally(async () => {
@@ -392,9 +396,13 @@ class AdmissionRefusal extends Error {
  * package-manager script, or `--test`), never its argument list, so new file
  * lists or flags reuse the recorded peak. */
 const SCRIPT_HOSTS = new Set(['pnpm', 'npm', 'yarn', 'bun', 'node', 'tsx', 'bash', 'sh', 'corepack']);
-export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = process.cwd(), command, args = [] }) {
+function commandArgv(command, args) {
   const separator = args[0] === '--heavyweight-admitted-exec' ? args.indexOf('--') : -1;
-  let tokens = separator >= 0 ? args.slice(separator + 1) : [command, ...args];
+  return separator >= 0 ? args.slice(separator + 1) : [command, ...args];
+}
+
+export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = process.cwd(), command, args = [] }) {
+  let tokens = commandArgv(command, args);
   const program = index => String(tokens[index] ?? '').split('/').at(-1);
   // The identity is the program that runs: `env NAME=value …` and a package
   // manager's exec launcher (`pnpm exec node x.mjs`, `npx vitest`) only start it.
@@ -417,12 +425,28 @@ export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = proces
   return { component: relative(repoDir, cwd) || '.', entry: entry.join(' ') };
 }
 
-export async function runAdmissionCommand({ command, args = [], authoredArgs = args, validationPreparation, ...options } = {}) {
+export async function runAdmissionCommand({ command, args = [], authoredArgs, treeIds = [], selectedFiles = [],
+  validationPreparation, ...options } = {}) {
   let payloadStarted = false;
   let payloadStartedAt;
   try {
     const identity = options.entry !== undefined ? {} : admissionCommandIdentity({ repoDir: options.repoDir, command, args });
-    const admission = { ...identity, ...options, cpuCost: resolveAdmissionCpuCost(options.className, authoredArgs),
+    const [program, ...commandArgs] = authoredArgs ?? commandArgv(command, args);
+    // Exact-tree workers may run the same command from different temporary
+    // copies of the tool tree. Use repo-relative paths for those arguments.
+    const repoArg = argument => {
+      if (!isAbsolute(argument)) return argument;
+      const path = relative(options.repoDir ?? process.cwd(), argument);
+      return path === '..' || path.startsWith('../') ? argument : { repoPath: path || '.' };
+    };
+    const fileSelection = selectedFiles.length ? selectedFiles : options.projects ?? [];
+    const commandDigest = createHash('sha256').update(JSON.stringify([
+      options.component ?? identity.component ?? '.', program === process.execPath ? 'node' : repoArg(program),
+      commandArgs.map(repoArg),
+      [...new Set(fileSelection)].sort(),
+    ])).digest('hex');
+    const admission = { ...identity, ...options, judgment: { treeIds, commandDigest },
+      cpuCost: resolveAdmissionCpuCost(options.className, authoredArgs ?? args),
       requestedCpuCores: options.requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env: options.env ?? process.env, args }),
     };
     const launch = (env, signal) => {
@@ -522,13 +546,14 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
   const identity = identityArgs.length ? admissionCommandIdentity({ repoDir,
     cwd: resolve(repoDir, value('identity-cwd') ?? '.'), command: identityArgs[0], args: identityArgs.slice(1) }) : {};
   const projects = value('projects')?.split('\n').filter(Boolean);
-  if (options.some(option => ['--sample', '--active-count', '--waiting-count', '--unreserved-memory', '--check'].includes(option))) {
+  if (options.some(option => ['--sample', '--queue-snapshot', '--active-count', '--waiting-count', '--unreserved-memory', '--check'].includes(option))) {
     const sample = await requestAdmissionSample(root, options.includes('--check')
       ? { kind: 'check', className: value('class'), floorKiB: Number(value('floor-kib')),
         cpuCost: resolveAdmissionCpuCost(value('class')),
         requestedCpuCores: value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores') ?? 0) }
       // Placement's sample for a routed command: the broker answers the floor it would reserve for this identity.
-      : { kind: 'sample', ...(identity.entry !== undefined && value('class') ? { identity: { ...identity,
+      : { kind: 'sample', ...(options.includes('--queue-snapshot') ? { includeQueue: true } : {}),
+        ...(identity.entry !== undefined && value('class') ? { identity: { ...identity,
         resourceClass: value('class'), floorKiB: Number(value('floor-kib')), projects: projects ?? [] } } : {}) });
     if (options.includes('--check')) process.exitCode = sample.kind === 'admitted' ? 0 : 1;
     else {
@@ -550,7 +575,8 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
   };
   process.exitCode = await runAdmissionCommand({ ...identity, root, className: value('class'), validationPreparation,
     floorKiB: Number(value('floor-kib')), machine: value('machine'),
-    projects,
+    projects, treeIds: value('judged-trees')?.split(','),
+    selectedFiles: options.filter(item => item.startsWith('--judged-file=')).map(item => item.slice('--judged-file='.length)),
     exportMode: value('export-mode'), exportWorkers: Number(value('export-workers')),
     requestedCpuCores: value('cpu-cores') === undefined ? undefined
       : value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores')),

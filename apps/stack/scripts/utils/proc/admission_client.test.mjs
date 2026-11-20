@@ -256,6 +256,61 @@ test('admission reports one waiting line with enqueue facts only when capacity q
     });
   });
 
+test('the broker snapshot identifies waiting and recently finished judgments without exposing argv',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    let availableMemoryKiB = 100;
+    let observed;
+    const broker = createAdmissionBroker({ root: fixture.native.admissionRoot,
+      oldLockPath: join(fixture.root, 'old-admission.lock'),
+      sampleResources: async () => {
+        observed?.();
+        observed = undefined;
+        return { availableMemoryKiB, totalMemoryKiB: 100 };
+      } });
+    await broker.start();
+    t.after(() => broker.close());
+    const root = fixture.native.admissionRoot;
+    const snapshot = () => requestAdmissionSample(root, { kind: 'sample', includeQueue: true });
+    const tree = 'a'.repeat(40);
+    const anotherTree = 'b'.repeat(40);
+    const command = (file, trees = tree, files = ['private/a.ts', 'private/b.ts']) => [`--judged-trees=${trees}`,
+      '--identity-arg=node', '--identity-arg=--test', `--identity-arg=${file}`,
+      ...files.map(selected => `--judged-file=${selected}`)];
+    const completed = fixture.start('process.exit(1)', command('private/customer-a.test.mjs'));
+    assert.deepEqual(await completed.closed, [1, null], completed.stderr());
+    const initial = await snapshot();
+    assert.equal(initial.queue.recentlyFinished.length, 1);
+    assert.deepEqual(initial.queue.recentlyFinished[0].treeIds, [tree]);
+    assert.match(initial.queue.recentlyFinished[0].commandDigest, /^[0-9a-f]{64}$/);
+    assert.equal(initial.queue.recentlyFinished[0].finishedAt <= initial.queue.sampledAt, true);
+
+    availableMemoryKiB = 0;
+    for (const args of [command('private/customer-a.test.mjs', `${tree},${anotherTree}`, ['private/b.ts', 'private/a.ts']),
+      command('private/customer-b.test.mjs'), command('private/customer-a.test.mjs', 'private/source'),
+      command('private/customer-a.test.mjs', tree, ['private/a.ts']),
+      [...command(join(fixture.root, 'private/customer-a.test.mjs')), '--identity-cwd=apps/stack'],
+      [...command('private/customer-a.test.mjs'), '--identity-cwd=apps/stack']]) {
+      const arrival = new Promise(resolve => { observed = resolve; });
+      fixture.start('process.exit(0)', args);
+      await arrival;
+    }
+    const queued = await snapshot();
+    assert.equal(queued.waitingCount, 6);
+    assert.equal(queued.queue.waiting.length, 6);
+    assert.deepEqual(queued.queue.waiting[0].treeIds, [tree, anotherTree]);
+    assert.equal(queued.queue.waiting[0].commandDigest, initial.queue.recentlyFinished[0].commandDigest);
+    assert.notEqual(queued.queue.waiting[1].commandDigest, queued.queue.waiting[0].commandDigest);
+    assert.deepEqual(queued.queue.waiting[2].treeIds, []);
+    assert.notEqual(queued.queue.waiting[3].commandDigest, queued.queue.waiting[0].commandDigest);
+    assert.notEqual(queued.queue.waiting[4].commandDigest, queued.queue.waiting[5].commandDigest);
+    assert.doesNotMatch(JSON.stringify(queued.queue), /private|customer|node --test/);
+    assert.equal((await requestAdmissionSample(root)).queue, undefined);
+    t.mock.timers.enable({ apis: ['Date'], now: queued.queue.sampledAt });
+    t.mock.timers.tick(900_001);
+    assert.deepEqual((await snapshot()).queue.recentlyFinished, []);
+  });
+
 test('a broker started before a newer admission class admits it through the client-resolved disk class',
   { skip: process.platform !== 'linux' }, async t => {
     const fixture = await restartFixture(t);
