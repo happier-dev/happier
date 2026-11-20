@@ -1,3 +1,4 @@
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from '../../actions/actionIds.js';
 import { describe, expect, it } from 'vitest';
 import { buildConfiguredAcpAgentSelectionV1 } from '../../agents/executionTargetV1.js';
 import { formatLegacyConfiguredAcpAgentId } from '../../backends/targets/compat/customAcp.js';
@@ -93,7 +94,7 @@ describe('existing Session change planner', () => {
       v: 1, updatedAt: 1, overrides: { effort: { value: 'high', updatedAt: 1 } },
     }, connectedServices: { v: 2, bindingsByServiceId: {} }, capabilityDeltas: [{ kind: 'skill', id: 'skill', state: 'on' }] }, targets, 'hello');
     expect(plan.stages.map(s => s.actionId)).toEqual([
-      'session.mode.set', 'session.config_option.set',
+      'session.mode.set', SESSION_CONFIG_OPTION_SET_ACTION_ID_V1,
       'session.connected_services_auth.set', 'session.connected_services_auth.set', 'session.connected_services_auth.set',
       'session.capabilities.set', 'session.message.send',
     ]);
@@ -160,7 +161,7 @@ describe('existing Session change planner', () => {
     const plan = planExistingSessionChanges({ agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
       acpSessionModeId: 'plan', sessionConfigOptionOverrides: config,
     }, [unchanged, targets[0], targets[2]]);
-    expect(plan.stages.map(stage => stage.actionId)).toEqual(['session.mode.set', 'session.config_option.set', 'session.agent.transition', 'session.agent.transition']);
+    expect(plan.stages.map(stage => stage.actionId)).toEqual(['session.mode.set', SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, 'session.agent.transition', 'session.agent.transition']);
     expect(plan.stages[0].targets).toEqual([unchanged.address]);
     expect(plan.stages[2].input.selection).toMatchObject({ acpSessionModeId: 'plan', sessionConfigOptionOverrides: config });
     expect(plan.stages.some(stage => stage.actionId === 'session.message.send')).toBe(false);

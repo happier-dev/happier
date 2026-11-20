@@ -3,6 +3,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol/usage/contextUsage';
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
 /**
  * A tiny reactive external store standing in for the session store. The strip's
@@ -36,11 +37,9 @@ vi.mock('@/sync/domains/state/storage', () => ({
     useSessionProjectScmSummarySnapshot: () => React.useSyncExternalStore(store.subscribe, () => store.state.scm),
 }));
 
-vi.mock('@/sync/sync', () => ({
-    sync: { publishSessionAcpConfigOptionOverrideToMetadata: publishSpy },
+vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
+    createDefaultActionExecutor: () => ({ execute: publishSpy }),
 }));
-
-vi.mock('@/sync/runtime/time', () => ({ nowServerMs: () => 1000 }));
 
 vi.mock('../resolveContextWarningWindowTokens', () => ({
     // Deterministic full window so percentage math is exercised without the registry.
@@ -138,14 +137,11 @@ describe('useInstrumentStripModel', () => {
         expect(latest?.git?.hasLineChanges).toBe(true);
     });
 
-    it('publishes a context_usage_refresh override to the strip Home when refresh is invoked', () => {
+    it('requests a context usage refresh on the strip Home', async () => {
         act(() => { tree = create(React.createElement(Probe)); });
-        act(() => latest?.refreshContextUsage());
-        expect(publishSpy).toHaveBeenCalledTimes(1);
-        expect(publishSpy.mock.calls[0]?.[0]).toMatchObject({
-            sessionId: 's1',
-            serverId: 'home-one',
-            configId: 'context_usage_refresh',
-        });
+        await act(async () => latest?.refreshContextUsage());
+        expect(publishSpy).toHaveBeenCalledExactlyOnceWith(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, {
+            sessionId: 's1', configId: 'context_usage_refresh', valueId: 'refresh',
+        }, { surface: 'ui', serverId: 'home-one', defaultSessionId: 's1' });
     });
 });

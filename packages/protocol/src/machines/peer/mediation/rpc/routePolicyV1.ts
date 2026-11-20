@@ -1,5 +1,5 @@
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
-import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '../../../../actions/actionIds.js';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '../../../../actions/actionIds.js';
 import { readSessionActionChildCreationRpcEffectV1 } from '../../../../sessions/creation/sessionCreationActionIdsV1.js';
 import { isApprovalWithdrawalDecisionV1 } from '../../../../actions/decisionAuthority.js';
 import { isProjectWorkspaceSyncPreparationActionV1, PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '../../../../actions/projectActionIdsV1.js';
@@ -815,6 +815,10 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     'Switch bindings under the current Session owner’s authorization.', SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, 'use'),
   actionSpecServerRequired(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, 'auth',
     'Read routing choices under the current Session owner’s authorization.', ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, 'use'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_CHOICES, 'auth',
+    'Read the Session owner’s effective configuration choices.', ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, 'use'),
+  actionSpecServerRequired(RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET, 'durable_session_write',
+    'Write configuration intent under the current Session owner’s authorization.', SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, 'use'),
   serverRequired(RPC_METHODS.DAEMON_SESSION_GOAL_GET, 'durable_session_write',
     'Session and execution-run lifecycle/state methods remain server-required; detached Runs use exact Machine admission while attached Runs retain Session authority.', 'use'),
   serverRequired(RPC_METHODS.DAEMON_SESSION_GOAL_SET, 'durable_session_write',

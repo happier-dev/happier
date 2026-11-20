@@ -8,7 +8,7 @@ import { SessionSummarySchema } from '../sessions/control/listResult.js';
 import { SessionListQueryV1Schema } from '../sessions/listing/query.js';
 import { encodeV2SessionListCursorV1 } from '../sessions/listing/cursor.js';
 import { bindHomeDomainActionHttpRequestV1, readHomeDomainActionErrorV1 } from './homeDomainActionFamily.js';
-import { ActionIdSchema } from './actionIds.js';
+import { ActionIdSchema, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from './actionIds.js';
 import { getActionSpec } from './actionSpecs.js';
 import { normalizeActionsSettingsV1 } from './actionSettings.js';
 import { isApprovalRequiredByActionsSettings } from './actionApprovalPolicy.js';
@@ -133,27 +133,20 @@ describe('createActionExecutor (session control)', () => {
     expect(models).toEqual([' native/model ']);
     expect(result).toMatchObject({ ok: true, result: { modelId: ' native/model ' } });
   });
-  it.each([' selected ', '', ' ', null])('carries opaque config identity and choice value %j to the client Action boundary', async valueId => {
+  it.each([' selected ', '', ' ', null])('carries opaque config identity and choice %j to the Session owner', async valueId => {
     const inputs: unknown[] = [];
-    const executor = createExecutor({ clientActionExecute: async request => {
-      inputs.push(request.input);
-      return { ok: true, result: { ok: true } };
+    const executor = createExecutor({ sessionConfigOptionSet: async ({ machineId, serverId, ...request }) => {
+      inputs.push(request);
+      expect(machineId).toBe('machine');
+      expect(serverId).toBe('home');
+      return { ...request, metadataVersion: 2, privateMaterialization: 'internal' };
     } });
     const input = { sessionId: 's1', configId: ' custom ', valueId };
-    expect(await executor.execute('session.config_option.set', input, { surface: 'agent', defaultSessionId: 's1' }))
-      .toMatchObject({ ok: true });
+    expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, input, {
+      surface: 'agent', defaultSessionId: 's1', expectedSessionMachineId: 'machine', serverId: 'home',
+    })).toMatchObject({ ok: true, result: { ...input, metadataVersion: 2 } });
     expect(inputs).toEqual([input]);
-    expect(getActionSpec('session.config_option.set').inputSchema.safeParse({ ...input, configId: ' ' }).success).toBe(false);
-  });
-  it('preserves explicit configuration withdrawal through local Action execution', async () => {
-    const inputs: unknown[] = [];
-    const executor = createExecutor({ sessionConfigOptionSet: async input => {
-      inputs.push(input);
-      return { ok: true };
-    } });
-    const input = { sessionId: 's1', configId: 'reasoning_effort', valueId: null };
-    expect(await executor.execute('session.config_option.set', input, { surface: 'ui' })).toMatchObject({ ok: true });
-    expect(inputs).toEqual([input]);
+    expect(getActionSpec(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1).inputSchema.safeParse({ ...input, configId: ' ' }).success).toBe(false);
   });
   it('reads one exact input result through the public Action with host-stamped plugin identity', async () => {
     const read = vi.fn(async () => ({ ok: true as const, sessionId: 's1', localId: 'input-1',
@@ -3607,7 +3600,7 @@ describe('createActionExecutor (session control)', () => {
     const requests = [
       { id: 'session.permission.remote.grants.list', input: { sessionId: 's1' } },
       { id: 'session.permission.remote.grants.revoke', input: { sessionId: 's1', turnId: 'turn', requestId: 'request', grantId: 'grant' } },
-      { id: 'session.config_option.set', input: { sessionId: 's1', configId: 'effort', valueId: 'high' } },
+      { id: SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, input: { sessionId: 's1', configId: 'effort', valueId: 'high' } },
       { id: 'session.connected_services_auth.set', input: { sessionId: 's1', machineId: 'machine',
         routing: { agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } } } },
     ] as const;
@@ -3618,7 +3611,11 @@ describe('createActionExecutor (session control)', () => {
         return args.actionId === 'session.permission.remote.grants.list' ? { grants: [], nextCursor: null }
           : { status: 'revoked', grantId: 'grant' };
       },
-      clientActionExecute: async () => { effects++; return { ok: true, result: { ok: true } }; },
+      sessionStatusGet: async () => ({ session: { machineId: 'machine' } }),
+      sessionConfigOptionSet: async ({ sessionId, configId, valueId }) => {
+        effects++;
+        return { sessionId, configId, valueId, metadataVersion: 2 };
+      },
       sessionConnectedServicesAuthSet: async () => { effects++; return { ok: true, action: 'metadata_updated' }; },
     });
     for (const surface of ['agent', 'mcp'] as const) {

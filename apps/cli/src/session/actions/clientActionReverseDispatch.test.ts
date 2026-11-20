@@ -120,7 +120,6 @@ describe('client Action reverse delivery', () => {
       .toEqual({ ok: false, errorCode: 'disabled', error: 'disabled' });
   });
   it.each([
-    { actionId: 'session.config_option.set', input: { sessionId: 'target-session', configId: 'effort', valueId: 'high' } },
     { actionId: 'session.target.primary.set', input: { serverId: 'home', sessionId: 'target-session' } },
     { actionId: 'session.target.tracked.set', input: { sessionAddresses: [{ serverId: 'home', sessionId: 'target-session' }] } },
     { actionId: 'session.organization.appearance.set', input: { sessionId: 'target-session', color: null } },

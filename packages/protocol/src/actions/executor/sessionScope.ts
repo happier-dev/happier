@@ -3,6 +3,7 @@ import { normalizeId } from './inputReading.js';
 import { readRecord, hasOwn } from '../../inputs/inputRecords.js';
 import { readWidgetDefinitionActionSessionV1 } from '../../widgets/definitionActionsV1.js';
 import { readWidgetActionSurfaceV1, readWidgetActionDestinationV1 } from '../../widgets/actionsV1.js';
+import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 
 export function resolveSessionIdFromInput(input: unknown, ctx: ActionExecutorContext): string | null {
   const sessionId = normalizeId(readRecord(input).sessionId);
@@ -65,6 +66,22 @@ export function resolveServerIdForSession(deps: ActionExecutorDeps, ctx: ActionE
   const explicit = normalizeId(ctx.serverId);
   if (explicit) return explicit;
   return deps.resolveServerIdForSessionId ? deps.resolveServerIdForSessionId(sessionId) : null;
+}
+
+export async function resolveSessionControlTarget(
+  deps: ActionExecutorDeps, ctx: ActionExecutorContext, sessionId: string,
+): Promise<ActionExecuteFailure | Readonly<{ ok: true; sessionId: string; machineId: string; serverId: string | null }>> {
+  const serverId = ctx.expectedSessionAddress?.serverId ?? resolveServerIdForSession(deps, ctx, sessionId);
+  let machineId = ctx.expectedSessionMachineId;
+  if (!machineId) {
+    const status = await deps.sessionStatusGet?.({ sessionId, ...(serverId ? { serverId } : {}), context: ctx, signal: ctx.signal });
+    const refusal = readActionFailureEnvelope(status);
+    if (refusal) return refusal;
+    machineId = normalizeId(readRecord(readRecord(status).session).machineId);
+  }
+  return machineId
+    ? { ok: true, sessionId, machineId, serverId }
+    : { ok: false, errorCode: 'unavailable', error: 'unavailable' };
 }
 
 export function resolveServerIdForExecutionRunScope(

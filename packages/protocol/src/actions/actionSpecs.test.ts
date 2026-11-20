@@ -1,3 +1,4 @@
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from './actionIds.js';
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { SessionSpawnNewInputV2Schema as preObservationSpawnInput } from '../sessions/creation/testFixtures/sessionSpawnInputBeforeCommitObservation.js';
 import { z } from 'zod/mini';
@@ -213,11 +214,11 @@ describe('Profile entity operation parity', () => {
 });
 
 describe('Composer state mutation Actions', () => {
-  it('shares the reversible config-option mutation through its answering client', () => {
-    expect(getActionSpec('session.config_option.set')).toMatchObject({
+  it('shares the reversible config-option mutation through its Session owner', () => {
+    expect(getActionSpec(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1)).toMatchObject({
       sideEffectClass: 'write',
       safety: 'safe',
-      executionPlacement: 'client',
+      executionPlacement: 'session',
       placements: [],
       surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
     });
@@ -771,7 +772,7 @@ const RESULT_OPTIONAL_DEFERRED_ACTION_IDS = [
   'session.permission.respond',
   'session.user_action.answer',
   'session.mode.set',
-  'session.config_option.set',
+  SESSION_CONFIG_OPTION_SET_ACTION_ID_V1,
   'session.connected_services_auth.set',
   'session.target.primary.set',
   'session.target.tracked.set',

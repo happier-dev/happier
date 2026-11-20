@@ -4,24 +4,28 @@ import axios, { AxiosHeaders } from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema, FeaturesResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, RPC_METHODS,
   SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema,
-  SessionOwnerMetadataEnvelopeV1Schema, projectSessionOwnerCompatibilityViewV1, UiActionDispatchRequestV1Schema } from '@happier-dev/protocol';
+  SessionOwnerMetadataEnvelopeV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol';
 import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
-import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_CONFIG_OPTION_IDS_SOURCE_ID, SESSION_CONFIG_OPTION_VALUES_SOURCE_ID } from '@happier-dev/protocol/sessions/control/sessionConfigOptionV1';
+import { parseSocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, createAccountTokenForTests } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '../../../../ui/sources/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSessionFixture } from '../../../../ui/sources/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createPlainMachineRowFixture } from '../../../../ui/sources/dev/testkit/fixtures/machineFixtures';
 import { standardCleanup } from '../../../../ui/sources/dev/testkit/cleanup/standardCleanup';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import { installDaemonMachineAdmissionTransport } from '@/daemon/machineAdmissionTransport';
-import { createClientActionReverseDispatcher } from './clientActionReverseDispatch';
+import { registerMachineSessionConfigOptionRpcHandlers } from '@/api/machine/rpcHandlers.sessionConfigOptions';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
 
 vi.mock('socket.io-client', async importOriginal =>
   (await import('../../../../ui/sources/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 vi.mock('react-native', async () => (await import('../../../../ui/sources/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
-let daemonAnswer: (method: string, params: unknown) => unknown;
+let daemonAnswer: (method: string, params: unknown, context: RpcHandlerContext) => unknown;
 installDisconnectedServerSocketBoundary(socket => {
   vi.mocked(socket.connect).mockImplementation(() => {
     socket.connected = true;
@@ -34,21 +38,29 @@ installDisconnectedServerSocketBoundary(socket => {
     if (!payload || typeof payload !== 'object' || !('method' in payload) || typeof payload.method !== 'string' || !('params' in payload)) {
       throw new Error('Invalid daemon RPC');
     }
-    return { ok: true, result: await daemonAnswer(payload.method, payload.params) };
+    const authorization = parseSocketRpcAuthorizationContext('authorization' in payload ? payload.authorization : undefined);
+    try {
+      return { ok: true, result: await daemonAnswer(payload.method, payload.params, {
+        ...(authorization ? { authorization } : {}), signal: new AbortController().signal,
+      }) };
+    } catch (error) {
+      const errorCode = readRpcErrorCode(error);
+      if (!errorCode) throw error;
+      return { ok: true, result: { errorCode, error: errorCode } };
+    }
   });
 });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 await (await import('../../../../ui/sources/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
 const { storage } = await import('../../../../ui/sources/sync/domains/state/storage');
-const { createUiClientActionReverseHandler } = await import('../../../../ui/sources/sync/ops/actions/clientActionReverseDispatch');
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let serverId: string;
 const accountId = 'session-parity-account';
 const sessionId = 'c123456789012345678901234';
 const machineId = 'session-parity-machine';
 const credentials = { token: createAccountTokenForTests(accountId), encryption: null } as const;
-const controls = ['session.config_option.set', SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1] as const;
+const controls = [SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1] as const;
 
 beforeEach(async () => {
   await homes.reset();
@@ -62,6 +74,11 @@ beforeEach(async () => {
       if (value != null) headers.set(key, Array.isArray(value) ? value.join(', ') : String(value));
     }
     const response = await homes.request(String(url), { method: 'GET', headers });
+    return { status: response.status, data: await response.json() };
+  });
+  vi.spyOn(axios, 'patch').mockImplementation(async (url, body, config) => {
+    const headers = new Headers(AxiosHeaders.from(config?.headers).toJSON() as Record<string, string>);
+    const response = await homes.request(String(url), { method: 'PATCH', headers, body: JSON.stringify(body) });
     return { status: response.status, data: await response.json() };
   });
   const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
@@ -82,8 +99,12 @@ afterEach(async () => {
 });
 
 describe('CLI current-Session control owners', () => {
-  it.each(['agent', 'mcp'] as const)('writes client configuration and applies connected-account routing without a connected client on %s', async surface => {
+  it.each(['agent', 'mcp'] as const)('writes Session configuration and connected-account routing without an app on %s', async surface => {
     const metadata = { path: '/checkout', host: 'test', flavor: 'opencode', machineId,
+      sessionModelsV1: { v: 1 as const, agentId: 'opencode', updatedAt: 1, currentModelId: 'vendor/model',
+        availableModels: [{ id: 'vendor/model', name: 'Current model', modelOptions: [
+          { id: 'enabled', name: 'Enabled', type: 'boolean' as const, currentValue: false },
+        ] }] },
       sessionConfigOptionsV1: { v: 1 as const, agentId: 'opencode', updatedAt: 1, configOptions: [{ id: 'effort',
         name: 'Thinking', type: 'select' as const, currentValue: 'medium', options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }] }] } };
     const session = createSessionFixture({ id: sessionId, serverId, active: true, metadata });
@@ -105,23 +126,12 @@ describe('CLI current-Session control owners', () => {
     } };
     homes.answer(serverId, `/v2/sessions/${sessionId}`, answer);
     homes.answer(serverId, `/v2/sessions/${sessionId}?accessProjectionVersion=1`, answer);
-    const receive = createUiClientActionReverseHandler({ serverId, accountId, isCurrent: () => true });
-    let connected = true;
-    let current = true;
-    const release = installDaemonMachineAdmissionTransport({ serverId,
-      transport: async () => { throw new Error('Configuration must not enqueue Session input'); },
-      clientActionExecute: createClientActionReverseDispatcher(() => ({
-        hasConnectedClientRpcHandler: method => connected && method === RPC_METHODS.UI_ACTION_EXECUTE,
-        // Only process/network delivery is replaced; both real executors,
-        // Account lifetime capture, option validation and publication run.
-        callConnectedClientRpc: async (_method, payload, options) => {
-          if (!connected) return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
-          UiActionDispatchRequestV1Schema.parse(payload);
-          options.onIssued();
-          return { ok: true, result: await (current ? receive : createUiClientActionReverseHandler({ serverId, accountId, isCurrent: () => false }))(
-            payload, { signal: options.signal ?? new AbortController().signal }) };
-        },
-      })),
+    // The Socket transport is mocked. The receiving handlers, choice admission
+    // and metadata tuple writer are real and there is no reverse-dispatch client.
+    const daemonHandlers = new Map<string, RpcHandler>();
+    registerMachineSessionConfigOptionRpcHandlers({
+      machineId, serverId, readCredentials: async () => credentials,
+      rpcHandlerManager: { registerHandler: (method, handler) => daemonHandlers.set(`${machineId}:${method}`, handler as RpcHandler) },
     });
     const features = FeaturesResponseSchema.parse({ features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_session_parity' } } });
     const executor = createCliActionExecutorFromCredentials({ credentials, serverId, serverApiUrl: 'https://session-parity.test',
@@ -135,7 +145,11 @@ describe('CLI current-Session control owners', () => {
       bindings: { v: 2 as const, bindingsByServiceId: { [service]: { source: 'native' as const } } } };
     const auth = { sessionId, machineId, serverId, routing };
     const applied: unknown[] = [];
-    daemonAnswer = (method, raw) => {
+    daemonAnswer = (method, raw, received) => {
+      const configHandler = daemonHandlers.get(method);
+      if (configHandler) {
+        return runWithServerHttpBaseUrl('https://session-parity.test', () => Promise.resolve(configHandler(raw, received)));
+      }
       if (method === `${machineId}:${RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS}`) {
         expect(raw).toEqual({ sessionId });
         return { ok: true, options: [{ label: 'Native sign-in', routing }] };
@@ -146,36 +160,50 @@ describe('CLI current-Session control owners', () => {
       return { ok: true, action: 'metadata_updated', materializedTargetByServiceId: { internal: '/private/runtime' },
         verificationByServiceId: { internal: { accountId: 'another-account' } } };
     };
-    try {
-      expect(await executor.execute('session.config_option.set', config, context)).toMatchObject({ ok: true });
-      const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
-      if (owner.t !== 'plain') throw new Error('Expected plain Account metadata');
-      const visible = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(row.metadata), ownerMetadata: owner.v });
-      expect(visible.acpConfigOptionOverridesV1).toMatchObject({ overrides: { effort: { value: 'high' } } });
-      expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
-        .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
-      expect(applied).toEqual([expect.objectContaining({ sessionId, agentId: routing.agentId, bindings: routing.bindings })]);
-      expect(await executor.execute('session.config_option.set', { ...config, valueId: 'unadvertised' }, context))
-        .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-      current = false;
-      expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
-        .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
-      connected = false;
-      const options = await executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
-        actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
-        fieldPath: 'routing',
-        optionsSourceId: SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID,
-        sessionId,
-        draftInput: { machineId },
+    const readOptions = (fieldPath: 'configId' | 'valueId', optionsSourceId: string, draftInput: Record<string, string>) =>
+      executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
+        actionId: SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, fieldPath, optionsSourceId, sessionId, draftInput,
       }, context);
-      expect(options).toMatchObject({ ok: true, result: { options: [{ label: 'Native sign-in', value: routing }] } });
-      expect(await executor.execute('session.config_option.set', config, context))
-        .toMatchObject({ ok: false, errorCode: 'unavailable', error: 'noClient' });
-      if (!options.ok) throw new Error('Expected eligible routing choices');
-      const published = options.result as { options: Array<{ value: unknown }> };
-      expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, { ...auth, routing: published.options[0].value }, context))
-        .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
-      expect(applied).toHaveLength(3);
-    } finally { release(); }
+    expect(await readOptions('configId', SESSION_CONFIG_OPTION_IDS_SOURCE_ID, {})).toMatchObject({
+      ok: true, result: { options: [{ value: 'enabled', label: 'Enabled' }, { value: 'effort', label: 'Thinking' }] },
+    });
+    expect(await readOptions('valueId', SESSION_CONFIG_OPTION_VALUES_SOURCE_ID, { configId: 'effort' })).toMatchObject({
+      ok: true, result: { options: [{ value: 'medium' }, { value: 'high' }, { value: null }] },
+    });
+    expect(await readOptions('valueId', SESSION_CONFIG_OPTION_VALUES_SOURCE_ID, { configId: 'enabled' })).toMatchObject({
+      ok: true, result: { options: [{ value: 'false' }, { value: 'true' }, { value: null }] },
+    });
+    expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, config, context))
+      .toEqual(expect.objectContaining({ ok: true, result: { ...config, metadataVersion: row.metadataVersion } }));
+    const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
+    if (owner.t !== 'plain') throw new Error('Expected plain Account metadata');
+    const visible = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(row.metadata), ownerMetadata: owner.v });
+    expect(visible.acpConfigOptionOverridesV1).toMatchObject({ overrides: { effort: { value: 'high' } } });
+    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
+      .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
+    expect(applied).toEqual([expect.objectContaining({ sessionId, agentId: routing.agentId, bindings: routing.bindings })]);
+    const acceptedVersion = row.metadataVersion;
+    expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, { ...config, valueId: 'unadvertised' }, context))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(row.metadataVersion).toBe(acceptedVersion);
+    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, auth, context))
+      .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
+    const options = await executor.execute(ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, {
+      actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1,
+      fieldPath: 'routing',
+      optionsSourceId: SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID,
+      sessionId,
+      draftInput: { machineId },
+    }, context);
+    expect(options).toMatchObject({ ok: true, result: { options: [{ label: 'Native sign-in', value: routing }] } });
+    expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, { ...config, valueId: null }, context))
+      .toEqual(expect.objectContaining({ ok: true, result: {
+        sessionId, configId: config.configId, valueId: null, metadataVersion: row.metadataVersion,
+      } }));
+    if (!options.ok) throw new Error('Expected eligible routing choices');
+    const published = options.result as { options: Array<{ value: unknown }> };
+    expect(await executor.execute(SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, { ...auth, routing: published.options[0].value }, context))
+      .toEqual(expect.objectContaining({ ok: true, result: { ok: true, action: 'metadata_updated' } }));
+    expect(applied).toHaveLength(3);
   });
 });

@@ -629,7 +629,6 @@ import {
 import { socketEmitWithAckFallback } from './engine/socket/socketEmitWithAckFallback';
 import { publishPermissionModeToMetadata as publishPermissionModeToMetadataEngine } from './state/permissionModePublish';
 import { publishAcpSessionModeOverrideToMetadata as publishAcpSessionModeOverrideToMetadataEngine } from './state/acpSessionModeOverridePublish';
-import { publishAcpConfigOptionOverrideToMetadata as publishAcpConfigOptionOverrideToMetadataEngine, type AcpConfigOptionOverrideValueId } from './state/acpConfigOptionOverridePublish';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import type { ResolvedServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
 import { isRpcMethodNotFoundResult, RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -6538,26 +6537,6 @@ class Sync {
             modeId: params.modeId,
             updatedAt: params.updatedAt,
             updateSessionMetadataWithRetry: (sessionId, updater) => this.updateSessionMetadataWithRetry(sessionId, updater),
-        });
-    }
-
-    async publishSessionAcpConfigOptionOverrideToMetadata(params: {
-        sessionId: string;
-        configId: string;
-        value: AcpConfigOptionOverrideValueId;
-        updatedAt: number;
-        serverId?: string | null;
-        accountLifetime?: ServerAccountScopeLifetime;
-    }): Promise<void> {
-        await publishAcpConfigOptionOverrideToMetadataEngine({
-            sessionId: params.sessionId,
-            configId: params.configId,
-            value: params.value,
-            updatedAt: params.updatedAt,
-            updateSessionMetadataWithRetry: (sessionId, updater) => this.patchSessionMetadataWithRetry(sessionId, updater, {
-                ...(params.serverId ? { serverId: params.serverId } : {}),
-                ...(params.accountLifetime ? { accountLifetime: params.accountLifetime } : {}),
-            }),
         });
     }
 

@@ -7,7 +7,8 @@ import { SessionNeedsYouRaiseInputV1Schema, SessionNeedsYouRaiseOutputV1Schema }
 import { z } from '../../../zodRuntimePolicy.js';
 import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondPayloadV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
 import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchRoutingSchema, SessionConnectedServiceAuthSwitchSuccessSchema } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
-import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 } from '../../actionIds.js';
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 } from '../../actionIds.js';
+import { SESSION_CONFIG_OPTION_IDS_SOURCE_ID, SESSION_CONFIG_OPTION_VALUES_SOURCE_ID, SessionConfigOptionRequestSchema, SessionConfigOptionWriteReceiptSchema } from '../../../sessions/control/sessionConfigOptionV1.js';
 import { SessionPermissionRemoteGrantRevokeInputV1Schema, SessionPermissionRemoteGrantRevokeOutputV1Schema, SessionPermissionRemoteGrantsListInputV1Schema, SessionPermissionRemoteGrantsListOutputV1Schema, SessionPermissionRemotePendingListInputV1Schema, SessionPermissionRemotePendingListOutputV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionPermissionRemoteRespondOutputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionUserActionRemoteAnswerOutputV1Schema } from '../../../sessions/permissions/v1.js';
 import { VoiceTrackedTargetsActionResultV1Schema } from '../../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
 import { VoiceTrackedSessionAddressV1Schema } from '../../../sessions/follow/voiceTrackedSessionAddressV1.js';
@@ -156,11 +157,8 @@ export const SessionControlSwitchInputSchema = lazyZodSchema(() => z.strictObjec
 }));
 export const SessionControlSwitchOutputSchema = lazyZodSchema(() => z.strictObject({ switched: z.literal(true) }));
 
-export const SessionConfigOptionSetInputSchema = lazyZodSchema(() => z.strictObject({
-  sessionId: z.optional(z.string().check(z.minLength(1))),
-  configId: NonBlankOpaqueIdentifierSchema,
-  valueId: z.nullable(z.string()),
-}));
+export const SessionConfigOptionSetInputSchema = lazyZodSchema(() =>
+  z.extend(SessionConfigOptionRequestSchema, { sessionId: z.optional(SessionConfigOptionRequestSchema.shape.sessionId) }));
 
 export const SessionConnectedServicesAuthSetInputSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.trim(), z.minLength(1)),
@@ -627,9 +625,9 @@ function createSessionInteractionActionSpecs() {
     inputSchema: lazyZodSchema(() => z.extend(SessionModeSetInputSchema, { sessionId: z.optional(SessionTargetV1Schema) })),
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'session.config_option.set', approval: {result: 'optional',flow: 'deferred'},
+    id: SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, approval: {result: 'optional',flow: 'deferred'},
     sessionTarget: { field: 'sessionId', cardinality: 'many' },
-    executionPlacement: 'client',
+    executionPlacement: 'session',
     title: 'Set session configuration option',
     sideEffectClass: 'write',
     description: 'Set one provider-owned configuration option for the current session. Pass null as valueId to withdraw its override, including when the option is no longer available.',
@@ -648,11 +646,11 @@ function createSessionInteractionActionSpecs() {
       title: 'Set session configuration option',
       fields: [
         { path: 'sessionId', title: 'Session id', widget: 'text' },
-        { path: 'configId', title: 'Configuration id', widget: 'text', required: true },
-        { path: 'valueId', title: 'Value id', widget: 'text', required: true },
+        { path: 'configId', title: 'Configuration id', widget: 'text', required: true, optionsSourceId: SESSION_CONFIG_OPTION_IDS_SOURCE_ID },
+        { path: 'valueId', title: 'Value id', widget: 'text', required: true, optionsSourceId: SESSION_CONFIG_OPTION_VALUES_SOURCE_ID },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: lazyZodSchema(() => withSessionTargetFanoutResultV1(SessionConfigOptionWriteReceiptSchema)),
     inputSchema: lazyZodSchema(() => z.extend(SessionConfigOptionSetInputSchema, { sessionId: z.optional(SessionTargetV1Schema) })),
   } satisfies PreNormalizedActionSpec,
   {

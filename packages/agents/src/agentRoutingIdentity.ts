@@ -3,6 +3,11 @@ import {
   parseQualifiedPluginContributionKey,
   type PluginContributionIdentityV1,
 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { normalizeBundledAgentRoutingId } from './resolveAgentIdFromSessionMetadata.js';
+
+export function areSameAgentRoutingIdentity(left: string, right: string): boolean {
+  return normalizeBundledAgentRoutingId(left) === normalizeBundledAgentRoutingId(right);
+}
 
 export type AgentRoutingIdentityEntry = Readonly<{
   id: string;

@@ -7,21 +7,17 @@ import {
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import { useSessionProjectScmSummarySnapshot, useSessionUsage } from '@/sync/domains/state/storage';
-import { sync } from '@/sync/sync';
-import { nowServerMs } from '@/sync/runtime/time';
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import {
+    SESSION_CONTEXT_USAGE_REFRESH_OPTION_ID,
+    SESSION_CONTEXT_USAGE_REFRESH_VALUE_ID,
+} from '@happier-dev/protocol/sessions/control/sessionConfigOptionV1';
 import {
     computeContextPercentUsed,
     type SessionContextUsageSnapshotV1,
 } from '@happier-dev/protocol/usage/contextUsage';
 
 import { resolveContextWindowTokens } from '../resolveContextWarningWindowTokens';
-
-/**
- * Config-option id the Claude runtime listens for to run an on-demand
- * `getContextUsage()` refresh (L2 T3.3). Toggling it from the UI publishes a
- * session metadata override that the plugin picks up between turns.
- */
-const CONTEXT_USAGE_REFRESH_CONFIG_OPTION_ID = 'context_usage_refresh';
 
 export type InstrumentStripContextModel = Readonly<{
     /** Baseline-adjusted used percentage, 0..100 (true window, not the 0.95 warning window). */
@@ -164,14 +160,10 @@ export function useInstrumentStripModel(params: Readonly<{
 
     const refreshContextUsage = React.useCallback(() => {
         if (!sessionId) return;
-        // Toggle a monotonically-changing value so a repeated open re-triggers.
-        void sync.publishSessionAcpConfigOptionOverrideToMetadata({
-            sessionId,
-            serverId,
-            configId: CONTEXT_USAGE_REFRESH_CONFIG_OPTION_ID,
-            value: String(nowServerMs()),
-            updatedAt: nowServerMs(),
-        });
+        void import('@/sync/ops/actions/defaultActionExecutor').then(({ createDefaultActionExecutor }) =>
+            createDefaultActionExecutor().execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, {
+                sessionId, configId: SESSION_CONTEXT_USAGE_REFRESH_OPTION_ID, valueId: SESSION_CONTEXT_USAGE_REFRESH_VALUE_ID,
+            }, { surface: 'ui', ...(serverId ? { serverId } : {}), defaultSessionId: sessionId }));
     }, [sessionId, serverId]);
 
     return React.useMemo(

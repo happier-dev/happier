@@ -47,7 +47,7 @@ import { useExistingSessionCapabilitiesChip } from "@/components/sessions/capabi
 import { executeSessionLifecycleAction } from "@/components/sessions/actions/sessionActionExecution";
 import type { CurrentUiContextCommandInvocation } from "@/components/appShell/currentUiContext/CurrentUiContextCommands";
 import { type SessionConnectedServiceAuthSwitchResult, readSessionConnectedServiceAuthSwitchActionResult } from "@/sync/ops/connectedServices/sessionAuthSwitch";
-import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { PublicActionInputById, PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionConnectedServiceAuthSwitchRoutingSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import { resolveResumeFailurePresentation } from "@/sync/domains/session/resume/resolveResumeFailurePresentation";
@@ -3895,7 +3895,7 @@ export function useSessionComposerController({
 
     const publishAcpConfigOptionOverride = React.useCallback(async (configId: string, valueId: string) => {
         try {
-            requireActionSuccess(await actionExecutor.execute('session.config_option.set', buildExistingSessionConfigOptionActionInput({
+            requireActionSuccess(await actionExecutor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, buildExistingSessionConfigOptionActionInput({
                 sessionId,
                 configId,
                 valueId,

@@ -1,7 +1,7 @@
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { autonomousExchangePath, readAutonomousExchangeStatus, mutateAutonomousExchangeControl } from '@/api/sessionAutonomousExchangeTransport';
-import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
@@ -20,7 +20,7 @@ import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS } from '@happier-dev/protocol/rp
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
-type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionCompact' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet' | 'sessionConnectedServicesAuthSet' | 'sessionConnectedServicesAuthOptions'>;
+type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionExchangePrepare' | 'sessionExchangeControl' | 'sessionTurnCancel' | 'sessionCompact' | 'sessionRuntimeRefresh' | 'sessionStop' | 'sessionControlSwitch' | 'sessionModeSet' | 'sessionConnectedServicesAuthSet' | 'sessionConnectedServicesAuthOptions' | 'sessionConfigOptionSet' | 'sessionConfigOptionChoices'>;
 
 export function createCliControlActionDeps(
   params: CliActionDepsParams,
@@ -38,6 +38,16 @@ export function createCliControlActionDeps(
   }>,
 ): FamilyActionDeps {
   return {
+    sessionConfigOptionSet: async ({ machineId, serverId, ...request }, context) => callMachineAction({
+      machineId, ...(serverId ? { serverId } : {}), request, context, authority: context.authority,
+      method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET, effectActionId: SESSION_CONFIG_OPTION_SET_ACTION_ID_V1,
+      exactMachine: true, signal: context.signal, authorization: { kind: 'session.write', sessionId: request.sessionId },
+    }),
+    sessionConfigOptionChoices: async ({ machineId, serverId, sessionId }, context) => callMachineAction({
+      machineId, ...(serverId ? { serverId } : {}), request: { sessionId }, context, authority: context.authority,
+      method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_CHOICES, effectActionId: ACTION_OPTIONS_RESOLVE_ACTION_ID_V1,
+      exactMachine: true, signal: context.signal, authorization: { kind: 'session.read', sessionId },
+    }),
     sessionConnectedServicesAuthSet: async ({ machineId, serverId, ...request }, context) => callMachineAction({
       machineId, ...(serverId ? { serverId } : {}),
       method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,

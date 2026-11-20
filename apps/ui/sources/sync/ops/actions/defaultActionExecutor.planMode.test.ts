@@ -1,3 +1,4 @@
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
@@ -46,14 +47,6 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { SessionStopResultSchema, isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
 import { readSessionExplicitStopV1FromMetadata, resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
-import { buildSessionModelDiscoveryContext } from '@/sync/ops/sessionModelDiscovery';
-import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
-import { writeDynamicModelProbeCacheSuccess } from '@/sync/domains/models/dynamicModelProbeCache';
-import { normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
-import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture } from '@/dev/testkit/harness/providerSettingsHarness';
 
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -632,36 +625,6 @@ describe('default Action executor mode and catalog contracts', () => {
     const published = writes();
     expect(await write(null)).toMatchObject({ ok: true });
     expect(writes()).toBe(published);
-  });
-  it('publishes instrument context refresh to its Home while a same-id Session is active elsewhere', async () => {
-    const targetServerId = await homes.addHome({ name: 'Context refresh Home', serverUrl: 'https://context-refresh.test',
-      serverIdentityId: 'srv_context_refresh', accountId: 'bob', currentAccount: true });
-    const sessionId = 'context-refresh-same-id';
-    const readTarget = installSession(sessionId, { flavor: 'claude' }, targetServerId, 1);
-    const readActive = installSession(sessionId, { flavor: 'claude' }, serverId, 1);
-    installHomeGovernanceBoundaries(httpBoundary);
-    const { useInstrumentStripModel } = await import('@/components/sessions/agentInput/instrumentStrip/useInstrumentStripModel');
-    const hook = await renderHook(() => useInstrumentStripModel({
-      sessionId, serverId: targetServerId, agentId: null, metadata: null,
-    }));
-    const metadata = (read: typeof readTarget) => {
-      const row = read();
-      const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(row.ownerMetadata);
-      if (owner.t !== 'plain') throw new Error('Expected plain owner metadata');
-      return projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(row.metadata), ownerMetadata: owner.v });
-    };
-    try {
-      await act(async () => hook.getCurrent().refreshContextUsage());
-      await vi.waitFor(() => expect(metadata(readTarget).acpConfigOptionOverridesV1).toMatchObject({
-        overrides: { context_usage_refresh: { value: expect.any(String) } },
-      }));
-      expect(metadata(readActive).acpConfigOptionOverridesV1).toBeUndefined();
-      const writes = homes.requestsFor(`/v2/sessions/${sessionId}`).filter(request => request.input !== null);
-      expect(writes.length).toBeGreaterThan(0);
-      expect(writes.every(request => request.serverId === targetServerId)).toBe(true);
-    } finally {
-      await hook.unmount();
-    }
   });
 
   it.each(['focus-switch', 'credential-replacement'] as const)(
@@ -3251,285 +3214,18 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(homes.requestsFor('/v2/sessions/s1').filter((request) => request.input != null)).toEqual([]);
   });
 
-  it('publishes a validated Composer config-option choice through the Action owner', async () => {
-    const read = installSession('s1', {
-      path: '/tmp/project',
-      host: 'localhost',
-      flavor: 'opencode',
-      sessionConfigOptionsV1: {
-        v: 1,
-        agentId: 'opencode',
-        updatedAt: 1,
-        configOptions: [{
-          id: 'reasoning_effort',
-          name: 'Thinking',
-          type: 'select',
-          currentValue: 'medium',
-          options: [
-            { value: 'medium', name: 'Medium' },
-            { value: 'high', name: 'High' },
-          ],
-        }],
-      },
-    });
-    const result = await createDefaultActionExecutor().execute('session.config_option.set', {
-      sessionId: 's1', configId: 'reasoning_effort', valueId: 'high',
-    }, context());
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-    const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(read().ownerMetadata);
-    if (owner.t !== 'plain') throw new Error('Unreadable owner metadata');
-    const flat = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(read().metadata), ownerMetadata: owner.v });
-    expect(flat.acpConfigOptionOverridesV1).toMatchObject({
-      overrides: { reasoning_effort: { value: 'high' } },
+  it('uses the Session owner for a Composer configuration choice and projects its receipt', async () => {
+    installSession('s1', { machineId: 'machine-a', flavor: 'opencode' });
+    const request = { sessionId: 's1', configId: 'reasoning_effort', valueId: 'high' };
+    daemonAnswer = () => ({ ...request, metadataVersion: 3, privateMaterialization: 'internal' });
+    const result = await createDefaultActionExecutor().execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, request, context());
+    expect(result).toMatchObject({ ok: true });
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    expect(result.result).toEqual({ ...request, metadataVersion: 3 });
+    expect(outgoing).toContainEqual({
+      method: `machine-a:${RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET}`, params: request,
     });
   });
-
-  it.each([false, true])('withdraws a config-option override when its control is unavailable (disabled=%s)', async disabled => {
-    const read = installSession('s1', {
-      path: '/tmp/project', host: 'localhost', flavor: 'opencode',
-      sessionConfigOptionsV1: {
-        v: 1, agentId: 'opencode', updatedAt: 1,
-        configOptions: disabled ? [
-          { id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'medium',
-            options: [{ value: 'medium', name: 'Medium' }] },
-          { id: 'automatic', name: 'Automatic', type: 'boolean', currentValue: 'true',
-            overridesWhenOn: { optionIds: ['reasoning_effort'], forcedValue: 'medium' } },
-        ] : [],
-      },
-      acpConfigOptionOverridesV1: {
-        v: 1, updatedAt: 2,
-        overrides: { reasoning_effort: { value: 'low', updatedAt: 2 }, telemetry: { value: 'true', updatedAt: 2 } },
-      },
-    }, serverId, 1);
-    const initialMetadataVersion = read().metadataVersion;
-    expect(await createDefaultActionExecutor().execute('session.config_option.set', {
-      sessionId: 's1', configId: 'reasoning_effort', valueId: 'low',
-    }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-    expect(read().metadataVersion).toBe(initialMetadataVersion);
-    const result = await createDefaultActionExecutor().execute('session.config_option.set', {
-      sessionId: 's1', configId: 'reasoning_effort', valueId: null,
-    }, context());
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { valueId: null } });
-    const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(read().ownerMetadata);
-    if (owner.t !== 'plain') throw new Error('Unreadable owner metadata');
-    const flat = projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(read().metadata), ownerMetadata: owner.v });
-    expect(flat.acpConfigOptionOverridesV1).toMatchObject({ overrides: {
-      reasoning_effort: { value: null }, telemetry: { value: 'true', updatedAt: 2 },
-    } });
-  });
-
-  describe('a Provider-bound Session\'s model option', () => {
-    const effort = {
-      id: 'reasoning_effort', name: 'Thinking', type: 'select' as const, currentValue: 'low',
-      options: [{ value: 'low', name: 'Low' }, { value: 'medium', name: 'Medium' }],
-    };
-    const binding = {
-      v: 1 as const, connectionId: 'pc_work', contributionKey: null, connectionRevision: 1,
-      model: { id: 'provider-model', name: 'Provider model', modelOptions: [effort], capabilities: { reasoningControls: 'supported' as const } },
-      protocol: 'openai-responses' as const, materialization: 'engineConfig' as const,
-      compatibilityFingerprint: 'compatibility:v1:a', bindingSecurityFingerprint: 'binding-security:v1:a',
-      displaySnapshot: { providerName: 'Gateway', connectionName: 'Work', connectionRole: 'named' as const, connectionDisplayNameMode: 'custom' as const },
-    };
-    const install = (modelId: string, machineId?: string) => installSession('s1', {
-      path: '/tmp/project', host: 'localhost', flavor: 'codex', ...(machineId ? { machineId } : {}),
-      providerBindingV1: binding,
-      modelSelectionIntentV1: { v: 1, updatedAt: 2, selection: {
-        agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId,
-      } },
-    } as never, serverId, 1);
-    const readOverride = (read: ReturnType<typeof install>) => {
-      const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(read().ownerMetadata);
-      if (owner.t !== 'plain') throw new Error('Unreadable owner metadata');
-      return projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(read().metadata), ownerMetadata: owner.v })
-        .acpConfigOptionOverridesV1;
-    };
-
-    it('accepts a value the running Provider model declares and refuses one it does not', async () => {
-      const read = install('provider-model');
-      const initialMetadataVersion = read().metadataVersion;
-      expect(await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId: 'reasoning_effort', valueId: 'xhigh',
-      }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-      expect(read().metadataVersion).toBe(initialMetadataVersion);
-      const result = await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId: 'reasoning_effort', valueId: 'medium',
-      }, context());
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-      expect(readOverride(read)).toMatchObject({ overrides: { reasoning_effort: { value: 'medium' } } });
-      expect(outgoing).toEqual([]);
-    });
-
-    it('uses the pending Provider model descriptor for an inactive Session effort choice', async () => {
-      // Live Muse: a personal model is armed after a stopped Team-backed run; no new launch binding exists yet.
-      const read = install('armed-model', 'machine-a');
-      storage.setState({ sessions: { ...storage.getState().sessions,
-        s1: { ...storage.getState().sessions.s1!, active: false },
-      } });
-      const selection = { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_work', modelId: 'armed-model' };
-      const projection = createProviderModelProjectionFixture({ agentTargetKey: selection.agentTargetKey,
-        groups: [createProviderModelProjectionGroupFixture({ connectionId: selection.providerConnectionId, rows: [{
-          ref: selection, descriptor: { id: selection.modelId, name: 'Armed model', modelOptions: [{
-            ...effort, currentValue: 'max', options: [{ value: 'minimal', name: 'Minimal' }, { value: 'max', name: 'Max' }],
-          }] }, sources: { manual: false, static: false, probe: true }, confidence: 'probe',
-          compatibility: { result: { status: 'experimental', selectedProtocol: 'openai-responses',
-            reasons: ['model_capability_toolRoundTrips_unknown'], confirmationScope: { kind: 'model', modelId: selection.modelId } },
-            compatibilityFingerprint: 'compatibility:v1:a', confirmed: true },
-          endpointHealth: 'not_checked', catalog: { stale: false }, loadState: 'unknown', visibility: 'visible',
-        }] })] });
-      daemonAnswer = () => projection;
-      const initialMetadataVersion = read().metadataVersion;
-      expect(await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId: 'reasoning_effort', valueId: 'high',
-      }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-      expect(read().metadataVersion).toBe(initialMetadataVersion);
-      const result = await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId: 'reasoning_effort', valueId: 'minimal',
-      }, context());
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-      expect(readOverride(read)).toMatchObject({ overrides: { reasoning_effort: { value: 'minimal' } } });
-      expect(outgoing).toHaveLength(2);
-      expect(outgoing.every(request => request.method === `machine-a:${RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION}`
-        && (request.params as { refreshPolicy?: string }).refreshPolicy === 'current_only')).toBe(true);
-    });
-
-    it.each(['declared', 'unknown', 'unavailable'] as const)('discovers native model options for a direct Action (%s)', async (catalog) => {
-      const read = installSession('s1', {
-        path: '/tmp/project', host: 'localhost', machineId: 'machine-a', flavor: 'codex',
-        providerBindingV1: binding,
-        modelSelectionIntentV1: { v: 1, updatedAt: 3, selection: {
-          agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna',
-        } },
-      } as never, serverId, 1);
-      const initialMetadataVersion = read().metadataVersion;
-      daemonAnswer = () => ({ ok: true, result: {
-        availableModels: catalog === 'unknown' ? [] : [{ id: 'gpt-6-luna', name: 'GPT-6 Luna', modelOptions: [
-          { id: 'service_tier', name: 'Speed', type: 'select', currentValue: 'default',
-            options: [{ value: 'default', name: 'Standard' }, { value: 'fast', name: 'Fast' }] },
-        ] }],
-        supportsFreeform: false, source: catalog === 'unavailable' ? 'unavailable' : 'dynamic', runtimeDescriptorV1Accepted: true,
-      } });
-      const result = await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId: 'service_tier', valueId: 'fast',
-      }, context());
-      if (catalog === 'declared') {
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-        expect(readOverride(read)).toMatchObject({ overrides: { service_tier: { value: 'fast' } } });
-      } else {
-        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-        expect(read().metadataVersion).toBe(initialMetadataVersion);
-      }
-      expect(outgoing).toEqual([expect.objectContaining({
-        method: `machine-a:${RPC_METHODS.CAPABILITIES_INVOKE}`,
-        params: expect.objectContaining({ method: 'probeModels' }),
-      })]);
-    });
-
-    it.each([
-      { configId: 'reasoning_effort', valueId: 'adaptive', undeclaredValueId: 'high' },
-      { configId: 'service_tier', valueId: 'fast', undeclaredValueId: 'unoffered' },
-    ])('retains declared $configId=$valueId for a native model armed on a Provider route', async ({ configId, valueId, undeclaredValueId }) => {
-      // Live 1103: the Provider runner's catalog lists only its Provider model, so the armed native one has no descriptor.
-      const read = installSession('s1', {
-        path: '/tmp/project', host: 'localhost', machineId: 'machine-a', flavor: 'codex',
-        providerBindingV1: binding,
-        modelSelectionIntentV1: { v: 1, updatedAt: 3, selection: {
-          agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-6-luna',
-        } },
-        sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 2, currentModelId: 'provider-model',
-          availableModels: [{ id: 'provider-model', name: 'Provider model', modelOptions: [effort] }] },
-      } as never, serverId, 1);
-      const initialMetadataVersion = read().metadataVersion;
-      const session = storage.getState().sessions.s1!;
-      const account = await captureLazyActionAccountContext(serverId);
-      const discovery = buildSessionModelDiscoveryContext({
-        target: resolveSessionActionDefaultTarget(resolveSessionActionDefaultBackend({ session })),
-        agentId: 'codex', machineId: 'machine-a', serverId: account.serverId, directory: '/tmp/project', profileId: null,
-        metadata: readSessionOwnerMetadataView(session), settings: account.readLiveSettings() ?? storage.getState().settings,
-        accountScope: account.accountLifetime.scope,
-      });
-      account.dispose();
-      const cacheKey = buildDynamicModelProbeCacheKey({
-        machineId: discovery.selectedMachineId, targetKey: resolveBackendTargetKeyV2(discovery.backendTarget!),
-        serverId: discovery.capabilityServerId, providerConnectionId: null, cwd: discovery.cwd,
-        extraKeySuffixParts: normalizeNewSessionCapabilityProbeContextCacheKeySuffixParts(discovery.probeContext),
-      })!;
-      writeDynamicModelProbeCacheSuccess(cacheKey, {
-        availableModels: [{ id: 'gpt-6-luna', name: 'GPT-6 Luna', modelOptions: [
-          { ...effort, options: [{ value: 'adaptive', name: 'Adaptive' }] },
-          { id: 'service_tier', name: 'Speed', type: 'select', currentValue: 'default',
-            options: [{ value: 'default', name: 'Standard' }, { value: 'fast', name: 'Fast' }] },
-        ] }], supportsFreeform: false,
-      });
-      expect(await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId, valueId: undeclaredValueId,
-      }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-      expect(outgoing, JSON.stringify(discovery)).toEqual([]);
-      expect(read().metadataVersion).toBe(initialMetadataVersion);
-      const result = await createDefaultActionExecutor().execute('session.config_option.set', {
-        sessionId: 's1', configId, valueId,
-      }, context());
-      expect(result, JSON.stringify({ result, outgoing, discovery })).toMatchObject({ ok: true });
-      expect(readOverride(read)).toMatchObject({ overrides: { [configId]: { value: valueId } } });
-      // Choosing from a held catalog writes intent without another Machine probe.
-      expect(outgoing).toEqual([]);
-    });
-  });
-
-  it('rejects an unavailable Composer config-option choice without writing metadata', async () => {
-    const read = installSession('s1', {
-      path: '/tmp/project', host: 'localhost', flavor: 'opencode',
-      sessionConfigOptionsV1: {
-        v: 1, agentId: 'opencode', updatedAt: 1,
-        configOptions: [{ id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'medium', options: [{ value: 'medium', name: 'Medium' }] }],
-      },
-    }, serverId, 1);
-    const initialMetadataVersion = read().metadataVersion;
-    expect(await createDefaultActionExecutor().execute('session.config_option.set', {
-      sessionId: 's1', configId: 'reasoning_effort', valueId: 'ultra',
-    }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-    expect(read().metadataVersion).toBe(initialMetadataVersion);
-  });
-
-  it.each([false, true])('authorizes selected-model choices without bypassing global overrides (disabled=%s)', async (disabled) => {
-    const reasoning = {
-      id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'medium',
-      options: [{ value: 'medium', name: 'Medium' }, { value: 'high', name: 'High' }],
-    };
-    const read = installSession('s1', {
-      path: '/tmp/project', host: 'localhost', flavor: 'opencode',
-      modelSelectionIntentV1: { v: 1, updatedAt: 2, selection: {
-        agentTargetKey: 'agent:happier.agent.opencode/opencode', providerConnectionId: null, modelId: 'selected',
-      } },
-      sessionModelsV1: {
-        v: 1, agentId: 'opencode', updatedAt: 1, currentModelId: 'selected',
-        availableModels: [{ id: 'selected', name: 'Selected', modelOptions: [reasoning] }],
-      },
-      ...(disabled ? { sessionConfigOptionsV1: {
-        v: 1 as const, agentId: 'opencode', updatedAt: 1,
-        configOptions: [reasoning, { id: 'automatic', name: 'Automatic', type: 'boolean', currentValue: 'true',
-          overridesWhenOn: { optionIds: ['reasoning_effort'], forcedValue: 'medium' } }],
-      } } : {}),
-    }, serverId, 1);
-    const initialMetadataVersion = read().metadataVersion;
-    expect(await createDefaultActionExecutor().execute('session.config_option.set', {
-      sessionId: 's1', configId: 'reasoning_effort', valueId: 'unoffered',
-    }, context())).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-    expect(read().metadataVersion).toBe(initialMetadataVersion);
-    const result = await createDefaultActionExecutor().execute('session.config_option.set', {
-      sessionId: 's1', configId: 'reasoning_effort', valueId: 'high',
-    }, context());
-    if (disabled) {
-      expect(result, JSON.stringify({ result, session: storage.getState().sessions.s1 })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-      expect(read().metadataVersion).toBe(initialMetadataVersion);
-    } else {
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-      const owner = SessionOwnerMetadataEnvelopeV1Schema.parse(read().ownerMetadata);
-      if (owner.t !== 'plain') throw new Error('Unreadable owner metadata');
-      expect(projectSessionOwnerCompatibilityViewV1({ sharedMetadata: JSON.parse(read().metadata), ownerMetadata: owner.v }))
-        .toMatchObject({ acpConfigOptionOverridesV1: { overrides: { reasoning_effort: { value: 'high' } } } });
-    }
-  });
-
 
   it.each(['ui', 'agent', 'mcp'] as const)('routes a confirmed connected-account mutation through its %s Action owner', async (surface) => {
     daemonAnswer = () => ({ ok: true, action: 'metadata_updated' });

@@ -38,6 +38,8 @@ import { WorkspaceRefV1Schema } from '../workspaces/workspaceRefV1.js';
 import { createProjectAnchorOfKeyV1 } from '../workspaces/workspaceRefResolutionV1.js';
 import { MachineVitalsSnapshotV1Schema } from '../machines/vitals/machineVitalsRpcV1.js';
 import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchOptionsResultSchema } from '../connect/sessionConnectedServiceAuthSwitch.js';
+import { SESSION_CONFIG_OPTION_IDS_SOURCE_ID, SESSION_CONFIG_OPTION_VALUES_SOURCE_ID, SessionConfigOptionChoicesSchema } from '../sessions/control/sessionConfigOptionV1.js';
+import { resolveSessionControlTarget } from '../actions/executor/sessionScope.js';
 import { normalizeUsageQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
 import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
   resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
@@ -722,6 +724,29 @@ export async function resolveInputOptions(params: Readonly<{
       }).defaultNarratorEngineId !== null) };
     }
     return { ok: true, result: options };
+  }
+
+  if (optionsSourceId === SESSION_CONFIG_OPTION_IDS_SOURCE_ID || optionsSourceId === SESSION_CONFIG_OPTION_VALUES_SOURCE_ID) {
+    if (!deps.sessionConfigOptionChoices) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    const sessionId = params.resolveSessionId(input, ctx);
+    if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
+    const target = await resolveSessionControlTarget(deps, ctx, sessionId);
+    if (!target.ok) return target;
+    const { ok: _resolved, ...address } = target;
+    const result = await deps.sessionConfigOptionChoices(address, ctx);
+    const failure = params.readFailure(result);
+    if (failure) return failure;
+    const choices = SessionConfigOptionChoicesSchema.safeParse(result);
+    if (!choices.success) return { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
+    if (optionsSourceId === SESSION_CONFIG_OPTION_IDS_SOURCE_ID) {
+      return { ok: true, result: choices.data.options.map(choice => ({ value: choice.id, label: choice.label })) };
+    }
+    if (typeof input.configId !== 'string') return { ok: true, result: [] };
+    const selected = choices.data.options.find(option => option.id === input.configId);
+    return { ok: true, result: [
+      ...(selected?.values.map(value => ({ value: value.id, label: value.label })) ?? []),
+      { value: null, label: 'Withdraw override' },
+    ] };
   }
 
   if (optionsSourceId === SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID) {

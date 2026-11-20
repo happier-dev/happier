@@ -717,8 +717,6 @@ export type SessionControlActionInputById = {
         configId: string;
         valueId: null | string;
         sessionId?: SessionTargetV1<true> | undefined;
-    } & {
-        clientId?: string | undefined;
     };
     readonly "session.connected_services_auth.set": {
         machineId: string;
@@ -2222,8 +2220,125 @@ export type SessionControlActionResultById = {
         idle: true;
         observedAt: number;
     };
-    readonly "session.config_option.set": boolean | null | number | readonly JsonValue[] | string | {
-        readonly [key: string]: JsonValue;
+    readonly "session.config_option.set": {
+        kind: 'fanout';
+        results: {
+            target: {
+                serverId: string;
+                sessionId: string;
+            };
+            result: {
+                ok: false;
+                errorCode: string;
+                error: string;
+                operationCredentialUses?: undefined | {
+                    v: 1;
+                    kind: 'connected_account' | 'team_resource';
+                    label: null | string;
+                    owner: null | {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    why: {
+                        kind: 'purpose_binding';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        target: 'account' | 'group' | 'listed_account';
+                    };
+                    currentness: {
+                        kind: 'current_at_materialization';
+                        resourceRevision?: number | undefined;
+                    };
+                }[];
+                requestId?: string | undefined;
+                effectAttempted?: boolean | undefined;
+                details?: unknown;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
+                failureCause?: ActionFailureCauseV1 | undefined;
+                goalControlFailure?: undefined | {
+                    phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+                };
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
+            } | {
+                ok: true;
+                result: {
+                    metadataVersion: number;
+                    sessionId: string;
+                    configId: string;
+                    valueId: null | string;
+                };
+                operationCredentialUses?: undefined | {
+                    v: 1;
+                    kind: 'connected_account' | 'team_resource';
+                    label: null | string;
+                    owner: null | {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'team';
+                        teamId: string;
+                    };
+                    service: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    why: {
+                        kind: 'purpose_binding';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        target: 'account' | 'group' | 'listed_account';
+                    };
+                    currentness: {
+                        kind: 'current_at_materialization';
+                        resourceRevision?: number | undefined;
+                    };
+                }[];
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
+            };
+        }[];
+    } | {
+        metadataVersion: number;
+        sessionId: string;
+        configId: string;
+        valueId: null | string;
     };
     readonly "session.connected_services_auth.set": {
         kind: 'fanout';

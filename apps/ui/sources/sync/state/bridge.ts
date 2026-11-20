@@ -11,9 +11,6 @@ export {
     readSessionPermissionModeField,
 } from './selectors';
 export {
-    publishAcpConfigOptionOverrideToMetadata,
-} from './acpConfigOptionOverridePublish';
-export {
     publishAcpSessionModeOverrideToMetadata,
 } from './acpSessionModeOverridePublish';
 export {

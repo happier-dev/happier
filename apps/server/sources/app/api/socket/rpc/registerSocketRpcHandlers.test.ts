@@ -1618,6 +1618,8 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     it.each([
         [RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, "session.read"],
         [RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, "session.write"],
+        [RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_CHOICES, "session.read"],
+        [RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET, "session.write"],
     ])("admits %s for the Session owner and refuses a shared reader", async (rpcMethod, kind) => {
         const sessionId = "private-session";
         const method = `machine-1:${rpcMethod}`;

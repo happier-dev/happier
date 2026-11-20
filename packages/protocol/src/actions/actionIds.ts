@@ -65,6 +65,7 @@ export { INBOX_GET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
 
 export const SESSION_RUNTIME_REFRESH_ACTION_ID_V1 = 'session.runtime.refresh' as const;
 export const SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 = 'session.connected_services_auth.set' as const;
+export const SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 = 'session.config_option.set' as const;
 export const SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 = 'session.target.primary.set' as const;
 export const ACTION_OPTIONS_RESOLVE_ACTION_ID_V1 = 'action.options.resolve' as const;
 
@@ -346,8 +347,7 @@ export const ACCOUNT_API_TOKENS_LIST_ACTION_ID_V1 = 'account.apiTokens.list' as 
 
 /** Explicit Session controls use the Account App, without a mounted Session view. */
 export function isSessionClientControlActionId(value: string): boolean {
-  return value === 'session.config_option.set' || value === 'session.connected_services_auth.set'
-    || value === 'session.target.primary.set' || value === 'session.target.tracked.set';
+  return value === SESSION_TARGET_PRIMARY_SET_ACTION_ID_V1 || value === 'session.target.tracked.set';
 }
 
 /** Ordered host Actions promoted in the Workflow step picker. */
@@ -584,7 +584,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'session.manager.set',
     'session.model.set',
     'session.model.unarm',
-    'session.config_option.set',
+    SESSION_CONFIG_OPTION_SET_ACTION_ID_V1,
     'session.connected_services_auth.set',
     SESSION_PERMISSION_MODE_SET_ACTION_ID_V1,
     'session.archive',

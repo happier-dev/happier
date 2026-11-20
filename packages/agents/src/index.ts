@@ -8,6 +8,7 @@ export const CANONICAL_AGENT_MODEL_CONFIG = CANONICAL_AGENT_MODEL_CONFIG_FROM_MO
 export const CANONICAL_AGENT_CLI_RUNTIME_SPECS = CANONICAL_AGENT_CLI_RUNTIME_SPECS_FROM_RUNTIME;
 export { readReleasedOutputNonTranscriptRecordTypes } from './definitions/releasedOutputTranscriptRecordReader.js';
 export {
+  areSameAgentRoutingIdentity,
   indexAgentRoutingIdsByContributionIdentity,
   readAgentRoutingIdForContributionIdentity,
   resolveAgentRoutingId,
@@ -175,6 +176,8 @@ export type {
   TerminalSpecialKey,
 } from './runtime/terminal/control.js';
 export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
+export * from './session/controls/configOptionSchema.js';
+export * from './session/controls/configOptionsControl.js';
 export {
   normalizeBundledAgentRoutingId,
   resolveAgentIdFromSessionMetadata,

@@ -289,7 +289,6 @@ import { isVoiceHistoryActionId } from '@happier-dev/protocol/actions/voiceConve
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
-import { createUiSessionConfigOptionAction } from './sessionConfigOptionAction';
 import { resolveSessionPermissionBehavior } from '@/sync/ops/sessionPermissionAnswers';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { createSettingsDeclarationAction, isBuiltInLocalSettingMutation, readSettingsDeclarationOperation } from './settingsDeclarationAction';
@@ -4448,7 +4447,14 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       });
       return { ok: true, sessionId, modeId: normalizedModeId };
     },
-    sessionConfigOptionSet: createUiSessionConfigOptionAction(accountContext ?? undefined, providerActionExecute),
+    sessionConfigOptionSet: async ({ machineId, serverId, ...request }, context) => actionMachineRpc({
+      machineId, serverId, method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET, payload: request,
+      authorization: { kind: 'session.write', sessionId: request.sessionId }, signal: context.signal, onIssued: () => {},
+    }),
+    sessionConfigOptionChoices: async ({ machineId, serverId, sessionId }, context) => actionMachineRpc({
+      machineId, serverId, method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_CHOICES, payload: { sessionId },
+      authorization: { kind: 'session.read', sessionId }, signal: context.signal,
+    }),
     ...createUiSessionCapabilityActionDeps(accountContext ?? undefined),
     sessionConnectedServicesAuthSet: setSessionConnectedServiceAuthBinding,
     sessionConnectedServicesAuthOptions: readSessionConnectedServiceAuthOptions,

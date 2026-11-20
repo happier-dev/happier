@@ -432,6 +432,8 @@ export const RPC_METHODS = {
   DAEMON_CONNECTED_SERVICE_POOL_SELECTION_GET: 'daemon.connectedServices.pools.selection.get',
   DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH: 'daemon.sessionConnectedServiceAuth.switch',
   DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS: 'daemon.sessionConnectedServiceAuth.options',
+  DAEMON_SESSION_CONFIG_OPTION_CHOICES: 'daemon.sessionConfigOption.choices',
+  DAEMON_SESSION_CONFIG_OPTION_SET: 'daemon.sessionConfigOption.set',
   DAEMON_SESSION_VENDOR_PLUGIN_CATALOG_LIST: 'daemon.sessionVendorPluginCatalog.list',
   DAEMON_SESSION_SKILL_CATALOG_LIST: 'daemon.sessionSkillCatalog.list',
   SESSION_SPAWN_NEW: 'session.spawnNew',

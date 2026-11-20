@@ -1,5 +1,5 @@
 import { isSessionStateFieldActionId, resolveSessionStateFieldActionWrite } from '../../sessionStateFieldActions.js';
-import { resolveSessionIdFromInput, resolveServerIdForSession } from '../sessionScope.js';
+import { resolveSessionControlTarget, resolveSessionIdFromInput, resolveServerIdForSession } from '../sessionScope.js';
 import { completeActionResult, isDeferredApprovalResult, normalizeActionExecutorThrownError } from '../resultProjection.js';
 import { normalizeId, readNullableString } from '../inputReading.js';
 import { readNonBlankOpaqueIdentifier } from '../../../strings/opaqueIdentifier.js';
@@ -20,7 +20,8 @@ import {
 import type { ActionExecutorContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult, ActionExecutorDeps } from '../types.js';
-import { ActionIdSchema, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
+import { ActionIdSchema, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
+import { SessionConfigOptionWriteReceiptSchema } from '../../../sessions/control/sessionConfigOptionV1.js';
 import { SessionStatusResultSchema } from '../../../sessions/control/contract.js';
 import type { NativePermissionChoiceAnswerV1, NativePermissionChoicesV1 } from '../../../sessions/permissions/nativeChoicesV1.js';
 
@@ -378,18 +379,25 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
           return completeActionResult(res);
         }
 
-        if (actionId === 'session.config_option.set') {
+        if (actionId === SESSION_CONFIG_OPTION_SET_ACTION_ID_V1) {
           const sessionId = resolveSessionIdFromInput(parsed.data, ctx);
           if (!sessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           if (!deps.sessionConfigOptionSet) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.config_option.set' };
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           }
-          const res = await deps.sessionConfigOptionSet({
-            sessionId,
+          const target = await resolveSessionControlTarget(deps, ctx, sessionId);
+          if (!target.ok) return target;
+          const { ok: _resolved, ...address } = target;
+          const result = await deps.sessionConfigOptionSet({
+            ...address,
             configId: String(data.configId),
             valueId: data.valueId === null ? null : String(data.valueId),
           }, ctx);
-          return completeActionResult(res);
+          const refusal = readActionFailureEnvelope(result);
+          if (refusal) return refusal;
+          const receipt = SessionConfigOptionWriteReceiptSchema.safeParse(result);
+          return receipt.success ? { ok: true, result: receipt.data }
+            : { ok: false, errorCode: 'invalid_response', error: 'invalid_response' };
         }
 
         if (actionId === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1) {

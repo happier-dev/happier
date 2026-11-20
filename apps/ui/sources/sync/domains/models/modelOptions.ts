@@ -12,6 +12,7 @@ import {
     getAgentStaticModels,
     getAgentModelConfig,
     isFreeformModelIdAllowed,
+    findModelOptionForEffectiveModelId as findCatalogModelOption,
 } from '@happier-dev/agents';
 import { readSessionModelSelectionFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
 
@@ -417,25 +418,7 @@ export function findModelOptionForEffectiveModelId<T extends Readonly<{
     options: readonly T[],
     effectiveModelId: string | null | undefined,
 ): T | null {
-    const raw = typeof effectiveModelId === 'string' ? effectiveModelId : '';
-    if (!raw.trim()) return null;
-    const exact = options.find((option) => option.value === raw);
-    if (exact) return exact;
-    const extendedContext = options.find((option) => option.extendedContextModelId === raw);
-    if (extendedContext) return extendedContext;
-
-    // Pi accepts unqualified model ids, while its model probe advertises the
-    // canonical provider-qualified id. Only collapse that shorthand when the
-    // advertised options prove that the suffix has exactly one owner.
-    if (raw.includes('/')) return null;
-    let qualifiedMatch: T | null = null;
-    for (const option of options) {
-        const separatorIndex = option.value.indexOf('/');
-        if (separatorIndex <= 0 || option.value.slice(separatorIndex + 1) !== raw) continue;
-        if (qualifiedMatch) return null;
-        qualifiedMatch = option;
-    }
-    return qualifiedMatch;
+    return findCatalogModelOption(options, effectiveModelId, option => option.value);
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { getTranslationValue, t, type TranslationKeyNoParams } from '@/text';
 
@@ -1146,7 +1146,7 @@ const ACTION_TITLE_KEYS = {
     'session.permission.remote.grants.revoke': 'actionPresentation.titles.session_permission_remote_grants_revoke',
     'session.user_action.answer': 'actionPresentation.titles.session_user_action_answer',
     'session.mode.set': 'actionPresentation.titles.session_mode_set',
-    'session.config_option.set': 'actionPresentation.titles.session_config_option_set',
+    [SESSION_CONFIG_OPTION_SET_ACTION_ID_V1]: 'actionPresentation.titles.session_config_option_set',
     'session.connected_services_auth.set': 'actionPresentation.titles.session_connected_services_auth_set',
     'session.target.primary.set': 'actionPresentation.titles.session_target_primary_set',
     'session.target.tracked.set': 'actionPresentation.titles.session_target_tracked_set',

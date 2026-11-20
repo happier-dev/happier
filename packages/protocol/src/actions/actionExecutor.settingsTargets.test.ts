@@ -1,3 +1,4 @@
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from './actionIds.js';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from './actionExecutor.js';
 import { getActionSpec } from './actionSpecs.js';
@@ -14,7 +15,7 @@ const mutations = [
   ['session.permission_mode.set', { permissionMode: 'default' }],
   ['session.permission_mode.set', { permissionMode: 'default', applyTiming: 'next_prompt' }],
   ['session.model.set', { modelId: 'target-model' }],
-  ['session.config_option.set', { configId: 'reasoning', valueId: 'high' }],
+  [SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, { configId: 'reasoning', valueId: 'high' }],
   ['session.mode.set', { modeId: 'plan' }],
   ['session.capabilities.set', { kind: 'skill', id: 'lint', state: 'on' }],
   ['session.connected_services_auth.set', { machineId: 'machine', routing: { agentId: 'codex', bindings: { v: 2, bindingsByServiceId: {} } } }],
@@ -39,7 +40,9 @@ function fixture() {
       modelId: input.modelId!, activeSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: input.modelId! } }; },
     sessionModesList: async () => ({ items: [{ value: 'plan', label: 'Plan' }] }),
     sessionModeSet: async input => write(input),
-    sessionConfigOptionSet: async input => write(input),
+    sessionConfigOptionSet: async input => {
+      write(input); return { sessionId: input.sessionId, configId: input.configId, valueId: input.valueId, metadataVersion: 2 };
+    },
     sessionConnectedServicesAuthSet: async input => { SessionConnectedServiceAuthSwitchRpcParamsSchema.parse(
       Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'machineId' && key !== 'serverId')));
       write(input); return { ok: true, action: 'metadata_updated' }; },

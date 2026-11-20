@@ -824,6 +824,8 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
     { method: RPC_METHODS.STOP_SESSION, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, authority: 'sessionOwner', routeToSessionOwnerDaemon: false, serverMintedContext: 'session.read' },
+    { method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_CHOICES, authority: 'sessionOwner', routeToSessionOwnerDaemon: false, serverMintedContext: 'session.read' },
+    { method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_CONFIRMED_BACKGROUND, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },

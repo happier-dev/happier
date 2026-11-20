@@ -1,4 +1,4 @@
-import { SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '../../actions/actionIds.js';
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, type ActionId } from '../../actions/actionIds.js';
 import { AgentIdV1Schema } from '../../agents/agentIdV1.js';
 import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
 import { formatLegacyConfiguredAcpAgentId, readLegacyConfiguredAcpBackendId } from '../../backends/targets/compat/customAcp.js';
@@ -29,7 +29,7 @@ export const EXISTING_SESSION_FIELD_APPLICATIONS = {
   modelSelection: { via: 'message' },
   permissionMode: { via: 'message' },
   acpSessionModeId: { via: 'action', actionId: 'session.mode.set' },
-  sessionConfigOptionOverrides: { via: 'action', actionId: 'session.config_option.set' },
+  sessionConfigOptionOverrides: { via: 'action', actionId: SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 },
   connectedServices: { via: 'action', actionId: SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 },
   // The authoring field contributes capabilityDeltas to an ExistingSessionChangeSet.
   capabilitySelection: { via: 'action', actionId: 'session.capabilities.set' },

@@ -103,6 +103,7 @@ import type { MachineSessionRpcFamily } from './rpcHandlers.sessions';
 import { registerProjectOpenRpcHandlers } from '@/rpc/handlers/projects/registerProjectOpenRpcHandlers';
 import type { ProjectOpenRuntime } from '@/workspaces/activation/openProject';
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
+import { registerMachineSessionConfigOptionRpcHandlers } from './rpcHandlers.sessionConfigOptions';
 import { registerMachineConnectedServiceQuotaRpcHandlers } from './rpcHandlers.connectedServiceQuotas';
 import {
   registerMachineNpmRegistryProfileRpcHandlers,
@@ -988,6 +989,10 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, async (raw: unknown, context) => {
     const { sessionId } = SessionConnectedServiceAuthSwitchOptionsRpcParamsSchema.parse(raw);
     return await requestDaemonSessionConnectedServiceAuthOptions(sessionId, { signal: context?.signal });
+  });
+  if (params.deps?.currentMachineId) registerMachineSessionConfigOptionRpcHandlers({
+    rpcHandlerManager, machineId: params.deps.currentMachineId, serverId: params.deps.currentServerId,
+    providerRpc: params.deps.providerRpc?.services,
   });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, async (raw: unknown, context) => {

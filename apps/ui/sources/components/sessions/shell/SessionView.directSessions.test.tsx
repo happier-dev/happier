@@ -1,3 +1,4 @@
+import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import 'fake-indexeddb/auto';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
@@ -5070,7 +5071,7 @@ describe('SessionView (direct sessions)', () => {
       expect.objectContaining({ surface: 'ui', defaultSessionId: 's1' }),
     );
     expect(actionExecuteSpy).toHaveBeenCalledWith(
-      'session.config_option.set',
+      SESSION_CONFIG_OPTION_SET_ACTION_ID_V1,
       { sessionId: 's1', configId: 'thinking', valueId: 'high' },
       expect.objectContaining({ surface: 'ui', defaultSessionId: 's1' }),
     );
@@ -5464,7 +5465,7 @@ describe('SessionView (direct sessions)', () => {
       await act(async () => { onSelectOptionControlValue('reasoning_effort', 'medium'); });
 
       // The Action owner's suite proves it accepts and writes the declared value (defaultActionExecutor.planMode).
-      expect(actionExecuteSpy).toHaveBeenCalledWith('session.config_option.set',
+      expect(actionExecuteSpy).toHaveBeenCalledWith(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1,
         { sessionId: 's1', configId: 'reasoning_effort', valueId: 'medium' }, expect.objectContaining({ surface: 'ui' }));
     });
 
@@ -8123,7 +8124,7 @@ describe('SessionView (direct sessions)', () => {
     expect(storage.getState().sessions.s1.permissionMode).toBe(committed);
   });
 
-  it.each(['session.mode.set', 'session.config_option.set'] as const)('shows %s policy refusal through the same typed composer feedback', async (actionId) => {
+  it.each(['session.mode.set', SESSION_CONFIG_OPTION_SET_ACTION_ID_V1] as const)('shows %s policy refusal through the same typed composer feedback', async (actionId) => {
     installRunnerActiveDirectSubmitStatus();
     storageState.sessions.s1.metadata = {
       ...storageState.sessions.s1.metadata,

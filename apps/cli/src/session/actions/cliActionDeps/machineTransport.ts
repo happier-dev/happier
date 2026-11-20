@@ -137,6 +137,8 @@ export function createCliMachineActionTransport(
     RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
     RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH,
     RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS,
+    RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_CHOICES,
+    RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET,
     // Native account descriptions use the daemon custodian’s Account. Enter
     // Home's custodian-only route even when the selected daemon is local.
     CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD,
