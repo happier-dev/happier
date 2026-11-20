@@ -135,6 +135,20 @@ describe('Project Open rendered choices', () => {
         await act(async () => publishLocalDaemonStatus(runner, { machineId: null }));
     });
 
+    it('names a workspace folder by the workspace, not its controller, and offers no other Machine', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const scope = { serverId: 'home', accountId: 'account' };
+        await seedOpenDraft(draftId, scope, undefined, 'linux');
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId: 'home', machineId: 'machine',
+            source: { kind: 'folder', path: '/home/coder/repo' },
+            materialization: { kind: 'attach', targetManaged: { managedId: 'guest', controller: { machineId: 'machine', installationId: 'install' } } } } } });
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId: 'home' }} />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.where.row')).not.toBeNull());
+        expect(screen.findByTestId('projects.open.where.change')).toBeNull();
+        expect(screen.findAll(node => node.type === DropdownMenu && node.props.testID === 'projects.open.where')).toHaveLength(0);
+    });
+
     it.each(['source', 'another-source'])('carries an attached dashboard only after accepting its Source (%s)', async acceptedSourceId => {
         const draftId = acceptedSourceId === 'source' ? '00000000-0000-4000-8000-000000000083' : '00000000-0000-4000-8000-000000000084';
         const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');

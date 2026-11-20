@@ -83,6 +83,8 @@ import {
   type ProjectOpenUse,
 } from './projectOpenChoices';
 import { readProjectOpenRouteDraft } from './projectOpenRoute.mjs';
+import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
+import { describeManagedCheckoutPlace } from '../shell/projectCheckoutPlace';
 import { ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
 import { useProjectOpen } from './useProjectOpen';
 import { readProjectAttachedDashboardSelection } from '../detail/projectRouteState';
@@ -377,6 +379,12 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   };
 
   const machineName = machine ? (machineNames.get(machine.id) ?? getMachineDisplayName(machine)) : null;
+  // A folder in an attached workspace lives in the workspace, reached through its controller (the header chip's words).
+  const draftManaged = open.draft?.materialization?.kind === 'attach' ? open.draft.materialization.targetManaged : undefined;
+  const managedName = useManagedMachineName(draftManaged ? props.scope.serverId : null, draftManaged?.managedId ?? null);
+  const managedPlace = draftManaged ? describeManagedCheckoutPlace({ controllerMachineId: draftManaged.controller.machineId,
+    machineNameParts: (id) => { const name = machineNames.get(id); return name ? { name, hint: null } : null; }, managedName,
+  }).machineNameParts : null;
   const checkoutsHere = options.find((option) => option.use === 'existing')?.candidates.length ?? 0;
   const whereStatus: ProjectOpenWhereStatus = !machine || !machineName
     ? { kind: 'none' }
@@ -527,6 +535,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             status={whereStatus}
             compact={!twoPanes}
             onSelect={setMachineId}
+            managedPlace={managedPlace}
           />
           <ProjectOpenUseSection
             rows={useRows}

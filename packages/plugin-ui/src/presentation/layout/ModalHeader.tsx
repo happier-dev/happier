@@ -311,6 +311,36 @@ export function HappierModalHeader(props: HappierModalHeaderProps) {
     );
   }
 
+  // A sentence under the title beside wide actions (a machine chip) was squeezed into a narrow column, so
+  // with actions the title line keeps the row and the subtitle spans the card beneath it.
+  if (subtitle !== null && hasActions && !props.leading) {
+    return (
+      <View
+        testID={testID}
+        {...{ dataSet: surfaceBinding.dataSet }}
+        style={[
+          {
+            paddingHorizontal: space.s16,
+            paddingTop: HAPPIER_MODAL_HEADER_METRICS.textTopInsetPx,
+            paddingBottom: space.s10,
+            gap: space.s2,
+          },
+          props.style,
+          surfaceBinding.style,
+        ]}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.s12 }}>
+          <View style={[titleWrap, titleLine]}>{title}</View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: space.s10 }}>
+            {props.actions}
+            {close}
+          </View>
+        </View>
+        {subtitle}
+      </View>
+    );
+  }
+
   return (
     <View
       testID={testID}

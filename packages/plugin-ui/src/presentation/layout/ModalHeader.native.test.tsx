@@ -151,9 +151,10 @@ describe('modal header phone layout', () => {
     expect(sharedRow(chip, close).props.style).toMatchObject({
       flexDirection: 'row',
     });
-    expect(
-      sharedRow(chip, root.findByProps({ testID: 'title' })).props.testID,
-    ).toBe('header');
+    const titleRow = sharedRow(chip, root.findByProps({ testID: 'title' }));
+    expect(titleRow.props.style).toMatchObject({ flexDirection: 'row' });
+    // A sentence beside a wide chip would be squeezed into a column: it spans the card under the title's row.
+    expect(titleRow.findAll(node => node.props.children === 'Claude sees and acts only in what you choose.')).toHaveLength(0);
   });
 
   it('keeps a compact card without actions on one row', () => {

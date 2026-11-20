@@ -39,6 +39,8 @@ export const ProjectOpenWhereRow = React.memo(function ProjectOpenWhereRow(
     status: ProjectOpenWhereStatus;
     compact: boolean;
     onSelect: (machineId: string) => void;
+    /** An attached workspace folder: the workspace is the place ("via" its controller) and no other Machine can hold it. */
+    managedPlace?: Readonly<{ name: string; hint: string | null }> | null;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -70,6 +72,18 @@ export const ProjectOpenWhereRow = React.memo(function ProjectOpenWhereRow(
       : props.machineName
         ? t('projects.open.change')
         : t('common.choose');
+  if (props.managedPlace) {
+    return (
+      <ItemGroup title={t('projects.open.where')}>
+        <Item
+          testID="projects.open.where.row"
+          title={props.managedPlace.name}
+          subtitle={props.managedPlace.hint ?? undefined}
+          icon={<Icon name="terminal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+        />
+      </ItemGroup>
+    );
+  }
   return (
     <ItemGroup title={t('projects.open.where')}>
       <DropdownMenu
