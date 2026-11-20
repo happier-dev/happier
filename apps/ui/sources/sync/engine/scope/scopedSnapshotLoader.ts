@@ -504,7 +504,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
             unsubscribeWake = subscribeHomeAccountChange((event) => {
                 if (params.matchesWake && !params.matchesWake(event)) return;
                 handleWake(event);
-            }, { includeCatchUpPending: params.observeCatchUpPending, reconnect: {
+            }, { includeCatchUpPending: params.observeCatchUpPending ?? 'recovery', reconnect: {
                 readNotCurrent: () => [...observed.values()].some(({ target }) => params.shouldLoadOnObserve(target)),
             } });
         }

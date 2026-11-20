@@ -9,6 +9,8 @@ import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccou
 import { planSyncActionsFromChanges } from '@/sync/runtime/orchestration/changesPlanner';
 import { getReviewListSnapshot, reviewListKey } from '@/sync/store/domains/reviews/list';
 import { loadMoreReviews, observeReviewList, refreshReviewList } from './list';
+import { observeReviewHistory } from './history';
+import { getReviewHistorySnapshot, reviewHistoryKey } from '@/sync/store/domains/reviews/history';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -25,6 +27,57 @@ function listedRow(reviewId: string) {
 }
 
 describe('demanded Review list through the real Action and Account transport', () => {
+    it('defers a primary socket wake to its consumed page while preserving Review and coarse recovery reads', async () => {
+        const serverId = await homes.addHome({ serverUrl: 'https://reviews-catch-up-wake.example', name: 'Reviews', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const scope = { serverId, accountId: 'alice' };
+        const historyInput = { workflowId: 'workflow', reviewId: 'selected' };
+        const requests = { list: 0, history: 0 };
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => {
+            requests.list += 1;
+            return { body: { items: [listedRow('selected')], cursor: null } };
+        } });
+        homes.answer(serverId, 'POST /v1/reviews/history/list', { select: () => {
+            requests.history += 1;
+            return { body: { previousReviewId: null, items: [] } };
+        } });
+        const releaseList = observeReviewList(scope, input);
+        const releaseHistory = observeReviewHistory(scope, historyInput);
+        const settle = () => new Promise<void>(resolve => setImmediate(resolve));
+        try {
+            await waitForHomeGovernance(() => {
+                expect(getReviewListSnapshot(reviewListKey(scope, input)).status).toBe('ready');
+                expect(getReviewHistorySnapshot(reviewHistoryKey(scope, historyInput)).status).toBe('ready');
+            });
+            expect(requests).toEqual({ list: 1, history: 1 });
+            // The socket knows only the Artifact id. Its cursor owner will publish
+            // the exact approval kind after consuming the detailed change page.
+            publishHomeAccountChange(serverId, ['approval'], { source: 'socket', changesCatchUp: true, changeKinds: ['artifact'] });
+            publishHomeAccountChange(serverId, ['approval'], { feedPageConsumed: true, changeKinds: ['artifact'],
+                artifactKinds: [deriveArtifactStoredKindV1({ kind: 'approval_request.v1' })] });
+            await settle();
+            expect(requests).toEqual({ list: 1, history: 1 });
+
+            publishHomeAccountChange(serverId, ['selected'], { feedPageConsumed: true, changeKinds: ['artifact'],
+                artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })] });
+            await waitForHomeGovernance(() => expect(requests).toEqual({ list: 2, history: 2 }));
+            await settle();
+            // Missing kind hints, blocked-cursor repair, snapshot repair and a
+            // secondary socket without catch-up keep their conservative reads.
+            const recoveries = [
+                { changeKinds: ['artifact'] as const, feedPageConsumed: true as const },
+                { source: 'catch-up-pending' as const },
+                { source: 'snapshot' as const },
+                { source: 'socket' as const, changeKinds: ['artifact'] as const },
+            ];
+            for (const [index, details] of recoveries.entries()) {
+                publishHomeAccountChange(serverId, undefined, details);
+                await waitForHomeGovernance(() => expect(requests).toEqual({ list: index + 3, history: index + 3 }));
+                await settle();
+            }
+        } finally { releaseList(); releaseHistory(); }
+    });
+
     it('refreshes only the demanded personal space named by an organization membership publication', async () => {
         const serverId = await homes.addHome({ serverUrl: 'https://reviews-personal-space.example', name: 'Reviews', accountId: 'alice' });
         await setActiveServerId(serverId, { scope: 'device' });

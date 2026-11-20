@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import { deriveArtifactStoredKindV1, PROMPT_DOC_ARTIFACT_KIND_V2 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import * as changePlanner from './changesPlanner';
 import { log } from '@/log';
@@ -19,7 +19,7 @@ describe('Home Account change subscriptions', () => {
     it('scopes early and consumed Artifact changes while retaining coarse recovery and legacy wakes', () => {
         const observer = vi.fn();
         const template = deriveArtifactStoredKindV1({ kind: BOT_TEMPLATE_ARTIFACT_KIND_V1 });
-        const document = deriveArtifactStoredKindV1({ title: 'A normal Doc has no header kind' });
+        const document = deriveArtifactStoredKindV1({ kind: PROMPT_DOC_ARTIFACT_KIND_V2 });
         const dispose = subscribeHomeAccountChange(observer, { artifactKinds: [BOT_TEMPLATE_ARTIFACT_KIND_V1],
             includeCatchUpPending: true, reconnect: 'refresh' });
         try {
