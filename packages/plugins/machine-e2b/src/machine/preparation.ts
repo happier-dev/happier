@@ -1,6 +1,7 @@
 import { isMachineProvisionerCreateRefusal, buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { E2B_API_ORIGIN } from '../api.js';
 import { E2bNativeError, projectE2bNativeFailure } from './nativeFailure.js';
 import { E2bLaunchSchema, reference, type E2bLaunch } from './schemas.js';
 import { createE2bBuildContext } from './buildContext.js';
@@ -42,7 +43,7 @@ class PreparationError extends E2bNativeError {
 export function createE2bPreparationClient(request: typeof fetch, signal?: AbortSignal) {
   async function http(path: string, method = 'GET', body?: unknown) {
     signal?.throwIfAborted();
-    const response = await request('https://api.e2b.app' + path, { method, signal, redirect: 'error', headers: { 'content-type': 'application/json' },
+    const response = await request(E2B_API_ORIGIN + path, { method, signal, redirect: 'error', headers: { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     if (!response.ok && response.status !== 404) throw new PreparationError('e2b_http_' + response.status, response.status);
     return response;

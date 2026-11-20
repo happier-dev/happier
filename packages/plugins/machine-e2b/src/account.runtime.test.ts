@@ -69,7 +69,7 @@ describe('E2B selected Account API key', () => {
     try {
       expect(await h.mode.complete({ fields: { token: secret } }, h.authentication)).toMatchObject({ status: 'connected', scopes: [] });
       expect(h.staged.get('token')).toBe(secret);
-      expect(h.requests[0]).toMatchObject({ method: 'GET', url: 'https://api.e2b.app/v2/sandboxes', headers: { 'x-api-key': secret }, redirect: 'error' });
+      expect(h.requests[0]).toMatchObject({ method: 'GET', url: 'https://api.e2b.app/v2/sandboxes?limit=1', headers: { 'x-api-key': secret }, redirect: 'error' });
       expect(await h.runtime.materialize({ kind: 'httpHeaders', origin: 'https://api.e2b.app', headerNames: ['x-api-key'] }, h.read)).toEqual({ kind: 'httpHeaders', headers: { 'x-api-key': secret } });
       await expect(h.runtime.materialize({ kind: 'httpHeaders', origin: 'https://49983-sandbox.e2b.app', headerNames: ['x-api-key'] }, h.read)).rejects.toThrow('credential_unavailable');
     } finally { await h.kit.dispose(); }

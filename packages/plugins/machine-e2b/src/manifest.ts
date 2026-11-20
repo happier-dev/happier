@@ -9,6 +9,7 @@ import {   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckRe
   observeMachineProvisionerNativeRead, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { ACCOUNT_ID, ACCOUNT_PURPOSE, connectedAccountRuntime, connectedAccountPortableRuntime } from './account.js';
+import { E2B_API_ORIGIN } from './api.js';
 import { nativeFetch } from './machine/credentials.js';
 import { createE2bNativeClient } from './machine/nativeClient.js';
 import { createE2bPreparationClient, E2B_PREPARATION_HOME, E2bPreparationInputSchema, E2bPreparedArtifactSchema, E2bPreparationOperationSchema, PREPARATION_SCHEMAS } from './machine/preparation.js';
@@ -42,7 +43,7 @@ export const PLUGIN = definePlugin({
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [
     { id: 'native-api', capability: 'network', reason: 'Manage E2B sandboxes and install the portable guest runtime.',
-      scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://api.e2b.app' }, { kind: 'httpsHostSuffix', hostSuffix: 'e2b.app' }], methods: ['GET', 'POST', 'DELETE'] } },
+      scope: { targets: [{ kind: 'fixedOrigin', origin: E2B_API_ORIGIN }, { kind: 'httpsHostSuffix', hostSuffix: 'e2b.app' }], methods: ['GET', 'POST', 'DELETE'] } },
     { id: ACCOUNT_PURPOSE, capability: 'connectedAccounts', reason: 'Use the selected E2B API key.',
       scope: { serviceRefs: [ACCOUNT_ID], operations: ['use'], materializationKinds: ['httpHeaders'] } },
   ], optional: [] },

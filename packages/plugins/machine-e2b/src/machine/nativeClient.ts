@@ -1,4 +1,5 @@
 import { isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { E2B_ACCESS_PROBE_PATH, E2B_API_ORIGIN } from '../api.js';
 import { E2bNativeError, projectE2bNativeFailure } from './nativeFailure.js';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { readMachineProvisionerCredentialRefusal, assertMachineProvisionerGuestCommandSucceeded, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -7,7 +8,6 @@ import { executeEnvd, type EnvdSession } from './envd.js';
 
 // E2B OpenAPI 0.1.0 / envd 0.1.3, inspected 2026-11-01. The lane report pins
 // the upstream revision. No vendor SDK or lifecycle retry loop.
-const origin = 'https://api.e2b.app';
 const open = { policy: 'additive-open/drop' } as const;
 const text = defineProtocolString({ minLength: 1 });
 const identitySchema = defineProtocolObject({ sandboxID: text }, open);
@@ -35,7 +35,7 @@ const unknown = (operation: E2bOperation): Acquisition => ({ kind: 'unknown', re
 export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal, observedAt: number) {
   async function http(path: string, method = 'GET', body?: unknown, headers?: HeadersInit) {
     signal.throwIfAborted();
-    const response = await request(origin + path, { method, redirect: 'error', signal,
+    const response = await request(E2B_API_ORIGIN + path, { method, redirect: 'error', signal,
       headers: { 'content-type': 'application/json', ...Object.fromEntries(new Headers(headers)) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return response;
@@ -163,7 +163,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
   return {
     async check(): Promise<MachineProvisionerCheckResultV1> {
       try {
-        const value = await json(await http('/v2/sandboxes'));
+        const value = await json(await http(E2B_ACCESS_PROBE_PATH));
         if (!Array.isArray(value)) throw invalid();
         return { available: true };
       } catch (error) { signal.throwIfAborted(); return projectE2bNativeFailure(error, () => ({ available: false, code: safeCode(error), status: 'E2B unavailable' })); }
