@@ -37,7 +37,7 @@ describe('FirstOpenHost', () => {
         const press = vi.fn();
         const decision = resolveFirstOpen(freshWelcome);
         if (decision !== 'reduced') throw new Error(`Expected the Still first open, got ${decision}`);
-        const screen = await renderScreen(<FirstOpenHost decision={decision}><Destination onPress={press} /></FirstOpenHost>);
+        const screen = await renderScreen(<FirstOpenHost opening={{ decision }}><Destination onPress={press} /></FirstOpenHost>);
         const destination = screen.findByTestId('first-open.fixture-layout');
         const onLayout = destination?.props.onLayout;
         if (!onLayout) throw new Error('The destination must be mounted before its layout');

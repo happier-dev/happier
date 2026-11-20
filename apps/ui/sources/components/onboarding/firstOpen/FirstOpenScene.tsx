@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import type { GlyphRect } from '@happier-dev/brand/glyph-scene';
 
 import { GlyphSurface, type GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/GlyphSurface';
+import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import { playBuild, skipStepMotion, useOpeningBuildGlyphs } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useIsTablet } from '@/utils/platform/responsive';
 
@@ -20,6 +21,7 @@ export type FirstOpenPlacement = Readonly<{
 export function FirstOpenScene(props: Readonly<{
     epoch: number | null;
     holding?: boolean;
+    warmup?: GlyphSurfaceWarmup;
     placement?: FirstOpenPlacement;
     onReady: (status: GlyphSurfaceReadiness) => void;
 }>) {
@@ -51,7 +53,7 @@ export function FirstOpenScene(props: Readonly<{
         onSettled: build?.finish,
     }), [build, buildStartS, epoch, holding]);
     return <GlyphSurface width={width} height={height} scene={scene} motion={motion} onReady={props.onReady}
-        warmWhenHidden style={StyleSheet.absoluteFillObject} testID="first-open.scene" />;
+        warmWhenHidden warmup={props.warmup} style={StyleSheet.absoluteFillObject} testID="first-open.scene" />;
 }
 
 export function buildFirstOpenDestination(epoch: number) {

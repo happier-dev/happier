@@ -98,7 +98,8 @@ import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
 import { FirstOpenHost, useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenHost';
-import { resolveFirstOpen, type FirstOpenDecision } from '@/components/onboarding/firstOpen/resolveFirstOpen';
+import { resolveFirstOpen } from '@/components/onboarding/firstOpen/resolveFirstOpen';
+import { useFirstOpenBoot } from '@/components/onboarding/firstOpen/useFirstOpenBoot';
 import { readWebRuntimeFirstOpenCandidate } from '@/sync/runtime/webRuntimeConfig';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
@@ -754,10 +755,10 @@ function AppBoot() {
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
     const firstOpenSegments = React.useRef(segments);
     firstOpenSegments.current = segments;
-    const [firstOpenDecision, setFirstOpenDecision] = React.useState<FirstOpenDecision>('none');
-    const renderFirstOpen = (content: React.ReactNode) => firstOpenDecision === 'none'
-        ? content
-        : <FirstOpenHost decision={firstOpenDecision}>{content}</FirstOpenHost>;
+    const { opening, admitOpening } = useFirstOpenBoot();
+    const renderFirstOpen = (content: React.ReactNode) => opening
+        ? <FirstOpenHost opening={opening}>{content}</FirstOpenHost>
+        : content;
 
     React.useEffect(() => {
         clearSessionSurfaceVisibilityForNonSessionRoute(pathname);
@@ -765,6 +766,7 @@ function AppBoot() {
 
     React.useEffect(() => {
         let cancelled = false;
+        let releaseOpening: (() => void) | undefined;
         const runBoot = nativeSecondaryWindow ? runDesktopAppWindowBootSequence : runAppBootSequence;
         void runBoot({
             context: isDesktopOverlayWindow ? 'presenter' : 'app',
@@ -794,7 +796,7 @@ function AppBoot() {
                     accountRestored,
                     desktopCandidate: candidate,
                 });
-                if (decision !== 'none') setFirstOpenDecision(decision);
+                releaseOpening = admitOpening(decision);
                 if (candidate) {
                     void invokeDesktopHost('desktop_first_open_decide', { play: decision }).catch(() => {
                         // Native still shows main as soon as it has usable content.
@@ -811,8 +813,9 @@ function AppBoot() {
         });
         return () => {
             cancelled = true;
+            releaseOpening?.();
         };
-    }, [isDesktopOverlayWindow, primaryRealm]);
+    }, [admitOpening, isDesktopOverlayWindow, primaryRealm]);
 
     React.useEffect(() => {
         if (initState) {

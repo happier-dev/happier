@@ -7,7 +7,7 @@ import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingSt
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 import { useGlyphClock } from '../moments/useMomentClock';
-import type { GlyphSurfaceProps, GlyphSurfaceReadiness } from './glyphSurfaceTypes';
+import type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphSurfaceWarmup } from './glyphSurfaceTypes';
 
 type Backend = typeof import('./glyphPainter.web');
 type Prepared = {
@@ -18,15 +18,30 @@ type Prepared = {
 
 export type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphMotion } from './glyphSurfaceTypes';
 
+const defaultCell = [8, 16] as const;
+const readPixelRatio = () => typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+const atlasGrid = (w: number, h: number, dpr: number) => ({
+    cell: [Math.round(w * dpr), Math.round(h * dpr)] as const,
+    cols: 0, rows: 0, origin: [0, 0] as const,
+});
+
+export function warmGlyphSurface(): GlyphSurfaceWarmup {
+    const dpr = readPixelRatio();
+    const atlas = import('./glyphPainter.web').then(backend => backend.warmWebGlyphAtlas(atlasGrid(...defaultCell, dpr), dpr));
+    // The boot can settle to Still before any canvas consumes this preparation.
+    void atlas.catch(() => {});
+    return { dpr, atlas };
+}
+
 export const GlyphSurface = React.memo(function GlyphSurface({
-    width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, onWebPaint, drawAtRef, warmWhenHidden, viewport, digitCadence,
+    width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, onWebPaint, drawAtRef, warmWhenHidden, warmup, viewport, digitCadence,
 }: GlyphSurfaceProps) {
     const { theme: appTheme } = useUnistyles();
     const theme = themeOverride ?? (appTheme.dark ? 'dark' : 'light');
     const reduced = useReducedMotionPreference();
-    const dpr = pixelRatio ?? (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
+    const dpr = pixelRatio ?? readPixelRatio();
     const pixelWidth = Math.round(width * dpr), pixelHeight = Math.round(height * dpr);
-    const cellW = cell?.[0] ?? 8, cellH = cell?.[1] ?? 16;
+    const [cellW, cellH] = cell ?? defaultCell;
     const webgl = React.useRef<HTMLCanvasElement>(null);
     const still = React.useRef<HTMLCanvasElement>(null);
     const prepared = React.useRef<Prepared | null>(null);
@@ -54,8 +69,8 @@ export const GlyphSurface = React.memo(function GlyphSurface({
                 canvas.dataset.glyphLinked = String(restored);
                 if (prepared.current) setReady(restored ? 'ready' : 'still');
             });
-            const grid = { cell: [Math.round(cellW * dpr), Math.round(cellH * dpr)] as const, cols: 0, rows: 0, origin: [0, 0] as const };
-            const atlas = await backend.warmWebGlyphAtlas(grid, dpr);
+            const atlas = await (warmup?.dpr === dpr && cellW === defaultCell[0] && cellH === defaultCell[1]
+                ? warmup.atlas : backend.warmWebGlyphAtlas(atlasGrid(cellW, cellH, dpr), dpr));
             if (disposed) return;
             canvas.dataset.glyphRenderer = painter.renderer ?? 'unavailable';
             canvas.dataset.glyphLinked = String(painter.ready);
@@ -74,7 +89,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
             painter?.dispose(() => currentCanvas.current !== canvas);
             releaseCanvasBackingStore(stillCanvas);
         };
-    }, [cellW, cellH, dpr]);
+    }, [cellW, cellH, dpr, warmup]);
 
     const readiness = reduced && ready ? 'still' : ready;
     const paintedStatus = React.useRef<GlyphSurfaceReadiness | null>(null);

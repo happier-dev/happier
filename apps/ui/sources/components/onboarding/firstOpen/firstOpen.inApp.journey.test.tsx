@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { expect, it, vi } from 'vitest';
 
+import { runAppBootSequence } from '@/boot/runAppBootSequence';
 import { WelcomeEntryView } from '@/components/onboarding/preAuth/WelcomeEntryView';
 import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell/UnauthenticatedRouteShell';
 import { UnauthenticatedSplitShell } from '@/components/onboarding/unauthShell/UnauthenticatedSplitShell';
@@ -17,26 +18,26 @@ import { onboardingAuthHistoryState, onboardingHistoryState, readOpeningSeenAt }
 import { FirstOpenHost, useFirstOpenContentLayout } from './FirstOpenHost';
 import { installFirstOpenWebGraphics } from './firstOpenWebGraphics.fixture';
 import { resolveFirstOpen } from './resolveFirstOpen';
+import { useFirstOpenBoot } from './useFirstOpenBoot';
 
 vi.mock('react-native', async () => await vi.importActual('react-native-web'));
-// Vitest uses the source fallback without Metro's web-extension precedence.
-vi.mock('@/components/atmosphere/glyph/GlyphSurface', async () =>
+// The source barrel re-exports Native under Vitest. Use the same browser adapter Metro selects.
+vi.mock('@/components/atmosphere/glyph/GlyphSurface.native', async () =>
     await vi.importActual('@/components/atmosphere/glyph/GlyphSurface.web'));
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
 });
 it.each([
-    { name: 'Welcome', segments: ['(app)', 'index'], width: 1440 },
-    { name: 'Team sign-in', segments: ['(app)', 'teams', '[teamId]', 'sign-in'], width: 390 },
-])('builds the real workflow layer on first open of $name, then releases it on input', async ({ name, segments, width }) => {
+    { name: 'Welcome', segments: ['(app)', 'index'], width: 1440, canPaint: true },
+    { name: 'Team sign-in', segments: ['(app)', 'teams', '[teamId]', 'sign-in'], width: 390, canPaint: true },
+    { name: 'Welcome', segments: ['(app)', 'index'], width: 390, canPaint: false },
+])('first layout builds $name only when the boot renderer can paint ($canPaint)', async ({ name, segments, width, canPaint }) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     replacePersistentUiStateForTest(onboardingHistoryState, {});
     replacePersistentUiStateForTest(onboardingAuthHistoryState, {});
     setReducedMotionPreferenceOverride(false);
-    const decision = resolveFirstOpen({ accountRestored: false, segments });
-    if (decision !== 'in-app') throw new Error(`Expected an in-app opening, got ${decision}`);
     const box = document.createElement('div');
     document.body.append(box);
     const root = createRoot(box);
@@ -63,29 +64,87 @@ it.each([
             }} compact={false} interaction={{
                 admission: { pendingActionId: null, run: async (_id, invoke) => { await invoke(); } },
                 getActionId: () => 'first-open-next',
-                onAction, onRetry() {}, onSelfHosting() {},
+                onAction, onNoticeAction() {}, onSelfHosting() {},
             }} />
         </UnauthenticatedSplitShell> : <UnauthenticatedRouteShell stepId="team-sign-in" testID="team-sign-in-shell">
             <h1>{name}</h1><button data-testid="first-open-next" onClick={onAction}>Continue</button>
         </UnauthenticatedRouteShell>;
     }
+    const fontsLoaded = vi.spyOn(document.fonts, 'load');
+    let releaseFonts: (() => void) | undefined;
+    if (!canPaint) {
+        const fonts = new Promise<FontFace[]>(resolve => { releaseFonts = () => resolve([]); });
+        fontsLoaded.mockReturnValue(fonts);
+    }
+    let completeTranslations: () => void = () => {};
+    const translations = new Promise<void>(resolve => { completeTranslations = resolve; });
+    let onAuthResolved = (_accountRestored: boolean): void => {};
+    let releaseOpening: (() => void) | undefined;
+    let mountOpening = () => {};
+    let readyApp = () => {};
+    let boot: Promise<void> | undefined;
+    function BootFixture() {
+        const [mount, setMount] = React.useState(false);
+        const [ready, setReady] = React.useState(false);
+        const { opening, admitOpening } = useFirstOpenBoot();
+        onAuthResolved = accountRestored => { releaseOpening = admitOpening(resolveFirstOpen({ accountRestored, segments })); };
+        mountOpening = () => setMount(true);
+        readyApp = () => setReady(true);
+        return mount && opening ? <FirstOpenHost opening={opening}>{ready ? <Destination /> : null}</FirstOpenHost> : null;
+    }
     try {
         await act(async () => root.render(
             <SafeAreaProvider initialMetrics={{ frame, insets: { top: 0, right: 0, bottom: 0, left: 0 } }}>
-                <StepMotionStage><FirstOpenHost decision={decision}><Destination /></FirstOpenHost></StepMotionStage>
+                <StepMotionStage><BootFixture /></StepMotionStage>
             </SafeAreaProvider>,
         ));
         const scene = () => box.querySelector('[data-testid="first-open.scene"]');
-        expect(box.textContent).toContain(name);
-        expect(readOpeningSeenAt()).toBeNull();
+        await act(async () => {
+            boot = runAppBootSequence({
+                loadFonts: async () => {},
+                sodiumReady: Promise.resolve(),
+                resolveCredentials: async () => null,
+                prepareWarmCache: async () => {},
+                prepareSessionDrafts: async () => {},
+                prepareTranslations: () => translations,
+                restoreSync: null,
+                onAuthResolved,
+                onReady: readyApp,
+            });
+        });
+        // The boot dependencies can still be pending and the React host has yet to mount.
         await vi.waitFor(async () => {
             await act(async () => {});
-            expect(scene()?.querySelector('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]')).toBeTruthy();
-            expect(readBuildReady()).toBe(true);
+            expect(fontsLoaded).toHaveBeenCalled();
+        }, { timeout: 3000 });
+        expect(box.textContent).not.toContain(name);
+        await act(async () => mountOpening());
+        if (canPaint) {
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(scene()?.querySelector('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]'), scene()?.outerHTML).toBeTruthy();
+            });
+        }
+        await act(async () => {
+            completeTranslations();
+            await boot;
         });
+        expect(box.textContent).toContain(name);
+        expect(readOpeningSeenAt()).toBeNull();
+        if (canPaint) expect(readBuildReady()).toBe(true);
         animate.mockClear();
         await act(async () => commitLayout());
         expect(readOpeningSeenAt()).toEqual(expect.any(Number));
+        if (!canPaint) {
+            expect(scene()).toBeNull();
+            expect(animate).not.toHaveBeenCalled();
+            await act(async () => box.querySelector<HTMLElement>('[data-testid="first-open-next"]')!.click());
+            expect(onAction).toHaveBeenCalledOnce();
+            await act(async () => releaseFonts?.());
+            expect(scene()).toBeNull();
+            expect(animate).not.toHaveBeenCalled();
+            return;
+        }
         expect(scene()).toBeTruthy();
         const openingCanvas = scene()?.querySelector('canvas[data-glyph-linked=true]');
         const visibleCanvases = Array.from(box.querySelectorAll<HTMLCanvasElement>('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]'))
@@ -106,7 +165,14 @@ it.each([
         expect(onAction).toHaveBeenCalledOnce();
         expect(resolveFirstOpen({ accountRestored: false, segments })).toBe('none');
     } finally {
-        await act(async () => root.unmount());
+        await act(async () => {
+            releaseFonts?.();
+            completeTranslations();
+            await boot;
+            releaseOpening?.();
+            root.unmount();
+        });
+        fontsLoaded.mockRestore();
         box.remove();
         bounds.mockRestore();
         if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);

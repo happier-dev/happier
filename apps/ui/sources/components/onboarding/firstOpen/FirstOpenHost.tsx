@@ -3,16 +3,15 @@ import { Animated, AppState, Platform, View, type LayoutChangeEvent } from 'reac
 
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
-import { usePrepareStepBuild } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
 import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 import { readHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import { FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch, FirstOpenWelcomeModelContext } from './FirstOpenWelcomeModelContext';
 import { resolveInAppFirstFrame } from './inAppFirstFrame';
-import type { FirstOpenDecision } from './resolveFirstOpen';
+import type { FirstOpenAdmission } from './useFirstOpenBoot';
 
-type SceneModule = typeof import('./FirstOpenScene');
 type Phase = 'preparing' | 'still' | 'settled' | { epoch: number };
 const FirstOpenContentLayout = createContext<((event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined) | null>(null);
 type OverlayHost =
@@ -23,15 +22,18 @@ export function useFirstOpenContentLayout() {
     return useContext(FirstOpenContentLayout);
 }
 
-/** Warms the admitted decoration in parallel. The real destination lays out and accepts input independently. */
-export function FirstOpenHost({ decision, children }: Readonly<{
-    decision: Exclude<FirstOpenDecision, 'none'>;
+/** Presents the prepared decoration if available at the destination's first usable layout. */
+export function FirstOpenHost({ opening, children }: Readonly<{
+    opening: FirstOpenAdmission;
     children: ReactNode;
 }>) {
+    const { decision } = opening;
+    const scene = decision === 'in-app' ? opening.scene : null;
+    const release = decision === 'in-app' ? opening.release : undefined;
+    const stage = useStepMotionStage();
     const seen = useRef(false);
     const activePlay = useRef(false);
     const readiness = useRef<GlyphSurfaceReadiness | null>(null);
-    const [scene, setScene] = useState<SceneModule | null>(null);
     const [phase, setPhase] = useState<Phase>('preparing');
     const [opacity] = useState(() => new Animated.Value(1));
     const [replica, setReplica] = useState<number | null>(null);
@@ -49,7 +51,6 @@ export function FirstOpenHost({ decision, children }: Readonly<{
     const playing = typeof phase === 'object';
     const wasPresenting = useRef(false);
     const presenting = playing || (replica !== null && !replicaClosed);
-    const readBuildReady = usePrepareStepBuild(decision === 'in-app' && phase !== 'still' && phase !== 'settled');
     const settle = useCallback(() => setPhase('settled'), []);
     const fadeToRest = useCallback(() => {
         opacity.setValue(0.65);
@@ -76,6 +77,10 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         if (wasPresenting.current && !presenting) performance.mark?.('first_open:destination-handoff');
         wasPresenting.current = presenting;
     }, [presenting]);
+
+    useLayoutEffect(() => {
+        if (phase === 'still' || phase === 'settled') release?.();
+    }, [phase, release]);
 
     useLayoutEffect(() => {
         if (!waitingForReplica) return;
@@ -107,17 +112,6 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         };
     }, [fadeToRest, publishWelcome, settle, waitingForReplica]);
 
-    useEffect(() => {
-        if (decision !== 'in-app') return;
-        let active = true;
-        void import('./FirstOpenScene').then(module => {
-            if (active && !seen.current) setScene(module);
-        }).catch(() => {
-            // The next layout settles through the same Still path as an unavailable renderer.
-        });
-        return () => { active = false; };
-    }, [decision]);
-
     const onFirstLayout = useCallback((event: LayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
         if (seen.current || width <= 0 || height <= 0) return;
@@ -130,7 +124,7 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         }
         // A desktop main webview commits this layout just before native shows it.
         if (scene && (isDesktopHost() || readHostActivelyViewed())
-            && resolveInAppFirstFrame(decision, readiness.current, readBuildReady()) === 'play') {
+            && resolveInAppFirstFrame(decision, readiness.current, stage?.isBuildReady() ?? false) === 'play') {
             const epoch = performance.now();
             activePlay.current = true;
             setPhase({ epoch });
@@ -143,7 +137,7 @@ export function FirstOpenHost({ decision, children }: Readonly<{
             return;
         }
         fadeToRest();
-    }, [decision, fadeToRest, readBuildReady, scene, settle, skip]);
+    }, [decision, fadeToRest, scene, settle, skip, stage]);
 
     useEffect(() => {
         if (phase !== 'still') return;
@@ -191,8 +185,8 @@ export function FirstOpenHost({ decision, children }: Readonly<{
                     </FirstOpenWelcomeEpoch.Provider>
                 </FirstOpenContentLayout.Provider>
             </Animated.View>
-            {Scene && (phase === 'preparing' || typeof phase === 'object')
-                ? <Scene epoch={typeof phase === 'object' ? phase.epoch : null} onReady={updateReady} />
+            {Scene && decision === 'in-app' && (phase === 'preparing' || typeof phase === 'object')
+                ? <Scene epoch={typeof phase === 'object' ? phase.epoch : null} onReady={updateReady} warmup={opening.warmup} />
                 : null}
         </View>
     );

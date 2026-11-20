@@ -15,6 +15,11 @@ type Backend = typeof import('./glyphPainter.native');
 type Painter = Awaited<ReturnType<Backend['createNativeGlyphPainter']>>;
 export type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphMotion } from './glyphSurfaceTypes';
 
+export function warmGlyphSurface(): undefined {
+    void import('./glyphPainter.native').catch(() => {});
+    return undefined;
+}
+
 export const GlyphSurface = React.memo(function GlyphSurface({
     width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, composePicture, drawAtRef, warmWhenHidden, viewport, digitCadence,
 }: GlyphSurfaceProps) {
