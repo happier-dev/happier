@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { decodeVoiceAssistantActions } from '../voice/actions.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../actions/actionExecutor.js';
 import { resolveMachineAgentTeamCredentialDemandV1 } from '../teams/credentials/teamCredentialModelCatalogV1.js';
 import { openPrivateLabelV1 } from '../crypto/privateLabelV1.js';
@@ -47,15 +48,7 @@ describe('teams.credential_models.available', () => {
       .toEqual({ requirements: null, applications: [], connectedServiceKeys: null });
   });
 
-  it.each([
-    { query: 'Musee model', versions: [''], matches: [''] },
-    { query: 'unrelated model', versions: [''], matches: [] },
-    { query: 'muse-spark-1.2', versions: ['1.2.3'], matches: [] },
-    { query: 'muse-spark-1.2', versions: ['1.2', '1.2.3'], matches: ['1.2'] },
-    { query: 'muse spark', versions: ['1.2', '1.3'], matches: ['1.2', '1.3'] },
-    { query: 'muse-spark-1.2.3', versions: ['1.2'], matches: [] },
-    { query: '1.2', versions: ['0.1.2'], matches: [] },
-  ])('resolves spoken spawn model "$query" with versions $versions', async ({ query, versions, matches }) => {
+  function spokenCatalog(versions: readonly string[]) {
     const muse = resource('muse', { pluginId: 'happier.agent.muse', localId: 'muse-account' });
     const modelId = (version: string) => version ? `muse-spark-${version}` : 'muse-model';
     const ref = (version: string) => ({ source: 'team_resource', teamId: 'team-1', resourceId: 'muse', expectedResourceRevision: 1,
@@ -65,7 +58,10 @@ describe('teams.credential_models.available', () => {
       selection: { ...model.selection, modelId: modelId(version) },
       descriptor: { id: modelId(version), name: version ? `Muse Spark ${version}` : 'Muse model' },
     }));
-    const result = await createActionExecutor({
+    const births: unknown[] = [];
+    const executor = createActionExecutor({
+      sessionSpawnNew: async request => { births.push(request.admittedInput);
+        return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; },
       agentsModelsList: async () => ({ items: [{ id: 'native', name: 'Native' }], source: 'dynamic' }),
       resolveSessionSpawnAgentInventorySelection: async () => ({ backendTargetKey: CODEX }),
       machinePluginProjectionRead: async () => projection,
@@ -73,11 +69,52 @@ describe('teams.credential_models.available', () => {
         ? { items: [TEAM], nextCursor: null } : { resources: [muse], nextCursor: null, failures: [] },
       providerActionExecute: async () => ({ ok: true, result: { status: 'success', agentTargetKey: CODEX, groups: [],
         teamCredentialResources: [muse] } }),
-    }).execute('action.options.resolve', {
-      actionId: 'session.spawn_new', fieldPath: 'modelSelection', query,
-      draftInput: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-        executionTarget: { serverId: 'home', machineId: 'm1' } },
-    }, { surface: 'voice', authority: 'present_user', serverId: 'home' });
+    });
+    return { executor, births, ref };
+  }
+
+  const spokenSpawnInput = {
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    executionTarget: { serverId: 'home', machineId: 'm1' },
+    directory: { kind: 'managed' },
+    initialInput: { text: 'Write exactly yellow to the requested file.' },
+  } as const;
+  const spokenSpawnContext = { surface: 'voice', authority: 'present_user', serverId: 'home', actionRequestId: 'spoken-model-request' } as const;
+
+  it.each([
+    { query: 'Muse Spark 1.2', versions: ['1.2', '1.2.3'], matched: '1.2', errorCode: null },
+    { query: 'Muse Spark', versions: ['1.2', '1.3'], matched: null, errorCode: 'provider_model_ambiguous' },
+    { query: 'Muse Spark 1.2', versions: ['1.2.3'], matched: null, errorCode: 'provider_model_not_found' },
+  ])('spawns a Voice child only after the spoken model "$query" resolves uniquely ($errorCode)', async ({ query, versions, matched, errorCode }) => {
+    const { executor, births, ref } = spokenCatalog(versions);
+    const decoded = decodeVoiceAssistantActions([{ t: 'spawnSession', args: { ...spokenSpawnInput, spokenModelName: query } }]);
+    expect(decoded.actions).toHaveLength(1);
+    const result = await executor.execute('session.spawn_new', decoded.actions[0]!.args, spokenSpawnContext);
+
+    if (matched) {
+      expect(result).toMatchObject({ ok: true, result: { type: 'pending' } });
+      expect(births).toMatchObject([{ modelSelection: { v: 2, ref: ref(matched), updatedAt: expect.any(Number) } }]);
+      expect(births[0]).not.toHaveProperty('spokenModelName');
+    } else {
+      expect(result).toMatchObject({ ok: false, errorCode,
+        details: { candidates: expect.arrayContaining(versions.map(version => expect.objectContaining({ value: ref(version) }))) } });
+      expect(births).toEqual([]);
+    }
+  });
+
+  it.each([
+    { query: 'Musee model', versions: [''], matches: [''] },
+    { query: 'unrelated model', versions: [''], matches: [] },
+    { query: 'muse-spark-1.2', versions: ['1.2.3'], matches: [] },
+    { query: 'muse-spark-1.2', versions: ['1.2', '1.2.3'], matches: ['1.2'] },
+    { query: 'muse spark', versions: ['1.2', '1.3'], matches: ['1.2', '1.3'] },
+    { query: 'muse-spark-1.2.3', versions: ['1.2'], matches: [] },
+    { query: '1.2', versions: ['0.1.2'], matches: [] },
+  ])('resolves spoken spawn model "$query" with versions $versions', async ({ query, versions, matches }) => {
+    const { executor, ref } = spokenCatalog(versions);
+    const result = await executor.execute('action.options.resolve', {
+      actionId: 'session.spawn_new', fieldPath: 'modelSelection', query, draftInput: spokenSpawnInput,
+    }, spokenSpawnContext);
     if (matches.length > 0) {
       expect(result).toMatchObject({ ok: true, result: { options: matches.map(version => ({ value: ref(version) })) } });
     } else {

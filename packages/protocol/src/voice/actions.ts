@@ -83,7 +83,7 @@ let voiceActionFunctionTool: ReturnType<typeof buildVoiceActionFunctionTool> | u
 function buildVoiceActionFunctionTool() {
   return {
     name: VOICE_ACTION_FUNCTION_NAME,
-    description: 'Execute one Happier Voice Action and use its returned result. If the user names a model for spawnSession, call resolveActionOptions for session.spawn_new at modelSelection. Use the exact selection returned, or ask for clarification. Omit modelSelection only if no model was requested.',
+    description: 'Execute one Happier Voice Action and wait for its settled result. If the person names a model for spawnSession, pass its spoken name in args.spokenModelName. Ask for clarification if it cannot be matched uniquely.',
     // Advertise transport, not the whole catalog. searchActionSpecs/getActionSpec
     // provide the canonical sectioned schemas on demand; the decoder below
     // still validates args against the selected Action before executing it.

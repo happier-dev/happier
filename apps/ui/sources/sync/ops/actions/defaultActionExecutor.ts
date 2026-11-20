@@ -5237,8 +5237,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // Settle omissions once; a carried review reuses these same captured facts.
       if (!reviewDigest && isSessionSpawnNewActionIdV1(actionId) && deps.prepareSessionSpawnNewInput) {
         try {
-          const prepared = await deps.prepareSessionSpawnNewInput(SessionSpawnNewActionInputV2Schema.parse(actionInput), context);
-          actionInput = prepared.input;
+          const authoring = SessionSpawnNewActionInputV2Schema.parse(actionInput);
+          const prepared = await deps.prepareSessionSpawnNewInput(authoring, context);
+          actionInput = authoring.spokenModelName === undefined ? prepared.input
+            : { ...prepared.input, spokenModelName: authoring.spokenModelName };
           context = { ...context, sessionCreationDefaults: prepared.defaults };
         } catch (error) {
           const failure = parseActionExecuteFailure(error);

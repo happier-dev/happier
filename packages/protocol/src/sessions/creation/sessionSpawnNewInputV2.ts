@@ -178,6 +178,8 @@ export const SessionSpawnNewActionInputV2BaseSchema = lazyZodSchema(() => z.stri
   ...SessionSpawnNewInputV2BaseSchema.shape,
   executionTarget: z.optional(SessionSpawnNewInputV2BaseSchema.shape.executionTarget),
   agentTarget: z.optional(SessionSpawnNewInputV2BaseSchema.shape.agentTarget),
+  /** Voice authoring resolves a spoken name before admitting an exact launch recipe. */
+  spokenModelName: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Flat model authoring waits for the selected Project's Agent choice. */
   modelSelectionInput: z.optional(z.strictObject({
     modelId: z.string().check(z.trim(), z.minLength(1)),
@@ -200,7 +202,7 @@ export const SessionSpawnNewActionVoiceInputV2Schema = SessionSpawnNewActionInpu
 
 function projectSessionSpawnNewActionSelectionV2(input: SessionSpawnNewActionAuthoringInputV2) {
   const { organizationPlacement, modelSelectionInput: _modelSelectionInput,
-    connectedServicesAuthIntent: _connectedServicesAuthIntent, ...selection } = input;
+    connectedServicesAuthIntent: _connectedServicesAuthIntent, spokenModelName: _spokenModelName, ...selection } = input;
   return { ...selection, ...(organizationPlacement ? { organizationPlacement: {
     folderId: organizationPlacement.sectionId, tagIds: organizationPlacement.tagIds,
   } } : {}) };
