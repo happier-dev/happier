@@ -320,13 +320,15 @@ function createAccountWorkflowTriggerActionOwner(params: WorkflowTriggerAccountH
     const trigger = row.triggers.find(item => item.id === triggerId);
     if (!trigger || trigger.kind !== 'action' || 'consentFor' in trigger) unavailable();
     const envelope = AutomationActionTriggerDefinitionEnvelopeV1Schema.parse(JSON.parse(trigger.triggerDefinitionEnvelope));
-    if (envelope.t !== 'workflow') return readAccountStoredActionTriggerV1(row, triggerId, current);
+    if (envelope.t !== 'workflow') {
+      return { ...readAccountStoredActionTriggerV1(row, triggerId, current), envelopeKind: envelope.t };
+    }
     if (!row.workflowDefinitionId) unavailable();
     const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: row.id,
       triggerId, triggerRevision: trigger.revision, triggerKind: 'action' });
     const definition = await openWorkflowAction(row.workflowDefinitionId, binding, envelope.content);
     assertStoredActionDefinitionMatches(definition, trigger);
-    return { trigger, binding, definition };
+    return { trigger, binding, definition, envelopeKind: envelope.t };
   };
   const sealWorkflowAction = async (workflowId: string, binding: AutomationTriggerDefinitionBindingV1,
     definition: AutomationActionTrigger) => {
@@ -739,7 +741,12 @@ if (trigger.kind === 'sessionLifecycle') {
     }
     if (requested.kind === 'action' && !('consentFor' in requested) && retained.kind === 'action' && !('consentFor' in retained)) {
       const { enabled: _enabled, ...definition } = requested;
-      return pluginJsonValuesEqual((await storedAction(row, retained.id, current)).definition, definition);
+      const stored = await storedAction(row, retained.id, current);
+      // An explicit author save upgrades an older Account-sealed filter even
+      // when its definition is unchanged. The actor cannot open that codec.
+      const needsWorkflowReseal = stored.envelopeKind !== 'workflow'
+        && parseWorkflowDefinitionRefV1(row.workflowDefinitionId)?.kind === 'artifact';
+      return !needsWorkflowReseal && pluginJsonValuesEqual(stored.definition, definition);
     }
     if (requested.kind === 'prComment' || requested.kind === 'ciFailed') {
       return pluginJsonValuesEqual(storedPullRequest(row, retained.id, current).definition,

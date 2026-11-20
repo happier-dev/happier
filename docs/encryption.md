@@ -726,6 +726,8 @@ and replaces their envelopes in the same transaction as the Workflow key,
 including checks authored by other people.
 Writes carry the Artifact revision used for sealing and use its existing
 publication lock and revision check, so key replacement cannot strand a delayed write.
+An author can re-save a retained Account-sealed check's definition to move it to
+the Workflow key, even when the filter and other settings stay the same.
 
 Artifact reads project `sharedTeamIds` only for direct Team grants admitted by
 the existing effective-membership policy. The Workflow library carries this
