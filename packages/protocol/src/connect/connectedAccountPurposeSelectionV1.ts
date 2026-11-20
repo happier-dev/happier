@@ -50,11 +50,18 @@ export function readDeclaredConnectedAccountPurposeV1(input: ConnectedAccountNat
           serviceRefs: entry.request.scope.serviceRefs.map(reference => qualifyPluginContributionReferenceV1(reference, manifest.id)) })) ?? []
     );
     const provisioners = manifest.contributes.machineProvisioners.filter(entry => entry.id === consumer.localId);
+    const systemToolPurposes = manifest.contributes.systemTools.flatMap(tool => {
+      const launch = tool.connectedAccountLaunch;
+      if (tool.id !== consumer.localId || launch?.purpose !== purpose) return [];
+      return [{ purpose, consumerKind: 'systemTool' as const,
+        serviceRefs: [qualifyPluginContributionReferenceV1(launch.service, manifest.id)] }];
+    });
     const candidates = [
       ...projectUseRequests(resolvePluginResourceConnectedAccountUseRequestsV2(manifest, consumer.localId), 'resource'),
       ...(provisioners.length === 1 ? projectUseRequests(
         resolvePluginActionConnectedAccountUseRequestsV2(manifest, provisioners[0]!.actions.acquire), 'machineProvisioner') : []),
       ...projectUseRequests(resolvePluginActionConnectedAccountUseRequestsV2(manifest, consumer.localId), 'action'),
+      ...systemToolPurposes,
     ];
     // Account and native origins share the same one-consumer purpose identity.
     return candidates.length === 1 ? candidates[0]! : null;

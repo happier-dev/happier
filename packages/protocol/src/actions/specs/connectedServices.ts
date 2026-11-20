@@ -175,7 +175,7 @@ function createConnectedServiceConfigurationActionSpecs() {
       { path: 'onlyIfUnset', title: 'Keep an intervening default', widget: 'boolean' },
     ] } },
   { ...common, id: 'connectedServices.purposes.default.set', approval: {result: 'required'}, approvalPolicy: { uiConfirmation: 'direct' }, title: 'Choose default connected account',
-    description: 'Choose the active personal account or pool for one purpose declared by an Account Resource or Action, or by the exact selected machine.',
+    description: 'Choose the active personal account or pool for a Resource, Action, or Account system tool purpose. Supply a Machine for an exact Machine declaration.',
     bindings: { mcpToolName: 'connected_services_purposes_default_set' },
     inputSchema: inputs['connectedServices.purposes.default.set'], outputSchema: outputs['connectedServices.purposes.default.set'],
     inputHints: { fields: [

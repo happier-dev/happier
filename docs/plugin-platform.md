@@ -10869,6 +10869,13 @@ anonymous only when the provider observes public repository visibility.
 
 ### Connected Account purpose setup (0.3 development)
 
+An Account can choose a default connected account for a system tool's declared
+`connectedAccountLaunch` purpose through `connectedServices.purposes.default.set`.
+With `machineId` omitted, admission uses the Account's selected plugin manifest
+and the declaration's qualified service. Fresh Session admission consumes this
+preference through the existing connected-services owner. For the bundled
+GitHub CLI purpose, that owner supplies `GH_TOKEN` only to admitted processes.
+
 Manual authentication modes can declare optional `machineSetup` in unreleased
 0.3 source. It references one existing Machine recipe and may prefill recipe
 inputs from the selected Machine's observed private-network HTTPS name. Missing

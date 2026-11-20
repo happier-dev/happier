@@ -36,6 +36,36 @@ describe('connected Account purpose declaration selection', () => {
       consumer: { pluginId: 'com.acme.foreign', localId: 'read-cloud' } }, accountSelection })).toBeNull();
   });
 
+  it('admits an Account default for a declared system tool purpose only for its qualified service', () => {
+    const manifest = PluginPortableReleaseManifestV1Schema.parse({
+      schemaVersion: 2, id: 'com.acme.forge', version: '1.0.0', displayName: 'Forge',
+      engines: { happier: '^1.0.0' }, runtime: { apiVersion: 1 },
+      contributes: { systemTools: [{ id: 'forge-cli', title: 'Forge CLI', executableNames: ['forge'],
+        connectedAccountLaunch: { purpose: 'forge.cli', service: 'forge-account', environmentKey: 'FORGE_TOKEN' } }],
+        connectedAccountDescriptors: [{ id: 'forge-account', title: 'Forge account', authentication: {
+          defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none',
+            fields: [{ id: 'token', title: 'Token', secret: true, schema: { type: 'string' } }] }] } }] },
+    });
+    const accountSelection = resolvePluginAccountExecutionSelectionV1({ pluginId: manifest.id, intentRead: null,
+      bundled: createPluginAccountBundledSelectionV1({ packageName: '@acme/forge', manifest }) });
+    if (accountSelection.kind !== 'available') throw new Error('Expected the admitted Account plugin');
+    const purpose = { consumer: { pluginId: manifest.id, localId: 'forge-cli' }, purpose: 'forge.cli' };
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service: { pluginId: manifest.id, localId: 'forge-account' }, accountId: 'owner' }, status: 'connected',
+      authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+      configurationReady: true, configurationRevision: null, scopes: [],
+    });
+    const input = { declaration: { purpose, accountSelection }, target: { kind: 'account' as const, account: profile.ref },
+      accounts: [profile], groups: [], now: 1 };
+    expect(resolveConnectedAccountPurposeDefaultTargetV1(input)).toEqual(profile);
+
+    const foreign = { ...profile, ref: { ...profile.ref, service: { ...profile.ref.service, pluginId: 'com.acme.other' } } };
+    expect(resolveConnectedAccountPurposeDefaultTargetV1({ ...input, accounts: [foreign],
+      target: { kind: 'account', account: foreign.ref } })).toBeNull();
+    expect(resolveConnectedAccountPurposeDefaultTargetV1({ ...input,
+      declaration: { ...input.declaration, purpose: { ...purpose, purpose: 'other.cli' } } })).toBeNull();
+  });
+
   it('admits Account pool defaults using only the exact admitted service manifest authentication', () => {
     const manifest = PluginPortableReleaseManifestV1Schema.parse({
       schemaVersion: 2, id: 'com.acme.pool', version: '1.0.0', displayName: 'Pool',

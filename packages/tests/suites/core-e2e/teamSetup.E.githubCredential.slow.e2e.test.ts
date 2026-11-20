@@ -246,15 +246,18 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
   type Account = Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
   type Machine = Awaited<ReturnType<TeamSetupFFixture['enrollDaemon']>>;
   type Ui = Awaited<ReturnType<typeof connectUiActionClient>>;
-  function spawnInput(selection?: ConnectedServiceBindingSelectionV2, targetMachine: Machine = machine) {
+  type LaunchSelection = ConnectedServiceBindingSelectionV2 | 'account-default';
+  function spawnInput(selection?: LaunchSelection, targetMachine: Machine = machine) {
     return {
       executionTarget: targetMachine.target, directory: { kind: 'path' as const, path: targetMachine.workspaceDir },
       agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-      connectedServices: { v: 2 as const, bindingsByServiceId: selection ? { [serviceKey]: selection } : {} },
+      ...(selection !== 'account-default' ? {
+        connectedServices: { v: 2 as const, bindingsByServiceId: selection ? { [serviceKey]: selection } : {} },
+      } : {}),
       terminal: { mode: 'plain' as const },
     };
   }
-  async function admit(selection?: ConnectedServiceBindingSelectionV2, scope: { account: Account; machine: Machine; ui: Ui } = {
+  async function admit(selection?: LaunchSelection, scope: { account: Account; machine: Machine; ui: Ui } = {
     account, machine, ui: ui!,
   }) {
     const before = await readFile(attestationPath, 'utf8').catch(() => '');
@@ -379,11 +382,20 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
       === fingerprint(`Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`))).toBe(true);
   }
 
-  it('TS.E.githubCredential uses a personal binding, switches at the next admission and leaves unbound/native isolated', async () => {
+  it('TS.E.githubCredential uses the saved Account CLI purpose on the next admission and leaves native isolated', async () => {
+    await ui!.waitForPluginAccountAvailability();
+    const selectCliAccount = async (ref: Awaited<ReturnType<typeof importToken>>) => {
+      const chosen = await ui!.executeConfirmed('connectedServices.purposes.default.set', {
+        purpose: { consumer: { pluginId: service.pluginId, localId: 'gh' }, purpose: 'github.cli' },
+        target: { kind: 'account', account: ref },
+      }, { surface: 'ui', authority: 'present_user', serverId: ui!.serverId, actionCaller: { kind: 'host' } });
+      expect(chosen, chosen.ok ? undefined : chosen.errorCode).toMatchObject({ ok: true, result: { applied: true } });
+    };
     const firstToken = `github_pat_TEST_ONLY_FIRST_${randomUUID()}`;
     const secondToken = `github_pat_TEST_ONLY_SECOND_${randomUUID()}`;
     const firstAccount = await importToken(firstToken);
-    const first = await admit({ source: 'connected', selection: 'profile', profileId: firstAccount.accountId });
+    await selectCliAccount(firstAccount);
+    const first = await admit('account-default');
     expect(first.observed.tokenFingerprint).toBe(fingerprint(firstToken));
     expect(first.observed.gh, first.observed.gh.output).toMatchObject({ code: 0 });
     expect(first.observed.gh.output).toContain('team-setup-fixture');
@@ -393,7 +405,8 @@ await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});
     await assertAssociatedTerminal(first.sessionId, firstToken);
     await assertSessionSetup(first.observed.sessionMcpContextFile, firstToken);
     const secondAccount = await importToken(secondToken);
-    const second = await admit({ source: 'connected', selection: 'profile', profileId: secondAccount.accountId });
+    await selectCliAccount(secondAccount);
+    const second = await admit('account-default');
     expect(second.observed).toMatchObject({ tokenFingerprint: fingerprint(secondToken), gh: { code: 0 }, git: { code: 0 } });
     // A new Session admission cannot replace an existing Session's associated
     // process selection. Both native gh and Git still use the first binding.
