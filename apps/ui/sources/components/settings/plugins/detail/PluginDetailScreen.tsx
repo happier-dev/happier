@@ -165,6 +165,7 @@ function PluginDetailCurrentContent(props: Readonly<{
             {installed ? (
                 <PluginSetupSection
                     pluginId={props.pluginId}
+                    title={props.projection?.title ?? installed.title ?? props.pluginId}
                     host={host}
                     projection={state.pluginProjectionV2}
                     machineId={state.executionMachineId}

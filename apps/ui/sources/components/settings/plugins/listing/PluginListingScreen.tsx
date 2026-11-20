@@ -130,6 +130,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
         <>
             <PluginSetupSection
                 pluginId={props.pluginId}
+                title={title}
                 host={host}
                 projection={state.pluginProjectionV2}
                 machineId={state.executionMachineId}
