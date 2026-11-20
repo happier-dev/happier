@@ -11,12 +11,13 @@ import { HappierChevron } from '../collection/DisclosureChevron.js';
 import { HappierPageSheet, useHappierPageSection, type HappierPageSheetProps } from '../layout/PageSection.js';
 import type { HappierPageRowMetrics } from '../layout/pageRowMetrics.js';
 import { HAPPIER_PRESS_FEEDBACK_V1 } from '../interaction/pressFeedback.js';
+import { HAPPIER_MOTION_V1 } from '../interaction/motion.js';
 import { useHappierHitArea } from '../interaction/hitArea.js';
 import type { HappierHitReach } from '../../environment/interactiveTarget.js';
 import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow } from '../layout/pageMetrics.js';
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import { HAPPIER_FIELD_BOX_METRICS } from './FieldBox.js';
-import { resolveHappierRadioMarkStyle } from './RadioMark.js';
+import { HAPPIER_RADIO_MARK_METRICS, resolveHappierRadioMarkStyle } from './RadioMark.js';
 import { useHappierMaterialColorResolver } from '../layout/Surface.js';
 import { usePageWindow } from '../collection/pageCollectionVirtualizer.js';
 import { useOptionalPluginUiScrollActivityTracker, type PluginUiScrollActivityTracker } from '../../presentationHost/scrollActivity.js';
@@ -89,8 +90,12 @@ export type HappierSelectionTilesColors = Readonly<{
   ring: string;
   /** The ground behind a visual preview. */
   previewBackground: string;
-  /** An action tile's paper and its hovered outline. */
+  /** An action tile's paper. */
   actionBackground: string;
+  /**
+   * One ink step above `tileBorder`: an action or card tile's outline under a hovering pointer, and the empty ring an
+   * unchosen single-choice card shows where the chosen card's filled check sits.
+   */
   actionBorderHovered: string;
   /** The hairline between the cells of a `surface="sheet"` group; the tile outline colour when absent. */
   divider?: string;
@@ -894,6 +899,60 @@ const CARD_GAP_TIGHT_PX = 8;
 const CARD_LINE_ESTIMATE_PX = { regular: 92, compact: 48 } as const;
 const FILL_TILE_FRAME: ViewStyle = { width: '100%' };
 
+/** A card's outline and its mark settle on the colour step of the motion scale; nothing in the card moves. */
+const CARD_PAINT_TRANSITION = Platform.OS === 'web' ? {
+  transitionProperty: 'border-color, background-color',
+  transitionDuration: `${HAPPIER_MOTION_V1.hoverMs}ms`,
+  transitionTimingFunction: HAPPIER_MOTION_V1.standardEasingCss,
+} as ViewStyle : null;
+
+type CardTileHoverHandlers = Readonly<{ onHoverIn?: () => void; onHoverOut?: () => void }>;
+
+/**
+ * A card tile's frame. Its outline darkens one ink step while a pointer hovers the card's choice (colour only; a
+ * finger has no hover, and React Native reports hover for fine pointers alone). The frame holds its own hover so a
+ * pointer crossing a large group repaints one card, not the group.
+ */
+function CardTileFrame(props: Readonly<{
+  style: ComponentProps<typeof View>['style'];
+  hoverBorderColor: string | null;
+  onLayout?: (event: { nativeEvent: { layout: { height: number } } }) => void;
+  children: (hover: CardTileHoverHandlers) => ReactNode;
+}>): ReactElement {
+  const [hovered, setHovered] = useState(false);
+  const hover = useMemo<CardTileHoverHandlers>(() => ({
+    onHoverIn: () => setHovered(true),
+    onHoverOut: () => setHovered(false),
+  }), []);
+  return (
+    <View
+      {...(props.onLayout ? { onLayout: props.onLayout } : {})}
+      style={[props.style, CARD_PAINT_TRANSITION, hovered && props.hoverBorderColor ? { borderColor: props.hoverBorderColor } : null]}
+    >
+      {props.children(hover)}
+    </View>
+  );
+}
+
+/** The chosen single-choice card's filled check and an unchosen card's empty ring: one diameter, so nothing shifts. */
+function CardChoiceMark<I extends string>(props: Readonly<{
+  selected: boolean;
+  colors: HappierSelectionTilesColors;
+  renderGlyph: HappierSelectionTilesGlyphRenderer<I>;
+}>): ReactElement {
+  const { size } = HAPPIER_RADIO_MARK_METRICS;
+  return (
+    <View style={[
+      resolveHappierRadioMarkStyle({ selected: false, ink: props.colors.selection, quiet: props.colors.actionBorderHovered, surface: 'transparent' }),
+      CARD_PAINT_TRANSITION,
+      props.selected ? { borderColor: props.colors.selection, backgroundColor: props.colors.selection } : null,
+      { alignItems: 'center', justifyContent: 'center' },
+    ]}>
+      {props.selected ? props.renderGlyph({ glyph: { kind: 'check' }, size: Math.round(size * 0.625), color: props.colors.tileBackground }) : null}
+    </View>
+  );
+}
+
 function CardSelectionTiles<T extends string, I extends string>(props: HappierChoiceSelectionTilesProps<T, I>) {
   const styles = useTileStyles(props.colors);
   const [width, setWidth] = useState<number>(0);
@@ -1004,9 +1063,11 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
           : null;
 
         return (
-          <View
+          <CardTileFrame
             key={option.id}
-            {...(onHeight === undefined ? {} : { onLayout: (event: { nativeEvent: { layout: { height: number } } }) => onHeight(option.id, event.nativeEvent.layout.height) })}
+            onLayout={onHeight === undefined ? undefined : (event) => onHeight(option.id, event.nativeEvent.layout.height)}
+            // A sheet's cells have no outline of their own; a chosen card keeps its selection ink under the pointer.
+            hoverBorderColor={sheet || selected || disabled ? null : props.colors.actionBorderHovered}
             style={sheet ? [
               styles.sheetCell,
               tileWidth ? { width: tileWidth } : fallbackTileWidthStyle,
@@ -1021,8 +1082,10 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
               trailing ? styles.tileTrailing : null,
             ]}
           >
+            {(hover) => (<>
             <SelectionTilePressable
               {...tileKeyboardProps(index)}
+              {...hover}
               // Sheet cells meet edge to edge; separate tiles reach half the gap between them.
               hitReach={sheet ? 0 : gap / 2}
               testID={tileTestID}
@@ -1098,7 +1161,11 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                       that a table's or a list's radio draws. */}
                   {sheet && !(selected && props.selectionMode === 'multiple')
                     ? <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />
-                    : selected && props.selectionMark !== 'outline' ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null}
+                    : props.selectionMark === 'outline' ? null
+                    // A single choice shows every card's mark: an empty ring that becomes the filled check (option F),
+                    // one size, so choosing changes only the outline and the mark.
+                    : props.selectionMode !== 'multiple' ? <CardChoiceMark selected={selected} colors={props.colors} renderGlyph={props.renderGlyph} />
+                    : selected ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null}
                 </View>
               </View>
               {below && (hasSubtitle || option.status) ? (
@@ -1115,7 +1182,8 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                 {footer}
               </View>
             ) : null}
-          </View>
+            </>)}
+          </CardTileFrame>
         );
   };
   const gridStyle: ViewStyle[] = [styles.grid, { flexDirection: 'row', flexWrap: 'wrap', gap }];
