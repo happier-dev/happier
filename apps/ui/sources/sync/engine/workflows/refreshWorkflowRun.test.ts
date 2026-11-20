@@ -1,12 +1,12 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
-import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protocol/workflows/workflowRunKeyV1';
 import type { WorkflowRunAcceptedContextV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createAutomationRunFixture, createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createAutomationRunFixture, createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -18,7 +18,7 @@ installHomeGovernanceBoundaries(home);
 installDisconnectedServerSocketBoundary();
 beforeAll(loadSyncSingletonForTests);
 const { storage } = await import('@/sync/domains/state/storageStore');
-const { refreshWorkflowRunById, refreshWorkflowRunsByIds } = await import('./refreshWorkflowRun');
+const { refreshWorkflowRunById, refreshWorkflowRunsByIds, refreshWorkflowRunSummaries } = await import('./refreshWorkflowRun');
 const { workflowRunRowFromAutomationRun, workflowRunRowFromSummary, workflowRunStoreKey } = await import('@/sync/store/domains/workflowRuns');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -43,7 +43,8 @@ beforeEach(async () => {
 afterEach(async () => { standardCleanup(); await home.reset(); storage.setState(previous); publishAppliedActiveServerSnapshot(applied, available); });
 
 async function serveRun(metadata?: { title: string }, unopened = false,
-    source: WorkflowRunAcceptedContextV1['source'] = { kind: 'inline' }, access: 'owner' | 'view' = 'owner') {
+    source: WorkflowRunAcceptedContextV1['source'] = { kind: 'inline' }, access: 'owner' | 'view' = 'owner',
+    invocationRecordIds: readonly string[] = []) {
     const materialized = await materializeWorkflowAcceptedSnapshotV1({
         definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'wait',
             document: { text: 'Continue', references: [], attachments: [] } }] }),
@@ -58,11 +59,49 @@ async function serveRun(metadata?: { title: string }, unopened = false,
     const keyCensus = WorkflowRunRecipientCensusResponseV1Schema.parse({ runId: run.id, ownerAccountId: run.ownerAccountId,
         access, encryptionMode: 'plain', dataEncryptionKey: null, callerDataEncryptionKey: null, recipients: [], visibleTeamId: null,
         ownerAccountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+    const invocationProgress = invocationRecordIds.map((id, ordinal) => {
+        const index = createWorkflowInvocationIndexFixture({ id, runId: run.id,
+            sequence: String(ordinal + 1), memberOrdinal: String(ordinal), lifecycle: 'completed' });
+        const contentEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({
+            mode: 'plain',
+            binding: { v: 1, purpose: 'invocation_progress', accountId: run.ownerAccountId, runId: run.id,
+                recordId: id, sequence: index.sequence, parentRecordId: index.parentRecordId,
+                memberOrdinal: index.memberOrdinal, attempt: index.attempt },
+            progress: { kind: 'happier.workflow-progress.v1', blockKind: 'wait',
+                invocationPath: { blockId: 'wait', scope: [] }, attempt: index.attempt, logicalInvocationRecordId: id },
+        }));
+        return { index, contentEnvelope };
+    });
     home.answer(serverId, route, { body: { runs: [run], acceptedEnvelopesByRunId: { [run.id]: unopened ? '{}' : acceptedEnvelope },
-        keyCensusByRunId: { [run.id]: keyCensus } } });
+        keyCensusByRunId: { [run.id]: keyCensus }, invocationProgressByRunId: { [run.id]: invocationProgress } } });
 }
 
 describe('refreshWorkflowRunById through the real Account summary and store owners', () => {
+    it('publishes a Run’s transcript invocation batch once and ignores an unchanged Account refresh', async () => {
+        const invocationRecordIds = Array.from({ length: 24 }, (_, i) => `transcript-invocation-${i + 1}`);
+        await serveRun(undefined, false, undefined, 'owner', invocationRecordIds);
+        const key = workflowRunStoreKey(run.id);
+        const publications: string[][] = [];
+        const unsubscribe = storage.subscribe((state, previousState) => {
+            const current = state.workflowRunInvocationsByRunId[key];
+            if (current && current !== previousState.workflowRunInvocationsByRunId[key]) {
+                publications.push(Object.keys(current.factsById).sort());
+            }
+        });
+        try {
+            await refreshWorkflowRunSummaries([{ runId: run.id, invocationRecordIds }]);
+            const published = storage.getState().workflowRunInvocationsByRunId[key];
+            expect(Object.keys(published?.factsById ?? {}).sort()).toEqual([...invocationRecordIds].sort());
+            expect(published?.history.loaded).toBe(false);
+            expect(publications).toHaveLength(1);
+
+            await refreshWorkflowRunById(run.id);
+            expect(storage.getState().workflowRunInvocationsByRunId[key]).toBe(published);
+            expect(publications).toHaveLength(1);
+            expect(home.requestsFor(route)).toHaveLength(2);
+        } finally { unsubscribe(); }
+    });
+
     it.each(['available', 'unreadable', 'incomplete'] as const)('FIX257 checkpoints a Workflow invalidation only after %s materialization', async kind => {
         await serveRun(undefined, kind === 'unreadable');
         if (kind === 'incomplete') home.answer(serverId, route, { body: { runs: [{ id: run.id }] } });

@@ -1,10 +1,9 @@
 import { storage } from '@/sync/domains/state/storage';
 import { listWorkflowRuns } from '@/sync/domains/workflows/workflowRunListActions';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
+import { workflowRunRowFromSummary, workflowRunStoreKey, type WorkflowRunInvocationObservation } from '@/sync/store/domains/workflowRuns';
 import type { WorkflowRunGetResultV1, WorkflowRunListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
-import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { supportsWorkflowAnotherRoundV1 } from '@happier-dev/protocol/workflows';
 import { readWorkflowRunDisplayMetadataV1 } from '@happier-dev/protocol/workflows/workflowRunDisplayMetadataV1';
@@ -20,12 +19,21 @@ export function publishOpenedWorkflowRunDetail(detail: WorkflowRunGetResultV1, s
 // Only pending reads are shared; the Account's existing Run/fact maps own all resolved content.
 const pendingSummaries = new WeakMap<ActiveServerAccountScopeLifetime, Map<string, Promise<void>>>();
 
-function publishInvocationProvenance(run: WorkflowRunListResultV1['runs'][number], facts: WorkflowRunListResultV1['invocationProvenance'], scope?: ServerAccountScope): void {
-    for (const fact of facts ?? []) {
-        if (fact.index.runId !== run.id) continue;
-        storage.getState().upsertWorkflowRunInvocation({ runId: run.id, scope, parentRevision: run.revision,
-            invocation: { ...fact.index, ...(fact.stepOrdinal ? { stepOrdinal: fact.stepOrdinal } : {}),
-                ...(fact.notificationCondition ? { notificationCondition: fact.notificationCondition } : {}), provenanceLoaded: true } });
+function publishInvocationProvenance(runs: WorkflowRunListResultV1['runs'], facts: WorkflowRunListResultV1['invocationProvenance'], scope?: ServerAccountScope): void {
+    if (!facts?.length) return;
+    const byRunId = new Map<string, WorkflowRunInvocationObservation[]>();
+    for (const fact of facts) {
+        const invocation: WorkflowRunInvocationObservation = { ...fact.index,
+            ...(fact.stepOrdinal ? { stepOrdinal: fact.stepOrdinal } : {}),
+            ...(fact.notificationCondition ? { notificationCondition: fact.notificationCondition } : {}), provenanceLoaded: true };
+        const existing = byRunId.get(invocation.runId);
+        if (existing) existing.push(invocation);
+        else byRunId.set(invocation.runId, [invocation]);
+    }
+    const { upsertWorkflowRunInvocations } = storage.getState();
+    for (const run of runs) {
+        const invocations = byRunId.get(run.id);
+        if (invocations) upsertWorkflowRunInvocations({ runId: run.id, scope, parentRevision: run.revision, invocations });
     }
 }
 
@@ -53,7 +61,7 @@ export function refreshWorkflowRunSummaries(
             const state = storage.getState();
             state.upsertWorkflowRuns(page.runs.map(run => workflowRunRowFromSummary(run, page.metadataByRunId[run.id] ?? null,
                 undefined, page.callerAccessByRunId?.[run.id])));
-            for (const run of page.runs) publishInvocationProvenance(run, page.invocationProvenance);
+            publishInvocationProvenance(page.runs, page.invocationProvenance);
             cursor = page.nextCursor;
         } while (cursor);
     })().finally(() => { retirement.dispose(); pending.delete(key); });
@@ -128,7 +136,7 @@ export async function refreshWorkflowRunsByIds(
     const state = storage.getState();
     state.upsertWorkflowRuns(listed.map(run => workflowRunRowFromSummary(run, metadataByRunId[run.id] ?? null,
         undefined, callerAccessByRunId[run.id])), scope);
-    for (const run of listed) publishInvocationProvenance(run, provenance, scope);
+    publishInvocationProvenance(listed, provenance, scope);
     const listedIds = new Set(listed.map(run => run.id));
     for (const runId of ids) {
         if (!listedIds.has(runId) && state.workflowRunsById[workflowRunStoreKey(runId, scope)]?.summary) {

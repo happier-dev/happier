@@ -151,6 +151,13 @@ export type WorkflowRunsDomain = {
         invocation: WorkflowRunInvocationObservation;
         parentRevision: number;
     }>) => void;
+    /** Merge exact observations together without opening or moving a traversal. */
+    upsertWorkflowRunInvocations: (input: Readonly<{
+        scope?: ServerAccountScope | null;
+        runId: string;
+        invocations: readonly WorkflowRunInvocationObservation[];
+        parentRevision: number;
+    }>) => void;
     /** Record the exact first-failure evidence (`null`: the Run has none). */
     setWorkflowRunFirstFailedInvocation: (input: Readonly<{
         scope?: ServerAccountScope | null;
@@ -1069,19 +1076,21 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                     },
                 };
             }),
-        upsertWorkflowRunInvocation: ({ runId, scope, invocation, parentRevision }) =>
+        upsertWorkflowRunInvocation: ({ invocation, ...input }) =>
+            get().upsertWorkflowRunInvocations({ ...input, invocations: [invocation] }),
+        upsertWorkflowRunInvocations: ({ runId, scope, invocations, parentRevision }) =>
             set((state) => {
                 const key = workflowRunStoreKey(runId, scope);
                 const previous = state.workflowRunInvocationsByRunId[key] ?? EMPTY_RUN_INVOCATIONS;
-                const merged = mergeInvocationFacts(previous, [invocation]);
+                const merged = mergeInvocationFacts(previous, invocations);
                 const { factsById } = merged;
                 const candidateHistory: WorkflowRunInvocationWindow = {
                     ...previous.history,
-                    invocationIds: appendUniqueInvocationIds(previous.history.invocationIds, [invocation.id]),
+                    invocationIds: appendUniqueInvocationIds(previous.history.invocationIds, invocations.map(invocation => invocation.id)),
                     parentRevision: Math.max(previous.history.parentRevision ?? 0, parentRevision),
                 };
                 const history = sameStrictJsonValue(previous.history, candidateHistory) ? previous.history : candidateHistory;
-                const candidateAttention = mergeInvocationAttention(previous.attention, factsById, [invocation]);
+                const candidateAttention = mergeInvocationAttention(previous.attention, factsById, invocations);
                 const attention = sameStrictJsonValue(previous.attention, candidateAttention) ? previous.attention : candidateAttention;
                 if (merged.openedReadMetadataById === previous.openedReadMetadataById && factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
                 return {
