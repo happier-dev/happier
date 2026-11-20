@@ -23,7 +23,7 @@ export function crabboxErrorCode(error: unknown) {
 /** A completed dependency observation, distinct from a failed host adapter. */
 export class CrabboxDependencyUnavailable extends Error {
   readonly code = 'provider_unavailable';
-  constructor() { super('Crabbox executable unavailable on this computer'); }
+  constructor(readonly missing = false) { super('Crabbox executable unavailable on this computer'); }
 }
 
 /** Vendor facts and exact native IO. The host owns admission, credentials,
@@ -70,7 +70,7 @@ export function createCrabboxProvider(options: Readonly<{
       const resource = CrabboxResourceV1Schema.parse({ transport: launch.transport, backendId: launch.backendId, namespace: launch.namespace, leaseId });
       const result = await native.acquire(launch, resource, input.bootstrapPublicKey, options.signal);
       const cause = result.nativeCause ? { nativeCause: result.nativeCause } : {};
-      if (result.status === 'refused') return { kind: 'rejected', code: 'provider_unavailable', ...cause };
+      if (result.status === 'refused') return { kind: 'rejected', code: result.code === 'credential_unavailable' ? result.code : 'provider_unavailable', ...cause };
       const reference = { contributionRef, schemaVersion: 1, value: result.resource };
       return result.status === 'allocated' ? { kind: 'bound', resource: { ...reference, origin: 'created' as const } }
         : { kind: 'pending', nativeOperationRef: reference, ...cause };

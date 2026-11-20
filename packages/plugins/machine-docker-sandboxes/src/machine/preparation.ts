@@ -4,7 +4,7 @@ import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
-import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerPreparationInstallScript, projectMachineProvisionerActionFailure, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createDockerSandboxesNativeClient } from './nativeClient.js';
 import { DOCKER_SANDBOXES_PREPARATION_BUILDER_PREFIX as builderPrefix, DOCKER_SANDBOXES_PREPARATION_TEMPLATE_PREFIX as templatePrefix,
   DockerSandboxesPreparationInputSchema, DockerSandboxesPreparedArtifactSchema, DockerSandboxesPreparationOperationSchema } from './schemas.js';
@@ -67,7 +67,8 @@ export function createDockerSandboxesPreparation(exec: Pick<ExecService, 'run'>,
         }
         // The canonical supplier's script expects its public payload files in
         // the working directory. No provider credential acquisition occurs here.
-        const script = `cd '${directory}'\n${input.cli.installScript}\n${input.setupScript ?? ''}\nrm -rf -- '${directory}'\n`;
+        const script = buildMachineProvisionerPreparationInstallScript({ cli: input.cli, stageDirectory: directory, setupScript: input.setupScript })
+          + 'rm -rf -- ' + quote(directory) + '\n';
         if (!completed(await native.exec(builder, ['sh', '-eu', '-s'], signal, new TextEncoder().encode(script)))) {
           return unknown(operation, failureCode);
         }

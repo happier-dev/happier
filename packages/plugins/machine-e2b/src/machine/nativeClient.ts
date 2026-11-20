@@ -1,6 +1,7 @@
+import { isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { E2bNativeError, projectE2bNativeFailure } from './nativeFailure.js';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { readMachineProvisionerCredentialRefusal, assertMachineProvisionerGuestCommandSucceeded, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type E2bLaunch, type E2bResource, type E2bOperation } from './schemas.js';
 import { executeEnvd, type EnvdSession } from './envd.js';
 
@@ -23,7 +24,6 @@ const detailSchema = defineProtocolObject({ sandboxID: text,
 }, open);
 type Acquisition = ReturnType<typeof RECONCILIATION.result.parse>;
 type Destruction = ReturnType<typeof RECONCILIATION.destroyResult.parse>;
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const invalid = () => new E2bNativeError({ code: 'e2b_invalid_response' });
 const pathOf = (resource: E2bResource) => '/sandboxes/' + encodeURIComponent(resource.sandboxId);
 const safeCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable';
@@ -41,7 +41,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     return response;
   }
   function requireSuccess(response: Response) {
-    if (!response.ok) throw new E2bNativeError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'e2b_http_' + response.status });
+    if (!response.ok) throw new E2bNativeError({ code: readMachineProvisionerCredentialRefusal(response.status) ?? 'e2b_http_' + response.status });
   }
   async function json(response: Response): Promise<unknown> {
     requireSuccess(response);
@@ -49,7 +49,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
   }
   async function read(resource: E2bResource) {
     const response = await http(pathOf(resource));
-    if (response.status === 404) return null;
+    if (response.status === 404 && (await listManagedSandboxes(resource.managedId)).size === 0) return null;
     const result = detailSchema.safeParse(await json(response));
     if (!result.success || result.data.sandboxID !== resource.sandboxId || result.data.metadata?.['happier-managed-id'] !== resource.managedId
       || !Number.isFinite(Date.parse(result.data.endAt))) throw invalid();
@@ -70,23 +70,27 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     });
     requireSuccess(response);
   }
+  async function listManagedSandboxes(managedId: string) {
+    let next: string | null = null;
+    const matches = new Set<string>();
+    do {
+      const query = new URLSearchParams({ metadata: new URLSearchParams({ 'happier-managed-id': managedId }).toString(), state: 'running,paused' });
+      if (next) query.set('nextToken', next);
+      const response = await http('/v2/sandboxes?' + query);
+      const value = await json(response);
+      if (!Array.isArray(value)) throw invalid();
+      for (const entry of value) {
+        const decoded = listedSchema.safeParse(entry);
+        if (!decoded.success) throw invalid();
+        if (decoded.data.metadata?.['happier-managed-id'] === managedId) matches.add(decoded.data.sandboxID);
+      }
+      next = response.headers.get('x-next-token');
+    } while (next);
+    return matches;
+  }
   async function recover(operation: E2bOperation): Promise<Acquisition> {
     try {
-      let next: string | null = null;
-      const matches = new Set<string>();
-      do {
-        const query = new URLSearchParams({ metadata: new URLSearchParams({ 'happier-managed-id': operation.managedId }).toString(), state: 'running,paused' });
-        if (next) query.set('nextToken', next);
-        const response = await http('/v2/sandboxes?' + query);
-        const value = await json(response);
-        if (!Array.isArray(value)) return unknown(operation);
-        for (const entry of value) {
-          const decoded = listedSchema.safeParse(entry);
-          if (!decoded.success) return unknown(operation);
-          if (decoded.data.metadata?.['happier-managed-id'] === operation.managedId) matches.add(decoded.data.sandboxID);
-        }
-        next = response.headers.get('x-next-token');
-      } while (next);
+      const matches = await listManagedSandboxes(operation.managedId);
       if (matches.size !== 1) return unknown(operation);
       return { kind: 'bound', resource: { ...reference({ sandboxId: [...matches][0]!, managedId: operation.managedId, timeoutSeconds: operation.launch.timeoutSeconds }), origin: 'created' as const } };
     } catch (error) { return projectE2bNativeFailure(error, () => unknown(operation)); }
@@ -152,9 +156,9 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     }
     if (!await read(input.resource)) return { kind: 'confirmed' };
     const response = await http(pathOf(input.resource), 'DELETE');
-    if (response.status === 204 || response.status === 404) return { kind: 'confirmed' };
-    requireSuccess(response);
-    return { kind: 'unknown', code: 'e2b_delete_unconfirmed' };
+    if (response.status !== 404) requireSuccess(response);
+    if (signal.aborted) return { kind: 'unknown', code: 'e2b_delete_unconfirmed' };
+    return projectMachineProvisionerDeleteReadback(await inspect(input.resource), 'e2b_delete_unconfirmed');
   }
   return {
     async check(): Promise<MachineProvisionerCheckResultV1> {
@@ -171,20 +175,16 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
       try {
         const response = await http('/v2/sandboxes', 'POST', { templateID: launch.templateId, timeout: launch.timeoutSeconds,
           autoPause: true, autoPauseMemory: true, autoResume: { enabled: false }, metadata: { 'happier-managed-id': managedId } }, { 'idempotency-key': managedId });
-        if (response.status === 401 || response.status === 403) return { kind: 'rejected', code: 'credential_unavailable' };
-        if (response.status >= 400 && response.status < 500 && response.status !== 409 && response.status !== 422) return { kind: 'rejected', code: 'provider_unavailable' };
+        const credentialRefusal = readMachineProvisionerCredentialRefusal(response.status);
+        if (credentialRefusal) return { kind: 'rejected', code: credentialRefusal };
+        if (isMachineProvisionerCreateRefusal(response.status, [409, 422])) return { kind: 'rejected', code: 'provider_unavailable' };
         const decoded = identitySchema.safeParse(await json(response));
         return decoded.success ? { kind: 'bound', resource: { ...reference({ sandboxId: decoded.data.sandboxID, managedId, timeoutSeconds: launch.timeoutSeconds }), origin: 'created' as const } } : pending(operation);
       } catch (error) { return projectE2bNativeFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : pending(operation)); }
     },
     recover, inspect, exec, power, destroy,
-    async bootstrap(resource: E2bResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-      const result = await executeEnvd(request, signal, await guest(resource), ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-      assertMachineProvisionerGuestCommandSucceeded(result, details => new E2bNativeError({ code: 'e2b_guest_command_failed', details }));
-      const [platform, architecture, home] = new TextDecoder().decode(result.stdout).trimEnd().split('\n');
-      if (platform !== 'Linux' || !['x86_64', 'aarch64'].includes(architecture ?? '') || !home?.startsWith('/') || home.includes('\0')) throw invalid();
-      return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-        guestHome: { homeDir: home, happyHomeDir: home.replace(/\/$/u, '') + '/.happier', daemonStartup: 'native-process' } };
+    async bootstrap(_resource: E2bResource): Promise<MachineProvisionerBootstrapCarrierV1> {
+      return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
     },
     async putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
       try {

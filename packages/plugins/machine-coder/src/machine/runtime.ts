@@ -1,3 +1,4 @@
+import { readManagedDependencyExecutable } from '@happier-dev/plugin-sdk/managed-services';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { CoderCliUnavailable } from './cliPrerequisite.js';
 import { prepareCoderConnection } from './connection.js';
@@ -10,8 +11,9 @@ export async function coderRuntime(context: PluginInvocationContext) {
   const client = createCoderClient({ request: connection.request, signal: context.signal, observedAt: context.invokedAtMs,
     waitForObservation: () => context.services.machineProvisioners.waitForNativeObservation() });
   async function transport() {
-    const status = await context.services.managedServices.dependencies.status(DEPENDENCY_ID, { signal: context.signal });
-    if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) throw new CoderCliUnavailable(connection.endpoint);
+    const status = await readManagedDependencyExecutable(context.services.managedServices.dependencies, DEPENDENCY_ID, context.signal);
+    if (status.state === 'missing') throw new CoderCliUnavailable(connection.endpoint);
+    if (status.state !== 'ready') throw new PluginError({ code: 'coder_cli_unavailable' });
     return createCoderTransport({ ...connection, exec: context.services.exec, executable: status.executable, signal: context.signal });
   }
   return { ...client,

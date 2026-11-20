@@ -160,7 +160,7 @@ async function vendor(home?: string, status: { project?: number; team?: number; 
 describe('public Vercel provisioner composition', () => {
   it('admits the complete HTTP bootstrap recipe on a browser host', () => {
     expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: MACHINE_PROVISIONER }))
-      .toEqual({ available: true, executionTarget: 'account' });
+    .toEqual({ available: true, executionTarget: 'account', requiresController: false });
   });
 
   it('round-trips nonsecret Account scope through retained acquisition and inspection without a Machine', async () => {
@@ -402,7 +402,7 @@ describe('public Vercel provisioner composition', () => {
     const host = await vendor(home);
     try {
       expect(await host.kit.invokeAction('bootstrap', { resource }, { surface: 'plugin' })).toMatchObject({
-        kind: 'native', guestHome: { homeDir: home, happyHomeDir: home + '/.happier', daemonStartup: 'native-process' },
+        kind: 'native', daemonStartup: 'native-process',
       });
       const marker = join(home, 'daemon-starts');
       const input = { resource, argv: ['sh', '-c', 'exit 99'], processConfig: {

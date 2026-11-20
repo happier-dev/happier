@@ -1,3 +1,4 @@
+import { projectUnavailableManagedDependency } from '@happier-dev/plugin-sdk/managed-services';
 import { Buffer } from 'node:buffer';
 import { machinePresentationLabel, machineCheckPresentation, configurationLabel } from './ui/translations.js';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -22,9 +23,9 @@ const cliRequirement = { kind: 'managedDependency', id: { pluginId, localId: dep
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
 
 function unavailableCliPrerequisite(error: CuaCliUnavailable) {
-    return { requirement: cliRequirement, status: 'unavailable' as const, ...(error.installable ? {
+    return projectUnavailableManagedDependency(cliRequirement.id, error.installable ? {
         repairAction: { action: { pluginId, localId: installAction }, input: {} },
-    } : {}) };
+    } : {});
 }
 
 async function nativeClient(context: PluginInvocationContext) {

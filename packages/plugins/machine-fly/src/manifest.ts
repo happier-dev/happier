@@ -221,7 +221,8 @@ export const PLUGIN = definePlugin({
         const organizationSlug = await organization(context);
         const result = await createFlyNativeClient('host-bound', nativeFetch(context), { signal: context.signal, organizationSlug })
           .acquire({ launch: input.launch, requestId: input.managedId, boot: FLY_GUEST_BOOT });
-        if (result.kind === 'rejected') return { kind: 'rejected', code: result.reason === 'provider-unavailable' ? 'provider_unavailable' : 'invalid_request',
+        if (result.kind === 'rejected') return { kind: 'rejected',
+          code: result.reason === 'credential_unavailable' ? result.reason : result.reason === 'provider-unavailable' ? 'provider_unavailable' : 'invalid_request',
           ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
         const reference = { contributionRef: { pluginId: PLUGIN_ID, localId: PROVISIONER_ID }, schemaVersion: 1 };
         return result.kind === 'bound' ? { kind: 'bound', resource: { ...reference, value: result.resource, origin: 'created' as const } }

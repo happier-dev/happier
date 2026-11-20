@@ -193,9 +193,11 @@ shows these declarations alongside options and ordinary Action activation.
 ### Prerequisites and repair Actions
 
 In **0.3 development**, declare executable prerequisites in `managedDependencies`
-and reference them from the provisioner's `prerequisites`. Read availability with
-`context.services.managedServices.dependencies.status(id, { signal })`; discovery
-does not install software. An explicitly approved repair Action can call
+and reference them from the provisioner's `prerequisites`. Use
+`readManagedDependencyExecutable(dependencies, id, signal)` from
+`@happier-dev/plugin-sdk/managed-services` to read availability. Offer an install
+repair when it returns `missing`. An `unknown` result leaves installation status
+unresolved. An explicitly approved repair Action can call
 `dependencies.ensure(id, { signal })` for an installable declared source. A
 system-only source requires installation by the person; return its installation
 guide rather than inventing a downloader. See the
@@ -340,6 +342,27 @@ its own field. The vendor adapter still interprets native transport errors and
 parses this command result; it never treats command acceptance as success.
 The startup-file builder renders the host-provided environment and argv; the
 native adapter still owns private staging, publication and startup registration.
+
+Use `readMachineProvisionerCredentialRefusal(reply.status)` when the vendor API
+rejects the selected credential. A `credential_unavailable` check result lets
+the host offer reconnection. Confirm deletion through the vendor’s exact resource
+readback and pass the observation to `projectMachineProvisionerDeleteReadback`.
+
+For a native preparation Action, build the command after staging the CLI inputs.
+
+```ts
+import { buildMachineProvisionerPreparationInstallScript } from '@happier-dev/plugin-sdk/machine-provisioners';
+
+const script = buildMachineProvisionerPreparationInstallScript({
+  cli: definition.cli,
+  stageDirectory,
+  setupScript: definition.setupScript,
+});
+```
+
+The script checks that the installed CLI is executable before it runs setup.
+Keep output from authored install and setup scripts private. Public command
+failures can carry the exit code without the script’s stderr.
 
 ## Cloud-init SSH bootstrap in development
 

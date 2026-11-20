@@ -85,7 +85,7 @@ describe('Upstash Box HTTP qualification', () => {
   });
   it('enrolls the retained box through the shared portable native guest carrier', async () => {
     const v = vendor();
-    try { expect(await createUpstashBoxNativeClient(v.request).bootstrap(resource)).toMatchObject({ kind: 'native', guestHome: { homeDir: v.home, daemonStartup: 'native-process' } }); }
+    try { expect(await createUpstashBoxNativeClient(v.request).bootstrap(resource)).toMatchObject({ kind: 'native', daemonStartup: 'native-process' }); }
     finally { v.cleanup(); }
   });
   it('preserves raw guest bytes, stdin, separate channels, nonzero status and host-built startup', async () => {

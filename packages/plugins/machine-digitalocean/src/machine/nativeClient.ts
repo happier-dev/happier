@@ -1,7 +1,7 @@
 import * as z from 'zod/mini';
 import { createDigitalOceanTransport, type Unavailable } from './transport.js';
 import type { MachineProvisionerNativeCauseV1, MachineProvisionerSnapshotResultV1, MachineProvisionerSizeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { buildMachineProvisionerCloudInit, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { isMachineProvisionerCreateRefusal, buildMachineProvisionerCloudInit, readMachineProvisionerCredentialRefusal, MACHINE_PROVISIONER_CLOUD_SSH_USER, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   dropletAcquireInputSchema, dropletPowerIntentSchema, dropletResourceSchema,
   nativeDropletSchema, nativeActionSchema, nativeSizeSchema, nativeRegionSchema, nativeImageSchema,
@@ -122,7 +122,7 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
       const before = await readDroplet();
       if (before.kind === 'unavailable') return failure('refused', 'native_snapshot_preflight_unavailable', before);
       const submitted = await request(`/droplets/${resource.dropletId}/actions`, 'POST', { type: 'snapshot', name: label });
-      if (submitted.kind === 'unavailable') return failure(submitted.status !== undefined && submitted.status >= 400 && submitted.status < 500
+      if (submitted.kind === 'unavailable') return failure(isMachineProvisionerCreateRefusal(submitted.status)
         ? 'refused' : 'unknown', 'native_snapshot_submission_unavailable', submitted);
       const decodeAction = (body: unknown) => {
         const decoded = z.object({ action: nativeActionSchema }).safeParse(body);
@@ -153,7 +153,7 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
       const result = await request('/account');
       const account = result.kind === 'response' ? readDigitalOceanAccountAccess(result.body) : undefined;
       return account?.kind === 'active'
-        ? { available: true } as const : { available: false, code: result.kind === 'unavailable' ? result.reason : 'account-unavailable',
+        ? { available: true } as const : { available: false, code: result.kind === 'unavailable' ? readMachineProvisionerCredentialRefusal(result.status) ?? result.reason : 'account-unavailable',
           ...(result.kind === 'unavailable' && result.nativeCause ? { nativeCause: result.nativeCause } : {}) } as const;
     },
     async create(raw: DropletAcquireInputV1): Promise<Binding | Unavailable | { kind: 'unknown'; recoveryTag: string; reason: string; nativeCause?: MachineProvisionerNativeCauseV1 }> {
@@ -166,7 +166,7 @@ export function createDigitalOceanNativeClient(options: { token: string; fetch?:
         user_data: buildMachineProvisionerCloudInit(publicKey, options.guestHostKey),
       });
       if (result.kind === 'unavailable') {
-        if (result.reason === 'authorization' || (result.status !== undefined && result.status < 500 && result.reason === 'native-error')) return result;
+        if (isMachineProvisionerCreateRefusal(result.status)) return result;
         return { kind: 'unknown', recoveryTag: input.recoveryTag, reason: result.reason, ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
       }
       const parsed = createReplySchema.safeParse(result.body);

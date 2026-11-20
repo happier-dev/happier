@@ -60,7 +60,7 @@ export function boatSetupMessage(code: string): string | undefined {
 }
 
 export class BoatNativeError extends Error {
-  constructor(readonly code: string, readonly nativeCause?: MachineProvisionerNativeCauseV1) {
+  constructor(readonly code: string, readonly nativeCause?: MachineProvisionerNativeCauseV1, readonly httpStatus?: number) {
     super(boatSetupMessage(code) ?? code);
     this.name = 'BoatNativeError';
   }

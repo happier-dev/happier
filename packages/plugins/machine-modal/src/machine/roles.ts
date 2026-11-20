@@ -86,7 +86,8 @@ export function createModalProvisionerRoles(client: ModalNativeClient, observedA
         appReference: parsed.data.launch.appReference, managedId: parsed.data.managedId,
       }, result.nativeCause) : { kind: 'unknown' as const, recovery: { reference: parsed.data.launch.appReference, reason: result.code },
         ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
-      return { kind: 'rejected' as const, code: result.code === 'modal_launch_invalid' ? 'invalid_request' as const : 'provider_unavailable' as const,
+      return { kind: 'rejected' as const, code: result.code === 'credential_unavailable' ? result.code
+        : result.code === 'modal_launch_invalid' ? 'invalid_request' as const : 'provider_unavailable' as const,
         ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
     },
     async bootstrap(input: unknown) {

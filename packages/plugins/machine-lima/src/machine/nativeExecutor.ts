@@ -2,8 +2,7 @@ import type { LimaCommandResult, LimaExecutor } from '@happier-dev/plugin-sdk/ma
 import type { ExecService, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerGuestCommandFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { mkdir } from 'node:fs/promises';
 
@@ -38,15 +37,9 @@ export function createLimaSdkExecutor({ exec, executable, signal }: Readonly<{
     const exitCode = observed.kind === 'exit' && process.termination.requestedBy.kind === 'none' ? observed.exitCode : null;
     const command = args[0];
     if ((command === 'create' || command === 'start' || command === 'restart' || command === 'stop' || command === 'edit' || command === 'delete') && exitCode !== 0) {
-      // Project the whole retained stderr before truncating, so a credential
-      // crossing the excerpt boundary cannot leak a partial value.
-      const err = new TextDecoder().decode(process.stderr).trim();
-      const projected = err ? projectPluginFailureText(new Error(err)) : '';
-      const truncated = process.stderrTruncated || projected.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1;
-      throw new LimaNativeCommandError({ localCause: 'native_command_failed', command, exitCode,
-          ...(projected ? { stderr: projected.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-          ...(truncated ? { stderrTruncated: true } : {}),
-      });
+      throw new LimaNativeCommandError(projectMachineProvisionerGuestCommandFailure({
+        command, exitCode, stderr: process.stderr, stderrTruncated: process.stderrTruncated,
+      }));
     }
     return {
       exitCode,

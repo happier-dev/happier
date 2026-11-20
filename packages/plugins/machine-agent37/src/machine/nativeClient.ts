@@ -1,6 +1,7 @@
+import { readMachineProvisionerCredentialRefusal, isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolUnion, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, projectMachineProvisionerActionFailure, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, DISK_GB, SIZES, reference, ROLE_SCHEMAS, RECONCILIATION, type Agent37Launch, type Agent37Resource, type Agent37Operation } from './schemas.js';
 import { KINDS } from './kinds.js';
 
@@ -10,11 +11,11 @@ const dataOrigin = 'https://sandbox.agent37.app';
 const open = { policy: 'additive-open/drop' } as const;
 const identity = defineProtocolObject({ id: defineProtocolString({ pattern: '^[a-z0-9]{10}$' }), status: defineProtocolString() }, open);
 const execution = defineProtocolObject({ exit_code: defineProtocolNumber({ integer: true }), stdout: defineProtocolString(), stderr: defineProtocolString(), truncated: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, open);
-const deletion = defineProtocolObject({ id: defineProtocolString(), deleted: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]) }, open);
+const deletion = defineProtocolObject({ id: defineProtocolString(), deleted: defineProtocolLiteral(true) }, open);
+const missingInstance = defineProtocolObject({ error: defineProtocolObject({ code: defineProtocolLiteral('not_found') }, open) }, open);
 const binaryExecution = defineProtocolObject({ exitCode: defineProtocolNumber({ integer: true }), stdoutBase64: defineProtocolString(), stderrBase64: defineProtocolString() }, open);
 type Acquisition = ReturnType<typeof RECONCILIATION.result.parse>;
 type Destruction = ReturnType<typeof RECONCILIATION.destroyResult.parse>;
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const invalid = () => new PluginError({ code: 'agent37_invalid_response' });
 const pathOf = (resource: Agent37Resource) => '/v1/instances/' + encodeURIComponent(resource.instanceId);
 const safeCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable';
@@ -30,7 +31,7 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
     return response;
   }
   async function json(response: Response): Promise<unknown> {
-    if (!response.ok) throw new PluginError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'provider_unavailable' });
+    if (!response.ok) throw new PluginError({ code: readMachineProvisionerCredentialRefusal(response.status) ?? 'provider_unavailable' });
     try { return await response.json() as unknown; } catch { throw invalid(); }
   }
   async function command(resource: Agent37Resource, command: string) {
@@ -94,7 +95,9 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
   async function inspect(resource: Agent37Resource): Promise<MachineProvisionerObservationV1> {
     try {
       const response = await http(pathOf(resource));
-      if (response.status === 404) return { observedAt, availability: 'absent', storage: 'lost', billing: BILLING };
+      if (response.status === 404 && missingInstance.safeParse(await response.clone().json().catch(() => undefined)).success) {
+        return { observedAt, availability: 'absent', storage: 'lost', billing: BILLING };
+      }
       const native = identity.safeParse(await json(response));
       if (!native.success || native.data.id !== resource.instanceId) throw invalid();
       return { observedAt, availability: 'present', power: native.data.status === 'running' ? 'running' : native.data.status === 'stopped' ? 'stopped' : 'unknown',
@@ -111,10 +114,12 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
   async function destroy(input: ReturnType<typeof RECONCILIATION.destroyInput.parse>): Promise<Destruction> {
     if ('nativeOperation' in input) return { kind: 'unknown', code: 'agent37_acquisition_unconfirmed' };
     const response = await http(pathOf(input.resource), 'DELETE');
-    if (response.status === 404) return { kind: 'confirmed' };
-    const native = deletion.safeParse(await json(response));
-    return native.success && native.data.id === input.resource.instanceId && native.data.deleted
-      ? { kind: 'confirmed' } : { kind: 'unknown', code: 'agent37_delete_unconfirmed' };
+    if (response.status !== 404) {
+      const native = deletion.safeParse(await json(response));
+      if (!native.success || native.data.id !== input.resource.instanceId) return { kind: 'unknown', code: 'agent37_delete_unconfirmed' };
+    }
+    if (signal.aborted) return { kind: 'unknown', code: 'agent37_delete_unconfirmed' };
+    return projectMachineProvisionerDeleteReadback(await inspect(input.resource), 'agent37_delete_unconfirmed');
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     if (input.processConfig) {
@@ -161,20 +166,17 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
       try {
         const response = await http('/v1/instances', 'POST', { template: launch.template ?? kind.template, type: launch.kind,
           region: launch.region, resources: { cpu: size.cpu, memory: size.memory, disk: DISK_GB }, mount_path: '/root', auto_sleep: false });
-        if (response.status === 401 || response.status === 403) return { kind: 'rejected', code: 'credential_unavailable' };
-        if (response.status >= 400 && response.status < 500 && response.status !== 408) return { kind: 'rejected', code: 'provider_unavailable' };
+        const credentialRefusal = readMachineProvisionerCredentialRefusal(response.status);
+        if (credentialRefusal) return { kind: 'rejected', code: credentialRefusal };
+        if (isMachineProvisionerCreateRefusal(response.status)) return { kind: 'rejected', code: 'provider_unavailable' };
         const native = identity.safeParse(await json(response));
         return native.success ? { kind: 'bound', resource: { ...reference({ instanceId: native.data.id, managedId, kind: launch.kind, size: launch.size, region: launch.region }), origin: 'created' as const },
           ...(native.data.status === 'running' ? {} : { startPending: true as const }) } : unknown(operation);
       } catch (error) { return projectMachineProvisionerActionFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : unknown(operation)); }
     },
     recover, inspect, power, destroy, exec,
-    async bootstrap(resource: Agent37Resource): Promise<MachineProvisionerBootstrapCarrierV1> {
-      const output = await checked(resource, 'uname -s; uname -m; printf "%s\\n" "$HOME"');
-      const [platform, architecture, home] = output.trimEnd().split('\n');
-      if (platform !== 'Linux' || !['x86_64', 'aarch64'].includes(architecture ?? '') || !home?.startsWith('/') || home.includes('\0')) throw invalid();
-      return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-        guestHome: { homeDir: home, happyHomeDir: home.replace(/\/$/u, '') + '/.happier', daemonStartup: 'native-process' } };
+    async bootstrap(_resource: Agent37Resource): Promise<MachineProvisionerBootstrapCarrierV1> {
+      return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
     },
     async putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
       try { await upload(input.resource, input.guestPath, decodeBase64(input.bytesBase64), input.mode ?? 0o600); return { kind: 'confirmed' }; }

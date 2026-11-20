@@ -3,7 +3,7 @@ import { MachineProvisionerPowerResultV1Schema, type MachineProvisionerContribut
 import { ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import type { ManagedNativeInvocation, ManagedNativeInvocationIO } from './reconcile.js';
 import { ManagedMachineControllerError } from './controllerErrors.js';
-import { createManagedNativeBootstrapIO, startManagedNativeGuestDaemon } from './nativeBootstrap.js';
+import { createManagedNativeBootstrapIO, resolveManagedNativeGuestStartup, startManagedNativeGuestDaemon } from './nativeBootstrap.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../../systemTasks/ssh/remoteFirstPartyInstallPath.js';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -58,11 +58,13 @@ export async function executeManagedMachinePowerIntent(input: Readonly<{
             const carrier = ManagedBootstrapCarrierV1Schema.parse(await invoke('bootstrap', { resource: machine.resource!.value }, io));
             if (carrier.kind !== 'native' || !sameStrictJsonValue(carrier.transport.contributionRef, machine.resource!.contributionRef)
                 || carrier.transport.schemaVersion !== machine.resource!.schemaVersion) throw new ManagedMachineControllerError('resource_mismatch');
-            if (!carrier.guestHome && machine.enrollmentIdentity?.kind !== 'guestProcess') return power;
-            await startManagedNativeGuestDaemon({ native: createManagedNativeBootstrapIO({ resource: machine.resource! }, invoke),
-                channel: input.guestStartup.channel, guestHome: carrier.guestHome, signal: io?.signal,
+            const native = createManagedNativeBootstrapIO({ resource: machine.resource! }, invoke);
+            const { home: guestHome } = await resolveManagedNativeGuestStartup(carrier, request => native.exec(request), io?.signal);
+            if (!guestHome && machine.enrollmentIdentity?.kind !== 'guestProcess') return power;
+            await startManagedNativeGuestDaemon({ native,
+                channel: input.guestStartup.channel, guestHome, signal: io?.signal,
                 binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({ componentId: 'happier-cli',
-                    channel: input.guestStartup.channel, remoteHomeDir: carrier.guestHome?.happyHomeDir }) });
+                    channel: input.guestStartup.channel, remoteHomeDir: guestHome?.happyHomeDir }) });
             return power;
         } catch (error) {
             return { ...power, guestStartupError: error instanceof ManagedMachineControllerError ? error

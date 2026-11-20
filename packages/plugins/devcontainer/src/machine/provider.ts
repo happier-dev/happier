@@ -1,6 +1,7 @@
-import { PluginError, projectPluginFailureText } from '@happier-dev/plugin-sdk';
+import { quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
-import { compareMachineHosts, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { compareMachineHosts, projectMachineProvisionerGuestCommandFailure, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerSizeV1Schema, requiresMachineProvisionerEffectReviewV1, type MachineProvisionerSizeV1, type MachineProvisionerResizeResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
@@ -39,7 +40,6 @@ function managedFlags(launch: DevcontainerLaunch, managedMachineId: string) {
   return [...devcontainerNativeFlags(launch), ...Object.entries(nativeLabels(launch, managedMachineId))
     .flatMap(([key, value]) => ['--id-label', `${key}=${value}`])];
 }
-function quote(value: string) { return `'${value.replace(/'/gu, `'"'"'`)}'`; }
 function mountArgument(fields: readonly string[]) {
   return fields.map(value => /[,"\r\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value).join(',');
 }
@@ -48,11 +48,10 @@ function commandFailure(result: PluginProcessResult,
   outputMayContainSetup = command === 'up'): Extract<MachineProvisionerNativeCauseV1, { localCause: 'native_command_failed' }> {
   const observed = result.termination.observed;
   const exitCode = observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null;
-  if (outputMayContainSetup) return { localCause: 'native_command_failed', command, exitCode };
-  const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
-  return { localCause: 'native_command_failed', command, exitCode,
-    ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-    ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}) };
+  return projectMachineProvisionerGuestCommandFailure({
+    command, exitCode,
+    ...(outputMayContainSetup ? {} : { stderr: result.stderr, stderrTruncated: result.stderrTruncated }),
+  });
 }
 
 function failedSetup(result: PluginProcessResult) {

@@ -1,5 +1,6 @@
+import { readMachineProvisionerCredentialRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead,
+import { isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote, assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead,
   type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1,
   type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MaritimeNativeError, projectMaritimeNativeFailure } from '../machine/nativeFailure.js';
@@ -13,6 +14,7 @@ const open = { policy: 'additive-open/drop' } as const;
 // Native credentials are transient. Stored resource/operation schemas contain only identities.
 const sandboxSchema = defineProtocolObject({ id: text, name: text.nullable(), state: text, forEndUser: boolean,
   dataPlaneUrl: text, secret: text.nullable() }, open);
+const missingSandboxSchema = defineProtocolObject({ code: defineProtocolLiteral('sandbox_not_found') }, open);
 const commandSchema = defineProtocolObject({ state: text, exitCode: defineProtocolNumber({ integer: true }).nullable(),
   stdout: defineProtocolString(), stderr: defineProtocolString(), truncated: boolean }, open);
 type GuestFailureDetails = Parameters<Parameters<typeof assertMachineProvisionerGuestCommandSucceeded>[1]>[0];
@@ -23,7 +25,6 @@ export class SandboxError extends MaritimeNativeError {
     this.nativeCause = details?.nativeCause;
   }
 }
-export const quoteSandboxShell = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 type Acquisition = ReturnType<typeof SANDBOX_RECONCILIATION.result.parse>;
 type Deletion = ReturnType<typeof SANDBOX_RECONCILIATION.destroyResult.parse>;
 type Sandbox = ReturnType<typeof sandboxSchema.parse>;
@@ -35,7 +36,7 @@ export function createMaritimeSandboxClient(request: typeof fetch, signal: Abort
     signal.throwIfAborted();
     const response = await request('https://api.maritime.sh/v1' + path, { method, signal, redirect: 'error',
       headers: { 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (!response.ok && response.status !== 404) throw new SandboxError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'maritime_http_' + response.status, response.status);
+    if (!response.ok && response.status !== 404) throw new SandboxError(readMachineProvisionerCredentialRefusal(response.status) ?? 'maritime_http_' + response.status, response.status);
     return response;
   }
   async function json(response: Response): Promise<unknown> {
@@ -51,7 +52,11 @@ export function createMaritimeSandboxClient(request: typeof fetch, signal: Abort
   }
   async function read(expected: { name: string; sandboxId?: string }) {
     const response = await api('/sandboxes/' + encodeURIComponent(expected.sandboxId ?? expected.name));
-    return response.status === 404 ? null : identity(await json(response), expected);
+    if (response.status === 404) {
+      const failure = missingSandboxSchema.safeParse(await response.json().catch(() => null));
+      if (failure.success) return null;
+    }
+    return identity(await json(response), expected);
   }
   async function create(launch: SandboxLaunch, name: string) {
     return identity(await json(await api('/sandboxes', 'POST', { ...launch, name, forEndUser: true, env: {}, keepAwake: true })), { name });
@@ -106,10 +111,7 @@ export function createMaritimeSandboxClient(request: typeof fetch, signal: Abort
     return await remove(expected) ? { kind: 'confirmed' } : { kind: 'unknown', code: 'maritime_sandbox_delete_unconfirmed' };
   }
   async function bootstrap(resource: SandboxResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const result = await run(await requireGuest(resource), ['sh', '-c', 'uname -s; uname -m']);
-    assertMachineProvisionerGuestCommandSucceeded(result, details => new SandboxError('maritime_guest_command_failed', undefined, details));
-    const [platform, architecture] = result.stdout.trim().split('\n');
-    if (platform !== 'Linux' || architecture !== 'x86_64') throw new SandboxError('maritime_guest_platform_unsupported');
+    await requireGuest(resource);
     return { kind: 'native', transport: { contributionRef: SANDBOX_CONTRIBUTION, schemaVersion: 1 }, guestHome: {
       homeDir: SANDBOX_HOME, happyHomeDir: SANDBOX_HOME + '/.happier', daemonStartup: 'native-process' } };
   }
@@ -117,7 +119,7 @@ export function createMaritimeSandboxClient(request: typeof fetch, signal: Abort
     async acquire(launch: SandboxLaunch, managedId: string): Promise<Acquisition> {
       const operation: SandboxOperation = { kind: 'acquire', name: 'happier-' + managedId };
       try { return acquired(await create(launch, operation.name), operation); }
-      catch (error) { return projectMaritimeNativeFailure(error, () => error instanceof SandboxError && error.status !== undefined && error.status >= 400 && error.status < 500
+      catch (error) { return projectMaritimeNativeFailure(error, () => error instanceof SandboxError && isMachineProvisionerCreateRefusal(error.status)
         ? { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' }
         : { kind: 'pending', nativeOperationRef: sandboxReference(operation) }); }
     },
@@ -141,8 +143,16 @@ export function createMaritimeSandboxClient(request: typeof fetch, signal: Abort
       return result.exitCode === 0 ? { kind: 'confirmed' } : { kind: 'unknown', code: 'maritime_power_unconfirmed' };
     },
     async exec(input: ReturnType<typeof SANDBOX_ROLES.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
-      if (input.processConfig) throw new SandboxError('maritime_sandbox_daemon_unsupported');
       const native = await requireGuest(input.resource, input.allowWake);
+      if (input.processConfig) {
+        const { environment, detachedDaemonStartArgv } = input.processConfig;
+        // The foreground command returns after the host's launcher starts the daemon.
+        const result = await run(native, ['env', ...Object.entries(environment).map(([key, value]) => `${key}=${value}`),
+          ...detachedDaemonStartArgv], input.timeoutMs);
+        assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exitCode, truncated: result.truncated },
+          details => new SandboxError('maritime_process_configuration_failed', undefined, details));
+        return { kind: 'process-configured' };
+      }
       let argv = input.argv;
       if (input.inputBase64 !== undefined) {
         const temporary = await run(native, ['mktemp', '-d', '/tmp/.happier-input.XXXXXXXXXX'], input.timeoutMs);
@@ -150,7 +160,7 @@ export function createMaritimeSandboxClient(request: typeof fetch, signal: Abort
         const directory = temporary.stdout.trim();
         if (!directory.startsWith('/tmp/.happier-input.') || /[\r\n\0]/u.test(directory)) throw new SandboxError('maritime_command_invalid_response');
         await upload(native, directory + '/input', decodeBase64(input.inputBase64));
-        argv = ['sh', '-c', `trap ${quoteSandboxShell('rm -rf -- ' + quoteSandboxShell(directory))} EXIT; ${input.argv.map(quoteSandboxShell).join(' ')} < ${quoteSandboxShell(directory + '/input')}`];
+        argv = ['sh', '-c', `trap ${quote('rm -rf -- ' + quote(directory))} EXIT; ${input.argv.map(quote).join(' ')} < ${quote(directory + '/input')}`];
       }
       const result = await run(native, ['sh', '-c', buildMachineProvisionerShellCommand(argv)], input.timeoutMs);
       const output = readMaritimeShellOutput(result);

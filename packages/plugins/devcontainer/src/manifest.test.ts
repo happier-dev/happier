@@ -74,6 +74,18 @@ describe('Devcontainer public-author declaration', () => {
     } finally { await kit.dispose(); }
   });
 
+  it('reports unreadable dependency status without offering to install the runtime', async () => {
+    const kit = await createPluginTestkit({
+      manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN,
+      services: { managedServices: { dependencies: { status: async id => ({ id, state: 'failed', code: 'status_unavailable' }) } } },
+    });
+    try {
+      const result = await kit.invokeAction('check', {}, { surface: 'plugin' });
+      expect(result).toMatchObject({ available: false });
+      expect(result).not.toHaveProperty('prerequisites');
+    } finally { await kit.dispose(); }
+  });
+
   it('repairs Docker through the controller setup recipe and preserves its operation result', async () => {
     const sources = [{ kind: 'direct', setup: { items: [{ kind: 'softwareRecipe',
       selection: { ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: { mode: 'rootless', daemonConfig: {} } } }] } }];

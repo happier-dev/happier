@@ -66,7 +66,7 @@ describe('Docker cloud through registered Actions and vendor HTTP', () => {
       expect(h.requests).toHaveLength(0);
       const acquired = await invoke('cloud-acquire', { launch, managedId: 'managed-fixture' });
       expect(acquired).toMatchObject({ kind: 'bound', resource: { origin: 'created', value: resource } });
-      expect(await invoke('cloud-bootstrap', { resource })).toMatchObject({ kind: 'native', guestHome: { homeDir: '/root', daemonStartup: 'native-process' } });
+      expect(await invoke('cloud-bootstrap', { resource })).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
       expect(await invoke('cloud-inspect', { resource })).toMatchObject({ availability: 'present', power: 'running', nativeExpiry: Date.parse('2026-11-15T18:00:00Z') });
       const create = h.requests.find(r => r.url.endsWith('/v1/sandboxes') && r.method === 'POST')!;
       expect(new Headers(create.headers).get('authorization')).toBe('Bearer fixture-management-token');
@@ -119,14 +119,16 @@ describe('Docker cloud through registered Actions and vendor HTTP', () => {
     });
     await withVendor({ refusal: 403 }, async (_h, invoke) => {
       const result = await invoke('cloud-check', {});
-      expect(result).toMatchObject({ available: false, code: 'docker_cloud_permissionDenied' });
+      expect(result).toMatchObject({ available: false, code: 'credential_unavailable' });
       expect(JSON.stringify(result)).not.toContain('fixture-scoped-token');
     });
-    await withVendor({ deleteStatus: 202 }, async (h, invoke) => {
-      expect(await invoke('cloud-destroy', { resource })).toMatchObject({ kind: 'unknown' });
-      expect(new Headers(h.requests.find(r => r.method === 'DELETE')!.headers).get('If-Match')).toBe('"fixture-etag"');
-      expect(await invoke('cloud-power', { resource, intent: 'stop' })).toMatchObject({ kind: 'unknown' });
-    });
+    for (const deleteStatus of [202, 204, 404]) {
+      await withVendor({ deleteStatus }, async (h, invoke) => {
+        expect(await invoke('cloud-destroy', { resource })).toMatchObject({ kind: 'unknown' });
+        expect(new Headers(h.requests.find(r => r.method === 'DELETE')!.headers).get('If-Match')).toBe('"fixture-etag"');
+        expect(await invoke('cloud-power', { resource, intent: 'stop' })).toMatchObject({ kind: 'unknown' });
+      });
+    }
   });
   it('refuses a credential issued for another endpoint before disclosing it', async () => {
     await withVendor({ mismatch: true }, async (h, invoke) => {

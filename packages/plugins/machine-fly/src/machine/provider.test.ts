@@ -68,7 +68,7 @@ describe('Fly exact native resource adapter', () => {
       reason: 'provider-unavailable', nativeCause: { httpStatusClass: '5xx' } });
     const { adapter: checking } = http([{ status: 403, body: { error: 'private credential' } }]);
     expect(await checking.check({ organizationSlug: 'exact-org' })).toEqual({ available: false,
-      code: 'authorization', nativeCause: { httpStatusClass: '4xx' } });
+      code: 'credential_unavailable', nativeCause: { httpStatusClass: '4xx' } });
   });
   it('retains a missing mutation target as a native acquisition cause without changing read absence', async () => {
     const { adapter } = http([{ body: platform }, { body: scopedApps },
@@ -488,7 +488,7 @@ describe('Fly exact native resource adapter', () => {
 
   it('checks actual scoped authorization and refuses incomplete discovery rather than publishing an empty catalog', async () => {
     const denied = http([{ status: 403 }]);
-    expect(await denied.adapter.check({ organizationSlug: 'exact-org' })).toEqual({ available: false, code: 'authorization', nativeCause: { httpStatusClass: '4xx' } });
+    expect(await denied.adapter.check({ organizationSlug: 'exact-org' })).toEqual({ available: false, code: 'credential_unavailable', nativeCause: { httpStatusClass: '4xx' } });
     const incomplete = http([{ body: { total_apps: 2, apps: [] } }]);
     expect(await incomplete.adapter.check({ organizationSlug: 'exact-org' })).toEqual({ available: false, code: 'invalid-response' });
     const available = http([{ body: { total_apps: 0, apps: [] } }]);

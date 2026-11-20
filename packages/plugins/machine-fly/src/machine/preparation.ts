@@ -1,3 +1,4 @@
+import { isMachineProvisionerCreateRefusal, buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as z from 'zod/mini';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas,
   projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -29,7 +30,6 @@ const machineSchema = z.object({ id: string, state: string,
   config: z.object({ metadata: z.optional(z.record(z.string(), z.string())) }) });
 const execSchema = z.object({ exit_code: z.int(), stdout: z.string(), stderr: z.string() });
 const manifestSchema = z.object({ schemaVersion: z.literal(2), config: z.object({}), layers: z.array(z.unknown()) });
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const directory = '/tmp/happier-preparation';
 // Flyctl dfaaf8be8634ecefb2f9c3affe2fb49d94ff68bb, ensure_builder.go.
 // The native builder is a cold image containing buildkitd and buildctl. No
@@ -78,7 +78,7 @@ export function createFlyPreparationClient(request: typeof fetch, organizationSl
   function failure(error: unknown, operation: Operation) {
     return projectMachineProvisionerActionFailure(error, () => {
       const code = error instanceof PreparationError ? error.code : 'fly_preparation_transport_unconfirmed';
-      return error instanceof PreparationError && error.status !== undefined && error.status >= 400 && error.status < 500
+      return error instanceof PreparationError && isMachineProvisionerCreateRefusal(error.status)
         ? { kind: 'refused' as const, code }
         : { kind: 'unknown' as const, code, nativeOperationRef: reference(operation) };
     });
@@ -176,8 +176,10 @@ export function createFlyPreparationClient(request: typeof fetch, organizationSl
       // The qualified Ubuntu base and native exec use root. Custom image USER
       // and HOME parity need tenant evidence; do not infer it from Docker USER.
       const run = ['sh', '-c', 'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi', 'happier-prepare',
-        'sh', '-c', 'set -e; mkdir -p /tmp/happier-cli-input; cd /tmp/happier-cli-input; sh -c "$1"; chmod -R a+rX /opt/happier; sh -c "$2"; rm -rf /tmp/happier-cli-input',
-        'happier-build', definition.cli.installScript, definition.setupScript ?? ''];
+        'sh', '-c', 'set -e\nmkdir -p /tmp/happier-cli-input\n'
+          + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: '/tmp/happier-cli-input',
+            readableRoot: '/opt/happier', setupScript: definition.setupScript })
+          + 'rm -rf /tmp/happier-cli-input\n'];
       const dockerfile = `FROM --platform=linux/amd64 ${launch.imageReference ?? FLY_DEFAULT_IMAGE}\n` + copies + 'RUN ' + JSON.stringify(run) + '\n';
       for (const file of definition.cli.files) await write(operation, machine.data.id, context + '/' + file.path, file.contentsBase64);
       await write(operation, machine.data.id, context + '/Dockerfile', encodeBase64(new TextEncoder().encode(dockerfile)));

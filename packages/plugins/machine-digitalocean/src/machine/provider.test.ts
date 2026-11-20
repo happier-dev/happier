@@ -130,10 +130,12 @@ describe('DigitalOcean native Droplet contract', () => {
 
   it('retains safe native failure evidence in check and paged options reads', async () => {
     const client = createDigitalOceanNativeClient({ token: 'token', fetch: boundary([
+      response({ id: 'unauthorized', message: 'private' }, 401),
       response({ id: 'forbidden', message: 'private' }, 403),
       response({ id: 'too_many_requests', message: 'private' }, 429),
     ]) });
-    expect(await client.check()).toEqual({ available: false, code: 'authorization', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } });
+    expect(await client.check()).toEqual({ available: false, code: 'credential_unavailable', nativeCause: { httpStatusClass: '4xx', code: 'unauthorized' } });
+    expect(await client.check()).toEqual({ available: false, code: 'credential_unavailable', nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } });
     expect(await client.options()).toEqual({ kind: 'unavailable', reason: 'native-error', status: 429,
       nativeCause: { httpStatusClass: '4xx', code: 'too_many_requests' } });
   });

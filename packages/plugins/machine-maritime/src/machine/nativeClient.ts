@@ -1,6 +1,8 @@
+import { sleepWithSignal } from '@happier-dev/plugin-sdk/async';
+import { readMachineProvisionerCredentialRefusal, isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MaritimeNativeError, projectMaritimeNativeFailure } from './nativeFailure.js';
 import { decodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
+import { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
   type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING_BY_KIND, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type MaritimeLaunch, type MaritimeResource, type MaritimeOperation } from './schemas.js';
 import { readMaritimeShellOutput } from './shellOutput.js';
@@ -22,7 +24,6 @@ const boolean = defineProtocolUnion([defineProtocolLiteral(true), defineProtocol
 const resizeSchema = defineProtocolObject({ ok: boolean, alwaysOn: boolean }, open);
 type Acquisition = ReturnType<typeof RECONCILIATION.result.parse>;
 type Destruction = ReturnType<typeof RECONCILIATION.destroyResult.parse>;
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const invalid = () => new MaritimeNativeError({ code: 'maritime_invalid_response' });
 const pathOf = (resource: MaritimeResource) => (resource.kind === 'agent-box' ? '/api/agents/' : '/api/v1/computers/') + encodeURIComponent(resource.machineId);
 const safeCode = (error: unknown) => error instanceof Error && error.message === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable';
@@ -45,7 +46,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     return response;
   }
   function requireSuccess(response: Response) {
-    if (!response.ok) throw new MaritimeNativeError({ code: response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'maritime_http_' + response.status });
+    if (!response.ok) throw new MaritimeNativeError({ code: readMachineProvisionerCredentialRefusal(response.status) ?? 'maritime_http_' + response.status });
   }
   async function json(response: Response): Promise<unknown> {
     requireSuccess(response);
@@ -68,24 +69,24 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     // schedules reconciliation; bootstrap must not run against a creating VM.
     return nativePower(native.status) === 'unknown' ? pending(operation) : bound(native, operation);
   }
-  async function matches(operation: MaritimeOperation) {
-    const boxes = operation.launch.kind === 'agent-box';
+  async function matches(kind: MaritimeLaunch['kind'], managedId: string) {
+    const boxes = kind === 'agent-box';
     const value = await json(await http((boxes ? '/api/agents?' : '/api/v1/computers?')
-      + new URLSearchParams({ [boxes ? 'externalId' : 'externalUserId']: operation.managedId })));
+      + new URLSearchParams({ [boxes ? 'externalId' : 'externalUserId']: managedId })));
     const entries = boxes ? value : typeof value === 'object' && value !== null && 'computers' in value ? value.computers : undefined;
     if (!Array.isArray(entries)) throw invalid();
     // Filtered lists are the SDK's documented external-identity lookup, not a name guess.
-    return entries.map(entry => identity(entry, operation.launch.kind, operation.managedId));
+    return entries.map(entry => identity(entry, kind, managedId));
   }
   async function recover(operation: MaritimeOperation): Promise<Acquisition> {
     try {
-      const entries = await matches(operation);
+      const entries = await matches(operation.launch.kind, operation.managedId);
       return entries.length === 1 ? acquired(entries[0], operation) : unknown(operation);
     } catch (error) { signal.throwIfAborted(); return projectMaritimeNativeFailure(error, () => unknown(operation)); }
   }
   async function read(resource: MaritimeResource) {
     const response = await http(pathOf(resource));
-    if (response.status === 404) return null;
+    if (response.status === 404 && (await matches(resource.kind, resource.managedId)).length === 0) return null;
     const native = identity(await json(response), resource.kind, resource.managedId);
     if (native.id !== resource.machineId) throw invalid();
     return native;
@@ -119,12 +120,7 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     // while consuming that execution; respect Retry-After when the API supplies it.
     const seconds = Number(response.headers.get('retry-after'));
     const delay = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 1000;
-    await new Promise<void>((resolve, reject) => {
-      const abort = () => { clearTimeout(timer); reject(signal.reason); };
-      const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, delay);
-      signal.addEventListener('abort', abort, { once: true });
-      if (signal.aborted) { signal.removeEventListener('abort', abort); abort(); }
-    });
+    await sleepWithSignal(delay, signal);
   }
   async function run(resource: MaritimeResource, argv: readonly string[], timeoutMs?: number | null) {
     const box = resource.kind === 'agent-box';
@@ -195,15 +191,16 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
   }
   async function destroy(input: ReturnType<typeof RECONCILIATION.destroyInput.parse>): Promise<Destruction> {
     if ('nativeOperation' in input) {
-      const entries = await matches(input.nativeOperation);
+      const { launch, managedId } = input.nativeOperation;
+      const entries = await matches(launch.kind, managedId);
       const recovered = entries.length === 1 ? bound(entries[0], input.nativeOperation) : unknown(input.nativeOperation);
       if (recovered.kind !== 'bound') return { kind: 'unknown', code: 'maritime_acquisition_unconfirmed' };
       return destroy({ resource: recovered.resource.value });
     }
     const response = await http(pathOf(input.resource), 'DELETE');
-    if (response.status === 204 || response.status === 404) return { kind: 'confirmed' };
-    requireSuccess(response);
-    return { kind: 'unknown', code: 'maritime_delete_unconfirmed' };
+    if (response.status !== 404) requireSuccess(response);
+    if (signal.aborted) return { kind: 'unknown', code: 'maritime_delete_unconfirmed' };
+    return projectMachineProvisionerDeleteReadback(await inspect(input.resource), 'maritime_delete_unconfirmed');
   }
   return {
     async check(): Promise<MachineProvisionerCheckResultV1> {
@@ -218,15 +215,16 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
       if (launch.kind === 'linux-computer' && (launch.memMb !== 4096 || launch.diskGb !== 5 || launch.alwaysOn)) return { kind: 'rejected', code: 'invalid_request' };
       try {
         if (launch.kind === 'agent-box') {
-          const existing = await matches(operation);
+          const existing = await matches(launch.kind, managedId);
           if (existing.length === 1) return acquired(existing[0], operation);
           if (existing.length > 1) return unknown(operation);
         }
         const response = await http(launch.kind === 'agent-box' ? '/api/agents' : '/api/v1/computers', 'POST', launch.kind === 'agent-box'
           ? { name: managedId, externalId: managedId, templateId: launch.templateId, memMb: launch.memMb, diskGb: launch.diskGb }
           : { name: managedId, externalUserId: managedId, os: 'linux' });
-        if (response.status === 401 || response.status === 403) return { kind: 'rejected', code: 'credential_unavailable' };
-        if (response.status >= 400 && response.status < 500 && response.status !== 409) return { kind: 'rejected', code: 'provider_unavailable' };
+        const credentialRefusal = readMachineProvisionerCredentialRefusal(response.status);
+        if (credentialRefusal) return { kind: 'rejected', code: credentialRefusal };
+        if (isMachineProvisionerCreateRefusal(response.status, [409])) return { kind: 'rejected', code: 'provider_unavailable' };
         return acquired(await json(response), operation);
       } catch (error) { signal.throwIfAborted(); return projectMaritimeNativeFailure(error, () => safeCode(error) === 'credential_unavailable' ? { kind: 'rejected', code: 'credential_unavailable' } : pending(operation)); }
     },
@@ -237,13 +235,9 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
         const resized = resizeSchema.parse(await json(await http(pathOf(resource) + '/resize', 'POST', { always_on: resource.alwaysOn ?? true })));
         if (!resized.ok || resized.alwaysOn !== (resource.alwaysOn ?? true)) throw new MaritimeNativeError({ code: 'maritime_keep_awake_unconfirmed' });
       }
-      const result = await run(resource, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-      assertMachineProvisionerGuestCommandSucceeded(result, details => new MaritimeNativeError({ code: 'maritime_guest_command_failed', details }));
-      const [platform, architecture, home] = result.stdout.trimEnd().split('\n');
-      if (platform !== 'Linux' || !['x86_64', 'aarch64'].includes(architecture ?? '') || !home?.startsWith('/') || home.includes('\0')) throw invalid();
-      const homeDir = resource.kind === 'agent-box' ? '/data' : home;
       return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-        guestHome: { homeDir, happyHomeDir: homeDir.replace(/\/$/u, '') + '/.happier', daemonStartup: 'native-process' } };
+        ...(resource.kind === 'agent-box' ? { guestHome: { homeDir: '/data', happyHomeDir: '/data/.happier', daemonStartup: 'native-process' as const } }
+          : { daemonStartup: 'native-process' as const }) };
     },
     async putFile(input: ReturnType<typeof ROLE_SCHEMAS.putFileInput.parse>): Promise<MachineProvisionerPowerResultV1> {
       try {

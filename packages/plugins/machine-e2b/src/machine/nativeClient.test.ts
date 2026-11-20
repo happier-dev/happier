@@ -30,28 +30,24 @@ function vendor(options: { failCreate?: boolean; duplicate?: boolean; processByt
       if (options.failCreate) throw new TypeError('lost reply');
       return Response.json(native, { status: 201 });
     }
-    if (url.pathname === '/v2/sandboxes') return Response.json(options.duplicate ? [native, { ...native, sandboxID: 'second' }] : [native]);
+    if (url.pathname === '/v2/sandboxes') return Response.json(!present ? [] : options.duplicate ? [native, { ...native, sandboxID: 'second' }] : [native]);
     return Response.json({ ...native, state }, { status: present ? 200 : 404 });
   };
   return { requests, client: createE2bNativeClient(fetch, new AbortController().signal, 1000) };
 }
 
 describe('E2B native REST leaf', () => {
-  it.each(['stdin', 'bootstrap'] as const)('classifies a failed %s guest prerequisite as a command failure', async phase => {
+  it('classifies a failed guest stdin prerequisite as a command failure', async () => {
     const h = vendor({ processBytes: output('', 28, Buffer.from('Bearer private-token; mktemp: No space left on device').toString('base64')) });
-    const operation = phase === 'stdin'
-      ? h.client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' })
-      : h.client.bootstrap(resource);
+    const operation = h.client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' });
     const failure: unknown = await operation.catch((error: unknown) => error);
     expect(failure).toMatchObject({ code: 'e2b_guest_command_failed', details: { exitCode: 28,
       nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: 28, stderr: expect.stringContaining('No space left on device') } } });
     expect(JSON.stringify(failure)).not.toContain('private-token');
   });
-  it.each(['stdin', 'bootstrap'] as const)('keeps malformed successful %s output distinct from command failure', async phase => {
+  it('keeps malformed successful guest stdin output distinct from command failure', async () => {
     const h = vendor({ processBytes: output('') });
-    const operation = phase === 'stdin'
-      ? h.client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' })
-      : h.client.bootstrap(resource);
+    const operation = h.client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' });
     await expect(operation).rejects.toMatchObject({ code: 'e2b_invalid_response' });
   });
   it.each(['headers', 'body'] as const)('retains completed native execution output after late cancellation at %s', async phase => {
@@ -77,13 +73,13 @@ describe('E2B native REST leaf', () => {
     };
     await expect(createE2bNativeClient(request, abort.signal, 1000).exec({ resource, argv: ['true'] })).rejects.toBe(reason);
   });
-  it('retains a completed delete acknowledgement after late cancellation', async () => {
+  it('keeps delete unconfirmed when cancellation prevents native readback', async () => {
     const abort = new AbortController();
     const request: typeof fetch = async (_input, init) => {
       if (init?.method === 'DELETE') { abort.abort(); return new Response(null, { status: 204 }); }
       return Response.json(native);
     };
-    expect(await createE2bNativeClient(request, abort.signal, 1000).destroy({ resource })).toEqual({ kind: 'confirmed' });
+    expect(await createE2bNativeClient(request, abort.signal, 1000).destroy({ resource })).toEqual({ kind: 'unknown', code: 'e2b_delete_unconfirmed' });
   });
   it('preserves completed upload failures instead of replacing them with late cancellation', async () => {
     const abort = new AbortController();
@@ -123,7 +119,7 @@ describe('E2B native REST leaf', () => {
     expect(JSON.stringify(result)).not.toContain(token);
     expect(await h.requests[0]!.json()).toMatchObject({ templateID: 'base', timeout: 300, autoPause: true, autoPauseMemory: true, autoResume: { enabled: false } });
     expect(h.requests[0]!.headers.get('idempotency-key')).toBe(resource.managedId);
-    expect(await h.client.bootstrap(resource)).toMatchObject({ kind: 'native', guestHome: { homeDir: '/root', daemonStartup: 'native-process' } });
+    expect(await h.client.bootstrap(resource)).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
   });
   it('guest runtime decodes Connect frames as bytes including BOM, nonzero exit and sliced binary uploads', async () => {
     const bytes = Buffer.from('\uFEFF秘密\n'); const h = vendor({ processBytes: output(bytes.toString('base64'), 17) });

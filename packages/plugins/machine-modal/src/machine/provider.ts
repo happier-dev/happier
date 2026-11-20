@@ -10,7 +10,7 @@ type FailureCode = 'native_intent_unconfirmed' | 'modal_resource_invalid' | 'mod
   | 'modal_resource_ended' | 'modal_launch_invalid' | 'modal_acquisition_unknown'
   | 'modal_file_invalid' | 'modal_file_permissions_failed' | 'modal_file_outcome_unknown'
   | 'modal_exec_invalid' | 'modal_exec_outcome_unknown' | 'modal_operation_cancelled'
-  | 'modal_check_unavailable' | 'modal_check_invalid' | 'modal_app_unavailable' | 'modal_image_invalid';
+  | 'modal_check_unavailable' | 'modal_check_invalid' | 'modal_app_unavailable' | 'modal_image_invalid' | 'credential_unavailable';
 type Failure = Readonly<{ ok: false; code: FailureCode; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 type Observation =
   | Readonly<{ resource: ModalResourceV1; state: 'running'; nativeCause?: MachineProvisionerNativeCauseV1 }>
@@ -142,7 +142,10 @@ export function createModalNativeProvider(client: ModalNativeClient) {
       try {
         app = await client.apps.fromName(launch.appReference, { createIfMissing: false });
       } catch (error) {
-        return failure('modal_app_unavailable', error);
+        const cause = nativeCause(error);
+        // The pinned SDK retains gRPC UNAUTHENTICATED from this pre-create read.
+        return { ok: false, code: cause && 'grpcStatusCode' in cause && cause.grpcStatusCode === 16
+          ? 'credential_unavailable' : 'modal_app_unavailable', ...(cause ? { nativeCause: cause } : {}) };
       }
       if (signal?.aborted) return failure('modal_operation_cancelled');
       const tags = managedId === undefined ? undefined : { 'happier.managed-id': managedId };

@@ -71,7 +71,8 @@ describe('Hetzner credential-free preparation through public Actions', () => {
     const native = fixture(), kit = await kitFor(native), directory = mkdtempSync(join(tmpdir(), 'hetzner-cloud-init-'));
     try {
       await kit.invokeAction('prepare-build', { ...input, input: { ...input.input,
-        cli: { ...input.input.cli, installScript: 'printf installed > "$INSTALL_MARKER"\nexit 0' },
+        cli: { ...input.input.cli, binaryPath: join(directory, 'installed'),
+          installScript: 'printf installed > "$INSTALL_MARKER"\nchmod +x "$INSTALL_MARKER"\nexit 0' },
         setupScript: setup === 'false' ? 'false\nprintf wrong > "$SETUP_MARKER"' : 'printf setup > "$SETUP_MARKER"\nexit 0',
       } }, { surface: 'plugin' });
       const create = native.calls.find(call => call.path === '/v1/servers' && call.method === 'POST')!.body!;
@@ -80,7 +81,7 @@ describe('Hetzner credential-free preparation through public Actions', () => {
       };
       // Map the guest filesystem and power-management tools at the OS boundary;
       // execute the generated shell unchanged apart from those absolute roots.
-      const mapPaths = (value: string) => value.replace(/\/(tmp|var|etc)(?=\/)/g, prefix => directory + prefix);
+      const mapPaths = (value: string) => value.split(directory).map(part => part.replace(/\/(tmp|var|etc)(?=\/)/g, prefix => directory + prefix)).join(directory);
       const binaries = join(directory, 'bin'); mkdirSync(binaries);
       for (const command of ['rm', 'cloud-init', 'passwd', 'poweroff']) writeFileSync(join(binaries, command),
         '#!/bin/sh\n' + (command === 'poweroff' ? 'touch "$SHUTDOWN_MARKER"\n' : 'exit 0\n'), { mode: 0o700 });

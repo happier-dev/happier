@@ -30,7 +30,7 @@ import { readLocalServerProfileIdentity } from '../executors/serverProfileScope.
 import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExecutorFromTextRunner.js';
 import type { InteractiveSystemTaskPromptRequest } from '../interactiveTaskKinds.js';
 import { readManagedSshTrustedHostKey } from './sshHostTrustResolution.js';
-import { buildManagedNativeGuestCommand, probeManagedNativeGuestPlatform, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
+import { buildManagedNativeGuestCommand, probeManagedNativeGuestPlatform, resolveManagedNativeGuestStartup, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 import { GuestServiceFailureFactsV1Schema, readGuestCliFailureOutput } from '@happier-dev/protocol/ssh/commandFailure';
@@ -177,9 +177,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   if (input.replacePayload && row.guestCli?.payloads && !guestCli) {
     throw new SystemTaskExecutionError('guest_payload_missing', 'Update requires the Home payload captured by its admission.');
   }
-  const nativeGuestHome = carrier.kind === 'native' && !dedicatedIdentity ? carrier.guestHome : undefined;
   let nativeProcess = carrier.kind === 'native' && !dedicatedIdentity
-    && (nativeGuestHome !== undefined || row.enrollmentIdentity?.kind === 'guestProcess');
+    && (carrier.guestHome !== undefined || carrier.daemonStartup === 'native-process' || row.enrollmentIdentity?.kind === 'guestProcess');
   const roles = resolveManagedMachineEnrollmentRolesV1(row.enrollmentIdentity, row.resource?.origin);
   const initialMachineMetadata = {
     ...(roles ? { rolesV1: roles } : {}),
@@ -218,6 +217,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     throw new SystemTaskExecutionError('resource_mismatch', 'Native bootstrap transport does not address the retained resource.');
   }
   const native = deps.native;
+  const { home: nativeGuestHome, platform: nativePlatform } = dedicatedIdentity ? {}
+    : await resolveManagedNativeGuestStartup(carrier, request => native.exec(request), input.signal);
   const wrapNativeCommand = (command: string) => buildManagedNativeGuestCommand(command, nativeGuestHome);
   const exec: ManagedNativeBootstrapIO['exec'] = async (request) => {
     input.signal?.throwIfAborted();
@@ -270,7 +271,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
         },
       },
       transport: { exec, install: async placement => {
-        const { os, arch, home } = await probeManagedNativeGuestPlatform(exec, signal);
+        const { os, arch, home } = nativePlatform ?? await probeManagedNativeGuestPlatform(exec, signal);
         const installation = { channel: configuration.channel, homeUrl: input.target.applicationUrl, signal, os, arch, home,
           ...(guestCli ? { guestCli } : {}),
           remoteHomeDir: placement.remoteHomeDir ?? nativeGuestHome?.happyHomeDir, dedicatedIdentity: !!dedicatedIdentity,

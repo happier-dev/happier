@@ -114,7 +114,7 @@ describe('Hetzner native boundary', () => {
     } }, status));
     const client = createHetznerNativeClient({ token: 'private-token', fetch: transport });
     const result = await client.acquire(acquire);
-    expect(result).toEqual({ kind: 'rejected', code: status === 401 || status === 403 ? 'native_authorization_failed' : 'native_request_failed',
+    expect(result).toEqual({ kind: 'rejected', code: status === 401 || status === 403 ? 'credential_unavailable' : 'native_request_failed',
       nativeCause: { httpStatusClass: '4xx', code } });
     expect(JSON.stringify(result)).not.toContain('private');
     expect(transport).toHaveBeenCalledTimes(1); // A permanent refusal never repeats allocation.

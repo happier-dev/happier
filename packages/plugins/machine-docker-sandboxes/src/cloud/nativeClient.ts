@@ -1,3 +1,4 @@
+import { isMachineProvisionerCreateRefusal, projectMachineProvisionerDeleteReadback, quoteMachineProvisionerShellArgument as quote, readMachineProvisionerCredentialRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -12,7 +13,6 @@ import { BILLING, CONTRIBUTION, reference, RECONCILIATION, ROLE, type Resource, 
 const base = 'https://connect.docker.com/sandboxes';
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const decode = (value: Uint8Array) => new TextDecoder().decode(value);
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 export function invalidResponse(): never { throw new PluginError({ code: 'docker_cloud_invalid_response' }); }
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return invalidResponse();
@@ -65,7 +65,8 @@ export function createCloudClient(context: CloudContext) {
     if (response.status >= 400) {
       let code: unknown;
       try { code = object(json(response.body)).code; } catch { /* Non-JSON failures retain HTTP status only. */ }
-      throw new CloudError(`docker_cloud_${typeof code === 'string' && vendorCodes.has(code) ? code : `http_${response.status}`}`, response.status);
+      throw new CloudError(readMachineProvisionerCredentialRefusal(response.status)
+        ?? `docker_cloud_${typeof code === 'string' && vendorCodes.has(code) ? code : `http_${response.status}`}`, response.status);
     }
     return response;
   }
@@ -134,7 +135,7 @@ export function createCloudClient(context: CloudContext) {
       }, { 'Idempotency-Key': managedId });
       return settle(sandbox(json(response.body)), operation);
     } catch (error) {
-      if (error instanceof CloudError && error.status && error.status < 500) return { kind: 'rejected', code: error.code };
+      if (error instanceof CloudError && isMachineProvisionerCreateRefusal(error.status)) return { kind: 'rejected', code: error.code };
       if (error instanceof PluginError && error.code !== 'docker_cloud_invalid_response') throw error;
       return { kind: 'pending', nativeOperationRef: reference(operation) };
     }
@@ -182,12 +183,8 @@ export function createCloudClient(context: CloudContext) {
     return { termination: { observed: { kind: 'exit', exitCode: result.exitCode }, requestedBy: { kind: 'none' } },
       stdoutBase64: result.stdout, stderrBase64: result.stderr, stdoutTruncated: result.incomplete, stderrTruncated: result.incomplete };
   }
-  async function bootstrap(resource: Resource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const result = await execute(resource, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-    const [os, arch, home] = Buffer.from(result.stdout, 'base64').toString('utf8').trim().split('\n');
-    if (result.exitCode !== 0 || result.incomplete || os !== 'Linux' || !['x86_64', 'aarch64'].includes(arch ?? '') || !home?.startsWith('/')) return invalidResponse();
-    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-      guestHome: { homeDir: home, happyHomeDir: home + '/.happier', daemonStartup: 'native-process' } };
+  async function bootstrap(_resource: Resource): Promise<MachineProvisionerBootstrapCarrierV1> {
+    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
   }
   async function inspect(resource: Resource): Promise<MachineProvisionerObservationV1> {
     try {
@@ -197,7 +194,9 @@ export function createCloudClient(context: CloudContext) {
         power: item.status === 'running' ? 'running' : item.status === 'stopped' ? 'stopped' : 'unknown', storage: 'retained', billing: BILLING,
         ...(expiry === undefined ? {} : { nativeExpiry: expiry }) });
     } catch (error) {
-      if (error instanceof CloudError && error.status === 404) return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'absent' });
+      if (error instanceof CloudError && error.status === 404 && error.code === 'docker_cloud_notFound') {
+        return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'absent' });
+      }
       return observeMachineProvisionerNativeRead(context.invokedAtMs, { kind: 'unknown', reason: cloudCode(error) });
     }
   }
@@ -212,12 +211,11 @@ export function createCloudClient(context: CloudContext) {
     try {
       const item = await read(resource);
       if (item.status === 'deleting') return { kind: 'unknown' };
-      const response = await management(item.name, 'DELETE', undefined, { 'If-Match': item.etag });
-      return response.status === 204 ? { kind: 'confirmed' } : { kind: 'unknown' };
+      await management(item.name, 'DELETE', undefined, { 'If-Match': item.etag });
     } catch (error) {
-      if (error instanceof CloudError && error.status === 404) return { kind: 'confirmed' };
-      return { kind: 'unknown', code: cloudCode(error) };
+      if (!(error instanceof CloudError && error.status === 404)) return { kind: 'unknown', code: cloudCode(error) };
     }
+    return projectMachineProvisionerDeleteReadback(await inspect(resource), 'docker_cloud_delete_unconfirmed');
   }
   return { authorize, management, list, read, locate, acquire, recover, settle, execute, exec, putFile, bootstrap, inspect, power, destroy,
     async check() { try { await list(); return { available: true }; } catch (error) { return { available: false, code: cloudCode(error) }; } } };

@@ -66,9 +66,8 @@ export const PLUGIN = definePlugin({
       async run(_input, context) { try { return await runtime(context).check(); }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: errorCode(error), status: 'Agent37 unavailable' })); } } },
     options: { ...defaults, title: 'Agent37 machine options', dangerLevel: 'safe', inputSchema: Agent37OptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
-      async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const check = await runtime(context).check();
-        return check.available ? projectOptions() : { dimensions: { size: [], location: [], network: [], image: [], duration: [] }, code: 'provider_unavailable' };
+      async run(_input): Promise<MachineProvisionerOptionsResultV1> {
+        return projectOptions();
       } },
     acquire: { ...defaults, title: 'Create Agent37 machine', dangerLevel: 'writesRemote', confirmation, inputSchema: ROLE_SCHEMAS.acquireInput, resultSchema: RECONCILIATION.result,
       async run(input, context) { if (!input.managedId) return { kind: 'rejected', code: 'invalid_request' };

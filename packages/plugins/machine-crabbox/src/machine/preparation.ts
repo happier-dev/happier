@@ -1,3 +1,5 @@
+import { readManagedDependencyExecutable } from '@happier-dev/plugin-sdk/managed-services';
+import { buildMachineProvisionerPreparationInstallScript } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -54,8 +56,8 @@ const nativeImage = defineProtocolObject({ Id: runtimeImageId, Config: definePro
 export function createCrabboxPreparation(context: PluginInvocationContext) {
   async function run(operation: Operation, args: readonly string[], stdin?: Uint8Array) {
     const runtime = operation.launch.backendId === 'local-container' ? operation.launch.localContainerRuntime ?? 'docker' : 'docker';
-    const dependency = await context.services.managedServices.dependencies.status(runtime, { signal: context.signal });
-    if ((dependency.state !== 'ready' && dependency.state !== 'updateAvailable') || !dependency.executable)
+    const dependency = await readManagedDependencyExecutable(context.services.managedServices.dependencies, runtime, context.signal);
+    if (dependency.state !== 'ready')
       throw new Error('Native container runtime unavailable');
     // Match direct.ts native tool discovery: no cloud/SSH/daemon environment
     // is passed to the image builder, nor build args, secret or SSH mounts.
@@ -109,8 +111,10 @@ export function createCrabboxPreparation(context: PluginInvocationContext) {
           await writeFile(target, Buffer.from(file.contentsBase64, 'base64'));
           copies.push('COPY ' + JSON.stringify([file.path, '/tmp/happier-build/' + file.path]));
         }
-        const command = ['sh', '-c', 'set -e\nmkdir -p /tmp/happier-build\ncd /tmp/happier-build\nsh -c "$1"\nchmod -R a+rX /opt/happier\nsh -c "$2"\ncd /\nrm -rf /tmp/happier-build\n',
-          'happier-prepare', input.cli.installScript, input.setupScript ?? ''];
+        const command = ['sh', '-c', 'set -e\nmkdir -p /tmp/happier-build\n'
+          + buildMachineProvisionerPreparationInstallScript({ cli: input.cli, stageDirectory: '/tmp/happier-build',
+            readableRoot: '/opt/happier', setupScript: input.setupScript })
+          + 'cd /\nrm -rf /tmp/happier-build\n'];
         // Native Crabbox starts its SSH bootstrap as root, independent of the
         // base image USER. Only public CLI payload and reviewed Setup are baked.
         const platform = guest.target.arch === 'x64' ? 'amd64' : 'arm64';

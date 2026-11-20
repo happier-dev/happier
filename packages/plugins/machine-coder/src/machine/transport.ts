@@ -1,10 +1,10 @@
+import { quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineProvisionerNativeExecResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { CoderResource, ROLE_SCHEMAS } from './schemas.js';
 
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const completed = (result: PluginProcessResult) => result.termination.requestedBy.kind === 'none'
   && result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0;
 /** Only the control-plane token is redacted. All other output remains bytes,

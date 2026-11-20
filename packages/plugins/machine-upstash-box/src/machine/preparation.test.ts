@@ -21,7 +21,12 @@ describe('Upstash native preparation recovery', () => {
       if (method === 'GET' && cancel) { cancel = false; controller.abort(); }
       return response;
     };
-    const built = await createUpstashBoxPreparationClient(request, controller.signal).build(input);
+    let waits = 0;
+    const built = await createUpstashBoxPreparationClient(request, controller.signal).build(input, async () => {
+      waits++;
+      controller.signal.throwIfAborted();
+    });
+    expect(waits).toBe(1);
     expect(built).toMatchObject({ kind: 'unknown', nativeOperationRef: { value: { sourceBoxId: 'builder' } } });
     if (built.kind !== 'unknown') throw new Error('Missing interrupted build');
     const recovered = await createUpstashBoxPreparationClient(request).inspect({ operationId: 'cancelled', launch });
@@ -34,7 +39,7 @@ describe('Upstash native preparation recovery', () => {
   it('keeps exact native HTTP refusal codes without leaking the vendor body', async () => {
     const request: typeof fetch = async () => Response.json({ error: 'private-account-detail' }, { status: 403 });
     const client = createUpstashBoxPreparationClient(request);
-    expect(await client.build(input)).toEqual({ kind: 'refused', code: 'credential_unavailable' });
+    expect(await client.build(input, async () => { throw new Error('Refused allocation must not wait'); })).toEqual({ kind: 'refused', code: 'credential_unavailable' });
     const inspection = await client.inspect({ operationId: 'cancelled', launch });
     expect(inspection).toMatchObject({ kind: 'unknown', code: 'credential_unavailable' });
     expect(JSON.stringify(inspection)).not.toContain('private-account-detail');

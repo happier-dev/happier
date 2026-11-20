@@ -1,5 +1,5 @@
-import { PluginError, projectPluginFailureText } from '@happier-dev/plugin-sdk';
-import { projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import { projectMachineProvisionerActionFailure, projectMachineProvisionerGuestCommandFailure, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { DockerSandboxesLaunchV1Schema, DockerSandboxesNameSchema, DockerSandboxesResourceV1Schema, isDockerSandboxesPreparedTemplateId } from './schemas.js';
@@ -53,11 +53,9 @@ export function createDockerSandboxesNativeClient(exec: Pick<ExecService, 'run'>
   function commandFailure(command: 'create' | 'run', result?: PluginProcessResult) {
     const observed = result?.termination.observed;
     const exitCode = observed?.kind === 'exit' && result?.termination.requestedBy.kind === 'none' ? observed.exitCode : null;
-    const stderr = result ? projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim() : '';
-    return { localCause: 'native_command_failed', command, exitCode,
-      ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-      ...(result?.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
-    } satisfies MachineProvisionerNativeCauseV1;
+    return projectMachineProvisionerGuestCommandFailure({
+      command, exitCode, stderr: result?.stderr, stderrTruncated: result?.stderrTruncated,
+    });
   }
   const client = {
     async stream(resource: SandboxLocator, command: readonly string[], signal?: AbortSignal) {

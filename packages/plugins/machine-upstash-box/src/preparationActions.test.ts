@@ -11,7 +11,7 @@ const choices = { runtime: 'node', size: 'small' } as const;
 const provider = { pluginId: 'happier.machine.upstash-box', localId: 'upstash-box' };
 const input = { operationId: 'build-one', input: { launch: { provider, schemaVersion: 1, choices },
   cli: { identity: 'public-release:0.3.0', versionId: '0.3.0', binaryPath: '/workspace/home/cli/happier',
-    installScript: 'printf install', files: [{ path: 'payload.tar.gz', contentsBase64: 'AAECAw==' }] }, setupScript: 'printf setup' } };
+    installScript: 'mkdir -p "$HOME/workspace/cli"; touch "$HOME/workspace/cli/happier"; chmod +x "$HOME/workspace/cli/happier"', files: [{ path: 'payload.tar.gz', contentsBase64: 'AAECAw==' }] }, setupScript: 'printf setup' } };
 
 function vendor() {
   const home = mkdtempSync(join(tmpdir(), 'upstash-prepare-'));
@@ -24,6 +24,7 @@ function vendor() {
   const calls: { method: string; path: string; body: Record<string, unknown> }[] = [];
   const dto = () => ({ id: 'builder-id', name: 'happier-prepared-build-one', labels: ['happier-managed'], status });
   const services = {
+    machineProvisioners: { waitForNativeObservation: async () => { throw new Error('Idle build must not wait'); } },
     connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { 'x-box-api-key': 'fixture-key' } }) },
     http: { request: async (request: { url: string; method: string; body?: Uint8Array }) => {
       const path = new URL(request.url).pathname, method = request.method;
@@ -55,7 +56,8 @@ function vendor() {
       throw new Error('Unexpected path ' + method + ' ' + path);
     } },
   } as unknown as PluginTestServicesFixture;
-  return { services, calls, home, cleanup() { rmSync(home, { recursive: true, force: true }); }, ready() { snapshotStatus = 'ready'; }, lostCreate() { lostCreate = true; }, lostSnapshot() { lostSnapshot = true; },
+  const buildInput = { ...input, input: { ...input.input, cli: { ...input.input.cli, binaryPath: join(home, 'workspace', 'cli', 'happier') } } };
+  return { services, calls, home, buildInput, cleanup() { rmSync(home, { recursive: true, force: true }); }, ready() { snapshotStatus = 'ready'; }, lostCreate() { lostCreate = true; }, lostSnapshot() { lostSnapshot = true; },
     mismatch() { mismatch = true; }, deferDelete() { lostDelete = true; }, deleted() { snapshot = false; }, env() { env = { SECRET: 'masked' }; }, present: () => ({ source, snapshot }) };
 }
 
@@ -65,7 +67,7 @@ describe('Upstash preparation through public Actions', () => {
     try {
       const built = await kit.invokeAction('prepare-build', { ...input, input: { ...input.input,
         cli: { ...input.input.cli, binaryPath: join(v.home, 'workspace', 'cli', 'happier'),
-          installScript: 'mkdir -p "$HOME/workspace/cli"; printf installed > "$HOME/workspace/cli/happier"' },
+          installScript: 'mkdir -p "$HOME/workspace/cli"; printf installed > "$HOME/workspace/cli/happier"; chmod +x "$HOME/workspace/cli/happier"' },
         setupScript: 'printf configured > "$HOME/configured"' } }, { surface: 'plugin' });
       expect(built).toMatchObject({ kind: 'pending', nativeOperationRef: { value: { sourceBoxId: 'builder-id', snapshotId: 'snapshot-id' } } });
       expect(v.calls.find(call => call.method === 'POST' && call.path === '/v2/box')?.body).toEqual({ ...choices,
@@ -89,7 +91,7 @@ describe('Upstash preparation through public Actions', () => {
   it('builds with configured native account environment without reading or mutating account settings', async () => {
     const v = vendor(); v.env(); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
-      expect(await kit.invokeAction('prepare-build', input, { surface: 'plugin' }))
+      expect(await kit.invokeAction('prepare-build', v.buildInput, { surface: 'plugin' }))
         .toMatchObject({ kind: 'pending', nativeOperationRef: { value: { sourceBoxId: 'builder-id', snapshotId: 'snapshot-id' } } });
       expect(v.calls.filter(call => call.path.startsWith('/v2/box/settings'))).toEqual([]);
       expect(JSON.stringify(v.calls)).not.toContain('fixture-key');
@@ -100,7 +102,7 @@ describe('Upstash preparation through public Actions', () => {
   it.each(['lostCreate', 'lostSnapshot'] as const)('recovers %s without replaying build or allocation', async failure => {
     const v = vendor(); v[failure](); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
-      expect(await kit.invokeAction('prepare-build', input, { surface: 'plugin' })).toMatchObject({ kind: 'unknown' });
+      expect(await kit.invokeAction('prepare-build', v.buildInput, { surface: 'plugin' })).toMatchObject({ kind: 'unknown' });
       v.ready();
       const recovered = await kit.invokeAction('prepare-inspect', { operationId: 'build-one', launch: choices }, { surface: 'plugin' });
       expect(recovered).toMatchObject({ kind: failure === 'lostSnapshot' ? 'ready' : 'failed' });
@@ -115,7 +117,7 @@ describe('Upstash preparation through public Actions', () => {
   it('refuses a snapshot from another box before deleting anything', async () => {
     const v = vendor(); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
-      const result = await kit.invokeAction('prepare-build', input, { surface: 'plugin' });
+      const result = await kit.invokeAction('prepare-build', v.buildInput, { surface: 'plugin' });
       if (result.kind !== 'pending') throw new Error('Missing operation');
       v.mismatch();
       expect(await kit.invokeAction('prepare-inspect', { nativeOperation: result.nativeOperationRef }, { surface: 'plugin' })).toMatchObject({ kind: 'unknown', code: 'upstash_box_snapshot_identity_mismatch' });
@@ -127,7 +129,7 @@ describe('Upstash preparation through public Actions', () => {
   it('retains the paused source while snapshot deletion remains unconfirmed', async () => {
     const v = vendor(); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
-      const result = await kit.invokeAction('prepare-build', input, { surface: 'plugin' });
+      const result = await kit.invokeAction('prepare-build', v.buildInput, { surface: 'plugin' });
       if (result.kind !== 'pending') throw new Error('Missing operation');
       v.deferDelete();
       expect(await kit.invokeAction('prepare-destroy', { nativeOperation: result.nativeOperationRef }, { surface: 'plugin' }))
@@ -148,14 +150,15 @@ describe('Upstash preparation through public Actions', () => {
     finally { await kit.dispose(); }
   });
 
-  it('retains failed setup exit status and sanitized stderr with its owned cleanup reference', async () => {
+  it('retains setup exit status and its cleanup reference while keeping authored output private', async () => {
     const v = vendor(); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
-      const result = await kit.invokeAction('prepare-build', { ...input, input: { ...input.input,
-        setupScript: 'printf "install prerequisite failed" >&2; exit 19' } }, { surface: 'plugin' });
+      const result = await kit.invokeAction('prepare-build', { ...v.buildInput, input: { ...v.buildInput.input,
+        setupScript: 'printf "PRIVATE_SETUP_OUTPUT_SENTINEL" >&2; exit 19' } }, { surface: 'plugin' });
       expect(result).toMatchObject({ kind: 'unknown', code: 'upstash_box_preparation_exec_failed',
-        nativeCause: { localCause: 'native_command_failed', exitCode: 19, stderr: 'install prerequisite failed' },
+        nativeCause: { localCause: 'native_command_failed', exitCode: 19 },
         nativeOperationRef: { value: { sourceBoxId: 'builder-id' } } });
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_SETUP_OUTPUT_SENTINEL');
       expect(v.calls.filter(call => call.method === 'POST' && call.path.endsWith('/snapshots'))).toHaveLength(0);
     } finally { await kit.dispose(); v.cleanup(); }
   });
@@ -163,8 +166,8 @@ describe('Upstash preparation through public Actions', () => {
   it('runs the existing root-only setup interpreter through the boxuser sudo boundary', async () => {
     const v = vendor(); const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
-      expect(await kit.invokeAction('prepare-build', { ...input, input: { ...input.input,
-        cli: { ...input.input.cli, installScript: 'id -u > "$HOME/install-principal"' },
+      expect(await kit.invokeAction('prepare-build', { ...v.buildInput, input: { ...v.buildInput.input,
+        cli: { ...v.buildInput.input.cli, installScript: v.buildInput.input.cli.installScript + '; id -u > "$HOME/install-principal"' },
         setupScript: 'test "$(id -u)" = 0 || exit 77; printf root > "$HOME/setup-principal"' } }, { surface: 'plugin' }))
         .toMatchObject({ kind: 'pending', nativeOperationRef: { value: { snapshotId: 'snapshot-id' } } });
       expect(readFileSync(join(v.home, 'install-principal'), 'utf8').trim()).toBe('1002');

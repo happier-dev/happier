@@ -1,3 +1,4 @@
+import { isMachineProvisionerCreateRefusal, buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { E2bNativeError, projectE2bNativeFailure } from './nativeFailure.js';
@@ -29,7 +30,6 @@ const aliasSchema = defineProtocolObject({ templateID: text, public: boolean }, 
 const statusSchema = defineProtocolObject({ templateID: text, buildID: text, status: text }, open);
 const uploadSchema = defineProtocolObject({ present: boolean, url: text.optional(),
   headers: defineProtocolObject({}, { policy: 'additive-open/preserve', additionalProperties: defineProtocolString() }).optional() }, open);
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const named = (names: readonly string[], name: string) => names.some(value => value === name || value.split('/').length === 2 && value.split('/')[1] === name);
 class PreparationError extends E2bNativeError {
   constructor(code: string, readonly status?: number) { super({ code }); }
@@ -88,7 +88,7 @@ export function createE2bPreparationClient(request: typeof fetch, signal?: Abort
         : error instanceof Error && (error.message === 'credential_unavailable' || error.message === 'provider_unavailable') ? error.message : fallback;
       if (!mayOwn && code === 'credential_unavailable') return { kind: 'refused', code };
       if (error instanceof PreparationError && (error.code === 'e2b_template_identity_mismatch'
-        || !mayOwn && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409)) return { kind: 'refused', code };
+        || !mayOwn && isMachineProvisionerCreateRefusal(error.status, [409]))) return { kind: 'refused', code };
       return { kind: 'unknown', code, nativeOperationRef: reference(operation) };
     });
   }
@@ -150,8 +150,8 @@ export function createE2bPreparationClient(request: typeof fetch, signal?: Abort
         }
         steps.push({ type: 'COPY', args: ['.', directory + '/', 'root', ''], filesHash: context.hash });
       }
-      const script = 'set -eu\nmkdir -p ' + quote(directory) + '\ntrap ' + quote('rm -rf -- ' + quote(directory)) + ' EXIT\ncd ' + quote(directory)
-        + '\nsh -c ' + quote(definition.cli.installScript) + '\nsh -c ' + quote(definition.setupScript ?? '') + '\n';
+      const script = 'set -eu\nmkdir -p ' + quote(directory) + '\ntrap ' + quote('rm -rf -- ' + quote(directory)) + ' EXIT\n'
+        + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: directory, setupScript: definition.setupScript });
       steps.push({ type: 'RUN', args: ['sh -c ' + quote(script), 'root'] });
       const started = await http('/v2/templates/' + encodeURIComponent(operation.templateId!) + '/builds/' + encodeURIComponent(operation.buildId!), 'POST', {
         fromTemplate: operation.launch.templateId, steps,

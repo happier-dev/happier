@@ -1,4 +1,4 @@
-import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { isMachineProvisionerCreateRefusal, projectMachineProvisionerActionFailure, quoteMachineProvisionerShellArgument as quote, readMachineProvisionerCredentialRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as z from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1, MachineProvisionerSizeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { FLY_DEFAULT_IMAGE, FLY_ROLE_SCHEMAS, FlyAcquireOperationV1Schema, FlyAcquireRequestSchema, FlyExecRequestSchema, FlyExecResponseSchema, FlyGuestBootSchema, FlyLaunchV1Schema, FlyMachineSchema, FlyProcessConfigurationSchema, FlyPutFileOptionsSchema, FlyResourceV1Schema, FlyVolumeSchema, type FlyAcquireOperationV1, type FlyAcquireRequest, type FlyExecRequest, type FlyGuestBoot, type FlyLaunchV1, type FlyPutFileRequest, type FlyResourceV1 } from './schemas.js';
@@ -53,7 +53,7 @@ export type FlyCleanup = Readonly<{
   kind?: 'refused' | 'unknown' | 'pending'; nativeCause?: MachineProvisionerNativeCauseV1;
 }>;
 export type FlyAcquireResult = Readonly<{ kind: 'bound'; resource: FlyResourceV1 }>
-  | Readonly<{ kind: 'rejected'; reason: 'scope-mismatch' | 'launch-unavailable' | 'provider-unavailable'; nativeCause?: MachineProvisionerNativeCauseV1 }>
+  | Readonly<{ kind: 'rejected'; reason: 'scope-mismatch' | 'launch-unavailable' | 'provider-unavailable' | 'credential_unavailable'; nativeCause?: MachineProvisionerNativeCauseV1 }>
   | Readonly<{ kind: 'unknown' | 'refused'; reason: string; operation: FlyAcquireOperationV1; nativeCause?: MachineProvisionerNativeCauseV1 }>;
 export type FlyOptionsInput = z.infer<typeof discoveryInputSchema>;
 export type FlyOptionsResult = Readonly<{ kind: 'available'; regions: z.infer<typeof platformSchema>['data']['platform']['regions'];
@@ -69,7 +69,6 @@ function cleanupFailure(cleanup: FlyCleanup, result: HttpResult, reason: string,
   return { ...cleanup, kind: effect && failure.kind === 'refused' ? 'refused' : 'unknown', reason,
     ...('nativeCause' in failure && failure.nativeCause ? { nativeCause: failure.nativeCause } : {}) };
 }
-const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 // Official Machines OpenAPI ErrorResponse/main.statusCode, fetched 2026-10-25:
 // https://docs.fly.io/api/machines/openapi.json. error/details are content.
 const nativeStatusSchema = z.object({ status: z.enum(['unknown', 'insufficient_capacity', 'volume_placement_capacity', 'name_taken']) });
@@ -123,7 +122,7 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
   async function check(input: Pick<FlyOptionsInput, 'organizationSlug'>) {
     const { organizationSlug } = discoveryInputSchema.parse(input);
     const result = await listApps(organizationSlug);
-    return result.kind === 'available' ? { available: true as const } : { available: false as const, code: result.reason,
+    return result.kind === 'available' ? { available: true as const } : { available: false as const, code: readMachineProvisionerCredentialRefusal(result.status) ?? result.reason,
       ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
   }
 
@@ -155,14 +154,15 @@ export function createFlyNativeClient(token: string, request: typeof fetch = fet
     }
     const current = await options({ organizationSlug: context.organizationSlug,
       ...(launch.app.ownership === 'existing' ? { appName: launch.app.name } : {}) });
-    if (current.kind !== 'available') return { kind: 'rejected', reason: current.kind === 'refused' ? 'launch-unavailable' : 'provider-unavailable',
+    if (current.kind !== 'available') return { kind: 'rejected', reason: readMachineProvisionerCredentialRefusal(current.status)
+      ?? (current.kind === 'refused' ? 'launch-unavailable' : 'provider-unavailable'),
       ...(current.nativeCause ? { nativeCause: current.nativeCause } : {}) };
     if (!isLaunchAvailable(launch, current, context.organizationSlug)) return { kind: 'rejected', reason: 'launch-unavailable' };
     let operation: FlyAcquireOperationV1 = {
       app: { name: launch.app.name, ownership: launch.app.ownership === 'created' ? 'unknown' : 'existing' },
       requestId, phase: launch.app.ownership === 'created' ? 'app' : 'volume',
     };
-    const failed = (result: HttpResult): FlyAcquireResult => ({ kind: result.kind === 'refused' || result.kind === 'absent' ? 'refused' : 'unknown', reason: result.kind === 'absent' ? 'native-absent' : result.kind === 'ok' ? 'invalid-response' : result.reason, operation,
+    const failed = (result: HttpResult): FlyAcquireResult => ({ kind: result.kind === 'absent' || result.kind === 'refused' && isMachineProvisionerCreateRefusal(result.status) ? 'refused' : 'unknown', reason: result.kind === 'absent' ? 'native-absent' : result.kind === 'ok' ? 'invalid-response' : result.reason, operation,
       ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) });
     // Every successful stage's exact ids are returned even when a later stage
     // is ambiguous. The host retains this native operation value on its row;

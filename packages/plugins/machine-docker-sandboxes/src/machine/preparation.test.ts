@@ -1,3 +1,7 @@
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { PluginError } from '@happier-dev/plugin-sdk';
@@ -19,11 +23,14 @@ const processResult = (exitCode = 0, stdout = ''): PluginProcessResult => ({
 });
 
 // The genuine boundary is the native sbx process; all provider logic stays real.
-function fixture(options: { fail?: string; lostSave?: boolean; unknownInventory?: boolean } = {}) {
+function fixture(options: { fail?: string; lostSave?: boolean; unknownInventory?: boolean; executeSetup?: (script: string, sandboxName: string) => number } = {}) {
   const builders = new Set<string>();
   const templates = new Set<string>(['someone-else:keep']);
   const run = vi.fn<ExecService['run']>(async request => {
     const args = [...(request.args ?? [])];
+    if (options.executeSetup && args.at(-1) === '-s') {
+      return processResult(options.executeSetup(new TextDecoder().decode(request.stdin), args[3]!));
+    }
     if (options.fail === args[0] || (options.fail === 'setup' && args.at(-1) === '-s')) return processResult(17);
     if (args[0] === 'create') builders.add(args[args.indexOf('--name') + 1]);
     if (args[0] === 'ls') return processResult(0, JSON.stringify({ sandboxes: [...builders].map(name => ({ name, status: 'stopped' })) }));
@@ -60,13 +67,32 @@ describe('Docker Sandboxes prepared templates', () => {
     expect(upload?.stdin && [...upload.stdin]).toEqual([0, 1, 255]);
     const setup = f.run.mock.calls.find(([request]) => request.args?.at(-1) === '-s')?.[0];
     expect(setup?.args).toEqual(['exec', '--interactive', '--', builderName, 'sh', '-eu', '-s']);
-    expect(new TextDecoder().decode(setup?.stdin)).toContain(input.cli.installScript + '\n' + input.setupScript);
+    expect(new TextDecoder().decode(setup?.stdin)).toContain(input.setupScript);
     expect(JSON.stringify(f.run.mock.calls.map(([request]) => request.args))).not.toContain(input.setupScript);
     expect(f.run.mock.calls.some(([request]) => request.args?.includes('login'))).toBe(false);
     f.run.mockClear();
     expect(await f.provider.buildPreparation({ operationId, input })).toMatchObject({ kind: 'ready' });
     expect(f.run.mock.calls.every(([request]) => request.args?.[0] === 'ls' || request.args?.[1] === 'ls')).toBe(true);
   });
+
+  it.each([['/bin/sh', 'exit 13'], ['/nonexistent/happier', 'exit 0']])(
+    'keeps a failed or incomplete CLI install out of the saved template (%s)', async (binaryPath, setupScript) => {
+      const root = await mkdtemp(join(tmpdir(), 'happier-docker-preparation-'));
+      try {
+        const f = fixture({ executeSetup: (script, sandboxName) => {
+          const guestScript = script.replaceAll('/tmp/' + sandboxName, root);
+          const result = spawnSync('sh', ['-eu', '-s'], { input: guestScript });
+          if (result.error || result.status === null) throw result.error ?? new Error('Guest script did not exit');
+          return result.status;
+        } });
+        const result = await f.provider.buildPreparation({ operationId, input: {
+          ...input, cli: { ...input.cli, binaryPath, installScript: 'exit 0' }, setupScript,
+        } });
+        expect(result).toMatchObject({ kind: 'unknown', code: 'docker_sandbox_prepare_setup_failed' });
+        expect(f.templates.has(templateId)).toBe(false);
+      } finally { await rm(root, { recursive: true, force: true }); }
+    },
+  );
 
   it('adopts a complete saved template after interruption using the original launch, without allocating', async () => {
     const f = fixture();

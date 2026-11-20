@@ -1,5 +1,5 @@
 import { defineProtocolNumber, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { readMachineProvisionerCredentialRefusal, isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote, buildMachineProvisionerPreparationInstallScript, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Agent37LaunchSchema, Agent37PreparedNameSchema, PREPARED_NAME_HASH_LENGTH, PREPARED_NAME_PREFIX, reference, type Agent37Launch } from './schemas.js';
 import { KINDS } from './kinds.js';
 import { createAgent37BuildContext } from './buildContext.js';
@@ -46,7 +46,7 @@ export function createAgent37PreparationClient(request: typeof fetch, signal?: A
     signal?.throwIfAborted();
     const response = await request(API + path, { method, signal, redirect: 'error', headers: { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (!response.ok && response.status !== 404) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'agent37_http_' + response.status, response.status);
+    if (!response.ok && response.status !== 404) throw new NativeError(readMachineProvisionerCredentialRefusal(response.status) ?? 'agent37_http_' + response.status, response.status);
     return response;
   }
   async function json(response: Response): Promise<unknown> {
@@ -97,8 +97,11 @@ export function createAgent37PreparationClient(request: typeof fetch, signal?: A
       }
       const directory = '/tmp/.happier-preparation';
       const copies = definition.cli.files.map(file => 'COPY ' + JSON.stringify([file.path, directory + '/' + file.path]) + '\n').join('');
-      const command = ['sh', '-c', 'set -e\nif [ -n "$1" ]; then trap \'rm -rf -- "$1"\' EXIT; cd -- "$1"; fi\nsh -c "$2"\nchmod -R a+rX /opt/happier\nsh -c "$3"\n',
-        'happier-build', definition.cli.files.length ? directory : '', definition.cli.installScript, definition.setupScript ?? ''];
+      const stageDirectory = definition.cli.files.length ? directory : undefined;
+      const script = (stageDirectory ? 'trap ' + quote('rm -rf -- ' + quote(stageDirectory)) + ' EXIT\n' : '')
+        + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory,
+          readableRoot: '/opt/happier', setupScript: definition.setupScript });
+      const command = ['sh', '-c', script];
       const install = copies + 'RUN ' + JSON.stringify(command) + '\n';
       // Run the install as root, then restore the system image's runtime user.
       const dockerfile = 'FROM --platform=linux/amd64 ' + base.data.image_ref + '\n' + (selected.preparationBaseUser
@@ -121,7 +124,7 @@ export function createAgent37PreparationClient(request: typeof fetch, signal?: A
       return { kind: 'pending', nativeOperationRef: reference(operation) };
     } catch (error) {
       if (!dispatched || !operation.buildId && error instanceof NativeError && error.status !== undefined
-        && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 409) {
+        && isMachineProvisionerCreateRefusal(error.status, [409])) {
         return projectMachineProvisionerActionFailure(error, () => ({ kind: 'refused', code: error instanceof NativeError ? error.code : 'agent37_context_invalid' }));
       }
       return failure(error, operation, 'agent37_build_unconfirmed');

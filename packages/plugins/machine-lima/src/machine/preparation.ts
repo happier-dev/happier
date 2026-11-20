@@ -1,3 +1,4 @@
+import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import { posix } from 'node:path';
 import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
@@ -70,9 +71,9 @@ export function createLimaPreparationClient(executor: LimaExecutor, provider: Pi
       }
       // As in Daytona, installation/setup need root for /opt/happier. Keep
       // scripts on private stdin and preserve the supplier's selected CLI path.
-      const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
-      await command(['sudo', '-n', '--', 'sh', '-s'], 'set -eu\ncd ' + quote(directory) + '\nsh -c ' + quote(definition.cli.installScript)
-        + '\ntest -x ' + quote(definition.cli.binaryPath) + '\nchmod -R a+rX /opt/happier\nsh -c ' + quote(definition.setupScript ?? '') + '\nrm -rf -- ' + quote(directory) + '\n');
+      await command(['sudo', '-n', '--', 'sh', '-s'],
+        buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: directory,
+          readableRoot: '/opt/happier', setupScript: definition.setupScript }) + 'rm -rf -- ' + quote(directory) + '\n');
       const stopped = await changeLimaPower({ executor, ...resource, intent: 'stop' });
       if (stopped.status.toLowerCase() !== 'stopped') throw nativeError('lima_preparation_stop_unconfirmed');
       const marked = await runLimaCommand({ executor, store: resource.store, args: ['edit', '--tty=false', '--start=false',

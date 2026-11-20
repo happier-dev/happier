@@ -5,7 +5,7 @@ import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin
 import { observeMachineProvisionerNativeRead, buildMachineProvisionerPinnedSshBootstrap, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema,
-  MachineProvisionerPowerResultV1Schema, MachineProvisionerSnapshotResultV1Schema, projectMachineProvisionerActionFailure, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
+  MachineProvisionerPowerResultV1Schema, MachineProvisionerSnapshotResultV1Schema, projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerCloudHostKeyV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
 import { createDigitalOceanProvider } from './machine/provider.js';
@@ -179,7 +179,7 @@ export const PLUGIN = definePlugin({
         const result = await (await accountRuntime(context, guestHostKey)).acquire({ launch: input.launch, name: `happier-${input.managedId}`, recoveryTag: `happier-${input.managedId}`, bootstrapSshPublicKey: input.bootstrapPublicKey });
         if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
         if (result.kind === 'unknown') return { ...pending(`happier-${input.managedId}`), ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}) };
-        return { kind: 'rejected' as const, code: 'provider_unavailable' as const,
+        return { kind: 'rejected' as const, code: readMachineProvisionerCredentialRefusal(result.status) ?? 'provider_unavailable',
           ...('nativeCause' in result && result.nativeCause ? { nativeCause: result.nativeCause } : {}) }; }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(`happier-${input.managedId}`)); }
         finally { await guestHostLease?.dispose(); }

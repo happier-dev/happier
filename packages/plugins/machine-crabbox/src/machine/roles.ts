@@ -1,3 +1,4 @@
+import { projectUnavailableManagedDependency } from '@happier-dev/plugin-sdk/managed-services';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { machineCheckPresentation, machinePresentationLabel } from '../ui/translations.js';
@@ -88,11 +89,10 @@ export async function checkCrabboxDirect(direct: () => Promise<unknown>): Promis
   try { await direct(); return machineCheckPresentation({ available: true }); }
   catch (error) {
     if (!(error instanceof CrabboxDependencyUnavailable)) throw error;
-    return machineCheckPresentation({ available: false, code: error.code, prerequisites: [{
-      requirement: { kind: 'managedDependency', id: { pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_DEPENDENCY_ID } },
-      status: 'unavailable',
-      repairAction: { action: { pluginId: CRABBOX_PLUGIN_ID, localId: 'install' }, input: {} },
-    }] });
+    return machineCheckPresentation({ available: false, code: error.code, ...(error.missing ? { prerequisites: [
+      projectUnavailableManagedDependency({ pluginId: CRABBOX_PLUGIN_ID, localId: CRABBOX_DEPENDENCY_ID },
+        { repairAction: { action: { pluginId: CRABBOX_PLUGIN_ID, localId: 'install' }, input: {} } }),
+    ] } : {}) });
   }
 }
 

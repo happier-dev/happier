@@ -77,7 +77,7 @@ describe('Daytona HTTP leaf qualification', () => {
       const recovered = await client.recover(acquired.nativeOperationRef.value);
       expect(recovered.kind).toBe('bound');
       if (recovered.kind !== 'bound') throw new Error('Missing native resource');
-      expect(await client.bootstrap(recovered.resource.value)).toMatchObject({ kind: 'native', guestHome: { homeDir: v.home, daemonStartup: 'native-process' } });
+      expect(await client.bootstrap(recovered.resource.value)).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
       expect(v.calls.filter(call => call.path === '/api/sandbox' && call.method === 'POST')).toHaveLength(1);
     } finally { v.cleanup(); }
   });

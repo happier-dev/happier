@@ -1,9 +1,10 @@
+import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { LumeNativeClient } from './nativeClient.js';
 import type { LumePreparationBuildExecution } from './preparation.js';
 import type { LumeSshHost } from './sshGuest.js';
-import { observeLumeSshGuest, withLumeSshGuest, lumeProcessSucceeded, lumeShellQuote as quote } from './sshGuest.js';
+import { observeLumeSshGuest, withLumeSshGuest, lumeProcessSucceeded } from './sshGuest.js';
 import { Buffer } from 'node:buffer';
 import { LUME_DEFAULT_LOGIN } from './schemas.js';
 
@@ -45,7 +46,7 @@ export function createLumePreparationBuildExecutor(input: Readonly<{
           const parent = destination.slice(0, destination.lastIndexOf('/'));
           await run(`umask 077; mkdir -p -- ${quote(parent)} && cat > ${quote(destination)}`, Buffer.from(file.contentsBase64, 'base64'));
         }
-        await run(`set -e\ncd -- ${quote(stage)}\nsh -c ${quote(build.cli.installScript)}\nsh -c ${quote(build.setupScript ?? '')}`);
+        await run(buildMachineProvisionerPreparationInstallScript({ cli: build.cli, stageDirectory: stage, setupScript: build.setupScript }));
         // macOS launchd's sshd-keygen-wrapper regenerates missing host keys on
         // each clone's first connection. This must be the base's final SSH
         // connection: even a native GET probes port 22 and would recreate them.

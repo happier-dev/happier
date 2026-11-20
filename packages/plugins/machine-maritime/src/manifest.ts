@@ -123,8 +123,6 @@ export const PLUGIN = definePlugin({
           description: 'Uses the documented alwaysOn paid add-on; verify its price and availability with Maritime. Maritime also says never-sleep machines are not sold; a refused setting stops bootstrap. Linux computers still sleep when idle.' },
       ] },
       async run(input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const check = await runtime(context).check();
-        if (!check.available) return { dimensions: { size: [], location: [], network: [], image: [], duration: [] }, code: 'provider_unavailable' };
         const launch = MaritimeLaunchSchema.parse({ kind: 'agent-box', templateId: input.templateId ?? 'zeroclaw',
           memMb: input.memMb ?? 2048, diskGb: input.diskGb ?? 5, alwaysOn: input.alwaysOn ?? true });
         const price = (amount: string, unit: string, source: string) => ({ amount, currency: 'USD', unit, source, observedAt: context.invokedAtMs });

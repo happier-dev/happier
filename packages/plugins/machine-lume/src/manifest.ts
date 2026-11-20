@@ -1,3 +1,4 @@
+import { readManagedDependencyExecutable, projectUnavailableManagedDependency } from '@happier-dev/plugin-sdk/managed-services';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import {
@@ -43,9 +44,9 @@ function errorCode(error: unknown) {
 }
 
 async function runtime(context: PluginInvocationContext) {
-  const status = await context.services.managedServices.dependencies.status(LUME_DEPENDENCY_ID, { signal: context.signal });
-  if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) {
-    throw Object.assign(new Error('Declared native Lume executable unavailable'), { code: 'provider_unavailable', notInstalled: true });
+  const status = await readManagedDependencyExecutable(context.services.managedServices.dependencies, LUME_DEPENDENCY_ID, context.signal);
+  if (status.state !== 'ready') {
+    throw Object.assign(new Error('Declared native Lume executable unavailable'), { code: 'provider_unavailable', notInstalled: status.state === 'missing' });
   }
   const [{ createLumeNativeClient }, { createLumeProvider }] = await Promise.all([
     import('./machine/nativeClient.js'), import('./machine/provider.js'),
@@ -188,12 +189,11 @@ export const LUME_PLUGIN = definePlugin({
           return machineCheckPresentation(await (await runtime(context)).provider.check());
         } catch (error) {
           // A missing `lume` is its own state, so its card can say how to get it; the server's own refusals stay typed below.
-          const notInstalled = error !== null && typeof error === 'object' && 'notInstalled' in error;
+          const notInstalled = error !== null && typeof error === 'object' && 'notInstalled' in error && error.notInstalled === true;
           return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: notInstalled ? 'lume_not_installed' : errorCode(error),
-            ...(notInstalled ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const, id: LUME_DEPENDENCY_ID },
-              status: 'unavailable' as const, reason: 'lume_not_installed',
-              repairAction: { action: { pluginId: LUME_PLUGIN_ID, localId: 'install' }, input: {} },
-            }] } : {}),
+            ...(notInstalled ? { prerequisites: [projectUnavailableManagedDependency(LUME_DEPENDENCY_ID, {
+              reason: 'lume_not_installed', repairAction: { action: { pluginId: LUME_PLUGIN_ID, localId: 'install' }, input: {} },
+            })] } : {}),
           }));
         }
       },

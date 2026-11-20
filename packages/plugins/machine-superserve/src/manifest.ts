@@ -65,9 +65,7 @@ export const PLUGIN = definePlugin({
       async run(_input, context) { return runtime(context).check(); } },
     options: { ...defaults, title: 'Choose Superserve template', dangerLevel: 'safe', inputSchema: SuperserveOptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [{ path: 'template', title: 'Template', widget: 'text', required: true, defaultValue: 'superserve/base' }] },
-      async run(input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const check = await runtime(context).check();
-        if (!check.available) return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable' };
+      async run(input): Promise<MachineProvisionerOptionsResultV1> {
         const template = input.template ?? 'superserve/base';
         return { base: { launch: { template }, guestPlatform: 'linux' as const, retention },
           dimensions: { size: [], image: [{ id: template, title: template, guestPlatform: 'linux' as const, assignments: [], nativeFacts: {

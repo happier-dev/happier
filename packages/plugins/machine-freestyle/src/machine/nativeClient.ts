@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { readMachineProvisionerCredentialRefusal, isMachineProvisionerCreateRefusal, projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, FreestyleLaunchSchema, FreestyleOperationSchema, FreestyleResourceSchema, ROLE_SCHEMAS, reference, type FreestyleLaunch, type FreestyleOperation, type FreestyleResource } from './schemas.js';
 
 // Freestyle public v5 REST, OpenAPI 3.1.0 / info 0.1.0, observed 2026-11-01.
@@ -17,6 +17,7 @@ const dtoSchema = defineProtocolObject({ id: text, slug: text, state: text,
   createdAt: text, autoDeleteSeconds: defineProtocolNumber({ integer: true, minimum: 0 }).nullable().optional(),
   ttlSeconds: defineProtocolNumber({ integer: true, minimum: 0 }).nullable().optional(),
 }, open);
+const missingVmSchema = defineProtocolObject({ error: defineProtocolObject({ code: defineProtocolString() }, open) }, open);
 type Native = ProtocolSchemaOutput<typeof dtoSchema>;
 const executionSchema = defineProtocolObject({ statusCode: defineProtocolNumber({ integer: true }).nullable().optional(),
   stdout: defineProtocolString().nullable().optional(), stderr: defineProtocolString().nullable().optional() }, open);
@@ -35,7 +36,11 @@ export function createFreestyleHttp(request: typeof fetch, signal?: AbortSignal)
     const response = await request(url, { method, signal, redirect: 'error',
       headers: { 'content-type': bytes ? 'application/octet-stream' : 'application/json' },
       ...(bytes ? { body: new Uint8Array(bytes) } : body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'freestyle_http_' + response.status, response.status);
+    if (!response.ok && response.status === 404 && method === 'GET') {
+      const failure = missingVmSchema.safeParse(await response.json().catch(() => undefined));
+      if (failure.success && failure.data.error.code === 'NOT_FOUND') throw new NativeError('freestyle_vm_not_found', 404);
+    }
+    if (!response.ok) throw new NativeError(readMachineProvisionerCredentialRefusal(response.status) ?? 'freestyle_http_' + response.status, response.status);
     if (response.status === 204) return null;
     try { return await response.json() as unknown; } catch { throw new NativeError('freestyle_invalid_response'); }
   };
@@ -79,7 +84,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
     try {
       return { kind: 'bound', resource: { ...reference(await createResource(launch, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
-      if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
+      if (error instanceof NativeError && isMachineProvisionerCreateRefusal(error.status, [409])) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted create may already be paid; recovery reads the exact retained name, never creates.
       return pending(operation);
     }); }
@@ -109,7 +114,7 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
         ...(expiry !== undefined && expiry >= 0 ? { nativeExpiry: expiry } : {}) };
 
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
-      return observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.status === 404
+      return observeMachineProvisionerNativeRead(observedAt, error instanceof NativeError && error.code === 'freestyle_vm_not_found'
         ? { kind: 'absent' } : { kind: 'unknown', reason: code(error) });
     }); }
   }
@@ -126,19 +131,15 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
     await http(path(value.vmId) + '/fs/write?' + new URLSearchParams({ path: guestPath, mode: String(mode ?? 0o600) }), 'PUT', undefined, bytes);
   }
 
-  async function bootstrap(value: FreestyleResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const probe = await execute(value, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-    const parts = new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(probe.stdoutBase64)).trimEnd().split(/\r?\n/);
-    if (probe.exitCode !== 0 || parts.length !== 3 || parts[0] !== 'Linux' || !['x86_64', 'aarch64'].includes(parts[1]!) || !parts[2]!.startsWith('/')) throw new NativeError('freestyle_guest_unsupported');
-    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-      guestHome: { homeDir: parts[2]!, happyHomeDir: parts[2]! + '/.happier', daemonStartup: 'native-process' } };
+  async function bootstrap(_resource: FreestyleResource): Promise<MachineProvisionerBootstrapCarrierV1> {
+    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const parsed = ROLE_SCHEMAS.execInput.parse(input);
     if (parsed.processConfig) {
       const { environment, detachedDaemonStartArgv } = parsed.processConfig;
       const home = environment.HAPPIER_HOME_DIR;
-      if (!home?.startsWith('/') || !detachedDaemonStartArgv?.length || Object.keys(environment).some(key => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw new NativeError('invalid_request');
+      if (!home.startsWith('/')) throw new NativeError('invalid_request');
       const script = buildMachineProvisionerDaemonStartScript(environment, detachedDaemonStartArgv);
       const start = await execute(parsed.resource, ['sh', '-c', script], '', parsed.timeoutMs);
       if (start.exitCode !== 0) throw new NativeError('freestyle_boot_unconfirmed');
@@ -169,14 +170,11 @@ export function createFreestyleNativeClient(request: typeof fetch, signal?: Abor
       value = recovered.resource.value;
     }
     if (!value) return { kind: 'unknown', code: 'invalid_request' };
-    try {
-      const native = await http(path(value.vmId), 'DELETE');
-      if (native === null) return { kind: 'confirmed' };
-      return { kind: 'unknown', code: 'freestyle_delete_unconfirmed' };
-    } catch (error) {
-      if (error instanceof NativeError && error.status === 404) return { kind: 'confirmed' };
-      return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
+    try { await http(path(value.vmId), 'DELETE'); }
+    catch (error) {
+      if (!(error instanceof NativeError && error.status === 404)) return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
     }
+    return projectMachineProvisionerDeleteReadback(await inspect(value), 'freestyle_delete_unconfirmed');
   }
   return { check, acquire, recover, bootstrap, inspect, exec, putFile, power, destroy, createResource, readResource };
 }

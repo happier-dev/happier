@@ -33,7 +33,7 @@ export type HetznerLaunchV1 = ProtocolSchemaOutput<typeof HetznerLaunchV1Schema>
 export type HetznerResourceV1 = ProtocolSchemaOutput<typeof HetznerResourceV1Schema>;
 export type HetznerAcquireV1 = mini.infer<typeof HetznerAcquireV1Schema>;
 export class HetznerNativeError extends Error {
-  constructor(readonly code: string, readonly nativeCause?: MachineProvisionerNativeCauseV1) { super(code); this.name = 'HetznerNativeError'; }
+  constructor(readonly code: string, readonly nativeCause?: MachineProvisionerNativeCauseV1, readonly httpStatus?: number) { super(code); this.name = 'HetznerNativeError'; }
 }
 /** Schema issues and vendor error bodies can contain credentials. */
 export function parseHetznerValue<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown, code = 'native_input_invalid'): T {

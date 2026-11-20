@@ -42,6 +42,7 @@ function vendor() {
       if (loseCreate) throw new Error('private-lost-create');
       return Response.json(vm(), { status: 201 });
     }
+    if (url.pathname === '/v5/vms' && method === 'GET') return Response.json({ vms: [], totalCount: 0 });
     if (url.pathname.endsWith('/exec-await')) {
       const output = spawnSync('sh', ['-c', String(body?.command)], { env: { ...process.env, HOME: home },
         input: typeof body?.stdin === 'string' ? Buffer.from(body.stdin, 'base64') : undefined });
@@ -72,7 +73,8 @@ function vendor() {
   } } } as unknown as PluginTestServicesFixture;
   const input = { operationId, input: { launch: { provider: { pluginId: 'happier.machine.freestyle', localId: 'freestyle' },
     schemaVersion: 1, choices: { snapshotId: 'freestyle/ubuntu' } }, cli: { identity: 'home:0.3-test', versionId: '0.3.0',
-      binaryPath: '/opt/happier/cli/happier', installScript: 'printf CLI > ' + JSON.stringify(join(home, 'installed')) + '; exit 0',
+      binaryPath: join(home, 'installed'), installScript: 'printf CLI > ' + JSON.stringify(join(home, 'installed'))
+        + '; chmod +x ' + JSON.stringify(join(home, 'installed')) + '; exit 0',
       files: [{ path: 'payload.bin', contentsBase64: 'AP+A' }] },
     setupScript: 'test "$(cat ' + JSON.stringify(join(home, 'installed')) + ')" = CLI; printf SETUP >> ' + JSON.stringify(join(home, 'installed')) } };
   return { home, name, managedId, input, calls, uploads, services, readFile: (path: string) => readFileSync(path),
@@ -136,7 +138,8 @@ describe('Freestyle preparation through public Actions', () => {
       const result = MachineProvisionerPreparationBuildResultV1Schema.parse(await kit.invokeAction('prepare-build',
         { ...v.input, input: { ...v.input.input, setupScript: 'printf "package install failed\\nAuthorization: Bearer secret-test-token\\n" >&2; exit 9' } }, { surface: 'plugin' }));
       expect(result).toMatchObject({ kind: 'unknown', code: 'freestyle_preparation_setup_failed',
-        nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: 9, stderr: expect.stringContaining('package install failed') } });
+        nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: 9 } });
+      expect(JSON.stringify(result)).not.toContain('package install failed');
       expect(JSON.stringify(result)).not.toContain('secret-test-token');
       expect(v.calls.some(call => call.path.endsWith('/snapshot'))).toBe(false);
       if (result.kind !== 'unknown') throw new Error('Missing cleanup identity');

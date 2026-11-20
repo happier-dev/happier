@@ -21,7 +21,7 @@ describe('Railway documented network contracts', () => {
   it('enrolls the paid native identity through the portable guest carrier', async () => {
     const v = railwayVendor();
     try { const client = createRailwayNativeClient(v.request); const resource = await bound(client);
-      expect(await client.bootstrap(resource)).toMatchObject({ kind: 'native', guestHome: { homeDir: v.home, daemonStartup: 'native-process' } });
+      expect(await client.bootstrap(resource)).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
       expect(resource).toMatchObject({ sandboxId: 'sandbox-one', environmentId: 'environment-one', managedId: 'managed-one' });
     } finally { v.cleanup(); }
   });

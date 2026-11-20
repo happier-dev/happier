@@ -207,6 +207,7 @@ export const ManagedBootstrapNativeCarrierV1Schema = lazyDefinition(() => z.stri
   kind: z.literal('native'),
   transport: z.strictObject({ contributionRef: asProtocolZod(PluginContributionIdentityV1Schema), schemaVersion: z.int().check(z.gt(0)) }),
   homeNetworkHint: z.optional(ManagedGuestHomeNetworkHintV1Schema),
+  daemonStartup: z.optional(z.literal('native-process')),
   guestHome: z.optional(z.strictObject({
     homeDir: z.string().check(z.startsWith('/'), z.refine(value => !value.includes('\0'))),
     happyHomeDir: z.string().check(z.startsWith('/'), z.refine(value => !value.includes('\0'))),

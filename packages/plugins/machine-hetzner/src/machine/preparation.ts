@@ -1,6 +1,6 @@
 import * as mini from 'zod/mini';
 import { defineProtocolArray, defineProtocolNumber, defineProtocolObject, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerPreparationInstallScript, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createHetznerNativeTransport, type HetznerNativeClientOptions } from './nativeClient.js';
 import { HetznerCorrelationSchema, HetznerLaunchV1Schema, HetznerNativeError, type HetznerLaunchV1 } from './schemas.js';
 
@@ -104,13 +104,13 @@ export function createHetznerPreparationClient(options: HetznerNativeClientOptio
     // cloud-init warns that /tmp can be removed by systemd-tmpfiles during boot.
     const directory = '/var/tmp/happier-preparation';
     const files = input.cli.files.map(file => ({ path: directory + '/context/' + file.path, encoding: 'b64', permissions: '0600', content: file.contentsBase64 }));
-    const script = 'set -eu\nmkdir -p ' + directory + '/context\ncd ' + directory + '/context\nsh ../install.sh\nsh ../setup.sh\n'
+    const script = 'set -eu\nmkdir -p ' + directory + '/context\ncd ' + directory + '/context\nsh ../prepare.sh\n'
       + 'rm -rf -- ' + directory + '\nrm -f /etc/ssh/ssh_host_*\npasswd -l root\ncloud-init clean --logs --seed --machine-id\npoweroff\n';
     // JSON is valid YAML; shell source is a file rather than interpolated into
     // shell arguments. No account credentials, SSH enrollment or daemon enter it.
     return '#cloud-config\n' + JSON.stringify({ ssh_pwauth: false, write_files: [...files,
-      { path: directory + '/install.sh', permissions: '0700', content: 'set -eu\n' + input.cli.installScript },
-      { path: directory + '/setup.sh', permissions: '0700', content: 'set -eu\n' + (input.setupScript ?? '') }], runcmd: [['sh', '-c', script]] });
+      { path: directory + '/prepare.sh', permissions: '0700',
+        content: buildMachineProvisionerPreparationInstallScript({ cli: input.cli, setupScript: input.setupScript }) }], runcmd: [['sh', '-c', script]] });
   }
   async function build(input: { operationId: string; input: BuildInput }, waitForObservation: () => Promise<void>): Promise<BuildResult> {
     const definition = HetznerPreparationInputSchema.parse(input.input);

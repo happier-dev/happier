@@ -1,3 +1,4 @@
+import { isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote, buildMachineProvisionerPreparationInstallScript } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { decodeBase64, defineProtocolLiteral, defineProtocolUnion, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas,
   assertMachineProvisionerGuestCommandSucceeded, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -42,7 +43,7 @@ export function createFreestylePreparationClient(request: typeof fetch, signal?:
     return projectMachineProvisionerActionFailure(error, (): Extract<BuildResult, { kind: 'refused' | 'unknown' }> => {
       const cause = error instanceof NativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
       if (error instanceof NativeError && (error.code.endsWith('_identity_mismatch')
-        || error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409)) {
+        || isMachineProvisionerCreateRefusal(error.status, [409]))) {
         return { kind: 'refused', code: error.code, ...cause };
       }
       return { kind: 'unknown', code: error instanceof NativeError ? error.code : fallback, nativeOperationRef: reference(operation), ...cause };
@@ -96,11 +97,11 @@ export function createFreestylePreparationClient(request: typeof fetch, signal?:
     try {
       const builder = await guest.createResource(definition.launch.choices, operation.managedId);
       operation = { ...operation, vmId: builder.vmId };
-      const execute = async (argv: string[], code: string) => {
+      const execute = async (argv: string[], code: string, privateOutput = false) => {
         const result = await guest.exec({ resource: builder, argv, inputBase64: '' });
         if (!('termination' in result) || result.termination.observed.kind !== 'exit') throw new NativeError(code);
         assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.termination.observed.exitCode,
-          truncated: result.stderrTruncated, stderr: decodeBase64(result.stderrBase64) },
+          truncated: result.stderrTruncated, ...(privateOutput ? {} : { stderr: decodeBase64(result.stderrBase64) }) },
         details => new NativeError(code, undefined, details.nativeCause));
         return result;
       };
@@ -117,8 +118,8 @@ export function createFreestylePreparationClient(request: typeof fetch, signal?:
       }
       // Separate shells preserve setup after an install script that exits 0.
       // The supplier owns both scripts; no credential selection/composition here.
-      await execute(['sh', '-c', 'set -e\ncd -- "$1"\nsh -c "$2"\nsh -c "$3"\ncd /\nrm -rf -- "$1"',
-        'happier-prepare', directory, definition.cli.installScript, definition.setupScript ?? ''], 'freestyle_preparation_setup_failed');
+      const install = buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: directory, setupScript: definition.setupScript });
+      await execute(['sh', '-c', install + 'cd /\nrm -rf -- ' + quote(directory) + '\n'], 'freestyle_preparation_setup_failed', true);
       operation = { ...operation, captureRequested: true };
       const parsed = captureSchema.safeParse(await http(FREESTYLE_API + '/vms/' + encodeURIComponent(builder.vmId) + '/snapshot', 'POST', { slug: operation.name }));
       if (!parsed.success) throw new NativeError('freestyle_snapshot_invalid_response');

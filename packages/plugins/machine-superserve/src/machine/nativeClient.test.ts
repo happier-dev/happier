@@ -86,7 +86,7 @@ describe('Superserve thin HTTP qualification', () => {
       const recovered = await client.recover(acquired.nativeOperationRef.value);
       expect(recovered.kind).toBe('bound');
       if (recovered.kind !== 'bound') throw new Error('Missing retained resource');
-      expect(await client.bootstrap(recovered.resource.value)).toMatchObject({ kind: 'native', guestHome: { homeDir: v.home, daemonStartup: 'native-process' } });
+      expect(await client.bootstrap(recovered.resource.value)).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
       expect(v.calls.filter(c => c.method === 'POST' && c.url.pathname === '/sandboxes')).toHaveLength(1);
       expect(v.calls.find(c => c.method === 'POST' && c.url.pathname === '/sandboxes')?.body).toEqual({ name: 'happier-managed', from_template: 'superserve/base', metadata: { 'happier-managed-id': 'managed' }, preview_access: 'private' });
       expect(v.calls.some(c => c.url.searchParams.get('metadata.happier-managed-id') === 'managed')).toBe(true);
@@ -152,5 +152,19 @@ describe('Superserve thin HTTP qualification', () => {
     const request: typeof fetch = async (_url, init) => { calls++; expect(init?.signal).toBe(controller.signal); controller.abort(); throw controller.signal.reason; };
     expect(await createSuperserveNativeClient(request, controller.signal).acquire(launch, 'managed')).toMatchObject({ kind: 'pending', nativeOperationRef: { value: { managedId: 'managed' } } });
     expect(calls).toBe(1);
+  });
+  it('retains the existing resource when delete acknowledgement disagrees with native readback', async () => {
+    const resource = { sandboxId: 'ssb_owned', name: 'happier-managed', managedId: 'managed' };
+    const request: typeof fetch = async (_url, init) => init?.method === 'DELETE'
+      ? new Response(null, { status: 204 })
+      : Response.json({ id: resource.sandboxId, name: resource.name, status: 'active',
+        created_at: '2026-11-01T00:00:00Z', metadata: { 'happier-managed-id': resource.managedId } });
+    expect(await createSuperserveNativeClient(request).destroy({ resource })).toMatchObject({ kind: 'unknown' });
+  });
+  it('retains acquire correlation for a native request timeout', async () => {
+    const request: typeof fetch = async () => Response.json({}, { status: 408 });
+    expect(await createSuperserveNativeClient(request).acquire(launch, 'managed')).toMatchObject({
+      kind: 'pending', nativeOperationRef: { value: { managedId: 'managed' } },
+    });
   });
 });

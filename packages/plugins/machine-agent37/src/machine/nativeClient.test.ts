@@ -140,7 +140,7 @@ describe('Agent37 native HTTP lifecycle', () => {
     expect(await h.requests[0]!.json()).toEqual({ template: kind === 'vm' ? 'agent37-ubuntu' : 'agent37-base', type: kind,
       region: 'us', resources: { cpu: 2, memory: 4, disk: 12 }, mount_path: '/root', auto_sleep: false });
     expect(h.requests[0]!.headers.has('idempotency-key')).toBe(false);
-    expect(await h.client.bootstrap({ ...resource, kind })).toMatchObject({ kind: 'native', guestHome: { homeDir: '/root', daemonStartup: 'native-process' } });
+    expect(await h.client.bootstrap({ ...resource, kind })).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
   });
   it('stops, inspects retained billed storage, starts and deletes the same instance', async () => {
     const h = vendor();

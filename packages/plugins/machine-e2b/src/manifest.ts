@@ -69,9 +69,7 @@ export const PLUGIN = definePlugin({
         { path: 'timeoutSeconds', title: 'Running duration (seconds)', widget: 'integer', required: true, defaultValue: 300,
           description: 'E2B pauses with memory and disk retained when this duration expires. Team limits still apply.' },
       ] },
-      async run(input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const check = await runtime(context).check();
-        if (!check.available) return { dimensions: { size: [], location: [], network: [], image: [], duration: [] }, code: 'provider_unavailable' };
+      async run(input): Promise<MachineProvisionerOptionsResultV1> {
         const launch = E2bLaunchSchema.parse({ templateId: input.templateId ?? 'base', timeoutSeconds: input.timeoutSeconds ?? 300 });
         return { base: { launch, guestPlatform: 'linux' as const, retention: RETENTION }, dimensions: { size: [], location: [], network: [],
           image: [{ id: launch.templateId, title: launch.templateId, assignments: [], guestPlatform: 'linux' as const, nativeFacts: {

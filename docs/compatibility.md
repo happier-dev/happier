@@ -567,6 +567,12 @@ reload together under the unpublished development direct cut: earlier strict
 development readers reject the added fields. No migration, wire epoch,
 compatibility adapter or released format changes.
 
+Native bootstrap carriers can also declare `daemonStartup: 'native-process'`.
+The controller resolves the guest platform and default Happier home through
+native exec. Explicit `guestHome` paths remain supported for provider-defined
+persistent locations and existing carriers. The new field follows the same
+unpublished 0.3 direct cut.
+
 Agent install failed outcomes optionally carry the existing `ActionFailureCauseV1`
 as `failureCause`. The download owner projects the original transport cause;
 machine/member job transports and the UI consume it without a second classifier.

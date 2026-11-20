@@ -6,7 +6,7 @@ import { readMachineProvisionerHostAvailability } from '@happier-dev/cli-common/
 
 it('admits the HTTP create and envd bootstrap recipe on a browser host', () => {
   expect(readMachineProvisionerHostAvailability({ host: 'browser', provisioner: entry.MACHINE_PROVISIONER }))
-    .toEqual({ available: true, executionTarget: 'account' });
+    .toEqual({ available: true, executionTarget: 'account', requiresController: false });
 });
 
 it.each(['network', 'credential'] as const)('Check and Options return schema-valid unavailable results on %s failure', async failure => {

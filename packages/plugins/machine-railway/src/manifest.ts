@@ -73,9 +73,7 @@ export const PLUGIN = definePlugin({
     options: { ...defaults, title: 'Choose Railway environment', dangerLevel: 'safe', inputSchema: RailwayOptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [{ path: 'environmentId', title: 'Environment ID', widget: 'text', required: true }] },
       async run(input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const check = await runtime(context).check();
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
-        if (!check.available) return { dimensions, code: 'provider_unavailable' };
         let environmentId = input.environmentId;
         if (environmentId === undefined) {
           try {

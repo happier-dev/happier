@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { readMachineProvisionerCredentialRefusal, isMachineProvisionerCreateRefusal, projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, DaytonaLaunchSchema, DaytonaOperationSchema, DaytonaResourceSchema, ROLE_SCHEMAS, reference, type DaytonaLaunch, type DaytonaOperation, type DaytonaResource } from './schemas.js';
 
 // Daytona v0.226 stable docs, OpenAPI 1.0 / Toolbox v0.0.0-dev, checked 2026-11-01.
@@ -21,7 +21,7 @@ export class NativeError extends Error {
   constructor(readonly code: string, readonly status?: number) { super(code); }
 }
 export function requireDaytonaHttpSuccess(response: Response): void {
-  if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'daytona_http_' + response.status, response.status);
+  if (!response.ok) throw new NativeError(readMachineProvisionerCredentialRefusal(response.status) ?? 'daytona_http_' + response.status, response.status);
 }
 const code = (error: unknown) => error instanceof NativeError ? error.code : 'daytona_unavailable';
 const pending = (operation: DaytonaOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
@@ -69,7 +69,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
         labels: { 'happier-managed-id': managedId }, autoStopInterval: 0, autoPauseInterval: 0, autoDeleteInterval: -1 }), operation);
       return { kind: 'bound', resource: { ...reference(resource(native, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
-      if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
+      if (error instanceof NativeError && isMachineProvisionerCreateRefusal(error.status, [409])) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // An interrupted create may already be paid; recovery reads the exact retained name, never creates.
       return pending(operation);
     }); }
@@ -113,19 +113,15 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
     const changed = await execute(value, ['chmod', (mode ?? 0o600).toString(8), guestPath]);
     if (changed.exitCode !== 0) throw new NativeError('daytona_file_unconfirmed');
   }
-  async function bootstrap(value: DaytonaResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const probe = await execute(value, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-    const parts = new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(probe.stdoutBase64)).trimEnd().split(/\r?\n/);
-    if (probe.exitCode !== 0 || parts.length !== 3 || parts[0] !== 'Linux' || !['x86_64', 'aarch64'].includes(parts[1]!) || !parts[2]!.startsWith('/')) throw new NativeError('daytona_guest_unsupported');
-    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-      guestHome: { homeDir: parts[2]!, happyHomeDir: parts[2]! + '/.happier', daemonStartup: 'native-process' } };
+  async function bootstrap(_resource: DaytonaResource): Promise<MachineProvisionerBootstrapCarrierV1> {
+    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const parsed = ROLE_SCHEMAS.execInput.parse(input);
     if (parsed.processConfig) {
       const { environment, detachedDaemonStartArgv } = parsed.processConfig;
       const home = environment.HAPPIER_HOME_DIR;
-      if (!home?.startsWith('/') || !detachedDaemonStartArgv?.length || Object.keys(environment).some(key => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw new NativeError('invalid_request');
+      if (!home.startsWith('/')) throw new NativeError('invalid_request');
       const script = buildMachineProvisionerDaemonStartScript(environment, detachedDaemonStartArgv);
       const start = await execute(parsed.resource, ['sh', '-c', script], '', parsed.timeoutMs);
       if (start.exitCode !== 0) throw new NativeError('daytona_boot_unconfirmed');
@@ -151,7 +147,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
   async function cleanup(operation: DaytonaOperation): Promise<{ kind: 'confirmed' } | { kind: 'unknown'; code: string }> {
     if (operation.kind !== 'delete') return { kind: 'unknown', code: 'invalid_request' };
     const observation = await inspect(operation.resource);
-    return observation.availability === 'absent' ? { kind: 'confirmed' } : { kind: 'unknown', code: 'daytona_delete_unconfirmed' };
+    return projectMachineProvisionerDeleteReadback(observation, 'daytona_delete_unconfirmed');
   }
   async function destroy(input: { resource?: DaytonaResource; nativeOperation?: DaytonaOperation }): Promise<Destruction> {
     if (input.nativeOperation?.kind === 'delete') return cleanup(input.nativeOperation);
@@ -167,7 +163,7 @@ export function createDaytonaNativeClient(request: typeof fetch, signal?: AbortS
       if (native !== null && identity(native, value).state === 'destroyed') return { kind: 'confirmed' };
       return { kind: 'accepted', nativeOperationRef: reference({ kind: 'delete', resource: value } as const) };
     } catch (error) {
-      if (error instanceof NativeError && error.status === 404) return { kind: 'confirmed' };
+      if (error instanceof NativeError && error.status === 404) return cleanup({ kind: 'delete', resource: value });
       return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
     }
   }

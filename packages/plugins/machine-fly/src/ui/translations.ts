@@ -1,6 +1,6 @@
 import type { PluginLocalizedStringV2 as PresentationLocalizedString } from '@happier-dev/plugin-sdk';
 
-import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { createMachineProvisionerCheckPresenter } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const en = {
   appOwnership: 'App', createApp: 'Create a new app', existingApp: 'Use an existing app', appName: 'App name',
@@ -25,9 +25,4 @@ export function machinePresentationLabel(id: keyof typeof MACHINE_PRESENTATION_L
 }
 
 /** Native check codes and their human vocabulary stay owned by this leaf. */
-export function machineCheckPresentation(result: MachineProvisionerCheckResultV1): MachineProvisionerCheckResultV1 {
-  const code = result.code;
-  const id = result.available ? 'ready' : code && Object.hasOwn(MACHINE_PRESENTATION_LABELS.en, code)
-    ? code as keyof typeof MACHINE_PRESENTATION_LABELS.en : 'unavailable';
-  return { ...result, status: result.status ?? machinePresentationLabel(id) };
-}
+export const machineCheckPresentation = createMachineProvisionerCheckPresenter(MACHINE_PRESENTATION_LABELS.en, 'machineFly.presentation.');

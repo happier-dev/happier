@@ -1,3 +1,4 @@
+import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import * as mini from 'zod/mini';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -34,7 +35,6 @@ const upload = mini.object({ ok: mini.literal(true), url: mini.url(), path: mini
 const started = mini.object({ ok: mini.literal(true), success: mini.literal(true), processId: mini.number().check(mini.int(), mini.positive()) });
 const commandStatus = mini.object({ ok: mini.literal(true), processId: mini.number(), status: mini.enum(['running', 'exited', 'lost']),
   running: mini.boolean(), exitCode: mini.nullable(mini.number()) });
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const operationFor = (operationId: string, launch: BoatLaunchV1): Operation => ({
   // Boat's native name ceiling is 63 characters; retain the rest of the identity
   // in the sandbox's existing managed label, shared with acquire recovery.
@@ -136,9 +136,10 @@ export function createBoatPreparationClient(request: typeof fetch, signal: Abort
         const uploaded = await uploadFetch(target.url, { method: 'PUT', signal, redirect: 'error', body: new Uint8Array(decodeBase64(file.contentsBase64)).buffer });
         if (!uploaded.ok) throw new BoatNativeError('boat_upload_failed');
       }
-      const script = 'set -eu\n' + (definition.cli.files.length ? 'cd -- ' + quote(directory) + '\n' : '')
-        + 'sh -c ' + quote(definition.cli.installScript) + '\nchmod -R a+rX ' + BOAT_PREPARATION_HOME + '\nsh -c ' + quote(definition.setupScript ?? '')
-        + '\nrm -rf -- ' + quote(directory) + '\n';
+      const script = buildMachineProvisionerPreparationInstallScript({
+        cli: definition.cli, stageDirectory: definition.cli.files.length ? directory : undefined,
+        readableRoot: BOAT_PREPARATION_HOME, setupScript: definition.setupScript,
+      }) + 'rm -rf -- ' + quote(directory) + '\n';
       // Native detached execution has no synchronous 600s command deadline.
       // Only this install effect needs root; setup does not enroll a Machine.
       const command = 'sudo -n sh -c ' + quote(script);

@@ -65,9 +65,7 @@ export const PLUGIN = definePlugin({
     check: { ...defaults, title: 'Check Upstash Box access', dangerLevel: 'safe', inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
       async run(_input, context) { return runtime(context).check(); } },
     options: { ...defaults, title: 'Choose Upstash Box size', dangerLevel: 'safe', inputSchema: UpstashBoxOptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
-      async run(_input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const check = await runtime(context).check();
-        if (!check.available) return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable' };
+      async run(_input): Promise<MachineProvisionerOptionsResultV1> {
         return { base: { launch: { runtime: 'node', size: 'small' }, guestPlatform: 'linux', retention },
           dimensions: { size: ['small', 'medium', 'large'].map(size => ({ id: size, title: size, assignments: [{ path: 'size', value: size }] })),
             image: [{ id: 'node', title: 'Node.js', guestPlatform: 'linux', assignments: [], nativeFacts: {
@@ -91,7 +89,7 @@ export const PLUGIN = definePlugin({
     'prepare-build': { ...defaults, title: 'Build Upstash Box prepared snapshot', dangerLevel: 'writesRemote',
       confirmation: { title: 'Build this Upstash Box snapshot?', body: 'Build CPU and retained storage charges apply. The paused build box is retained with the snapshot for recovery. Accounts with configured environment variables cannot prepare snapshots.' },
       inputSchema: PREPARATION_SCHEMAS.buildInput, resultSchema: PREPARATION_SCHEMAS.buildResult,
-      async run(input, context) { return preparationRuntime(context).build(input); } },
+      async run(input, context) { return preparationRuntime(context).build(input, () => context.services.machineProvisioners.waitForNativeObservation()); } },
     'prepare-inspect': { ...defaults, title: 'Inspect Upstash Box prepared snapshot', dangerLevel: 'safe',
       inputSchema: PREPARATION_SCHEMAS.inspectInput, resultSchema: PREPARATION_SCHEMAS.inspectResult,
       async run(input, context) { return preparationRuntime(context).inspect('nativeOperation' in input ? { nativeOperation: input.nativeOperation.value } : input); } },

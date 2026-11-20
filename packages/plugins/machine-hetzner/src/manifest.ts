@@ -2,7 +2,7 @@ import { definePlugin, PluginError, type PluginInvocationContext } from '@happie
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { projectMachineProvisionerActionFailure, observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
+import { projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal, observeMachineProvisionerNativeRead, defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, prepareMachineProvisionerStoredSchemas, buildMachineProvisionerPinnedSshBootstrap,
   MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerObservationV1Schema, MachineProvisionerOptionsResultV1Schema, MachineProvisionerSnapshotResultV1Schema,
   MachineProvisionerPowerResultV1Schema, type MachineProvisionerAuthorDefinitionV1, type MachineProvisionerOptionsResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerCloudHostKeyV1,
@@ -143,7 +143,13 @@ export const PLUGIN = definePlugin({
     },
     check: { ...defaults, title: 'Check Hetzner API access', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerCheckResultV1Schema,
-      async run(_input, context) { try { return machineCheckPresentation(await (await runtime(context)).check()); } catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ ...machineCheckPresentation({ available: false, code: 'provider_unavailable' }), ...failureCause(error) })); } },
+      async run(_input, context) {
+        try { return machineCheckPresentation(await (await runtime(context)).check()); }
+        catch (error) { return projectMachineProvisionerActionFailure(error, () => {
+          const code = readMachineProvisionerCredentialRefusal(error instanceof HetznerNativeError ? error.httpStatus : undefined) ?? 'provider_unavailable';
+          return { ...machineCheckPresentation({ available: false, code }), ...failureCause(error) };
+        }); }
+      },
     },
     options: { ...defaults, title: 'Discover Hetzner options', dangerLevel: 'safe',
       inputSchema: ROLE_SCHEMAS.checkInput, resultSchema: MachineProvisionerOptionsResultV1Schema,
@@ -166,7 +172,8 @@ export const PLUGIN = definePlugin({
         })).acquire({ launch: input.launch, name: `happier-${input.managedId}`, correlation: input.managedId, bootstrapSshPublicKey: input.bootstrapPublicKey });
         if (result.kind === 'bound') return { kind: 'bound' as const, resource: { ...resourceRef(result.resource), origin: 'created' as const } };
         const nativeCause = 'nativeCause' in result ? result.nativeCause : undefined;
-        return result.kind === 'rejected' ? { kind: 'rejected' as const, code: 'provider_unavailable' as const, ...(nativeCause ? { nativeCause } : {}) }
+        return result.kind === 'rejected' ? { kind: 'rejected' as const,
+          code: result.code === 'credential_unavailable' ? result.code : 'provider_unavailable', ...(nativeCause ? { nativeCause } : {}) }
           : pending(input.managedId, nativeCause); }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => pending(managedId, error instanceof HetznerNativeError ? error.nativeCause : undefined)); }
         finally { await guestHostCredential?.lease.dispose(); }

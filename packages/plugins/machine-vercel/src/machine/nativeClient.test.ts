@@ -421,16 +421,10 @@ describe('Vercel retained REST resource', () => {
     const { client } = fixture(() => json({}, 404));
     expect(await client.inspect(resource)).toEqual({ observedAt: 2000, availability: 'unavailable', reason: 'vercel_snapshot_cleanup_unqualified' });
   });
-  it('preserves trailing spaces in the actually observed guest home', async () => {
-    const home = '/home/custom guest ';
-    const { client } = fixture((url, init) => {
-      if (url.pathname.endsWith('/cmd') || /\/cmd\/cmd_one$/.test(url.pathname)) {
-        return json({ command: { id: 'cmd_one', sessionId: session.id, exitCode: init?.method === 'POST' ? null : 0 } });
-      }
-      if (url.pathname.endsWith('/logs')) return new Response(JSON.stringify({ stream: 'stdout', data: 'Linux\nx86_64\n' + home + '\n' }) + '\n');
-      return json({ sandbox: named(), session, routes: [], resumed: false });
-    });
-    expect(await client.bootstrap(resource)).toMatchObject({ guestHome: { homeDir: home, happyHomeDir: home + '/.happier' } });
+  it('declares native startup without a vendor call', async () => {
+    const { client, calls } = fixture(() => { throw new Error('bootstrap carrier should not call the vendor'); });
+    expect(await client.bootstrap(resource)).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
+    expect(calls).toEqual([]);
   });
 
   it('retains a dropped create response and recovers one exact tagged allocation without another POST', async () => {

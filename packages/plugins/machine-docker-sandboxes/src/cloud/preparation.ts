@@ -1,3 +1,4 @@
+import { buildMachineProvisionerPreparationInstallScript } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import { CloudError, cloudCode, object, invalidResponse, type createCloudClient } from './nativeClient.js';
 import { reference, type PreparationInput, type PreparationOperation } from './schemas.js';
@@ -72,8 +73,9 @@ export function createCloudPreparation(client: Client, waitForNativeObservation:
       for (const file of input.cli.files) await client.putFile(resource, directory + '/' + file.path, Buffer.from(file.contentsBase64, 'base64'), 0o600);
       // Supplier-selected CLI installation and recipe-owner setup run in the
       // image only. No enrollment, daemon, Agent or Account credential is baked.
-      await run(['sh', '-eu', '-c', `trap 'rm -rf -- "$1"' EXIT; cd -- "$1"; sh -c "$2"; sh -c "$3"`,
-        'happier-prepare', directory, input.cli.installScript, input.setupScript ?? '']);
+      await run(['sh', '-eu', '-c', 'trap \'rm -rf -- "$1"\' EXIT\n'
+        + buildMachineProvisionerPreparationInstallScript({ cli: input.cli, stageDirectory: directory, setupScript: input.setupScript }),
+        'happier-prepare', directory]);
       let image = snapshot(body(await client.management(resource.sandboxName + '/snapshots', 'POST', {
         displayName: displayName(operationId), captureMode: 'disk',
       }, { 'Idempotency-Key': operationId })));

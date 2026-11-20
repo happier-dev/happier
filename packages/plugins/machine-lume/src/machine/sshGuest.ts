@@ -11,7 +11,6 @@ import type { LumeNativeClient } from './nativeClient.js';
 export type LumeSshHost = Omit<Extract<MachineProvisionerBootstrapCarrierV1, { kind: 'ssh' }>, 'credentialRef'> & {
   hostKeyEvidence: NonNullable<Extract<MachineProvisionerBootstrapCarrierV1, { kind: 'ssh' }>['hostKeyEvidence']>;
 };
-export function lumeShellQuote(value: string) { return `'${value.replace(/'/gu, "'\\''")}'`; }
 export function lumeProcessSucceeded(result: PluginProcessResult) {
   return result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 0
     && result.termination.requestedBy.kind === 'none' && !result.stdoutTruncated && !result.stderrTruncated;

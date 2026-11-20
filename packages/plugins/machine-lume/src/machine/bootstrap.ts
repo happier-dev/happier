@@ -2,11 +2,11 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { MachineProvisionersService } from '@happier-dev/plugin-sdk';
 import type { MachineProvisionerBootstrapCarrierV1, MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { LumeNativeClient } from './nativeClient.js';
 import { LumeResourceV1Schema } from './schemas.js';
 import { hardenMacosSshPasswordLogin } from './passwordPolicy.js';
-import { observeLumeSshGuest, withLumeSshGuest, lumeProcessSucceeded as completed, lumeShellQuote as quote } from './sshGuest.js';
+import { observeLumeSshGuest, withLumeSshGuest, lumeProcessSucceeded as completed } from './sshGuest.js';
 
 function refusal(code: string, nativeCause?: MachineProvisionerNativeCauseV1): never {
   throw new PluginError({ code, ...(nativeCause ? { details: { nativeCause } } : {}) });

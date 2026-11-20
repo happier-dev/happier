@@ -1,4 +1,4 @@
-import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as mini from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
@@ -99,27 +99,28 @@ export function createBoatNativeRequest(options: BoatNativeClientOptions = {}) {
     const nativeCause: MachineProvisionerNativeCauseV1 | undefined = response.ok ? undefined : {
       httpStatusClass: response.status >= 500 ? '5xx' : response.status >= 400 ? '4xx' : response.status >= 300 ? '3xx' : 'other',
     };
+    const httpFailure = (code: string) => new BoatNativeError(code, nativeCause, response.status);
     let value: unknown;
-    try { value = await response.json(); } catch { throw new BoatNativeError('native_response_invalid', nativeCause); }
+    try { value = await response.json(); } catch { throw httpFailure('native_response_invalid'); }
     if (!response.ok) {
       const parsed = errorResponse.safeParse(value);
-      if (!parsed.success) throw new BoatNativeError('native_response_invalid', nativeCause);
+      if (!parsed.success) throw httpFailure('native_response_invalid');
       const error = parsed.data;
       // Only a completed client refusal disproves allocation. A timeout or
       // server failure can follow a committed create, regardless of its code.
-      if (response.status === 408) throw new BoatNativeError('native_transport_unavailable', nativeCause);
-      if (response.status >= 500) throw new BoatNativeError('native_service_unavailable', nativeCause);
-      if (response.status < 400) throw new BoatNativeError('native_response_invalid', nativeCause);
-      if (response.status === 401 || error.code === 'unauthorized') throw new BoatNativeError('native_authorization_failed', nativeCause);
-      if (error.code === 'idempotency_in_progress') throw new BoatNativeError('native_idempotency_in_progress', nativeCause);
-      if (error.code === 'idempotency_key_reused') throw new BoatNativeError('native_idempotency_mismatch', nativeCause);
+      if (response.status === 408) throw httpFailure('native_transport_unavailable');
+      if (response.status >= 500) throw httpFailure('native_service_unavailable');
+      if (response.status < 400) throw httpFailure('native_response_invalid');
+      if (response.status === 401 || error.code === 'unauthorized') throw httpFailure('native_authorization_failed');
+      if (error.code === 'idempotency_in_progress') throw httpFailure('native_idempotency_in_progress');
+      if (error.code === 'idempotency_key_reused') throw httpFailure('native_idempotency_mismatch');
       const nativeCode = `native_${error.code}`;
       if (isBoatAdmissionRefusalCode(nativeCode)) {
-        throw new BoatNativeError(nativeCode, nativeCause);
+        throw httpFailure(nativeCode);
       }
-      if (response.status === 429 || error.code === 'rate_limited') throw new BoatNativeError('native_rate_limited', nativeCause);
-      if (response.status === 404 && error.code === 'not_found') throw new BoatNativeError('native_not_found', nativeCause);
-      throw new BoatNativeError('native_request_failed', nativeCause);
+      if (response.status === 429 || error.code === 'rate_limited') throw httpFailure('native_rate_limited');
+      if (response.status === 404 && error.code === 'not_found') throw httpFailure('native_not_found');
+      throw httpFailure('native_request_failed');
     }
     return value;
   }
@@ -190,8 +191,12 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
         return { kind: 'bound', resource: { sandboxId: accepted.sandbox.id }, ready: false };
       } catch (error) {
         const cause = error instanceof BoatNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
-        if (error instanceof BoatNativeError && isBoatAdmissionRefusalCode(error.code)) {
-          return { kind: 'refused', code: error.code, ...cause };
+        if (error instanceof BoatNativeError) {
+          if (error.code !== 'native_authorization_failed' && error.code !== 'native_request_failed' && isBoatAdmissionRefusalCode(error.code)) {
+            return { kind: 'refused', code: error.code, ...cause };
+          }
+          const credential = readMachineProvisionerCredentialRefusal(error.httpStatus);
+          if (credential || isBoatAdmissionRefusalCode(error.code)) return { kind: 'refused', code: credential ?? error.code, ...cause };
         }
         // A lost or undecodable reply cannot disprove the submitted effect.
         return { kind: 'pending', operation, ...cause };

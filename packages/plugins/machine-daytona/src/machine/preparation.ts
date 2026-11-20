@@ -1,5 +1,5 @@
 import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { isMachineProvisionerCreateRefusal, buildMachineProvisionerPreparationInstallScript, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { DAYTONA_API, NativeError as SnapshotError, requireDaytonaHttpSuccess } from './nativeClient.js';
 import { DaytonaLaunchSchema, reference, type DaytonaLaunch } from './schemas.js';
 import { createDaytonaContextFile, signDaytonaStoragePut } from './buildContext.js';
@@ -76,7 +76,7 @@ export function createDaytonaPreparationClient(request: typeof fetch, signal?: A
     return projectMachineProvisionerActionFailure(error, (): { kind: 'refused'; code: string }
       | { kind: 'unknown'; code: string; nativeOperationRef: ReturnType<typeof reference<Operation>> } => {
       if (error instanceof SnapshotError && (error.code === 'daytona_snapshot_identity_mismatch'
-        || error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409)) {
+        || isMachineProvisionerCreateRefusal(error.status, [409]))) {
         return { kind: 'refused', code: error.code };
       }
       return { kind: 'unknown', code: error instanceof SnapshotError ? error.code : fallback, nativeOperationRef: reference(operation) };
@@ -132,8 +132,10 @@ export function createDaytonaPreparationClient(request: typeof fetch, signal?: A
       // Keep the inherited image USER. Only this build effect needs root; an
       // image without root/passwordless sudo fails visibly and remains cold.
       const command = ['sh', '-c', 'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi',
-        'happier-prepare', 'sh', '-c', 'set -e\nif [ -n "$1" ]; then trap \'rm -rf -- "$1"\' EXIT; cd -- "$1"; fi\nsh -c "$2"\nchmod -R a+rX ' + DAYTONA_PREPARATION_HOME + '\nsh -c "$3"\n',
-        'happier-build', contextDirectory, definition.cli.installScript, definition.setupScript ?? ''];
+        'happier-prepare', 'sh', '-c', 'set -e\nif [ -n "$1" ]; then trap \'rm -rf -- "$1"\' EXIT; fi\n'
+          + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: contextDirectory || undefined,
+            readableRoot: DAYTONA_PREPARATION_HOME, setupScript: definition.setupScript }),
+          'happier-build', contextDirectory];
       // Request the stage platform advertised by preparationGuest, including
       // multi-platform base refs: https://docs.docker.com/reference/dockerfile/#from
       const dockerfileContent = 'FROM --platform=linux/amd64 ' + image + '\n' + copies + 'RUN ' + JSON.stringify(command) + '\n';

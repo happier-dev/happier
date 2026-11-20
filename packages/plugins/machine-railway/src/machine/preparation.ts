@@ -1,5 +1,5 @@
 import { decodeBase64, encodeBase64, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote, buildMachineProvisionerPreparationInstallScript, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createRailwayNativeClient, NativeError } from './nativeClient.js';
 import { RailwayLaunchSchema, RailwayResourceSchema, reference, type RailwayLaunch, type RailwayResource } from './schemas.js';
 
@@ -33,7 +33,7 @@ export function createRailwayPreparationClient(request: typeof fetch, signal?: A
   function failure(error: unknown, operation: Operation, fallback: string) {
     return projectMachineProvisionerActionFailure(error, () => {
       if (error instanceof NativeError && (error.code === 'railway_checkpoint_identity_mismatch'
-        || error.status !== undefined && error.status >= 400 && error.status < 500)) return operation.sandboxId ? unknown(operation, error.code) : { kind: 'refused' as const, code: error.code };
+        || isMachineProvisionerCreateRefusal(error.status))) return operation.sandboxId ? unknown(operation, error.code) : { kind: 'refused' as const, code: error.code };
       return unknown(operation, error instanceof NativeError ? error.code : fallback);
     });
   }
@@ -108,8 +108,8 @@ export function createRailwayPreparationClient(request: typeof fetch, signal?: A
       }
       // Each script is a separate shell: an installer that exits must not skip
       // Setup. Remove credential-free staging before capturing the disk.
-      await exec(guest, ['sh', '-c', 'set -e\ncd -- "$1"\nsh -c "$2"\nsh -c "$3"\ncd /\nrm -rf -- "$1"\n',
-        'happier-prepare', directory, definition.cli.installScript, definition.setupScript ?? ''], 'railway_preparation_setup_failed');
+      const install = buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: directory, setupScript: definition.setupScript });
+      await exec(guest, ['sh', '-c', install + 'cd /\nrm -rf -- ' + quote(directory) + '\n'], 'railway_preparation_setup_failed');
       operation = { ...operation, checkpointKey: prefix(operation.operationId) + encodeURIComponent(guest.sandboxId) };
       const checkpoint = await native.createCheckpoint(guest, operation.checkpointKey!);
       operation = { ...operation, checkpointId: checkpoint.id, checkpointKey: checkpoint.key };

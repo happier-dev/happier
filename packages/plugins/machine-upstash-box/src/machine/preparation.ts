@@ -1,6 +1,5 @@
-import { sleepWithSignal } from '@happier-dev/plugin-sdk/async';
 import { decodeBase64, defineProtocolArray, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { isMachineProvisionerCreateRefusal, buildMachineProvisionerPreparationInstallScript, assertMachineProvisionerGuestCommandSucceeded, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createUpstashBoxHttpClient, createUpstashBoxNativeClient, readUpstashBoxIdentity, NativeError, UPSTASH_BOX_API } from './nativeClient.js';
 import { UpstashBoxLaunchSchema, reference, type UpstashBoxLaunch, type UpstashBoxResource } from './schemas.js';
 
@@ -38,7 +37,7 @@ export function createUpstashBoxPreparationClient(request: typeof fetch, signal?
     return projectMachineProvisionerActionFailure(error, (): { kind: 'refused'; code: string; nativeCause?: MachineProvisionerNativeCauseV1 } | { kind: 'unknown'; code: string; nativeOperationRef: ReturnType<typeof reference<Operation>>; nativeCause?: MachineProvisionerNativeCauseV1 } => {
       const code = error instanceof NativeError ? error.code : fallback;
       const cause = error instanceof NativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
-      if (refuse && error instanceof NativeError && (code.endsWith('_identity_mismatch') || error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409)) return { kind: 'refused', code, ...cause };
+      if (refuse && error instanceof NativeError && (code.endsWith('_identity_mismatch') || isMachineProvisionerCreateRefusal(error.status, [409]))) return { kind: 'refused', code, ...cause };
       return { kind: 'unknown', code, nativeOperationRef: reference(operation), ...cause };
     });
   }
@@ -66,15 +65,15 @@ export function createUpstashBoxPreparationClient(request: typeof fetch, signal?
     if (value.status === 'creating') return { kind: 'pending', nativeOperationRef: reference(retained) };
     return { kind: value.status === 'error' ? 'failed' : 'unknown', code: 'upstash_box_snapshot_' + (value.status === 'error' ? 'error' : 'state_unsupported'), nativeOperationRef: reference(retained) };
   }
-  async function exec(operation: Operation, argv: readonly string[]) {
+  async function exec(operation: Operation, argv: readonly string[], privateOutput = false) {
     const result = await native.exec({ resource: resource(operation), argv: [...argv] });
     if (!('termination' in result) || result.termination.observed.kind !== 'exit') throw new NativeError('upstash_box_preparation_exec_failed');
     assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.termination.observed.exitCode,
-      stderr: decodeBase64(result.stderrBase64), ...(result.stdoutTruncated || result.stderrTruncated ? { truncated: true } : {}) },
+      ...(privateOutput ? {} : { stderr: decodeBase64(result.stderrBase64) }), ...(result.stdoutTruncated || result.stderrTruncated ? { truncated: true } : {}) },
     details => new NativeError('upstash_box_preparation_exec_failed', undefined, details.nativeCause));
     return new TextDecoder().decode(decodeBase64(result.stdoutBase64));
   }
-  async function build(input: { operationId: string; input: BuildInput }): Promise<BuildResult> {
+  async function build(input: { operationId: string; input: BuildInput }, waitForObservation: () => Promise<void>): Promise<BuildResult> {
     const definition = UpstashBoxPreparationInputSchema.parse(input.input);
     let operation: Operation = { managedId: 'prepared-' + text.parse(input.operationId), launch: definition.launch.choices };
     let allocated = false;
@@ -86,9 +85,7 @@ export function createUpstashBoxPreparationClient(request: typeof fetch, signal?
       if (acquired.kind !== 'bound') return { kind: 'unknown', code: 'upstash_box_build_source_unconfirmed', nativeOperationRef: reference(operation) };
       operation = { ...operation, sourceBoxId: acquired.resource.value.boxId };
       let state = await source(operation);
-      // Upstash SDK 0.8.0 Box.create follows creating at this cadence. The
-      // invocation owns cancellation/deadline; no competing timeout is added.
-      while (state?.status === 'creating') { await sleepWithSignal(2000, signal); state = await source(operation); }
+      while (state?.status === 'creating') { await waitForObservation(); state = await source(operation); }
       if (!state || !['idle', 'running'].includes(state.status)) throw new NativeError('upstash_box_build_source_unavailable');
       const guest = await exec(operation, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
       if (!guest.startsWith('Linux\nx86_64\n')) throw new NativeError('upstash_box_guest_unsupported');
@@ -100,9 +97,10 @@ export function createUpstashBoxPreparationClient(request: typeof fetch, signal?
       }
       // Install as boxuser in its writable workspace. Only the existing setup
       // interpreter requires root; keep the installed CLI owned by its caller.
-      await exec(operation, ['sh', '-c', 'set -e\ntrap \'rm -rf -- "$1"\' EXIT\ncd -- "$1"\nsh -c "$2"\n'
-        + 'if [ "$(id -u)" = 0 ]; then sh -c "$3"; else sudo -n -- sh -c "$3"; fi\n',
-        'happier-build', directory, definition.cli.installScript, definition.setupScript ?? '']);
+      await exec(operation, ['sh', '-c', 'trap \'rm -rf -- "$1"\' EXIT\n'
+        + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: directory })
+        + 'if [ "$(id -u)" = 0 ]; then sh -ec "$2"; else sudo -n -- sh -ec "$2"; fi\n',
+        'happier-build', directory, definition.setupScript ?? ''], true);
       const stopped = await native.power(resource(operation), 'stop');
       if (stopped.kind !== 'confirmed') throw new NativeError(stopped.code ?? 'upstash_box_power_unconfirmed');
       const parsed = snapshotSchema.safeParse(await http(snapshotsPath(operation), 'POST', { name: name(operation) }));

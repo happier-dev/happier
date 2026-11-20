@@ -1,3 +1,4 @@
+import { readManagedDependencyExecutable, projectUnavailableManagedDependency } from '@happier-dev/plugin-sdk/managed-services';
 import { Buffer } from 'node:buffer';
 import { platform } from 'node:os';
 import { definePlugin } from '@happier-dev/plugin-sdk';
@@ -27,22 +28,20 @@ const devcontainerDependencyId = 'devcontainer-cli';
 const defaults = { scopes: ['machine'], surfaces: ['cli', 'plugin'], hostAccess: [processAccess] } as const;
 function code(error: unknown) { return typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string' ? error.code : 'provider_unavailable'; }
 type NativeSelection = Readonly<{ runtime?: 'docker' | 'podman'; configPath?: string; configuration?: { kind: string } }>;
-class MissingDependency extends Error {
+class DependencyUnavailable extends Error {
   readonly code = 'provider_unavailable';
-  constructor(readonly dependencyId: 'docker' | 'podman' | 'devcontainer-cli') { super('Container prerequisite unavailable'); }
+  constructor(readonly dependencyId: 'docker' | 'podman' | 'devcontainer-cli', readonly missing: boolean) { super('Container prerequisite unavailable'); }
 }
 function unavailable(error: unknown): MachineProvisionerCheckResultV1 {
   const failure = { available: false, code: code(error) };
-  if (!(error instanceof MissingDependency)) return failure;
+  if (!(error instanceof DependencyUnavailable) || !error.missing) return failure;
   const recipeRepair = error.dependencyId === 'docker' && platform() === 'linux';
-  return { ...failure, prerequisites: [{
-    requirement: { kind: 'managedDependency' as const, id: { pluginId: DEVCONTAINER_PLUGIN_ID, localId: error.dependencyId } },
-    status: 'unavailable' as const,
+  return { ...failure, prerequisites: [projectUnavailableManagedDependency({ pluginId: DEVCONTAINER_PLUGIN_ID, localId: error.dependencyId }, {
     ...(recipeRepair ? { setupSources: dockerRuntimeRepairSources() } : {}),
     repairAction: { action: { pluginId: DEVCONTAINER_PLUGIN_ID,
       localId: error.dependencyId === devcontainerDependencyId ? 'install-cli' : recipeRepair ? 'install-runtime' : 'runtime-install-docs' },
       input: error.dependencyId === devcontainerDependencyId || recipeRepair ? {} : { runtime: error.dependencyId } },
-  }] };
+  })] };
 }
 async function provider(context: PluginInvocationContext, selection?: NativeSelection) {
   return createDevcontainerProvider(await nativeTools(context, selection));
@@ -52,8 +51,8 @@ async function preparation(context: PluginInvocationContext, runtime?: 'docker' 
 }
 async function nativeTools(context: PluginInvocationContext, selection?: NativeSelection) {
   const executable = async (id: 'docker' | 'podman' | 'devcontainer-cli') => {
-    const status = await context.services.managedServices.dependencies.status(id, { signal: context.signal });
-    if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) throw new MissingDependency(id);
+    const status = await readManagedDependencyExecutable(context.services.managedServices.dependencies, id, context.signal);
+    if (status.state !== 'ready') throw new DependencyUnavailable(id, status.state === 'missing');
     return status.executable;
   };
   const docker = await executable(selection?.runtime ?? 'docker');
@@ -183,10 +182,10 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
             ...(image ? { nativeFacts: { image: { id: image, title: image },
               ...('preparationGuest' in reviewed && reviewed.preparationGuest ? { preparationGuest: reviewed.preparationGuest } : {}) } } : {}) }, dimensions };
         } catch (error) {
-          if (!(error instanceof MissingDependency)) throw error;
+          if (!(error instanceof DependencyUnavailable)) throw error;
           return { base: { launch: input, available: false,
             prerequisites: unavailable(error).prerequisites, guestPlatform: 'linux' as const,
-            unavailableReason: { code: 'provider_unavailable', status: error.dependencyId === devcontainerDependencyId
+            unavailableReason: { code: 'provider_unavailable', status: !error.missing ? 'Could not verify the container prerequisite.' : error.dependencyId === devcontainerDependencyId
               ? 'Install Dev Containers CLI to use a devcontainer.json configuration.'
               : `Install ${error.dependencyId === 'podman' ? 'Podman' : 'Docker'} on this computer.` } }, dimensions };
         }
@@ -211,7 +210,7 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
           ...(input.reviewedEffectDigest ? { reviewedEffectDigest: input.reviewedEffectDigest } : {}) }, input.managedId ?? '', input.guestHome);
       }
         catch (error) {
-          if (error instanceof MissingDependency) return { kind: 'rejected' as const, code: error.code };
+          if (error instanceof DependencyUnavailable) return { kind: 'rejected' as const, code: error.code };
           return { kind: 'unknown' as const, recovery: { reference: input.launch.configPath ?? input.managedId ?? '', reason: code(error) } };
         } } },
     bootstrap: { ...defaults, title: 'Resolve private child enrollment transport', dangerLevel: 'writesLocal',

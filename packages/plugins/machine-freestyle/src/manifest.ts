@@ -65,9 +65,7 @@ export const PLUGIN = definePlugin({
       async run(_input, context) { return runtime(context).check(); } },
     options: { ...defaults, title: 'Choose Freestyle snapshot', dangerLevel: 'safe', inputSchema: FreestyleOptionsSchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [{ path: 'snapshotId', title: 'Snapshot', widget: 'text', required: true, defaultValue: 'freestyle/ubuntu' }] },
-      async run(input, context): Promise<MachineProvisionerOptionsResultV1> {
-        const check = await runtime(context).check();
-        if (!check.available) return { dimensions: { size: [], image: [], location: [], network: [], duration: [] }, code: 'provider_unavailable' };
+      async run(input): Promise<MachineProvisionerOptionsResultV1> {
         const snapshot = input.snapshotId ?? 'freestyle/ubuntu';
         return { base: { launch: { snapshotId: snapshot }, guestPlatform: 'linux' as const, retention },
           dimensions: { size: [], image: [{ id: snapshot, title: snapshot, guestPlatform: 'linux' as const, assignments: [], nativeFacts: {

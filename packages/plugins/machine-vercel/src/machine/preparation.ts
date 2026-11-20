@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerPreparationInstallScript, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { caughtNativeFailure, fail, nativeFailureResult, type VercelNativeFailure } from './nativeFailure.js';
 import { createVercelNativeClient } from './nativeClient.js';
 import { reference, VercelAcquisitionSchema, VercelLaunchSchema, type VercelLaunch, type VercelResource, type VercelScope } from './schemas.js';
@@ -62,15 +62,15 @@ export function createVercelPreparationClient(scope: VercelScope, request: typeo
       if (current.kind !== 'present') return unknown(operation, current.kind === 'absent'
         ? { ...current, kind: 'unknown', code: 'vercel_resource_absent' } : current);
       if (current.value.sandbox.persistent || current.value.sandbox.status !== 'running') return unknown(operation, 'vercel_preparation_base_unavailable');
-      await io.guestHome(current.value);
       const directory = '/tmp/happier-prepared-' + encodeURIComponent(input.operationId);
       const mkdir = await io.execute(current.value, ['mkdir', '-p', directory,
         ...definition.cli.files.map(file => directory + '/' + file.path.slice(0, Math.max(0, file.path.lastIndexOf('/')))).filter(path => !path.endsWith('/'))]);
       if (mkdir.exitCode !== 0) fail('vercel_preparation_stage_failed');
       for (const file of definition.cli.files) await io.put(current.value, directory + '/' + file.path, decodeBase64(file.contentsBase64));
-      const script = 'set -e\ncd -- "$1"\ntrap \'rm -rf -- "$1"\' EXIT\nsh -c "$2"\nchmod -R a+rX ' + VERCEL_PREPARATION_HOME + '\n';
+      const script = 'trap \'rm -rf -- "$1"\' EXIT\n'
+        + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: directory, readableRoot: VERCEL_PREPARATION_HOME });
       const installed = await io.execute(current.value, ['sh', '-c', 'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi',
-        'happier-prepare', 'sh', '-c', script, 'happier-build', directory, definition.cli.installScript]);
+        'happier-prepare', 'sh', '-c', script, 'happier-build', directory]);
       if (installed.exitCode !== 0) fail('vercel_preparation_cli_install_failed');
       // The composed Setup command runs the root-only typed effect interpreter.
       // Elevate this build effect without changing the restored image's user.

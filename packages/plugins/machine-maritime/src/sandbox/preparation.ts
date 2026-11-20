@@ -1,7 +1,7 @@
 import { defineProtocolNumber, defineProtocolObject, defineProtocolString, decodeBase64, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote, assertMachineProvisionerGuestCommandSucceeded, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { projectMaritimeNativeFailure } from '../machine/nativeFailure.js';
-import { createMaritimeSandboxClient, SandboxError, quoteSandboxShell } from './native.js';
+import { createMaritimeSandboxClient, SandboxError } from './native.js';
 import { SandboxLaunchSchema, SANDBOX_HOME, sandboxReference, type SandboxLaunch } from './schemas.js';
 
 const closed = { policy: 'closed' } as const;
@@ -74,17 +74,16 @@ export function createMaritimePreparationClient(request: typeof fetch, signal: A
         await native.bootstrap({ sandboxId: builder.id, name: builderFor(operation).name });
         const directory = '/tmp/' + operation.name;
         for (const file of definition.cli.files) await native.upload(builder, directory + '/' + file.path, decodeBase64(file.contentsBase64));
-        const script = 'set -eu\ntrap ' + quoteSandboxShell('rm -rf -- ' + quoteSandboxShell(directory)) + ' EXIT\n'
-          + (definition.cli.files.length ? 'cd -- ' + quoteSandboxShell(directory) + '\n' : '')
-          + 'sh -c ' + quoteSandboxShell(definition.cli.installScript) + '\nchmod -R a+rX ' + SANDBOX_HOME + '\n'
-          + 'sh -c ' + quoteSandboxShell(definition.setupScript ?? '') + '\n';
+        const script = 'trap ' + quote('rm -rf -- ' + quote(directory)) + ' EXIT\n'
+          + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli,
+            stageDirectory: definition.cli.files.length ? directory : undefined, readableRoot: SANDBOX_HOME, setupScript: definition.setupScript });
         // The native base example installs under /home/user. Installation into
         // /opt/happier and the shared setup effect require root, without changing
         // the image's ordinary command user. Images without sudo fail visibly.
         const result = await native.run(builder, ['sh', '-c',
           'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi',
           'happier-prepare', 'sh', '-c', script]);
-        assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exitCode, stderr: result.stderr }, details => new SandboxError('maritime_preparation_command_failed', undefined, details));
+        assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exitCode }, details => new SandboxError('maritime_preparation_command_failed', undefined, details));
         snapshot(await native.json(await native.api('/sandboxes/' + encodeURIComponent(builder.id) + '/save', 'POST', { name: operation.name })), operation);
         const resultState = await inspectOperation(operation);
         return resultState.kind === 'failed' || resultState.kind === 'absent' ? { kind: 'unknown', code: 'maritime_preparation_unconfirmed', nativeOperationRef: sandboxReference(operation) } : resultState;

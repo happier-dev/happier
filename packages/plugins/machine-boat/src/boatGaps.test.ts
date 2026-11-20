@@ -207,9 +207,9 @@ describe('Boat documented contract gaps', () => {
   it.each([
     ['daily_limit_reached', 'native_daily_limit_reached', 429],
     ['idempotency_key_reused', 'native_idempotency_mismatch', 409],
-    ['api_key_action_forbidden', 'native_api_key_action_forbidden', 403],
+    ['api_key_action_forbidden', 'credential_unavailable', 403],
     ['invalid_json', 'native_request_failed', 400],
-    ['unauthorized', 'native_authorization_failed', 401],
+    ['unauthorized', 'credential_unavailable', 401],
     ['rate_limited', 'native_rate_limited', 429],
     ['not_found', 'native_not_found', 404],
   ] as const)('retains definite allocation refusal %s without turning it into recovery', async (createRefusal, code, createRefusalStatus) => {

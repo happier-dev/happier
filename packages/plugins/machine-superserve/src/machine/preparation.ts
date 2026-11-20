@@ -1,5 +1,5 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { assertMachineProvisionerGuestCommandSucceeded, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerPreparationInstallScript, assertMachineProvisionerGuestCommandSucceeded, createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { API_ORIGIN } from '../account.js';
 import { createSuperserveNativeClient, superserveSandboxIdentity } from './nativeClient.js';
 import { SuperserveLaunchSchema, SuperserveResourceSchema, reference, type SuperserveLaunch, type SuperserveResource } from './schemas.js';
@@ -99,11 +99,11 @@ export function createSuperservePreparationClient(request: typeof fetch, signal?
       if (acquired.kind !== 'bound') return { kind: 'unknown', code: 'superserve_acquire_unconfirmed', nativeOperationRef: reference(operation) };
       operation = { ...operation, seed: acquired.resource.value };
       const directory = '/tmp/' + operation.name;
-      async function exec(argv: string[]) {
+      async function exec(argv: string[], privateOutput = false) {
         const output = await native.exec({ resource: operation.seed!, argv });
         if (!('termination' in output) || output.termination.observed.kind !== 'exit') throw new NativeError('superserve_preparation_setup_failed');
         assertMachineProvisionerGuestCommandSucceeded({ exitCode: output.termination.observed.exitCode,
-          stderr: decodeBase64(output.stderrBase64), truncated: output.stdoutTruncated || output.stderrTruncated },
+          ...(privateOutput ? {} : { stderr: decodeBase64(output.stderrBase64) }), truncated: output.stdoutTruncated || output.stderrTruncated },
         details => new NativeError('superserve_preparation_setup_failed', undefined, details.nativeCause));
       }
       await exec(['mkdir', '-p', directory]);
@@ -113,8 +113,9 @@ export function createSuperservePreparationClient(request: typeof fetch, signal?
         const written = await native.putFile({ resource: operation.seed!, guestPath: directory + '/' + file.path, bytesBase64: file.contentsBase64 });
         if (written.kind !== 'confirmed') throw new NativeError('code' in written && written.code ? written.code : 'superserve_file_unconfirmed');
       }
-      await exec(['sh', '-c', 'set -e\ntrap \'rm -rf -- "$1"\' EXIT\ncd -- "$1"\nsh -c "$2"\nchmod -R a+rX ' + SUPERSERVE_PREPARATION_HOME + '\nsh -c "$3"\n',
-        'happier-prepare', directory, definition.cli.installScript, definition.setupScript ?? '']);
+      await exec(['sh', '-c', 'trap \'rm -rf -- "$1"\' EXIT\n'
+        + buildMachineProvisionerPreparationInstallScript({ cli: definition.cli, stageDirectory: directory,
+          readableRoot: SUPERSERVE_PREPARATION_HOME, setupScript: definition.setupScript }), 'happier-prepare', directory], true);
       // A running snapshot source continues afterwards. Pause explicitly before
       // capture so retained source storage, rather than active CPU, is billed.
       const paused = await native.power(operation.seed!, 'suspend');

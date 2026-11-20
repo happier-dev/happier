@@ -120,10 +120,8 @@ export const PLUGIN = definePlugin({
         const dimensions = { size: [], image: [], location: [], network: [], duration: [] };
         try {
           const client = await runtime(context);
-          const [check, limits] = await Promise.all([client.checkProject(), client.limits()]);
+          const limits = await client.limits();
           context.signal.throwIfAborted();
-          if (!check.available) return { dimensions, code: 'provider_unavailable',
-            ...(check.nativeCause ? { nativeCause: check.nativeCause } : {}) };
           if (limits.kind !== 'available') return { dimensions, code: 'provider_unavailable',
             ...(limits.nativeCause ? { nativeCause: limits.nativeCause } : {}) };
           const parsed = VercelLaunchSchema.safeParse({ ...input, timeoutMs: input.timeoutMs ?? limits.timeoutMs });

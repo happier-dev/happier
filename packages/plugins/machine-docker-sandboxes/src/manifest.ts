@@ -1,3 +1,4 @@
+import { readManagedDependencyExecutable, projectUnavailableManagedDependency } from '@happier-dev/plugin-sdk/managed-services';
 import { Buffer } from 'node:buffer';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
 import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
@@ -32,11 +33,10 @@ function errorCode(error: unknown) {
 }
 function readDockerSignInRefusal(error: unknown) {
   if (!(error instanceof PluginError) || error.code !== 'credential_unavailable') return null;
-  return { available: false, code: error.code, status: 'Sign in to Docker', prerequisites: [{
-    requirement: { kind: 'managedDependency', id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } },
-    status: 'unavailable', reason: 'Docker Sandboxes is installed but needs native sign-in.',
+  return { available: false, code: error.code, status: 'Sign in to Docker', prerequisites: [projectUnavailableManagedDependency(
+    { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID }, { reason: 'Docker Sandboxes is installed but needs native sign-in.',
     repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'sign-in' }, input: {} },
-  }] } satisfies MachineProvisionerCheckResultV1;
+  })] } satisfies MachineProvisionerCheckResultV1;
 }
 class MissingDockerSandboxesDependency extends Error {
   readonly code = 'docker_sandbox_unavailable';
@@ -44,10 +44,9 @@ class MissingDockerSandboxesDependency extends Error {
 async function nativeExecutable(context: PluginInvocationContext) {
   // A system declaration uses the shared dependency owner. No vendor download,
   // license grant, install or native daemon effect occurs during discovery.
-  const status = await context.services.managedServices.dependencies.status(DOCKER_SANDBOXES_DEPENDENCY_ID, { signal: context.signal });
-  if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) {
-    throw new MissingDockerSandboxesDependency('native Docker Sandboxes executable unavailable');
-  }
+  const status = await readManagedDependencyExecutable(context.services.managedServices.dependencies, DOCKER_SANDBOXES_DEPENDENCY_ID, context.signal);
+  if (status.state === 'missing') throw new MissingDockerSandboxesDependency('native Docker Sandboxes executable missing');
+  if (status.state !== 'ready') throw new Error('native Docker Sandboxes executable unavailable');
   return status.executable;
 }
 async function provider(context: PluginInvocationContext) {
@@ -238,10 +237,11 @@ export const DOCKER_SANDBOXES_PLUGIN = definePlugin({
           const signIn = readDockerSignInRefusal(error);
           if (signIn) return signIn;
           return projectMachineProvisionerActionFailure(error, () => machineCheckPresentation({ available: false, code: errorCode(error),
-          ...(error instanceof MissingDockerSandboxesDependency ? { prerequisites: [{ requirement: { kind: 'managedDependency' as const,
-            id: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID } }, status: 'unavailable' as const,
-            setupSources: dockerSandboxesInstallSources(),
-            repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'install-runtime' }, input: {} } }] } : {}),
+          ...(error instanceof MissingDockerSandboxesDependency ? { prerequisites: [projectUnavailableManagedDependency(
+            { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: DOCKER_SANDBOXES_DEPENDENCY_ID }, {
+              setupSources: dockerSandboxesInstallSources(),
+              repairAction: { action: { pluginId: DOCKER_SANDBOXES_PLUGIN_ID, localId: 'install-runtime' }, input: {} },
+            })] } : {}),
         })); }
       },
     },

@@ -1,4 +1,4 @@
-import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { z } from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { CrabboxLaunchV1Schema, CrabboxResourceV1Schema, type CrabboxLaunchV1, type CrabboxResourceV1 } from './schemas.js';
@@ -22,7 +22,7 @@ export type CrabboxAcquireResult = Readonly<{
 }>;
 
 export class CrabboxNativeError extends Error {
-    constructor(readonly code: 'native_identity_mismatch' | 'native_response_invalid' | 'native_connection_invalid' | 'native_route_unavailable' | 'native_lease_ended' | 'native_transport_unknown' | 'native_not_ready', readonly nativeCause?: MachineProvisionerNativeCauseV1) {
+    constructor(readonly code: 'native_identity_mismatch' | 'native_response_invalid' | 'native_connection_invalid' | 'native_route_unavailable' | 'native_lease_ended' | 'native_transport_unknown' | 'native_not_ready' | 'credential_unavailable', readonly nativeCause?: MachineProvisionerNativeCauseV1) {
         super(code);
         this.name = 'CrabboxNativeError';
     }
@@ -112,7 +112,7 @@ export class CrabboxCoordinatorClient {
                     return { status: 'allocated', resource: observation.resource, observation };
                 }
                 const response = await this.send(resource, 'POST', `/v1/checkpoints/${encodeURIComponent(checkpointID)}/use`, { action: 'begin' }, signal);
-                if (!response?.ok) throw new CrabboxNativeError('native_transport_unknown');
+                if (!response?.ok) throw new CrabboxNativeError(readMachineProvisionerCredentialRefusal(response?.status) ?? 'native_transport_unknown');
                 const claim = z.object({ claim: z.string(), checkpoint: z.object({ id: z.string(), provider: z.string(),
                     image: z.object({ id: z.string(), kind: z.string() }) }) }).safeParse(await response.json());
                 if (!claim.success || !claim.data.claim || claim.data.checkpoint.id !== checkpointID
@@ -137,7 +137,7 @@ export class CrabboxCoordinatorClient {
             const observation = observe(resource, lease);
             return { status: 'allocated', resource: observation.resource, observation };
         } catch (error) {
-            return projectMachineProvisionerActionFailure(error, () => ({ status: error instanceof CrabboxNativeError && error.code === 'native_lease_ended' ? 'refused' : 'unknown', resource,
+            return projectMachineProvisionerActionFailure(error, () => ({ status: error instanceof CrabboxNativeError && (error.code === 'native_lease_ended' || error.code === 'credential_unavailable') ? 'refused' : 'unknown', resource,
                 code: error instanceof CrabboxNativeError ? error.code : 'native_transport_unknown',
                 ...(error instanceof CrabboxNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {}) }));
         }
@@ -205,7 +205,7 @@ export class CrabboxCoordinatorClient {
                 const rejection = z.object({ error: z.string() }).safeParse(await response.json().catch(() => undefined));
                 if (rejection.success && rejection.data.error === 'fixed_lease_terminal') throw new CrabboxNativeError('native_lease_ended', { localCause: 'native_lease_ended' });
             }
-            throw new CrabboxNativeError('native_transport_unknown', {
+            throw new CrabboxNativeError(readMachineProvisionerCredentialRefusal(response.status) ?? 'native_transport_unknown', {
                 httpStatusClass: response.status >= 500 ? '5xx' : response.status >= 400 ? '4xx' : response.status >= 300 ? '3xx' : 'other',
             });
         }

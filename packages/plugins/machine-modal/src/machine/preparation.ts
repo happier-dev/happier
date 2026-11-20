@@ -1,3 +1,4 @@
+import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { App, Image, ModalClient, SandboxCreateParams } from 'modal';
 import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import { createManagedMachinePresetPreparationBuildInputV1Schema, defineMachineProvisionerPreparationSchemas,
@@ -54,7 +55,6 @@ export function createModalPreparationClient(client: ModalClient): ModalPreparat
 }
 const ref = <T>(value: T) => ({ contributionRef: MODAL_CONTRIBUTION_REF, schemaVersion: 1, value });
 function named(error: unknown, name: string) { return error instanceof Error && error.name === name; }
-const quote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
 class PreparationIdentityMismatch extends Error {}
 function buildPayload(operationId: string, input: BuildInput) {
   const prefix = '/tmp/.happier-preparation-' + encodeURIComponent(operationId);
@@ -63,12 +63,11 @@ function buildPayload(operationId: string, input: BuildInput) {
   const files = input.cli.files.map((file, index) => 'mkdir -p -- ' + quote(file.path.includes('/') ? file.path.slice(0, file.path.lastIndexOf('/')) : '.')
     + '\nmv -- ' + quote(payloadPaths[index]!) + ' ' + quote(file.path)).join('\n');
   const cleanup = 'rm -rf -- "$stage" ' + [...payloadPaths, scriptPath].map(quote).join(' ');
-  const install = 'sh -c "$1" && chmod -R a+rX ' + MODAL_PREPARATION_HOME + ' && sh -c "$2"';
+  const install = buildMachineProvisionerPreparationInstallScript({ cli: input.cli, readableRoot: MODAL_PREPARATION_HOME, setupScript: input.setupScript });
   const script = 'set -eu\nstage=$(mktemp -d)\ntrap ' + quote(cleanup) + ' EXIT\n'
     + '[ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ]\ncd -- "$stage"\n' + files + '\n'
     + 'sh -c ' + quote('if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi')
-    + ' happier-install sh -c ' + quote(install) + ' happier-cli ' + quote(input.cli.installScript)
-    + ' ' + quote(input.setupScript ?? '') + '\n';
+    + ' happier-install sh -c ' + quote(install) + '\n';
   // The main process waits for atomic native file uploads. Only the small
   // script pathname enters stdin/argv; CLI archives never enter exec arguments.
   const command = ['sh', '-c', 'IFS= read -r script && [ "$script" = "$1" ] && exec sh "$script"', 'happier-prepare', scriptPath];

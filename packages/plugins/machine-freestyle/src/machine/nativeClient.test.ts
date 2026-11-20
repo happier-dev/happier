@@ -80,7 +80,7 @@ describe('Freestyle HTTP leaf qualification', () => {
       const bound = await c.recover(a.nativeOperationRef.value);
       expect(bound.kind).toBe('bound');
       if (bound.kind !== 'bound') throw new Error('Missing resource');
-      expect(await c.bootstrap(bound.resource.value)).toMatchObject({ kind: 'native', guestHome: { homeDir: v.home, daemonStartup: 'native-process' } });
+      expect(await c.bootstrap(bound.resource.value)).toMatchObject({ kind: 'native', daemonStartup: 'native-process' });
       expect(v.calls.filter(x => x.path === '/v5/vms' && x.method === 'POST')).toHaveLength(1);
     } finally { v.cleanup(); }
   });

@@ -1,3 +1,4 @@
+import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { Buffer } from 'node:buffer';
 import { lstat, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -39,7 +40,6 @@ const checkpointSchema = defineProtocolObject({ id: text, leaseID: text, name: t
   retryAt: text.optional(),
   image: defineProtocolObject({ id: text, kind: text, architecture: text.optional() }, open).optional() }, open);
 const sourceSchema = defineProtocolObject({ id: text, provider: text, org: text, state: text }, open);
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 function failure(code: string) { return Object.assign(new Error(code), { code }); }
 function code(error: unknown) {
   return error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'native_preparation_unconfirmed';
@@ -88,8 +88,8 @@ function buildScript(input: BuildInput) {
   return Buffer.from('#!/bin/sh\nset -eu\nif [ "$(id -u)" -ne 0 ]; then exec sudo -n -- sh "$0" "$@"; fi\n'
     + 'decode() { if [ "$(uname -s)" = Darwin ]; then base64 -D; else base64 -d; fi; }\n'
     + 'stage=$(mktemp -d)\ntrap \'rm -rf -- "$stage"\' EXIT\ncd "$stage"\n' + files
-    + 'sh -c ' + quote(input.cli.installScript) + '\nchmod -R a+rX /opt/happier\nsh -c ' + quote(input.setupScript ?? '')
-    + '\ncd /\nrm -rf -- "$stage"\ntrap - EXIT\n'
+    + buildMachineProvisionerPreparationInstallScript({ cli: input.cli, readableRoot: '/opt/happier', setupScript: input.setupScript })
+    + 'cd /\nrm -rf -- "$stage"\ntrap - EXIT\n'
     // Only this fresh native-owned source is captured. No enrollment, Account
     // credentials, repository sync, inherited env or ordinary resource key.
     + 'if command -v cloud-init >/dev/null 2>&1; then cloud-init status --wait >/dev/null; cloud-init clean --logs; fi\n'

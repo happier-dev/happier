@@ -1,5 +1,6 @@
-import { encodeBase64, decodeBase64, defineProtocolArray, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { readMachineProvisionerCredentialRefusal, isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { encodeBase64, defineProtocolArray, defineProtocolObject, defineProtocolString, defineProtocolNumber, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeCauseV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, UpstashBoxLaunchSchema, UpstashBoxOperationSchema, UpstashBoxResourceSchema, ROLE_SCHEMAS, reference, type UpstashBoxLaunch, type UpstashBoxOperation, type UpstashBoxResource } from './schemas.js';
 
 // Public REST v2; official @upstash/box 0.8.0, checked 2026-11-16.
@@ -16,7 +17,6 @@ export class NativeError extends Error {
   constructor(readonly code: string, readonly status?: number, readonly nativeCause?: MachineProvisionerNativeCauseV1) { super(code); }
 }
 const code = (error: unknown) => error instanceof NativeError ? error.code : 'upstash_box_unavailable';
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 // Native labels are limited to 20 characters. The exact name and retained
 // box id establish identity; this short marker identifies managed resources.
 const MANAGED_LABEL = 'happier-managed';
@@ -36,7 +36,7 @@ export function createUpstashBoxHttpClient(request: typeof fetch, signal?: Abort
     signal?.throwIfAborted();
     const response = await request(url, { method, signal, redirect: 'error', headers: { 'content-type': 'application/json' },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    if (!response.ok) throw new NativeError(response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'upstash_box_http_' + response.status, response.status);
+    if (!response.ok) throw new NativeError(readMachineProvisionerCredentialRefusal(response.status) ?? 'upstash_box_http_' + response.status, response.status);
     const content = await response.text();
     if (!content) return null;
     try { return JSON.parse(content) as unknown; } catch { throw new NativeError('upstash_box_invalid_response'); }
@@ -64,7 +64,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
         labels: [MANAGED_LABEL], keep_alive: false }), operation);
       return { kind: 'bound', resource: { ...reference(resource(native, managedId)), origin: 'created' as const } };
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
-      if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
+      if (error instanceof NativeError && isMachineProvisionerCreateRefusal(error.status, [409])) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // Create can allocate before the response is lost. Reconcile only the captured name, never POST again.
       return pending(operation);
     }); }
@@ -104,19 +104,15 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
     const changed = await execute(value, ['chmod', (mode ?? 0o600).toString(8), guestPath]);
     if (changed.exitCode !== 0) throw new NativeError('upstash_box_file_unconfirmed');
   }
-  async function bootstrap(value: UpstashBoxResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const probe = await execute(value, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-    const parts = new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(probe.stdoutBase64)).trimEnd().split(/\r?\n/);
-    if (probe.exitCode !== 0 || parts.length !== 3 || parts[0] !== 'Linux' || !['x86_64', 'aarch64'].includes(parts[1]!) || !parts[2]!.startsWith('/')) throw new NativeError('upstash_box_guest_unsupported');
-    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-      guestHome: { homeDir: parts[2]!, happyHomeDir: parts[2]! + '/.happier', daemonStartup: 'native-process' } };
+  async function bootstrap(_resource: UpstashBoxResource): Promise<MachineProvisionerBootstrapCarrierV1> {
+    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const parsed = ROLE_SCHEMAS.execInput.parse(input);
     if (parsed.processConfig) {
       const { environment, detachedDaemonStartArgv } = parsed.processConfig;
       const home = environment.HAPPIER_HOME_DIR;
-      if (!home?.startsWith('/') || !detachedDaemonStartArgv?.length || Object.keys(environment).some(key => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) throw new NativeError('invalid_request');
+      if (!home.startsWith('/')) throw new NativeError('invalid_request');
       const script = buildMachineProvisionerDaemonStartScript(environment, detachedDaemonStartArgv);
       // Native startup reruns on resume; persist the host-built binary argv without vendor SDK or system Node.
       const startPath = home + '/upstash-box-daemon-start';
@@ -148,7 +144,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
   }
   async function cleanup(operation: UpstashBoxOperation): Promise<{ kind: 'confirmed' } | { kind: 'unknown'; code: string }> {
     if (operation.kind !== 'delete') return { kind: 'unknown', code: 'invalid_request' };
-    return (await inspect(operation.resource)).availability === 'absent' ? { kind: 'confirmed' } : { kind: 'unknown', code: 'upstash_box_delete_unconfirmed' };
+    return projectMachineProvisionerDeleteReadback(await inspect(operation.resource), 'upstash_box_delete_unconfirmed');
   }
   async function destroy(input: { resource?: UpstashBoxResource; nativeOperation?: UpstashBoxOperation }): Promise<Destruction> {
     if (input.nativeOperation?.kind === 'delete') return cleanup(input.nativeOperation);
@@ -163,7 +159,7 @@ export function createUpstashBoxNativeClient(request: typeof fetch, signal?: Abo
       await http(path(value.boxId), 'DELETE');
       return { kind: 'accepted', nativeOperationRef: reference({ kind: 'delete', resource: value } as const) };
     } catch (error) {
-      if (error instanceof NativeError && error.status === 404) return { kind: 'confirmed' };
+      if (error instanceof NativeError && error.status === 404) return cleanup({ kind: 'delete', resource: value });
       return projectMachineProvisionerActionFailure(error, () => ({ kind: 'unknown', code: code(error) }));
     }
   }

@@ -1,3 +1,4 @@
+import { readManagedDependencyExecutable, projectUnavailableManagedDependency } from '@happier-dev/plugin-sdk/managed-services';
 import { Buffer } from 'node:buffer';
 import { defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import { machinePresentationLabel, machineCheckPresentation } from './ui/translations.js';
@@ -36,15 +37,15 @@ function errorCode(error: unknown) {
 async function provider(context: PluginInvocationContext) {
   // Checking never installs or mutates a managed dependency. Executable identity
   // is resolved by the public dependency owner, never a host-specific path.
-  const status = await context.services.managedServices.dependencies.status(LIMA_DEPENDENCY_ID, { signal: context.signal });
-  if ((status.state !== 'ready' && status.state !== 'updateAvailable') || !status.executable) {
-    throw Object.assign(new Error('declared native Lima executable is unavailable'), { code: 'lima_unavailable' });
+  const status = await readManagedDependencyExecutable(context.services.managedServices.dependencies, LIMA_DEPENDENCY_ID, context.signal);
+  if (status.state !== 'ready') {
+    throw Object.assign(new Error('declared native Lima executable is unavailable'), { code: 'lima_unavailable', notInstalled: status.state === 'missing' });
   }
   const executor = createLimaSdkExecutor({ exec: context.services.exec, executable: status.executable, signal: context.signal });
   const current = createLimaProvider(executor, context.invokedAtMs,
     async (dependencyId) => {
-      const tool = await context.services.managedServices.dependencies.status(dependencyId, { signal: context.signal });
-      return (tool.state === 'ready' || tool.state === 'updateAvailable') && tool.executable !== undefined;
+      const tool = await readManagedDependencyExecutable(context.services.managedServices.dependencies, dependencyId, context.signal);
+      return tool.state === 'ready';
     });
   return { ...current, preparation: createLimaPreparationClient(executor, current) };
 }
@@ -163,10 +164,11 @@ export const LIMA_PLUGIN = definePlugin({
           return projectMachineProvisionerActionFailure(error, () => {
             const code = errorCode(error);
             // The missing executable is a prerequisite, so the picker treats it like every other tool that isn't installed.
-            return machineCheckPresentation({ available: false, code, ...(code === 'lima_unavailable' ? { prerequisites: [{
-              requirement: { kind: 'managedDependency' as const, id: { pluginId: LIMA_PLUGIN_ID, localId: LIMA_DEPENDENCY_ID } },
-              status: 'unavailable' as const,
-              repairAction: { action: { pluginId: LIMA_PLUGIN_ID, localId: 'install' }, input: {} } }] } : {}) });
+            const notInstalled = error instanceof Error && 'notInstalled' in error && error.notInstalled === true;
+            return machineCheckPresentation({ available: false, code, ...(notInstalled ? { prerequisites: [
+              projectUnavailableManagedDependency({ pluginId: LIMA_PLUGIN_ID, localId: LIMA_DEPENDENCY_ID },
+                { repairAction: { action: { pluginId: LIMA_PLUGIN_ID, localId: 'install' }, input: {} } }),
+            ] } : {}) });
           });
         }
       },

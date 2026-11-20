@@ -1,5 +1,4 @@
-import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerGuestCommandFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import type { LumeNativeResource } from './schemas.js';
@@ -23,13 +22,8 @@ export async function deleteLumeNativeVm(input: Readonly<{
   const exitCode = observed.kind === 'exit' && process.termination.requestedBy.kind === 'none' ? observed.exitCode : null;
   // Delete's awaited exit certifies completion without parsing process output.
   if (exitCode === 0) return { kind: 'delete-accepted', resource: input.resource };
-  // Project before taking the existing diagnostic excerpt so credentials that
-  // cross its boundary cannot leak as partial values.
-  const err = new TextDecoder().decode(process.stderr).trim();
-  const projected = err ? projectPluginFailureText(new Error(err)) : '';
   return { kind: 'unknown', reason: 'native_command_failed', resource: input.resource,
-    nativeCause: { localCause: 'native_command_failed', command: 'delete', exitCode,
-      ...(projected ? { stderr: projected.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-      ...(process.stderrTruncated || projected.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
-    } };
+    nativeCause: projectMachineProvisionerGuestCommandFailure({
+      command: 'delete', exitCode, stderr: process.stderr, stderrTruncated: process.stderrTruncated,
+    }) };
 }

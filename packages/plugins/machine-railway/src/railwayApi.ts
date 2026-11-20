@@ -1,4 +1,4 @@
-import { createMachineProvisionerFetch, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { readMachineProvisionerCredentialRefusal, createMachineProvisionerFetch, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 // Railway Public API: https://docs.railway.com/integrations/api
 export const RAILWAY_ORIGIN = 'https://backboard.railway.com';
@@ -40,7 +40,7 @@ export function createRailwayGraphqlClient(request: typeof fetch, signal?: Abort
         headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query, variables }),
       });
       if (!response.ok) {
-        const code = response.status === 401 || response.status === 403 ? 'credential_unavailable' : 'railway_http_' + response.status;
+        const code = readMachineProvisionerCredentialRefusal(response.status) ?? 'railway_http_' + response.status;
         throw new NativeError(code, response.status);
       }
       const body: unknown = await response.json();

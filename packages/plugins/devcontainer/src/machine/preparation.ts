@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
 import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { createManagedMachinePresetPreparationBuildInputV1Schema, type ManagedMachinePresetPreparationBuildInputV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { buildMachineProvisionerPreparationInstallScript, createManagedMachinePresetPreparationBuildInputV1Schema, type ManagedMachinePresetPreparationBuildInputV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { canonicalizePath, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { DevcontainerReviewQuerySchema, DevcontainerRuntimeSchema } from './schemas.js';
 import { DEVCONTAINER_PREPARATION_HOME } from './effectReview.js';
@@ -116,8 +116,10 @@ export function createDevcontainerPreparation(input: Readonly<{
         // Preserve the base USER and WORKDIR. Only installation runs as root;
         // an image without root/passwordless sudo fails visibly and stays cold.
         const command = ['sh', '-c', 'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi',
-          'happier-prepare', 'sh', '-c', 'set -e\nif [ -n "$1" ]; then trap \'rm -rf -- "$1"\' EXIT; cd -- "$1"; fi\nsh -c "$2"\nchmod -R a+rX ' + DEVCONTAINER_PREPARATION_HOME + '\nsh -c "$3"\n',
-          'happier-build', contextDirectory, query.cli.installScript, query.setupScript ?? ''];
+          'happier-prepare', 'sh', '-c', 'set -e\nif [ -n "$1" ]; then trap \'rm -rf -- "$1"\' EXIT; fi\n'
+            + buildMachineProvisionerPreparationInstallScript({ cli: query.cli, stageDirectory: contextDirectory || undefined,
+              readableRoot: DEVCONTAINER_PREPARATION_HOME, setupScript: query.setupScript }),
+            'happier-build', contextDirectory];
         dockerfile.push(`RUN ${JSON.stringify(command)}`);
         // Only the setup owner's classified script is baked. Authored launch
         // setup may require the mounted workspace or credentials and stays cold.

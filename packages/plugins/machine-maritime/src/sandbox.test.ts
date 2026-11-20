@@ -72,6 +72,7 @@ function vendor(options: { injectSecrets?: boolean; commandFails?: boolean; inte
 describe('Maritime native sandbox and preparation through public Actions', () => {
   it('runs installation and setup as root when the native base command user requires passwordless sudo', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'maritime-guest-'));
+    const binaryPath = join(directory, 'happier');
     // Model only guest OS executables: Maritime base docs install under /home/user.
     // The effect itself requires UID0; this sudo boundary changes the child identity.
     writeFileSync(join(directory, 'id'), '#!/bin/sh\nprintf "%s\\n" "$MARITIME_TEST_UID"\n', { mode: 0o700 });
@@ -81,13 +82,14 @@ describe('Maritime native sandbox and preparation through public Actions', () =>
     v.data.mockImplementation(async (_url, init) => {
       const { cmd } = JSON.parse(String(init?.body)) as { cmd: string[] };
       const result = spawnSync(cmd[0], cmd.slice(1), { encoding: 'utf8', env: { ...process.env,
-        PATH: directory + ':' + process.env.PATH, MARITIME_TEST_UID: '1000' } });
+        PATH: directory + ':' + process.env.PATH, MARITIME_TEST_UID: '1000', MARITIME_TEST_BIN: binaryPath } });
       return Response.json({ state: 'exited', exitCode: result.status, stdout: result.stdout, stderr: result.stderr, truncated: false });
     });
     const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
     try {
       const result = await kit.invokeAction('prepare-build', { ...input, input: { ...input.input,
-        cli: { ...input.input.cli, files: [], installScript: '[ "$(id -u)" = 0 ] || exit 73' },
+        cli: { ...input.input.cli, binaryPath, files: [],
+          installScript: '[ "$(id -u)" = 0 ] || exit 73; touch "$MARITIME_TEST_BIN"; /bin/chmod +x "$MARITIME_TEST_BIN"' },
         setupScript: '[ "$(id -u)" = 0 ] || exit 73' } }, { surface: 'plugin' });
       expect(result).toMatchObject({ kind: 'ready' });
     } finally { await kit.dispose(); v.data.mockRestore(); rmSync(directory, { recursive: true, force: true }); }

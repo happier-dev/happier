@@ -1,6 +1,6 @@
 import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
 
-import type { MachineProvisionerCheckResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { createMachineProvisionerCheckPresenter } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const BOAT_PRESENTATION_LABELS = {
   en: {
@@ -18,6 +18,4 @@ export function boatPresentationLabel(id: keyof typeof en): PluginLocalizedStrin
   return { key: `machineBoat.presentation.${id}`, fallback: en[id] };
 }
 
-export function boatCheckPresentation(result: MachineProvisionerCheckResultV1): MachineProvisionerCheckResultV1 {
-  return { ...result, status: result.status ?? boatPresentationLabel(result.available ? 'ready' : 'unavailable') };
-}
+export const boatCheckPresentation = createMachineProvisionerCheckPresenter(en, 'machineBoat.presentation.');

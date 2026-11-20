@@ -1,3 +1,4 @@
+import { isMachineProvisionerCreateRefusal, buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import * as z from 'zod/mini';
 import { defineProtocolNumber, defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
@@ -37,14 +38,13 @@ function parse<T>(schema: z.ZodMiniType<T>, value: unknown): T {
   if (!result.success) throw new PreparationError('digitalocean_preparation_invalid_response');
   return result.data;
 }
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 function userData(input: BuildInput) {
   return ['#!/bin/sh', 'set -eu', 'umask 077', 'export HOME=' + quote(DIGITALOCEAN_PREPARATION_HOME),
     'mkdir -p -- "$HOME"', 'stage="$(mktemp -d)"', 'trap \'rm -rf -- "$stage"\' EXIT', 'cd -- "$stage"',
     ...input.cli.files.flatMap(file => ['mkdir -p -- "$(dirname -- ' + quote(file.path) + ')"',
       'printf %s ' + quote(file.contentsBase64) + ' | base64 -d > ' + quote(file.path)]),
-    'sh -c ' + quote(input.cli.installScript), 'chmod -R a+rX ' + quote(DIGITALOCEAN_PREPARATION_HOME),
-    'sh -c ' + quote(input.setupScript ?? ''), 'cd /', 'rm -rf -- "$stage"', 'trap - EXIT', 'sync', 'poweroff', ''].join('\n');
+    buildMachineProvisionerPreparationInstallScript({ cli: input.cli, readableRoot: DIGITALOCEAN_PREPARATION_HOME, setupScript: input.setupScript }),
+    'cd /', 'rm -rf -- "$stage"', 'trap - EXIT', 'sync', 'poweroff', ''].join('\n');
 }
 
 // DigitalOcean REST v2, official snapshots/tags/droplets API, 2026-11-16.
@@ -69,7 +69,7 @@ export function createDigitalOceanPreparationClient(options: DigitalOceanTranspo
     return projectMachineProvisionerActionFailure(error, () => {
       const code = error instanceof PreparationError ? error.code : 'action_failed';
       return refuse && error instanceof PreparationError && (error.code === 'digitalocean_preparation_identity_mismatch'
-        || error.status !== undefined && error.status >= 400 && error.status < 500 && error.status !== 409 && error.status !== 429)
+        || isMachineProvisionerCreateRefusal(error.status, [409, 429]))
         ? { kind: 'refused' as const, code } : { kind: 'unknown' as const, code, nativeOperationRef: reference(operation) };
     });
   }

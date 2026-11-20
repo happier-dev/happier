@@ -1,9 +1,9 @@
+import { quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ExecService, PluginExecSpawnRequest, PluginProcessHandle } from '@happier-dev/plugin-sdk/exec';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import { LUME_DEFAULT_LOGIN } from './schemas.js';
 
-function quote(value: string) { return `'${value.replace(/'/gu, "'\\''")}'`; }
 
 /** macOS launchd starts sshd per connection. Keep the root session open until
  * fresh key authentication succeeds, restoring the prior drop-in on failure.

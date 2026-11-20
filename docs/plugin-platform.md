@@ -4542,12 +4542,28 @@ API and guest origins; API headers never accompany guest requests. Both bridges
 preserve request/response bytes and combine role and request cancellation.
 Vendor endpoints, header names, token formatting, DTOs and lifecycle decisions
 remain in each leaf. Neither bridge adds retries, polling or permission checks.
+`readMachineProvisionerCredentialRefusal` maps provider HTTP 401 and 403 to
+`credential_unavailable` so the picker can offer Connect. During acquisition,
+`isMachineProvisionerCreateRefusal` classifies definite HTTP refusals. A timeout
+retains the acquisition reference, and a vendor adapter can identify additional
+statuses that leave allocation uncertain.
 `buildMachineProvisionerShellCommand` owns the shared private binary-output
 shell envelope for text-only native exec APIs; vendors with a separate stdin
 channel omit its optional base64 stdin argument.
 `buildMachineProvisionerDaemonStartScript` renders the host-provided environment
 and argv for retained startup files; native staging and startup registration
 stay with the vendor adapter.
+`buildMachineProvisionerPreparationInstallScript` runs the CLI supplier in its
+own shell, checks that the expected binary is executable, applies any required
+guest readability, and runs setup in a separate shell. Provider adapters own
+staging, guest identity, and snapshot capture. Local provisioners use
+`readManagedDependencyExecutable` to project executable readiness. An explicit
+missing status can offer Install, while a failed status read leaves readiness
+unknown.
+
+Native bootstrap may declare `daemonStartup: 'native-process'`. The controller
+uses the native exec transport to resolve the platform and default Happier home.
+Providers with a specified persistent home supply `guestHome`.
 
 A Destroy result of `confirmed` means the native adapter has proved complete
 cleanup of that exact managed resource and its owned attachments. The managed
@@ -4555,6 +4571,9 @@ intent reconciler uses that proof to settle Delete without another native read.
 Asynchronous command acceptance and uncertain cleanup are not confirmation;
 they retain custody until an exact qualified read or completed native operation
 proves absence. Power-command confirmation does not imply resource absence.
+`projectMachineProvisionerDeleteReadback` accepts only an absence already
+qualified by the vendor adapter. The adapter interprets its own typed resource
+or exact account lookup and keeps an inconclusive response unsettled.
 
 Lume's native destroy adapter observes the recorded storage and VM name, stops a
 running VM, and confirms that exact VM is stopped before issuing Delete. A failed

@@ -1,3 +1,4 @@
+import { readMachineProvisionerCredentialRefusal, isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { decodeBase64, encodeBase64, defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
 import type { MachineProvisionerAcquireResultV1, MachineProvisionerBootstrapCarrierV1, MachineProvisionerCheckResultV1, MachineProvisionerDestroyResultV1, MachineProvisionerNativeCauseV1, MachineProvisionerNativeExecResultV1, MachineProvisionerObservationV1, MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
@@ -49,12 +50,11 @@ const teamSchema = defineProtocolObject({
 const logSchema = defineProtocolObject({ stream: defineProtocolUnion([defineProtocolLiteral('stdout'), defineProtocolLiteral('stderr')]), data: defineProtocolString() }, open);
 type Native = ProtocolSchemaOutput<typeof namedResponse>;
 type ResourceIdentity = Pick<VercelResource, 'teamId' | 'projectId' | 'name' | 'managedId'> & Partial<Pick<VercelResource, 'createdAt'>>;
-type Http = Readonly<{ kind: 'ok'; value: unknown }> | Readonly<{ kind: 'absent'; nativeCause?: MachineProvisionerNativeCauseV1 }> | Failure;
+type Http = Readonly<{ kind: 'ok'; value: unknown }> | Readonly<{ kind: 'absent'; nativeCause?: MachineProvisionerNativeCauseV1 }> | (Failure & Readonly<{ httpStatus?: number }>);
 type ReadNative = Readonly<{ kind: 'present'; value: Native }> | Exclude<Http, { kind: 'ok' }>;
 type Acquisition = MachineProvisionerAcquireResultV1<VercelResource, VercelOperation>;
 type Destruction = MachineProvisionerDestroyResultV1<VercelOperation>;
 const invalid = (): Failure => ({ kind: 'unavailable', code: 'vercel_invalid_response' });
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const pending = (operation: VercelOperation, nativeCause?: MachineProvisionerNativeCauseV1): Acquisition => ({
   kind: 'pending', nativeOperationRef: reference(operation), ...(nativeCause ? { nativeCause } : {}),
 });
@@ -89,9 +89,10 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       const nativeCause: MachineProvisionerNativeCauseV1 = { httpStatusClass: response.status >= 400 && response.status < 500
         ? '4xx' : response.status >= 500 && response.status < 600 ? '5xx' : response.status >= 300 && response.status < 400 ? '3xx' : 'other' };
       if (response.status === 404) return { kind: 'absent', nativeCause };
-      if (response.status === 401 || response.status === 403) return { kind: 'unavailable', code: 'credential_unavailable', nativeCause };
+      const credentialRefusal = readMachineProvisionerCredentialRefusal(response.status);
+      if (credentialRefusal) return { kind: 'unavailable', code: credentialRefusal, nativeCause };
       return { kind: effect ? response.status < 500 ? 'refused' : 'unknown' : 'unavailable',
-        code: 'vercel_http_' + response.status, nativeCause };
+        code: 'vercel_http_' + response.status, nativeCause, httpStatus: response.status };
     }
     try {
       const raw = await response.text();
@@ -205,7 +206,7 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       ...(created.nativeCause ? { nativeCause: created.nativeCause } : {}) };
     if (created.kind === 'absent') return { kind: 'rejected', code: 'provider_unavailable',
       ...(created.nativeCause ? { nativeCause: created.nativeCause } : {}) };
-    if (created.kind === 'refused' && created.code !== 'vercel_http_409') return { kind: 'rejected',
+    if (created.kind === 'refused' && isMachineProvisionerCreateRefusal(created.httpStatus, [409])) return { kind: 'rejected',
       code: created.code === 'vercel_http_400' || created.code === 'vercel_http_422' ? 'invalid_request' : 'provider_unavailable',
       ...(created.nativeCause ? { nativeCause: created.nativeCause } : {}) };
     const decoded = decodeNative(created, operation.data);
@@ -304,16 +305,8 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     const result = await execute(native, ['sh', '-c', command], bytes);
     if (result.exitCode !== 0) fail('vercel_file_unconfirmed');
   }
-  async function guestHome(native: Native): Promise<Extract<MachineProvisionerBootstrapCarrierV1, { kind: 'native' }>['guestHome']> {
-    const probe = await execute(native, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-    const parts = (probe.stdout.endsWith('\n') ? probe.stdout.slice(0, -1) : probe.stdout).split(/\r?\n/);
-    if (probe.exitCode !== 0 || parts.length !== 3 || parts[0] !== 'Linux' || parts[1] !== 'x86_64' || !parts[2]!.startsWith('/')) fail('vercel_guest_unsupported');
-    return { homeDir: parts[2]!, happyHomeDir: parts[2]! + '/.happier', daemonStartup: 'native-process' };
-  }
-  async function bootstrap(resource: VercelResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const native = await running(resource);
-    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-      guestHome: await guestHome(native) };
+  async function bootstrap(_resource: VercelResource): Promise<MachineProvisionerBootstrapCarrierV1> {
+    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const parsed = ROLE_SCHEMAS.execInput.parse(input);
@@ -321,7 +314,7 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
     if (parsed.processConfig) {
       const { environment, detachedDaemonStartArgv } = parsed.processConfig;
       const home = environment.HAPPIER_HOME_DIR;
-      if (!home?.startsWith('/') || !detachedDaemonStartArgv?.length || Object.keys(environment).some(key => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key))) fail('invalid_request');
+      if (!home.startsWith('/')) fail('invalid_request');
       const script = buildMachineProvisionerDaemonStartScript(environment, detachedDaemonStartArgv);
       const start = await execute(native, ['sh', '-c', script], undefined, parsed.timeoutMs);
       if (start.exitCode !== 0) fail('vercel_boot_unconfirmed');
@@ -531,5 +524,5 @@ export function createVercelNativeClient(inputScope: VercelScope, request: typeo
       ? accepted(operation) : nativeFailureResult(cleaned);
   }
   return { check, checkProject, limits, acquire, recover, inspect, bootstrap, exec, putFile, applyNativeCredentials, power, destroy, cleanup,
-    preparation: { read, readSnapshot, readOwnedSnapshot, capture, snapshots, execute, put, guestHome, http } };
+    preparation: { read, readSnapshot, readOwnedSnapshot, capture, snapshots, execute, put, http } };
 }

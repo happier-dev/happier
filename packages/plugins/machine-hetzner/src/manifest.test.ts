@@ -622,6 +622,7 @@ describe('public hetzner machine provisioner', () => {
       : role === 'reconcile' ? { nativeOperation: { correlation: 'row-1' } } : {};
     const result = await runtime.handlers.get(role)!(input, runtime.context);
     expect(result).toMatchObject({ nativeCause: { httpStatusClass: '4xx', code: 'forbidden' } });
+    if (role === 'inspect') expect(result).toMatchObject({ availability: 'unavailable' });
     const schema = role === 'check' ? MachineProvisionerCheckResultV1Schema : role === 'options' ? MachineProvisionerOptionsResultV1Schema
       : role === 'inspect' ? MachineProvisionerObservationV1Schema : role === 'reconcile' ? exports.ROLE_SCHEMAS.acquireResult : MachineProvisionerPowerResultV1Schema;
     expect(schema.safeParse(result).success).toBe(true);

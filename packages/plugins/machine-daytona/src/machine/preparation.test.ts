@@ -63,7 +63,7 @@ describe('Daytona credential-free snapshot preparation HTTP boundary', () => {
     ]);
     // Recorded outbound HTTP DTO, rather than a duplicated Dockerfile renderer.
     const body = v.calls.at(-1)?.body as { buildInfo: { dockerfileContent: string } };
-    expect(body.buildInfo.dockerfileContent).toContain(JSON.stringify(buildInput.input.cli.installScript));
+    expect(body.buildInfo.dockerfileContent).toContain(buildInput.input.cli.installScript);
     expect(JSON.stringify(result)).not.toContain('private-vendor-detail');
   });
 

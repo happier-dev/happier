@@ -4,7 +4,7 @@ import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { projectMachineProvisionerActionFailure,
+import { projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal,
   defineMachineProvisionerReconciliationSchemas,
   defineMachineProvisionerSchemas,
   computeSshHostKeyFingerprint,
@@ -211,7 +211,9 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
       async run(_input, context) {
         try { return boatCheckPresentation(await runtime(context).check()); }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => {
-          const code = error instanceof BoatNativeError ? error.code : 'provider_unavailable';
+          const code = error instanceof BoatNativeError
+            ? readMachineProvisionerCredentialRefusal(error.httpStatus) ?? error.code
+            : 'provider_unavailable';
           const message = boatSetupMessage(code);
           return { ...boatCheckPresentation({ available: false, code,
             ...(message ? { status: { key: `machineBoat.errors.${code}`, fallback: message } } : {}) }), ...failureCause(error) };
@@ -247,7 +249,8 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
           return { kind: 'rejected' as const, code: result.code, ...cause };
         } catch (error) {
           // Submitted effects settle inside the native client; escaped native failures precede allocation.
-          if (error instanceof BoatNativeError) return { kind: 'rejected' as const, code: error.code, ...failureCause(error) };
+          if (error instanceof BoatNativeError) return { kind: 'rejected' as const,
+            code: readMachineProvisionerCredentialRefusal(error.httpStatus) ?? error.code, ...failureCause(error) };
           return { kind: 'unknown' as const, recovery: { reference: input.managedId, reason: 'provider_unavailable' }, ...failureCause(error) };
         }
       },

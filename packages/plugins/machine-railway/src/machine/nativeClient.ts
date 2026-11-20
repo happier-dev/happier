@@ -1,5 +1,6 @@
+import { isMachineProvisionerCreateRefusal, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { decodeBase64, encodeBase64, defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerDaemonStartScript, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, RailwayLaunchSchema, RailwayOperationSchema, RailwayResourceSchema, ROLE_SCHEMAS, reference, type RailwayLaunch, type RailwayOperation, type RailwayResource } from './schemas.js';
 import { readRailwayFile, writeRailwayFile } from './files.js';
 import { createRailwayGraphqlClient, NativeError, railwayErrorCode as code } from '../railwayApi.js';
@@ -21,7 +22,6 @@ const readQuery = `query($environmentId:String!,$id:String!){sandbox(environment
 const destroyQuery = `mutation($environmentId:String!,$id:String!){sandboxDestroy(environmentId:$environmentId,id:$id){${fields}}}`;
 const execQuery = 'mutation($environmentId:String!,$id:String!,$command:String!,$timeoutSec:Int){sandboxExec(environmentId:$environmentId,id:$id,command:$command,timeoutSec:$timeoutSec){exitCode stdout stderr truncated timedOut}}';
 const tokenQuery = 'mutation($input:ShellTokenInput!){generateShellToken(input:$input)}';
-const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const pending = (operation: RailwayOperation): Acquisition => ({ kind: 'pending', nativeOperationRef: reference(operation) });
 const unknown = (id: string, reason = 'railway_acquisition_unconfirmed'): Acquisition => ({ kind: 'unknown', recovery: { reference: id, reason, consoleUrl: 'https://railway.com/dashboard' } });
 
@@ -61,7 +61,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
       onAllocated?.({ sandboxId: allocated.id, environmentId: allocated.environmentId, managedId });
       return acquired(allocated, managedId);
     } catch (error) { return projectMachineProvisionerActionFailure(error, () => {
-      if (error instanceof NativeError && error.status !== undefined && error.status >= 400 && error.status < 500) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
+      if (error instanceof NativeError && isMachineProvisionerCreateRefusal(error.status)) return { kind: 'rejected', code: error.code === 'credential_unavailable' ? 'credential_unavailable' : 'provider_unavailable' };
       // Railway has no create idempotency key or correlation lookup: never replay an uncertain paid create.
       return unknown(managedId);
     }); }
@@ -134,12 +134,8 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
     }
   }
   async function bootstrap(input: RailwayResource): Promise<MachineProvisionerBootstrapCarrierV1> {
-    const resource = RailwayResourceSchema.parse(input);
-    const probe = await execute(resource, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
-    const parts = new TextDecoder('utf-8', { ignoreBOM: true }).decode(decodeBase64(probe.stdoutBase64)).trimEnd().split(/\r?\n/);
-    if (probe.exitCode !== 0 || probe.timedOut || parts.length !== 3 || parts[0] !== 'Linux' || !['x86_64', 'aarch64'].includes(parts[1]!) || !parts[2]!.startsWith('/')) throw new NativeError('railway_guest_unsupported');
-    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
-      guestHome: { homeDir: parts[2]!, happyHomeDir: parts[2]! + '/.happier', daemonStartup: 'native-process' } };
+    RailwayResourceSchema.parse(input);
+    return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 }, daemonStartup: 'native-process' };
   }
   async function exec(input: ReturnType<typeof ROLE_SCHEMAS.execInput.parse>): Promise<MachineProvisionerNativeExecResultV1> {
     const parsed = ROLE_SCHEMAS.execInput.parse(input);
@@ -180,7 +176,7 @@ export function createRailwayNativeClient(request: typeof fetch, signal?: AbortS
   async function cleanup(input: RailwayOperation): Promise<Extract<Destruction, { kind: 'confirmed' | 'unknown' }>> {
     const operation = RailwayOperationSchema.parse(input);
     if (operation.kind !== 'delete') return { kind: 'unknown', code: 'invalid_request' };
-    return (await inspect(operation.resource)).availability === 'absent' ? { kind: 'confirmed' } : { kind: 'unknown', code: 'railway_delete_unconfirmed' };
+    return projectMachineProvisionerDeleteReadback(await inspect(operation.resource), 'railway_delete_unconfirmed');
   }
   async function destroy(input: { resource?: RailwayResource; nativeOperation?: RailwayOperation }): Promise<Destruction> {
     if (input.nativeOperation?.kind === 'delete') return cleanup(input.nativeOperation);

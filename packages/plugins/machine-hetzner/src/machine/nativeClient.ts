@@ -1,5 +1,5 @@
 import * as mini from 'zod/mini';
-import { projectMachineProvisionerActionFailure, buildMachineProvisionerCloudInit, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, buildMachineProvisionerCloudInit, isMachineProvisionerCreateRefusal, readMachineProvisionerCredentialRefusal, type MachineProvisionerCloudHostKeyV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCauseV1, type MachineProvisionerSnapshotResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { HetznerAcquireV1Schema, HetznerCorrelationSchema, HetznerDeleteOperationV1Schema, HetznerNativeError, HetznerPowerIntentSchema, HetznerResourceV1Schema, parseHetznerValue } from './schemas.js';
 import type { HetznerResourceV1 } from './schemas.js';
@@ -110,12 +110,12 @@ export function createHetznerNativeTransport(options: HetznerNativeClientOptions
           }
         }
       }
-      if (response.status === 401 || response.status === 403) throw new HetznerNativeError('native_authorization_failed', nativeCause);
+      if (response.status === 401 || response.status === 403) throw new HetznerNativeError('native_authorization_failed', nativeCause, response.status);
       if (exactAbsence && response.status === 404) {
         if (invalidBody) throw new HetznerNativeError('native_response_invalid', nativeCause);
         if (mini.object({ error: mini.object({ code: mini.literal('not_found') }) }).safeParse(value).success) return { kind: 'absent' };
       }
-      throw new HetznerNativeError(response.status >= 500 ? 'native_service_unavailable' : 'native_request_failed', nativeCause);
+      throw new HetznerNativeError(response.status >= 500 ? 'native_service_unavailable' : 'native_request_failed', nativeCause, response.status);
     }
     if (response.status === 204) return { kind: 'ok', status: 204, value: null };
     try { return { kind: 'ok', status: response.status, value: await response.json() }; }
@@ -197,9 +197,9 @@ export function createHetznerNativeClient(options: HetznerNativeClientOptions) {
         });
       } catch (error) {
         return projectMachineProvisionerActionFailure(error, (): HetznerAcquireResult => {
-          const code = codeOf(error);
+          const code = error instanceof HetznerNativeError ? readMachineProvisionerCredentialRefusal(error.httpStatus) ?? error.code : codeOf(error);
           const cause = error instanceof HetznerNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
-          if (['native_authorization_failed', 'native_request_failed'].includes(code)) return { kind: 'rejected', code, ...cause };
+          if (error instanceof HetznerNativeError && isMachineProvisionerCreateRefusal(error.httpStatus)) return { kind: 'rejected', code, ...cause };
           return { kind: 'unknown', code: code === 'native_transport_unavailable' ? 'native_transport_unknown' : code, correlation: input.correlation, ...cause };
         });
       }

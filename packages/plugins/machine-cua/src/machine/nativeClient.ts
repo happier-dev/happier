@@ -1,5 +1,6 @@
-import { projectMachineProvisionerActionFailure, MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type ManagedGuestCliBuildInputV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { projectPluginFailureText, PluginError } from '@happier-dev/plugin-sdk';
+import { buildMachineProvisionerPreparationInstallScript, quoteMachineProvisionerShellArgument as quote } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure, projectMachineProvisionerGuestCommandFailure, type MachineProvisionerNativeCauseV1, type ManagedGuestCliBuildInputV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type { ExecService, PluginExecSpawnRequest } from '@happier-dev/plugin-sdk/exec';
 import { createSecureTempDirectorySync, writeAtomicFile } from '@happier-dev/plugin-sdk/fs';
 import { createHash } from 'node:crypto';
@@ -24,7 +25,6 @@ export function cuaLocalNativeImage(launch: CuaLocalLaunchV1, kind: 'sandbox' | 
 const uploadSchema = z.object({ direction: z.literal('upload'), size: z.number(), sha256: z.string() });
 const daemonStartSchema = z.object({ ok: z.literal(true), status: z.enum(['started', 'already_running']) });
 const privateDirectoryPattern = /^\/tmp\/happier-cua\.[A-Za-z0-9-]+$/u;
-function quote(value: string) { return `'${value.replaceAll("'", "'\\''")}'`; }
 function qualifiedSandboxId(value: string) {
     const [location, name, ...rest] = value.split(':');
     if (!['local', 'aws', 'gcp', 'modal'].includes(location) || name === undefined || rest.length > 0) {
@@ -150,12 +150,12 @@ export function createCuaNativeClient(options: {
             const success = completed(result);
             if (args.includes('create') && !success) {
                 const observed = result.termination.observed;
-                const stderr = projectPluginFailureText(new Error(new TextDecoder().decode(result.stderr))).trim();
-                nativeCause = { localCause: 'native_command_failed', command: 'create',
+                nativeCause = projectMachineProvisionerGuestCommandFailure({
+                    command: 'create',
                     exitCode: observed.kind === 'exit' && result.termination.requestedBy.kind === 'none' ? observed.exitCode : null,
-                    ...(stderr ? { stderr: stderr.slice(-MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1) } : {}),
-                    ...(result.stderrTruncated || stderr.length > MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 ? { stderrTruncated: true } : {}),
-                };
+                    stderr: result.stderr,
+                    stderrTruncated: result.stderrTruncated,
+                });
             }
             if (result.termination.observed.kind === 'exit' && result.termination.observed.exitCode === 3
                 && result.termination.requestedBy.kind === 'none') {
@@ -212,7 +212,9 @@ export function createCuaNativeClient(options: {
                 }
                 // Only this build effect needs root. Preserve the image's user;
                 // missing passwordless sudo fails visibly before a checkpoint.
-                const script = `set -eu\ncd -- ${quote(directory)}\nsh -c ${quote(cli.installScript)}\nchmod -R a+rX ${quote(CUA_PREPARATION_HOME)}\nsh -c ${quote(setupScript ?? '')}\n`;
+                const script = buildMachineProvisionerPreparationInstallScript({
+                    cli, stageDirectory: directory, readableRoot: CUA_PREPARATION_HOME, setupScript,
+                });
                 return await this.execGuest(sandboxId, ['sh', '-c',
                     'if [ "$(id -u)" = 0 ]; then exec "$@"; else exec sudo -n -- "$@"; fi', 'happier-prepare', 'sh', '-s'],
                 new TextEncoder().encode(script), signal);

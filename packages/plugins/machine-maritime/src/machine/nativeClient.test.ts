@@ -50,7 +50,7 @@ function vendor(options: { lostCreate?: boolean; duplicate?: boolean; asleep?: b
     }
     if (path === '/api/agents' || path.endsWith('/agents') || path === '/api/v1/computers') {
       const entry = path === '/api/v1/computers' ? computer : box;
-      const entries = submitted || options.duplicate ? (options.duplicate ? [entry, { ...entry, id: 'other' }] : [entry]) : [];
+      const entries = present && (submitted || options.duplicate) ? (options.duplicate ? [entry, { ...entry, id: 'other' }] : [entry]) : [];
       return Response.json(path === '/api/v1/computers' ? { computers: entries } : entries);
     }
     return present ? Response.json(path.startsWith('/api/v1/computers') ? { ...computer, status: status === 'active' ? 'ready' : status } : { ...box, status }) : new Response(null, { status: 404 });
@@ -75,8 +75,8 @@ describe('Maritime managed-machine REST leaf', () => {
       .exec({ resource, argv: ['sh', '-c', 'printf "\\000\\377\\200"; printf "\\000\\377\\200" >&2; exit 7'], allowWake: false }));
     expect(result).toMatchObject({ stdoutBase64: 'AP+A', stderrBase64: 'AP+A', termination: { observed: { kind: 'exit', exitCode: 7 } } });
   });
-  it.each([boxResource, computerResource].flatMap(resource => (['stdin', 'bootstrap'] as const).map(phase => ({ resource, phase }))))(
-    'classifies a failed $phase guest prerequisite for $resource.kind as a command failure', async ({ resource, phase }) => {
+  it.each([boxResource, computerResource])(
+    'classifies a failed guest stdin prerequisite for $kind as a command failure', async resource => {
       const request: typeof fetch = async input => {
         const path = new URL(String(input)).pathname;
         if (path.endsWith('/resize')) return Response.json({ ok: true, alwaysOn: true });
@@ -84,16 +84,16 @@ describe('Maritime managed-machine REST leaf', () => {
         return Response.json(resource.kind === 'agent-box' ? box : computer);
       };
       const client = createMaritimeNativeClient(request, new AbortController().signal, 1000);
-      const operation = phase === 'stdin' ? client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' }) : client.bootstrap(resource);
+      const operation = client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' });
       const failure: unknown = await operation.catch((error: unknown) => error);
       expect(failure).toMatchObject({ code: 'maritime_guest_command_failed', details: { exitCode: 28,
         nativeCause: { localCause: 'native_command_failed', command: 'run', exitCode: 28, stderr: expect.stringContaining('No space left on device') } } });
       expect(JSON.stringify(failure)).not.toContain('private-token');
     });
-  it('retains a completed delete acknowledgement after late cancellation', async () => {
+  it('keeps delete unconfirmed when cancellation prevents native readback', async () => {
     const abort = new AbortController();
     const request: typeof fetch = async () => { abort.abort(); return new Response(null, { status: 204 }); };
-    expect(await createMaritimeNativeClient(request, abort.signal, 1000).destroy({ resource: boxResource })).toEqual({ kind: 'confirmed' });
+    expect(await createMaritimeNativeClient(request, abort.signal, 1000).destroy({ resource: boxResource })).toEqual({ kind: 'unknown', code: 'maritime_delete_unconfirmed' });
   });
   it.each([boxResource, computerResource])('preserves completed upload failures after late cancellation (%j)', async resource => {
     const abort = new AbortController();
@@ -201,7 +201,9 @@ describe('Maritime managed-machine REST leaf', () => {
   it.each([boxResource, computerResource])('hands the guest to canonical native binary bootstrap (%j)', async resource => {
     const h = vendor();
     const carrier = MachineProvisionerBootstrapCarrierV1Schema.parse(await h.client.bootstrap(resource));
-    expect(carrier).toMatchObject({ kind: 'native', guestHome: { homeDir: resource.kind === 'agent-box' ? '/data' : '/home/desk', daemonStartup: 'native-process' } });
+    expect(carrier).toMatchObject(resource.kind === 'agent-box'
+      ? { kind: 'native', guestHome: { homeDir: '/data', daemonStartup: 'native-process' } }
+      : { kind: 'native', daemonStartup: 'native-process' });
     if (resource.kind === 'agent-box') expect(await h.requests.find(r => r.url.endsWith('/resize'))!.json()).toEqual({ always_on: true });
     else expect(h.requests.some(r => r.url.endsWith('/resize'))).toBe(false);
   });

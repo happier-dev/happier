@@ -86,7 +86,7 @@ function vendor() {
           return { status: 200, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify({ stream: 'stdout', data: stdout }) + '\n') };
         }
         return response(200, { command: { id: match[1], sessionId: 'sbx_build', exitCode: match[2] === 'stdin' ? null
-          : commandFailure === 'install' && command.args.includes(buildInput.input.cli.installScript)
+          : commandFailure === 'install' && command.args.some(arg => arg.includes(buildInput.input.cli.installScript))
             || command.args.includes(buildInput.input.setupScript!) && (commandFailure === 'setup'
               || !command.args.some(arg => arg.includes('sudo -n --'))) ? 1 : 0 } });
       }

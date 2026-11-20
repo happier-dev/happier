@@ -1,3 +1,4 @@
+import { readManagedDependencyExecutable } from '@happier-dev/plugin-sdk/managed-services';
 import { posix, win32 } from 'node:path';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -6,8 +7,8 @@ import { CrabboxDependencyUnavailable } from './provider.js';
 
 /** Same binary and isolated environment for ordinary leases and native-owned builders. */
 async function nativeCommand(context: PluginInvocationContext) {
-  const dependency = await context.services.managedServices.dependencies.status(CRABBOX_DEPENDENCY_ID, { signal: context.signal });
-  if ((dependency.state !== 'ready' && dependency.state !== 'updateAvailable') || !dependency.executable) throw new CrabboxDependencyUnavailable();
+  const dependency = await readManagedDependencyExecutable(context.services.managedServices.dependencies, CRABBOX_DEPENDENCY_ID, context.signal);
+  if (dependency.state !== 'ready') throw new CrabboxDependencyUnavailable(dependency.state === 'missing');
   const executable = dependency.executable;
   return (stateRoot: string, environment?: Readonly<Record<string, string>>) => {
     const toolEnvironment = Object.fromEntries(['PATH', 'Path', 'SystemRoot'].flatMap(key => {
