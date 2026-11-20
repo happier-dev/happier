@@ -665,7 +665,7 @@ describe('Plugin Event Automation setup orchestration', () => {
             initialSetupSeed: { eventRef: event.event.identity, ...(knownMachine ? { monitoringMachineId: MACHINE_ID } : {}),
                 ...(knownAccount ? { connectedAccount: deploymentAccount } : {}), setupInput: { repository: 'acme/widgets',
                     ...(knownMachine ? { deploymentReview: { monitoringMachineId: MACHINE_ID } } : {}) } }, present, dispatch });
-        expect(result.kind).toBe('unavailable');
+        expect(result.kind).toBe('cancelled');
         expect(presentedInput).toEqual({ repository: 'acme/widgets', ...(knownAccount ? { credentialRef: deploymentAccount } : {}),
             ...(knownMachine ? { deploymentReview: { monitoringMachineId: MACHINE_ID } } : {}) });
         expect(present).toHaveBeenCalledTimes(1);
@@ -813,7 +813,7 @@ describe('Plugin Event Automation setup orchestration', () => {
         await expect(configurePluginEventAutomationSetup({
             ...base,
             presentSetupSurface: async () => ({ kind: 'cancelled' }),
-        })).resolves.toEqual({ kind: 'unavailable' });
+        })).resolves.toEqual({ kind: 'cancelled' });
         expect(dispatch).not.toHaveBeenCalled();
     });
 
@@ -1035,7 +1035,7 @@ describe('Plugin Event Automation setup orchestration', () => {
         })).toBeNull();
     });
 
-    it('does not dispatch when the exact Event setup form is cancelled', async () => {
+    it('preserves cancellation when the exact Event setup form is cancelled', async () => {
         const event = eligibleEvent();
         const dispatch = vi.fn<PluginContributedActionDispatch>();
 
@@ -1053,7 +1053,7 @@ describe('Plugin Event Automation setup orchestration', () => {
             })),
             present: ({ form }) => form.cancel(),
             dispatch,
-        })).resolves.toEqual({ kind: 'unavailable' });
+        })).resolves.toEqual({ kind: 'cancelled' });
 
         expect(dispatch).not.toHaveBeenCalled();
     });

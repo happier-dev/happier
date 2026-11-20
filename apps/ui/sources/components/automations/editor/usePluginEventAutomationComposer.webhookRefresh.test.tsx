@@ -47,6 +47,9 @@ const SERVER_IDENTITY_ID = 'srv_account_a';
 const WATCHER_MACHINE_ID = 'watcher-machine';
 const MATERIALIZATION_ID = 'github-materialization-a';
 
+// The dialog painter is a platform boundary; setup, selection and composer remain real.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 installDisconnectedServerSocketBoundary();
@@ -63,17 +66,21 @@ const endpointReadPath = getActionSpec('plugin.webhook.endpoint.read').serverTra
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 let restoreActionLoader: (() => void) | null = null;
 const editorProjectionReads: string[] = [];
+let setupEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1 | null = null;
 
 // The machine RPC transport is a process boundary; catalog/cache/hook/editor logic stays real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
     return { machineRpcWithServerScope: async (request: Readonly<{ method: string; machineId: string }>) => {
+        if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) {
+            return { ok: true, inputSchema: (setupEvent ?? eligibleEvent()).setupAction.inputSchema };
+        }
         if (request.method !== RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
             return { ok: false, code: 'method_not_found' };
         }
         editorProjectionReads.push(request.machineId);
-        return { protocolVersion: 1, projection: PluginProjectionV2Schema.parse({ v: 2, generation: 0 }),
-            automationEligibleEvents: [eligibleEvent()] };
+        return { protocolVersion: 1, projection: setupEvent ? setupProjection(setupEvent) : PluginProjectionV2Schema.parse({ v: 2, generation: 0 }),
+            automationEligibleEvents: [setupEvent ?? eligibleEvent()] };
     } };
 });
 
@@ -213,12 +220,30 @@ function eligibleEventWithSetupSurface(
     });
 }
 
+function setupProjection(event: DaemonContributionRegistryProjectionAutomationEligibleEventV1) {
+    return PluginProjectionV2Schema.parse({
+        v: 2, generation: 0,
+        installedPackagesById: { [PLUGIN_ID]: {
+            id: PLUGIN_ID, displayName: 'GitHub', version: '1.0.0', enabled: true,
+            source: { kind: 'path', locator: '/sources/github' },
+            occurrenceId: event.event.occurrenceId, sourceCustody: event.event.sourceCustody,
+        } },
+        actionsById: { [event.setupAction.id]: {
+            id: event.setupAction.identity.localId, pluginId: PLUGIN_ID,
+            occurrenceId: event.setupAction.occurrenceId, title: event.setupAction.title,
+            scopes: ['settings'], surfaces: ['plugin'], execution: { target: 'daemon' },
+            placementBindings: [], priority: 0, dangerLevel: 'safe', available: true,
+            inputHints: event.setupAction.inputHints,
+        } },
+    });
+}
+
 function projectionInputs(
     event: DaemonContributionRegistryProjectionAutomationEligibleEventV1,
 ): DaemonMergedProjectionInputs {
     return {
-        ...publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse({ v: 2, generation: 0 }), automationEligibleEvents: [event] }),
-        pluginProjectionV2: null,
+        ...publishDaemonMergedProjectionInputs({ projection: setupEvent ? setupProjection(setupEvent) : PluginProjectionV2Schema.parse({ v: 2, generation: 0 }), automationEligibleEvents: [event] }),
+        ...(setupEvent ? {} : { pluginProjectionV2: null }),
         registryDiagnostics: [],
     };
 }
@@ -268,9 +293,8 @@ function endpointReadResult(readiness: 'providerConfirmationRequired' | 'ready' 
     };
 }
 
-async function configureSeededComposer() {
+async function configureSeededComposer(event = eligibleEvent()) {
     harness.answer(serverId, endpointReadPath, { body: endpointReadResult() });
-    const event = eligibleEvent();
     const inputs = projectionInputs(event);
     const seed = editSeed(event);
     const hook = await renderHook(
@@ -306,6 +330,34 @@ async function refresh(hook: Awaited<ReturnType<typeof configureSeededComposer>>
 }
 
 describe('usePluginEventAutomationComposer webhook refresh', () => {
+    it('keeps the completed source and disclosed webhook when reconfiguration is cancelled', async () => {
+        const fixture = eligibleEvent();
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...fixture,
+            setupAction: { ...fixture.setupAction,
+                inputSchema: { type: 'object', properties: { repository: { type: 'string' } },
+                    required: ['repository'], additionalProperties: false },
+                inputHints: { fields: [{ path: 'repository', title: 'Repository', widget: 'text', required: true }] },
+            },
+        });
+        setupEvent = event;
+        const hook = await configureSeededComposer(event);
+        const previous = hook.getCurrent();
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockImplementationOnce((config) => {
+            config.onRequestClose?.();
+            return 'cancelled-setup-dialog';
+        });
+
+        await act(async () => hook.getCurrent().configureSource());
+        await waitForHomeGovernance(() => expect(Modal.show).toHaveBeenCalled());
+        await waitForHomeGovernance(() => expect(hook.getCurrent().sourceStatus).toBe('configured'));
+
+        expect(hook.getCurrent().sourceFailure).toBeNull();
+        expect(hook.getCurrent().createDraft).toEqual(previous.createDraft);
+        expect(hook.getCurrent().webhookEndpoint).toBe(previous.webhookEndpoint);
+    });
+
     it('edits numeric comparisons through the Event controls and reopens the completed filter unchanged', async () => {
         const { InlinePluginEventEditor } = await import('./PluginEventAutomationEditor');
         const { pluginEventAutomationEditSeedFromCurrentInput } = await import('@/sync/domains/automations/pluginEventAutomationEditSeed');
@@ -421,6 +473,7 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
 
     beforeEach(async () => {
         editorProjectionReads.length = 0;
+        setupEvent = null;
         await harness.reset();
         await loadSyncSingletonForTests();
         restoreActionLoader = await installRealActionExecutorModuleLoader();

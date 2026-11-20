@@ -856,9 +856,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 setSourceStatus('unavailable');
                 return;
             }
+            const previousStatus = sourceStatus;
+            const previousFailure = sourceFailure;
             setSourceStatus('settingUp');
             setSourceFailure(null);
-            setWebhookEndpoint(null);
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
                 eligibleEvent: currentEvent,
@@ -889,7 +890,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             ) {
                 return;
             }
+            if (configured.kind === 'cancelled') {
+                setSourceStatus(previousStatus);
+                setSourceFailure(previousFailure);
+                return;
+            }
             if (configured.kind !== 'configured') {
+                setWebhookEndpoint(null);
                 setSourceFailure(configured.kind === 'unavailable' && configured.code && configured.reason
                     ? {
                         code: configured.code,
@@ -922,6 +929,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         maximumObservationAgeMs.value,
         resolveExecutionOrigin,
         setupScope,
+        sourceStatus,
+        sourceFailure,
         params.initialSetupSeed,
     ]);
 

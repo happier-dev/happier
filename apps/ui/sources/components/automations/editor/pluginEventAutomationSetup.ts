@@ -65,7 +65,8 @@ type SetupOutcome =
         webhookEndpointUnavailable?: true;
     }>
     | (Readonly<{ kind: 'unavailable' }> & Partial<PluginEventAutomationSetupFailure>)
-    | Readonly<{ kind: 'stale'; reason: 'event_retired' }>;
+    | Readonly<{ kind: 'stale'; reason: 'event_retired' }>
+    | Readonly<{ kind: 'cancelled' }>;
 
 export type PluginEventAutomationWebhookEndpointEnsurer =
     typeof ensurePluginEventAutomationWebhookEndpoint;
@@ -412,6 +413,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
             : selection.kind === 'direct'
                 ? selection.result
                 : selection;
+        if (settled.kind === 'cancelled') return { kind: 'cancelled' };
         if (settled.kind !== 'submitted') return { kind: 'unavailable' };
         if (operationScope.signal.aborted) return { kind: 'unavailable' };
 
