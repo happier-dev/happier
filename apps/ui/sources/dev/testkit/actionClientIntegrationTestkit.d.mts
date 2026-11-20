@@ -4,6 +4,7 @@ import type { AuthCredentials } from '../../auth/storage/authCredentials.js';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { AccountEncryptionModeResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BundledPluginUiAppArtifactInventory, PluginHostBundledUiDeclaration } from '../../sync/domains/plugins/availability/bundledPluginUiArtifactInventory.js';
@@ -185,9 +186,9 @@ export function connectUiPersonActionClient(params: Readonly<{
     withAppShellActions?: boolean;
     withCurrentUiActionPort?: boolean;
     withAccountLifecycle?: boolean;
-    presentedMachineAction?: PluginContributionIdentityV1;
+    presentedMachineAction?: Readonly<{ action: PluginContributionIdentityV1; target: MachineAdministrationTargetV1 }>;
 }>): Promise<Awaited<ReturnType<typeof connectUiActionClient>> & Readonly<{
-    isPresentedMachineActionReady(machineId: string): boolean;
+    isPresentedMachineActionReady(): boolean;
 }>>;
 
 export function connectUiTriageActionClient(params: Parameters<typeof connectUiPersonActionClient>[0] & Readonly<{

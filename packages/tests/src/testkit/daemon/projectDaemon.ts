@@ -165,10 +165,11 @@ export async function startProjectDaemonFixture(params: Readonly<{
           presentation?: Readonly<{ action: PluginContributionIdentityV1; machineId: string }>) {
           const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
             addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed,
-            ...(presentation ? { presentedMachineAction: presentation.action } : {}) });
+            ...(presentation ? { presentedMachineAction: { action: presentation.action,
+                target: { serverIdentityId: serverId, machineId: presentation.machineId } } } : {}) });
           try {
             if (presentation) {
-              await waitFor(() => ui.isPresentedMachineActionReady(presentation.machineId),
+              await waitFor(ui.isPresentedMachineActionReady,
                 { context: `presented Machine Action ${presentation.action.pluginId}/${presentation.action.localId}` });
             }
             return await ui.executeConfirmed(actionId, input, { ...context, surface: 'ui', authority: 'present_user',
