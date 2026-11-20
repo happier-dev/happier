@@ -211,6 +211,8 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const { metricScale } = useHappierTextPresentation({});
   const renderText = props.renderText ?? defaultRenderText;
   const showTitle = props.showTitle !== false;
+  // An empty list of facts is no facts: the header draws no meta line and keeps no gap for one.
+  const meta = props.meta !== undefined && props.meta.length > 0 ? props.meta : undefined;
   // Inside a column that already draws part of the edge (a detail's body), the title keeps the text edge.
   const textInsetPx = useHappierColumnEdgeRemainder(HAPPIER_PAGE_METRICS.pageTextInsetPx);
   const contentInsetPx = props.contentInsetPx ?? 0;
@@ -319,7 +321,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   }, []);
 
   const hasCount = props.countPending === true || (props.count !== undefined && formatHappierPageCount(props.count) !== null);
-  if (!showTitle && !props.description && !props.actions && !props.status && !props.details && !props.meta && !hasCount) return null;
+  if (!showTitle && !props.description && !props.actions && !props.status && !props.details && !meta && !hasCount) return null;
 
   const columnMaxWidthPx = props.columnMaxWidthPx ?? Number.POSITIVE_INFINITY;
   const centered = props.compactPresentation === 'centered' && paneWidthPx !== null && paneWidthPx < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
@@ -400,10 +402,10 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
         // The first line under the title takes the title's rhythm; a line under the purpose takes the line gap.
         <View style={{ marginTop: props.description ? HAPPIER_PAGE_METRICS.pageHeaderLineGapPx : titleToDescriptionGapPx }}>{props.details}</View>
       ) : null}
-      {props.meta ? (
+      {meta ? (
         <PageHeaderMetaLine
           testID={props.testID ? `${props.testID}-meta` : undefined}
-          facts={props.meta}
+          facts={meta}
           renderText={renderText}
           centered={centered}
           // An entity's facts directly under its name read as its subtitle (OWNER-UI round 2, item 4): only a line

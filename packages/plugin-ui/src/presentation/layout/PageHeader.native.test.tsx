@@ -189,4 +189,22 @@ describe('page header facts line', () => {
     expect(separatorHidden('presence')).toBe(false);
     expect(separatorHidden('uptime')).toBe(true);
   });
+
+  it('draws no meta line for an empty list of facts', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<HappierPageHeader testID="header" title="Northwind" description="Your Home." meta={[]} />);
+    });
+    onTestFinished(() => { act(() => renderer.unmount()); });
+    expect(renderer.root.findAll(node => node.props.testID === 'header-meta')).toHaveLength(0);
+  });
+
+  it('draws nothing when an empty list of facts is all a hidden-title header has', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<HappierPageHeader testID="header" title="Northwind" showTitle={false} meta={[]} />);
+    });
+    onTestFinished(() => { act(() => renderer.unmount()); });
+    expect(renderer.toJSON()).toBeNull();
+  });
 });
