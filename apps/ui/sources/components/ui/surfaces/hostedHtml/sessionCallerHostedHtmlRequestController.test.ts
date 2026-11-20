@@ -164,6 +164,7 @@ describe('Session caller-hosted HTML request controller', () => {
             sessionId: 'session-1', serverId: 'home-1', serverIdentityId: 'identity-1', accountId: 'viewer',
             isSessionOwned: () => owned,
             executeHostAction: (actionId: ActionId, value: unknown, context?: ActionExecutorContext) => executor.execute(actionId, value, { ...context, actionsSettings: settings }),
+            readActionsSettings: async () => settings,
             isAccountCurrent: () => true, isSessionCurrent: () => true, pluginTarget: null,
             publishResourceEvent: () => {}, notify: () => {},
         };
