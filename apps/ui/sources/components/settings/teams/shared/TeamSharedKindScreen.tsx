@@ -2,6 +2,11 @@ import * as React from 'react';
 
 import type { ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import type { ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
+import type { PluginCollectionContractRefV1 } from '@happier-dev/protocol/plugins/data/collectionContractRefV1';
+import {
+  TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1,
+  type TeamSharedResourceCollectionRefV1,
+} from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
@@ -22,9 +27,11 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useTeamSharedCollectionRowOpener, useTeamSharedCollections } from '@/hooks/teams/useTeamSharedCollections';
 import { useTeamSharedMachinePools } from '@/hooks/teams/useTeamSharedMachinePools';
 import { useTeamSharedMachines } from '@/hooks/teams/useTeamSharedMachines';
 import { useTeamSharedSavedSecrets } from '@/hooks/teams/useTeamSharedSavedSecrets';
+import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 
@@ -43,7 +50,10 @@ type KindRow = Readonly<{
   key: string;
   title: string;
   subtitle?: string;
+  detail?: string;
   href: string | null;
+  /** Opens a record whose owner is not a route (a plugin's declared reader). */
+  onOpen?: () => void;
 }>;
 type KindListState = Readonly<{
   rows: readonly KindRow[];
@@ -71,18 +81,23 @@ export const TeamSharedKindScreen = React.memo(function TeamSharedKindScreen(
   props: Readonly<{
     serverId: string;
     teamId: string;
-    kind: TeamSharedListKind;
-  }>,
+  }> & (
+    | Readonly<{ kind: TeamSharedListKind }>
+    | Readonly<{ kind: typeof TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1; collection: TeamSharedResourceCollectionRefV1 }>
+  ),
 ) {
   const presentation = TEAM_SHARED_KIND_PRESENTATION[props.kind];
+  const collection = props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? props.collection : null;
   return (
     <TeamSection
       serverId={props.serverId}
       teamId={props.teamId}
-      title={t(presentation.title)}
+      title={collection?.collectionId ?? t(presentation.title)}
       description={t('teams.overview.shared.kindDescription')}
     >
-      {(context) => (
+      {(context) => props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? (
+        <CollectionList context={context} icon={presentation.icon} collection={props.collection} />
+      ) : (
         <TeamSharedKindList
           context={context}
           kind={props.kind}
@@ -120,6 +135,52 @@ function TeamSharedKindList(
 }
 
 type ListProps = Readonly<{ context: TeamSectionContext; icon: IconName }>;
+
+function CollectionList({ context, icon, collection }: ListProps & Readonly<{ collection: TeamSharedResourceCollectionRefV1 }>) {
+  const reader = usePluginAccountAvailabilityReader(context.scope, collection.pluginId);
+  const contract = reader?.readCurrentCollectionContract(collection);
+  if (contract?.kind === 'available') {
+    return <CollectionRows context={context} icon={icon} collectionRef={contract.ref} sharedRowDestination={contract.sharedRowDestination} />;
+  }
+  if (!contract || contract.code === 'account_availability_not_loaded') {
+    return <KindList icon={icon} state={{ rows: [], loading: true, failure: null, hasMore: false }} />;
+  }
+  return <SurfaceStateCard testID="team-shared-collection-unavailable" kind="unavailable" size="line" title={t('common.unavailable')} />;
+}
+
+/**
+ * A contributed Collection's rows. Each opens at the reader its plugin declares for shared rows; a row says
+ * Unavailable when there is no such reader here, or the reader refused it.
+ */
+function CollectionRows({ context, icon, collectionRef, sharedRowDestination }: ListProps & Readonly<{
+  collectionRef: PluginCollectionContractRefV1;
+  sharedRowDestination: string | undefined;
+}>) {
+  const list = useTeamSharedCollections({
+    scope: context.scope,
+    address: context.address,
+    collectionRef,
+    enabled: true,
+    pageSize: PAGE_SIZE,
+  });
+  const open = useTeamSharedCollectionRowOpener({ scope: context.scope, collection: collectionRef, sharedRowDestination });
+  const [refused, setRefused] = React.useState<ReadonlySet<string>>(() => new Set());
+  const rows = React.useMemo(() => list.rows.map((row): KindRow => {
+    const key = JSON.stringify([row.ownerAccountId, row.rowId]);
+    const refuse = () => setRefused(current => new Set(current).add(key));
+    const unavailable = open === null || refused.has(key);
+    return {
+      key,
+      title: row.rowId,
+      subtitle: scopeLine(row.sharedWithTeamScope),
+      href: null,
+      ...(unavailable ? { detail: t('common.unavailable') } : {
+        onOpen: () => { void open(row).then(outcome => { if (!outcome.ok) refuse(); }, refuse); },
+      }),
+    };
+  }), [list.rows, open, refused]);
+  return <KindList icon={icon} state={pagedState(list, rows)} />;
+}
 
 function MachinesList({ context, icon }: ListProps) {
   const list = useTeamSharedMachines({
@@ -375,9 +436,10 @@ function KindList(props: Readonly<{ icon: IconName; state: KindListState }>) {
           icon={<Icon name={props.icon} />}
           title={row.title}
           subtitle={row.subtitle}
-          mode={row.href ? 'interactive' : 'info'}
-          showChevron={row.href !== null}
-          onPress={row.href ? () => router.push(row.href as never) : undefined}
+          detail={row.detail}
+          mode={row.href || row.onOpen ? 'interactive' : 'info'}
+          showChevron={row.href !== null || row.onOpen !== undefined}
+          onPress={row.href ? () => router.push(row.href as never) : row.onOpen}
         />
       ))}
       {state.hasMore && state.loadMore ? (

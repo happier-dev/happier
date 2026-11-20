@@ -1,5 +1,6 @@
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
+import { TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1, type TeamSharedResourceCollectionRefV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 
 export type TeamCredentialConnectedAccountSourceHint = Readonly<{
     kind: 'connected_account';
@@ -92,6 +93,10 @@ export function teamSessionsPath(address: TeamAddress): `/teams/${string}/sessio
 /** One kind shared with the Team, listed through that kind's own list Action with the Team filter. */
 export function teamSharedKindPath(address: TeamAddress, kind: string): `/settings/teams/${string}/${string}/shared?kind=${string}` {
     return `${teamDetailPath(address)}/shared?kind=${encodeURIComponent(kind)}`;
+}
+
+export function teamSharedCollectionPath(address: TeamAddress, collection: TeamSharedResourceCollectionRefV1) {
+    return `${teamSharedKindPath(address, TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1)}&collectionPluginId=${encodeURIComponent(collection.pluginId)}&collectionId=${encodeURIComponent(collection.collectionId)}` as const;
 }
 
 export function teamMembersPath(address: TeamAddress): `/settings/teams/${string}/${string}/members` {

@@ -1,10 +1,10 @@
 import * as React from 'react';
 
-import type {
-  TeamShareableResourceKindV1,
-  TeamSharedResourceSummaryRowV1,
+import {
+  TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1,
+  teamSharedResourceSummaryRowKeyV1,
+  type TeamSharedResourceSummaryRowV1,
 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
-import { teamSharedResourceSummaryRowKeyV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -18,18 +18,20 @@ import { t } from '@/text';
 import type { TeamSectionContext } from './teamSectionContext';
 import { teamReadFailureLabel } from './teamMutationPresentation';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
-import { teamCredentialsPath, teamSessionsPath, teamSharedKindPath } from './teamsRoutes';
+import { teamCredentialsPath, teamSessionsPath, teamSharedCollectionPath, teamSharedKindPath } from './teamsRoutes';
 
 /** The rows the section reserves while its one summary read runs (lab L12-loading). */
 const LOADING_ROWS = 8;
 
 /** Sessions and Credentials keep their shipped Team pages; every other listed kind opens its own Team list. */
 function kindDestination(
-  kind: TeamShareableResourceKindV1,
+  row: TeamSharedResourceSummaryRowV1,
   context: TeamSectionContext,
 ): string | null {
+  const { kind } = row;
   if (kind === 'sessions') return teamSessionsPath(context.address);
   if (kind === 'credentials') return teamCredentialsPath(context.address);
+  if (row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1) return teamSharedCollectionPath(context.address, row.collection);
   const listKind = readTeamSharedListKind(kind);
   return listKind ? teamSharedKindPath(context.address, listKind) : null;
 }
@@ -55,7 +57,7 @@ export const TeamSharedResourcesSection = React.memo(
       address: context.address,
       enabled: true,
     });
-    const destinationOf = React.useCallback((kind: TeamSharedResourceSummaryRowV1['kind']) => kindDestination(kind, context), [context]);
+    const destinationOf = React.useCallback((row: TeamSharedResourceSummaryRowV1) => kindDestination(row, context), [context]);
     const open = React.useCallback((destination: NonNullable<ReturnType<typeof kindDestination>>) => router.push(destination), [router]);
     return (
       <TeamSharedResourcesView teamName={context.team.name} serverId={context.address.serverId} summary={summary}
@@ -73,7 +75,7 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
     teamName: string;
     serverId: string;
     summary: TeamSharedSummaryState;
-    destinationOf: (kind: TeamSharedResourceSummaryRowV1['kind']) => KindDestination | null;
+    destinationOf: (row: TeamSharedResourceSummaryRowV1) => KindDestination | null;
     onOpen: (destination: KindDestination) => void;
   }>,
 ) {
@@ -139,8 +141,10 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
         ) : null}
         {rows.map((row) => {
           const presentation = TEAM_SHARED_KIND_PRESENTATION[row.kind];
-          const title = t(presentation.title);
-          const destination = props.destinationOf(row.kind);
+          const collection = row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? row.collection : null;
+          const label = collection ? `${collection.collectionId} · ${collection.pluginId}` : t(presentation.title);
+          const title = collection?.collectionId ?? label;
+          const destination = props.destinationOf(row);
           const key = teamSharedResourceSummaryRowKeyV1(row);
           if (row.status === 'unavailable') {
             return (
@@ -149,8 +153,9 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
                 testID={`team-overview-shared:${key}`}
                 icon={<Icon name={presentation.icon} />}
                 title={title}
+                subtitle={collection?.pluginId}
                 accessibilityLabel={t('teams.overview.shared.unknownA11y', {
-                  kind: title,
+                  kind: label,
                 })}
                 detail={t('teams.overview.shared.unknown')}
                 rightElement={
@@ -171,8 +176,9 @@ export const TeamSharedResourcesView = React.memo(function TeamSharedResourcesVi
               testID={`team-overview-shared:${key}`}
               icon={<Icon name={presentation.icon} />}
               title={title}
+              subtitle={collection?.pluginId}
               accessibilityLabel={t('teams.overview.shared.countA11y', {
-                kind: title,
+                kind: label,
                 count: row.count,
               })}
               detail={String(row.count)}

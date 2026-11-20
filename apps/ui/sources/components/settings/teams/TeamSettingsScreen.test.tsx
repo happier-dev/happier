@@ -487,7 +487,7 @@ describe('TeamSettingsScreen', () => {
                 { kind: 'otherArtifacts', status: 'available', count: 1 },
                 { kind: 'reviews', status: 'available', count: 2 },
             ], error: null, reload: vi.fn() }}
-            destinationOf={kind => `/settings/teams/team-1/shared/${kind}`} onOpen={open}
+            destinationOf={({ kind }) => `/settings/teams/team-1/shared/${kind}`} onOpen={open}
         />);
         const ids = collectRenderedTestIds(screen.tree.toJSON());
         expect(ids.indexOf('team-overview-shared:reviews')).toBeLessThan(ids.indexOf('team-overview-shared:otherArtifacts'));
