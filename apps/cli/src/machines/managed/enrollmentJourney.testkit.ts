@@ -17,17 +17,13 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual, promisify } from 'node:util';
 import { expect, onTestFinished, vi } from 'vitest';
 import { machineSetup } from '@happier-dev/cli-common';
-import { callSocketRpc } from '@happier-dev/sync-client';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import type { ActionExecutorDeps, ActionExecuteResult, JsonValue } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { ManagedAcquireInputV1Schema, ManagedInstallationResponseV1Schema, ManagedTerminalPairingContextV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import type { CapabilitiesInvokeResponse } from '@happier-dev/protocol/capabilities';
+import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { createHostActionOperationRuntime } from '@/daemon/actionOperations';
@@ -47,10 +43,6 @@ import { updateSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { buildManagedSudoersSteps, MANAGED_SUDOERS_PATH } from '@/machines/adminAccess/managedSudoers';
 import type { MachineAdminAccessNativeDependencies } from '@/machines/adminAccess/observeMachineAdminAccess';
-import { readManagedMachine } from './readManagedMachine';
-import { withUserScopedRpcSocket } from '@/session/transport/rpc/withUserScopedRpcSocket';
-import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
-import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
 
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import type { AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
@@ -292,6 +284,7 @@ lines.close(); process.stdin.destroy();\n`);
                     env: { ...process.env, HOME: guestHome }, signal: context.signal });
                 stdout = result.stdout;
             }
+            else if (command.includes('managed_guest_cli_absent')) stdout = 'managed_guest_cli_absent\n';
             else if (command.includes('mktemp')) stdout = '/tmp/happier-bootstrap-transfer.s0\n';
             else if (command.includes('version_path')) stdout = 'current=\nprevious=\n';
             else if (command.includes('effect-internal')) {
@@ -485,30 +478,20 @@ lines.close(); process.stdin.destroy();\n`);
                 if (requester.accountId === controller.accountId) {
                     await getLiveSystemTasksRunnerAdapter().respond({ taskId: ref.bootstrapTask.id, answer: { approved: true } });
                 } else {
-                    const taskId = ref.bootstrapTask.id;
-                    const machine = await readManagedMachine({ credentials, serverHttpBaseUrl: controller.baseUrl,
-                        homeId: controller.serverId, managedId: ref.id, signal: lifetime.signal });
-                    await withUserScopedRpcSocket({ token: requester.token, serverUrl: controller.baseUrl,
-                        connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal }, async (socket, connect, signal) => {
-                        await connect();
-                        const respond = async (response: { delivery: { kind: 'terminalPairing' } } | { answer: { approved: true } }) => {
-                            const input = ManagedInstallationResponseV1Schema.parse({ homeId: controller.serverId,
-                                managedId: machine.id, operationId, taskId, controller: machine.controller,
-                                resource: machine.resource, expectedIntentRevision: machine.intentRevision,
-                                expectedPromptKind: 'auth.approveRemoteProvisioning', ...response });
-                            const result = await callSocketRpc<CapabilitiesInvokeResponse>({ socket,
-                                target: { kind: 'machine', id: controller.machineId }, method: RPC_METHODS.CAPABILITIES_INVOKE,
-                                params: { id: 'tool.systemTasks', method: 'respond', params: input },
-                                content: { mode: 'plain' }, timeoutMs: null, signal });
-                            if (!result.ok) throw new Error(`Enrollment approval refused: ${readRpcErrorCode(result) ?? result.error?.code ?? 'unclassified_error'}`);
-                            return result.result;
-                        };
-                        const pairing = ManagedTerminalPairingContextV1Schema.parse(await respond({ delivery: { kind: 'terminalPairing' } }));
-                        expect(pairing.enrollmentAccountId).toBe(requester.accountId);
-                        await approveTerminalAuthRequest({ publicKey: pairing.publicKey, pairing: pairing.pairing,
-                            supportsTokenOnly: pairing.supportsTokenOnly, target, accountCredentials: credentials, signal });
-                        await respond({ answer: { approved: true } });
-                    });
+                    const inspection = await author.execute('action.operations.get', { serverId: controller.serverId,
+                        machineId: controller.machineId, operationId,
+                        managed: { homeId: controller.serverId, managedId: ref.id }, waitForTerminal: true, includeManagedPrompt: true },
+                    { surface: 'cli', authority: 'present_user', serverId: controller.serverId, actionRequestId: randomUUID(), signal: lifetime.signal });
+                    expect(inspection).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+                        operationId, domainRef: { bootstrapTask: { id: ref.bootstrapTask.id, prompt: ref.bootstrapTask.prompt } },
+                    } } });
+                    const approval = await author.execute('machines.managed.bootstrap.respond', {
+                        serverId: controller.serverId, homeId: controller.serverId, managedId: ref.id, operationId,
+                        taskId: ref.bootstrapTask.id, purpose: 'approve', approved: true, prompt: ref.bootstrapTask.prompt,
+                    }, { surface: 'cli', authority: 'present_user', serverId: controller.serverId,
+                        actionRequestId: randomUUID(), presentUserConfirmation: { actionId: 'machines.managed.bootstrap.respond' },
+                        signal: lifetime.signal });
+                    expect(approval).toMatchObject({ ok: true, result: { taskId: ref.bootstrapTask.id } });
                 }
             }
             return false;
@@ -529,7 +512,7 @@ lines.close(); process.stdin.destroy();\n`);
                 { env: { ...process.env, HOME: guestHome } });
             expect(installed.stdout).toBe('public-author-installed\n');
         }
-        if (actionInput.enrollmentIdentity.kind === 'dedicatedDaemonUser') {
+        if (actionInput.enrollmentIdentity?.kind === 'dedicatedDaemonUser') {
             expect(rootSteps).toEqual(expect.arrayContaining(['bootstrap-isolation-packages', 'agent-account']));
         }
         return observed.guest;

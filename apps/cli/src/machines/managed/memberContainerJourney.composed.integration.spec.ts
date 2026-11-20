@@ -12,6 +12,7 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createDeploymentSocketHome } from '../../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createSignedAccountContentBinding } from '../../../../server/sources/testkit/accountEncryption';
+import { prepareE2eePrivateLabelForAccount } from '../../../../server/sources/testkit/privateLabelFixture';
 import { db } from '../../../../server/sources/storage/db';
 import { auth } from '../../../../server/sources/app/auth/auth';
 import { createMachinePreset, readMachinePresetRecipientCensus } from '../../../../server/sources/app/machines/managed/machinePresetService';
@@ -34,7 +35,12 @@ import { acquireEnrollmentJourneyGuest } from './enrollmentJourney.testkit';
 // "releases the delegated preset slot when a member deletes canceled uncertain Devcontainer creation through native reconciliation".
 // Run this same journey with HAPPIER_MEMBER_JOURNEY_FAULT=missing-payload-root,
 // invalid-archive or remote-stderr to falsify its successful enrollment assertion.
-it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers as their member and preserves bootstrap failure causes', async () => {
+const memberJourneys = [
+    { name: 'enrolls an unprepared Team preset as its member through the public enrollment answer', unprepared: true, scenarios: ['exact'] },
+    { name: 'enrolls exact and pool Team containers as their member and preserves bootstrap failure causes', unprepared: false,
+        scenarios: ['missing-native-option', 'missing-payload-root', 'invalid-archive', 'stderr', 'admin', 'exact', 'pool'] },
+] as const;
+it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ unprepared, scenarios }) => {
     const homeDirectory = await createTempDir('member-container-journey-');
     onTestFinished(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); reloadConfiguration(); await removeTempDir(homeDirectory); });
     vi.stubEnv('HAPPIER_HOME_DIR', homeDirectory);
@@ -80,10 +86,13 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
     const controllerHome = { ...home, async prepareControllerProvisioner(raw: unknown) {
         if (installed) return;
         await home.prepareControllerProvisioner(raw);
-        expect(await createMachinePool({ accountId: home.accountId,
+        const poolName = await prepareE2eePrivateLabelForAccount(home.accountId,
+            { entity: 'machine_pool', field: 'name', id: poolId }, 'Team container controllers', { teamIds: [team.id] });
+        const pool = await createMachinePool({ accountId: home.accountId,
             authentication: { authenticationAuthority: 'present_user' }, io: presence,
-            input: { poolId, name: 'Team container controllers', audience: { kind: 'team', teamId: team.id },
-                members: [{ machineId: home.machineId, priorityTier: 0, enabled: true }] } })).toMatchObject({ ok: true });
+            input: { poolId, name: poolName, audience: { kind: 'team', teamId: team.id },
+                members: [{ machineId: home.machineId, priorityTier: 0, enabled: true }] } });
+        expect(pool, pool.ok ? undefined : JSON.stringify(pool.error)).toMatchObject({ ok: true });
         for (const id of [exactId, pooledId, ...Object.values(failurePresets)]) {
             const target = id === pooledId ? { controllerPoolId: poolId } : { controller };
             const census = await readMachinePresetRecipientCensus({ accountId: home.accountId,
@@ -111,7 +120,7 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
             expect(result).toMatchObject({ kind: 'found', preset: { teamAcquireDelegated: true, content: { t: 'encrypted' } } });
             expect(result.preset).not.toHaveProperty('delegatedAcquire');
         }
-        expect(await db.machineAccountGrant.count({ where: { machineId: home.machineId, accountId: member.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { machineId: home.machineId, accountId: member.id } })).toBe(0);
         installed = true;
     } };
     await controllerHome.prepareControllerProvisioner(manifest);
@@ -125,7 +134,7 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
     const successful: Array<{ guestId: string; nativeId: string;
         owner: Pick<typeof home, 'accountId' | 'token' | 'encryption'>; action: typeof currentAction }> = [];
     const fault = process.env.HAPPIER_MEMBER_JOURNEY_FAULT;
-    for (const scenario of ['missing-native-option', 'missing-payload-root', 'invalid-archive', 'stderr', 'admin', 'exact', 'pool'] as const) {
+    for (const scenario of scenarios) {
         const owner = scenario === 'admin' ? home : requester;
         let terminal: ActionOperationSnapshotV1 | undefined;
         const nativeId = randomUUID();
@@ -139,10 +148,12 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
             projection: { content: sealed.content, recipientEnvelope }, accountId: owner.accountId, accountKey: owner.encryption.machineKey,
             enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, randomBytes: nacl.randomBytes });
         if (!presetContentOverride) throw new Error('Expected sealed acquisition choices');
-        const input = ManagedAcquireInputV1Schema.parse({ presetContentOverride,
+        const input = ManagedAcquireInputV1Schema.parse({ ...(unprepared ? {} : { presetContentOverride }),
             selection: { kind: 'preset', homeId: home.serverId,
                 id: presetId, revision: 0 },
-            ...(scenario === 'pool' ? {} : { controller }), retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+            ...(unprepared ? {} : {
+                ...(scenario === 'pool' ? {} : { controller }), retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            }) });
         const injected = scenario === 'admin' ? fault : scenario;
         const journey = acquireEnrollmentJourneyGuest(controllerHome, { requester: owner,
             acquireInput: input, confirmWholeOperation: true, onSettled: operation => { terminal = operation; },
@@ -222,10 +233,10 @@ it.skipIf(process.platform !== 'linux')('enrolls exact and pool Team containers 
                     controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId });
             expect(commandLines.some(command => command.includes('self __install-payload') && command.includes('--payload-root'))).toBe(true);
             successful.push({ guestId: guest.machineId, nativeId, owner, action: currentAction! });
-            if (scenario === 'exact') await verifyCapAndDelete();
+            if (scenario === 'exact' && !unprepared) await verifyCapAndDelete();
         }
     }
-    expect(await db.machineAccountGrant.count({ where: { machineId: home.machineId, accountId: member.id } })).toBe(0);
+    expect(await db.machineGrant.count({ where: { machineId: home.machineId, accountId: member.id } })).toBe(0);
     async function verifyCapAndDelete() {
         expect(payloadTransfers).toBeGreaterThan(0);
         const response = await fetch(`${home.baseUrl}/v1/machines`, { headers: { Authorization: `Bearer ${requester.token}` } });
