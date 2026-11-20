@@ -1,3 +1,4 @@
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { afterAll, afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
 import { API_TOKEN_FULL_GRANT_V1, freezeActionCompletionContractV1, getActionSpec,
@@ -19,6 +20,8 @@ import { buildSessionCreationCorrespondence } from '@/session/shared/sessionCrea
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionMessageReplyCapabilityV1Schema, SessionMessageReplyReadResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from './workflowRunStorage.testkit';
+import { WorkflowRuntimeInterruption } from './coordinator';
+import { SessionActivityChangedResponseSchema } from '@/daemon/sessions/sessionActivityChangedContract';
 import { tmpdir } from 'node:os';
 import nacl from 'tweetnacl';
 import { AccountSettingsSchema, ResolvedRoleV1Schema, HomeConnectionDescriptorV1Schema, FeaturesResponseSchema, ManagedMachineV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,
@@ -60,6 +63,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createServer } from 'node:http';
 import { ApiMachineClient } from '@/api/apiMachine';
+import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/installedProjectAgentLaunchFixture';
 import { invalidateCliSnapshots } from '@/capabilities/snapshots/cliSnapshot';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
@@ -71,17 +75,10 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { AgentRuntime, AgentExecutionRunEvent } from '@happier-dev/plugin-sdk/agents/runtime';
-import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
-import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
-import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
-import { registerExecutionRunActionRpcHandlers } from '@/rpc/handlers/executionRuns/actionRpcRegistration';
-import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import { createWorkflowRunMachineTransport } from './workflowMachineTransport';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { ConnectedServiceRunMaterializeRequestSchema, ConnectedServiceRunMaterializeSuccessResponseSchema,
   ConnectedServiceRunReleaseRequestSchema, ConnectedServiceRunGenerationCurrentRequestSchema } from '@/daemon/connectedServices/runs/materializeContract';
-import { checkExecutionRunConnectedServicesGenerationCurrent } from '@/daemon/controlClient';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createWorkflowActionContextResolver } from './workflowActionContext';
@@ -251,7 +248,10 @@ describe('production daemon retained operation target', () => {
       await recover('control', recovery.signal);
       if (match !== 'local' && match !== 'remote') {
         expect(nativeSignal?.aborted).toBe(false);
-        expect(storage.run().workflowCustodyState).toBe('pending');
+        // An exact request inventory can prove our Action absent while unrelated
+        // native work remains live. Foreign authority is not such evidence.
+        expect(storage.run().workflowCustodyState).toBe(
+          match === 'foreign-request' || match === 'foreign-action' ? 'settled' : 'pending');
         expect(methods).not.toContain('actionOperation.cancel.v1');
         return;
       }
@@ -896,26 +896,53 @@ describe('production daemon detached Workflow admission', () => {
     // Dispose IPC clients while their isolated Home and HTTP boundary remain
     // installed, never after restoring the surrounding process environment.
     try { await releaseDetached(); }
-    finally {
-      releaseDetached = async () => {};
-      releaseHome(); vi.restoreAllMocks(); vi.unstubAllEnvs(); reloadConfiguration(); resetInMemoryAccountSettingsContextForTests();
-    }
+    finally { releaseDetached = async () => {}; }
   });
 
   it.each(['bound', 'misbound', 'missing-home'] as const)('completes Session then detached leaves through the admitted Run receiver (%s)', async binding => {
-    const accountId = 'detached-owner';
-    const machineId = 'detached-machine';
+    // Registered before the installed fixture so its shutdown, bootstrap and
+    // Home cleanup finish before these surrounding boundaries are restored.
+    onTestFinished(() => {
+      releaseHome(); releaseHome = () => {};
+      vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); reloadConfiguration(); resetInMemoryAccountSettingsContextForTests();
+    });
+    const accountId = 'requester';
+    const machineId = 'machine';
     const runId = 'detached-owner-run';
-    const homeId = 'detached-home';
-    const home = 'https://detached-workflow.test';
+    const homeId = 'srv_detached_home';
+    const home = 'https://session-home.test';
     const pluginId = 'acme.workflow-detached';
-    const baseline = readCurrentContributionRegistry();
-    const directory = await createTempDir('workflow-detached-native-');
+    const serverId = configuration.activeServerId;
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
+      session: 'detached-workflow', provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null,
+      credentialProvenance: 'stored_session' as const };
+    const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {},
+      approvalWaivedSurfaces: { 'execution.run.start': ['rpc', 'agent'] } } });
+    // Reuse installed Machine admission and Project/native launch ownership. The
+    // Workflow transport below still supplies its account_automation principal.
+    // Keep the helper's real loopback currentness socket beneath this file's RPC boundary mock.
+    const nativeSocketClient = await vi.importActual<typeof import('socket.io-client')>('socket.io-client');
+    mocks.io.mockImplementation(nativeSocketClient.io);
+    const installed = await createInstalledProjectAgentLaunchFixture({ prepareProject: false, preserveLaunchEnvironment: true,
+      serverId, homeServerIdentityId: homeId, accountActionCredentials: credentials, accountSettings: settings,
+      machineRpcMethods: [RPC_METHODS.CAPABILITIES_DESCRIBE],
+      agentIsolationEnabled: false, agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) } });
+    const directory = installed.f.directory;
+    const installationIdentity = installed.f.installation;
+    const receiver = installed.rpc;
+    const readInstalledHome = vi.mocked(axios.get).getMockImplementation()!;
+    const writeInstalledHome = vi.mocked(axios.post).getMockImplementation()!;
+    const fetchInstalledHome = vi.mocked(globalThis.fetch).getMockImplementation()!;
     let admitted: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
-    let bridge: ExecutionRunHostBridge | undefined;
     let transport: ReturnType<typeof createWorkflowRunMachineTransport> | undefined;
     let controlServer: ReturnType<typeof createServer> | undefined;
+    let finishNative: (() => void) | undefined;
+    const observation = new AbortController();
+    let coordination: Promise<unknown> | undefined;
     releaseDetached = async () => {
+      observation.abort();
+      finishNative?.();
+      await coordination?.catch(() => undefined);
       const failures: unknown[] = [];
       const releaseOwned = async (release: () => Promise<unknown>) => {
         try { await release(); }
@@ -927,38 +954,22 @@ describe('production daemon detached Workflow admission', () => {
       };
       try { await releaseOwned(async () => transport?.dispose()); }
       finally {
-        try { await releaseOwned(async () => bridge?.dispose()); }
+        try { await releaseOwned(() => installed.machine.shutdown()); }
         finally {
           try { await releaseOwned(async () => admitted?.dispose()); }
           finally {
-            try {
-              if (admitted) await releaseOwned(async () => pluginReloadController.adoptPreparedRuntimeRegistry({
-                registry: await resolveExecutablePluginRuntimeRegistry({ contributes: baseline, pluginIds: [] }),
-                changedPluginIds: [pluginId], runningSessionDisposition: 'retainRunningSessions',
-              }));
-            } finally {
-              try {
-                if (controlServer) await releaseOwned(() => new Promise<void>((resolve, reject) => {
-                  controlServer!.close(error => error ? reject(error) : resolve());
-                }));
-              } finally { await releaseOwned(() => removeTempDir(directory)); }
-            }
+            if (controlServer) await releaseOwned(() => new Promise<void>((resolve, reject) => {
+              controlServer!.close(error => error ? reject(error) : resolve());
+            }));
           }
         }
       }
     };
-    vi.stubEnv('HAPPIER_HOME_DIR', directory);
-    reloadConfiguration();
     releaseHome = publishServerHttpRuntimeOrigin(home, 'https');
-    const serverId = configuration.activeServerId;
-    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
-      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null,
-      credentialProvenance: 'stored_session' as const };
     const agentTarget = { kind: 'agent' as const, identity: { pluginId, localId: 'default' } };
     let nativeOpens = 0;
     let nativeReady!: () => void;
     const nativeOpened = new Promise<void>(resolve => { nativeReady = resolve; });
-    let finishNative!: () => void;
     const agentRuntime: AgentRuntime = { sessions: {
       async open() { throw new Error('Unexpected Session open'); },
       executionRunContextV1: { async open(request) {
@@ -969,6 +980,7 @@ describe('production daemon detached Workflow admission', () => {
         const emit = (event: AgentExecutionRunEvent) => { events.push(event); listener?.(event); };
         emit({ kind: 'run-start', runId: request.runId, sequence: ++sequence, emittedAtMs: sequence });
         finishNative = () => {
+          finishNative = undefined;
           emit({ kind: 'output-delta', runId: request.runId, sequence: ++sequence, emittedAtMs: sequence,
             channel: 'assistant', text: 'complete' });
           emit({ kind: 'run-complete', runId: request.runId, sequence: ++sequence, emittedAtMs: sequence });
@@ -1022,16 +1034,18 @@ describe('production daemon detached Workflow admission', () => {
         }),
       }) });
     mocks.fetchSessionById.mockResolvedValue(session);
+    const { callExactMachineRpc: nativeCallExactMachineRpc } = await vi.importActual<typeof machineRpc>('@/session/transport/rpc/machineRpc');
     vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
       if (request.method === RPC_METHODS.SPAWN_HAPPY_SESSION) return { type: 'success', sessionId };
       if (request.method === RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE) return { status: 'success', sessionId };
+      if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return await nativeCallExactMachineRpc(request);
       throw new Error(`Unexpected sibling Session RPC: ${request.method}`);
     });
     const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [
       { kind: 'step', id: 'session', document: { text: 'Session first', references: [], attachments: [] }, input: [],
         execution: { conversation: { kind: 'existing_session', sessionId, machineId } }, result: { kind: 'text' } },
       { kind: 'step', id: 'review', document: { text: 'fixture', references: [], attachments: [] }, input: [],
-        execution: { engine: { role: role.roleId }, connectedServices: pool }, result: { kind: 'text' } },
+        execution: { roleId: role.roleId, connectedServices: pool }, result: { kind: 'text' } },
     ] };
     const materialized = await materializeWorkflowAcceptedSnapshotV1({ definition,
       roleSelection: { settingsRoles: { [role.roleId]: role } },
@@ -1047,8 +1061,6 @@ describe('production daemon detached Workflow admission', () => {
     const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
       binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: materialized.snapshot }));
     const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
-    const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1, actions: {},
-      approvalWaivedSurfaces: { 'execution.run.start': ['rpc', 'agent'] } } });
     mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
       signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
     // The run's connected-service materializer is reached over its ordinary
@@ -1056,6 +1068,7 @@ describe('production daemon detached Workflow admission', () => {
     let materializations = 0;
     const fetchFixture: typeof fetch = async (url, options) => {
       const path = new URL(String(url)).pathname;
+      if (path === '/session-activity-changed') return Response.json(SessionActivityChangedResponseSchema.parse({ ok: true }));
       if (path === '/connected-service-run/materialize') {
         const request = ConnectedServiceRunMaterializeRequestSchema.parse(JSON.parse(String(options?.body)));
         expect(request).toMatchObject({ connectedServices: pool, cwd: directory });
@@ -1076,8 +1089,10 @@ describe('production daemon detached Workflow admission', () => {
           .toMatchObject({ runnerPid: process.pid, registration: { connectedServicesBindings: pool } });
         return Response.json({ ok: true, current: true });
       }
-      return Response.json(FeaturesResponseSchema.parse({ features: {},
+      if (path === '/execution-run/admission') return Response.json({ admitted: true });
+      if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(FeaturesResponseSchema.parse({ features: {},
         capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
+      return await fetchInstalledHome(url, options);
     };
     vi.spyOn(globalThis, 'fetch').mockImplementation(fetchFixture);
     // 928ad0bf41 pairs control HTTP with bundled Undici. Exercise that real
@@ -1094,7 +1109,7 @@ describe('production daemon detached Workflow admission', () => {
     if (!address || typeof address === 'string') throw new Error('Missing fixture control HTTP address');
     writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(),
       startedWithCliVersion: 'fixture', controlToken: 'detached-fixture-control' });
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
+    vi.spyOn(axios, 'get').mockImplementation(async (url, requestOptions) => {
       const path = new URL(String(url)).pathname;
       if (path === `/v2/sessions/${sessionId}`) return { status: 200, data: { session } };
       if (path.endsWith('/messages/reply-capability')) return { status: 200,
@@ -1117,26 +1132,22 @@ describe('production daemon detached Workflow admission', () => {
       if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
       if (path === `/v1/machines/${machineId}`) return { status: 200, data: { machine: MachinePublishedRowV1Schema.parse({
         id: machineId, managedMachineRef: null, metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 0,
-        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, installationId: 'detached-installation',
+        storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, installationId: installationIdentity.installationId,
         access: { custodian: { accountId, displayName: 'Machine custodian' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
       }) } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-      if (path === '/v1/account/encryption/currentness') return { status: 200, data: AccountEncryptionCurrentnessResponseSchema.parse({
-        mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
-      }) };
-      if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: settings }, version: 1 } };
       if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(String(url), []) };
       if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [{ key: 'role-overrides', revision: 1,
         content: sealPromptLibraryContentV1({ mode: 'plain', material: null,
           record: { key: 'role-overrides', value: { v: 1, overrides: {} } } }) }] } };
-      throw new Error(`Unexpected detached Workflow HTTP read: ${path}`);
+      return await readInstalledHome(url, requestOptions);
     });
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown, requestOptions) => {
       if (new URL(String(url)).pathname === '/v1/artifacts/read') return artifactReadResponse(body, () => null);
       if (new URL(String(url)).pathname === '/v3/automations/runs/workflow-storage') {
         return { status: 200, data: await storage.execute(body as WorkflowRunStorageTestkitOperation) };
       }
-      throw new Error('Unexpected detached Workflow HTTP write');
+      return await writeInstalledHome(url, body, requestOptions);
     });
     const snapshot = await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force', honorAccountSettingsModeEnv: false });
     if (!snapshot.scopeKey) throw new Error('detached-settings-unavailable');
@@ -1144,41 +1155,21 @@ describe('production daemon detached Workflow admission', () => {
       PromptLibraryRowsListResponseV1Schema.parse((await axios.get(`${home}${PROMPT_LIBRARY_ROWS_ROUTE_V1}`)).data) });
     expect(commitActivePromptLibraryCatalog({ scopeKey: snapshot.scopeKey,
       lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), catalog })).toBe(true);
-    const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: admitted.registry });
-    const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog();
-    bridge = new ExecutionRunHostBridge({ parentProvider: 'claude', cwd: directory, sendAcp: async () => {},
-      machineId, happyHomeDir: directory, resolveExecutionRunProfileCatalog: () => ({ engineRegistry, profileCatalog }),
-      checkConnectedServicesGenerationCurrent: async ({ runId: nativeRunId, registration, signal }) => {
-        const current = await checkExecutionRunConnectedServicesGenerationCurrent({
-          runId: nativeRunId, runnerPid: process.pid, registration,
-        }, { signal });
-        return { current: current.ok === true && current.current === true };
-      } });
-    const receiver = new RpcHandlerManager({ scopePrefix: machineId, localMachineId: machineId, encryptionMode: 'plain',
-      authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId,
-        resolveCustodianAccountId: async () => accountId, resolveInstallationId: () => 'detached-installation',
-        resolveHomeServerIdentityId: async () => homeId, verifyMachineAdmission: async () => true }) });
-    const executor = createExecutionRunRpcActionExecutor({ manager: bridge,
-      context: { sessionId: null, cwd: directory, serverId },
-      policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
-        reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
-    registerExecutionRunActionRpcHandlers(receiver, { executor, defaultSessionId: null, machineId, serverId, runtimeAccountId: accountId });
-    registerCapabilitiesHandlers(receiver, { filesystemEffectAdmission: createFilesystemEffectAdmission({
-      resolveHomeServerIdentityId: async () => homeId }) });
     const nativeRequests: string[] = [];
     const requesterIdentities: ReturnType<typeof selectHostRequesterExecutionIdentity>[] = [];
     const receiverRefusals: string[] = [];
-    bindApiSessionSocketMock(mocks.io, createApiSessionSocketStub({ async emitWithAck(event, payload) {
+    const rpcSocket = createApiSessionSocketStub({ async emitWithAck(event, payload) {
       if (event !== SOCKET_RPC_EVENTS.CALL || !payload || typeof payload !== 'object' || !('method' in payload)
         || typeof payload.method !== 'string' || !payload.method.endsWith(RPC_METHODS.CAPABILITIES_DESCRIBE)) {
         throw new Error('Unexpected detached Workflow socket request');
       }
       return { ok: true, result: await receiver.handleRequest({ method: payload.method, params: {},
         callerAuthority: 'account_automation', machineAdmission: { actorAccountId: accountId, custodianAccountId: accountId,
-          machineId, installationId: 'detached-installation', role: 'manage', encryptionMode: 'plain' } }) };
-    } }));
-    const requesterWorkAttributionV1 = { serverId, accountId, machineId, installationId: 'detached-installation' };
-    const installationIdentity = { installationId: requesterWorkAttributionV1.installationId, privateKey: nacl.sign.keyPair().secretKey };
+          machineId, installationId: installationIdentity.installationId, role: 'manage', encryptionMode: 'plain' } }) };
+    } });
+    mocks.io.mockImplementation((...args: Parameters<typeof nativeSocketClient.io>) =>
+      args[0] === installed.f.channel.serverUrl ? nativeSocketClient.io(...args) : rpcSocket);
+    const requesterWorkAttributionV1 = { serverId, accountId, machineId, installationId: installationIdentity.installationId };
     transport = createWorkflowRunMachineTransport({ runId, credentials,
       requesterWorkAttributionV1: binding === 'misbound'
         ? { ...requesterWorkAttributionV1, installationId: 'different-installation' } : requesterWorkAttributionV1,
@@ -1217,13 +1208,16 @@ describe('production daemon detached Workflow admission', () => {
       machineAdmissionTransport: async request => { sessionLocalId = request.localId;
         return { status: 'accepted', localId: request.localId }; },
       machineActionDirectTargetTransport: transport.transport });
-    const coordinating = coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope,
+    const coordinating = coordinate({ runId, attempt: 0, expectedRevision: 0, acceptedEnvelope, signal: observation.signal,
       accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } });
+    coordination = coordinating;
+    void coordinating.catch(() => undefined);
     if (binding === 'bound') {
       await Promise.race([nativeOpened, coordinating.then(result => {
-        throw new Error(`Detached leaf never reached native open: ${JSON.stringify({ result, leaves: storage.rows().map(row => row.index.lifecycle) })}`);
+        throw new Error(`Detached leaf never reached native open: ${JSON.stringify({ result, nativeRequests, receiverRefusals,
+          leaves: storage.rows().map(row => row.index.lifecycle) })}`);
       })]);
-      finishNative();
+      finishNative!();
     }
     const result = await coordinating;
     const steps = storage.rows().filter(row => {
@@ -1534,6 +1528,9 @@ describe('production daemon scheduled service command operation', () => {
     let publishApproval!: (artifactId: string) => void;
     const approvalPublished = new Promise<string>(resolve => { publishApproval = resolve; });
     vi.spyOn(axios, 'request').mockImplementation(async request => {
+      if (request.method === 'GET' && new URL(request.url!).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
+        return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      }
       if (request.method === 'GET' && new URL(request.url!).pathname === `/v3/automations/${origin.automationId}`) {
         savedTriggerReads++;
         return { status: 200, data: savedTrigger };
@@ -1621,7 +1618,15 @@ describe('production daemon scheduled service command operation', () => {
       if (policy === 'foreign-use') {
         await Promise.race([opened, coordinating]);
         expect(launches).toBe(0);
-        expect(await coordinating).toMatchObject({ state: 'failed' });
+        expect(await coordinating).toMatchObject({ state: 'interrupted', reason: 'access_denied' });
+        const failedLeaves = storage.rows().filter(row => row.index.parentRecordId !== null);
+        expect(failedLeaves).toMatchObject([{ index: { lifecycle: 'failed' } }]);
+        expect(failedLeaves.map(row => openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: row.index.id,
+            sequence: row.index.sequence, parentRecordId: row.index.parentRecordId,
+            memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt },
+          envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope) })))
+          .toMatchObject([{ kind: 'available', content: { invocationPath: { blockId: 'job' }, reason: { code: 'access_denied' } } }]);
         expect(await workflowTransport.transport.invoke('actionOperation.get.v2', {
           operationId: 'scheduled-service-operation', waitForTerminal: true,
         })).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { errorCode: 'access_denied' } } });
@@ -1949,6 +1954,13 @@ describe('production daemon Workflow plugin approval composition', () => {
         confirmation: { title: 'Apply update' } }] } }),
       files: { 'daemon.mjs': 'let calls = 0; export function readCalls() { return calls; } export function activate(api) { api.actions.register("update", async () => { calls++; return { changed: true }; }); }' },
     }] });
+    let observation = new AbortController();
+    let coordinating: Promise<unknown> | undefined;
+    const drainObservation = async () => {
+      observation.abort();
+      await coordinating?.catch(() => undefined);
+    };
+    onTestFinished(drainObservation);
     try {
       const readCalls = fixture.modulesByPluginId.get(pluginId)?.readCalls;
       if (typeof readCalls !== 'function') throw new Error('Missing physical plugin effect observation');
@@ -2057,26 +2069,44 @@ describe('production daemon Workflow plugin approval composition', () => {
         installationIdentity: { installationId: 'workflow-installation', privateKey: installationKeys.secretKey } });
       const claim = () => ({ runId, attempt: 0, expectedRevision: storage.run().revision, acceptedEnvelope,
         accountCurrentness: { mode: 'plain' as const, version: 1, contentKeyFingerprint: null } });
-      const currentIntentDiagnostics = vi.spyOn(logger, 'debug');
-      const held = await coordinate()(claim());
-      expect.soft(authorityReads).toBe(0);
+      const initial = coordinate()({ ...claim(), signal: observation.signal });
+      coordinating = initial;
+      void initial.catch(() => undefined);
       if (requester === 'admitted') {
-        expect(held).toMatchObject({ state: 'succeeded' });
+        expect(await initial).toMatchObject({ state: 'succeeded' });
+        expect(authorityReads).toBe(0);
         expect(readCalls()).toBe(2);
         expect(artifacts.size).toBe(0);
         return;
       }
       if (requester === 'missing' || requester === 'wrong') {
-        expect(held).toMatchObject({ state: 'failed', reason: 'approval_requester_unavailable' });
+        expect(await initial).toMatchObject({ state: 'interrupted', reason: 'approval_requester_unavailable' });
+        expect(authorityReads).toBe(0);
+        const failedLeaves = storage.rows().filter(row => row.index.parentRecordId !== null);
+        expect(failedLeaves).toMatchObject([{ index: { lifecycle: 'failed' } }]);
+        expect(failedLeaves.map(row => openWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: row.index.id,
+            sequence: row.index.sequence, parentRecordId: row.index.parentRecordId,
+            memberOrdinal: row.index.memberOrdinal, attempt: row.index.attempt },
+          envelope: parseWorkflowStoredContentEnvelopeV1(row.contentEnvelope) })))
+          .toMatchObject([{ kind: 'available', content: { invocationPath: { blockId: 'update' }, reason: { code: 'approval_requester_unavailable' } } }]);
         expect(artifacts.size).toBe(0);
         expect(readCalls()).toBe(0);
         return;
       }
-      expect(held, JSON.stringify({ held, unavailable: currentIntentDiagnostics.mock.calls
-        .filter(([message]) => message === '[RPC] Target Action current intent unavailable').map(([, data]) => data) }))
-        .toMatchObject({ state: 'paused', reason: 'approval_required' });
+      await vi.waitFor(() => {
+        expect(storage.rows().filter(row => row.index.parentRecordId !== null))
+          .toMatchObject([{ index: { lifecycle: 'waiting_for_approval' } }]);
+        expect(artifacts.size).toBe(1);
+      });
+      expect(authorityReads).toBe(0);
       expect(readCalls()).toBe(0);
-      expect(artifacts.size).toBe(1);
+      // Losing this claim interrupts observation, not the admitted Action or its
+      // durable approval. Reconstruct from that retained state after the decision.
+      observation.abort();
+      await expect(initial).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
+      expect(storage.rows().filter(row => row.index.parentRecordId !== null))
+        .toMatchObject([{ index: { lifecycle: 'waiting_for_approval' } }]);
       const artifactId = [...artifacts.keys()][0]!;
       const store = createCliApprovalsArtifactStore({ credentials });
       const approval = await store.targetActionApprovalsGet({ artifactId });
@@ -2086,7 +2116,6 @@ describe('production daemon Workflow plugin approval composition', () => {
           ...(hasOriginSession ? { actionRequestAttributionV1: { ...starter,
             persona: { serverId, sessionId: 'person-origin-session' }, origin: null } } : {}) } });
       if (!hasOriginSession) expect(approval?.executionOriginV1).not.toHaveProperty('actionRequestAttributionV1');
-      expect(await coordinate()(claim())).toMatchObject({ state: 'paused' });
       expect(artifacts.size).toBe(1);
       expect(readCalls()).toBe(0);
       const startupHome = await createTempDir('workflow-approval-startup-');
@@ -2128,16 +2157,20 @@ describe('production daemon Workflow plugin approval composition', () => {
         // or authorize another plugin invocation during observation/reclaim.
         originalPrincipalRevoked = true;
         authorityReads = 0;
-        await storage.execute({ operation: 'resume', runId, expectedRevision: storage.run().revision });
-        expect(storage.run().state).toBe('running');
-        const reclaimed = await coordinate()(claim());
+        observation = new AbortController();
+        const resumed = coordinate()({ ...claim(), signal: observation.signal });
+        coordinating = resumed;
+        const reclaimed = await resumed;
         expect(reclaimed, JSON.stringify({ reclaimed, authorityReads, effects: readCalls() })).toMatchObject({ state: 'succeeded' });
         expect(authorityReads).toBe(0);
         expect(readCalls()).toBe(1);
         expect(artifacts.size).toBe(1);
         expect(storage.rows().filter(row => row.index.parentRecordId !== null)).toMatchObject([{ index: { lifecycle: 'completed', attempt: '0' } }]);
       } finally { await daemon.dispose(); await removeTempDir(startupHome); }
-    } finally { await fixture.dispose(); }
+    } finally {
+      await drainObservation();
+      await fixture.dispose();
+    }
   });
 });
 
