@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
@@ -14,6 +14,44 @@ import {
 } from './UsageLimitRecoveryScheduler';
 
 describe('UsageLimitRecoveryScheduler', () => {
+  beforeEach(() => { vi.spyOn(Math, 'random').mockReturnValue(0); });
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  it.each([0.25, 0.75])('spreads automatic reset and retry checks while explicit checks remain immediate (random=%s)', async (random) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    vi.mocked(Math.random).mockReturnValue(random);
+    const spreadMs = random === 0.25 ? 30_000 : 90_000;
+    const recoveredSessions: string[] = [];
+    const scheduler = new UsageLimitRecoveryScheduler({
+      nowMs: () => Date.now(),
+      recover: async (_intent, { sessionId }) => {
+        recoveredSessions.push(sessionId);
+        return { status: 'wait', nextCheckAtMs: Date.now() + 600_000 };
+      },
+    });
+    try {
+      await scheduler.enable({ sessionId: 'automatic', issueFingerprint: 'limit', resetAtMs: 2_000,
+        selectedAuth: { kind: 'native' } });
+      await scheduler.enable({ sessionId: 'manual', issueFingerprint: 'limit', resetAtMs: 2_000,
+        selectedAuth: { kind: 'native' } });
+      await scheduler.checkNow({ sessionId: 'manual' });
+      expect(recoveredSessions).toEqual(['manual']);
+      await scheduler.cancel({ sessionId: 'manual' });
+      await vi.advanceTimersByTimeAsync(999 + spreadMs);
+      expect(recoveredSessions).toEqual(['manual']);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(recoveredSessions).toEqual(['manual', 'automatic']);
+      await vi.advanceTimersByTimeAsync(599_999 + spreadMs);
+      expect(recoveredSessions).toEqual(['manual', 'automatic']);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(recoveredSessions).toEqual(['manual', 'automatic', 'automatic']);
+    } finally {
+      scheduler.dispose();
+      vi.useRealTimers();
+    }
+  });
+
   it('backs off a pending probe whose supplied check time has already passed', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

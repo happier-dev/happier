@@ -72,6 +72,8 @@ type DurableBackoffRecoverySchedulerDeps<TIntent> = Readonly<{
   baseBackoffMs?: number;
   maxBackoffMs?: number;
   jitterMs?: () => number;
+  /** Timer-only spread, including explicit retry dates; manual wakes stay immediate. */
+  timerJitterMs?: () => number;
   store?: DurableRecoveryStore<TIntent>;
   normalizeIntent: (value: unknown) => TIntent | null;
   getStatus: (intent: TIntent) => DurableRecoveryStatus;
@@ -1045,7 +1047,8 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       ? this.deps.nowMs()
       : this.deps.getNextRetryAtMs(intent);
     if (typeof nextRetryAtMs !== 'number' || !Number.isFinite(nextRetryAtMs)) return;
-    const delayMs = Math.min(maxSafeTimerDelayMs, Math.max(0, nextRetryAtMs - this.deps.nowMs()));
+    const jitterMs = Math.max(0, Math.trunc(this.deps.timerJitterMs?.() ?? 0));
+    const delayMs = Math.min(maxSafeTimerDelayMs, Math.max(0, nextRetryAtMs - this.deps.nowMs()) + jitterMs);
     const timer = setTimeout(() => {
       this.timersByRecoveryKey.delete(recoveryKey);
       void this.wakeByKey({ recoveryKey, reason: 'timer' }).catch(() => {});
