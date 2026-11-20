@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -125,10 +126,19 @@ describe('SshCredentialsFields', () => {
 
         const authBar = screen.find((node) => node.props?.testIDPrefix === 'ssh-fields-sshAuthMethod' && Array.isArray(node.props?.tabs));
         expect(authBar.props.segmentSizing).toBe('content');
-        expect(authBar.props.targetSize).toBe('platform');
         expect(screen.findAll((node) => node.props?.horizontal === true && node.props?.testID === 'ssh-fields-sshAuthMethod-scroller')).toHaveLength(1);
-        const password = screen.findByTestId('ssh-fields-sshAuthMethod:password');
-        await password?.props.onPress?.();
+        const password = screen.findHostByTestId('ssh-fields-sshAuthMethod:password')!;
+        const surface = password.find((node) => node.type === 'View'
+            && node.props.dataSet?.surface === 'tab-bar' && node.props.dataSet?.part === 'tab');
+        const label = surface.findByType('Text' as never);
+        const { paddingVertical = 0, borderWidth = 0, minHeight = 0 } = StyleSheet.flatten(surface.props.style);
+        const { lineHeight } = StyleSheet.flatten(label.props.style);
+        const frame = StyleSheet.flatten(password.props.style);
+        const drawnHeight = Math.max(minHeight, lineHeight + 2 * (paddingVertical + borderWidth));
+        const rowHeight = Math.max(frame.minHeight ?? 0, drawnHeight + 2 * (frame.paddingVertical ?? 0))
+            + 2 * (frame.marginVertical ?? 0);
+        expect(rowHeight).toBe(28);
+        await password.props.onPress();
         expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ authMode: 'password' }));
     });
 

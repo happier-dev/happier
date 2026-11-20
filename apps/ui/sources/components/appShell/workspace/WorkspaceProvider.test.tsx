@@ -4,6 +4,7 @@ import { act } from 'react-test-renderer';
 import { BaseNavigationContainer, createNavigatorFactory, StackRouter, useNavigationBuilder } from '@react-navigation/core';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createSessionFixture, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDesktopHostInternals } from '@/dev/testkit/harness/desktopHttpHost';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { WORKSPACE_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/workspaceActionFamily';
@@ -264,6 +265,15 @@ function installBrowserBoundary(input: Record<string, unknown> & { history: obje
     });
 }
 
+function installFullCloseDesktopBoundary() {
+    boundary.platform = 'web';
+    const { internals } = createDesktopHostInternals(({ command }) => {
+        if (command === 'desktop_app_window_ready') return null;
+        throw new Error(`Unexpected desktop command in full Close fixture: ${command}`);
+    });
+    vi.stubGlobal('__TAURI_INTERNALS__', internals);
+}
+
 /** IndexedDB is the external boundary; repository serialization and dirty-write draining stay real. */
 async function installDelayedDraftRecordBoundary() {
     const records = new Map<string, string>();
@@ -469,7 +479,7 @@ describe('consumed workspace navigation owner', () => {
     });
 
     it('keeps the dirty editor decision and pending NewSession authoring durable through full Close', async () => {
-        boundary.platform = 'web';
+        installFullCloseDesktopBoundary();
         // Idle is an external browser scheduling boundary; do not let it hide a Close-time loss.
         vi.stubGlobal('requestIdleCallback', () => 1);
         vi.stubGlobal('cancelIdleCallback', () => {});
@@ -508,7 +518,7 @@ describe('consumed workspace navigation owner', () => {
     });
 
     it('keeps pending NewSession authoring durable when its tab unmounts immediately before full Close', async () => {
-        boundary.platform = 'web';
+        installFullCloseDesktopBoundary();
         vi.stubGlobal('requestIdleCallback', () => 1);
         vi.stubGlobal('cancelIdleCallback', () => {});
         const disk = await installDelayedDraftRecordBoundary();
@@ -544,6 +554,7 @@ describe('consumed workspace navigation owner', () => {
     });
 
     it('keeps full Close mounted until every pending local draft write is durable', async () => {
+        installFullCloseDesktopBoundary();
         const disk = await installDelayedDraftRecordBoundary();
         const scope = { serverId: 'full-close-home', accountId: 'alice' };
         const otherScope = { serverId: 'retained-other-home', accountId: 'alice' };
@@ -576,6 +587,7 @@ describe('consumed workspace navigation owner', () => {
     });
 
     it('keeps a full window live when its local draft durability fails', async () => {
+        installFullCloseDesktopBoundary();
         const disk = await installDelayedDraftRecordBoundary();
         const scope = { serverId: 'full-close-failed-home', accountId: 'alice' };
         const record = { windowId: 'full-close-failed', chrome: 'full' as const, homeId: scope.serverId, accountId: scope.accountId,
@@ -1968,10 +1980,11 @@ describe('consumed workspace navigation owner', () => {
     });
     it('does not promote a generic chrome header over the destination identity', async () => {
         boundary.pathname = '/session/A1/info';
+        storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: {} });
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
             externalSessions: false, inbox: false, workflows: false, friends: false,
         } });
-        let options: React.ComponentProps<typeof Stack.Screen>['options'] = { headerTitle: 'Generic navigation chrome' };
+        let options: React.ComponentProps<typeof Stack.Screen>['options'] = { headerTitle: t('sessionInfo.title') };
         let pageTitle: string | undefined;
         let hosted = true;
         function PageIdentity() { useDestinationPageTitle(pageTitle); return null; }
@@ -1989,7 +2002,7 @@ describe('consumed workspace navigation owner', () => {
         }}</WorkspaceProvider>;
         const screen = await renderScreen(element());
         const titles = () => screen.root.findByType('DestinationTitles').props.titles as ReadonlyMap<string, string>;
-        expect([...titles().values()]).toEqual([t('sessionInfo.title')]);
+        expect([...titles().values()]).toEqual([t('session.untitled')]);
         options = { title: 'A named app page' };
         await screen.update(element());
         expect([...titles().values()]).toEqual(['A named app page']);
@@ -2001,9 +2014,8 @@ describe('consumed workspace navigation owner', () => {
         expect([...titles().values()]).toEqual(['A named app page']);
         options = { title: undefined, headerTitle: 'App page' };
         await screen.update(element());
-        // Withdrawing the leaf title restores the inherited screen identity;
-        // the generic chrome label never becomes the page's name.
-        expect([...titles().values()]).toEqual([t('sessionInfo.title')]);
+        // The retained destination keeps its last known name when only chrome is supplied.
+        expect([...titles().values()]).toEqual(['A named app page']);
         options = { title: 'Inherited screen identity' };
         pageTitle = 'Last settled page';
         await screen.update(element());
