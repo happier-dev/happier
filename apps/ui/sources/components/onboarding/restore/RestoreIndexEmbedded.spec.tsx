@@ -2,6 +2,11 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+
+import { RestoreIndexEmbedded } from './RestoreIndexEmbedded';
 
 type ReactActEnvironmentGlobal = typeof globalThis & {
     IS_REACT_ACT_ENVIRONMENT?: boolean;
@@ -59,9 +64,6 @@ vi.mock('@/components/account/restore/RestoreQrView', () => ({
 
 describe('RestoreIndexEmbedded', () => {
     it('returns from the active terminal-link way through the shell Back button', async () => {
-        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
-        const { AuthRouteStepFrame } = await import('@/components/onboarding/ui/AuthRouteStepFrame');
-        const { UNAUTH_BACK_TEST_ID } = await import('@/components/onboarding/unauthShell/stepBack');
         const leaveRestore = vi.fn();
         try {
             const screen = await renderScreen(<AuthRouteStepFrame testID="restore" title="Restore" onBack={leaveRestore}>
@@ -69,20 +71,16 @@ describe('RestoreIndexEmbedded', () => {
             </AuthRouteStepFrame>);
             await act(async () => lastQrProps.onOpenTerminalLink());
             expect(screen.findByTestId('restore-pairing-link-input')).toBeTruthy();
-            await screen.pressByTestIdAsync(UNAUTH_BACK_TEST_ID);
+            await screen.pressByTestIdAsync('unauth-shell-back-chevron');
             expect(screen.findByTestId('restore-pairing-link-input')).toBeNull();
             expect(screen.tree.root.findByType('qr')).toBeTruthy();
             expect(leaveRestore).not.toHaveBeenCalled();
-            await screen.pressByTestIdAsync(UNAUTH_BACK_TEST_ID);
+            await screen.pressByTestIdAsync('unauth-shell-back-chevron');
             expect(leaveRestore).toHaveBeenCalledOnce();
         } finally { await standardCleanup(); }
     });
 
     it('uses a routine step when restore is entered with an authenticated Account', async () => {
-        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
-        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
-        const { AuthRouteStepFrame } = await import('@/components/onboarding/ui/AuthRouteStepFrame');
-        const { StepMotionLayer } = await import('@/components/ui/motion/stepMotion/StepMotionLayer');
         try {
             const screen = await renderScreen(<InjectedAuthProvider credentials={{ token: 'signed-in' }}>
                 <AuthRouteStepFrame testID="restore" title="Restore" onBack={() => {}}>
@@ -101,8 +99,6 @@ describe('RestoreIndexEmbedded', () => {
 
         const onBack = vi.fn();
         const onOpenSecretKeyLogin = vi.fn();
-        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
-
         let tree!: renderer.ReactTestRenderer;
         try {
             await act(async () => {
@@ -141,8 +137,6 @@ describe('RestoreIndexEmbedded', () => {
     it('forces the restore scanner and forwards an initial V2 pairing link unchanged', async () => {
         lastScanProps = null;
         const initialPairingLink = 'happier:///pair?v=2&payload=opaque';
-        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
-
         let tree!: renderer.ReactTestRenderer;
         try {
             await act(async () => {
@@ -162,7 +156,6 @@ describe('RestoreIndexEmbedded', () => {
 
     it('hands a terminal URL from Approve to the same embedded link processor', async () => {
         lastScanProps = null;
-        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
         const terminalLink = 'happier://terminal?example';
         let tree!: renderer.ReactTestRenderer;
         try {
@@ -187,8 +180,6 @@ describe('RestoreIndexEmbedded', () => {
 
     it('hands a pasted link to the embedded scanner instead of routing away', async () => {
         lastScanProps = null;
-        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
-
         let tree!: renderer.ReactTestRenderer;
         try {
             await act(async () => {
