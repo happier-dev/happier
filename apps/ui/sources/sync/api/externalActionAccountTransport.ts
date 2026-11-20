@@ -1,4 +1,4 @@
-import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -349,18 +349,20 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         account.assertCurrent();
         params.signal?.throwIfAborted();
     }
+    const retainsSendReceipt = binding.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
+    const path = `/v1/actions/${binding.actionId}`;
+    const init = { method: 'POST', headers, body: JSON.stringify(request), signal: params.signal };
     let issued = false;
+    const options = { includeAuth: true, retry: 'none' as const,
+        ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
+        onIssued: () => { issued = true; params.onTransportIssued?.(); },
+    };
     let response: Response;
     try {
-        response = await account.request(`/v1/actions/${binding.actionId}`, {
-            method: 'POST', headers, body: JSON.stringify(request),
-            ...(params.signal ? { signal: params.signal } : {}),
-        }, { includeAuth: true, retry: 'none',
-            ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
-            onIssued: () => { issued = true; params.onTransportIssued?.(); },
-        });
+        if (retainsSendReceipt) return await account.requestEffectReceipt(path, init, options, readResponse);
+        response = await account.request(path, init, options);
     } catch (error) {
-        // Losing the observer after issuance cannot prove that the Action failed.
+        // Losing the response after issuance cannot prove that the Action failed.
         if (issued) return withActionFailureDiagnostic({ ...failure('outcome_unknown'),
             failureCause: projectActionFailureCauseV1(error, 'external_action.http.execute'),
         }, { phase: 'external_action.http.execute', causeKind: 'incomplete', error });
@@ -369,43 +371,48 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
         }
         throw error;
     }
-    let payload: unknown;
-    try {
-        if (response.status === 502) {
-            // The Home deliberately sends no Action envelope after losing the
-            // daemon's acknowledgement. It cannot prove whether the effect ran.
-            const body = await response.text();
-            if (isExternalActionSubmittedUnknownHttpResponse(response.status, body)) return failure('outcome_unknown');
-            payload = JSON.parse(body);
-        } else {
-            payload = await response.json();
+    return await readResponse(response);
+
+    async function readResponse(response: Response): Promise<ActionExecuteResult> {
+        let payload: unknown;
+        // Losing the Send response body is also an issued transport failure.
+        const sendBody = retainsSendReceipt ? await response.text() : undefined;
+        try {
+            if (response.status === 502 || sendBody !== undefined) {
+                // The Home deliberately sends no envelope after losing the daemon's acknowledgement.
+                const body = sendBody ?? await response.text();
+                if (isExternalActionSubmittedUnknownHttpResponse(response.status, body)) return failure('outcome_unknown');
+                payload = JSON.parse(body);
+            } else {
+                payload = await response.json();
+            }
+        } catch (error) {
+            return withActionFailureDiagnostic({ ...failure(invalid),
+                failureCause: projectActionFailureCauseV1(error, 'external_action.http.response'),
+            }, { phase: 'external_action.http.response', causeKind: 'incomplete', error });
         }
-    } catch (error) {
-        return withActionFailureDiagnostic({ ...failure(invalid),
-            failureCause: projectActionFailureCauseV1(error, 'external_action.http.response'),
-        }, { phase: 'external_action.http.response', causeKind: 'incomplete', error });
-    }
-    if (!response.ok) {
-        const refusal = ExternalActionHttpErrorSchema.safeParse(payload);
-        // Only the authenticated pre-open error contract proves that no Action
-        // ran. An invalid or differently bound reply cannot settle an issued request.
-        if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
-            && refusal.data.requestId !== envelope.requestId) return failure(invalid);
-        const result = projectExternalActionHttpFailureV1(refusal.data);
-        const classified = isActionOutcomeUnknownErrorCodeV1(result.errorCode) ? result : { ...result, effectAttempted: false };
-        // Protected requests adopt diagnostic/managed receipts only when their
-        // existing outer correlation binds them to this invocation.
-        if (envelope.v === 2 && !('requestId' in refusal.data && refusal.data.requestId === envelope.requestId)
-            && ('diagnostic' in refusal.data || 'managedAdmission' in refusal.data)) {
-            const { details: _details, ...uncorrelated } = classified;
-            return uncorrelated;
+        if (!response.ok) {
+            const refusal = ExternalActionHttpErrorSchema.safeParse(payload);
+            // Only the authenticated pre-open error contract proves that no Action
+            // ran. An invalid or differently bound reply cannot settle an issued request.
+            if (!refusal.success || 'requestId' in refusal.data && refusal.data.requestId !== undefined
+                && refusal.data.requestId !== envelope.requestId) return failure(invalid);
+            const result = projectExternalActionHttpFailureV1(refusal.data);
+            const classified = isActionOutcomeUnknownErrorCodeV1(result.errorCode) ? result : { ...result, effectAttempted: false };
+            // Protected requests adopt diagnostic/managed receipts only when their
+            // existing outer correlation binds them to this invocation.
+            if (envelope.v === 2 && !('requestId' in refusal.data && refusal.data.requestId === envelope.requestId)
+                && ('diagnostic' in refusal.data || 'managedAdmission' in refusal.data)) {
+                const { details: _details, ...uncorrelated } = classified;
+                return uncorrelated;
+            }
+            return classified;
         }
-        return classified;
+        if (envelope.v === 2 && material) return openExternalActionResponseV2({ envelope: payload, binding, material, request: envelope }) ?? failure(invalid);
+        const parsed = parseExternalActionResponseEnvelopeV1(payload);
+        return parsed && parsed.actionId === binding.actionId && parsed.requestId === envelope.requestId
+            ? readExternalActionResponseExecutionV1(parsed) : failure(invalid);
     }
-    if (envelope.v === 2 && material) return openExternalActionResponseV2({ envelope: payload, binding, material, request: envelope }) ?? failure(invalid);
-    const parsed = parseExternalActionResponseEnvelopeV1(payload);
-    return parsed && parsed.actionId === binding.actionId && parsed.requestId === envelope.requestId
-        ? readExternalActionResponseExecutionV1(parsed) : failure(invalid);
 }
 
 type OriginalAccountMachineActionParams = DeploymentReviewTransport & Readonly<{

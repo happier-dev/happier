@@ -33,7 +33,7 @@ import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSetti
 import { createAccountSettingsMutation, type RawSettingsMutationOptions } from './accountSettingsMutation';
 export type { RawSettingsMutationOptions } from './accountSettingsMutation';
 import { settingsParse, type Settings } from '@/sync/domains/settings/settings';
-import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
+import { createServerFetchAtEndpoint, type ServerFetch, type ServerFetchOptions } from '@/sync/http/client';
 import { bindAccountEncryptionObservation, captureAccountEncryptionObservationForHome, readAccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 import { resolveServerScopedTransport } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedTransport';
 import { createCapturedServerReadTransport } from '@/sync/runtime/orchestration/serverScopedRpc/capturedServerReadTransport';
@@ -147,7 +147,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             accountLifetime: embedAccountLifetime,
             accountOnlyLifetime: { scope: { serverId: embed.serverId, accountId: embed.accountId }, isCurrent: embed.isCurrent, onRetire: embed.onRetire },
             credentials: embed.credentials, credentialAuthorityKind: 'api_token' as const, invocationSignal: signal,
-            request: embed.request, readTransport: undefined, prepareRequest: undefined,
+            request: embed.request, requestEffectReceipt: unavailable, readTransport: undefined, prepareRequest: undefined,
             assertCurrent, assertAccountCurrent, assertResultCurrent, dispose: () => {},
             resolveAccountMode: unavailable, resolveAccountEncryption: unavailable, readSettings: unavailable, readRawSettings: unavailable,
             readRawSettingsSnapshot: unavailable,
@@ -322,13 +322,17 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
         // Every Action owns an explicit Home target. Resolve it through the
         // canonical scoped carrier so a staged focus change cannot retarget an
         // Action through the ambient focused request path.
-        const request: ServerFetch = async (path, init, options) => {
+        function requestAtHome(path: string, init?: RequestInit, options?: ServerFetchOptions): Promise<Response>;
+        function requestAtHome<T>(path: string, init: RequestInit | undefined, options: ServerFetchOptions | undefined,
+            consumeReceipt: (response: Response) => Promise<T>): Promise<T>;
+        async function requestAtHome<T>(path: string, init?: RequestInit, options?: ServerFetchOptions,
+            consumeReceipt?: (response: Response) => Promise<T>): Promise<Response | T> {
             assertCurrent();
             const method = (init?.method ?? 'GET').toUpperCase();
             const mutation = method !== 'GET' && method !== 'HEAD';
             // Account retirement withdraws future requests and active reads;
             // an admitted mutation retains its acknowledgement and caller cancellation.
-            const cancellation = mergeAbortSignals([mutation ? undefined : controller.signal, signal, init?.signal ?? undefined]);
+            const cancellation = mergeAbortSignals([!mutation || consumeReceipt ? controller.signal : undefined, signal, init?.signal ?? undefined]);
             try {
                 throwIfAborted(cancellation.signal);
                 const requestInit = await prepareRequest(path, { ...init, signal: cancellation.signal });
@@ -336,16 +340,25 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 try {
                     assertCurrent();
                     throwIfAborted(cancellation.signal);
-                    const response = await createServerFetchAtEndpoint({
+                    const endpointRequest = createServerFetchAtEndpoint({
                         endpointUrl: transport.canonicalServerUrl,
                         runtimeOrigin: transport.runtimeOrigin,
                         serverId,
                         credentials,
                         accountEncryptionObservation,
                         recoverStoredCredentials: true,
-                        signal: cancellation.signal,
+                        signal: consumeReceipt ? controller.signal : cancellation.signal,
                         ...(transport.homeCarrier ? { homeCarrier: transport.homeCarrier } : {}),
-                    })(path, requestInit, options);
+                    });
+                    if (consumeReceipt) {
+                        return await endpointRequest(path, requestInit, { ...options, onIssued: () => {
+                            // Only the Account signal stays attached while the issued receipt is read.
+                            throwIfAborted(cancellation.signal);
+                            cancellation.dispose();
+                            options?.onIssued?.();
+                        } }, consumeReceipt);
+                    }
+                    const response = await endpointRequest(path, requestInit, options);
                     if (!mutation) assertCurrent();
                     return response;
                 } finally {
@@ -355,7 +368,10 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             } finally {
                 cancellation.dispose();
             }
-        };
+        }
+        const request: ServerFetch = requestAtHome;
+        const requestEffectReceipt = <T>(path: string, init: RequestInit, options: ServerFetchOptions,
+            consumeReceipt: (response: Response) => Promise<T>) => requestAtHome(path, init, options, consumeReceipt);
         const loadAccountMode = async (operationSignal?: AbortSignal) => {
             accountEncryptionObservation ??= captureAccountEncryptionObservation();
             const transport = await resolveServerScopedTransport({ profile, credentials });
@@ -794,7 +810,7 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             readTransport,
             prepareRequest: requestAuthorization ? prepareRequest : undefined,
             resolveHomeTarget, shareableServerUrl,
-            request, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose, accountLifetime, accountOnlyLifetime,
+            request, requestEffectReceipt, assertCurrent, assertAccountCurrent, assertResultCurrent, dispose, accountLifetime, accountOnlyLifetime,
             resolveAccountMode, resolveAccountEncryption,
             readLaunchProfileSnapshot,
             readLaunchProfiles: async (rawProfiles: unknown) => {

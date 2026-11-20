@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildManagedSessionDefaultsContext } from '@happier-dev/protocol/teams/managedDefaults';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
@@ -95,6 +97,53 @@ async function execute() {
 }
 
 describe('captured Account Action response decoding', () => {
+    it.each(['before issuance', 'late refusal', 'Account retirement'] as const)(
+        'uses issuance as the Send cancellation boundary (%s)', async phase => {
+            const cancellation = new AbortController();
+            const sendBinding = { ...binding, actionId: SESSION_MESSAGE_SEND_ACTION_ID_V1, requestId: 'send-1' };
+            const sendPath = `/v1/actions/${sendBinding.actionId}`;
+            let release!: () => void;
+            const held = new Promise<void>(resolve => { release = resolve; });
+            let reached!: () => void;
+            const boundaryReached = new Promise<void>(resolve => { reached = resolve; });
+            const captured = await captureLazyActionAccountContext(serverId, cancellation.signal,
+                phase === 'before issuance' ? async () => { reached(); await held; return undefined; } : undefined);
+            let requestSignal: AbortSignal | null | undefined;
+            homes.answer(serverId, sendPath, { select: (_body, request) => {
+                requestSignal = request.signal;
+                reached();
+                return { ...(phase === 'late refusal' ? { respondAfter: held } : { bodyAfter: held }),
+                    body: { v: 1, actionId: sendBinding.actionId, requestId: sendBinding.requestId,
+                        execution: { ok: false, errorCode: 'permission_denied', error: 'Unavailable' } } };
+            } });
+            const pending = executeOriginalAccountActionTransport({ account: captured, binding: sendBinding,
+                input: { sessionId: 'session-1', message: 'Hello', localId: sendBinding.requestId } });
+            const settled = pending.then(result => ({ result }), error => ({ error }));
+            try {
+                await boundaryReached;
+                cancellation.abort();
+                if (phase !== 'before issuance') expect(requestSignal?.aborted).toBe(false);
+                if (phase === 'Account retirement') {
+                    await TokenStorage.removeCredentialsForServerUrl(captured.endpointUrl, { serverId });
+                    expect(requestSignal?.aborted).toBe(true);
+                }
+                release();
+                if (phase === 'before issuance') {
+                    expect(await settled).toMatchObject({ error: { name: 'AbortError' } });
+                    expect(homes.requestsFor(sendPath)).toHaveLength(0);
+                } else {
+                    expect(await settled).toMatchObject({ result: { ok: false,
+                        errorCode: phase === 'late refusal' ? 'permission_denied' : 'outcome_unknown' } });
+                    expect(homes.requestsFor(sendPath)).toHaveLength(1);
+                }
+            } finally {
+                release();
+                await settled;
+                captured.dispose();
+            }
+        },
+    );
+
     it.each([
         { captureDefaults: true, observeCommit: false },
         { captureDefaults: true, observeCommit: true },
