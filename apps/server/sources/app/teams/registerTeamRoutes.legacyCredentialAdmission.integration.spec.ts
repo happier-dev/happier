@@ -161,11 +161,16 @@ describe("Team API composition legacy Home credential admission (SQLite integrat
                     recipientEmail: null,
                     requestKey: crypto.randomUUID(),
                 }),
+                // The read a 0.3 client issues during its first Account sync.
+                await inject("/v2/teams/label-envelopes"),
             ];
+            // The released bearer is still a valid Home credential, so Team
+            // families refuse it as a permission answer. A 401 would tell the
+            // client to discard the person's stored credential and sign them out.
             for (const attempt of attempts) {
                 expect({ status: attempt.statusCode, body: attempt.json() }).toEqual({
-                    status: 401,
-                    body: { error: "invalid_token" },
+                    status: 403,
+                    body: { error: "team_forbidden" },
                 });
             }
 

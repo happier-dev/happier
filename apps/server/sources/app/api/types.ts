@@ -101,7 +101,7 @@ declare module 'fastify' {
         apiTokenSessionActionWhen?: Readonly<{ field: 'withdraw'; equals: 'true'; actionId: ActionId }>;
         /** Account Directory tokens are denied unless a Directory route opts in. */
         allowAccountDirectoryToken?: true;
-        /** Released pre-provenance Home credentials are denied when a route family opts out. */
+        /** Released pre-provenance Home credentials are denied (403, never 401) when a route family opts out. */
         allowLegacyHomeToken?: false;
         /** Runner credentials are denied unless the route binds them to their exact Session/Machine. */
         restrictedCredentialBinding?: RestrictedCredentialRouteBinding;

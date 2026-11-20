@@ -115,8 +115,7 @@ export function enableAuthentication(app: Fastify) {
         if (bearer === null || parseAccountApiTokenBearerV1(bearer) === null) return;
         const verification = await verifyRequestPrincipal({
             authorizationHeader: request.headers.authorization,
-            allowLegacyHomeToken: request.routeOptions.config.allowAccountDirectoryToken !== true
-                && request.routeOptions.config.allowLegacyHomeToken !== false,
+            allowLegacyHomeToken: request.routeOptions.config.allowAccountDirectoryToken !== true,
             readEnv: () => readRequestHomeEnv(request),
         });
         // Routes that authenticate in preHandler reuse the canonical verification;
@@ -156,8 +155,7 @@ export function enableAuthentication(app: Fastify) {
         if (hasExternalActionHeader) {
             const requesterVerification = authHeader !== undefined
                 ? earlyRequestPrincipals.get(request) ?? await verifyRequestPrincipal({ authorizationHeader: authHeader,
-                    allowLegacyHomeToken: request.routeOptions?.config?.allowAccountDirectoryToken !== true
-                        && request.routeOptions?.config?.allowLegacyHomeToken !== false,
+                    allowLegacyHomeToken: request.routeOptions?.config?.allowAccountDirectoryToken !== true,
                     readEnv: () => readRequestHomeEnv(request) }) : null;
             // A rejected execution carrier does not invalidate a verified
             // Account bearer. Clients retire Account credentials only on 401.
@@ -309,14 +307,14 @@ export function enableAuthentication(app: Fastify) {
         }
 
         // A pre-marker credential is an ordinary-Home compatibility input,
-        // never a Directory or Team credential. Directory routes and
-        // route families that explicitly reject legacy Home authority use
-        // only the strict current verifier; ordinary Home routes retain
-        // the explicitly named compatibility reader.
+        // never a Directory or Team credential. Directory routes use only the
+        // strict current verifier. Route families that opt out of legacy Home
+        // authority still verify it, then refuse it below with 403: the
+        // credential remains valid at this Home, and a 401 would make the
+        // client discard it.
         const verification = earlyRequestPrincipals.get(request) ?? await timeWebLatencyPhase('auth.verify_principal', () => verifyRequestPrincipal({
             authorizationHeader: authHeader,
-            allowLegacyHomeToken: request.routeOptions?.config?.allowAccountDirectoryToken !== true
-                && request.routeOptions?.config?.allowLegacyHomeToken !== false,
+            allowLegacyHomeToken: request.routeOptions?.config?.allowAccountDirectoryToken !== true,
             readEnv: () => readRequestHomeEnv(request),
         }));
         if (

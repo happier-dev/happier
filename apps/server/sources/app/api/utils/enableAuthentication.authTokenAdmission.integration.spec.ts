@@ -49,6 +49,15 @@ function createApp() {
         },
         async (request: any) => ({ tokenKind: request.authTokenKind }),
     );
+    // The policy the Team route families compose (createTeamRouteApp).
+    app.get(
+        "/legacy-opt-out",
+        {
+            config: { allowLegacyHomeToken: false, restrictedAuthFailureError: "team_forbidden" },
+            preHandler: app.authenticate,
+        },
+        async (request: any) => ({ tokenKind: request.authTokenKind }),
+    );
     return app;
 }
 
@@ -142,7 +151,34 @@ describe("authentication token admission (integration)", () => {
                 expect(ordinaryResponse.json()).toEqual({ tokenKind: legacy.expectedKind });
                 expect(directoryResponse.statusCode).toBe(401);
                 expect(directoryResponse.json()).toEqual({ error: "invalid_token" });
+
+                // A route family that opts out of pre-marker authority refuses
+                // the still-valid Home credential as a permission answer. A 401
+                // would make the client discard it and sign the person out.
+                const optedOutResponse = await app.inject({
+                    method: "GET",
+                    url: "/legacy-opt-out",
+                    headers: { authorization: `Bearer ${legacy.token}` },
+                });
+                expect({ status: optedOutResponse.statusCode, body: optedOutResponse.json() })
+                    .toEqual({ status: 403, body: { error: "team_forbidden" } });
             }
+
+            const current = await auth.createToken(account.id, undefined, { kind: "account", authority: "present_user" });
+            const currentOptedOut = await app.inject({
+                method: "GET",
+                url: "/legacy-opt-out",
+                headers: { authorization: `Bearer ${current}` },
+            });
+            expect({ status: currentOptedOut.statusCode, body: currentOptedOut.json() })
+                .toEqual({ status: 200, body: { tokenKind: "account" } });
+            const forged = await app.inject({
+                method: "GET",
+                url: "/legacy-opt-out",
+                headers: { authorization: "Bearer not-a-credential" },
+            });
+            expect({ status: forged.statusCode, body: forged.json() })
+                .toEqual({ status: 401, body: { error: "invalid_token" } });
         } finally {
             await app.close();
         }

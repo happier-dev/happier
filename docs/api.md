@@ -610,6 +610,10 @@ signed-token payload fields.
 During the 0.3 transition, the named legacy ordinary-Home verifier may read
 pre-marker Home credentials on ordinary Home routes. That compatibility reader
 cannot authorize Account Directory routes or classify a malformed new token.
+Team route families also refuse a pre-marker credential, but because it is
+still valid at the Home they answer `403` with the family's denial error
+(`team_forbidden` for Teams) rather than `401`. Clients retire a stored
+credential only on `401`, so a person upgrading from 0.2 stays signed in.
 String-valued `provenance` emitted as opaque library metadata by released
 `privacy-kit@0.0.25` tokens remains part of that pre-marker shape; only the
 strict structured V1/V2 union carries current provenance or authentication

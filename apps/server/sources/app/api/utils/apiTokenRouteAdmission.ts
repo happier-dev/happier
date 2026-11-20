@@ -121,6 +121,7 @@ type AuthenticatedRouteRequest = Readonly<{
     method?: string;
     url?: string;
     authTokenKind?: unknown;
+    authTokenLegacy?: unknown;
     userId?: unknown;
     sessionRuntimePrincipal?: VerifiedEphemeralSessionRunnerPrincipal;
     apiTokenPrincipal?: Readonly<{ grant: ApiTokenGrantV1 }>;
@@ -137,6 +138,7 @@ type AuthenticatedRouteRequest = Readonly<{
             apiTokenSessionAction?: unknown;
             apiTokenSessionActionWhen?: Readonly<{ field: 'withdraw'; equals: 'true'; actionId: ActionId }>;
             allowAccountDirectoryToken?: unknown;
+            allowLegacyHomeToken?: unknown;
             restrictedCredentialBinding?: RestrictedCredentialRouteBinding;
         }>;
     }>;
@@ -323,9 +325,13 @@ export function isRestrictedAuthTokenDeniedForRoute(
 ): boolean {
     switch (request.authTokenKind) {
         case "account":
-            return request.routeOptions?.config?.allowAccountDirectoryToken === true;
         case "terminal":
-            return request.routeOptions?.config?.allowAccountDirectoryToken === true;
+            // A released pre-marker Home credential stays valid at the Home, so a
+            // route family that opts out of it refuses it here as a permission
+            // answer; clients retire stored credentials only on 401.
+            return request.routeOptions?.config?.allowAccountDirectoryToken === true
+                || (request.authTokenLegacy === true
+                    && request.routeOptions?.config?.allowLegacyHomeToken === false);
         case "api_token":
             if (request.externalActionExecutionAuthorized === true) return false;
             if (resolveApiTokenSessionActionForRoute(request) !== undefined
