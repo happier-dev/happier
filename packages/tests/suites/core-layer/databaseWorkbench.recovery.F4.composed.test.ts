@@ -69,7 +69,7 @@ it('R6 preserves native backup verification and isolated restore-drill outcomes 
         const machine = await fixture.enrollDaemon(owner, { cliLaunchSpec: { command: process.execPath,
                 args: ['--import', resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
                     resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() } });
-        const opened = await owner.execute('projects.open', { ...machine.target,
+        const opened = await owner.executeReviewed('projects.open', { ...machine.target,
             source: { kind: 'folder', path: machine.workspaceDir }, materialization: { kind: 'attach' } },
         { presentUserConfirmation: { actionId: 'projects.open' } });
         if (!opened.ok) throw new Error(`R6 setup Project Open refused (${opened.errorCode})`);
