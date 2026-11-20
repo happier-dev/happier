@@ -306,8 +306,9 @@ describe("account pet library services", () => {
             return Readable.from([bytes]);
         });
         const removeObject = vi.fn(async (bucket: string, key: string) => { objects.delete(`${bucket}/${key}`); });
+        let bucketsAvailable = true;
         vi.doMock('minio', () => ({ Client: class {
-            bucketExists = async () => true;
+            bucketExists = async () => bucketsAvailable;
             getBucketPolicy = async () => '{"Statement":[]}';
             putObject = putObject;
             getObject = getObject;
@@ -329,7 +330,7 @@ describe("account pet library services", () => {
             if (!created.ok) throw new Error(created.errorCode);
             const petId = created.pet.accountPetId;
             const row = await db.accountPetAsset.findFirstOrThrow({ where: { accountId, petPackageId: petId } });
-            return { objectKey: row.objectKey,
+            return { objectKey: row.objectKey, request: sealed.request,
                 read: () => services.readAccountPetAssetForAccount({ accountId, accountEncryptionMode: 'e2ee', petId, assetId: null }),
                 remove: () => services.deleteAccountPetForAccount({ accountId, petId }) };
         };
@@ -359,6 +360,20 @@ describe("account pet library services", () => {
             expect(putObject).toHaveBeenCalledTimes(1);
             expect(await remote.read()).toMatchObject({ ok: true, bytes: new Uint8Array(objects.get(remoteKey)!) });
             expect(getObject).toHaveBeenCalledTimes(1);
+
+            bucketsAvailable = false;
+            await initFilesS3FromEnv(s3Env);
+            await loadFiles();
+            const unavailable = { ok: false, errorCode: 'custom_pet_sync_unavailable', error: 'custom_pet_sync_unavailable' };
+            await db.account.create({ data: { id: 'account-unavailable-pets', encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+            await expect(services.createAccountPetForAccount({ accountId: 'account-unavailable-pets', accountEncryptionMode: 'e2ee',
+                storagePolicy: 'optional', request: remote.request })).resolves.toEqual(unavailable);
+            await expect(remote.read()).resolves.toEqual(unavailable);
+            expect(await db.accountPetAsset.count({ where: { accountId: 'account-unavailable-pets' } })).toBe(0);
+            expect(putObject).toHaveBeenCalledTimes(1);
+            bucketsAvailable = true;
+            await initFilesS3FromEnv(s3Env);
+            await loadFiles();
             await deleteDefaultAccountPetPrivateObject(remote.objectKey);
             expect(objects.size).toBe(0);
             expect(removeObject).toHaveBeenCalledTimes(1);

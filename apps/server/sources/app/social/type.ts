@@ -1,4 +1,4 @@
-import { getPublicUrl, ImageRef } from "@/storage/blob/files";
+import { projectPublicImageRef, type ImageRef } from "@/storage/blob/files";
 import type { RelationshipStatus } from "@/storage/prisma";
 import * as privacyKit from "privacy-kit";
 import { projectAccountNameToLegacyFieldsV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
@@ -107,19 +107,7 @@ export function buildUserProfile(
     identities: readonly SocialIdentity[],
     presentation: IdentityPresentationMap,
 ): UserProfile {
-    const avatarJson = account.avatar;
-
-    let avatar: UserProfile['avatar'] = null;
-    if (avatarJson) {
-        const avatarData = avatarJson;
-        avatar = {
-            path: avatarData.path,
-            url: getPublicUrl(avatarData.path),
-            width: avatarData.width,
-            height: avatarData.height,
-            thumbhash: avatarData.thumbhash
-        };
-    }
+    const avatar = projectPublicImageRef(account.avatar);
 
     const social = resolveSocialProfileFromIdentities(identities, presentation);
     const badges = resolveBadgesFromIdentities(identities, presentation);

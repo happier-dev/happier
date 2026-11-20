@@ -280,6 +280,18 @@ export function discussionAttachmentContracts(): void {
             headers: { 'content-type': 'application/vnd.happier.discussion-upload-v1' },
             payload: Buffer.concat([Buffer.from(`${JSON.stringify(envelope)}\n`), payloadBytes]) });
         try {
+            await privateFiles.initFilesS3FromEnv({ ...process.env, S3_HOST: undefined, S3_PRIVATE_BUCKET: 'private' });
+            await privateFiles.loadFiles();
+            try {
+                const unavailable = await upload();
+                expect(unavailable.statusCode, unavailable.body).toBe(409);
+                expect(unavailable.json()).toEqual({ error: 'discussion_content_unavailable' });
+                expect(await db.uploadedFile.count({ where: { accountId: owner.id } })).toBe(0);
+                expect(await db.discussion.count({ where: { createdByAccountId: owner.id } })).toBe(0);
+            } finally {
+                privateFiles.initFilesLocalFromEnv(process.env);
+                await privateFiles.loadFiles();
+            }
             const denied = await upload(bytes, { operation: 'post', input: {
                 ...metadata.input.firstMessage, discussionId: 'missing-discussion',
             }, attachments: metadata.attachments });

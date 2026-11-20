@@ -29,6 +29,7 @@ import { isRestrictedAuthTokenKind } from '@/app/api/utils/apiTokenRouteAdmissio
 import { captureFastifyExceptionForSentry } from '@/app/monitoring/sentry';
 import { readRequestHomeEnv } from '@/app/home/settings/requestHomeEnv';
 import { registerServerGuestCliPayloadRoutes } from '@/app/runtime/serverGuestCliPayload';
+import { readFileStorageAvailability } from '@/storage/blob/files';
 
 export function featuresRoutes(app: Fastify, params: Readonly<{
     resolveHomeSearchCapability?: () => HomeSearchCapabilities | undefined;
@@ -142,6 +143,7 @@ export function featuresRoutes(app: Fastify, params: Readonly<{
             })();
         const serverIdentityId = readCachedServerIdentityIdForHotPath(process.env);
         const homeSearch = params.resolveHomeSearchCapability?.();
+        const fileStorage = readFileStorageAvailability();
         const effectiveDescriptorVisibility = descriptorVisibility === 'authenticated'
             && !isRestrictedAuthTokenKind(request.authTokenKind)
             ? 'authenticated'
@@ -178,6 +180,7 @@ export function featuresRoutes(app: Fastify, params: Readonly<{
                 ...(homeHostFact ? { homeHostFact } : {}),
                 capabilities: {
                     ...payload.capabilities,
+                    ...(fileStorage ? { server: { ...payload.capabilities.server, fileStorage } } : {}),
                     serverIdentity: { serverIdentityId },
                     ...(homeSearch ? { homeSearch } : {}),
                 },

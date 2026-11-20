@@ -22,6 +22,7 @@ export default defineConfig({
         sequence: { setupFiles: 'list' },
         include: [
             "sources/**/*.dbcontract.spec.ts",
+            "sources/startServer.s3Availability.integration.spec.ts",
             "scripts/**/*.dbcontract.spec.ts",
             "sources/app/api/routes/session/sessionRoutes.sessionTurns.recent.integration.spec.ts",
             "sources/app/deployments/environmentSecretGrantRepository.db.contract.test.ts",

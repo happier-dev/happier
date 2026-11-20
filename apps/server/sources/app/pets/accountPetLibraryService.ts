@@ -5,6 +5,7 @@ import { isAccountPetEncryptedLibraryEntryV1, type AccountPetCreateResponseV1, t
 import { admitAccountPetEncryptedCreateRequestV1, isAccountPetEncryptedCreateRequestV1 } from '@happier-dev/protocol/pets/accountPetEncryptionV1';
 
 import type { PrivateFilesBackend } from "@/storage/privateFiles/privateFiles";
+import { PrivateStorageUnavailableError } from "@/storage/blob/files";
 
 import {
     inspectPetAtlasWithSharp,
@@ -300,8 +301,14 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
         assetPath: string;
         bytes: Uint8Array;
     }>): Promise<AccountPetCreateResponseV1> {
-        const objectKey = options.createPrivateFileKey(params.assetPath);
-        await options.privateFiles.writePrivateFile(objectKey, params.bytes);
+        let objectKey: string;
+        try {
+            objectKey = options.createPrivateFileKey(params.assetPath);
+            await options.privateFiles.writePrivateFile(objectKey, params.bytes);
+        } catch (error) {
+            if (error instanceof PrivateStorageUnavailableError) return customPetSyncUnavailableResponse();
+            throw error;
+        }
         let refusal: AccountPetCreateResponseV1;
         try {
             const persisted = await persistence.persistAccountPet({
@@ -458,7 +465,13 @@ export function createAccountPetLibraryServices(options: AccountPetLibraryServic
             if (params.assetId !== null && params.assetId !== assetRef.assetId) {
                 return null;
             }
-            const bytes = await options.privateFiles.readPrivateFile(record.asset.objectKey);
+            let bytes: Uint8Array;
+            try {
+                bytes = await options.privateFiles.readPrivateFile(record.asset.objectKey);
+            } catch (error) {
+                if (error instanceof PrivateStorageUnavailableError) return customPetSyncUnavailableResponse();
+                throw error;
+            }
             return {
                 ok: true,
                 mediaType: isAccountPetEncryptedLibraryEntryV1(record.entry) ? ACCOUNT_PET_SEALED_ASSET_MEDIA_TYPE : record.entry.spritesheetAssetRef.mediaType,

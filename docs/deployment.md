@@ -5084,6 +5084,12 @@ database locally; selecting the adapter does not turn it into an API/worker spli
 - `HANDY_MASTER_SECRET`: master key for auth tokens and server-side encryption.
 - `S3_HOST`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_PUBLIC_URL`: object storage config.
 
+If the public S3 bucket is missing, denies access, or cannot be reached, the
+Home still starts with sign-in, API and Sessions available. Check the public
+S3 startup warning or `capabilities.server.fileStorage` in `/v1/features`. An
+invalid configuration reports the setting name. Correct the reported issue
+and restart the Home.
+
 **Common**
 - `PORT`: API server port (default `3005`).
 - `METRICS_ENABLED`: set to `false` to disable metrics server.

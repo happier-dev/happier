@@ -342,6 +342,11 @@ omit `S3_PRIVATE_BUCKET`, public uploads still work and binary Artifact uploads
 return HTTP 503 with the reason `s3_private_bucket_missing`. Keep the existing
 private files volume when upgrading a Home with Pets already stored on disk.
 
+If the public S3 bucket cannot be opened at startup, the Home still serves
+sign-in, API and Sessions. Operations that need an unavailable bucket return
+an error. Check the startup warning and `/v1/features`, fix the reported
+configuration or S3 access, and restart the container.
+
 ### Full flavor (Postgres)
 
 ```bash

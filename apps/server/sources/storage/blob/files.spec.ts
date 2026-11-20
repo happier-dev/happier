@@ -58,8 +58,13 @@ describe('storage/files (S3 env parsing)', () => {
       S3_ACCESS_KEY: 'access', S3_SECRET_KEY: 'secret' });
     await expect(files.loadFiles()).resolves.toBeUndefined();
     await expect(files.writePrivateFile('artifacts/a/b', Uint8Array.of(1))).rejects.toMatchObject({ code: 'private_storage_unavailable' });
-    await expect(files.initFilesS3FromEnv({ S3_HOST: 'example.com', S3_BUCKET: 'public', S3_PRIVATE_BUCKET: 'public',
-      S3_PUBLIC_URL: 'https://cdn.example.com', S3_ACCESS_KEY: 'access', S3_SECRET_KEY: 'secret' })).rejects.toThrow(/private/i);
+    await files.initFilesS3FromEnv({ S3_HOST: 'example.com', S3_BUCKET: 'public', S3_PRIVATE_BUCKET: 'public',
+      S3_PUBLIC_URL: 'https://cdn.example.com', S3_ACCESS_KEY: 'access', S3_SECRET_KEY: 'secret' });
+    await expect(files.loadFiles()).resolves.toBeUndefined();
+    await expect(files.writePublicFile('logo', Uint8Array.of(1))).rejects.toMatchObject({
+      code: 'public_storage_unavailable', reason: 's3_configuration_invalid', setting: 'S3_PRIVATE_BUCKET',
+    });
+    await expect(files.writePrivateFile('artifacts/a/b', Uint8Array.of(1))).rejects.toMatchObject({ code: 'private_storage_unavailable' });
   });
   it('refuses an anonymous-readable private S3 bucket without changing its policy', async () => {
     vi.resetModules();
@@ -165,45 +170,58 @@ describe('storage/files (S3 env parsing)', () => {
     expect(clientCtor).toHaveBeenCalledWith(expect.objectContaining({ region: 'us-east-1' }));
   });
 
-  it('throws when S3_PORT is set but not a valid integer port', async () => {
+  it.each(['S3_HOST', 'S3_PORT', 'S3_BUCKET', 'S3_PUBLIC_URL', 'S3_ACCESS_KEY', 'S3_SECRET_KEY'])(
+    'reports invalid public configuration for %s without stopping initialization', async setting => {
     vi.resetModules();
-    const { initFilesS3FromEnv } = await import('./files');
+    const files = await import('./files');
 
-    await expect(
-      initFilesS3FromEnv({
+    await files.initFilesS3FromEnv({
         S3_HOST: 'example.com',
-        S3_PORT: 'nope',
         S3_BUCKET: 'bucket',
         S3_PUBLIC_URL: 'https://cdn.example.com',
         S3_ACCESS_KEY: 'access',
         S3_SECRET_KEY: 'secret',
-      } as unknown as NodeJS.ProcessEnv),
-    ).rejects.toThrow(/S3_PORT/i);
+        [setting]: setting === 'S3_PORT' ? 'nope' : '',
+    });
+    await expect(files.loadFiles()).resolves.toBeUndefined();
+    await expect(files.writePublicFile('logo', Uint8Array.of(1))).rejects.toMatchObject({
+      code: 'public_storage_unavailable', reason: 's3_configuration_invalid', setting,
+    });
   });
 
-  it('throws when the configured bucket does not exist', async () => {
+  it('refuses public IO while keeping the separate private bucket available when the public bucket is missing', async () => {
     vi.resetModules();
-    const bucketExists = vi.fn().mockResolvedValue(false);
+    const putObject = vi.fn().mockResolvedValue(undefined);
 
     vi.doMock('minio', () => {
       return {
         Client: vi.fn().mockImplementation(() => ({
-          bucketExists,
-          putObject: vi.fn(),
+          bucketExists: async (bucket: string) => bucket === 'private',
+          getBucketPolicy: async () => '{"Statement":[]}',
+          putObject,
         })),
       };
     });
 
-    const { initFilesS3FromEnv, loadFiles } = await import('./files');
+    const files = await import('./files');
 
-    await initFilesS3FromEnv({
+    await files.initFilesS3FromEnv({
       S3_HOST: 'example.com',
       S3_BUCKET: 'bucket',
+      S3_PRIVATE_BUCKET: 'private',
       S3_PUBLIC_URL: 'https://cdn.example.com',
       S3_ACCESS_KEY: 'access',
       S3_SECRET_KEY: 'secret',
-    } as unknown as NodeJS.ProcessEnv);
+    });
 
-    await expect(loadFiles()).rejects.toThrow(/bucket/i);
+    await expect(files.loadFiles()).resolves.toBeUndefined();
+    expect(files.getPublicUrl('logo')).toBe('https://cdn.example.com/logo');
+    await expect(files.writePublicFile('logo', Uint8Array.of(1))).rejects.toMatchObject({
+      code: 'public_storage_unavailable', reason: 's3_public_bucket_missing',
+    });
+    await expect(files.deletePublicFile('logo')).rejects.toMatchObject({ code: 'public_storage_unavailable' });
+    expect(putObject).not.toHaveBeenCalled();
+    await expect(files.writePrivateFile('artifacts/a/b', Uint8Array.of(1))).resolves.toBeUndefined();
+    expect(putObject).toHaveBeenCalledWith('private', 'artifacts/a/b', Buffer.from([1]));
   });
 });

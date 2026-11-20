@@ -10,6 +10,7 @@ import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protoco
 import { DISCUSSION_UPLOAD_CONTENT_TYPE_V1, decodeDiscussionUploadMetadataV1, readBinaryUploadFrameV1 } from '@happier-dev/transfers';
 import { TransferSessionStore, createTransferSessionLifecycle, readFiniteTransferConfig } from '@happier-dev/transfers/node';
 import { inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
+import { assertPrivateStorageAvailable, PrivateStorageUnavailableError } from '@/storage/blob/files';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { resolveDiscussionContextInTx } from '@/app/discussions/access';
 import { createDiscussion, postDiscussionMessage, createDiscussionInTx, postPreparedDiscussionMessageInTx,
@@ -209,7 +210,10 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                             if (reply.sent || authority !== undefined) throw new DiscussionUploadRefusal('discussion_post_denied');
                         }
                         ownerAccountId = await admitUpload(request.userId, authentication, value);
-                        await cleanupRejectedDiscussionAttachmentUploads(ownerAccountId);
+                        if (value.attachments.length > 0) {
+                            assertPrivateStorageAvailable();
+                            await cleanupRejectedDiscussionAttachmentUploads(ownerAccountId);
+                        }
                         return value.attachments;
                     },
                     onSegment: async (index, chunks) => {
@@ -273,11 +277,12 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                         : { statusCode: statusForFailure(result.error), body: { error: result.error } };
                 }
             } catch (error) {
-                if (!(error instanceof DiscussionUploadRefusal))
-                    logUnexpectedRequestError(error, { module: 'fastify-error', httpRequestId: request.id });
+                const refusal = error instanceof DiscussionUploadRefusal ? error.code
+                    : error instanceof PrivateStorageUnavailableError ? 'discussion_content_unavailable' : undefined;
+                if (!refusal) logUnexpectedRequestError(error, { module: 'fastify-error', httpRequestId: request.id });
                 await cancelStage();
                 if (reply.sent) return;
-                const code = error instanceof DiscussionUploadRefusal ? error.code : 'discussion_invalid_content';
+                const code = refusal ?? 'discussion_invalid_content';
                 response = { statusCode: statusForFailure(code), body: { error: code } };
             } finally {
                 request.raw.off('aborted', onAbort);

@@ -1,10 +1,12 @@
 import type { ClientOptions } from 'minio';
+import type { FileStorageCapability, PublicFileStorageUnavailable } from '@happier-dev/protocol/features/payload/capabilities/serverCapabilities';
 import { PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1, type PrivateBinaryStorageUnavailableResponseV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
 
 import { deleteLightPublicFile, ensureLightFilesDir, getLightPublicUrl, readLightPublicFile, resolveLightPublicFilesDir, writeLightPublicFile } from '@/flavors/light/files';
 import { createLocalPrivateFilesBackendFromEnv, resolveLocalPrivateFilesDir } from '@/storage/privateFiles/privateFilesLocal';
 import { ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX, ACCOUNT_PET_S3_PRIVATE_FILE_PREFIX, normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
 import type { PrivateFilesBackend } from '@/storage/privateFiles/privateFiles';
+import { log } from '@/utils/logging/log';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute, relative, sep } from 'node:path';
 
@@ -17,15 +19,39 @@ export type ImageRef = {
 
 export type PublicFilesBackend = {
     init(): Promise<void>;
-    getPublicUrl(path: string): string;
     writePublicFile(path: string, data: Uint8Array): Promise<void>;
     readPublicFile?(path: string): Promise<Uint8Array>;
     deletePublicFile(path: string): Promise<void>;
 }
 
-let backend: PublicFilesBackend | null = null;
+let backend: PublicFilesBackend | PublicStorageUnavailableError | null = null;
+let publicUrlForPath: ((path: string) => string) | undefined;
 let initializePrivateBackend: (() => Promise<void>) | undefined;
 let diskAccountPetFiles: PrivateFilesBackend | undefined;
+
+class PublicStorageUnavailableError extends Error {
+    readonly code = 'public_storage_unavailable';
+    readonly statusCode = 503;
+    readonly reason: PublicFileStorageUnavailable['reason'];
+    readonly setting?: InvalidS3Setting;
+
+    constructor(readonly availability: PublicFileStorageUnavailable) {
+        super('Public file storage is unavailable');
+        this.reason = availability.reason;
+        if (availability.reason === 's3_configuration_invalid') this.setting = availability.setting;
+    }
+}
+
+type InvalidS3Setting = Extract<PublicFileStorageUnavailable, { reason: 's3_configuration_invalid' }>['setting'];
+
+function invalidS3Setting(setting: InvalidS3Setting): PublicStorageUnavailableError {
+    return new PublicStorageUnavailableError({ status: 'unavailable', reason: 's3_configuration_invalid', setting });
+}
+
+function markPublicStorageUnavailable(error: PublicStorageUnavailableError): void {
+    backend = error;
+    log({ module: 'files', level: 'warn', ...error.availability }, 'Public S3 storage unavailable');
+}
 
 export class PrivateStorageUnavailableError extends Error {
     readonly code = PRIVATE_BINARY_STORAGE_UNAVAILABLE_CODE_V1;
@@ -59,52 +85,67 @@ function hasAnonymousGrant(policy: string): boolean {
 }
 
 export async function initFilesS3FromEnv(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-    const s3Host = requiredEnv(env, 'S3_HOST');
-    const s3PortRaw = env.S3_PORT?.trim();
-    let s3Port: number | undefined;
-    if (s3PortRaw) {
-        const parsed = parseInt(s3PortRaw, 10);
-        if (!Number.isInteger(parsed) || parsed <= 0 || parsed > 65535) {
-            throw new Error(`Invalid S3_PORT: ${s3PortRaw}`);
-        }
-        s3Port = parsed;
-    }
-    const s3UseSSL = env.S3_USE_SSL ? env.S3_USE_SSL === 'true' : true;
-
-    const s3bucket = requiredEnv(env, 'S3_BUCKET');
+    const s3bucket = env.S3_BUCKET?.trim();
     const privateBucket = env.S3_PRIVATE_BUCKET?.trim();
-    if (privateBucket === s3bucket) throw new Error('S3_PRIVATE_BUCKET must differ from the public bucket');
-    const s3public = requiredEnv(env, 'S3_PUBLIC_URL');
-    const s3Region = env.S3_REGION?.trim() ? env.S3_REGION.trim() : 'us-east-1';
+    const s3public = env.S3_PUBLIC_URL?.trim();
+    publicUrlForPath = s3public ? (path) => `${s3public}/${path}` : undefined;
+    // Disk-owned Pet locators remain on the original volume when the Home selects S3.
+    diskAccountPetFiles = createLocalPrivateFilesBackendFromEnv(env);
+    privateBackend = new PrivateStorageUnavailableError(privateBucket ? 'backend_unavailable' : 's3_private_bucket_missing');
+    initializePrivateBackend = undefined;
 
     const Minio = await import('minio');
-    const s3client = new Minio.Client({
-        endPoint: s3Host,
-        port: s3Port,
-        useSSL: s3UseSSL,
-        region: s3Region,
-        ...resolveS3Credentials(env, Minio),
-    });
+    let s3client: InstanceType<typeof Minio.Client>;
+    try {
+        if (privateBucket && privateBucket === s3bucket) throw invalidS3Setting('S3_PRIVATE_BUCKET');
+        const endPoint = requiredEnv(env, 'S3_HOST');
+        const portRaw = env.S3_PORT?.trim();
+        const port = portRaw ? Number(portRaw) : undefined;
+        if (port !== undefined && (!Number.isInteger(port) || port < 1 || port > 65535)) throw invalidS3Setting('S3_PORT');
+        const credentials = resolveS3Credentials(env, Minio);
+        try {
+            s3client = new Minio.Client({
+                endPoint,
+                port,
+                useSSL: env.S3_USE_SSL ? env.S3_USE_SSL === 'true' : true,
+                region: env.S3_REGION?.trim() || 'us-east-1',
+                ...credentials,
+            });
+        } catch (error) {
+            if (error instanceof Minio.InvalidEndpointError) throw invalidS3Setting('S3_HOST');
+            throw error;
+        }
+    } catch (error) {
+        if (!(error instanceof PublicStorageUnavailableError)) throw error;
+        markPublicStorageUnavailable(error);
+        return;
+    }
 
-    backend = {
+    if (!s3bucket || !s3public) {
+        markPublicStorageUnavailable(invalidS3Setting(s3bucket ? 'S3_PUBLIC_URL' : 'S3_BUCKET'));
+    } else backend = {
         async init() {
-            const exists = await s3client.bucketExists(s3bucket);
-            if (!exists) {
-                throw new Error(`S3 bucket does not exist: ${s3bucket}`);
+            try {
+                if (await s3client.bucketExists(s3bucket)) return;
+            } catch (error: unknown) {
+                const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+                if (error instanceof Minio.InvalidBucketNameError) {
+                    markPublicStorageUnavailable(invalidS3Setting('S3_BUCKET'));
+                    return;
+                }
+                const permission = code === 'AccessDenied' || code === 'InvalidAccessKeyId' || code === 'SignatureDoesNotMatch';
+                markPublicStorageUnavailable(new PublicStorageUnavailableError({
+                    status: 'unavailable', reason: permission ? 's3_access_denied' : 'backend_unavailable',
+                }));
+                return;
             }
-        },
-        getPublicUrl(path: string) {
-            return `${s3public}/${path}`;
+            markPublicStorageUnavailable(new PublicStorageUnavailableError({ status: 'unavailable', reason: 's3_public_bucket_missing' }));
         },
         async writePublicFile(path: string, data: Uint8Array) {
             await s3client.putObject(s3bucket, path, Buffer.from(data));
         },
         async deletePublicFile(path: string) { await s3client.removeObject(s3bucket, path); },
     };
-    // Disk-owned Pet locators remain on the original volume when the Home selects S3.
-    diskAccountPetFiles = createLocalPrivateFilesBackendFromEnv(env);
-    privateBackend = new PrivateStorageUnavailableError('s3_private_bucket_missing');
-    initializePrivateBackend = undefined;
     if (privateBucket) {
         configurePrivateBackend({
             accountPetKeyPrefix: ACCOUNT_PET_S3_PRIVATE_FILE_PREFIX,
@@ -157,6 +198,7 @@ function resolveS3Credentials(
 export function initFilesLocalFromEnv(env: NodeJS.ProcessEnv = process.env): void {
     const localPrivate = createLocalPrivateFilesBackendFromEnv(env);
     diskAccountPetFiles = undefined;
+    publicUrlForPath = (path) => getLightPublicUrl(env, path);
     configurePrivateBackend({ ...localPrivate, accountPetKeyPrefix: ACCOUNT_PET_DISK_PRIVATE_FILE_PREFIX }, async () => {
         try {
             await localPrivate.init();
@@ -173,9 +215,6 @@ export function initFilesLocalFromEnv(env: NodeJS.ProcessEnv = process.env): voi
         async init() {
             await ensureLightFilesDir(env);
         },
-        getPublicUrl(path: string) {
-            return getLightPublicUrl(env, path);
-        },
         async writePublicFile(path: string, data: Uint8Array) {
             await writeLightPublicFile(env, path, data);
         },
@@ -187,40 +226,56 @@ export function initFilesLocalFromEnv(env: NodeJS.ProcessEnv = process.env): voi
 }
 
 export function hasPublicFileRead(): boolean {
-    return Boolean(backend && backend.readPublicFile);
+    return Boolean(backend && !(backend instanceof PublicStorageUnavailableError) && backend.readPublicFile);
 }
 
 export async function loadFiles(): Promise<void> {
     if (!backend) {
         throw new Error('Files backend not initialized');
     }
-    await backend.init();
+    if (!(backend instanceof PublicStorageUnavailableError)) await backend.init();
     await initializePrivateBackend?.();
 }
 
-export function getPublicUrl(path: string): string {
-    if (!backend) {
-        throw new Error('Files backend not initialized');
-    }
-    return backend.getPublicUrl(path);
+export function readFileStorageAvailability(): FileStorageCapability | undefined {
+    if (!backend) return undefined;
+    return {
+        public: backend instanceof PublicStorageUnavailableError ? backend.availability : { status: 'available' },
+        private: privateBackend instanceof PrivateStorageUnavailableError
+            ? { status: 'unavailable', reason: privateBackend.reason } : { status: 'available' },
+    };
+}
+
+export function getPublicUrl(path: string): string | null {
+    return publicUrlForPath?.(path) ?? null;
+}
+
+export function projectPublicImageRef(image: ImageRef | null | undefined): (ImageRef & { url: string }) | null {
+    if (!image) return null;
+    const { path, width, height, thumbhash } = image;
+    const url = getPublicUrl(path);
+    return url === null ? null : { path, width, height, thumbhash, url };
+}
+
+function requirePublicFilesBackend(): PublicFilesBackend {
+    if (!backend) throw new Error('Files backend not initialized');
+    if (backend instanceof PublicStorageUnavailableError) throw backend;
+    return backend;
 }
 
 export async function writePublicFile(path: string, data: Uint8Array): Promise<void> {
-    if (!backend) {
-        throw new Error('Files backend not initialized');
-    }
-    await backend.writePublicFile(path, data);
+    await requirePublicFilesBackend().writePublicFile(path, data);
 }
 
 export async function readPublicFile(path: string): Promise<Uint8Array> {
-    if (!backend?.readPublicFile) {
+    const files = requirePublicFilesBackend();
+    if (!files.readPublicFile) {
         throw new Error('Public file read is not supported');
     }
-    return await backend.readPublicFile(path);
+    return await files.readPublicFile(path);
 }
 export async function deletePublicFile(path: string): Promise<void> {
-    if (!backend) throw new Error('Files backend not initialized');
-    await backend.deletePublicFile(path);
+    await requirePublicFilesBackend().deletePublicFile(path);
 }
 
 function requirePrivateFilesBackend(): ConfiguredPrivateFiles {
@@ -273,10 +328,10 @@ export const accountPetPrivateFiles = {
     deletePrivateFile: (key: string) => deleteFromPrivateBackend(accountPetBackendForExistingLocator(key), key),
 } satisfies PrivateFilesBackend;
 
-function requiredEnv(env: NodeJS.ProcessEnv, key: string): string {
+function requiredEnv(env: NodeJS.ProcessEnv, key: InvalidS3Setting): string {
     const v = env[key]?.trim();
     if (!v) {
-        throw new Error(`Missing required env var: ${key}`);
+        throw invalidS3Setting(key);
     }
     return v;
 }

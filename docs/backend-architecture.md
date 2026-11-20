@@ -634,11 +634,21 @@ In 0.3 development source, Home approval creation, expiry shortening and decisio
 metadata in `UploadedFile`. In S3 mode, public objects use `S3_BUCKET` and
 `S3_PUBLIC_URL`.
 
+The files lifecycle probes public and private S3 separately at startup. If the
+public probe fails or its configuration is invalid, the lifecycle retains a
+typed unavailable state and writes one startup warning with its reason. Auth,
+API and Session readiness proceed. `GET /v1/features` exposes the two states in
+`capabilities.server.fileStorage`. An unavailable public bucket rejects public
+file operations and a separately healthy private bucket remains usable. An
+unavailable private bucket rejects private content access and uploads whose
+destination is that backend. Fix the storage fault and restart the Home to
+probe again.
+
 In 0.3 development, private Artifact bytes and new Account Pet assets use the
 selected private backend. For S3, provision `S3_PRIVATE_BUCKET` separately from
 `S3_BUCKET` and leave anonymous access disabled. A binary Artifact upload on a
 Home with no private bucket returns HTTP 503 with `private_storage_unavailable`
-and reason `s3_private_bucket_missing`. Public uploads remain available.
+and reason `s3_private_bucket_missing`.
 Pets imported while the Home uses local storage keep disk-owned locators,
 including after a switch to S3. Keep the original private volume available
 for reads and erasure.

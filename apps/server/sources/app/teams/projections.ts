@@ -7,7 +7,7 @@ import { normalizeTeamAuthenticationPolicyV1, TeamAuthenticationPolicyV1Schema }
 
 import type { HomeGovernanceAuthority } from "@/app/home/governance/homeCapabilities";
 import { projectTeamDirectoryMembershipFact, type DirectoryMembershipProjectionRow } from "./directory/directorySourceProjection";
-import { getPublicUrl } from "@/storage/blob/files";
+import { projectPublicImageRef } from "@/storage/blob/files";
 import type {
     SessionHistoryAccess,
     TeamAdmissionMode,
@@ -101,8 +101,7 @@ export function readStoredTeamLogo(value: unknown, teamId?: string): StoredTeamL
  * it through here, so no second parser can disagree about what a logo is.
  */
 export function projectTeamLogoRefV1(team: Pick<TeamRecord, "id" | "logo">): TeamSummaryV1["logo"] {
-    const logo = readStoredTeamLogo(team.logo, team.id);
-    return logo === null ? null : { ...logo, url: getPublicUrl(logo.path) };
+    return projectPublicImageRef(readStoredTeamLogo(team.logo, team.id));
 }
 
 /** The closed policy projection; the stored columns are already the contract. */

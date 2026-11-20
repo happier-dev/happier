@@ -3,7 +3,7 @@ import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/se
 import { projectAccountNameToLegacyFieldsV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { type SessionViewerProjectionV1 } from '@happier-dev/protocol/sessions/personal/viewer';
 import { AccountProfile } from "@/types";
-import { getPublicUrl } from "@/storage/blob/files";
+import { projectPublicImageRef } from "@/storage/blob/files";
 import { type UpdatePayload, type EphemeralPayload, type EphemeralEvent } from "./eventPayloadTypes";
 import { MachineKindFromLegacyProjectionSchema, type MachineKind } from '@happier-dev/protocol/machines/machineKind';
 import { SESSION_MESSAGE_USER_ATTENTION_IMPACT, type SessionMessageAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
@@ -481,7 +481,7 @@ export function buildUpdateAccountUpdate(userId: string, profile: Partial<Accoun
             ...profile,
             ...(encryptionCurrentness !== undefined ? { encryptionCurrentness } : {}),
             ...(profile.name !== undefined ? projectAccountNameToLegacyFieldsV1(profile.name) : {}),
-            avatar: profile.avatar ? { ...profile.avatar, url: getPublicUrl(profile.avatar.path) } : undefined
+            avatar: projectPublicImageRef(profile.avatar) ?? undefined
         },
         createdAt: Date.now()
     };

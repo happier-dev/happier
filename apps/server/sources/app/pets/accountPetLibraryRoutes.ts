@@ -74,6 +74,7 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
                 200: AccountPetCreateResponseV1Schema,
                 400: AccountPetCreateResponseV1Schema,
                 500: AccountPetCreateResponseV1Schema,
+                503: AccountPetCreateResponseV1Schema,
             },
         },
     }, async (request, reply) => {
@@ -86,6 +87,9 @@ export function registerAccountPetLibraryRoutes(app: Fastify): void {
         }
         if (!result.ok && result.errorCode === "quota_exceeded") {
             return reply.code(400).send(result);
+        }
+        if (!result.ok && result.errorCode === "custom_pet_sync_unavailable") {
+            return reply.code(503).send(result);
         }
         if (!result.ok && (result.errorCode === "custom_pet_sync_requires_plaintext" || result.errorCode === "account_encryption_mode_mismatch")) {
             return reply.code(400).send(result);

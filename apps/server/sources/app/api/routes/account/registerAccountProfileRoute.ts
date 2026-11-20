@@ -1,4 +1,4 @@
-import { getPublicUrl } from "@/storage/blob/files";
+import { projectPublicImageRef } from "@/storage/blob/files";
 import { fetchLinkedProvidersForAccount } from "@/app/auth/providers/linkedProviders";
 import { type Fastify } from "../../types";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
@@ -96,7 +96,7 @@ export function registerAccountProfileRoute(app: Fastify): void {
             name: user.name,
             ...projectAccountNameToLegacyFieldsV1(user.name),
             username: user.username,
-            avatar: user.avatar ? { ...user.avatar, url: getPublicUrl(user.avatar.path) } : null,
+            avatar: projectPublicImageRef(user.avatar),
             linkedProviders,
             linkedIdentityManagementV1,
             connectedServices: connectedServiceProjection.connectedServices,

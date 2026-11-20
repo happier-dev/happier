@@ -124,6 +124,7 @@ export type AccountPetEncryptedCreateRequestV1 = z.infer<typeof AccountPetEncryp
 
 export const AccountPetCreateResponseV1Schema = lazyZodSchema(() => z.union([
   z.looseObject({ ok: z.literal(true), pet: AccountPetStoredLibraryEntryV1Schema, reused: z.optional(z.literal(true)) }),
+  AccountPetSyncUnavailableResponseV1Schema,
   z.looseObject({
       ok: z.literal(false),
       errorCode: z.enum([
