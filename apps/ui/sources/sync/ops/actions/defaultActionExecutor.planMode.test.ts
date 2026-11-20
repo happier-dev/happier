@@ -2314,11 +2314,11 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(dismissal?.params).toMatchObject({ id: 'q2', approved: false, answeringClientCategory: 'web' });
     expect(dismissal?.params).not.toHaveProperty('answers');
   });
-  it.each(['approved', 'denied'] as const)('sends a delegated Voice %s decision through the native permission RPC by default', async decision => {
+  it.each(['approved', 'denied'] as const)('sends a confirmed Voice %s decision through the native permission RPC', async decision => {
     installSession('voice-permission', { machineId: 'machine-a', flavor: 'claude' });
     storage.getState().updateSessionPermissionMode('voice-permission', 'read-only');
     daemonAnswer = () => ({ ok: true });
-    const result = await createDefaultActionExecutor().execute('session.permission.respond', {
+    const result = await createDefaultActionExecutor().executeConfirmed('session.permission.respond', {
       sessionId: 'voice-permission', requestId: 'permission-1', turnId: 'turn-1', decision,
       ...(decision === 'approved' ? { mode: 'acceptEdits' } : {}),
     }, { surface: 'voice', serverId });
@@ -2349,15 +2349,29 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(result).toMatchObject(actor === 'cli' ? { ok: true } : { ok: false, errorCode: 'present_user_required' });
     expect(outgoing).toHaveLength(actor === 'cli' ? 1 : 0);
   });
-  const revocableVoiceDecisions = [
+  it('requires confirmation before admitting a Voice permission approval', async () => {
+    await installRevocableVoiceSettings();
+    installSession('voice-approval-review', { machineId: 'machine-a', flavor: 'claude' });
+    const prepared = await createDefaultActionExecutor().prepare('session.permission.respond', {
+      sessionId: 'voice-approval-review', requestId: 'permission-1', turnId: 'turn-1', decision: 'approved',
+    }, { surface: 'voice', serverId });
+    expect(prepared).toMatchObject({ kind: 'settled', result: {
+      ok: true, result: { kind: 'approval_request_created' },
+    } });
+    expect(outgoing).toEqual([]);
+  });
+  const voiceDecisions = [
     { actionId: 'session.permission.respond', response: 'approve',
+      method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
       input: { requestId: 'permission-1', turnId: 'turn-1', decision: 'approved' } },
     { actionId: 'session.permission.respond', response: 'deny',
+      method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
       input: { requestId: 'permission-1', turnId: 'turn-1', decision: 'denied' } },
     { actionId: 'session.user_action.answer', response: 'answer',
+      method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
       input: { requestId: 'question-1', answers: [{ question: 'Which revision?', values: ['42'] }] } },
   ] as const;
-  it.each(revocableVoiceDecisions)('revokes a prepared Voice $actionId $response before native dispatch', async ({ actionId, input }) => {
+  it.each(voiceDecisions.filter(({ response }) => response !== 'approve'))('finishes a prepared Voice $actionId $response after delegation is turned off', async ({ actionId, method, input }) => {
     const waiver = actionId === 'session.user_action.answer' ? { [actionId]: ['voice'] } : undefined;
     await installRevocableVoiceSettings(waiver);
     installSession('voice-revocation', { machineId: 'machine-a', flavor: 'claude' });
@@ -2372,10 +2386,11 @@ describe('default Action executor mode and catalog contracts', () => {
     expect(storage.getState().settings.voice.canApproveRequests).toBe(false);
     const result = await prepared.invocation.run();
     expect(storage.getState().settings.voice.canApproveRequests).toBe(false);
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(outgoing).toEqual([]);
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true } });
+    expect(outgoing).toEqual([expect.objectContaining({ method: `voice-revocation:${method}`,
+      params: expect.objectContaining({ id: input.requestId }) })]);
   });
-  it.each(revocableVoiceDecisions)('revokes Voice $actionId $response during its held Session target read', async ({ actionId, input }) => {
+  it.each(voiceDecisions)('finishes Voice $actionId $response when delegation is turned off during its held Session target read', async ({ actionId, method, input }) => {
     const waiver = actionId === 'session.user_action.answer' ? { [actionId]: ['voice'] } : undefined;
     await installRevocableVoiceSettings(waiver);
     const sessionId = 'voice-revocation';
@@ -2383,7 +2398,7 @@ describe('default Action executor mode and catalog contracts', () => {
     storage.setState({ sessions: {} });
     const body = holdSessionResponseBody(sessionId);
     daemonAnswer = () => ({ ok: true });
-    const pending = createDefaultActionExecutor().execute(actionId, { sessionId, ...input }, { surface: 'voice', serverId });
+    const pending = createDefaultActionExecutor().executeConfirmed(actionId, { sessionId, ...input }, { surface: 'voice', serverId });
     try {
       await Promise.race([body.reading, pending.then(result => {
         throw new Error('Voice decision settled before its held Session target read: ' + JSON.stringify(result));
@@ -2394,8 +2409,9 @@ describe('default Action executor mode and catalog contracts', () => {
       body.release();
       const result = await pending;
       expect(storage.getState().settings.voice.canApproveRequests).toBe(false);
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-      expect(outgoing).toEqual([]);
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true } });
+      expect(outgoing).toEqual([expect.objectContaining({ method: `${sessionId}:${method}`,
+        params: expect.objectContaining({ id: input.requestId }) })]);
     } finally {
       body.release();
       await pending;
@@ -2408,7 +2424,7 @@ describe('default Action executor mode and catalog contracts', () => {
     const issued = createDeferred<void>();
     const reply = createDeferred<unknown>();
     daemonAnswer = () => { issued.resolve(); return reply.promise; };
-    const pending = createDefaultActionExecutor().execute('session.permission.respond', {
+    const pending = createDefaultActionExecutor().executeConfirmed('session.permission.respond', {
       sessionId: 'voice-issued', requestId: 'permission-1', turnId: 'turn-1', decision,
     }, { surface: 'voice', serverId });
     try {
