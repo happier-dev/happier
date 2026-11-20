@@ -99,6 +99,7 @@ function renderPanel(
     overrides: Partial<AuthEntryOptions> = {},
     accountServiceEntry?: AccountServiceEntryOptions,
     canScanQr = true,
+    restoreWays = false,
 ) {
     const options: AuthEntryOptions = { ...baseOptions, ...overrides };
     const callbacks = {
@@ -118,6 +119,7 @@ function renderPanel(
                 authEntryOptions={options}
                 accountServiceEntry={accountServiceEntry}
                 canScanQr={canScanQr}
+                restoreWays={restoreWays}
                 {...callbacks}
             />,
         ),
@@ -441,10 +443,9 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-primary-start-icon')).toBeTruthy();
         expect(screen.findByTestId('welcome-scan-existing-home-title')).toBeTruthy();
         expect(screen.findByTestId('welcome-scan-existing-home-icon')).toBeTruthy();
-        expect(screen.findByTestId('welcome-use-different-home-title')).toBeTruthy();
+        expect(screen.findByTestId('welcome-use-different-home-title')).toBeNull();
         expect(screen.findByTestId('welcome-primary-start-title')?.props.children).toBe(t('welcome.welcomePrimaryButton'));
         expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe(t('welcome.welcomeSecondaryButton'));
-        expect(screen.findByTestId('welcome-use-different-home-title')?.props.children).toBe('Use a different Home');
         // The card chrome is the animated frame inside the pressable hit area.
         const primaryStyle = flattenStyle(screen.findByTestId('welcome-primary-start-text')?.parent?.props.style);
         const textBlockStyle = flattenStyle(screen.findByTestId('welcome-primary-start-text')?.props.style);
@@ -457,7 +458,6 @@ describe('WelcomeDecisionPanel', () => {
 
         await screen.pressByTestIdAsync('welcome-primary-start');
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
-        await screen.pressByTestIdAsync('welcome-use-different-home');
 
         expect(callbacks.onContinueWithHomeAuthentication).toHaveBeenCalledWith(expect.objectContaining({
             action: { id: 'provision', mode: 'keyed' },
@@ -466,7 +466,6 @@ describe('WelcomeDecisionPanel', () => {
             method: expect.objectContaining({ id: 'key_challenge' }),
         }));
         expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
-        expect(callbacks.onChangeRelay).toHaveBeenCalledTimes(1);
     });
 
     it('uses provider signup as the New here action', async () => {
@@ -507,20 +506,24 @@ describe('WelcomeDecisionPanel', () => {
         }));
     });
 
-    it('keeps a visible secondary keyless provider login when anonymous signup remains primary', async () => {
-        const { callbacks, screenPromise } = renderPanel({
+    it('offers the Home provider and Home switch on the Login step after one-tap Welcome', async () => {
+        const options: Partial<AuthEntryOptions> = {
             authenticationActions: [...baseOptions.authenticationActions!, { method: { id: 'github', enabledActions: [{ id: 'login', mode: 'keyless' }] }, action: { id: 'login', mode: 'keyless' }, execution: { kind: 'oauth', providerId: 'github', mode: 'keyless' } }],
-        });
-        const screen = await screenPromise;
+        };
+        const welcome = await renderPanel(options).screenPromise;
+        expect(welcome.findByTestId('welcome-primary-start')).toBeTruthy();
+        expect(welcome.findByTestId('welcome-login-provider')).toBeNull();
+        await welcome.unmount();
 
-        expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
-        expect(screen.findByTestId('welcome-login-provider')).toBeTruthy();
-
-        await screen.pressByTestIdAsync('welcome-login-provider');
+        const { callbacks, screenPromise } = renderPanel(options, undefined, true, true);
+        const login = await screenPromise;
+        await login.pressByTestIdAsync('welcome-provider-primary');
 
         expect(callbacks.onContinueWithHomeAuthentication).toHaveBeenCalledWith(expect.objectContaining({
             execution: { kind: 'oauth', providerId: 'github', mode: 'keyless' },
         }));
+        await login.pressByTestIdAsync('welcome-use-different-home');
+        expect(callbacks.onChangeRelay).toHaveBeenCalledOnce();
     });
 
     it('makes mTLS login the primary action without a New here entry', async () => {
@@ -633,7 +636,7 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe(t('welcome.welcomeSecondaryButton'));
         await screen.pressByTestIdAsync('welcome-scan-existing-home');
         expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
-        expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
     });
 
     it('uses semantic action identity for accessibility descriptions and pending state', async () => {
@@ -791,7 +794,7 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findByTestId('welcome-account-service-recovery')).toBeTruthy();
         expect(screen.findAllByTestId('welcome-account-service-choose')).toHaveLength(0);
         expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
-        expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
 
         await screen.pressByTestIdAsync('welcome-account-service-retry');
 

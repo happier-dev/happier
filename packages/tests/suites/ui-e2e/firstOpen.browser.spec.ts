@@ -308,7 +308,6 @@ test('firstOpen.F2.approve | firstOpen.03.F2 confirms the new device before appr
             stage = 'checking the approver write counts';
             expect(rendezvous.value()).toBe(1);
             expect(approval.value()).toBe(1);
-            test.fail(true, 'FO-L4-SIGNIN: the repo-dev requester shows Approved but does not open Home');
             stage = 'reaching Home after approval';
             await expectHome(requester);
         } finally {

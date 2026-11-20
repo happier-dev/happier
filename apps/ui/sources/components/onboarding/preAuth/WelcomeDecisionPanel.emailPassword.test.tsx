@@ -55,7 +55,7 @@ const baseOptions: AuthEntryOptions = {
     retryServerCheck: () => {},
 };
 
-function renderPanel(overrides: Partial<AuthEntryOptions> = {}) {
+function renderPanel(overrides: Partial<AuthEntryOptions> = {}, restoreWays = false) {
     const callbacks = {
         onContinueWithHomeAuthentication: vi.fn(),
         onOpenRestore: vi.fn(),
@@ -67,6 +67,7 @@ function renderPanel(overrides: Partial<AuthEntryOptions> = {}) {
         screenPromise: renderScreen(
             <WelcomeDecisionPanel
                 authEntryOptions={{ ...baseOptions, ...overrides }}
+                restoreWays={restoreWays}
                 {...callbacks}
             />,
         ),
@@ -75,7 +76,7 @@ function renderPanel(overrides: Partial<AuthEntryOptions> = {}) {
 
 describe('WelcomeDecisionPanel native email/password entry', () => {
     it('labels each native action by its own journey instead of an OAuth provider badge', async () => {
-        const { callbacks, screenPromise } = renderPanel();
+        const { callbacks, screenPromise } = renderPanel({}, true);
         const screen = await screenPromise;
 
         // The login action must reach its own controller with sign-in wording.
@@ -84,7 +85,7 @@ describe('WelcomeDecisionPanel native email/password entry', () => {
         // The extra provision action must not repeat the generic "New here?" card.
         expect(screen.findByTestId('welcome-email-password-provision-title')?.props.children)
             .toBe(t('settingsAccount.nativePassword.signUpWithEmail'));
-        expect(screen.findAllHostsByTestId('welcome-primary-start')).toHaveLength(1);
+        expect(screen.findAllHostsByTestId('restore-new-account')).toHaveLength(1);
 
         await screen.pressByTestIdAsync('welcome-email-password-login');
         expect(callbacks.onContinueWithHomeAuthentication).toHaveBeenCalledWith(expect.objectContaining({
