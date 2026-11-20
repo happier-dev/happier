@@ -686,28 +686,31 @@ export async function publishGitlabMergeRequestReview(
     return await settlePublication(uncertain, publishedBefore.failure);
   }
 
+  const reconcileEntry = (
+    entry: ReviewCommentPublicationEntryV1,
+    index: number,
+  ): ReviewCommentPublicationResultV1['entries'][number] => {
+    const instruction = claim.instructions.entries[index];
+    const prior = claim.priorResult?.entries[index];
+    if ((instruction === 'confirmed' || instruction === 'held') && prior !== undefined) return prior;
+    const marker = formatReviewCommentPublicationMarkerV1('entry', claim.entries[index]!.publicationCorrelationId);
+    const published = matchRawCollectionMarker(publishedBefore.rows, marker);
+    const pendingDraft = matchRawCollectionMarker(initialDrafts.rows, marker);
+    return {
+      happierCommentId: entry.happierCommentId,
+      publicationCorrelationId: claim.entries[index]!.publicationCorrelationId,
+      outcome: published.kind === 'unique'
+        ? { kind: 'published', externalRef: published.externalRef }
+        : pendingDraft.kind === 'unique'
+          ? { kind: 'failed', code: 'gitlab-publication-draft-pending' }
+          : { kind: 'uncertain' },
+    };
+  };
+
   if (claim.disposition === 'reconcile') {
     const publication = validateReviewCommentPublicationResultAgainstPlanV1(plan, claim, {
       publicationPlanId: claim.publicationPlanId,
-      entries: plan.entries.map((entry, index) => {
-        const instruction = claim.instructions.entries[index];
-        const prior = claim.priorResult?.entries[index];
-        if ((instruction === 'confirmed' || instruction === 'held') && prior !== undefined) {
-          return prior;
-        }
-        const marker = formatReviewCommentPublicationMarkerV1('entry', claim.entries[index]!.publicationCorrelationId);
-        const published = matchRawCollectionMarker(publishedBefore.rows, marker);
-        const pendingDraft = matchRawCollectionMarker(initialDrafts.rows, marker);
-        return {
-          happierCommentId: entry.happierCommentId,
-          publicationCorrelationId: claim.entries[index]!.publicationCorrelationId,
-          outcome: published.kind === 'unique'
-            ? { kind: 'published', externalRef: published.externalRef }
-            : pendingDraft.kind === 'unique'
-              ? { kind: 'failed', code: 'gitlab-publication-draft-pending' }
-              : { kind: 'uncertain' },
-        };
-      }),
+      entries: plan.entries.map(reconcileEntry),
       verdict: plan.verdict === null || claim.verdict === null
         ? { kind: 'notRequested' }
         : (() => {
@@ -810,12 +813,8 @@ export async function publishGitlabMergeRequestReview(
     draftIds.push(id);
   }
 
-  const entryOutcomes: Array<RecordValue | undefined> = plan.entries.map((_entry, index) => {
-    const instruction = claim.instructions.entries[index];
-    return instruction === 'confirmed' || instruction === 'held'
-      ? claim.priorResult?.entries[index]?.outcome
-      : undefined;
-  });
+  const entryOutcomes: Array<RecordValue | undefined> = plan.entries.map((entry, index) =>
+    claim.instructions.entries[index] === 'dispatch' ? undefined : reconcileEntry(entry, index).outcome);
   let terminalFailure: TriageSourceFailureV1 | undefined;
   for (let index = 0; index < inlineSpecs.length; index += 1) {
     const { spec, planIndex } = inlineSpecs[index]!;

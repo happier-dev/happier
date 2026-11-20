@@ -581,6 +581,51 @@ describe('gitlab/merge-request/submit-review', () => {
     expect(transport.requests.filter((request) => request.method !== 'GET')).toHaveLength(0);
   });
 
+  it.each([
+    [false, { kind: 'uncertain' }],
+    [true, { kind: 'published', externalRef: '91' }],
+  ])('reconciles a reused entry while dispatching only the new verdict (marker found: %s)', async (markerFound, entryOutcome) => {
+    let summaryPublished = false;
+    const settlements: unknown[] = [];
+    const transport = createStubGitlabTransport({ respond: (request) => {
+      if (request.method === 'GET' && request.url === ITEM_URL) return { status: 200, body: mergeRequestBody() };
+      if (request.method === 'GET' && request.url === DRAFTS_LIST_URL) return { status: 200, body: [] };
+      if (request.method === 'GET' && request.url === DISCUSSIONS_LIST_URL) return { status: 200, body: markerFound
+        ? [discussion(91, `Existing\n\n<!-- happier-review-comment:v1:${ENTRY_CORRELATION} -->`)] : [] };
+      if (request.method === 'POST' && request.url === DRAFTS_URL) return { status: 201, body: { id: 82 } };
+      if (request.method === 'PUT' && request.url === `${DRAFTS_URL}/82/publish`) {
+        summaryPublished = true;
+        return { status: 204, bodyText: '' };
+      }
+      if (request.method === 'GET' && request.url === NOTES_LIST_URL) return { status: 200, body: summaryPublished
+        ? [{ id: 92, body: `Ready.\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION} -->` }] : [] };
+      return undefined;
+    } });
+    Object.assign(transport.context.services, { actions: { async execute(_actionId: string, input: unknown) {
+      if (typeof input === 'object' && input !== null && 'settlement' in input) settlements.push(input.settlement);
+      // The store lends a prior Review's published entry to a new verdict with this mixed instruction shape.
+      return { disposition: 'dispatch', dispatchToken: 'dispatch-token-1', publicationPlanId: PLAN_ID,
+        entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: ENTRY_CORRELATION }],
+        verdict: { publicationCorrelationId: VERDICT_CORRELATION },
+        instructions: { entries: ['reconcile'], verdict: 'dispatch' }, priorResult: null };
+    } } });
+
+    const result = await publishGitlabMergeRequestReview(actionInput({
+      publicationPlan: plan({ verdict: { kind: 'comment', body: 'Ready.' } }),
+    }), transport.context);
+
+    expect(result).toMatchObject({ kind: 'settled', publication: {
+      entries: [{ outcome: entryOutcome }], verdict: { outcome: { kind: 'published', externalRef: '92' } },
+    } });
+    expect(settlements).toContainEqual(expect.objectContaining({ result: expect.objectContaining({
+      entries: [expect.objectContaining({ outcome: entryOutcome })],
+    }) }));
+    const writes = transport.requests.filter((request) => request.method === 'POST');
+    expect(writes.map((request) => bodyOf(request))).toEqual([{
+      note: `Ready.\n\n<!-- happier-review-verdict:v1:${VERDICT_CORRELATION} -->`,
+    }]);
+  });
+
   it('rejects a moved base before claiming and settles an unsupported fresh anchor without writing', async () => {
     const transport = createTransport((request) => request.method === 'GET' && request.url === ITEM_URL
       ? { status: 200, body: mergeRequestBody({ diff_refs: { base_sha: 'd'.repeat(40), head_sha: OBSERVED_HEAD, start_sha: OBSERVED_START } }) }
