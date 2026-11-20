@@ -663,37 +663,43 @@ describe('WelcomeDecisionPanel', () => {
         });
     });
 
-    it('offers the selected sign-in service methods as familiar provider actions and keeps QR entry', async () => {
-        const { callbacks, screenPromise } = renderPanel(
-            { authenticationActions: [...baseOptions.authenticationActions!, { method: { id: 'github', enabledActions: [{ id: 'provision', mode: 'keyed' }] }, action: { id: 'provision', mode: 'keyed' }, execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } }] },
-            readyAccountServiceEntry(['github', 'google']),
-        );
+    it('keeps QR entry on Welcome and offers the selected service methods in Login', async () => {
+        const options: Partial<AuthEntryOptions> = {
+            authenticationActions: [...baseOptions.authenticationActions!, { method: { id: 'github', enabledActions: [{ id: 'provision', mode: 'keyed' }] }, action: { id: 'provision', mode: 'keyed' }, execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } }],
+        };
+        const service = readyAccountServiceEntry(['github', 'google']);
+        const welcome = renderPanel(options, service);
+        const first = await welcome.screenPromise;
+        expect(first.findByTestId('welcome-primary-start')).toBeTruthy();
+        expect(first.findByTestId('welcome-account-service-provider-github')).toBeNull();
+        await first.pressByTestIdAsync('welcome-scan-existing-home');
+        expect(welcome.callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
+        await first.unmount();
+
+        const { callbacks, screenPromise } = renderPanel(options, service, true, true);
         const screen = await screenPromise;
 
-        expect(screen.findByTestId('welcome-account-service-provider-github-title')?.props.children)
+        expect(screen.findByTestId('welcome-account-service-provider-github')?.props.accessibilityLabel)
             .toBe('Continue with GitHub');
         expect(screen.findByTestId('welcome-account-service-provider-google')).toBeTruthy();
-        // Named-account methods augment the exact Home methods instead of replacing them.
-        expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
         expect(screen.findByTestId('welcome-login-provider')).toBeTruthy();
-        // Direct QR entry stays available.
-        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('restore-new-account')).toBeTruthy();
         expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
 
         await screen.pressByTestIdAsync('welcome-account-service-provider-google');
-        await screen.pressByTestIdAsync('welcome-scan-existing-home');
 
         expect(callbacks.onContinueWithAccountServiceProvider).toHaveBeenCalledWith(expect.objectContaining({
             method: expect.objectContaining({ id: 'google' }),
             authority: expect.objectContaining({ purpose: 'account_service' }),
         }));
-        expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
     });
 
     it('uses exact verified method presentation ahead of the local provider fallback', async () => {
         const { callbacks, screenPromise } = renderPanel(
             {},
             readyAccountServiceEntry(['github'], { oauthPresentationName: 'Company Identity' }),
+            true,
+            true,
         );
         const screen = await screenPromise;
         const action = screen.findByTestId('welcome-account-service-provider-github');
@@ -730,14 +736,14 @@ describe('WelcomeDecisionPanel', () => {
         const { callbacks, screenPromise } = renderPanel(
             {},
             readyAccountServiceEntry([], { keyLoginAvailable: true }),
+            true,
+            true,
         );
         const screen = await screenPromise;
 
         expect(screen.findByTestId('welcome-account-service-key')?.props.accessibilityLabel)
             .toBe('Use a key');
-        expect(screen.findByTestId('welcome-primary-start')).toBeTruthy();
-        // Direct QR entry stays available.
-        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('restore-new-account')).toBeTruthy();
         expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
 
         await screen.pressByTestIdAsync('welcome-account-service-key');
