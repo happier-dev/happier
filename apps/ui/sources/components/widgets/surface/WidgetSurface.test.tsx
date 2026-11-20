@@ -474,6 +474,7 @@ it.each([['artifact', 'home'], ['artifact', 'project'], ['inline', 'sessionBoard
 
 it.each(['declarative', 'html', 'installed'] as const)('renders a published inline %s through Session Board presence and real WidgetSurface admission', async kind => {
     const { SessionWidgetHost } = await import('@/components/sessions/board/SessionWidgetHost');
+    if (kind === 'html') await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
     const http = createHomeHubArtifactHttpBoundary('viewer');
     const connection = await restoreServerAccountForTest({ serverUrl: `https://session-inline-${kind}.test`,
         serverIdentityId: `srv_session_inline_${kind}`, accountId: 'viewer', request: http.request });
