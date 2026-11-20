@@ -9,21 +9,29 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createArtifactListHttpResponse, createArtifactReadBatchHttpResponse } from './artifactStoreBoundary';
+import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
 
 /** HTTP persistence boundary: the real Account mode, Artifact codec, Action and Home owners run above it. */
 export function createHomeHubArtifactHttpBoundary(
     accountId: string,
     profile: ReturnType<typeof AccountProfileSchema.parse> | (() => ReturnType<typeof AccountProfileSchema.parse>) = AccountProfileSchema.parse({ id: accountId }),
-    options?: Readonly<{ machines?: readonly FetchedMachineRow[] }>,
+    options?: Readonly<{
+        machines?: readonly FetchedMachineRow[];
+        sessionList?: (query: URLSearchParams) => readonly V2SessionRecord[];
+    }>,
 ): ReturnType<typeof createLayoutArtifactHttpBoundary<HomeHubLayoutV1>> {
     const boundary = createLayoutArtifactHttpBoundary(accountId, { artifactId: buildHomeHubArtifactIdV1(accountId), kind: HOME_HUB_ARTIFACT_KIND_V1,
         defaultLayout: getHomeHubDefaultLayoutV1(), parseLayout: value => HomeHubLayoutV1Schema.parse(value) });
-    return { ...boundary, request: async (input: RequestInfo | URL, init?: RequestInit) => {
+    const request = async (input: RequestInfo | URL, init?: RequestInit) => {
         // The signed-in Account establishes the Home lifetime. A shared layout's
         // owner is a different principal and must never supply this Profile.
-        const path = new URL(String(input)).pathname;
+        const { pathname: path, searchParams } = new URL(String(input));
+        if (path === '/v2/sessions' && options?.sessionList) {
+            return Response.json({ sessions: options.sessionList(searchParams), nextCursor: null, hasNext: false });
+        }
         if (path === '/v1/machines' && options?.machines) return Response.json(options.machines);
         if (path === '/v1/account/profile') {
             const currentProfile = AccountProfileSchema.parse(typeof profile === 'function' ? profile() : profile);
@@ -31,7 +39,8 @@ export function createHomeHubArtifactHttpBoundary(
             return Response.json(currentProfile);
         }
         return boundary.request(input, init);
-    } };
+    };
+    return { ...boundary, request: options?.sessionList ? createCompactSessionListFetchBoundary(request) : request };
 }
 
 /** The same HTTP/codec/CAS boundary serves personal Home and declared-area layouts. */

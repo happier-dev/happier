@@ -10,7 +10,7 @@ import { useConfiguredWidgetTarget } from '@/sync/domains/widgets/useConfiguredW
 import type { ConfiguredWidgetTargetResolution } from '@/sync/domains/widgets/widgetBinding';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createHomeHubArtifactHttpBoundary, createLayoutArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
-import { createCompactSessionListFetchBoundary, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createUsageQueryBatchFetchBoundary } from '@/dev/testkit/harness/usageQueryBatchHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -964,18 +964,16 @@ it.each([
     ['the viewer\'s own HTML on their own surface', 'own-account', false],
     ['the viewer\'s own HTML on their own Session Board', 'own-session', false],
 ] as const)('classifies %s into the foreign-HTML Action audience only when someone else owns it', async (_label, shape, foreign) => {
-    const http = createHomeHubArtifactHttpBoundary('viewer');
     const listedSession = createPlainSessionCurrentProjectionRecordFixture({ id: 'listed-session' });
     let listReads = 0;
-    const request = createCompactSessionListFetchBoundary(async (input, init) => {
-        const url = new URL(input);
-        if (url.pathname === '/v2/sessions' && url.searchParams.get('limit') === '1') {
+    const http = createHomeHubArtifactHttpBoundary('viewer', undefined, {
+        sessionList: query => {
+            if (query.get('limit') !== '1') return [];
             listReads += 1;
-            return Response.json({ sessions: [listedSession], nextCursor: null, hasNext: false });
-        }
-        return http.request(input, init);
+            return [listedSession];
+        },
     });
-    const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer', request });
+    const connection = await restoreServerAccountForTest({ serverUrl: `https://html-audience-${shape}.test`, serverIdentityId: `srv_html-audience-${shape}`, accountId: 'viewer', request: http.request });
     const viewer = getActiveServerAccountScope();
     if (!viewer) throw new Error('Expected restored viewer Account');
     const disposeActionLoader = await installRealActionExecutorModuleLoader();

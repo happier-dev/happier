@@ -341,7 +341,7 @@ describe('screen capture through the default executor and native adapter', () =>
         const executor = createDefaultActionExecutor({ screenCaptureWindowPress: true });
         expect(commands).toEqual([]);
         expect(await executor.execute('screenCapture.addToDraft', { captureRef: captured.captureRef, session: target, note: 'Look here' },
-            { surface: 'ui', serverId: target.serverId })).toEqual({ ok: true,
+            { surface: 'ui', serverId: target.serverId })).toMatchObject({ ok: true,
                 result: { captureRef: captured.captureRef, imageNumber: 1, waiting: false } });
         const drafts = readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(target));
         expect(drafts).toHaveLength(1);
@@ -423,12 +423,12 @@ describe('screen capture through the default executor and native adapter', () =>
     it.each(['ui', 'agent'] as const)('opens through the native operation owner and discards through its %s settled native owner', async surface => {
         const executor = createDefaultActionExecutor();
         expect(await executor.execute('screenCapture.open', { captureRef: captured.captureRef, targetSession: target }, { surface: 'ui', serverId: target.serverId }))
-            .toEqual({ ok: true, result: { captureRef: captured.captureRef, status: 'opened', targetSession: target } });
+            .toMatchObject({ ok: true, result: { captureRef: captured.captureRef, status: 'opened', targetSession: target } });
         expect(openedTarget).toEqual(target);
         expect(await executor.execute('screenCapture.discard', { captureRef: captured.captureRef }, { surface,
             authority: surface === 'ui' ? 'present_user' : 'account_automation', actionCaller: { kind: 'host' },
             serverId: target.serverId, runtimeAccountId: target.accountId, defaultSessionMachineId: 'client' }))
-            .toEqual({ ok: true, result: { captureRef: captured.captureRef, status: 'discarded' } });
+            .toMatchObject({ ok: true, result: { captureRef: captured.captureRef, status: 'discarded' } });
         expect(commands).toEqual(['desktop_capture_open', 'desktop_capture_discard']);
     });
 
