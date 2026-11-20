@@ -13,7 +13,7 @@ import { Typography } from '@/constants/Typography';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { t } from '@/text';
-import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
+import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import {
   isOpenedManagedMachinePresetV1,
   type ManagedMachinePresetListEntryV1,
@@ -79,13 +79,17 @@ function describePresetTableKeyPending(item: PresetTableItem) {
     : null;
 }
 
-/** Column widths at normal text size; the shared table scales them with the reader's text. */
+/**
+ * Column widths at normal text size; the shared table scales them with the reader's text. The name column has no
+ * width of its own: it takes the room the others leave, so each of them is as narrow as its values (Last used is a
+ * compact age, "3d").
+ */
 const COLUMN = Object.freeze({
   size: 136,
   for: 80,
-  inUse: 96,
+  inUse: 88,
   image: 148,
-  lastUsed: 96,
+  lastUsed: 64,
   next: 80,
   runsIn: 132,
   running: 72,
@@ -100,8 +104,11 @@ const COLUMN = Object.freeze({
 export function usePresetTableAnatomy(
   input: Readonly<{
     host: PresetTableHost;
-    /** Columns whose owner delivers a fact today; the others wait for it rather than standing as a column of blanks. */
-    facts: Readonly<{ inUse: boolean; lastUsed: boolean; runsIn?: boolean }>;
+    /**
+     * Columns whose owner delivers a fact today; the others wait for it rather than standing as a column of blanks.
+     * `nextStep`: some row needs its image's next step (`presetTableNeedsNextStep`); otherwise its room goes to the names.
+     */
+    facts: Readonly<{ inUse: boolean; lastUsed: boolean; runsIn?: boolean; nextStep: boolean }>;
     onNextStep: (item: PresetTableItem, next: PresetTableStep) => void;
   }>,
 ): CollectionAnatomy<PresetTableItem> {
@@ -194,17 +201,16 @@ export function usePresetTableAnatomy(
       // Only the next step stands in a row (lab review 5): Out of date → Rebuild, Failed or Cancelled → Retry. A healthy
       // image is quiet; its Rebuild stays on the preset's page. It is its own column, so a row with a button keeps
       // the same cell edges as the rows without one; a phone row says the image's word and the step stays on the page.
-      {
+      ...(facts.nextStep ? [{
         key: 'next',
         title: '',
         minWidth: COLUMN.next,
         priority: 5,
-        listColumn: true,
-        control: true,
-        align: 'end',
+        listColumn: true as const,
+        control: true as const,
+        align: 'end' as const,
         render: (item: PresetTableItem) => {
-          const image = readPresetTableImage(item);
-          const next = image.next === 'rebuild' || image.next === 'retry' ? image.next : null;
+          const next = readPresetTableRowStep(item);
           return next ? (
             <RoundButton
               testID={`preset-table.next.${item.key}`}
@@ -215,7 +221,8 @@ export function usePresetTableAnatomy(
             />
           ) : null;
         },
-      },    ];
+      }] : []),
+    ];
     return {
       glyph: (item) =>
         item.preset ? (
@@ -258,11 +265,23 @@ export function usePresetTableAnatomy(
   }, [
     facts.inUse,
     facts.lastUsed,
+    facts.nextStep,
     facts.runsIn,
     host,
     language,
     onNextStep,
   ]);
+}
+
+/** The step a wide row shows as its own button: Out of date → Rebuild, Failed or Cancelled → Retry. */
+function readPresetTableRowStep(item: PresetTableItem): 'rebuild' | 'retry' | null {
+  const next = readPresetTableImage(item).next;
+  return next === 'rebuild' || next === 'retry' ? next : null;
+}
+
+/** Whether any row shows its next step, so the table keeps that column. */
+export function presetTableNeedsNextStep(items: readonly PresetTableItem[]): boolean {
+  return items.some((item) => readPresetTableRowStep(item) !== null);
 }
 
 function toneOf(image: PresetImageState): 'warning' | 'danger' | 'secondary' {
@@ -493,12 +512,13 @@ function PresetInUseCell(
   );
 }
 
-function PresetLastUsedCell(props: Readonly<{ item: PresetTableItem }>) {
+/** A compact age ("3d"); never used, the table's quiet empty value. */
+export function PresetLastUsedCell(props: Readonly<{ item: PresetTableItem }>) {
   const at = props.item.preset?.lastUsedAt;
-  if (at === undefined) return null;
+  const label = at === undefined ? '' : formatShortRelativeTime(at);
   return (
-    <Text numberOfLines={1} style={styles.cell}>
-      {formatRelativeTime(at)}
+    <Text numberOfLines={1} style={label ? [styles.cell, styles.tabular] : styles.quiet}>
+      {label || '—'}
     </Text>
   );
 }

@@ -24,7 +24,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { Collection, useHappierCollection, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
-import { readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from '@/components/settings/machines/presets/presetTable';
+import { presetTableNeedsNextStep, readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from '@/components/settings/machines/presets/presetTable';
 import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
@@ -356,9 +356,6 @@ function MachineIsolationRowControls(props: Readonly<{ children: (stacked: boole
   return <View style={[styles.controls, stacked ? styles.controlsStacked : null]}>{props.children(stacked)}</View>;
 }
 
-/** Running is delivered (MACH-PRESETS-DATA-1119); Last used follows the Machine → preset link. */
-const FACTS = Object.freeze({ inUse: true, lastUsed: true });
-
 /**
  * The sandbox types this Machine added, through the one preset table (lab scene 6): the type with its provider, its
  * size and its image in the Presets page's words. Its "…" removes the type from this Machine.
@@ -398,7 +395,9 @@ function MachineIsolationSandboxesTable(
     () => ({ disabled: props.disabled, onRemove: props.onRemove, onStep: openPreset }),
     [openPreset, props.disabled, props.onRemove],
   );
-  const anatomy = usePresetTableAnatomy({ host: 'sandboxes', facts: FACTS, onNextStep: openPreset });
+  // Running is delivered (MACH-PRESETS-DATA-1119); Last used follows the Machine → preset link.
+  const nextStep = presetTableNeedsNextStep(items);
+  const anatomy = usePresetTableAnatomy({ host: 'sandboxes', facts: { inUse: true, lastUsed: true, nextStep }, onNextStep: openPreset });
   const model = useHappierCollection({
     items,
     keyOf: readItemKey,

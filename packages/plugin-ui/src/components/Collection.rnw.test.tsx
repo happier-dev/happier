@@ -3465,6 +3465,26 @@ describe('render scope', () => {
       } finally { view.unmount(); }
     },
   );
+  it('admits listColumn fields after the rows\' ⋯ slot: the title keeps its minimum beside the row action', () => {
+    // Presets (live 1440): the admission ignored the 40 pt ⋯ slot, so every column stayed and the names fell to 82 pt.
+    const field = (key: string, priority: number) => ({ key, title: key, render: (entry: Entry) => entry.age, minWidth: 120, priority,
+      listColumn: true as const });
+    const shownAt = (withActions: boolean) => {
+      const view = mount({
+        presentation: 'list', scroll: 'page',
+        anatomy: { ...anatomy, peek: undefined, byline: (entry) => entry.repo, fields: [field('low', 1), field('mid', 2), field('high', 3)] },
+        grouping: { ...groups, axis: groups.axis.map((group) => ({ ...group, section: { key: 'all', title: 'All work' } })) },
+        ...(withActions ? { useRowActions: () => ({ secondaryActions: [{ id: 'pin', label: 'Pin' }], onSecondaryAction: () => undefined }) } : {}),
+      });
+      try {
+        // Title floor 120 + three 120 columns + their gaps + the row's insets and mark: 610 fits only without the ⋯.
+        view.measure(610);
+        return ['low', 'mid', 'high'].filter((key) => view.query(`row:a:column:${key}`) !== null);
+      } finally { view.unmount(); }
+    };
+    expect(shownAt(false)).toEqual(['low', 'mid', 'high']);
+    expect(shownAt(true)).toEqual(['mid', 'high']);
+  });
   it('names list columns over their figures when each row ends in its ⋯: the bar keeps the rows\' action slot', () => {
     // A Services row: no peek chevron, so the ⋯ is the row's only end control.
     const { peek: _peek, ...rowWithoutPeek } = anatomy;

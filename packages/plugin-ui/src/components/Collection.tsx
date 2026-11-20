@@ -2533,9 +2533,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         ...declared.map((field) => ({ key: field.key, minWidth: field.minWidth * textScale, priority: field.priority,
           ...(field.maxWidth === undefined ? {} : { maxWidth: field.maxWidth * textScale }) })),
       ],
-      // The page row's insets and its leading mark column; every column after the title stands one leading gap on.
+      // The page row's insets, its leading mark column and the ⋯ slot every row (and the bar) keeps after its last
+      // column; every column after the title stands one leading gap on.
       availableWidth: rowWidth - 2 * HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx
-        - HAPPIER_PAGE_METRICS.rowLeadingColumnPx - HAPPIER_PAGE_METRICS.rowLeadingGapPx,
+        - HAPPIER_PAGE_METRICS.rowLeadingColumnPx - HAPPIER_PAGE_METRICS.rowLeadingGapPx - rowAccessoryWidth,
       gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
     });
     if (admitted.length === declared.length + 1 && declared.every((field) => field.maxWidth === undefined)) return declared;
@@ -2546,7 +2547,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
       return width === undefined ? [] : [width === field.minWidth ? field : { ...field, minWidth: width }];
     });
     return shown.length === 0 ? NO_FIELDS : shown;
-  }, [anatomy.fields, anatomy.titleMinWidth, columnsShown, rowWidth, textScale]);
+  }, [anatomy.fields, anatomy.titleMinWidth, columnsShown, rowAccessoryWidth, rowWidth, textScale]);
   const catalogList = rowRole === 'catalogRow' && rowGeometry === 'list' && !pageSections;
   const catalogSideList = catalogList && !wrapTitles;
   // Peeks exist in the resting table; while the table fades out (reduced motion) they stay and fade with it.

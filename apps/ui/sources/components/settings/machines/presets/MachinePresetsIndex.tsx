@@ -35,13 +35,11 @@ import { useMachinesSettingsViewModel } from '../machinesSettingsViewModel';
 import { useMachinePresets, useMachinePresetRowCommands, type MachinePresetQueryState } from '../managed/useMachinePresets';
 import { buildManagedMachineConfigurationRoute } from '../managed/managedMachineConfigurationRoute';
 import { hasOpenedManagedMachinePresetCreationV1, isOpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1, type OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
-import { readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from './presetTable';
+import { presetTableNeedsNextStep, readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from './presetTable';
 import { projectManagedPresetAllocationCounts } from '../managed/hostMachineSandboxes';
 import { projectSandboxPresetHostCounts } from '@/sync/domains/machines/machineIsolationPolicy';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
-/** Facts the table shows once their owner delivers them (MACH-PRESETS-DATA-1119): In use now; Last used follows its link. */
-const DELIVERED_FACTS = Object.freeze({ inUse: true, lastUsed: true });
 const NO_MANAGED: readonly ManagedMachineV1[] = Object.freeze([]);
 
 /**
@@ -152,12 +150,6 @@ export function MachinePresetsPage(props: Readonly<{
       else if (result.kind !== 'succeeded' || result.value.kind !== 'saved') await Modal.alert(t('machinePresets.archiveFailed'));
     })(), { tag: 'MachinePresetsIndex.archive' }),
   }), [commands, navigate, onNextStep, open]);
-  const anatomy = usePresetTableAnatomy({
-    host: 'presets',
-    facts: DELIVERED_FACTS,
-    onNextStep,
-  });
-
   // New presets go to the Home in focus, else the first Home listed (each Home keeps its own presets).
   const activeServerId = props.activeServerId || sections[0]?.serverId;
   const createLabel = t('machinePresets.newPreset');
@@ -201,6 +193,13 @@ export function MachinePresetsPage(props: Readonly<{
     ),
     readKey,
   );
+  // In use and Last used are delivered (MACH-PRESETS-DATA-1119); the step column stands only while a row needs it.
+  const nextStep = presetTableNeedsNextStep(items) || presetTableNeedsNextStep(archived);
+  const anatomy = usePresetTableAnatomy({
+    host: 'presets',
+    facts: { inUse: true, lastUsed: true, nextStep },
+    onNextStep,
+  });
   // The first read reserves rows; a re-read keeps what is shown (TH D12).
   const loading =
     items.length === 0 &&
@@ -289,6 +288,9 @@ export function MachinePresetsPage(props: Readonly<{
             minDetailWidth={0}
             preferredListRatio={1}
             header={header}
+            // The purpose line ends the head (no count or band); a Home's notice section brings its own space.
+            {...(sections.some((section) => states?.[section.serverId]?.error != null || states?.[section.serverId]?.approval != null)
+              ? {} : { sheetAfter: 'purpose' as const })}
             loading={loading}
             loadingRows={3}
             empty={
