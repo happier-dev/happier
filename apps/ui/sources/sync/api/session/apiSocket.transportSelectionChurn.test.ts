@@ -17,6 +17,35 @@ afterEach(async () => {
 afterAll(() => h.dispose());
 
 describe('ApiSocket and scoped HTTP transport selection', () => {
+    it('reconnects the published focused Home and resumes its Account reconciliation after transport loss', async () => {
+        const home = await h.profiles.adoptHomeProfile({ source: 'manual', descriptor: {
+            v: 1, homeServerIdentityId: 'srv_transport_reconnect', canonicalServerUrl: h.homeA.serverUrl,
+            revision: 1, endpoints: [{ kind: 'https', url: h.homeA.serverUrl }],
+        } });
+        await h.profiles.setActiveServerId(home.id, { scope: 'device' });
+        await h.select([h.homeA.id]);
+        await h.startFocused();
+        const snapshot = h.profiles.getActiveServerSnapshot();
+        expect(snapshot.carrier).toBe('https');
+        const connectedWakes: string[] = [];
+        const releaseWakes = subscribeHomeAccountChange(event => {
+            if (event.serverId === snapshot.serverId && event.source === 'connected') connectedWakes.push(event.serverId);
+        }, { reconnect: 'refresh' });
+        const statuses: string[] = [];
+        const releaseStatus = apiSocket.onStatusChange(status => statuses.push(status));
+        try {
+            await vi.waitFor(() => expect(statuses.at(-1)).toBe('connected'));
+            connectedWakes.length = 0;
+            h.socket(h.homeA).trigger('disconnect', 'transport close');
+            expect(statuses.at(-1)).toBe('disconnected');
+            await vi.waitFor(() => expect(statuses.at(-1)).toBe('connected'));
+            await vi.waitFor(() => expect(connectedWakes).toEqual([snapshot.serverId]));
+        } finally {
+            releaseStatus();
+            releaseWakes();
+        }
+    });
+
     it('retains one admitted primary socket when healthy reads select two origins for the same Home and bearer', async () => {
         await h.select([h.homeA.id]);
         await h.startFocused();

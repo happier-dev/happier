@@ -111,8 +111,11 @@ export async function readUiMachineProjection(params: Readonly<{
     return loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime });
 }
 
-/** Real UI client for cross-app journeys; only the platform lock API is substituted. */
-export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; addressAnchorUrl?: string; credentials: AuthCredentials }>) {
+/** Real UI client for cross-app journeys, including the App's Home/Account lifecycle. */
+export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; addressAnchorUrl?: string; credentials: AuthCredentials;
+    /** A Person client mounts this lifecycle in its existing AppShell instead. */
+    withAccountLifecycle?: boolean;
+}>) {
     const locks = installWebLockManagerMock();
     // A recording proxy carries the Home's bytes; it is not another Home profile.
     const profileUrl = params.addressAnchorUrl ?? params.serverUrl;
@@ -120,13 +123,18 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
     if (forwardedOrigin) setRuntimeFetch(createPublishedHomeOutputFetch({
         publishedOrigin: forwardedOrigin, loopbackUrl: params.serverUrl }));
     let bridge: Awaited<ReturnType<typeof loadSyncSingletonForTests>> | undefined;
+    let unmountAccountLifecycle: (() => Promise<void>) | undefined;
     const close = async () => {
         try {
-            if (bridge) await disconnectActiveServerConnection();
+            await unmountAccountLifecycle?.();
         } finally {
-            try { await bridge?.dispose(); } finally {
-                if (forwardedOrigin) resetRuntimeFetch();
-                locks.restore();
+            try {
+                if (bridge) await disconnectActiveServerConnection();
+            } finally {
+                try { await bridge?.dispose(); } finally {
+                    if (forwardedOrigin) resetRuntimeFetch();
+                    locks.restore();
+                }
             }
         }
     };
@@ -155,6 +163,29 @@ export async function connectUiActionClient(params: Readonly<{ serverUrl: string
                 resolve();
             });
         });
+        if (params.withAccountLifecycle !== false) {
+            const [{ renderHook }, { AuthProvider, useAuth }, { createElement }, connection] = await Promise.all([
+                import('./hooks/renderHook'), import('@/auth/context/AuthContext'), import('react'),
+                import('@/sync/runtime/orchestration/connectionManager'),
+            ]);
+            const lifecycle = await renderHook(useAuth, {
+                wrapper: ({ children }) => createElement(AuthProvider, { initialCredentials: params.credentials, children }),
+            });
+            unmountAccountLifecycle = lifecycle.unmount;
+            // The mounted provider owns restore reconciliation, including a Home
+            // descriptor learned before its subscription mounted.
+            await waitForTestEvent(notify => {
+                const releaseApplied = connection.subscribeAppliedActiveServer(notify);
+                const releaseAvailability = connection.subscribeAppliedActiveServerRuntimeAvailability(notify);
+                return () => { releaseApplied(); releaseAvailability(); };
+            }, () => {
+                const selected = getActiveServerSnapshot();
+                const applied = connection.getAppliedActiveServerSnapshot();
+                return connection.isAppliedActiveServerRuntimeAvailable()
+                    && applied.serverId === selected.serverId && applied.generation === selected.generation;
+            }, Boolean);
+            await getSyncSingleton().awaitBootstrapForegroundAcquisition();
+        }
         await getSyncSingleton().refreshMachines();
         const serverId = getActiveServerSnapshot().serverId;
         const execute = createFrontDoorActionExecute(createDefaultActionExecutor());
@@ -282,6 +313,7 @@ export async function connectUiPersonActionClient(params: Readonly<{
         requireExistingAccount: true,
     });
     const client = await connectUiActionClient({ serverUrl: params.serverUrl, addressAnchorUrl: params.addressAnchorUrl,
+        withAccountLifecycle: false,
         credentials: params.accountEncryptionMode === 'plain'
             ? { token: credentials.token }
             : { ...credentials, secret: encodeBase64(params.accountSecret) } });

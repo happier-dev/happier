@@ -165,6 +165,7 @@ export function connectUiActionClient(params: Readonly<{
     serverUrl: string;
     publicEndpoint?: string;
     credentials: AuthCredentials;
+    withAccountLifecycle?: boolean;
 }>): Promise<Readonly<{
     serverId: string;
     execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;

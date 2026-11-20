@@ -147,13 +147,26 @@ describe('Workflow activity through the Account Action executor', () => {
       expect(reopened).toEqual([]); // An unchanged retained refresh never invents live occurrences.
       const { apiSocket } = await import('../../../../apps/ui/sources/sync/api/session/apiSocket');
       let connected = false;
+      let reconnectState: unknown;
+      let reconnectError: unknown;
       releases.push(apiSocket.onStatusChange(status => { connected = status === 'connected'; }));
+      releases.push(apiSocket.onConnectionStateChange(state => {
+        reconnectState = { phase: state.phase, reason: state.reason, attempt: state.attempt,
+          retryScheduled: state.nextRetryAt !== null, hasError: state.lastErrorMessage !== null };
+      }));
+      releases.push(apiSocket.onError(error => {
+        reconnectError = { name: error?.name,
+          code: error && 'code' in error && typeof error.code === 'string' ? error.code : undefined };
+      }));
       apiSocket.disconnect({ preserveHttpRequests: true });
       expect(connected).toBe(false);
       apiSocket.connect();
-      await waitFor(() => connected, { timeoutMs: 60_000 });
+      try {
+        await waitFor(() => connected, { timeoutMs: 60_000 });
+      } catch (error) {
+        throw new Error(`Activity reconnect failed: ${JSON.stringify({ reconnectState, reconnectError })}`, { cause: error });
+      }
       expect(getWorkflowActivitySource()).toBe(source);
-      await source.retry();
       expect(reopened).toEqual([]); // Reattaching the same Account's unchanged facts is not a new occurrence.
       const afterReconnect = await fixture.assertKnownGoodSessionControl(account, machine);
       await waitFor(() => reopened.some(row => row.kind === 'session' && row.event === 'started' && row.sessionId === afterReconnect.sessionId),
