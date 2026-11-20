@@ -262,6 +262,7 @@ export function useAuthEntryOptions(): AuthEntryOptions {
     );
     const [serverCheckNonce, setServerCheckNonce] = React.useState(0);
     const [serverFeaturesRecoveryNonce, setServerFeaturesRecoveryNonce] = React.useState(0);
+    const retryAuthEntry = React.useRef<(() => void) | null>(null);
     const consumedForcedServerCheckNonceRef = React.useRef(0);
     const consumedRecoveredServerFeaturesSnapshotRef = React.useRef<ServerFeaturesSnapshot | null>(null);
     const [options, setOptions] = React.useState<ObservedAuthEntryOptions>(
@@ -305,10 +306,12 @@ export function useAuthEntryOptions(): AuthEntryOptions {
         const retainedObservation = lastUsableObservationRef.current?.key === activeObservationKey
             ? lastUsableObservationRef.current.observation
             : cachedObservationRef.current;
-        const commitUsableObservation = (observation: UsableAuthEntryObservation) => {
+        const commitUsableObservation = (observation: UsableAuthEntryObservation, preserveRetention = false) => {
             if (!mounted) return;
             lastUsableObservationRef.current = { key: activeObservationKey, observation };
-            setOptions(observation.options);
+            setOptions((current) => preserveRetention
+                ? { ...observation.options, retentionDisclosure: current.retentionDisclosure }
+                : observation.options);
             setServerAvailability(observation.serverAvailability);
         };
         const commitRetainedUnavailable = (observation: UsableAuthEntryObservation) => {
@@ -328,49 +331,53 @@ export function useAuthEntryOptions(): AuthEntryOptions {
             consumedForcedServerCheckNonceRef.current = serverCheckNonce;
         }
 
-        void (async () => {
+        async function readObservation(verifiedFeatures?: ServerFeaturesSnapshot) {
+            authEntryController?.abort('welcome-auth-entry-retry');
+            const controller = new AbortController();
+            authEntryController = controller;
             try {
-                if (retainedObservation) {
-                    commitUsableObservation(retainedObservation);
-                } else if (mounted) {
-                    setServerAvailability('loading');
-                    setOptions(createUnobservedAuthEntryOptions());
+                if (!verifiedFeatures) {
+                    if (retainedObservation) {
+                        commitUsableObservation(retainedObservation);
+                    } else if (mounted) {
+                        setServerAvailability('loading');
+                        setOptions(createUnobservedAuthEntryOptions());
+                    }
+
+                    // Sign-in owns an anonymous, mount-scoped enrollment carrier.
+                    // It does not publish or replace the authenticated active lease.
+                    if (enrollmentDescriptor) {
+                        const { resolveHomeEnrollmentTransport } = await import('@/auth/enrollment/homeEnrollmentTransport');
+                        const resolved = await resolveHomeEnrollmentTransport(enrollmentDescriptor);
+                        if (!resolved.ok) {
+                            commitTerminalUnavailable('unavailable');
+                            return;
+                        }
+                        enrollmentTransport = resolved.transport;
+                        if (!mounted) {
+                            releaseEnrollmentTransport();
+                            return;
+                        }
+                    }
                 }
 
-                // Sign-in owns an anonymous, mount-scoped enrollment carrier.
-                // It does not publish or replace the authenticated active lease.
-                if (enrollmentDescriptor) {
-                    const { resolveHomeEnrollmentTransport } = await import('@/auth/enrollment/homeEnrollmentTransport');
-                    const resolved = await resolveHomeEnrollmentTransport(enrollmentDescriptor);
-                    if (!resolved.ok) {
-                        commitTerminalUnavailable('unavailable');
-                        return;
-                    }
-                    enrollmentTransport = resolved.transport;
-                    if (!mounted) {
-                        releaseEnrollmentTransport();
-                        return;
-                    }
-                }
-
-                authEntryController = new AbortController();
                 // Independent observations share the mount/target cancellation lifetime.
                 const [featuresSnapshot, authEntry] = await Promise.all([
-                        enrollmentTransport ? probeServerFeaturesAtUrl({
+                        verifiedFeatures ?? (enrollmentTransport ? probeServerFeaturesAtUrl({
                             endpointUrl: enrollmentTransport.canonicalServerUrl,
                             runtimeOrigin: enrollmentTransport.runtimeOrigin,
                             ...(enrollmentTransport.homeCarrier ? { homeCarrier: enrollmentTransport.homeCarrier } : {}),
                             serverId: enrollmentTransport.homeServerIdentityId,
                             force: forceServerCheck,
-                            signal: authEntryController.signal,
+                            signal: controller.signal,
                         }) : getServerFeaturesSnapshot({
-                            signal: authEntryController.signal,
+                            signal: controller.signal,
                             // A retry nonce grants one forced revalidation. Keeping force
                             // sticky after the retry succeeds would force unrelated cache recovery.
                             force: forceServerCheck,
-                        }),
+                        })),
                         fetchHomeAuthEntry({
-                            signal: authEntryController.signal,
+                            signal: controller.signal,
                             ...(enrollmentTransport ? {
                                 endpointUrl: enrollmentTransport.canonicalServerUrl,
                                 runtimeOrigin: enrollmentTransport.runtimeOrigin,
@@ -384,6 +391,8 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                             }),
                         }),
                 ]);
+                if (!mounted || controller.signal.aborted) return;
+                retryAuthEntry.current = null;
 
                 if (featuresSnapshot.status === 'error') {
                     releaseEnrollmentTransport();
@@ -425,6 +434,10 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                 // notice with one retry. The `unavailable` availability is
                 // reserved for a failed feature probe.
                 const authEntryUnavailable = authEntry.kind === 'unavailable';
+                if (authEntryUnavailable) {
+                    // Retry the failed read on this exact transport, retaining the accepted feature observation.
+                    retryAuthEntry.current = () => { void readObservation(featuresSnapshot); };
+                }
                 const features = featuresSnapshot.status === 'ready' ? featuresSnapshot.features : null;
                 const observation = createUsableAuthEntryObservation({
                     features,
@@ -435,38 +448,42 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                         : null,
                     authEntryUnavailable,
                 });
-                if (mounted && enrollmentTransport) {
+                if (!verifiedFeatures && enrollmentTransport) {
                     setEnrollmentRead({
                         serverId: activeServerSnapshot.serverId,
                         descriptor: enrollmentDescriptor,
                         transport: enrollmentTransport,
                     });
                 }
-                commitUsableObservation(observation);
+                commitUsableObservation(observation, !!verifiedFeatures);
                 // This disclosure reader has no enrollment transport. A canonical loopback
                 // address can belong to another machine, so leave the disclosure absent here.
-                if (observation.serverAvailability === 'ready' && mounted && !enrollmentTransport) {
+                if (!verifiedFeatures && observation.serverAvailability === 'ready' && !enrollmentTransport) {
                     // Sign-in never waits on this: the disclosure fills in beside the actions.
                     readRetentionDisclosure({
                         serverId: activeServerSnapshot.serverId,
                         force: false,
                         isCurrent: () => mounted,
                         apply: (retentionDisclosure) => setOptions((current) => (
-                            isSameRetentionDisclosure(current.retentionDisclosure ?? null, retentionDisclosure)
+                            !current.showAuthActions || isSameRetentionDisclosure(current.retentionDisclosure ?? null, retentionDisclosure)
                                 ? current
                                 : { ...current, retentionDisclosure }
                         )),
                     });
                 }
             } catch {
+                if (!mounted || controller.signal.aborted) return;
+                retryAuthEntry.current = null;
                 releaseEnrollmentTransport();
                 if (retainedObservation) commitRetainedUnavailable(retainedObservation);
                 else commitTerminalUnavailable('unavailable');
             }
-        })();
+        }
+        void readObservation();
 
         return () => {
             mounted = false;
+            retryAuthEntry.current = null;
             authEntryController?.abort('welcome-auth-entry-unmounted');
             releaseEnrollmentTransport();
         };
@@ -511,7 +528,8 @@ export function useAuthEntryOptions(): AuthEntryOptions {
             serverAvailability: serverAvailability === 'ready' || serverAvailability === 'legacy' ? 'loading' as const : serverAvailability,
         } : {}),
         retryServerCheck: React.useCallback(() => {
-            setServerCheckNonce((value) => value + 1);
+            if (retryAuthEntry.current) retryAuthEntry.current();
+            else setServerCheckNonce((value) => value + 1);
         }, []),
     };
 }

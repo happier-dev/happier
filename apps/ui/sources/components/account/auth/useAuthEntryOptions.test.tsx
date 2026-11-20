@@ -301,6 +301,27 @@ describe('useAuthEntryOptions', () => {
         expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'unavailable', showAuthActions: false });
     });
 
+    it('retries only auth entry when the Home already answered features and retention', async () => {
+        entry = () => new Response('', { status: 503 });
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', authEntryUnavailable: true });
+        expect(calls('/v2/retention-policy')).toHaveLength(1);
+
+        entry = () => Response.json(AuthEntryProjectionV1Schema.parse({ v: 1, state: 'ready', scope: { kind: 'home' },
+            actions: [{ kind: 'authenticate', methodId: 'acme', action: 'login', mode: 'keyless', origin: 'home',
+                presentation: { displayName: 'Acme Workforce' } }], autoRedirect: null }));
+        await act(async () => hook.getCurrent().retryServerCheck());
+        await settle();
+        expect(hook.getCurrent()).toMatchObject({ authEntryUnavailable: false, authenticationActions: [
+            expect.objectContaining({ execution: { kind: 'oauth', providerId: 'acme', mode: 'keyless' } }),
+        ] });
+        expect(calls('/v1/features')).toHaveLength(1);
+        expect(calls('/v1/auth/entry')).toHaveLength(2);
+        expect(calls('/v2/retention-policy')).toHaveLength(1);
+        expect(hook.getCurrent().retentionDisclosure).toMatchObject({ kind: 'unreadable', retry: expect.any(Function) });
+    });
+
     it('consumes a forced retry once when a successful identity-bearing response advances the server generation', async () => {
         features = () => new Response('', { status: 503 });
         const hook = await mount();
