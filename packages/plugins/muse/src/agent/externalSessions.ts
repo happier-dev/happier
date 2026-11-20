@@ -327,7 +327,10 @@ export const museExternalSessionsContribution: AgentExternalSessionsContribution
             await projection.replayItems(values);
             const value: AgentExternalSessionsTranscriptPage = { items: projection.items, nextCursor: null,
               tailCursor: typeof result.viewCursor === 'string' ? result.viewCursor : null, hasMore: false };
-            if (projection.items.length <= request.maxItems && isAgentExternalSessionsResultWithinByteBudget({ ok: true, value }, request.maxSerializedBytes)) return bounded(value, request);
+            if (value.items.length <= request.maxItems) {
+              const inline = bounded(value, request);
+              if (inline.ok) return inline;
+            }
           }
         }
       } finally { projection.dispose(); }

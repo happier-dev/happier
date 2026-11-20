@@ -170,8 +170,24 @@ it('advances through captured nonvisual native events without inventing transcri
     const id = readMuseRecord(sessionId).sessionId;
     if (typeof id !== 'string') throw new Error('Captured native identity is missing');
     await fixture.phase(rows, [5]);
-    const initial = value(await fixture.callbacks.pageTranscript({ ...fixture.invocation, source: fixture.source,
-      remoteSessionId: id, direction: 'older', maxItems: 100 }));
+    const stringify = vi.spyOn(JSON, 'stringify');
+    const initial = await (async () => {
+      try {
+        const page = value(await fixture.callbacks.pageTranscript({ ...fixture.invocation, source: fixture.source,
+          remoteSessionId: id, direction: 'older', maxItems: 100 }));
+        expect(page.items.length).toBeGreaterThan(0);
+        // Count full page serializations in the producer. The host measures
+        // its admitted/qualified result through the iterative Protocol owner.
+        const pageSerializations = stringify.mock.calls.filter(([result]) => {
+          const envelope = readMuseRecord(result);
+          const payload = readMuseRecord(envelope.value);
+          return envelope.ok === true && Array.isArray(payload.items)
+            && payload.items.length === page.items.length && typeof payload.tailCursor === 'string';
+        });
+        expect(pageSerializations).toHaveLength(1);
+        return page;
+      } finally { stringify.mockRestore(); }
+    })();
     if (!initial.tailCursor) throw new Error('Native history did not establish a tail');
     // Exact capture: two session/branchChanged records have no visual Item.
     await fixture.phase(rows, [37]);
