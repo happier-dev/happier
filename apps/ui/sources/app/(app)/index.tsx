@@ -147,7 +147,7 @@ function Authenticated(props: Readonly<{
         });
     }, [activeServerAccountScope, askHappierReady, newSessionAuthContinuation, pendingSetupIntent, pendingTerminalConnect, router, sessionId, startAskHappier]);
 
-    if (routeContinuation) return null;
+    if (routeContinuation || pendingTerminalConnect) return null;
     return (
         <View style={stylesheet.root}>
             <PersonalHomeBootstrapContent>

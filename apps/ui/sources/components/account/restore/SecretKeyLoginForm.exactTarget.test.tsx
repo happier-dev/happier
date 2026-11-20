@@ -17,7 +17,8 @@ import { t } from '@/text';
 installTokenStorageWebPlatformMocks();
 // The network boundary: every request the real HTTP client issues, keyed by observed origin and path.
 const boundary = { request: vi.fn() };
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+const router = vi.hoisted(() => ({ dismissTo: vi.fn() }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router }).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -26,6 +27,7 @@ let restore: () => void;
 let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 beforeEach(() => {
     restore = installLocalStorageMock().restore;
+    router.dismissTo.mockClear();
     boundary.request.mockReset();
     setRuntimeFetch(async (input, init) => {
         const url = new URL(String(input));
@@ -206,4 +208,29 @@ it.each([
     expect(screen.findByTestId('restore-manual-secret-input')?.props.value).toBe('A'.repeat(43));
     expect(onAuthenticated).not.toHaveBeenCalled();
     expect(await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: fixture.home.homeServerIdentityId })).toEqual(previous);
+});
+
+it('returns to the admitted destination after recovery-key sign-in', async () => {
+    const fixture = createDirectoryHttpFixture();
+    const home = await adoptHomeProfile({
+        descriptor: fixture.home.connectionDescriptor,
+        source: 'account-directory',
+        descriptorAuthority: 'current_connection_observation',
+    });
+    await setActiveServerId(home.id, { scope: 'device' });
+    boundary.request.mockImplementation(async (_endpoint: string, path: string) => {
+        if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId: fixture.home.homeServerIdentityId },
+            server: { canonicalServerUrl: home.serverUrl },
+        } }));
+        if (path === '/v1/auth') return Response.json({ token: fixture.token });
+        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+        throw new Error(`Unexpected request: ${path}`);
+    });
+    screen = await renderScreen(<AuthProvider initialCredentials={null}>
+        <SecretKeyLoginForm returnTo="/settings/account" />
+    </AuthProvider>);
+    await act(async () => { screen!.changeTextByTestId('restore-manual-secret-input', 'A'.repeat(43)); });
+    await screen.pressByTestIdAsync('restore-manual-submit');
+    await vi.waitFor(() => expect(router.dismissTo).toHaveBeenCalledWith('/settings/account'));
 });

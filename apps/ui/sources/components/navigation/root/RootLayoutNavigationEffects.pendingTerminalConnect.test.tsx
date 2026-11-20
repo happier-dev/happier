@@ -120,7 +120,8 @@ it('resumes a real pre-auth capture when the authenticated account scope hydrate
     expect(scope).not.toBeNull();
     await act(async () => storage.getState().activateProfileScope(scope!));
 
-    expect(replaceSpy).toHaveBeenCalledWith('/terminal/connect');
+    expect(replaceSpy.mock.calls).toEqual([['/terminal/connect']]);
+    expect(runtimeFetchSpy).not.toHaveBeenCalled();
 });
 
 it('retains a pending terminal link for an unfocused unsaved Home without probing or routing', async () => {

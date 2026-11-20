@@ -393,19 +393,24 @@ describe('/ (welcome) setup continuation', () => {
         }
     });
 
-    it('does not open the post-auth setup wizard while a terminal connect approval is pending', async () => {
-        setDesktop(false);
+    it('keeps Home and post-auth setup behind the pending terminal approval', async () => {
+        const Screen = (await import('@/app/(app)/index')).Home;
+        const initial = await renderRoute(<Screen />);
+        expect(initial.findAllByType(MainView)).toHaveLength(1);
+        await initial.unmount();
+        seedSetupIntent({ branch: 'thisComputer', phase: 'awaiting_auth', relayUrl: HOME_A_URL });
+        expoRouterMock.spies.replace.mockClear();
         pendingTerminal.setPendingTerminalConnect({
-            publicKeyB64Url: 'abc123',
+            publicKeyB64Url: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
             serverUrl: HOME_A_URL,
             serverIdentityId: HOME_A_ID,
         });
         expect(pendingTerminal.getPendingTerminalConnect()).not.toBeNull();
-
-        const Screen = (await import('@/app/(app)/index')).Home;
         const screen = await renderRoute(React.createElement(Screen));
         await flushHookEffects({ cycles: 1, turns: 3 });
 
+        expect(screen.findAllByType(MainView)).toHaveLength(0);
+        expect(expoRouterMock.spies.replace).not.toHaveBeenCalled();
         expect(setPendingSetupIntentMock).not.toHaveBeenCalledWith(expect.objectContaining({ phase: 'post_auth' }));
     });
 });

@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { useRouter } from 'expo-router';
 
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { useAuth } from '@/auth/context/AuthContext';
 import { authGetTokenAtEndpoint, type AuthGetTokenAtEndpointParams } from '@/auth/flows/getToken';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
@@ -87,8 +88,8 @@ const SecretKeyLoginFormBody = React.memo(function SecretKeyLoginFormBody(props:
             props.onSuccess();
             return;
         }
-        router.dismissTo('/');
-    }, [props.onSuccess, router]);
+        resolvePostAuthLanding({ replace: router.dismissTo, returnTo: props.returnTo });
+    }, [props.onSuccess, props.returnTo, router]);
 
     const handleLogin = React.useCallback(async (input: Readonly<{
         normalizedKey: string;
