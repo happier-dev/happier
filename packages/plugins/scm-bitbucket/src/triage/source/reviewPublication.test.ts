@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
+import type { ReviewCommentClaimPublicationDispatchResponseV1, ReviewCommentPublicationPlanV1, ReviewCommentPublicationResultV1 } from '@happier-dev/plugin-sdk/reviews';
 import type { TriageConfiguredSourceInstanceV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -117,7 +117,7 @@ function summaryEntry(id: string) {
 }
 
 function plan(input: Readonly<{
-  entries?: readonly ReturnType<typeof entry>[];
+  entries?: ReviewCommentPublicationPlanV1['entries'];
   verdict?: ReviewCommentPublicationPlanV1['verdict'];
 }> = {}): ReviewCommentPublicationPlanV1 {
   return {
@@ -156,6 +156,9 @@ function withClaim(
   publicationPlan: ReviewCommentPublicationPlanV1,
   disposition: 'dispatch' | 'reconcile' = 'dispatch',
   settlementError?: Error,
+  priorResult?: ReviewCommentPublicationResultV1,
+  settlements?: unknown[],
+  entryInstructions?: ReviewCommentClaimPublicationDispatchResponseV1['instructions']['entries'],
 ): PluginInvocationContext {
   return {
     ...context,
@@ -164,6 +167,7 @@ function withClaim(
       actions: {
         execute: async (actionId: string, actionInput: unknown) => {
           expect(actionId).toBe('reviews.comments.claimPublicationDispatch');
+          if (typeof actionInput === 'object' && actionInput !== null && 'settlement' in actionInput) settlements?.push(actionInput.settlement);
           if (settlementError !== undefined
             && typeof actionInput === 'object'
             && actionInput !== null
@@ -183,10 +187,10 @@ function withClaim(
               ? null
               : { publicationCorrelationId: 'V'.repeat(43) },
             instructions: {
-              entries: publicationPlan.entries.map(() => disposition),
+              entries: entryInstructions ?? publicationPlan.entries.map(() => priorResult === undefined ? disposition : 'confirmed'),
               verdict: publicationPlan.verdict === null ? null : disposition,
             },
-            priorResult: null,
+            priorResult: priorResult ?? null,
           };
         },
       },
@@ -195,6 +199,44 @@ function withClaim(
 }
 
 describe('Bitbucket canonical review publication', () => {
+  it.each([
+    { landed: false, summary: false, count: 2 },
+    { landed: true, summary: false, count: 1 },
+    { landed: false, summary: true, count: 1 },
+  ])('preserves mixed reconcile entries beside a fresh verdict with marker=$landed summary=$summary count=$count', async ({ landed, summary, count }) => {
+    const publicationPlan = plan({
+      entries: Array.from({ length: count }, (_, index) => {
+        const original = summary ? summaryEntry(`comment-${index + 1}`) : entry(`comment-${index + 1}`, 12);
+        return { ...original, snapshot: { ...original.snapshot, commitSha: BASE } };
+      }),
+      verdict: { kind: 'comment', body: 'Review summary' },
+    });
+    const commentsUrl = `${PULL_REQUEST_URL}/comments`;
+    const { http, requests } = createHttpStub((url, info) => {
+      if (url.endsWith('/2.0/user')) return { body: { uuid: VIEWER_UUID } };
+      if (url === PULL_REQUEST_URL) return { body: pullRequest() };
+      if (url.startsWith(commentsUrl) && info?.method === 'GET') return {
+        body: { values: landed ? [{ id: 701, content: { raw: `<!-- happier-review-comment:v1:${'A'.repeat(43)} -->` } }] : [] },
+      };
+      if (url === commentsUrl && info?.method === 'POST') return { status: 201, body: { id: 702 } };
+      return undefined;
+    });
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+    const settlements: unknown[] = [];
+    const context = withClaim(createInvocationContext(connectedAccounts, http), publicationPlan, 'dispatch', undefined, undefined, settlements, Array.from({ length: count }, () => 'reconcile'));
+    const expected = {
+      entries: Array.from({ length: count }, () => ({ outcome: landed ? { kind: 'published', externalRef: '701' } : { kind: 'uncertain' } })),
+      verdict: { outcome: { kind: 'published', externalRef: '702' } },
+    };
+    await expect(publishBitbucketPullRequestReviewAction(request(publicationPlan), context)).resolves.toMatchObject({ kind: 'settled', publication: expected });
+    expect(settlements).toHaveLength(1);
+    expect(settlements[0]).toMatchObject({ result: expected });
+    const writes = requests.filter((candidate) => candidate.method !== 'GET');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.body).toMatchObject({ content: { raw: `Review summary\n\n<!-- happier-review-verdict:v1:${'V'.repeat(43)} -->` } });
+    expect(requests.filter((candidate) => candidate.method === 'GET' && candidate.url.startsWith(commentsUrl))).toHaveLength(count + 1);
+  });
+
   it.each(['claim', 'settlement'] as const)('retains typed %s failure identity beside publication truth', async (phase) => {
     const publicationPlan = plan({ entries: [entry('comment-1', 12)], verdict: null });
     const error = new PluginError({ code: 'review_claim_denied', retryable: false, details: { requestId: 'request-bitbucket-publication' } });
@@ -801,6 +843,30 @@ describe('Bitbucket canonical review publication', () => {
       BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.createReviewComment,
       BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.replyToReviewComment,
     ]) expect(ids.has(id)).toBe(true);
+  });
+
+  it.each(['fresh', 'confirmed', 'reconcile'] as const)('settles a %s standalone comment whose snapshot cannot project', async (state) => {
+    const original = entry('comment-1', 12);
+    const publicationPlan = plan({ entries: [{ ...original, snapshot: { ...original.snapshot, commitSha: BASE } }], verdict: null });
+    const { http, requests } = createHttpStub((url, info) => {
+      if (url.endsWith('/2.0/user')) return { body: { uuid: VIEWER_UUID } };
+      if (url === PULL_REQUEST_URL) return { body: pullRequest() };
+      if (url.startsWith(`${PULL_REQUEST_URL}/comments`) && info?.method === 'GET') return { body: { values: [] } };
+      return undefined;
+    });
+    const { connectedAccounts } = createConnectedAccountsStub({ accounts: [{ accountId: 'account-1' }] });
+    const priorResult: ReviewCommentPublicationResultV1 = {
+      publicationPlanId: 'P'.repeat(43),
+      entries: [{ happierCommentId: 'comment-1', publicationCorrelationId: 'A'.repeat(43), outcome: { kind: 'published', externalRef: '701' } }],
+      verdict: { kind: 'notRequested' },
+    };
+    const settlements: unknown[] = [];
+    const context = withClaim(createInvocationContext(connectedAccounts, http), publicationPlan, state === 'fresh' ? 'dispatch' : 'reconcile', undefined, state === 'confirmed' ? priorResult : undefined, settlements);
+    const outcome = state === 'confirmed' ? priorResult.entries[0]!.outcome
+      : state === 'reconcile' ? { kind: 'uncertain' } : { kind: 'failed', code: 'anchor_unresolvable' };
+    await expect(createBitbucketPullRequestReviewCommentAction(request(publicationPlan), context)).resolves.toMatchObject({ kind: 'settled', publication: { entries: [{ outcome }] } });
+    expect(settlements).toEqual([expect.objectContaining({ result: expect.objectContaining({ entries: [expect.objectContaining({ outcome })] }) })]);
+    expect(requests.filter((candidate) => candidate.method !== 'GET')).toHaveLength(0);
   });
 
   it('publishes one pinned standalone comment through the canonical claim', async () => {

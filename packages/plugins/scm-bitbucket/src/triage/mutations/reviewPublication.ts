@@ -304,7 +304,7 @@ export async function publishBitbucketReviewComment(
     return { kind: 'rejected', reason: 'unsupported_anchor', observation: initial.observation };
   }
 
-  let inline: Readonly<Record<string, unknown>> | undefined;
+  let inline: Readonly<Record<string, unknown>> | null | undefined;
   if (input.mode.kind === 'create') {
     if (input.plan.baseRevision === null
       || initial.observation.snapshot.reviewRevision?.baseSha !== input.plan.baseRevision
@@ -314,11 +314,7 @@ export async function publishBitbucketReviewComment(
     if (input.plan.headRevision === null || initial.headCommit !== input.plan.headRevision) {
       return { kind: 'rejected', reason: 'head_advanced', observation: initial.observation };
     }
-    const projected = inlineForEntry(entry, input.plan);
-    if (projected === null) {
-      return { kind: 'rejected', reason: 'unsupported_anchor', observation: initial.observation };
-    }
-    inline = projected;
+    inline = inlineForEntry(entry, input.plan);
   } else {
     if (input.plan.baseRevision !== null || input.plan.headRevision !== null) {
       return { kind: 'rejected', reason: 'unsupported_anchor', observation: initial.observation };
@@ -362,6 +358,8 @@ export async function publishBitbucketReviewComment(
   } else if (before.kind === 'failed' || instruction === 'reconcile') {
     outcome = { kind: 'uncertain' };
     if (before.kind === 'failed') failure = dependencies.toTriageFailure(before.failure);
+  } else if (inline === null) {
+    outcome = { kind: 'failed', code: 'anchor_unresolvable' };
   } else {
     const written = await writeComment(
       dependencies,
@@ -485,6 +483,15 @@ export async function publishBitbucketReview(
       settleEntry(index, prior);
       continue;
     }
+    if (instruction === 'reconcile') {
+      const marker = formatReviewCommentPublicationMarkerV1('entry', correlation.publicationCorrelationId);
+      const reconciled = await reconcileOne(dependencies, marker);
+      settleEntry(index, reconciled.kind === 'found'
+        ? { kind: 'published', externalRef: reconciled.externalRef }
+        : { kind: 'uncertain' });
+      if (reconciled.kind === 'failed') firstFailure ??= dependencies.toTriageFailure(reconciled.failure);
+      continue;
+    }
     if (stopped) {
       settleEntry(index, { kind: 'skippedPriorFailure' });
       continue;
@@ -506,9 +513,6 @@ export async function publishBitbucketReview(
     let outcome: ProviderEffect;
     if (before.kind === 'found') {
       outcome = { kind: 'published', externalRef: before.externalRef };
-    } else if (instruction === 'reconcile') {
-      outcome = { kind: 'uncertain' };
-      stopped = true;
     } else {
       const written = await writeComment(
         dependencies,
@@ -554,7 +558,7 @@ export async function publishBitbucketReview(
   } else {
     const marker = formatReviewCommentPublicationMarkerV1('verdict', claim.verdict.publicationCorrelationId);
     const foldedEntries = summaryIndexes.flatMap((index) => (
-      claim.instructions.entries[index] === 'confirmed' || claim.instructions.entries[index] === 'held'
+      claim.instructions.entries[index] !== 'dispatch'
         ? []
         : [{
           index,
