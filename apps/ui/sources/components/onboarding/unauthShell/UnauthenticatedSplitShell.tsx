@@ -46,6 +46,7 @@ export type UnauthenticatedSplitShellProps = Readonly<{
      * to fill the entire native viewport. Normal form/list steps stay padded.
      */
     workflowPresentation?: UnauthenticatedWorkflowPresentation;
+    warmStepMotion?: boolean;
 
     /** The workflow pane's one bottom-right control (the signed-out Updates entry); see `WorkflowPanel`. */
     footerAccessory?: React.ReactNode;
@@ -93,6 +94,7 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 showMobileWordmark={props.showMobileWordmark}
                 onBack={props.onBack}
                 transitionKey={props.stepId}
+                warmStepMotion={props.warmStepMotion}
                 presentation={presentation}
                 onColumnLayout={measureColumn ? onColumnLayout : undefined}
                 footerAccessory={props.footerAccessory}

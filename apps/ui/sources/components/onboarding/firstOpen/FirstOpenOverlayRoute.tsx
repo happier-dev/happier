@@ -106,7 +106,7 @@ export function FirstOpenOverlayRoute() {
                 <FirstOpenOverlayReplica welcome={start.welcome} epoch={start.epoch} windowRect={start.windowRect}
                     onSettled={buildSettled} />
             ) : null}
-            <FirstOpenScene epoch={start?.epoch ?? null} placement={prepared.placement} onReady={setSceneReady} />
+            <FirstOpenScene epoch={start?.epoch ?? null} holding={settling} placement={prepared.placement} onReady={setSceneReady} />
         </Animated.View>
     );
 }

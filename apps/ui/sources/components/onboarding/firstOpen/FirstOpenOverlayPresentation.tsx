@@ -60,7 +60,7 @@ export const FirstOpenOverlayReplica: ComponentType<Readonly<{
         }}>
             <FirstOpenWelcomeEpoch.Provider value={epoch}>
                 <FirstOpenOwnsWelcomePaint.Provider value>
-                    <UnauthenticatedSplitShell frameWidth={width} stepId="welcome" isWelcomeStep>
+                    <UnauthenticatedSplitShell frameWidth={width} stepId="welcome" isWelcomeStep warmStepMotion={false}>
                         <WelcomeEntryView model={welcome} compact={compact} />
                     </UnauthenticatedSplitShell>
                 </FirstOpenOwnsWelcomePaint.Provider>

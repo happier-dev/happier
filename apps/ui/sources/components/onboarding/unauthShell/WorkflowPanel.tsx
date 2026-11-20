@@ -74,6 +74,7 @@ export type WorkflowPanelProps = Readonly<{
     showMobileWordmark?: boolean;
     onBack?: () => void;
     transitionKey: string;
+    warmStepMotion?: boolean;
     presentation?: WorkflowPanelPresentation;
     onColumnLayout?: (event: LayoutChangeEvent) => void;
     /**
@@ -249,6 +250,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 <StepMotionLayer
                                     layerKey={FIRST_RUN_WORKFLOW_LAYER}
                                     active={focused}
+                                    warmOnMount={props.warmStepMotion}
                                     backTestID={UNAUTH_BACK_TEST_ID}
                                     testID="unauth-shell-step-transition"
                                     stepKey={props.transitionKey}
@@ -273,6 +275,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <StepMotionLayer
                                 layerKey={FIRST_RUN_WORKFLOW_LAYER}
                                 active={focused}
+                                warmOnMount={props.warmStepMotion}
                                 backTestID={UNAUTH_BACK_TEST_ID}
                                 testID="unauth-shell-step-transition"
                                 stepKey={props.transitionKey}
@@ -297,6 +300,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         <StepMotionLayer
                             layerKey={FIRST_RUN_WORKFLOW_LAYER}
                             active={focused}
+                            warmOnMount={props.warmStepMotion}
                             backTestID={UNAUTH_BACK_TEST_ID}
                             testID="unauth-shell-step-transition"
                             stepKey={props.transitionKey}

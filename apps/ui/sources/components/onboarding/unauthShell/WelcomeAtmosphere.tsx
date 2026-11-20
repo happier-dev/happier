@@ -78,11 +78,11 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
     height: pane.height,
     ...(props.phone && { level: 0.55 }),
   }] : undefined, [pane, props.phone, props.quietColumn]);
-  const mode = !pane || openingPaints ? 'off' : reducedMotion || (!viewed && arrivalEpoch === null) ? 'still' : 'animated';
+  // The hidden native destination keeps a painted Still frame ready for the swap.
+  const mode = !pane || openingPaints ? 'off' : reducedMotion || !viewed || arrivalEpoch !== null ? 'still' : 'animated';
   const { layer: fieldLayer, epoch, readDurationS, settle, stir } = useHomeGlyphField({
     mode,
-    arriving: arrivalEpoch !== null,
-    arrivalEpoch: arrivalEpoch ?? undefined,
+    arriving: false,
     host: props.host,
     nativeTap: props.nativeTap,
     quiet,

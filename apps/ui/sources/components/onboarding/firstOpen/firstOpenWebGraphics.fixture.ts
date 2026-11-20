@@ -1,7 +1,7 @@
 import { vi } from 'vitest';
 
 /** JSDOM provides layout APIs but has no font or graphics device. */
-export function installFirstOpenWebGraphics(width: number, height: number) {
+export function installFirstOpenWebGraphics(width: number, height: number, onDraw = () => {}) {
     const originalFonts = Object.getOwnPropertyDescriptor(document, 'fonts');
     Object.defineProperty(document, 'fonts', { configurable: true, value: { load: async () => [] } });
     const noop = () => {};
@@ -16,7 +16,7 @@ export function installFirstOpenWebGraphics(width: number, height: number) {
         bindVertexArray: noop, blendFuncSeparate: noop, bufferData: noop,
         clear: noop, clearColor: noop, compileShader: noop, deleteBuffer: noop,
         deleteProgram: noop, deleteShader: noop, deleteTexture: noop, deleteVertexArray: noop,
-        drawArrays: noop, drawArraysInstanced: noop, enable: noop, enableVertexAttribArray: noop,
+        drawArrays: onDraw, drawArraysInstanced: onDraw, enable: noop, enableVertexAttribArray: noop,
         linkProgram: noop, shaderSource: noop, texImage2D: noop, texParameteri: noop,
         texSubImage2D: noop, uniform1i: noop, uniform2f: noop, uniform3f: noop, useProgram: noop,
         vertexAttribDivisor: noop, vertexAttribPointer: noop, viewport: noop,
