@@ -206,8 +206,10 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
     const historyReadPaths: string[] = [];
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: mode });
     let materialReadStatus = 200;
+    let materialReadError = 'temporarily_unavailable';
     let beforeMaterialRead: (() => void | Promise<void>) | undefined;
     let observeTrustRead: ((path: string) => void) | undefined;
+    let encryptionReadResponse: ((path: string) => Response | undefined) | undefined;
     let beforeCatalogRead: ((path: string) => void | Promise<void>) | undefined;
     let beforeProfileRead: (() => void) | undefined;
     let beforeHistoryRead: (() => void | Promise<void>) | undefined;
@@ -252,7 +254,11 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
                 }
                 return createMachineReadBatchResponseFixture(init?.body, id => id === machine.id ? row : null);
             }
-            if (path === '/v1/account/encryption' || path === '/v1/account/encryption/currentness') observeTrustRead?.(path);
+            if (path === '/v1/account/encryption' || path === '/v1/account/encryption/currentness') {
+                observeTrustRead?.(path);
+                const response = encryptionReadResponse?.(path);
+                if (response) return response;
+            }
             if (path === '/health') return Response.json({});
             if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: accountId }));
             if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
@@ -336,7 +342,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
                 const { resourceId } = selection.data;
                 const response = materialReadStatus === 200
                     ? Response.json({ resources: [...resources.values()].filter(row => !resourceId || 'resourceId' in row && row.resourceId === resourceId) })
-                    : Response.json({ error: 'temporarily_unavailable' }, { status: materialReadStatus });
+                    : Response.json({ error: materialReadError }, { status: materialReadStatus });
                 // HTTP can deliver a snapshot captured before a concurrent write commits.
                 await beforeMaterialRead?.();
                 return response;
@@ -417,9 +423,10 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
         get settingsVersion() { return settingsVersion; }, set settingsVersion(value: number) { settingsVersion = value; },
         get referenceGuardRevision() { return referenceGuardRevision; }, set referenceGuardRevision(value: number) { referenceGuardRevision = value; },
         setProfileReadStatus(value: number) { profileReadStatus = value; },
-        setMaterialReadStatus(value: number) { materialReadStatus = value; },
+        setMaterialReadStatus(value: number, error = 'temporarily_unavailable') { materialReadStatus = value; materialReadError = error; },
         setBeforeMaterialRead(value: (() => void | Promise<void>) | undefined) { beforeMaterialRead = value; },
         setTrustReadObserver(value: ((path: string) => void) | undefined) { observeTrustRead = value; },
+        setEncryptionReadResponse(value: typeof encryptionReadResponse) { encryptionReadResponse = value; },
         setBeforeCatalogRead(value: ((path: string) => void | Promise<void>) | undefined) { beforeCatalogRead = value; },
         setBeforeProfileRead(value: (() => void) | undefined) { beforeProfileRead = value; },
         setBeforeHistoryRead(value: (() => void | Promise<void>) | undefined) { beforeHistoryRead = value; },
@@ -3561,6 +3568,53 @@ describe('Saved Secret operations through their real Account and Action owners',
         } finally { await hook?.unmount(); }
     });
 
+    it.each(['shared', 'private'] as const)('retains a pre-dispatch encryption refusal through the %s update transport', async entry => {
+        const account = await openAccount('plain');
+        const row = account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
+        if (entry === 'private') account.resources.set('resource-a', { ...row, entry: { ...row.entry,
+            audience: { accounts: [], teams: [], groups: [] } } });
+        await refreshCatalogAndWaitForLegacyImport(account.scope);
+        const hook = entry === 'private' ? await renderHook(() => useSavedSecretCatalog({ scope: account.scope })) : null;
+        try {
+            if (hook) await vi.waitFor(() => expect(hook.getCurrent().personalSecrets).toHaveLength(1));
+            account.setEncryptionReadResponse(path => path === '/v1/account/encryption'
+                ? Response.json({ error: 'private-response-marker' }, { status: 503 }) : undefined);
+            const input = { resourceId: 'resource-a', expectedRevision: 3, nextValue: 'fixture-new', decryptDataKeyEnvelope: async () => null };
+            const result = hook ? await hook.getCurrent().updateResource(input)
+                : await updateSavedSecretResource({ ...input, scope: account.scope });
+            expect(result).toEqual({ ok: false, reason: 'failed', failure: {
+                code: 'account-encryption-mode-unavailable', context: { kind: 'unknown', httpStatus: 503 },
+            } });
+            expect(account.writes).toHaveLength(0);
+            expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
+        } finally { await hook?.unmount(); }
+    });
+
+    it.each(['shared', 'private'] as const)('retains a materials preflight refusal and permits retry through the %s update transport', async entry => {
+        const account = await openAccount('plain');
+        const row = account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
+        if (entry === 'private') account.resources.set('resource-a', { ...row, entry: { ...row.entry,
+            audience: { accounts: [], teams: [], groups: [] } } });
+        await refreshCatalogAndWaitForLegacyImport(account.scope);
+        const hook = entry === 'private' ? await renderHook(() => useSavedSecretCatalog({ scope: account.scope })) : null;
+        try {
+            if (hook) await vi.waitFor(() => expect(hook.getCurrent().personalSecrets).toHaveLength(1));
+            account.setMaterialReadStatus(500, 'internal');
+            const input = { resourceId: 'resource-a', expectedRevision: 3, nextValue: 'fixture-new', decryptDataKeyEnvelope: async () => null };
+            const update = () => hook ? hook.getCurrent().updateResource(input)
+                : updateSavedSecretResource({ ...input, scope: account.scope });
+            expect(await update()).toEqual({ ok: false, reason: 'failed', failure: {
+                code: 'internal', context: { kind: 'unknown', httpStatus: 500 },
+            } });
+            expect(account.writes).toHaveLength(0);
+            expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
+            account.setMaterialReadStatus(200);
+            account.setEffect(() => Response.json({ resourceId: 'resource-a', revision: 4 }));
+            expect(await update()).toEqual({ ok: true });
+            expect(account.writes.filter(write => write.path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.update'])).toHaveLength(1);
+        } finally { await hook?.unmount(); }
+    });
+
     it('projects only safe update refusal reasons while retaining the Home classification', () => {
         expect(projectSavedSecretResourceUpdateFailure({ kind: 'forbidden', code: 'forbidden', retryable: false,
             httpStatus: 403, details: { reason: 'recipient_envelope_missing', retryable: false, kind: 'private_transport',
@@ -4172,8 +4226,12 @@ describe('Saved Secret operations through their real Account and Action owners',
             ? Reflect.get(request.actionArgs, 'resourceId') : 'resource-a';
         const result = operation === 'delete' ? { resourceId } : { resourceId, revision: 4 };
         const settledAt = request.createdAtMs + 1;
+        const decision = { kind: 'approve' as const, decidedAtMs: settledAt };
+        // 8393ed9528c: a terminal observation includes the checks settled by automaticApproval.admit.
+        expect(request.automaticChecks?.selected ?? []).toEqual([]);
         const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: settledAt,
-            decision: { kind: 'approve', decidedAtMs: settledAt }, execution: { ok: true, executedAtMs: settledAt, result } });
+            decision, ...(request.automaticChecks ? { automaticChecks: { ...request.automaticChecks,
+                phase: 'passed', humanDecision: decision } } : {}), execution: { ok: true, executedAtMs: settledAt, result } });
         const observation: DecryptedArtifact = { id: artifact.id, header: buildApprovalRequestArtifactHeaderV1(settled),
             title: buildApprovalRequestArtifactHeaderV1(settled).title,
             body: JSON.stringify(settled), headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2, isDecrypted: true };

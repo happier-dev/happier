@@ -2,7 +2,7 @@ import { createPersonalSavedSecretActionExecuteV1 } from '@happier-dev/protocol/
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readSavedSecretCatalogInContext, readSavedSecretCatalogMetadataInContext, readSavedSecretContentsInContext } from '@/sync/api/account/apiSavedSecretCatalog';
-import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
+import { homeDomainActionFailureFromDomainFailure, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { createSavedSecretResource, updateSavedSecretResource, deleteSavedSecretResource,
     type SavedSecretAdmittedMutationExecute } from './savedSecretResourceOperations';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -39,7 +39,7 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                 ? await readSavedSecretCatalogMetadataInContext(account, context.signal)
                 : await readSavedSecretCatalogInContext(account, context.signal, { resourceId: secretId });
             account.assertCurrent();
-            if (!catalog.ok) refusal(catalog.failure.code ?? 'unavailable');
+            if (!catalog.ok) throw createActionExecuteFailureError(homeDomainActionFailureFromDomainFailure(actionId, catalog.failure));
             return catalog.resources.map(resource => 'entry' in resource ? resource.entry : resource)
                 .filter((entry): entry is Extract<typeof entry, { ref: string }> =>
                 'ref' in entry && entry.relationship === 'owner');

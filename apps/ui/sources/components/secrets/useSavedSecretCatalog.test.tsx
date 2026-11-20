@@ -7,7 +7,7 @@ import { openSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/ac
 
 import { createDeferred, createRenderCommitCounter, renderHook, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
-import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { resetSavedSecretCatalogEngineForTests } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { beginSavedSecretCatalogLoad, getSavedSecretCatalogSnapshot, invalidateSavedSecretCatalog, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
@@ -34,9 +34,46 @@ afterEach(async () => {
     resetSavedSecretCatalogEngineForTests();
     await home?.dispose();
     home = null;
+    installDisconnectedServerSocketBoundary();
 });
 
 describe('useSavedSecretCatalog resource authority', () => {
+    it.each(['denied', 'private_error'] as const)('retains only typed currentness failure metadata before personal rename (%s)', async refusal => {
+        // 1b8f0850661b: only a connected observation refreshes after invalidation.
+        installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+        let refuseCurrentness = false;
+        let refusedReads = 0;
+        home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }), handleRequest: async path => {
+            if (refuseCurrentness && path === '/v1/account/encryption/currentness') {
+                refusedReads++;
+                if (refusal === 'private_error') throw Object.assign(new Error('private-boundary-message'), { code: 'private_boundary_code' });
+                return Response.json({ error: 'forbidden' }, { status: 403 });
+            }
+            return null;
+        } });
+        const { entry } = await home.addOwnerResource();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { parseSavedSecretRefV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
+        const ref = parseSavedSecretRefV1(entry.ref);
+        if (ref.kind !== 'shared_resource') throw new Error('Expected an owner resource reference');
+        const { invalidateAccountEncryptionModeCacheForChanges } = await import('@/sync/api/account/apiAccountEncryptionMode');
+        refuseCurrentness = true;
+        invalidateAccountEncryptionModeCacheForChanges([{ kind: 'account', entityId: 'self', hint: { encryptionMode: 'plain' } }],
+            { serverId: home.scope.serverId });
+        const result = await createDefaultActionExecutor().execute('secrets.update', {
+            secretId: ref.resourceId, name: 'Retained draft', expectedUpdatedAt: entry.revision,
+        }, { surface: 'ui', authority: 'present_user', serverId: home.scope.serverId, expectedAccountId: home.scope.accountId });
+        expect(refusedReads, result.ok ? 'unexpected_success' : JSON.stringify(result)).toBeGreaterThan(0);
+        if (refusal === 'denied') expect(result).toMatchObject({ ok: false,
+            errorCode: 'account-encryption-currentness-unavailable', details: { httpStatus: 403 } });
+        else {
+            expect(result.ok).toBe(false);
+            expect(JSON.stringify(result)).not.toContain('private-boundary-message');
+            expect(JSON.stringify(result)).not.toContain('private_boundary_code');
+        }
+        expect(home.updates).toEqual([]);
+    });
+
     it.each([false, true])('carries an answered catalog refusal through the real owner to Retry and recovers (material=%s)', async includeMaterial => {
         const { SavedSecretResourceActionErrorV1Schema } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
         let refused = true;
