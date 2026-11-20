@@ -292,6 +292,8 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         // The page heads itself with the Team's lockup; the header only carries Back.
         'teams/[teamId]/setup': options.visibleBlankBack,
         'join/[token]': options.hiddenHeader,
+        // An older account QR's answer is a signed-out step; it heads itself.
+        account: options.hiddenHeader,
         'terminal/connect': options.hiddenHeader,
         'terminal/index': options.hiddenHeader,
         'scan/terminal': options.hiddenHeader,

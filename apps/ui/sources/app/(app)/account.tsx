@@ -3,6 +3,7 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { t } from '@/text';
 
 export default function LegacyAccountRoute() {
@@ -29,6 +30,8 @@ export default function LegacyAccountRoute() {
     if (decision.kind === 'redirect') return null;
     return <AuthRouteStepFrame
         testID="legacy-account-qr"
+        status
+        mark={<StepMark iconName="key" />}
         title={t('connect.updateRequiredTitle')}
         subtitle={t('connect.legacyAccountQrUnavailable')}
         onBack={() => router.replace(auth.isAuthenticated ? '/settings/account' : '/')}

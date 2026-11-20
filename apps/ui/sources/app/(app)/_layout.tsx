@@ -441,6 +441,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     options={rootStackRouteOptions['join/[token]']}
                 />
                 <Stack.Screen
+                    name="account"
+                    options={rootStackRouteOptions.account}
+                />
+                <Stack.Screen
                     name="terminal/connect"
                     options={rootStackRouteOptions['terminal/connect']}
                 />
