@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
@@ -9,7 +9,7 @@ import { withPatchedProcessEnv } from '../../../apps/stack/scripts/testkit/core/
 import { installWorkspaceAdmissionProcessFixture } from '../../../apps/stack/scripts/testkit/core/native_admission_fixture.mjs';
 import { preparePerfSourceDependencies } from './validate-perf.mjs';
 
-test('already-installed performance sources prepare the driver workspace dependencies before capture', async t => {
+test('already-installed performance sources derive the selected embedded policy before building driver dependencies', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-perf-dependencies-' });
   const root = fixture.root;
   await writeFile(join(root, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*', 'packages/*'] }));
@@ -38,13 +38,21 @@ importers:
     mkdir(join(root, 'node_modules/@happier-dev'), { recursive: true })]);
   await writeFile(join(protocol, 'package.json'), JSON.stringify({ name: '@happier-dev/protocol', type: 'module',
     main: './dist/index.js', exports: { '.': './dist/index.js' }, scripts: { build: 'node build.mjs' } }));
-  await writeFile(join(protocol, 'src/index.js'), 'export const ready = true;\n');
+  await mkdir(join(protocol, 'scripts'));
+  await copyFile(new URL('../../../packages/protocol/scripts/generate-embedded-feature-policies.mjs', import.meta.url),
+    join(protocol, 'scripts/generate-embedded-feature-policies.mjs'));
+  const policyDir = join(root, '.github/feature-policy');
+  await mkdir(policyDir, { recursive: true });
+  for (const environment of ['preview', 'production']) {
+    await writeFile(join(policyDir, environment + '.json'), JSON.stringify({ buildPolicy: { allow: ['fixture.' + environment] } }));
+  }
   await writeFile(join(protocol, 'build.mjs'), `import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 const output = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
 if (!output) throw new Error('Canonical workspace publisher must own the build output');
 await mkdir(output, { recursive: true });
-await writeFile(join(output, 'index.js'), await readFile(new URL('./src/index.js', import.meta.url)));
+const policy = await readFile(new URL('./src/features/embeddedFeaturePolicies.generated.ts', import.meta.url), 'utf8');
+await writeFile(join(output, 'index.js'), 'export const ready = ' + policy.includes('fixture.preview') + ';');
 `);
   await writeFile(join(driver, 'package.json'), JSON.stringify({ name: '@fixture/perf-driver', type: 'module', private: true,
     dependencies: { '@happier-dev/protocol': 'workspace:*' } }));

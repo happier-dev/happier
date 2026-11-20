@@ -134,6 +134,10 @@ async function withBasis({ ref, directory, label, scratch, signal }, consume) {
 
 export async function preparePerfSourceDependencies(side, sourceDir, signal, owned) {
   if (!owned) throw new Error(`${side} dependencies unavailable; only a private comparison tree can be prepared automatically`);
+  // Exact Git worktrees omit the ignored Protocol compiler input. Derive it
+  // from the selected side before the finite workspace publishers use it.
+  const policyGenerator = join(sourceDir, 'packages/protocol/scripts/generate-embedded-feature-policies.mjs');
+  if (existsSync(policyGenerator)) await command(process.execPath, [policyGenerator], { cwd: sourceDir, signal });
   if (!existsSync(join(sourceDir, 'node_modules'))) {
     // Only the detached comparison basis is ours to prepare. The canonical
     // installer selects its declared package manager and dependency inputs.
