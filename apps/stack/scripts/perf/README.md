@@ -27,7 +27,7 @@ browser each time; it never borrows a live stack's dependencies. Stateful journe
 effects remain part of that declared fixed sequence, not a claim of dataset reset.
 
 CI consumes `--baseline-results-dir <directory>` only for a trusted successful
-`dev`/`main` push artifact at the exact PR base SHA. The directory contains the
+`dev`, `main` or `v0.3` push artifact at the exact PR base SHA. The directory contains the
 same `comparison.json` and relative canonical `runs/.../candidate/bundle.json`
 files, not executable artifact code. Counts/bytes can compare across hosts;
 historical timing is explicitly not a same-host paired ratio. With no exact-base
@@ -43,16 +43,24 @@ sign-off. Only owner-level contracts that reject an intentional real regression
 and pass ten unchanged target-runner repeats may gate in the existing test jobs.
 SQL counts and scheduler-sensitive whole-app counts remain diagnostic.
 
-The fixed short PR profile has two counts-only captures: authenticated startup
-and another Session streaming while unrelated content is mounted (four captures
-for a local paired run). Only full-profile J1 startup collects five unperturbed
-timing repetitions per side. The full
-profile also covers cold startup, settled Home, New Session, exact Inbox approval
-and the real Stop control. Docker/composed validation is authorized on nl1;
-successful browser end-to-end execution and completed-step runtime remain
-unverified. The observed unsuccessful cold PR step took 62.26 minutes, dominated
-by UI export, so the five-minute cold target is not met. This documentation does
-not claim CI has executed the new scenario integration.
+The PR profile captures authenticated startup once and J4 streaming twice per
+source. J4 also measures the server API and worker, daemon, Session runner,
+native holders and an authenticated Chromium running the production UI. The
+Linux process snapshots report endpoint RSS and CPU time over the window. Idle
+CPU is normalized per minute. Active CPU covers three concurrent fake-provider
+turns while the UI observes one of them. Chromium is installed at the version
+pinned by the test workspace.
+
+For each idle or active RAM and CPU metric, compatible base captures supply a
+spread equal to the largest base value minus the smallest. The summary shows
+candidate minus base and raises an informational alert when an increase exceeds
+that spread. A single comparable base capture supplies a delta and leaves the
+spread unavailable. Capture and workload compatibility include the runtime,
+hardware class and measurement recipe.
+
+Full-profile J1 startup collects five unperturbed timing repetitions per side.
+The full profile also covers cold startup, settled Home, New Session, exact
+Inbox approval and the real Stop control.
 
 The orchestrator owns `agent-qa-perf` lifecycle. This tool attaches to the
 browser returned by `dev-targets browser start`; it never launches a browser,
