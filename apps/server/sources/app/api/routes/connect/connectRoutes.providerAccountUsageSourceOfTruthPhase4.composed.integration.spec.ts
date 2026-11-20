@@ -10,7 +10,7 @@ import { db } from "@/storage/db";
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
-import { readProviderAccountUsageChangedRecordIdsV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
+import { readProviderAccountUsageChangedRecordIdsV1, readProviderAccountUsageDayChangeV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { readConnectedServicesAccountChangeV1 } from '@happier-dev/protocol/changes';
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -122,7 +122,7 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
     });
 
     it.each(['plain', 'plain-without-fingerprint', 'e2ee'] as const)(
-        'publishes zero material quota changes for repeated %s freshness writes through the real route', async mode => {
+        'publishes each new %s observation clock and deduplicates equal-clock writes through the real route', async mode => {
         harness.resetEnv({
             HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: 'true',
             HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
@@ -177,21 +177,20 @@ describe("connectRoutes provider-account usage source-of-truth phase 4 contract"
         expect(materialChanges.map(change => change.entityId).sort()).toEqual([
             'provider-account-usage', `provider-account-usage-record:${first.recordId}`,
         ].sort());
-        expect(materialChanges.find(change => change.entityId === 'provider-account-usage')?.hint)
-            .toEqual({ providerAccountUsageRecordId: first.recordId });
+        expect(readProviderAccountUsageDayChangeV1(materialChanges)).toMatchObject({
+            history: { fromAtMs: first.fetchedAtMs }, publication: { kind: 'observation' },
+        });
         expect(readProviderAccountUsageChangedRecordIdsV1(materialChanges)).toEqual([first.recordId]);
         let previousCursor = await cursor();
-        let extraMaterialPublications = 0;
         let refreshed = first;
         for (let index = 1; index <= 20; index++) {
             refreshed = { ...first, fetchedAtMs: first.fetchedAtMs + index * 1000, observedAtMs: first.observedAtMs + index * 1000,
                 subscription: { ...first.subscription, observedAtMs: first.subscription.observedAtMs + index * 1000 } };
             await write(refreshed);
             const nextCursor = await cursor();
-            if (nextCursor !== previousCursor) extraMaterialPublications++;
+            expect(nextCursor).toBe(previousCursor + 2);
             previousCursor = nextCursor;
         }
-        expect(extraMaterialPublications).toBe(0);
         const latest = await app.inject({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/record?recordId=' + encodeURIComponent(first.recordId), headers });
         expect(latest.statusCode, latest.body).toBe(200);
         expect(latest.json().metadata.fetchedAt).toBe(refreshed.fetchedAtMs);

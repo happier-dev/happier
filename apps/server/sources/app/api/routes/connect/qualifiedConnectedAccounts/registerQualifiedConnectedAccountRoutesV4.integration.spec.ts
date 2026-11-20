@@ -327,8 +327,9 @@ describe("qualified Connected Account V4 route family (integration)", () => {
                 .toEqual({ projection: null, complete: false });
             await db.$executeRawUnsafe('DROP TRIGGER usage_idle_credential_write');
             await db.$executeRawUnsafe('DROP TRIGGER usage_idle_account_write');
+            // The new clock publishes the global history hint and its exact-record companion.
             await write({ ...first, planLabel: 'new plan', fetchedAtMs: first.fetchedAtMs + 2000, observedAtMs: first.observedAtMs + 2000 });
-            expect((await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq).toBe(beforeIdle.seq + 1);
+            expect((await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq).toBe(beforeIdle.seq + 2);
             expect((await read(widerDemand)).json()).toEqual({ projection, complete: false });
             expect((await read()).json()).toEqual({ projection, complete: true });
             const incompleteHead = await read(widerDemand, { ...headers, 'if-none-match': String(revision) });
