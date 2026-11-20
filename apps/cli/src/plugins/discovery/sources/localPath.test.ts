@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
+import { projectMcpPluginItemMetadataV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import { resolveLocalPathPluginSource } from './localPath';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
@@ -96,6 +98,77 @@ describe('resolveLocalPathPluginSource', () => {
         ok: true, manifest: { contributes: { mcp: { servers: [] } } },
         vendorContent: { notImported: { mcpServers: 1, other: ['extensions.example.vendor'] } },
       });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('admits private Workflow and HTTP MCP declarations from an Agent Plugins manifest', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-vendor-extension-'));
+    const workflow = { id: 'review-changes', title: 'Review changes', definition: { version: 1, inputs: [], defaults: {},
+      blocks: [{ kind: 'step', id: 'review', document: { text: 'Review changes', references: [], attachments: [] } }] } };
+    const oauth = { kind: 'oauth' };
+    const endpoint = 'https://example.com/review';
+    try {
+      await writeFile(join(root, 'plugin.json'), JSON.stringify({
+        $schema: 'https://agent-plugins.org/schemas/1.0.0/plugin.schema.json', name: 'portable',
+        extensions: { 'dev.happier': { contributes: {
+          workflows: [workflow],
+          mcp: { servers: [{ id: 'review', title: 'Review', kind: 'static', transport: { kind: 'http', url: endpoint, auth: oauth } }] },
+          hooks: [{ id: 'ignored' }],
+        }, entrypoints: { daemon: './ignored.js' } }, 'other.vendor': {} },
+      }));
+      await writeFile(join(root, 'mcp.json'), JSON.stringify({
+        $schema: 'https://agent-plugins.org/schemas/1.0.0/mcp.schema.json', mcpServers: {
+          review: { type: 'streamable-http', url: endpoint },
+          docs: { type: 'streamable-http', url: 'https://example.com/docs' },
+        },
+      }));
+      const result = await resolveLocalPathPluginSource({ locator: root });
+      expect(result).toMatchObject({ ok: true, manifest: { contributes: { workflows: [workflow] } }, vendorContent: {
+        notImported: { mcpServers: 0, other: expect.arrayContaining([
+          'extensions.other.vendor', 'extensions.dev.happier.contributes.hooks', 'extensions.dev.happier.entrypoints',
+        ]) },
+      } });
+      if (!result.ok) return;
+      expect(result.manifest.entrypoints).toBeUndefined();
+      const servers = result.manifest.contributes?.mcp?.servers ?? [];
+      expect(servers.map(server => server.id)).toEqual(['review', 'docs']);
+      const remote = servers.map(server => projectMcpPluginItemMetadataV1({ pluginId: result.manifest.id, pluginName: result.manifest.displayName, server }).remote);
+      expect(remote).toEqual([{ url: endpoint, auth: oauth }, undefined]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('projects vendor-declared HTTP OAuth through the same MCP sign-in metadata as native plugins', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-vendor-oauth-'));
+    try {
+      await mkdir(join(root, '.claude-plugin'));
+      await writeFile(join(root, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'vendor' }));
+      const protectedUrl = 'https://example.com/protected';
+      await writeFile(join(root, '.mcp.json'), JSON.stringify({ mcpServers: {
+        protected: { type: 'http', url: protectedUrl, oauth: { callbackPort: 8080 } },
+        anonymous: { type: 'http', url: 'https://example.com/public' },
+      } }));
+      const result = await resolveLocalPathPluginSource({ locator: root });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const metadata = (result.manifest.contributes?.mcp?.servers ?? []).map(server => projectMcpPluginItemMetadataV1({
+        pluginId: result.manifest.id, pluginName: result.manifest.displayName, server,
+      }));
+      const [protectedServer, anonymousServer] = metadata;
+      expect(metadata.map(({ remote }) => remote)).toEqual([{ url: protectedUrl, auth: { kind: 'oauth' } }, undefined]);
+      expect(result.vendorContent?.notImported.other).toContain('mcpServers.protected.oauth');
+
+      const execute = createMcpServerActionExecuteV1({
+        readPluginItems: async () => metadata,
+        resolveAdministrationMachine: async () => 'fixture-machine',
+        describeConnectedService: async () => { throw new Error('fixture daemon RPC disconnected'); },
+        readCatalog: async () => { throw new Error('unexpected Account catalog read'); },
+        mutate: async () => { throw new Error('unexpected Account catalog write'); },
+        machine: async () => { throw new Error('unexpected MCP test'); },
+      });
+      const start = (serverId: string) => execute({ actionId: 'mcp.servers.signIn.start', input: { serverId },
+        context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } });
+      expect(await start(protectedServer!.id)).toMatchObject({ ok: false, details: { stage: 'service_description' } });
+      expect(await start(anonymousServer!.id)).toMatchObject({ ok: false, errorCode: 'mcp_sign_in_not_supported' });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 

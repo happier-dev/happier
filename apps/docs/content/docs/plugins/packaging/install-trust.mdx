@@ -61,6 +61,49 @@ The installation review and installed plugin details list omitted content,
 such as hooks, vendor-specific extensions, and MCP declarations that require
 unsupported configuration.
 
+### Share Happier contributions from a vendor package
+
+In 0.3 development source, add an `extensions["dev.happier"]` object to a
+vendor package's existing manifest. Use `contributes.workflows` for Happier
+[Workflow templates](/plugins/manifest/contributions#workflow-definitions) and `contributes.mcp.servers`
+for static HTTP MCP servers. Both use the same declarations as a native
+Happier manifest. Each contribution needs a distinct ID within the plugin.
+Happier reports unsupported extension keys and invalid declarations in the
+import review.
+
+For an OAuth-protected portable MCP server, add the following to the package
+manifest and keep the same server ID and URL in its regular `mcp.json`.
+
+```json
+{
+  "extensions": {
+    "dev.happier": {
+      "contributes": {
+        "mcp": {
+          "servers": [
+            {
+              "id": "review",
+              "title": "Review tools",
+              "kind": "static",
+              "transport": {
+                "kind": "http",
+                "url": "https://tools.example.com/mcp",
+                "auth": { "kind": "oauth" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+A vendor `.mcp.json` HTTP entry with an `oauth` object also declares sign-in.
+Happier uses Connected Services to discover OAuth metadata and acquire a grant
+when the person signs in. Vendor OAuth client overrides are reported in import
+review. An HTTP declaration without OAuth continues to use anonymous access.
+
 For local authoring, use `hdev plugins dev`. The daemon owns replacement and
 validation while the author command automatically observes the source. For an
 intentional watcher-free refresh of a package root, use the same development

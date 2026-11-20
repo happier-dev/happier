@@ -13180,6 +13180,14 @@ the default registry. `useAsDefault` controls automatic registry selection; an
 explicit selection still checks the exact origin and any package scope. Binding
 a profile therefore does not redirect unrelated unscoped installs to that registry.
 
+In 0.3 development source, vendor package admission reads a manifest's
+`extensions["dev.happier"].contributes` for Workflow templates and static HTTP
+MCP declarations. Admission uses the native contribution schemas. A private
+MCP declaration can add OAuth to a portable server with the same ID and URL.
+Vendor HTTP entries declaring OAuth also reach the existing Connected Services
+sign-in and credential owner. The omitted-content report records unsupported
+extension declarations and vendor OAuth client overrides.
+
 The development `plugins.install` Action accepts an exact marketplace source,
 plugin and version plus the selected Machine, without public trust fields.
 For an installed plugin, `source: { kind: 'installed', pluginId }` asks the

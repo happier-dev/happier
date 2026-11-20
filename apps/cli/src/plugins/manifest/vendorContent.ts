@@ -4,6 +4,8 @@ import { basename, isAbsolute, join, relative } from 'node:path';
 import semver from 'semver';
 import { z } from 'zod';
 import { isPortableRelativePath } from '@happier-dev/protocol/filesystem/portablePathSegment';
+import { PluginMcpServerContributionV1Schema } from '@happier-dev/protocol/plugins/contributions/mcp';
+import { PluginWorkflowContributionV1Schema } from '@happier-dev/protocol/plugins/manifest';
 import type { PluginManifestV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { PluginContentNotImportedV1 } from '@happier-dev/protocol/plugins/source-spec';
 import { McpRemoteUrlV1Schema } from '@happier-dev/protocol/mcp/remoteUrlV1';
@@ -11,7 +13,9 @@ import { readSkillFrontmatterV1 } from '@happier-dev/protocol/prompts/library/sk
 
 type Fields = Record<string, unknown>;
 type Contributions = NonNullable<PluginManifestV2['contributes']>;
+type McpServers = NonNullable<NonNullable<Contributions['mcp']>['servers']>;
 const agentPluginsV1 = 'https://agent-plugins.org/schemas/1.0.0/';
+const happierExtension = 'dev.happier';
 const portableManifest = z.object({
   $schema: z.literal(`${agentPluginsV1}plugin.schema.json`),
   name: z.string().min(1).max(64).regex(/^(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/),
@@ -85,6 +89,61 @@ function readJson(raw: string | undefined): Fields | undefined {
   try { return fields(JSON.parse(raw)); } catch { return undefined; }
 }
 
+function admitHappierExtension(extensions: Fields | undefined, servers: McpServers, omissions: Set<string>) {
+  const workflows: NonNullable<Contributions['workflows']> = [];
+  for (const [namespace, raw] of Object.entries(extensions ?? {})) {
+    const path = `extensions.${namespace}`;
+    const extension = fields(raw);
+    if (namespace !== happierExtension || !extension) {
+      omissions.add(path);
+      continue;
+    }
+    for (const key of Object.keys(extension)) if (key !== 'contributes') omissions.add(`${path}.${key}`);
+    const contributes = fields(extension.contributes);
+    if (extension.contributes !== undefined && !contributes) omissions.add(`${path}.contributes`);
+    if (!contributes) continue;
+    const contributionPath = `${path}.contributes`;
+    for (const key of Object.keys(contributes)) {
+      if (key !== 'workflows' && key !== 'mcp') omissions.add(`${contributionPath}.${key}`);
+    }
+    if (Array.isArray(contributes.workflows)) {
+      for (const rawWorkflow of contributes.workflows) {
+        const workflow = PluginWorkflowContributionV1Schema.safeParse(rawWorkflow);
+        if (workflow.success && !workflows.some(existing => existing.id === workflow.data.id)) workflows.push(workflow.data);
+        else omissions.add(`${contributionPath}.workflows`);
+      }
+    } else if (contributes.workflows !== undefined) omissions.add(`${contributionPath}.workflows`);
+
+    const mcp = fields(contributes.mcp);
+    if (contributes.mcp !== undefined && !mcp) omissions.add(`${contributionPath}.mcp`);
+    if (!mcp) continue;
+    for (const key of Object.keys(mcp)) if (key !== 'servers') omissions.add(`${contributionPath}.mcp.${key}`);
+    const serverPath = `${contributionPath}.mcp.servers`;
+    if (!Array.isArray(mcp.servers)) {
+      if (mcp.servers !== undefined) omissions.add(serverPath);
+      continue;
+    }
+    for (const rawServer of mcp.servers) {
+      const parsed = PluginMcpServerContributionV1Schema.safeParse(rawServer);
+      if (!parsed.success || parsed.data.kind !== 'static' || parsed.data.transport.kind !== 'http' || parsed.data.transport.url.includes('${')) {
+        omissions.add(serverPath);
+        continue;
+      }
+      const server = parsed.data;
+      const index = servers.findIndex(existing => existing.id === server.id);
+      const existing = servers[index];
+      if (!existing) {
+        servers.push(server);
+      } else if (existing.kind === 'static' && existing.transport.kind === 'http' && existing.transport.url === server.transport.url) {
+        if (server.transport.auth) servers[index] = { ...existing, transport: { ...existing.transport, auth: server.transport.auth } };
+      } else {
+        omissions.add(serverPath);
+      }
+    }
+  }
+  return workflows;
+}
+
 export async function projectVendorPluginContent(root: string, identity: string): Promise<VendorContentProjection | null> {
   let metadata: Fields | undefined;
   let mcpPath: string | undefined;
@@ -101,7 +160,6 @@ export async function projectVendorPluginContent(root: string, identity: string)
       const manifest = portableManifest.safeParse(candidate);
       if (!manifest.success) throw new Error(`Invalid Agent Plugins manifest (${manifest.error.issues[0]?.path.join('.') || 'plugin.json'})`);
       for (const key of Object.keys(candidate)) if (!Object.hasOwn(portableManifest.shape, key)) other.add(key);
-      for (const key of Object.keys(manifest.data.extensions ?? {})) other.add(`extensions.${key}`);
       metadata = manifest.data;
     } else {
       metadata = candidate;
@@ -114,7 +172,7 @@ export async function projectVendorPluginContent(root: string, identity: string)
 
   const skills: NonNullable<Contributions['skills']> = [];
   const systemTools: NonNullable<Contributions['systemTools']> = [];
-  const servers: NonNullable<NonNullable<Contributions['mcp']>['servers']> = [];
+  const servers: McpServers = [];
   const files = new Map<string, string>();
   const skillIds = new Set<string>();
   const notImported = { hooks: 0, commands: 0, agents: 0, mcpServers: 0 };
@@ -176,7 +234,11 @@ export async function projectVendorPluginContent(root: string, identity: string)
     const http = entry.type === 'streamable-http' || !portable && (entry.type === 'http' || entry.type === undefined);
     if (http && typeof entry.url === 'string' && !entry.url.includes('\${') && entry.headers === undefined
       && McpRemoteUrlV1Schema.safeParse(entry.url).success) {
-      servers.push({ id, title: name, kind: 'static', transport: { kind: 'http', url: entry.url } });
+      const vendorOAuth = portable ? undefined : fields(entry.oauth);
+      // The existing Connected Services owner discovers and registers its own OAuth client.
+      if (entry.oauth !== undefined && (!vendorOAuth || Object.keys(vendorOAuth).length > 0)) other.add(`mcpServers.${name}.oauth`);
+      servers.push({ id, title: name, kind: 'static', transport: { kind: 'http', url: entry.url,
+        ...(vendorOAuth ? { auth: { kind: 'oauth' } } : {}) } });
       continue;
     }
     const stdio = entry.type === 'stdio' || !portable && entry.type === undefined;
@@ -190,6 +252,7 @@ export async function projectVendorPluginContent(root: string, identity: string)
     }
     notImported.mcpServers++;
   }
+  const workflows = admitHappierExtension(fields(metadata.extensions), servers, other);
   const hooks = metadata.hooks ?? readJson(await text(root, 'hooks/hooks.json'))?.hooks;
   notImported.hooks = Array.isArray(hooks) ? hooks.length : Object.keys(fields(hooks) ?? {}).length || (hooks ? 1 : 0);
   for (const key of ['rules', 'lspServers', 'app', 'outputStyles'] as const) if (metadata[key] !== undefined) other.add(key);
@@ -201,7 +264,7 @@ export async function projectVendorPluginContent(root: string, identity: string)
     manifest: { schemaVersion: 2, id: `imported.${id}`, displayName: metadata.name.trim(),
       version: typeof metadata.version === 'string' && semver.valid(metadata.version) === metadata.version ? metadata.version : '0.0.0',
       ...(typeof metadata.description === 'string' ? { description: metadata.description } : {}),
-      contributes: { skills, systemTools, mcp: { servers } } },
+      contributes: { skills, systemTools, mcp: { servers }, ...(workflows.length ? { workflows } : {}) } },
     files,
     notImported: { ...notImported, ...(other.size ? { other: [...other] } : {}) },
   };
