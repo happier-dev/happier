@@ -37,6 +37,10 @@ it('builds, restores and retires a credential-free snapshot through public prepa
         });
         seedPresent = true; return response(201, dto);
       }
+      if (url.pathname === '/sandboxes' && input.method === 'GET'
+        && url.searchParams.get('metadata.happier-managed-id') === seed.managedId) {
+        return response(200, seedPresent ? [dto] : []);
+      }
       if (url.pathname === '/sandboxes/seed-one/snapshot') { snapshotPresent = true; return response(201, snapshot); }
       if (url.pathname === '/sandboxes/seed-one/pause') return response(204);
       if (url.pathname === '/snapshots/snapshot-one') {

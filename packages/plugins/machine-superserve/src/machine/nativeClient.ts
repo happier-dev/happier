@@ -1,6 +1,6 @@
 import { decodeBase64, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolUnion, defineProtocolLiteral } from '@happier-dev/plugin-sdk/protocol';
 import { isMachineProvisionerCreateRefusal, projectMachineProvisionerActionFailure, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerDeleteReadback, type MachineProvisionerAcquireResultV1, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerDestroyResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { API_ORIGIN, GUEST_ORIGIN } from '../account.js';
+import { API_ORIGIN, GUEST_ORIGIN, SUPERSERVE_ACCESS_PROBE_URL } from '../account.js';
 import { BILLING, CONTRIBUTION, SuperserveLaunchSchema, SuperserveOperationSchema, SuperserveResourceSchema, ROLE_SCHEMAS, reference, type SuperserveLaunch, type SuperserveOperation, type SuperserveResource } from './schemas.js';
 import { createSuperserveHttp, NativeError } from './transport.js';
 
@@ -41,7 +41,7 @@ export function createSuperserveNativeClient(request: typeof fetch, signal?: Abo
   }
   const path = (id: string) => API_ORIGIN + '/sandboxes/' + encodeURIComponent(id);
   async function check(): Promise<MachineProvisionerCheckResultV1> {
-    try { if (!Array.isArray((await http(API_ORIGIN + '/sandboxes')).value)) throw new NativeError('superserve_invalid_response'); return { available: true }; }
+    try { if (!Array.isArray((await http(SUPERSERVE_ACCESS_PROBE_URL)).value)) throw new NativeError('superserve_invalid_response'); return { available: true }; }
     catch (error) { return projectMachineProvisionerActionFailure(error, () => ({ available: false, code: code(error) })); }
   }
   async function acquire(input: SuperserveLaunch, managedId: string): Promise<Acquisition> {

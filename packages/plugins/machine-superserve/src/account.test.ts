@@ -19,7 +19,7 @@ describe('Superserve Account token authentication', () => {
     const b = boundary();
     expect(await mode.complete({ fields: { token: ' private-account-key ' } }, b.context as unknown as ConnectedAccountAuthenticationContext)).toMatchObject({ status: 'connected' });
     expect(b.staged).toEqual(['private-account-key']);
-    expect(b.calls[0]).toMatchObject({ url: 'https://api.superserve.ai/sandboxes', headers: { 'x-api-key': 'private-account-key' } });
+    expect(b.calls[0]).toMatchObject({ url: 'https://api.superserve.ai/sandboxes?limit=1', headers: { 'x-api-key': 'private-account-key' } });
     for (const [httpStatus, status] of [[401, 'rejected'], [503, 'unavailable']] as const) {
       const failed = boundary(httpStatus);
       const result = await mode.complete({ fields: { token: 'private-account-key' } }, failed.context as unknown as ConnectedAccountAuthenticationContext);
