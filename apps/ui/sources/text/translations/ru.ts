@@ -3168,6 +3168,7 @@ export const ru: TranslationStructure = {
     pasteNewLink: "Вставить новую ссылку",
     homeEnrollmentRetryBody:
       "Не удалось завершить добавление этого Home. Проверьте подключение и повторите попытку.",
+    retryRetainedHome: ({ home }: { home: string }) => `Повторить для ${home}`,
     homeEnrollmentPartialCommitBody:
       "Учётные данные Home могли сохраниться, но добавление Home не завершилось. Повторите попытку с этим Home, прежде чем начинать другое добавление.",
     generateNewQrCode: "Создать новый QR‑код",

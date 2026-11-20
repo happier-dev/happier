@@ -35,6 +35,10 @@ export type HomeProfileCredentialRollbackOutcome =
 export class HomeProfileAdoptionPartialCommitError extends Error {
     readonly code = 'home_profile_adoption_partial_commit' as const;
 
+    get canRetry(): boolean {
+        return this.rollbackOutcome.kind === 'failed';
+    }
+
     constructor(
         readonly adoptionError: unknown,
         readonly canonicalServerUrl: string,
@@ -240,6 +244,24 @@ export async function adoptHomeProfileWithCredentials(
         undefined,
         async (authority) => await adoptHomeProfileWithCredentialsUnderAuthority(input, authority),
     );
+}
+
+/** Finish the profile half of the same adoption while its credential still owns the target slot. */
+export async function finalizeRetainedHomeProfileAdoption(
+    input: AdoptHomeProfileWithCredentialsInput,
+    failure: HomeProfileAdoptionPartialCommitError,
+): Promise<ServerProfile | null> {
+    if (!failure.canRetry || input.descriptor.homeServerIdentityId !== failure.serverIdentityId) return null;
+    const { credentials, shouldCancel, ...adoption } = input;
+    return await withHomeMutationAuthority(undefined, async (authority) => {
+        const retained = await getHomeCredentialsUnderMutationAuthority(
+            authority,
+            failure.canonicalServerUrl,
+            { serverId: failure.serverIdentityId },
+        );
+        if (retained?.token !== credentials.token || shouldCancel?.()) return null;
+        return await adoptHomeProfileUnderMutationAuthority(adoption, authority);
+    });
 }
 
 async function adoptHomeProfileWithCredentialsUnderAuthority(

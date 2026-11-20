@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installRestoreScanComputerQrViewCommonModuleMocks } from './restoreScanComputerQrViewTestHelpers';
 
@@ -23,30 +23,29 @@ installRestoreScanComputerQrViewCommonModuleMocks({
     },
 });
 
-vi.mock('@/hooks/server/useFeatureDecision', () => ({
-    useFeatureDecision: () => ({ state: 'disabled' }),
-}));
+// The camera SDK is a native boundary; the scanner and its gate stay real.
+vi.mock('expo-camera', () => ({ CameraView: 'CameraView',
+    useCameraPermissions: () => [{ granted: true }, vi.fn()] }));
 
-let scannerRendered = false;
-vi.mock('@/components/qr/QrCodeScannerView', () => ({
-    QrCodeScannerView: (props: any) => {
-        scannerRendered = true;
-        return React.createElement('QrCodeScannerView', props);
-    },
-}));
-
-const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
+const { QrCodeScannerView } = await import('@/components/qr/QrCodeScannerView');
 
 describe('RestoreScanComputerQrView (feature disabled)', () => {
+    beforeEach(() => {
+        // A build-policy denial disables this device's scanner; a focused Home's
+        // disabled server bit must still allow scanning another Home's invite.
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', 'auth.pairing.boundQrV2');
+    });
+
+    afterEach(() => vi.unstubAllEnvs());
+
     it('renders a fallback UX instead of the scanner', async () => {
-        scannerRendered = false;
-
-        const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}>
             <RestoreScanComputerQrView entryIntent="add_home" />
-        </InjectedAuthProvider>);
+        </AuthProvider>);
 
-        expect(scannerRendered).toBe(false);
+        expect(screen.findAllByType(QrCodeScannerView)).toHaveLength(0);
         expect(screen.getTextContent()).toContain('connect.scanComputerQrUnavailableBody');
         expect(screen.findByTestId('restore-open-manual')).not.toBeNull();
         expect(screen.findByTestId('restore-show-qr-instead')).toBeNull();

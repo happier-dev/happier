@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from 'expo-router';
 
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
-import { buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
+import { buildExpiredHomeQrRestoreRoutePath, buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
 import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
 import { promptAccountConnectApprovalRequired } from '@/components/account/restore/accountConnectApprovalGuidance';
@@ -12,6 +12,7 @@ import { t } from '@/text';
 
 type UseScannedAuthUrlProcessorCallbacks = Readonly<{
     onError?: (error: unknown) => void;
+    onScanNewQr?: () => void;
 }>;
 
 type UseScannedAuthUrlProcessorOptions = UseScannedAuthUrlProcessorCallbacks & (
@@ -55,6 +56,10 @@ export function useScannedAuthUrlProcessor(options: UseScannedAuthUrlProcessorOp
                     router.push(restorePath);
                     return true;
                 }
+                case 'expired_home_qr_invite':
+                    if (options.allowedUrlKind !== 'account') return await rejectAsInvalid();
+                    router.push(buildExpiredHomeQrRestoreRoutePath(options.homeQrEntryIntent));
+                    return true;
                 case 'terminal_connect':
                     if (options.allowedUrlKind !== 'terminal') return await rejectAsInvalid();
                     return await terminalConnect.openApproval(link.terminal);
@@ -73,7 +78,7 @@ export function useScannedAuthUrlProcessor(options: UseScannedAuthUrlProcessorOp
                     router.push(link.path);
                     return true;
                 case 'legacy_pairing':
-                    await promptLegacyPairingUpdateRequired();
+                    if (await promptLegacyPairingUpdateRequired() === 'scan_new_qr') options.onScanNewQr?.();
                     return true;
                 case 'unknown':
                     return await rejectAsInvalid();

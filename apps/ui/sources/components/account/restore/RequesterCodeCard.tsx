@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import Animated, {
   Easing,
+  runOnJS,
   useAnimatedStyle,
   useSharedValue,
   withDelay,
@@ -57,6 +58,7 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
     /** When the shown code renews; absent once approved. */
     expiresAtMs: number | null;
     approved: boolean;
+    onApprovedSettled?: () => void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -72,13 +74,20 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
 
   React.useEffect(() => {
     const target = props.approved ? 1 : 0;
+    const onApprovedSettled = props.onApprovedSettled;
+    const onPillSettled = props.approved && onApprovedSettled
+      ? (finished?: boolean) => {
+          'worklet';
+          if (finished) runOnJS(onApprovedSettled)();
+        }
+      : undefined;
     if (reducedMotion) {
       const fade = {
         duration: reanimatedMotionTokens.durationMs.base,
         easing: reanimatedMotionTokens.easing.standard,
       };
       progress.value = withTiming(target, fade);
-      pill.value = withTiming(target, fade);
+      pill.value = withTiming(target, fade, onPillSettled);
       return;
     }
     progress.value = withTiming(target, {
@@ -90,9 +99,9 @@ export const RequesterCodeCard = React.memo(function RequesterCodeCard(
       withTiming(target, {
         duration: APPROVED_ENTRANCE.riseMs,
         easing: APPROVED_ENTRANCE.easing,
-      }),
+      }, onPillSettled),
     );
-  }, [pill, progress, props.approved, reducedMotion]);
+  }, [pill, progress, props.approved, props.onApprovedSettled, reducedMotion]);
 
   const codeStyle = useAnimatedStyle(() => {
     // The softening runs on the first half of the entrance, so the check rises over a code that has already let go.

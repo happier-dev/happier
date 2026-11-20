@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, ScrollView } from 'react-native';
 import type { StyleProp, ViewStyle } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
@@ -202,12 +203,26 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     const [setupCompletedProfileId, setSetupCompletedProfileId] = React.useState<string | null>(null);
     const requiresComputerSetup = isDesktopHost() && pairing.phase === 'succeeded'
         && setupCompletedProfileId !== pairing.profileId;
+    // Keep the approved code in place until the visible entrance has settled and adoption has finished.
+    const shownCodeRef = React.useRef<Readonly<{ link: string; qrAvailable: boolean }> | null>(null);
+    if (pairing.phase === 'ready') {
+        if (shownCodeRef.current?.link !== pairing.link) {
+            shownCodeRef.current = { link: pairing.link, qrAvailable: pairing.qrAvailable };
+        }
+    } else if (pairing.phase !== 'adding' && pairing.phase !== 'succeeded') shownCodeRef.current = null;
+    const approvedCode = pairing.phase === 'adding' || pairing.phase === 'succeeded' ? shownCodeRef.current : null;
+    const [settledCode, setSettledCode] = React.useState<typeof approvedCode>(null);
+    const onApprovedSettled = React.useCallback(() => {
+        if (shownCodeRef.current === approvedCode) setSettledCode(approvedCode);
+    }, [approvedCode]);
+    const canLeaveApproved = approvedCode === null || approvedCode === settledCode;
     const openGenerationRef = React.useRef(0);
     const handledProfileIdRef = React.useRef<string | null>(null);
     const presentation = resolveHomeEnrollmentPresentation({
         kind: 'requester_display',
         phase: pairing.phase,
         ...(pairing.phase === 'retryable_error' ? { partialCommit: pairing.partialCommit !== null } : {}),
+        canRetryRetainedHome: reversePairing.canRetryRetainedHome,
     });
     // Once adoption succeeds, leaving is safe: the Home is already retained. Keeping the
     // removal guard active during the explicit open would also block the intentional route
@@ -218,6 +233,17 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     const targetLabel = 'descriptor' in pairing && pairing.descriptor !== undefined
         ? formatHomeEnrollmentTargetLabel(pairing.descriptor)
         : null;
+    const recoveryButton = presentation.recoveryAction === 'retry_retained_home' && targetLabel
+        ? {
+            testID: 'restore-requester-retry-retained-home',
+            title: t('connect.retryRetainedHome', { home: targetLabel }),
+            action: reversePairing.retryRetainedHome,
+        }
+        : presentation.recoveryAction === 'retry'
+            ? { testID: 'restore-requester-retry', title: t('common.retry'), action: reversePairing.start }
+            : presentation.recoveryAction === 'create_new_qr'
+                ? { testID: 'restore-requester-create-new-qr', title: t('connect.generateNewQrCode'), action: reversePairing.start }
+                : null;
     const scrollViewStyle: StyleProp<ViewStyle> = embedded
         ? [styles.scrollView, { backgroundColor: 'transparent' }]
         : styles.scrollView;
@@ -228,7 +254,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
     }, [claimOwnsNavigation, props.onNavigationLockChange]);
 
     React.useEffect(() => {
-        if (pairing.phase !== 'succeeded' || props.entryIntent !== 'enter_home' || requiresComputerSetup) return;
+        if (pairing.phase !== 'succeeded' || props.entryIntent !== 'enter_home' || requiresComputerSetup || !canLeaveApproved) return;
         if (handledProfileIdRef.current === pairing.profileId) return;
         handledProfileIdRef.current = pairing.profileId;
         const generation = openGenerationRef.current + 1;
@@ -243,11 +269,11 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                 setShellNavigationRequested(true);
             }
         });
-    }, [auth.refreshFromActiveServer, pairing, props.entryIntent, requiresComputerSetup]);
+    }, [auth.refreshFromActiveServer, canLeaveApproved, pairing, props.entryIntent, requiresComputerSetup]);
 
     React.useEffect(() => {
         if (!shellNavigationRequested || claimOwnsNavigation) return;
-        router.replace('/');
+        resolvePostAuthLanding({ replace: router.replace });
     }, [claimOwnsNavigation, router, shellNavigationRequested]);
 
     React.useEffect(() => () => {
@@ -276,12 +302,6 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         };
     }, []);
 
-    // The code a signed-in device approved stays where it was through the approved entrance (M4): the last shown code
-    // is kept while the approval lands and the Home is added, and forgotten on any other phase.
-    const shownCodeRef = React.useRef<Readonly<{ link: string; qrAvailable: boolean }> | null>(null);
-    if (pairing.phase === 'ready') shownCodeRef.current = { link: pairing.link, qrAvailable: pairing.qrAvailable };
-    else if (pairing.phase !== 'adding' && pairing.phase !== 'succeeded') shownCodeRef.current = null;
-    const approvedCode = pairing.phase === 'adding' || pairing.phase === 'succeeded' ? shownCodeRef.current : null;
     const hasStatusContent = presentation.activity
         || (presentation.contextualFacts !== 'none' && targetLabel != null)
         || pairing.phase === 'ready'
@@ -303,7 +323,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         } : '/restore/manual');
     };
 
-    if (requiresComputerSetup && pairing.phase === 'succeeded') {
+    if (requiresComputerSetup && pairing.phase === 'succeeded' && canLeaveApproved) {
         const frame = <View style={[styles.container, embedded ? styles.embeddedContainer : null]}>
             <View style={[styles.contentWrapper, embedded ? styles.embeddedContentWrapper : null]}>
                 <EnrolledComputerSetup profileId={pairing.profileId}
@@ -346,6 +366,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                                 qrAvailable={pairing.phase === 'ready' ? pairing.qrAvailable : approvedCode!.qrAvailable}
                                 expiresAtMs={pairing.phase === 'ready' ? pairing.invite.expiresAtMs : null}
                                 approved={approvedCode !== null}
+                                onApprovedSettled={onApprovedSettled}
                             />
                         </View>
                     ) : null}
@@ -359,21 +380,15 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     ) : null}
                 </View>}
 
-                {!claimOwnsNavigation && embedded ? (
+                {!claimOwnsNavigation && pairing.phase !== 'succeeded' && embedded ? (
                     <View style={styles.embeddedActions}>
-                        {presentation.recoveryAction === 'retry' || presentation.recoveryAction === 'create_new_qr' ? (
+                        {recoveryButton ? (
                             <View style={styles.embeddedPrimary}>
-                                <RoundButton
-                                    testID={presentation.recoveryAction === 'retry'
-                                        ? 'restore-requester-retry'
-                                        : 'restore-requester-create-new-qr'}
-                                    size="large"
-                                    title={presentation.recoveryAction === 'retry'
-                                        ? t('common.retry')
-                                        : t('connect.generateNewQrCode')}
-                                    action={reversePairing.start}
-                                />
+                                <RoundButton {...recoveryButton} size="large" />
                             </View>
+                        ) : null}
+                        {!props.targetProfileId ? (
+                            <TextLinkButton testID="restore-choose-home" label={t('connect.addPhoneChooseHomeTitle')} onPress={() => router.push('/server')} />
                         ) : null}
                         {reversePairing.canCancel ? (
                             <TextLinkButton testID="restore-requester-cancel" label={t('common.cancel')} onPress={reversePairing.cancel} />
@@ -406,30 +421,10 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             <View style={styles.footerButtonSpacer} />
                         </>
                     ) : null}
-                    {presentation.recoveryAction === 'retry' ? (
+                    {recoveryButton ? (
                         <>
                             <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-requester-retry"
-                                    size="small"
-                                    title={t('common.retry')}
-                                    display="inverted"
-                                    action={reversePairing.start}
-                                />
-                            </View>
-                            <View style={styles.footerButtonSpacer} />
-                        </>
-                    ) : null}
-                    {presentation.recoveryAction === 'create_new_qr' ? (
-                        <>
-                            <View style={styles.footerButton}>
-                                <RoundButton
-                                    testID="restore-requester-create-new-qr"
-                                    size="small"
-                                    title={t('connect.generateNewQrCode')}
-                                    display="inverted"
-                                    action={reversePairing.start}
-                                />
+                                <RoundButton {...recoveryButton} size="small" display="inverted" />
                             </View>
                             <View style={styles.footerButtonSpacer} />
                         </>

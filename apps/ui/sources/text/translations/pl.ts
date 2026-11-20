@@ -3289,6 +3289,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     pasteNewLink: "Wklej nowy link",
     homeEnrollmentRetryBody:
       "Nie udało się dokończyć dodawania tego Home. Sprawdź połączenie i spróbuj ponownie.",
+    retryRetainedHome: ({ home }: { home: string }) => `Ponów próbę dla ${home}`,
     homeEnrollmentPartialCommitBody:
       "Poświadczenie Home mogło zostać zapisane, ale dodawanie Home nie zostało ukończone. Spróbuj ponownie z tym Home, zanim rozpoczniesz kolejne dodawanie.",
     generateNewQrCode: "Utwórz nowy kod QR",

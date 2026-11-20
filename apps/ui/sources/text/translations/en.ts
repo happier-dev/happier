@@ -3485,6 +3485,7 @@ const enConnect = {
   pasteNewLink: 'Paste a new link',
   homeEnrollmentRetryBody:
     'We could not finish adding this Home. Check the connection and try again.',
+  retryRetainedHome: ({ home }: { home: string }) => `Retry ${home}`,
   homeEnrollmentPartialCommitBody:
     'The Home credential may have been saved, but adding the Home did not finish. Retry this Home before starting another enrollment.',
   generateNewQrCode: 'Create a new QR',

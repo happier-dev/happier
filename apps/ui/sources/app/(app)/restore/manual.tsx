@@ -6,7 +6,7 @@ import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFram
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { SecretKeyLoginForm } from '@/components/account/restore/SecretKeyLoginForm';
-import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
+import { admitOpaqueInternalReturnPath } from '@/utils/path/routeUtils';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { Text } from '@/components/ui/text/Text';
 import { useAuth } from '@/auth/context/AuthContext';
@@ -33,7 +33,7 @@ export default function Restore() {
         expectedAccountId?: string | string[];
     }>();
     const rawReturnTo = Array.isArray(params.returnTo) ? params.returnTo[0] : params.returnTo;
-    const returnTo = normalizeInternalReturnPath(rawReturnTo) ?? null;
+    const returnTo = admitOpaqueInternalReturnPath(rawReturnTo);
     // A token or embed create interrupted to restore encryption access resumes with its whole draft.
     const createResume = readApiTokenCreateResume(params);
     const targetServerId = String(Array.isArray(params.targetServerId)

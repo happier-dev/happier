@@ -1,6 +1,6 @@
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
 import { buildAccountConnectRoutePath } from '@/auth/pairing/accountConnectUrl';
-import { buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
+import { buildExpiredHomeQrRestoreRoutePath, buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
 import { LEGACY_PAIRING_UPDATE_REQUIRED_RESTORE_ROUTE_PATH } from '@/auth/pairing/legacyPairingUpdateRequiredRoute';
 import { resolveTerminalConnectWebHref } from '@/utils/path/terminalConnectUrl';
 import { isAcceptedHappierUrlProtocol } from './appScheme';
@@ -11,6 +11,7 @@ function resolvePairingSystemPath(path: string): string {
     switch (link.kind) {
         case 'legacy_pairing': return LEGACY_PAIRING_UPDATE_REQUIRED_RESTORE_ROUTE_PATH;
         case 'home_qr_invite': return buildHomeQrInviteRestoreRoutePath(link.rawLink, 'enter_home') ?? path;
+        case 'expired_home_qr_invite': return buildExpiredHomeQrRestoreRoutePath('enter_home');
         case 'account_connect': return buildAccountConnectRoutePath(link);
         case 'source_setup': return link.path;
         case 'terminal_connect':

@@ -22,6 +22,14 @@ const INVITE = {
 };
 
 describe('classifyPairingLink', () => {
+    it('recognizes an expired Home QR without returning its credentials', () => {
+        const link = buildHomeQrInviteDeepLink({ invite: { ...INVITE, issuedAtMs: 1000, expiresAtMs: 2000 } });
+        expect(classifyPairingLink(link)).toEqual({ kind: 'expired_home_qr_invite' });
+        expect(classifyPairingLink(link, { expectedInvite: {
+            homeServerIdentityId: 'srv_another_home', direction: 'trusted_home_displays',
+        } })).toEqual({ kind: 'unknown' });
+    });
+
     it('routes Source setup links to review with their explicit Home and excludes them from pinned recovery', () => {
         const path = '/projects/setup?source=source%2Fa&target=srv_home_b';
         for (const link of [`https://app.example.test${path}`, `happier://${path.slice(1)}`, `happier-dev://${path.slice(1)}`]) {

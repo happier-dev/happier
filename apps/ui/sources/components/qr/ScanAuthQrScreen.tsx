@@ -69,25 +69,27 @@ export function ScanAuthQrScreen(props: ScanAuthQrScreenProps) {
     const showQrInstead = React.useCallback(() => {
         router.replace('/settings/add-phone');
     }, [router]);
-    const processorOptions = props.allowedUrlKind === 'account'
-        ? {
-            allowedUrlKind: props.allowedUrlKind,
-            homeQrEntryIntent: props.homeQrEntryIntent,
-            // A legacy account link cannot be approved here; this device's own
-            // QR is the recovery the signed-in scanner can actually offer.
-            onShowQrInstead: showQrInstead,
-        } as const
-        : {
-            allowedUrlKind: props.allowedUrlKind,
-            navigateToApproval: router.replace,
-        } as const;
-    const { processAuthUrl } = useScannedAuthUrlProcessor(processorOptions);
     const [view, setView] = React.useState<'scanner' | 'paste'>('scanner');
     const [scannerPaused, setScannerPaused] = React.useState(false);
     const showScanner = React.useCallback(() => {
         setScannerPaused(false);
         setView('scanner');
     }, []);
+    const processorOptions = props.allowedUrlKind === 'account'
+        ? {
+            allowedUrlKind: props.allowedUrlKind,
+            homeQrEntryIntent: props.homeQrEntryIntent,
+            onScanNewQr: showScanner,
+            // A legacy account link cannot be approved here; this device's own
+            // QR is the recovery the signed-in scanner can actually offer.
+            onShowQrInstead: showQrInstead,
+        } as const
+        : {
+            allowedUrlKind: props.allowedUrlKind,
+            onScanNewQr: showScanner,
+            navigateToApproval: router.replace,
+        } as const;
+    const { processAuthUrl } = useScannedAuthUrlProcessor(processorOptions);
 
     // Camera and paste share one processor: the restore flow's link form is the
     // canonical manual-entry surface, so this screen switches views instead of
@@ -131,15 +133,11 @@ export function ScanAuthQrScreen(props: ScanAuthQrScreenProps) {
                 permissionRequiredMessage={props.permissionRequiredMessage}
                 onCancel={handleBack}
                 onScan={async (data) => {
-                    if (data.trim()) {
-                        try {
-                            await processAuthUrl(data.trim());
-                        } finally {
-                            // Leaving the QR in view must not reopen a declined approval
-                            // or error as soon as the camera's in-flight guard releases.
-                            setScannerPaused(true);
-                        }
-                    }
+                    if (!data.trim()) return;
+                    // Pause until the person chooses a recovery action. The older-format
+                    // prompt can resume the scanner before processing returns.
+                    setScannerPaused(true);
+                    await processAuthUrl(data.trim());
                 }}
                 footer={
                     <View style={{ width: '100%', maxWidth: 360 }}>

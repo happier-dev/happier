@@ -949,14 +949,19 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
             .resolves.toBeNull();
     });
 
-    it('reports a partial commit with both errors when credential rollback cannot remove the write', async () => {
+    it('can finish a partial commit without writing or reissuing its retained credential', async () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `adopt_credentials_rollback_failure_${Date.now()}_${Math.random()}`;
         const localStorageMock = installLocalStorageMock();
         restoreLocalStorage = localStorageMock.restore;
 
         const profiles = await import('@/sync/domains/server/serverProfiles');
-        const { adoptHomeProfileWithCredentials, HomeProfileAdoptionPartialCommitError } = await import('./adoptHomeProfile');
-        const write = observeCredentialWrite(localStorageMock, 'new-home-b-token');
+        const {
+            adoptHomeProfileWithCredentials,
+            finalizeRetainedHomeProfileAdoption,
+            HomeProfileAdoptionPartialCommitError,
+        } = await import('./adoptHomeProfile');
+        const credentials = { token: 'new-home-b-token' };
+        const write = observeCredentialWrite(localStorageMock, credentials.token);
         localStorageMock.removeItemMock.mockImplementation((key: string) => {
             if (key === write.key) throw new Error('storage removal unavailable');
             localStorageMock.store.delete(key);
@@ -965,7 +970,7 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
         const result = adoptHomeProfileWithCredentials({
             descriptor: HOME_B_DESCRIPTOR,
             source: 'qr',
-            credentials: { token: 'new-home-b-token' },
+            credentials,
             shouldCancel: () => write.key !== null,
         });
         await expect(result).rejects.toBeInstanceOf(HomeProfileAdoptionPartialCommitError);
@@ -984,6 +989,19 @@ describe('adoptHomeProfileWithCredentials (real storage integration)', () => {
             expect.objectContaining({ serverIdentityId: 'srv_home_b' }),
         ]));
         expect(localStorageMock.store.get(write.key!)).toContain('new-home-b-token');
+
+        const failure = await result.catch((error: unknown) => error);
+        if (!(failure instanceof HomeProfileAdoptionPartialCommitError)) throw new Error('Expected partial commit');
+        const storeCredential = localStorageMock.setItemMock.getMockImplementation()!;
+        localStorageMock.setItemMock.mockImplementation((key, value) => {
+            if (key === write.key) throw new Error('retry wrote the retained credential');
+            storeCredential(key, value);
+        });
+        await expect(finalizeRetainedHomeProfileAdoption(
+            { descriptor: HOME_B_DESCRIPTOR, source: 'qr', credentials },
+            failure,
+        )).resolves.toMatchObject({ serverIdentityId: 'srv_home_b' });
+        expect(localStorageMock.store.get(write.key!)).toBe(JSON.stringify(credentials));
     });
 
     it('reports a partial commit and keeps the concurrent winner when rollback finds the slot rewritten', async () => {

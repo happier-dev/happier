@@ -21,6 +21,7 @@ export type HomeEnrollmentPresentationModel = Readonly<{
         | 'connect.homeAddedPreservedFocusBody'
         | 'connect.homeEnrollmentPartialCommitBody'
         | 'connect.homeEnrollmentRetryBody'
+        | 'connect.legacyPairingUpdateRequiredBody'
         | 'connect.pairingAlreadyRequestedBody'
         | 'connect.pairingRejectedBody'
         | 'connect.pairingQrExpired'
@@ -43,10 +44,23 @@ export type HomeEnrollmentPresentationModel = Readonly<{
      * The one way forward this state offers. `retry` returns the scanner to the same code;
      * an expired code instead needs a fresh one, scanned (`scan_new_code`) or pasted (`enter_new_link`).
      */
-    recoveryAction: 'none' | 'automatic_retry' | 'retry' | 'create_new_qr' | 'scan_new_code' | 'enter_new_link';
+    recoveryAction: 'none' | 'automatic_retry' | 'retry' | 'retry_retained_home' | 'create_new_qr' | 'scan_new_code' | 'enter_new_link';
     liveRegion: 'none' | 'polite' | 'assertive';
     activity: boolean;
 }>;
+
+export type HomeEnrollmentScannerResult =
+    | 'succeeded'
+    | 'partial_commit'
+    | 'retryable_error'
+    | 'expired'
+    | 'invalid_request'
+    | 'already_requested'
+    | 'rejected'
+    | 'wrong_target'
+    | 'malformed_response'
+    | 'legacy_pairing'
+    | 'update_required';
 
 type HomeEnrollmentPresentationSource =
     | Readonly<{
@@ -57,6 +71,7 @@ type HomeEnrollmentPresentationSource =
         kind: 'requester_display';
         phase: 'generating' | 'ready' | 'adding' | 'retryable_error' | 'expired' | 'invalid' | 'update_required' | 'succeeded';
         partialCommit?: boolean;
+        canRetryRetainedHome?: boolean;
     }>
     | Readonly<{
         kind: 'scanner';
@@ -66,23 +81,11 @@ type HomeEnrollmentPresentationSource =
         inviteOrigin?: 'scanned' | 'link';
         /** Whether the host can take a pasted link (the only way to replace a link without a camera). */
         linkEntryAvailable?: boolean;
-        result?:
-            | 'succeeded'
-            | 'partial_commit'
-            | 'retryable_error'
-            | 'expired'
-            | 'invalid_request'
-            | 'already_requested'
-            | 'rejected'
-            | 'wrong_target'
-            | 'malformed_response'
-            | 'update_required';
+        canRetryRetainedHome?: boolean;
+        result?: HomeEnrollmentScannerResult;
     }>;
 
-const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<
-    NonNullable<Extract<HomeEnrollmentPresentationSource, { kind: 'scanner' }>['result']>,
-    HomeEnrollmentPresentationModel
->> = {
+const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<HomeEnrollmentScannerResult, HomeEnrollmentPresentationModel>> = {
     succeeded: {
         phase: 'succeeded',
         primaryTranslationKey: 'connect.homeAddedPreservedFocusBody',
@@ -127,7 +130,7 @@ const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<
         phase: 'invalid_request',
         primaryTranslationKey: 'connect.pairingAlreadyRequestedBody',
         contextualFacts: 'target',
-        recoveryAction: 'retry',
+        recoveryAction: 'scan_new_code',
         liveRegion: 'assertive',
         activity: false,
     },
@@ -143,7 +146,7 @@ const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<
         phase: 'invalid_request',
         primaryTranslationKey: 'connect.wrongHomeBody',
         contextualFacts: 'target',
-        recoveryAction: 'retry',
+        recoveryAction: 'scan_new_code',
         liveRegion: 'assertive',
         activity: false,
     },
@@ -152,6 +155,14 @@ const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<
         primaryTranslationKey: 'connect.unsupportedEnrollmentResponseBody',
         contextualFacts: 'target',
         recoveryAction: 'retry',
+        liveRegion: 'assertive',
+        activity: false,
+    },
+    legacy_pairing: {
+        phase: 'update_required',
+        primaryTranslationKey: 'connect.legacyPairingUpdateRequiredBody',
+        contextualFacts: 'none',
+        recoveryAction: 'scan_new_code',
         liveRegion: 'assertive',
         activity: false,
     },
@@ -172,7 +183,7 @@ const TERMINAL_SCANNER_PRESENTATIONS: Readonly<Record<
  * joiner-only results (partial_commit, already_requested, rejected, ...).
  */
 const APPROVER_SCANNER_TRANSLATION_KEYS: Readonly<Partial<Record<
-    NonNullable<Extract<HomeEnrollmentPresentationSource, { kind: 'scanner' }>['result']>,
+    HomeEnrollmentScannerResult,
     HomeEnrollmentPresentationModel['primaryTranslationKey']
 >>> = {
     succeeded: 'connect.requesterDeviceAddedBody',
@@ -183,13 +194,14 @@ const APPROVER_SCANNER_TRANSLATION_KEYS: Readonly<Partial<Record<
 };
 
 /**
- * The same expired code can never succeed, so the way forward is a new one, by the route the old
- * one came in: a pasted link is replaced by pasting a new link where the host takes one.
+ * Replace an unusable code by the route it came in. A pasted link is replaced by pasting
+ * a new link where the host takes one.
  */
-function resolveExpiredScannerRecovery(
+function resolveScannerReplacement(
     source: Extract<HomeEnrollmentPresentationSource, { kind: 'scanner' }>,
 ): 'scan_new_code' | 'enter_new_link' {
-    return source.inviteOrigin === 'link' && source.linkEntryAvailable === true ? 'enter_new_link' : 'scan_new_code';
+    const openedAsLink = source.inviteOrigin === 'link' || source.inviteOrigin === 'paste';
+    return openedAsLink && source.linkEntryAvailable === true ? 'enter_new_link' : 'scan_new_code';
 }
 
 /**
@@ -200,23 +212,21 @@ export function resolveHomeEnrollmentPresentation(
     source: HomeEnrollmentPresentationSource,
 ): HomeEnrollmentPresentationModel {
     if (source.kind === 'scanner') {
-        if (source.direction === 'requester_displays' && source.result) {
-            const approverTranslationKey = APPROVER_SCANNER_TRANSLATION_KEYS[source.result];
-            if (approverTranslationKey) {
-                return {
-                    ...TERMINAL_SCANNER_PRESENTATIONS[source.result],
-                    ...(source.result === 'expired' ? { recoveryAction: resolveExpiredScannerRecovery(source) } : {}),
-                    primaryTranslationKey: approverTranslationKey,
-                };
-            }
-        }
-        if (source.result === 'expired') {
+        if (source.result) {
+            const presentation = TERMINAL_SCANNER_PRESENTATIONS[source.result];
+            const roleCopy = source.direction === 'requester_displays'
+                ? APPROVER_SCANNER_TRANSLATION_KEYS[source.result]
+                : undefined;
             return {
-                ...TERMINAL_SCANNER_PRESENTATIONS.expired,
-                recoveryAction: resolveExpiredScannerRecovery(source),
+                ...presentation,
+                primaryTranslationKey: roleCopy ?? presentation.primaryTranslationKey,
+                recoveryAction: source.result === 'partial_commit' && source.canRetryRetainedHome
+                    ? 'retry_retained_home'
+                    : presentation.recoveryAction === 'scan_new_code'
+                        ? resolveScannerReplacement(source)
+                        : presentation.recoveryAction,
             };
         }
-        if (source.result) return TERMINAL_SCANNER_PRESENTATIONS[source.result];
         if (source.phase === 'idle') {
             return {
                 phase: 'ready',
@@ -260,7 +270,7 @@ export function resolveHomeEnrollmentPresentation(
             return source.partialCommit
                 ? {
                     phase: 'partial_commit', primaryTranslationKey: 'connect.homeEnrollmentPartialCommitBody', contextualFacts: 'target',
-                    recoveryAction: 'none', liveRegion: 'assertive', activity: false,
+                    recoveryAction: source.canRetryRetainedHome ? 'retry_retained_home' : 'none', liveRegion: 'assertive', activity: false,
                 }
                 : {
                     phase: 'retryable_error', primaryTranslationKey: 'connect.homeEnrollmentRetryBody', contextualFacts: 'target',

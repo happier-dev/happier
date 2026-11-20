@@ -3247,6 +3247,7 @@ export const zhHans: TranslationStructure = {
     scanNewQr: "扫描新的二维码",
     pasteNewLink: "粘贴新的链接",
     homeEnrollmentRetryBody: "无法完成添加此 Home。请检查连接后重试。",
+    retryRetainedHome: ({ home }: { home: string }) => `重试 ${home}`,
     homeEnrollmentPartialCommitBody:
       "Home 凭据可能已保存，但添加 Home 尚未完成。请先重试此 Home，再开始其他添加。",
     generateNewQrCode: "创建新的二维码",

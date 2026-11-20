@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
 import { ADD_HOME_RESTORE_PATH } from '@/auth/pairing/homeQrEntryIntent';
-import { buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
+import { buildExpiredHomeQrRestoreRoutePath, buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -82,7 +82,11 @@ export function DirectHomePathPane(props: Readonly<{
                 return;
             }
         }
-        if (classified.kind === 'team_join') {
+        if (classified.kind === 'expired_home_qr_invite') {
+            leaveFor(buildExpiredHomeQrRestoreRoutePath('add_home'), 'AlreadyUseHappier.homeLink');
+            return;
+        }
+        if (classified.kind === 'team_join' || classified.kind === 'source_setup') {
             leaveFor(classified.path, 'AlreadyUseHappier.teamJoinLink');
             return;
         }

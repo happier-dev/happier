@@ -1,7 +1,7 @@
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { QRAuthKeyPair, type HomeQrEnrollmentTarget } from './qrStart';
 import { decryptBox } from '@/encryption/libsodium';
-import { isRuntimeActive } from '@/utils/runtime/isRuntimeActive';
+import { isRuntimeActive, subscribeToRuntimeActiveChange } from '@/utils/runtime/isRuntimeActive';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { openTerminalProvisioningV3Response } from '@happier-dev/protocol/crypto/terminalProvisioningV2';
 import type { HomeQrInviteDirectionV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
@@ -75,28 +75,57 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
     return actual.length === expected.length && actual.every((key, index) => key === expected[index]);
 }
 
-async function waitForNextPoll(ms: number, signal?: AbortSignal): Promise<boolean> {
-    if (!signal) {
-        await new Promise<void>((resolve) => setTimeout(resolve, ms));
-        return true;
-    }
-    if (signal.aborted) return false;
-
-    return new Promise<boolean>((resolve) => {
-        let settled = false;
-        const finish = (completed: boolean) => {
-            if (settled) return;
-            settled = true;
-            clearTimeout(timer);
-            signal.removeEventListener('abort', onAbort);
-            resolve(completed);
+export function waitForQrPollOrVisibilityChange(active: boolean, delayMs: number, signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) return Promise.resolve(false);
+    return new Promise((resolve) => {
+        const finish = (continueWaiting: boolean) => {
+            if (timer !== undefined) clearTimeout(timer);
+            unsubscribe();
+            signal?.removeEventListener('abort', onAbort);
+            resolve(continueWaiting);
         };
         const onAbort = () => finish(false);
-        const timer = setTimeout(() => finish(true), ms);
-        signal.addEventListener('abort', onAbort, { once: true });
-        // Abort can race the listener registration between the check above and this point.
-        if (signal.aborted) onAbort();
+        const onVisibilityChange = () => {
+            if (isRuntimeActive() !== active) finish(true);
+        };
+        const timer = active ? setTimeout(() => finish(true), delayMs) : undefined;
+        const unsubscribe = subscribeToRuntimeActiveChange(onVisibilityChange);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) onAbort();
+        else onVisibilityChange();
     });
+}
+
+/** Both requester polling phases use the same foreground and deadline boundary. */
+export async function runVisibleQrPoll<T>(
+    request: (signal: AbortSignal) => Promise<T>,
+    expiresAtMs: number | undefined,
+    signal?: AbortSignal,
+): Promise<T | null> {
+    if (!isRuntimeActive() || signal?.aborted) return null;
+    const controller = new AbortController();
+    const abortRequest = () => controller.abort();
+    const deadline = expiresAtMs === undefined ? undefined : setTimeout(abortRequest, Math.max(0, expiresAtMs - Date.now()));
+    let hidden = false;
+    const stopWatching = subscribeToRuntimeActiveChange(() => {
+        if (isRuntimeActive()) return;
+        hidden = true;
+        if (deadline !== undefined) clearTimeout(deadline);
+        abortRequest();
+    });
+    signal?.addEventListener('abort', abortRequest, { once: true });
+    const expired = () => expiresAtMs !== undefined && Date.now() >= expiresAtMs;
+    try {
+        const result = await request(controller.signal);
+        return hidden || signal?.aborted || expired() ? null : result;
+    } catch (error) {
+        if (hidden || expired()) return null;
+        throw error;
+    } finally {
+        if (deadline !== undefined) clearTimeout(deadline);
+        signal?.removeEventListener('abort', abortRequest);
+        stopWatching();
+    }
 }
 
 function clampPollDelayToExpiry(delayMs: number, expiresAtMs: number | undefined): number {
@@ -145,34 +174,26 @@ export async function authQRWait(
         if (expiresAtMs !== undefined && Date.now() >= expiresAtMs) return terminal('expired');
 
         if (!isRuntimeActive()) {
-            const inactiveWaitMs = clampPollDelayToExpiry(1_000, expiresAtMs);
-            if (inactiveWaitMs === 0) return terminal('expired');
-            if (!await waitForNextPoll(inactiveWaitMs, signal)) return terminal('cancelled');
+            if (!await waitForQrPollOrVisibilityChange(false, 0, signal)) return terminal('cancelled');
             continue;
         }
 
         try {
-            const requestController = new AbortController();
-            const abortRequest = () => requestController.abort();
-            signal?.addEventListener('abort', abortRequest, { once: true });
-            const remainingMs = expiresAtMs === undefined ? null : Math.max(0, expiresAtMs - Date.now());
-            const deadlineTimer = remainingMs === null ? null : setTimeout(abortRequest, remainingMs);
-            let response: Response;
-            try {
-                response = await requestAtEndpoint('/v2/auth/account/request', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    publicKey: encodeBase64(keypair.publicKey),
-                    pairId: context.pairId,
-                    homeServerIdentityId: context.homeServerIdentityId,
-                }),
-                    signal: requestController.signal,
-                }, { includeAuth: false, retry: 'none' });
-            } finally {
-                if (deadlineTimer) clearTimeout(deadlineTimer);
-                signal?.removeEventListener('abort', abortRequest);
-            }
+            const response = await runVisibleQrPoll(
+                requestSignal => requestAtEndpoint('/v2/auth/account/request', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        publicKey: encodeBase64(keypair.publicKey),
+                        pairId: context.pairId,
+                        homeServerIdentityId: context.homeServerIdentityId,
+                    }),
+                    signal: requestSignal,
+                }, { includeAuth: false, retry: 'none' }),
+                expiresAtMs,
+                signal,
+            );
+            if (response === null) continue;
             if (!response.ok) {
                 if (response.status === 404 || response.status === 410) return terminal('expired');
                 if (response.status === 403) return terminal('wrong_target');
@@ -258,6 +279,6 @@ export async function authQRWait(
             : ENROLLMENT_POLL_IDLE_DELAY_MS;
         const boundedWaitMs = clampPollDelayToExpiry(waitMs, expiresAtMs);
         if (boundedWaitMs === 0) return terminal('expired');
-        if (!await waitForNextPoll(boundedWaitMs, signal)) return terminal('cancelled');
+        if (isRuntimeActive() && !await waitForQrPollOrVisibilityChange(true, boundedWaitMs, signal)) return terminal('cancelled');
     }
 }

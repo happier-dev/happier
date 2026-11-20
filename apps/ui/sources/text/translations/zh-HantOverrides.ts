@@ -3738,6 +3738,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         scanNewQr: '掃描新的 QR 碼',
         pasteNewLink: "貼上新的連結",
         homeEnrollmentRetryBody: '無法完成加入此 Home。請檢查連線後再試一次。',
+        retryRetainedHome: ({ home }: { home: string }) => `重試 ${home}`,
         homeEnrollmentPartialCommitBody: 'Home 憑證可能已儲存，但加入 Home 尚未完成。請先重試此 Home，再開始其他加入程序。',
         generateNewQrCode: '建立新的 QR 碼',
         pairingQrExpired: '此 QR 碼已過期。請產生新的 QR 碼。',

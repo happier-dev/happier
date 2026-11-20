@@ -3452,6 +3452,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
     pasteNewLink: "Pegar un enlace nuevo",
     homeEnrollmentRetryBody:
       "No hemos podido terminar de añadir este Home. Comprueba la conexión e inténtalo de nuevo.",
+    retryRetainedHome: ({ home }: { home: string }) => `Reintentar con ${home}`,
     homeEnrollmentPartialCommitBody:
       "Puede que la credencial del Home se haya guardado, pero no se terminó de añadir el Home. Vuelve a intentarlo con este Home antes de empezar con otro.",
     generateNewQrCode: "Crear un nuevo código QR",

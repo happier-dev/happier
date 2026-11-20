@@ -14,6 +14,7 @@ import {
     type RestoreScanComputerQrViewProps,
 } from '@/components/account/restore/RestoreScanComputerQrView';
 import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
+import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 
 import { resolveReverseQrTargetProfileId } from './loginWays';
 import { RestoreSignInWays } from './RestoreSignInWays';
@@ -29,6 +30,7 @@ export type RestoreIndexEmbeddedProps = Readonly<{
     onBack: () => void;
     onOpenSecretKeyLogin?: () => void;
     initialPairingLink?: string | null;
+    initialResult?: RestoreScanComputerQrViewProps['initialResult'];
     onNavigationLockChange?: (locked: boolean) => void;
     onInviteDirectionChange?: RestoreScanComputerQrViewProps['onInviteDirectionChange'];
 }>;
@@ -64,14 +66,15 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
     // Production entry point for the requester-displayed direction: an explicit
     // caller target wins, otherwise this device's own unambiguous saved Home.
     const reverseTargetProfileId = React.useMemo(
-        () => props.reverseTargetProfileId ?? resolveReverseQrTargetProfileId(),
-        [props.reverseTargetProfileId],
+        () => props.reverseTargetProfileId ?? resolveReverseQrTargetProfileId(props.initialView === 'qr' ? getActiveServerId() : undefined),
+        [props.initialView, props.reverseTargetProfileId],
     );
     // A pasted link is handed to the embedded scanner, the one owner that
     // classifies and enrolls scanned and pasted links alike.
     const [pastedPairingLink, setPastedPairingLink] = React.useState<string | null>(null);
     const showScannerFirst =
         Boolean(props.initialPairingLink)
+        || Boolean(props.initialResult)
         || props.entryIntent === 'add_home'
         || !reverseTargetProfileId
         || isNativePhone
@@ -107,6 +110,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                 entryIntent={props.entryIntent}
                 embedded
                 initialPairingLink={pastedPairingLink ?? props.initialPairingLink}
+                initialResult={props.initialResult}
                 onBack={props.onBack}
                 showBack={false}
                 onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}

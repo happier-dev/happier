@@ -1,6 +1,6 @@
 import {
     encodeHomeQrInviteV2Payload,
-    parseHomeQrInviteV2Payload,
+    inspectHomeQrInviteV2Payload,
     type HomeQrInviteV2,
 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 import { tryCreateQRMatrix } from '@/components/qr/qrMatrix';
@@ -17,6 +17,7 @@ export type LegacyPairingDeepLinkClassification = Readonly<{
 }>;
 
 export const HOME_QR_INVITE_RESTORE_ROUTE_PARAM = 'pairingHandoff';
+export const EXPIRED_HOME_QR_RESTORE_ROUTE_PARAM = 'pairingExpired';
 
 type PendingHomeQrInviteRestoreHandoff = Readonly<{
     handle: string;
@@ -120,6 +121,11 @@ export function buildRenderableHomeQrInviteDeepLink(
 
 /** Parse only the v2 opaque invite shape; v1 links stay on the compatibility reader. */
 export function parseHomeQrInviteDeepLink(rawLink: string, expected?: Readonly<{ homeServerIdentityId: string; direction: HomeQrInviteV2['direction'] }>): HomeQrInviteDeepLinkResult | null {
+    const result = inspectHomeQrInviteDeepLink(rawLink, expected);
+    return result?.kind === 'valid' ? { invite: result.invite } : null;
+}
+
+export function inspectHomeQrInviteDeepLink(rawLink: string, expected?: Readonly<{ homeServerIdentityId: string; direction: HomeQrInviteV2['direction'] }>): Readonly<{ kind: 'valid'; invite: HomeQrInviteV2 }> | Readonly<{ kind: 'expired' }> | null {
     let url: URL;
     try {
         url = new URL(rawLink);
@@ -130,10 +136,12 @@ export function parseHomeQrInviteDeepLink(rawLink: string, expected?: Readonly<{
     if (url.hash) return null;
     const entries = [...url.searchParams.entries()];
     if (entries.length !== 2 || url.searchParams.get('v') !== '2' || !url.searchParams.has('payload')) return null;
-    const invite = parseHomeQrInviteV2Payload(url.searchParams.get('payload') ?? '', { nowMs: Date.now() });
-    if (!invite) return null;
-    if (expected && (invite.home.homeServerIdentityId !== expected.homeServerIdentityId || invite.direction !== expected.direction)) return null;
-    return { invite };
+    const result = inspectHomeQrInviteV2Payload(url.searchParams.get('payload') ?? '', { nowMs: Date.now() });
+    if (!result) return null;
+    const homeServerIdentityId = result.kind === 'valid' ? result.invite.home.homeServerIdentityId : result.homeServerIdentityId;
+    const direction = result.kind === 'valid' ? result.invite.direction : result.direction;
+    if (expected && (homeServerIdentityId !== expected.homeServerIdentityId || direction !== expected.direction)) return null;
+    return result.kind === 'valid' ? result : { kind: 'expired' };
 }
 
 /**
@@ -144,7 +152,11 @@ export function consumeHomeQrInviteRestoreHandoff(handle: string): string | null
     const pending = pendingHomeQrInviteRestoreHandoff;
     if (!pending || pending.handle !== handle) return null;
     pendingHomeQrInviteRestoreHandoff = null;
-    return parseHomeQrInviteDeepLink(pending.rawLink) ? pending.rawLink : null;
+    return pending.rawLink;
+}
+
+export function buildExpiredHomeQrRestoreRoutePath(entryIntent: HomeQrEntryIntent): `/restore?${string}` {
+    return `/restore?${EXPIRED_HOME_QR_RESTORE_ROUTE_PARAM}=1&${HOME_QR_ENTRY_INTENT_ROUTE_PARAM}=${entryIntent}`;
 }
 
 /** Route a validated V2 invite to the canonical restore controller via one in-memory handoff. */
@@ -153,7 +165,9 @@ export function buildHomeQrInviteRestoreRoutePath(
     entryIntent: HomeQrEntryIntent,
 ): `/restore?${string}` | null {
     const link = String(rawLink ?? '').trim();
-    if (!parseHomeQrInviteDeepLink(link)) return null;
+    const result = inspectHomeQrInviteDeepLink(link);
+    if (!result) return null;
+    if (result.kind === 'expired') return buildExpiredHomeQrRestoreRoutePath(entryIntent);
     const handle = `home-qr-${randomUUID()}`;
     pendingHomeQrInviteRestoreHandoff = { handle, rawLink: link };
     return `/restore?${HOME_QR_INVITE_RESTORE_ROUTE_PARAM}=${handle}&${HOME_QR_ENTRY_INTENT_ROUTE_PARAM}=${entryIntent}`;

@@ -7,10 +7,10 @@ import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreInd
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
-import { promptLegacyPairingUpdateRequired } from '@/auth/pairing/legacyPairingUpdateRequired';
 import { LEGACY_PAIRING_UPDATE_REQUIRED_RESTORE_ROUTE_PARAM } from '@/auth/pairing/legacyPairingUpdateRequiredRoute';
 import {
     consumeHomeQrInviteRestoreHandoff,
+    EXPIRED_HOME_QR_RESTORE_ROUTE_PARAM,
     HOME_QR_INVITE_RESTORE_ROUTE_PARAM,
     parseHomeQrInviteDeepLink,
 } from '@/auth/pairing/pairingUrl';
@@ -25,6 +25,7 @@ export default function RestoreIndex() {
     const params = useLocalSearchParams<Readonly<{
         pairingHandoff?: string | string[];
         legacyPairingUpdateRequired?: string | string[];
+        pairingExpired?: string | string[];
         entryIntent?: string | string[];
         provider?: string | string[];
         reason?: string | string[];
@@ -73,29 +74,12 @@ export default function RestoreIndex() {
         });
     }, [entryIntent, navigationLocked, router]);
     const legacyPairingUpdateRequiredParam = params[LEGACY_PAIRING_UPDATE_REQUIRED_RESTORE_ROUTE_PARAM];
-    const shouldPromptLegacyPairingUpdateRequired = (
+    const legacyPairingUpdateRequired = (
         Array.isArray(legacyPairingUpdateRequiredParam)
             ? legacyPairingUpdateRequiredParam[0]
             : legacyPairingUpdateRequiredParam
     ) === '1';
-    const didPromptLegacyPairingUpdateRequiredRef = React.useRef(false);
-
-    React.useEffect(() => {
-        if (!shouldPromptLegacyPairingUpdateRequired || didPromptLegacyPairingUpdateRequiredRef.current) return;
-        didPromptLegacyPairingUpdateRequiredRef.current = true;
-        // Consume the secret-free marker before prompting so a reload/remount cannot
-        // replay compatibility guidance. The clean restore route retains the scanner.
-        router.replace('/restore');
-        void (async () => {
-            const action = await promptLegacyPairingUpdateRequired();
-            if (action === 'cancel') handleBack();
-        })();
-    }, [handleBack, router, shouldPromptLegacyPairingUpdateRequired]);
-
-    if (shouldPromptLegacyPairingUpdateRequired) {
-        return <View testID="legacy-pairing-update-required-route" style={{ flex: 1 }} />;
-    }
-
+    const expiredPairing = params[EXPIRED_HOME_QR_RESTORE_ROUTE_PARAM] === '1';
     return (
         <View
             testID="unauth-shell-route-restore"
@@ -127,6 +111,7 @@ export default function RestoreIndex() {
                         initialView={hasProviderRestoreRedirect ? 'qr' : requestedView === 'link' ? 'paste' : undefined}
                         onBack={handleBack}
                         initialPairingLink={initialPairingLink}
+                        initialResult={legacyPairingUpdateRequired ? 'legacy_pairing' : expiredPairing ? 'expired' : undefined}
                         onNavigationLockChange={setNavigationLocked}
                         onInviteDirectionChange={setInviteDirection}
                     />

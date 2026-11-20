@@ -1,12 +1,13 @@
 import type { HomeQrInviteV2 } from '@happier-dev/protocol/crypto/qrProvisioningV2';
 
 import { parseAccountConnectDeepLink } from '@/auth/pairing/accountConnectUrl';
-import { classifyLegacyPairingDeepLink, parseHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
+import { classifyLegacyPairingDeepLink, inspectHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
 import { parseTerminalConnectUrl, type ParsedTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
 import { parseProjectSourceSetupLink, type ProjectSourceSetupLink } from '@/components/projects/sources/projectSourceNavigation';
 
 export type ClassifiedPairingLink =
     | Readonly<{ kind: 'home_qr_invite'; rawLink: string; invite: HomeQrInviteV2 }>
+    | Readonly<{ kind: 'expired_home_qr_invite' }>
     | Readonly<{ kind: 'legacy_pairing' }>
     | Readonly<{ kind: 'account_connect'; publicKeyB64Url: string }>
     | Readonly<{ kind: 'terminal_connect'; terminal: ParsedTerminalConnectUrl }>
@@ -38,8 +39,9 @@ export function classifyPairingLink(
     const rawLink = String(raw ?? '').trim();
     if (!rawLink) return UNKNOWN;
 
-    const invite = parseHomeQrInviteDeepLink(rawLink, options?.expectedInvite);
-    if (invite) return { kind: 'home_qr_invite', rawLink, invite: invite.invite };
+    const invite = inspectHomeQrInviteDeepLink(rawLink, options?.expectedInvite);
+    if (invite?.kind === 'expired') return { kind: 'expired_home_qr_invite' };
+    if (invite?.kind === 'valid') return { kind: 'home_qr_invite', rawLink, invite: invite.invite };
     if (options?.expectedInvite) return UNKNOWN;
 
     if (classifyLegacyPairingDeepLink(rawLink)) return { kind: 'legacy_pairing' };

@@ -3281,6 +3281,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     pasteNewLink: "Coller un nouveau lien",
     homeEnrollmentRetryBody:
       "Impossible de terminer l’ajout de ce Home. Vérifie la connexion et réessaie.",
+    retryRetainedHome: ({ home }: { home: string }) => `Réessayer avec ${home}`,
     homeEnrollmentPartialCommitBody:
       "L’identifiant du Home a peut-être été enregistré, mais l’ajout du Home n’est pas terminé. Réessaie avec ce Home avant d’en démarrer un autre.",
     generateNewQrCode: "Créer un nouveau QR code",

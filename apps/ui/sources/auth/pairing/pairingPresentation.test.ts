@@ -126,7 +126,7 @@ describe('resolveHomeEnrollmentPresentation', () => {
     // none may fall through to joiner/restore guidance.
     it.each([
         ['retryable_error', 'connect.requesterDeviceRetryBody', 'retry'],
-        ['wrong_target', 'connect.requesterDeviceWrongHomeBody', 'retry'],
+        ['wrong_target', 'connect.requesterDeviceWrongHomeBody', 'scan_new_code'],
         ['expired', 'connect.requesterDeviceQrExpiredBody', 'scan_new_code'],
         ['invalid_request', 'connect.requesterDeviceRequestInvalidBody', 'retry'],
     ] as const)('describes reverse-direction %s from the approving Home\'s perspective', (result, primaryTranslationKey, recoveryAction) => {
@@ -159,6 +159,22 @@ describe('resolveHomeEnrollmentPresentation', () => {
             recoveryAction: 'none',
             liveRegion: 'assertive',
         });
+    });
+
+    it('offers a new pasted link after a used link and retries only an eligible partial adoption', () => {
+        expect(resolveHomeEnrollmentPresentation({
+            kind: 'scanner',
+            phase: 'requesting',
+            result: 'already_requested',
+            inviteOrigin: 'paste',
+            linkEntryAvailable: true,
+        }).recoveryAction).toBe('enter_new_link');
+        expect(resolveHomeEnrollmentPresentation({
+            kind: 'scanner',
+            phase: 'securing',
+            result: 'partial_commit',
+            canRetryRetainedHome: true,
+        }).recoveryAction).toBe('retry_retained_home');
     });
 });
 

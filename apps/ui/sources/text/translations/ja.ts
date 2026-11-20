@@ -3799,6 +3799,7 @@ export const ja: TranslationStructure = {
     pasteNewLink: "新しいリンクを貼り付け",
     homeEnrollmentRetryBody:
       "このHomeの追加を完了できませんでした。接続を確認して、もう一度お試しください。",
+    retryRetainedHome: ({ home }: { home: string }) => `${home} を再試行`,
     homeEnrollmentPartialCommitBody:
       "Homeの認証情報は保存された可能性がありますが、Homeの追加は完了しませんでした。別の登録を始める前に、このHomeをもう一度お試しください。",
     generateNewQrCode: "新しいQRコードを作成",

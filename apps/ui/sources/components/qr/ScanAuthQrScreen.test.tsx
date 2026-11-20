@@ -5,10 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import type { IModal } from '@/modal/types';
 import { getStorage } from '@/sync/domains/state/storageStore';
 
 const boundary = vi.hoisted(() => ({
-    alertAsync: vi.fn(async () => undefined),
+    alertAsync: vi.fn<IModal['alertAsync']>(async () => undefined),
     back: vi.fn(),
 }));
 
@@ -55,6 +56,21 @@ describe('ScanAuthQrScreen recovery', () => {
         boundary.alertAsync.mockReset();
         boundary.alertAsync.mockResolvedValue(undefined);
         boundary.back.mockClear();
+    });
+
+    it('resumes live scanning when the person chooses Scan a new QR after a released V1 link', async () => {
+        boundary.alertAsync.mockImplementationOnce(async (_title, _body, buttons) => {
+            buttons?.[0]?.onPress?.();
+        });
+        const screen = await renderScanner();
+        await act(async () => {
+            await screen.findByTestId('auth-qr-camera')!.props.onBarcodeScanned({
+                data: 'happier-dev:///pair?v=1&pairId=pid123&secret=sec_abc&server=https%3A%2F%2Fstack.example.test',
+            });
+        });
+
+        expect(screen.findAllHostsByTestId('auth-qr-camera')).toHaveLength(1);
+        expect(screen.findByTestId('auth-qr-scan-again')).toBeNull();
     });
 
     it.each(['happier-dev:///account?abc123', 'not-a-pairing-link'])(

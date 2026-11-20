@@ -3,7 +3,7 @@ import * as React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { View } from 'react-native';
 
-import { RestoreQrView } from '@/components/account/restore/RestoreQrView';
+import { RestoreIndexEmbedded } from '@/components/onboarding/restore/RestoreIndexEmbedded';
 import { HOME_QR_ENTRY_INTENT_ROUTE_PARAM, parseHomeQrEntryIntentRouteParam } from '@/auth/pairing/homeQrEntryIntent';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -34,15 +34,13 @@ export default function RestoreShowQrRoute() {
             backDisabled={navigationLocked}
         >
             <View testID="restore-route-content">
-                {targetProfileId ? (
-                    <RestoreQrView
-                        entryIntent={entryIntent}
-                        targetProfileId={targetProfileId}
-                        embedded
-                        onBack={handleBack}
-                        onNavigationLockChange={setNavigationLocked}
-                    />
-                ) : null}
+                <RestoreIndexEmbedded
+                    entryIntent={entryIntent}
+                    initialView="qr"
+                    reverseTargetProfileId={targetProfileId || null}
+                    onBack={handleBack}
+                    onNavigationLockChange={setNavigationLocked}
+                />
             </View>
         </AuthRouteStepFrame>
     );

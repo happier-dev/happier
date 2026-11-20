@@ -9,6 +9,7 @@ import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch'
 
 const appState = vi.hoisted(() => ({ currentState: 'background' as string }));
 const endpointFetchMock = vi.hoisted(() => vi.fn());
+const visibilityEvents = new EventTarget();
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -18,6 +19,10 @@ vi.mock('react-native', async () => {
                 AppState: {
                     get currentState() {
                         return appState.currentState;
+                    },
+                    addEventListener: (_event: string, listener: () => void) => {
+                        visibilityEvents.addEventListener('change', listener);
+                        return { remove: () => visibilityEvents.removeEventListener('change', listener) };
                     },
                 },
             }
@@ -43,6 +48,7 @@ describe('authQRWait runtime active gating', () => {
         resetRuntimeFetch();
         endpointFetchMock.mockReset();
         appState.currentState = 'background';
+        vi.restoreAllMocks();
         vi.useRealTimers();
     });
 
@@ -67,6 +73,8 @@ describe('authQRWait runtime active gating', () => {
 
         await vi.advanceTimersByTimeAsync(10_000);
 
+        appState.currentState = 'active';
+        visibilityEvents.dispatchEvent(new Event('change'));
         await expect(outPromise).resolves.toEqual({ ok: false, reason: 'expired' });
         expect(endpointFetchMock).toHaveBeenCalledTimes(0);
 
@@ -98,5 +106,38 @@ describe('authQRWait runtime active gating', () => {
 
         await expect(outPromise).resolves.toEqual({ ok: false, reason: 'cancelled' });
         expect(endpointFetchMock).not.toHaveBeenCalled();
+    });
+
+    it('schedules no poll wakes while hidden and polls on the foreground event', async () => {
+        vi.useFakeTimers();
+        const schedule = vi.spyOn(globalThis, 'setTimeout');
+        endpointFetchMock.mockResolvedValue(new Response(null, { status: 410 }));
+        const keypair = generateAuthKeyPair();
+        const issuedAtMs = Date.now();
+        const controller = new AbortController();
+        const outPromise = authQRWait(keypair, target, {
+            signal: controller.signal,
+            v2Context: {
+                pairId: 'pair-background-resume',
+                homeServerIdentityId: target.homeServerIdentityId,
+                bindingSecret: new Uint8Array(32).fill(7),
+                bindingProof: 'proof',
+                direction: 'trusted_home_displays',
+                issuedAtMs,
+                expiresAtMs: issuedAtMs + 120_000,
+            },
+        });
+        try {
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(endpointFetchMock).not.toHaveBeenCalled();
+            expect(schedule).not.toHaveBeenCalled();
+
+            appState.currentState = 'active';
+            visibilityEvents.dispatchEvent(new Event('change'));
+            await expect(outPromise).resolves.toEqual({ ok: false, reason: 'expired' });
+            expect(endpointFetchMock).toHaveBeenCalledTimes(1);
+        } finally {
+            controller.abort();
+        }
     });
 });
