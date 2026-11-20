@@ -716,6 +716,7 @@ export const managedMachinesEn = {
                 signInsTitle: ({ machine }: { machine: string }) => `Sign-ins on ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Accounts ${machine} uses on its own, for agents, clones and pushes. A connected account you choose for one is used instead.`,
                 signInConnectedOnly: "Signs in with a connected account",
+                signInConnected: "Use connected account",
                 signInAction: "Sign in…",
                 signInConfirmTitle: ({ machine, tool }: { machine: string; tool: string }) => `Sign ${machine} in to ${tool}?`,
                 signInSharedUser: ({ user, account }: { user: string; account: string }) => `Everyone using ${user} on this machine will use your ${account} account.`,

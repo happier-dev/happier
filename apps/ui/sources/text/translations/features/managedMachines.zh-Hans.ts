@@ -737,6 +737,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} 上的登录`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} 自己使用的账号，用于代理、克隆和推送。如果你为其中某项选择了已连接的账号，则改用该账号。`,
                 signInConnectedOnly: "使用已连接的账号登录",
+                signInConnected: "使用已连接账户",
                 signInAction: "登录…",
                 signInConfirmTitle: ({ machine, tool }: { machine: string; tool: string }) => `要让 ${machine} 登录 ${tool} 吗？`,
                 signInSharedUser: ({ user, account }: { user: string; account: string }) => `在这台机器上使用 ${user} 的所有人都会使用你的 ${account} 账号。`,

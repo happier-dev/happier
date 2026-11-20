@@ -737,6 +737,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 signInsTitle: ({ machine }: { machine: string }) => `Inicis de sessió a ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Comptes que ${machine} fa servir pel seu compte, per a agents, clonacions i pujades. Si tries un compte connectat per a algun, es fa servir aquest.`,
                 signInConnectedOnly: "Inicia la sessió amb un compte connectat",
+                signInConnected: "Usa el compte connectat",
                 signInAction: "Inicia la sessió…",
                 signInConfirmTitle: ({ machine, tool }: { machine: string; tool: string }) => `Vols iniciar la sessió de ${tool} a ${machine}?`,
                 signInSharedUser: ({ user, account }: { user: string; account: string }) => `Tothom qui faci servir ${user} en aquesta màquina farà servir el teu compte de ${account}.`,

@@ -737,6 +737,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} 上的登入`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} 自行使用的帳號，用於代理程式、複製與推送。若你為其中某項選擇已連結的帳號，就會改用該帳號。`,
                 signInConnectedOnly: "使用已連結的帳號登入",
+                signInConnected: "使用已連接帳戶",
                 signInAction: "登入…",
                 signInConfirmTitle: ({ machine, tool }: { machine: string; tool: string }) => `要讓 ${machine} 登入 ${tool} 嗎？`,
                 signInSharedUser: ({ user, account }: { user: string; account: string }) => `在這台機器上使用 ${user} 的所有人都會使用你的 ${account} 帳號。`,

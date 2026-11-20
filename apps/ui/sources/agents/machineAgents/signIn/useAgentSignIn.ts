@@ -287,10 +287,17 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
 
 export type MachineCliSignInAuthentication = Omit<AgentSignInStatusResponse, 'checkedAt'>;
 
+/** A CLI's declared connected-account launch (plan E U4): the qualified purpose its Account default is keyed by. */
+export type MachineCliConnectedLaunch = Readonly<{
+  purpose: Readonly<{ consumer: Readonly<{ pluginId: string; localId: string }>; purpose: string }>;
+  service: Readonly<{ pluginId: string; localId: string }>;
+}>;
+
 export type MachineCliSignInRow = Readonly<{
   id: string;
   title: string;
   kind: 'agent' | 'systemTool';
+  connectedLaunch?: MachineCliConnectedLaunch;
   authentication: MachineCliSignInAuthentication | null;
   signIn: MachineAgentSignInSession;
 }>;
@@ -316,7 +323,14 @@ export function useMachineCliSignIns(target: Readonly<{
     }));
     const tools = Object.values(readPublishedDaemonProjectionFamily(inputs, 'systemTools')?.entriesById ?? {})
       .filter(tool => tool.definition.authentication)
-      .map(tool => ({ id: tool.id, title: resolvePluginLocalizedStringV2Text(tool.definition.title), kind: 'systemTool' as const }));
+      .map(tool => {
+        const launch = tool.definition.connectedAccountLaunch;
+        const service = !launch ? null : typeof launch.service === 'string'
+          ? { pluginId: tool.pluginId, localId: launch.service } : launch.service;
+        return { id: tool.id, title: resolvePluginLocalizedStringV2Text(tool.definition.title), kind: 'systemTool' as const,
+          ...(launch && service ? { connectedLaunch: { service,
+            purpose: { consumer: { pluginId: tool.pluginId, localId: tool.definition.id }, purpose: launch.purpose } } } : {}) };
+      });
     return [...agents, ...tools].map(row => ({ ...row,
       entry: getEntry(serverAccountScopedResourceKey(binding.scope, 'agent-sign-in', target.machineId!, row.id)),
       boundTarget: { serverId, machineId: target.machineId!, agentId: row.id, lifetime: binding },

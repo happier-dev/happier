@@ -737,6 +737,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 signInsTitle: ({ machine }: { machine: string }) => `${machine} のサインイン`,
                 signInsHelp: ({ machine }: { machine: string }) => `${machine} が自分で使うアカウントです（エージェント、クローン、プッシュ用）。接続済みアカウントを選んだ場合は、そちらが使われます。`,
                 signInConnectedOnly: "接続済みアカウントでサインインします",
+                signInConnected: "接続済みアカウントを使う",
                 signInAction: "サインイン…",
                 signInConfirmTitle: ({ machine, tool }: { machine: string; tool: string }) => `${machine} を ${tool} にサインインしますか？`,
                 signInSharedUser: ({ user, account }: { user: string; account: string }) => `このマシンで ${user} を使う全員が、あなたの ${account} アカウントを使います。`,

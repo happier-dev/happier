@@ -737,6 +737,7 @@ export const managedMachines: ManagedMachinesTranslations = {
                 signInsTitle: ({ machine }: { machine: string }) => `Connexions sur ${machine}`,
                 signInsHelp: ({ machine }: { machine: string }) => `Les comptes que ${machine} utilise lui-même, pour les agents, les clones et les envois. Un compte connecté que vous choisissez pour l’un d’eux est utilisé à la place.`,
                 signInConnectedOnly: "Se connecte avec un compte connecté",
+                signInConnected: "Utiliser un compte connecté",
                 signInAction: "Se connecter…",
                 signInConfirmTitle: ({ machine, tool }: { machine: string; tool: string }) => `Connecter ${machine} à ${tool} ?`,
                 signInSharedUser: ({ user, account }: { user: string; account: string }) => `Toutes les personnes qui utilisent ${user} sur cette machine utiliseront votre compte ${account}.`,
