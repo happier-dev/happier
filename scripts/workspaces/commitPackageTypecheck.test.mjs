@@ -844,6 +844,8 @@ exec "${process.execPath}" "${entry}" "$@"
 `, 0o755);
   await write('scripts/workspaces/runTypeScriptCli.mjs', `
 import { readFileSync } from 'node:fs';
+import { shouldRouteTypeScriptCliThroughHstack } from ${JSON.stringify(new URL('./resolveTypeScriptCliInvocation.mjs', import.meta.url).href)};
+if (shouldRouteTypeScriptCliThroughHstack({ args: process.argv.slice(2), env: process.env })) process.exit(98);
 const source = readFileSync('src/index.ts', 'utf8');
 if (source.includes('= 99')) process.exit(97);
 if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 'tsconfig.json') {
@@ -862,6 +864,8 @@ if (source.includes('= 41') && process.argv[process.argv.indexOf('-p') + 1] !== 
   await publishDependencyRefreshMarker({ installDir: repo, identity: installIdentity });
   const env = { ...process.env, HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
     HAPPIER_COMMIT_TYPECHECK_DIR: state, HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
+  // This gate starts directly, outside the routed test runner's placement.
+  for (const marker of ['HAPPIER_HSTACK_EXECUTION', 'HAPPIER_DEV_TARGET_EXECUTION', 'HAPPIER_TYPECHECK_DISPATCHED', 'HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN']) delete env[marker];
   const result = await runCommitGate({ repo, base: `${candidate}^`, tree: candidate, env, label: 'commit-partial' });
   assert.equal(result.verdict, 'refused', JSON.stringify(result));
   assert.ok(result.findings.some(finding => finding.includes('TS9007')));

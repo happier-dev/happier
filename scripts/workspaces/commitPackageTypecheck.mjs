@@ -228,9 +228,11 @@ function runPackageCompiler(worktree, cwd, args, env) {
       { cwd, env, stdio: ['ignore', ...descriptors] });
     const stdout = readFileSync(join(output, 'stdout'), 'utf8');
     const stderr = readFileSync(join(output, 'stderr'), 'utf8');
-    return { rows: packageTypecheckRows({ ...result, stdout, stderr }, cwd, worktree),
-      failure: `exit=${result.status ?? 'none'} signal=${result.signal ?? 'none'}${result.error ? ` error=${result.error.code}` : ''}`,
-      tail: stderr.split(/\r?\n/u).filter(line => line.startsWith('[typecheck-')).slice(-3) };
+    const rows = packageTypecheckRows({ ...result, stdout, stderr }, cwd, worktree);
+    const lines = stderr.split(/\r?\n/u).filter(Boolean);
+    const diagnostics = lines.filter(line => line.startsWith('[typecheck-'));
+    return { rows, failure: `exit=${result.status ?? 'none'} signal=${result.signal ?? 'none'}${result.error ? ` error=${result.error.code}` : ''}`,
+      tail: diagnostics.length ? diagnostics.slice(-3) : lines.slice(0, 3) };
   } finally {
     for (const descriptor of descriptors) closeSync(descriptor);
     rmSync(output, { recursive: true, force: true });
@@ -1147,18 +1149,28 @@ async function compileControllerDeclarations({ repo, trees, packages, sides }) {
   const { dependencyInputsIdentity, inspectDependencyRefresh, readDependencyPublicationState, withDependencyConsumption } = await import('../../apps/stack/scripts/utils/proc/dependency_refresh.mjs');
   const log = message => console.error(message);
   const byTree = {};
-  for (const [index, tree] of trees.entries()) {
-    const state = mkdtempSync(join(tmpdir(), 'happier-controller-declarations-'));
-    try {
+  const scratch = mkdtempSync(join(tmpdir(), 'happier-controller-declarations-'));
+  try {
+    const captured = [];
+    for (const [index, tree] of trees.entries()) {
+      const state = join(scratch, String(index));
       const worktree = join(state, 'worktree');
-      mkdirSync(worktree);
+      mkdirSync(worktree, { recursive: true });
       await extractRevision({ repoDir: repo, revision: tree, outputDir: worktree });
       const selected = await inspectDependencyRefresh({ installDir: worktree });
-      byTree[tree] = await withDependencyConsumption({ installDir: repo, wait: false }, async admittedEnv => {
-        const installed = await readDependencyPublicationState({ installDir: repo });
+      captured.push({ tree, side: sides[index], state, worktree, selected });
+    }
+    // Both trees use the same publication. A dependency writer can acquire
+    // custody once both compiler invocations end.
+    await withDependencyConsumption({ installDir: repo, wait: false }, async admittedEnv => {
+      const installed = await readDependencyPublicationState({ installDir: repo });
+      const current = await inspectDependencyRefresh({ installDir: repo });
+      // This process came through local admission. Compiler leaves inside a
+      // Git archive need to inherit that placement as well as the slot.
+      const env = { ...admittedEnv, HAPPIER_HSTACK_EXECUTION: '1' };
+      for (const { tree, side, state, worktree, selected } of captured) {
         const workspaces = readCommitTreeWorkspacePackages(repo, tree);
         if (selected.installIdentity !== installed.identity) {
-          const current = await inspectDependencyRefresh({ installDir: repo });
           const roots = [...workspaces].filter(([, workspace]) => packages.includes(workspace.root)).map(([name]) => name);
           const closure = workspaceSourcePackageClosure(workspaces, roots);
           // Keep the root, lockfile and patch inputs. Workspace manifests for
@@ -1168,20 +1180,20 @@ async function compileControllerDeclarations({ repo, trees, packages, sides }) {
             dependencyIdentity, inputSnapshot.filter(({ path }) => !path.endsWith('/package.json') || path.startsWith('install:patches/') || manifests.has(path)),
           );
           if (current.installIdentity !== installed.identity || scopedInstallIdentity(selected) !== scopedInstallIdentity(current)) {
-            log(`[commit-package-typecheck] ${sides[index]} controller installation does not match the judged declaration closure`);
-            return {};
+            log(`[commit-package-typecheck] ${side} controller installation does not match the judged declaration closure`);
+            continue;
           }
         }
         const dirs = [...new Set([...packages, ...[...workspaces.values()].map(workspace => workspace.root)])];
         await mountCapturedWorkspaceDependencies({ sourceDir: repo, captureDir: worktree, workspaceDirs: dirs, capturedOnly: true });
-        const { rowsAt } = treeTypechecker({ repo, state, env: admittedEnv, log, capturedWorktree: worktree });
-        return Object.fromEntries(rowsAt(tree, packages, sides[index]));
-      });
-    } catch (error) {
-      log(`[commit-package-typecheck] ${sides[index]} controller comparison incomplete: ${error.message}`);
-    } finally {
-      rmSync(state, { recursive: true, force: true });
-    }
+        const { rowsAt } = treeTypechecker({ repo, state, env, log, capturedWorktree: worktree });
+        byTree[tree] = Object.fromEntries(rowsAt(tree, packages, side));
+      }
+    });
+  } catch (error) {
+    log(`[commit-package-typecheck] controller comparison incomplete: ${error.message}`);
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
   }
   console.log(`${WORKER_ROWS}${JSON.stringify(byTree)}`);
   return 0;
