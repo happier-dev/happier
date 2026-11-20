@@ -70,10 +70,10 @@ export const plugin = definePlugin({
         "facts": [
           {
             "label": "Seats",
-            "value": "1 deploying seat included"
+            "value": "1 seat"
           },
           {
-            "label": "Each extra deploying seat",
+            "label": "Extra seat",
             "price": {
               "amount": "20",
               "currency": "USD",
@@ -81,7 +81,7 @@ export const plugin = definePlugin({
             }
           },
           {
-            "label": "Usage credit included",
+            "label": "Usage credit",
             "price": {
               "amount": "20",
               "currency": "USD",
