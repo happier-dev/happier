@@ -273,16 +273,18 @@ it.each(['index', 'rail'] as const)('holds the first managed answer, then keeps 
     expect(row()).toBeUndefined();
     await act(async () => managed.resolve());
     await waitForHomeGovernance(() => expect(row()).toBeDefined());
-    // Synced roster facts contain no live samples. The online fleet admits one
-    // shared summary batch (e48c310359); pending names add no hydration read.
+    // The index reads the online fleet's host facts in one batch. The rail's
+    // calm rows show names without requesting live samples.
     const summaryReads = () => home.requests.filter(request => request.path === '/v1/machines/read-batch');
-    await waitForHomeGovernance(() => expect(summaryReads()).toHaveLength(1));
-    expect(MachineReadBatchRequestV1Schema.parse(summaryReads()[0]!.input).machineIds.sort())
-      .toEqual(fleet.filter(machine => machine.active).map(machine => machine.id).sort());
+    if (surface === 'index') {
+      await waitForHomeGovernance(() => expect(summaryReads()).toHaveLength(1));
+      expect(MachineReadBatchRequestV1Schema.parse(summaryReads()[0]!.input).machineIds.sort())
+        .toEqual(fleet.filter(machine => machine.active).map(machine => machine.id).sort());
+    }
     await act(async () => storage.getState().applyMachines([{ ...fleet[0]!, metadataVersion: 2,
       metadata: { ...fleet[0]!.metadata!, displayName: 'Renamed studio' } }], false, { sourceServerId: 'srv_a' }));
     expect(row()?.props.accessibilityLabel).toContain('Renamed studio');
-    expect(summaryReads()).toHaveLength(1);
+    expect(summaryReads()).toHaveLength(surface === 'index' ? 1 : 0);
   } finally {
     managed.resolve();
     await screen.unmount();
@@ -1117,18 +1119,22 @@ describe('All machines (the Settings door index)', () => {
     const rowId = 'machines.index.row.machine:srv_a:machine-a1';
     const has = (tree: Awaited<ReturnType<typeof renderPage>>, testID: string) => tree.findAll(node => node.props?.testID === testID).length > 0;
     // The shared count line names the Machine count only once the fleet has answered.
-    const countsMachines = (tree: Awaited<ReturnType<typeof renderPage>>) => tree.findAll(node => node.props?.testID === 'machines.index.header:count')
-      .some(node => /\d+ Machines?\b/.test(String(node.props.children ?? '')));
+    const readCountText = (tree: Awaited<ReturnType<typeof renderPage>>) => {
+      const count = tree.findHostByTestId('machines.index.header:count');
+      if (!count) return '';
+      return findAllHostTestInstances(count, () => true)
+        .flatMap(node => node.children.filter(child => typeof child === 'string')).join('');
+    };
     const screen = await renderScreen(React.createElement(MachinesSettingsView));
     await waitForHomeGovernance(() => expect(home.requests.some(request => request.path === '/v1/machines/managed/actions/list')).toBe(true));
     await flushHookEffects();
     // One machine is already known, but the created machines have not answered: no partial row, no count.
     expect(screen.tree.findAll(node => node.props?.testID === 'machines.index.collection' && node.props?.loading === true).length).toBeGreaterThan(0);
     expect(has(screen.tree, rowId)).toBe(false);
-    expect(countsMachines(screen.tree)).toBe(false);
+    expect(readCountText(screen.tree)).not.toMatch(/\d+ Machines?\b/i);
     await act(async () => managedFirstReply.resolve());
     await waitForHomeGovernance(() => expect(has(screen.tree, rowId)).toBe(true));
-    expect(countsMachines(screen.tree)).toBe(true);
+    expect(readCountText(screen.tree)).toMatch(/\b1 Machines?\b/i);
     // A later read keeps the answer already shown.
     const rereply = createDeferred<void>();
     home.answer(profileId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] }, respondAfter: rereply.promise });
@@ -1137,7 +1143,7 @@ describe('All machines (the Settings door index)', () => {
     await act(async () => publishHomeAccountChange('srv_a'));
     await waitForHomeGovernance(() => expect(home.requests.filter(request => request.path === '/v1/machines/managed/actions/list').length).toBeGreaterThan(requests));
     expect(has(screen.tree, rowId)).toBe(true);
-    expect(countsMachines(screen.tree)).toBe(true);
+    expect(readCountText(screen.tree)).toMatch(/\b1 Machines?\b/i);
     await act(async () => rereply.resolve());
     await screen.unmount();
   });
