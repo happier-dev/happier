@@ -51,7 +51,7 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   onTask?: (task: Readonly<{ taskId: string; kind: 'remote.ssh.bootstrapMachine.v1' }>) => void | Promise<void>;
   /** The task's current unanswered question, then `null` once it is answered, so the waiting surface can ask it. */
   onPrompt?: (prompt: ManagedMachineBootstrapPromptV1 | null) => void;
-}> & Pick<PortableManagedMachineEnrollmentInput, 'supportsAgentNativeSandbox'>;
+}> & Pick<PortableManagedMachineEnrollmentInput, 'presetCredentialBroker' | 'supportsAgentNativeSandbox'>;
 
 export type DeploymentAppMachineEnrollmentInput = Omit<PortableDeploymentAppEnrollmentInput, 'channel'>
   & Pick<ManagedMachineEnrollmentInput, 'channel' | 'onEvent' | 'onTask' | 'onPrompt'>

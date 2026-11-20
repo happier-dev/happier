@@ -220,6 +220,7 @@ export async function hydrateUiManagedOpaquePreset(params: Readonly<{
         };
         const normalizer: UiManagedAccountMachineNormalizer = {
             normalize,
+            presetCredentialBroker: prepared.opened.credentialBroker,
             structural: local => local.id === params.carrier.machine.id
                 && local.homeId === params.carrier.machine.homeId
                 && local.custodianAccountId === params.carrier.machine.custodianAccountId
@@ -456,6 +457,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                         carrier: enrollment.carrier, target,
                         channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), operationId: params.context.operationAcceptance?.operationId ?? params.requestId,
                         onInstalled: enrollment.onInstalled,
+                        presetCredentialBroker: normalizer?.presetCredentialBroker,
                         credentials: params.account.credentials, context: params.context, reviewedAction: params.input, signal: params.signal,
                         ...(enrollment.guestHostPublicKey ? { guestHostPublicKey: enrollment.guestHostPublicKey } : {}),
                     }, {

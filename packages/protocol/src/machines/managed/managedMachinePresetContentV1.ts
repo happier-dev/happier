@@ -132,6 +132,8 @@ export function createManagedMachinePresetContentV1Schema<Choices extends z.core
     setupSourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
     controllerDisplayName: z.optional(id()),
     projectFiles: z.optional(SessionProjectFilesV1Schema),
+    /** Opts a newly created isolation guest into the Credential broker role. */
+    credentialBroker: z.optional(z.boolean()),
     preparation: z.optional(ManagedMachinePresetPreparationV1Schema),
     /** Provider-owned build/artifact identity; never an author or per-acquire override. */
     prepared: z.optional(ManagedMachinePresetPreparedV1Schema),

@@ -80,13 +80,14 @@ describe('portable managed enrollment', () => {
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const, noServiceManager: true },
     { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, personalGuest: true, supportsAgentNativeSandbox: true },
+    { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, personalGuest: true, credentialBroker: true },
     { requesterEnrollment: true, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: false, adminAccessAtCreation: 'preauthorized' as const },
     { requesterEnrollment: false, dedicatedRetry: true, retainedEnrollment: true, adminAccessAtCreation: 'preauthorized' as const },
     { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, unreachable: true, bridge: true },
     { requesterEnrollment: false, dedicatedRetry: false, retainedEnrollment: false, adminAccessAtCreation: 'ask' as const, unreachable: true, bridge: false },
-  ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry, mode=$adminAccessAtCreation, retained=$retainedEnrollment)', async ({ requesterEnrollment, dedicatedRetry, retainedEnrollment, adminAccessAtCreation, ...availability }) => {
+  ])('uses local Account pairing only for the custodian row (requester=$requesterEnrollment, dedicated retry=$dedicatedRetry, mode=$adminAccessAtCreation, retained=$retainedEnrollment, preset broker=$credentialBroker)', async ({ requesterEnrollment, dedicatedRetry, retainedEnrollment, adminAccessAtCreation, ...availability }) => {
     const commands: string[] = [];
     const phases: string[] = [];
     const events: unknown[] = [];
@@ -102,12 +103,14 @@ describe('portable managed enrollment', () => {
       pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
     const personalGuest = 'personalGuest' in availability && availability.personalGuest === true;
     const supportsAgentNativeSandbox = 'supportsAgentNativeSandbox' in availability ? availability.supportsAgentNativeSandbox : undefined;
+    const credentialBroker = 'credentialBroker' in availability ? availability.credentialBroker : undefined;
     const carrierCaptured = new Error('Enrollment arrived at the guest');
     const nativeCorrelation = personalGuest ? { ...correlation, resource: { ...resource, origin: 'created' as const } } : correlation;
     const { resource: _sealedResource, ...structuralCorrelation } = nativeCorrelation;
     const enrollment = runManagedMachineEnrollment({ correlation: nativeCorrelation,
       homeCorrelation: personalGuest ? structuralCorrelation : nativeCorrelation, target, channel: 'stable', operationId: 'admitted-operation',
       ...(supportsAgentNativeSandbox ? { supportsAgentNativeSandbox } : {}),
+      presetCredentialBroker: credentialBroker,
       onInstalled: async () => { phases.push('installed'); },
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 },
         ...('bridge' in availability && availability.bridge ? { homeNetworkHint: 'authored_network' } : {}) } }, {
@@ -132,7 +135,7 @@ describe('portable managed enrollment', () => {
           if (personalGuest) {
             const enrollmentInput = JSON.parse(input ?? '{}');
             expect(enrollmentInput).toMatchObject({ managedEnrollment: structuralCorrelation,
-              initialMachineMetadata: { rolesV1: { active: CORE_MACHINE_ROLE_IDS_V1.filter(id => id !== 'broker') },
+              initialMachineMetadata: { rolesV1: { active: credentialBroker ? CORE_MACHINE_ROLE_IDS_V1 : CORE_MACHINE_ROLE_IDS_V1.filter(id => id !== 'broker') },
                 isolationV1: { environment: 'managed-guest', provisionerId: 'test.provisioner/vm' } } });
             expect(enrollmentInput.initialMachineMetadata.isolationV1.supportsAgentNativeSandbox).toBe(supportsAgentNativeSandbox);
             expect(enrollmentInput.managedEnrollment).not.toHaveProperty('resource');

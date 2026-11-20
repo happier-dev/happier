@@ -17,6 +17,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { ManagedBootstrapCarrierV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ManagedMachineBootstrapPromptV1Schema, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { parseSshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
@@ -74,6 +75,8 @@ export type ManagedMachineEnrollmentInput = Readonly<{
   reviewedChild?: HostReviewedChildPortV1;
   /** The controller's qualified provisioner capability for the retained launch. */
   supportsAgentNativeSandbox?: boolean;
+  /** From the admitted Preset snapshot held by the keyholding host. */
+  presetCredentialBroker?: ManagedMachinePresetContentV1['credentialBroker'];
   signal?: AbortSignal;
   channel: 'stable' | 'preview' | 'dev';
 }>;
@@ -181,7 +184,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
   }
   let nativeProcess = carrier.kind === 'native' && !dedicatedIdentity
     && (carrier.guestHome !== undefined || carrier.daemonStartup === 'native-process' || row.enrollmentIdentity?.kind === 'guestProcess');
-  const roles = resolveManagedMachineEnrollmentRolesV1(row.enrollmentIdentity, row.resource?.origin);
+  const roles = resolveManagedMachineEnrollmentRolesV1(row.enrollmentIdentity, row.resource?.origin, input.presetCredentialBroker);
   const initialMachineMetadata = {
     ...(roles ? { rolesV1: roles } : {}),
     ...(row.resource?.origin === 'created' ? { isolationV1: {

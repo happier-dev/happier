@@ -161,14 +161,19 @@ export function isMachineRoleActiveV1(openedMetadata: unknown, roleId: string,
 /** Initial roles for the reviewed enrollment identity and provider-proven creation. */
 export function resolveManagedMachineEnrollmentRolesV1(
   identity: ManagedMachineEnrollmentIdentityV1 | undefined, resourceOrigin?: ManagedResourceV1['origin'],
+  presetCredentialBroker?: boolean,
 ): MachineRolesPolicyV1 | null {
-  if (identity?.kind === 'guestProcess') return { active: ['sessions'] };
-  if (identity?.kind === 'dedicatedDaemonUser' && identity.role === 'deployTarget') {
-    return { active: ['deployments', 'sessions'] };
+  let enrollmentDefault: CoreMachineRoleIdV1[] | undefined;
+  if (identity?.kind === 'guestProcess') {
+    enrollmentDefault = ['sessions'];
+  } else if (identity?.kind === 'dedicatedDaemonUser') {
+    enrollmentDefault = identity.role === 'deployTarget' ? ['deployments', 'sessions'] : ['sessions', 'broker', 'workspaces', 'relay'];
   }
-  const active = identity?.kind === 'dedicatedDaemonUser' ? ['sessions', 'broker', 'workspaces', 'relay'] : CORE_MACHINE_ROLE_IDS_V1;
-  if (resourceOrigin === 'created') return { active: active.filter(id => id !== 'broker') };
-  return identity?.kind === 'dedicatedDaemonUser' ? { active: [...active] } : null;
+  if (resourceOrigin !== 'created') return enrollmentDefault ? { active: enrollmentDefault } : null;
+  const active = new Set(enrollmentDefault ?? CORE_MACHINE_ROLE_IDS_V1);
+  if (presetCredentialBroker === true) active.add('broker');
+  else active.delete('broker');
+  return { active: [...active] };
 }
 
 /** A creation child may only seed its reviewed default over the missing field. */

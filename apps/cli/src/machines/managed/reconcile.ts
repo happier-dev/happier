@@ -812,6 +812,7 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
             accountCredentials: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)?.credentials,
             ...(enrollmentInput.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: enrollmentInput.guestHostPublicKey }),
             operationId: params.options.context?.operationAcceptance?.operationId,
+            presetCredentialBroker: params.hydrator?.readPresetDefinition(machine)?.credentialBroker,
             ...createManagedBootstrapProgress(params, machine, () => { enrollmentAttempted = true; }),
         }, {
             onEnrollmentLifetime: lifetime => {

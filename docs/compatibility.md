@@ -427,10 +427,10 @@ managed preset nor prepared-image schemas; no predecessor wire adapter is added.
 
 The canonical client preset authoring owner writes optional public
 `configurationRevision` separately from the preset row revision. New presets
-start at zero; absent legacy counters mean zero. Only authored launch or setup
-changes advance the counter. Display names, Keep rules, preparation state and
-the supplier CLI identity leave it unchanged. The server receives no content
-digest or cross-preset equality key.
+start at zero. Absent legacy counters mean zero. Authored launch, setup and
+Credential broker changes advance the counter. Display names, Keep rules,
+preparation state and the supplier CLI identity leave it unchanged. The server
+receives no content digest or cross-preset equality key.
 
 Updates compare opened incumbent content at the exact expected row revision;
 unavailable incumbent content fails closed. Matching development Protocol,
@@ -650,11 +650,16 @@ Creation enrollment also records `isolationV1.supportsAgentNativeSandbox: true`
 when the qualified provisioner's session placement declares support for the
 retained launch choices. Older provenance without that optional field still
 defaults to OFF and cannot enable the native sandbox on that guest.
-The shared enrollment roles resolver excludes Credential broker from the initial
-role set for provider-created isolation guests and preserves saved role choices.
-The broker default follows creation provenance through the sealed preset path.
-The controller and guest binary must both carry the protected enrollment input
-on the unreleased 0.3 cut. Home correlation stays structural for a sealed preset.
+The shared enrollment roles resolver starts provider-created isolation guests
+with Credential broker off. The admitted Preset's private content can carry
+optional `credentialBroker: true` to enable it at first registration. Omission
+and explicit `false` have the same effect. Saved Machine roles survive retries
+and edits to the Preset. The keyholding host reads the option from the admitted
+snapshot and reuses protected enrollment metadata. Home correlation stays
+structural for a sealed preset. Older strict development readers reject the
+new Preset content field, so matching Protocol, clients, and guest binaries
+reload together. The 0.2 frontier described above has no managed Preset contract.
+This adds no wire epoch or migration.
 
 `readMachineIsolationV1` in Protocol `machines/metadataUpdate` reads opened Machine
 metadata and returns the fact or `null` for missing/unreadable provenance. Missing

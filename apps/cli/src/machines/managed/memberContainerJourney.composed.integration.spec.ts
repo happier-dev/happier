@@ -100,7 +100,8 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
                 input: { homeId: home.serverId, owner: { kind: 'team', teamId: team.id }, ...target } });
             if (census.kind !== 'ready') throw new Error(`Preset census refused: ${census.code}`);
             const sealed = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee',
-                content: { v: 1, name: 'Team container', launch: { provider, schemaVersion: 1, name: 'Member container', choices: {} } },
+                content: { v: 1, name: 'Team container', launch: { provider, schemaVersion: 1, name: 'Member container', choices: {} },
+                    ...(id === exactId ? { credentialBroker: true } : {}) },
                 recipientCensus: census.recipients, randomBytes: nacl.randomBytes });
             sealedPresets.set(id, sealed);
             expect(await createMachinePreset({ accountId: home.accountId,
@@ -164,7 +165,7 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
                     });
                     if (role === 'acquire') {
                         nativeContainers.add(nativeId);
-                        return { kind: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: { guest: nativeId } } };
+                        return { kind: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: { guest: nativeId }, origin: 'created' } };
                     }
                     if (role === 'destroy') { nativeContainers.delete(nativeId); return { kind: 'confirmed' }; }
                     if (role === 'putFile') payloadTransfers++;
@@ -227,7 +228,14 @@ it.skipIf(process.platform !== 'linux').each(memberJourneys)('$name', async ({ u
             const guest = await journey.catch(error => { throw new Error(`${scenario} journey failed`, { cause: error }); });
             expect(guest.accountId).toBe(owner.accountId);
             expect(guest.token === owner.token).toBe(true);
-            expect(await db.machine.findUniqueOrThrow({ where: { id: guest.machineId } })).toMatchObject({ accountId: owner.accountId });
+            const registered = await db.machine.findUniqueOrThrow({ where: { id: guest.machineId } });
+            expect(registered).toMatchObject({ accountId: owner.accountId });
+            if (scenario === 'exact') {
+                if (!guest.machineEncryptionKey) throw new Error('Expected a key for the enrolled Machine');
+                const metadata = createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: guest.machineEncryptionKey,
+                    encryptionVariant: 'dataKey' }).decodeStored(registered.metadata);
+                expect(metadata).toMatchObject({ rolesV1: { active: expect.arrayContaining(['broker']) } });
+            }
             expect(await db.managedMachine.findFirstOrThrow({ where: { enrolledMachineId: guest.machineId } }))
                 .toMatchObject({ presetId: scenario === 'pool' ? pooledId : exactId,
                     controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId });

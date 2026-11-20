@@ -73,6 +73,14 @@ describe('Machine roles policy', () => {
     expect(resolveManagedMachineEnrollmentRolesV1(undefined)).toBeNull();
   });
 
+  it('adds only the opted-in role to a newly created guest and preserves the adopted-host defaults', () => {
+    const deployTarget = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+      role: 'deployTarget', adminAccessAtCreation: 'none' } as const;
+    expect(resolveManagedMachineEnrollmentRolesV1(deployTarget, 'created')).toEqual({ active: ['deployments', 'sessions'] });
+    expect(resolveManagedMachineEnrollmentRolesV1(deployTarget, 'created', true)).toEqual({ active: ['deployments', 'sessions', 'broker'] });
+    expect(resolveManagedMachineEnrollmentRolesV1(deployTarget, undefined, true)).toEqual({ active: ['deployments', 'sessions'] });
+  });
+
   it('lets a creation child write only its reviewed seed over the missing field', () => {
     const target = { homeId: 'home', machineId: 'm1', enrollmentIdentity: { kind: 'guestProcess' as const, role: 'sandbox' as const } };
     const seed = { serverId: 'home', machineId: 'm1', expectedMetadataVersion: 0, expectedPolicy: { active: allCore }, policy: { active: ['sessions'] } };

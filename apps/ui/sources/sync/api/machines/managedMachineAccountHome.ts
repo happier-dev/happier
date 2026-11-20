@@ -9,12 +9,14 @@ import type { MachineProvisionerContributionV1 } from '@happier-dev/protocol/plu
 import { isManagedOpaquePresetMachineV1, ManagedMachineFullV1Schema, type ManagedMachineFullV1,
     type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import type { ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 
 /** Opaque preset rows are opened locally, then restored to their exact structural wire shape at output boundaries. */
 export type UiManagedAccountMachineNormalizer = Readonly<{
     normalize(machine: ManagedMachineV1): ManagedMachineFullV1 | null;
     structural(machine: ManagedMachineV1): ManagedMachineV1 | null;
+    presetCredentialBroker?: ManagedMachinePresetContentV1['credentialBroker'];
     /** Opaque keyholders reseal private report values before the Home request. */
     prepareHomeRequest?(path: string, body: unknown): unknown | null | undefined;
 }>;

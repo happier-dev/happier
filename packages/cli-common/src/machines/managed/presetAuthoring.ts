@@ -15,7 +15,7 @@ function readAuthoredConfiguration(content: ManagedMachinePresetContentV1) {
   if (content.launch === undefined) return { setup: content.setup };
   // Physical guest names are display metadata, just as in the private prepared binding.
   const { name: _name, ...launch } = content.launch;
-  return { launch, setup: content.setup };
+  return { launch, setup: content.setup, credentialBroker: content.credentialBroker === true };
 }
 
 /** Admit the preset audience against the writer's captured Account mode before sealing. */

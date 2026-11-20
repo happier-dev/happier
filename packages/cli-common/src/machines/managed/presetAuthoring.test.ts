@@ -144,7 +144,7 @@ describe('preset author source review', () => {
 
 describe('preset authored configuration counter', () => {
   // Owner ruling 2026-11-16: public reuse identity is a change counter, never a content digest.
-  it.each(['plain', 'e2ee'] as const)('advances only launch/setup changes through real %s custody', async mode => {
+  it.each(['plain', 'e2ee'] as const)('advances guest configuration changes through real %s custody', async mode => {
     const accountKey = new Uint8Array(32).fill(13);
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
     const recipientCensus = [{ account: { kind: 'account' as const, accountId: 'author', name: null, firstName: 'Author',
@@ -176,6 +176,8 @@ describe('preset authored configuration counter', () => {
         preparation: { enabled: true } }, 4],
       [{ ...original, launch: { ...original.launch, choices: { source: 'file' } } }, 5],
       [{ ...original, setup: { scripts: [{ body: 'echo edited', affects: 'none' as const }] } }, 5],
+      [{ ...original, credentialBroker: true }, 5],
+      [{ ...original, credentialBroker: false }, 4],
     ];
     for (const [next, expected] of cases) {
       const write = seal(next);

@@ -3133,9 +3133,10 @@ built-in role (`sessions`, `broker`, `intake`, `deployments`, `workspaces`, `rel
 - **One decision:** `resolveActiveMachineRolesV1` / `isMachineRoleActiveV1`. The daemon, spawn
   readiness (`roleInactive`), the implicit launch default, the deployment draft default and the UI
   all call it.
-- **Writes:** `machines.roles.set` is Machine-placed with Manage admission (same as
-  `machines.resources.policy.set`) and field compare-and-swap. Managed creation seeds the
-  install-type default through the same Action as a creation child.
+- **Writes.** `machines.roles.set` is Machine-placed with Manage admission (same as
+  `machines.resources.policy.set`) and field compare-and-swap. Managed enrollment
+  supplies initial roles in the first Machine registration. Credential broker starts
+  off for provider-created isolation guests unless the admitted Preset enables it.
 - **Daemon:** `apps/cli/src/daemon/roles/machineRolesRuntime.ts` reloads on the Machine-metadata
   change hook and exposes the active set to role registration. An inactive role's handlers are not
   registered, so the daemon answers `machine_role_inactive` (`RPC_ERROR_CODES.MACHINE_ROLE_INACTIVE`).

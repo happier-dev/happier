@@ -14,7 +14,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 import { HomeGovernanceGetInputV1Schema } from '@happier-dev/protocol/home/governance/actionsV1';
 import { HomeSessionDefaultsProjectionV1Schema } from '@happier-dev/protocol/home/governance/projection';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
-import { encodeBase64 } from '@/encryption/base64';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import nacl from 'tweetnacl';
@@ -146,6 +146,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
     const delegatedPolicy = label.includes('delegated policy');
     const refusedRoles = label.includes('refused roles seed');
     const plainPreset = label.includes('Plain preset');
+    const brokerPreset = label === 'native opaque E2EE preset';
     const presetMode = plainPreset ? 'plain' as const : 'e2ee' as const;
     const e2eeAccount = opaquePreset && !plainPreset || label === 'native E2EE one-off';
     if (host === 'native') vi.stubGlobal('__TAURI_INTERNALS__', { invoke: () => null });
@@ -244,7 +245,8 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
             sealManagedMachinePresetContentV1 } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetContentV1');
         const privateLaunch = { ...launch, name: privateLaunchName };
         const sealContent = { presetId: 'opaque-preset',
-            content: { v: 1 as const, name: privatePresetName, launch: privateLaunch },
+            content: { v: 1 as const, name: privatePresetName, launch: privateLaunch,
+                ...(brokerPreset ? { credentialBroker: true } : {}) },
             randomBytes: (length: number) => new Uint8Array(length).fill(7) };
         const sealed = encryption ? sealManagedMachinePresetContentV1({ ...sealContent, mode: 'e2ee',
             recipientCensus: [e2eeRecipient(accountId, encryption.contentDataKey)] })
@@ -809,6 +811,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         })));
         let running = false;
         const commands = new Map<string, string>();
+        let enrollmentRoles: unknown;
         const session = { id: 'sbx_one', sourceSandboxName: 'happier-managed-1', projectId: 'prj_one', createdAt: 919,
             networkPolicy: { mode: 'allow-all' } };
         const snapshot = { id: 'snap_one', sourceSessionId: session.id, projectId: 'prj_one', createdAt: 1100, status: 'created' };
@@ -849,6 +852,11 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
                 return Response.json({ command: { id, sessionId: session.id, exitCode: null } });
             }
             const id = path.split('/cmd/')[1]?.split('/')[0];
+            if (brokerPreset && id && path.endsWith('/stdin') && commands.get(id)?.includes("'auth' 'request'")) {
+                const { data } = await new Response(init?.body).json();
+                const enrollment = JSON.parse(new TextDecoder().decode(decodeBase64(data)));
+                enrollmentRoles = enrollment.initialMachineMetadata.rolesV1;
+            }
             if (id && path.endsWith('/logs')) {
                 const command = commands.get(id) ?? '';
                 let stdout = '';
@@ -1138,6 +1146,7 @@ it.each(cases)('%s host carries the designed Create/Send review through the publ
         expect(machineRpcs).toBe(0);
         expect(homeBoundaryFailures).toEqual([]);
         expect(retried, JSON.stringify({ retried, homePaths, roleDispatches, allocations, joinAttempts })).toMatchObject({ ok: true, result: { managedId: 'managed-1' } });
+        if (brokerPreset) expect(enrollmentRoles).toEqual({ active: ['sessions', 'broker'] });
         const joined = await executor.execute('machines.managed.get', { homeId, managedId: 'managed-1' }, {
             ...context, actionRequestId: 'stage-joined', presentUserConfirmation: undefined,
         });
