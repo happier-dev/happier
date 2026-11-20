@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readlink, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh/shellQuote';
 import type { MachineRecipeStepV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
 export function resolveAgentIsolationMemberCliRuntime(installedCli: string) {
@@ -81,12 +82,13 @@ fi
 
 export async function buildAgentIsolationMemberCliRuntimeSteps(runtime: AgentIsolationMemberCliRuntime): Promise<MachineRecipeStepV1[]> {
   const { payload, generation } = await readInstalledPayload(runtime);
-  const args = (mode: 'check' | 'apply') => [
-    '-c', publishMemberCli, 'happier-member-cli-runtime', mode, runtime.root, payload, generation, basename(runtime.executable),
-  ];
+  const script = (mode: 'check' | 'apply') => {
+    const args = [mode, runtime.root, payload, generation, basename(runtime.executable)];
+    return `set -- ${args.map(safeBashSingleQuote).join(' ')}\n${publishMemberCli}`;
+  };
   return [
     { id: 'member-cli-root', kind: 'directory', path: runtime.root, owner: 'root', group: 'root', mode: 0o755, protectedAncestors: true },
-    { id: 'member-cli-payload', kind: 'command', executable: '/bin/sh', args: args('apply'),
-      check: { executable: '/bin/sh', args: args('check'), unsatisfiedExitCodes: [1] } },
+    { id: 'member-cli-payload', kind: 'script', shell: 'sh', body: script('apply'),
+      check: { body: script('check'), unsatisfiedExitCodes: [1] } },
   ];
 }

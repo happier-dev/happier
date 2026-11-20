@@ -3,21 +3,49 @@ import { execFileSync } from 'node:child_process';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { resolveSeparateUserToolsLayout } from '@happier-dev/cli-common/firstPartyRuntime';
 import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend,
   createCaddyContainerSetupSteps } from '@happier-dev/cli-common/machineSetup';
+import { runMachineSetupEffectInternal } from '@/machines/setup/effectInternal';
 import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { buildAgentIsolationProvisioningSteps } from './provisioning';
 import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
 import { resolveAgentIsolationEffectIntentResult } from './effectIntent';
 import { createDaemonAgentIsolationEffects } from './createDaemonAgentIsolationEffects';
-import { isAgentIsolationMemberCliCurrent } from './memberCliRuntime';
+import { buildAgentIsolationMemberCliRuntimeSteps, isAgentIsolationMemberCliCurrent } from './memberCliRuntime';
 
 afterEach(() => vi.unstubAllEnvs());
 
 describe('agent isolation provisioning', () => {
+  it.skipIf(process.platform !== 'linux')('reviews the member CLI payload through the elevated setup interpreter', async () => {
+    const root = await mkdtemp(join(tmpdir(), "happier member's CLI-"));
+    try {
+      const payload = join(root, 'cli', 'current');
+      await mkdir(payload, { recursive: true });
+      const sourceCli = join(payload, 'happier');
+      await writeFile(sourceCli, '#!/bin/sh\n', { mode: 0o700 });
+      const runtimeRoot = join(root, 'member-runtime');
+      const steps = await buildAgentIsolationMemberCliRuntimeSteps({ sourceCli, root: runtimeRoot,
+        executable: join(runtimeRoot, 'current', 'happier') });
+      const stdin = new PassThrough(), stdout = new PassThrough();
+      let output = '';
+      stdout.setEncoding('utf8').on('data', chunk => { output += chunk; });
+      stdin.end(JSON.stringify({ v: 1, mode: 'check', machineId: 'guest', installationId: 'install', operationId: 'enrollment',
+        basis: { kind: 'agentIsolation', machineId: 'guest', enabled: true, expectedPolicy: { enabled: false },
+          review: { roots: [], ancestorAcls: [], sessionsToReplace: 0, memberProvisioning: 'linuxUsersV1' } }, steps }) + '\n');
+      const code = await runMachineSetupEffectInternal(['--operation-id=enrollment', '--installation-id=install'],
+        // Substitute the sudo identity only. The interpreter still checks the real payload on disk.
+        { stdin, stdout, readUid: () => 0 });
+      expect(JSON.parse(output.trim().split('\n').at(-1)!)).toMatchObject({ type: 'result', result: { status: 'checked',
+        plan: { nativeFacts: expect.arrayContaining([{ stepId: 'member-cli-payload', status: 'drifted', facts: expect.any(Object) }]) } } });
+      expect(code).toBe(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   it.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID_INTEGRATION !== '1')(
     'publishes the current managed CLI and its companion files for a member without opening the private home', async () => {
       const root = await mkdtemp(join(tmpdir(), 'happier-private-cli-'));
@@ -52,10 +80,10 @@ describe('agent isolation provisioning', () => {
         const directory = reviewed.intent.steps.find(step => step.id === 'member-cli-root');
         const publish = reviewed.intent.steps.find(step => step.id === 'member-cli-payload');
         expect(directory).toMatchObject({ kind: 'directory', owner: 'root', group: 'root', protectedAncestors: true });
-        if (directory?.kind !== 'directory' || publish?.kind !== 'command') throw new Error('No member runtime in Apply');
+        if (directory?.kind !== 'directory' || publish?.kind !== 'script') throw new Error('No member runtime in Apply');
         publishedRoot = directory.path;
         sudo('install', '-d', '-m', '0755', '--', publishedRoot);
-        sudo(publish.executable, ...publish.args);
+        sudo(publish.shell, '-c', publish.body);
         const prepared = await resolveAgentIsolationEffectIntentResult(true, effects, requesterIdentity);
         if (prepared.kind !== 'ready') throw new Error('Expected a ready member Apply plan');
         const rule = prepared.intent.steps.find(step => step.id === 'agent-runas');
@@ -71,8 +99,8 @@ describe('agent isolation provisioning', () => {
         expect(await isAgentIsolationMemberCliCurrent(production.memberCliRuntime!)).toBe(false);
         const upgrade = await resolveAgentIsolationEffectIntentResult(true, effects, requesterIdentity);
         const refresh = upgrade.kind === 'ready' && upgrade.intent.steps.find(step => step.id === 'member-cli-payload');
-        if (!refresh || refresh.kind !== 'command') throw new Error('No member runtime refresh in Apply');
-        sudo(refresh.executable, ...refresh.args);
+        if (!refresh || refresh.kind !== 'script') throw new Error('No member runtime refresh in Apply');
+        sudo(refresh.shell, '-c', refresh.body);
         expect(await isAgentIsolationMemberCliCurrent(production.memberCliRuntime!)).toBe(true);
         expect(sudo('-u', 'nobody', '--', target!, 'agent-launch')).toBe('new managed release\n');
         expect(sudo('-u', 'nobody', '--', previous, 'agent-launch')).toBe('managed release\n');
