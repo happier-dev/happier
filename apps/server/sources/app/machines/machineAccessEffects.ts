@@ -147,11 +147,18 @@ export async function applyMachineAccessImpactsInTx(
     }
 
     await acquireAccountChangePublicationLocksInTx(tx, publications.flatMap(publication => [...publication.changed]));
+    const lostAccessMachineIds = publications.filter(({ revoked, manageLost }) => revoked.size > 0 || manageLost.size > 0)
+        .map(({ machineId }) => machineId);
+    const custodyByMachineId = new Map<string, { accountId: string; installationId: string | null }>();
+    for (const ids of portableQueryChunks({ values: lostAccessMachineIds, bindingsPerValue: 1, fixedBindings: 1 })) {
+        const machines = await tx.machine.findMany({ where: { id: { in: [...ids] } },
+            select: { id: true, accountId: true, installationId: true } });
+        for (const machine of machines) custodyByMachineId.set(machine.id, machine);
+    }
     for (const { machineId, changed, revoked, manageLost } of publications) {
         await markAccountsChanged(tx, { accountIds: [...changed], kind: MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, entityId: machineId });
 
-        if (revoked.size === 0 && manageLost.size === 0) continue;
-        const machine = await tx.machine.findUnique({ where: { id: machineId }, select: { accountId: true, installationId: true } });
+        const machine = custodyByMachineId.get(machineId);
         if (!machine) continue;
         for (const accountId of new Set([...revoked, ...manageLost])) {
             afterTx(tx, () => {

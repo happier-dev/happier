@@ -342,6 +342,24 @@ async function accessFromFactsInTx(tx: Tx, row: MachineFacts, actorAccountId: st
         installationId: row.installationId, owned };
 }
 
+async function accessFromFactsForActorsInTx(tx: Tx, row: MachineFacts, accountIds: readonly string[],
+    roles: ReadonlyMap<string, MachineAccessRoleV1 | null> | undefined): Promise<Map<string, MachineAccessFacts | null>> {
+    const recipients = accountIds.filter(accountId => accountId !== row.accountId && roles?.get(accountId));
+    const contentMatches = new Map<MachineFacts, boolean>();
+    if (recipients.length > 0 && classifyMachineAvailabilityState(row) === 'available' && resourceMode(row) === 'e2ee') {
+        contentMatches.set(row, resourceContentMatchesMode(row, 'e2ee'));
+    }
+    const materials = contentMatches.get(row) === true
+        ? await readRecipientAccessMaterialsInTx(tx, recipients.map(actorAccountId => ({ actorAccountId, machineId: row.id })))
+        : undefined;
+    const states = new Map<string, MachineAccessFacts | null>();
+    for (const accountId of accountIds) {
+        states.set(accountId, await accessFromFactsInTx(tx, row, accountId, materials?.get(accountId),
+            roles?.get(accountId) ?? null, contentMatches));
+    }
+    return states;
+}
+
 function grantReadiness(states: readonly (MachineAccessFacts | null)[]) {
     return { readiness: states.some(state => state?.accessState === 'refused') ? 'refused' as const
         : states.some(state => state?.accessState === 'key_pending') ? 'key_pending' as const : 'ready' as const,
@@ -351,15 +369,17 @@ function grantReadiness(states: readonly (MachineAccessFacts | null)[]) {
 export async function resolveMachineAccessForActorsInTx(tx: Tx, input: Readonly<{
     machineId: string; actorAccountIds: readonly string[];
 }>): Promise<Map<string, MachineAccessFacts | null>> {
-    const result = new Map<string, MachineAccessFacts | null>();
     const actorAccountIds = [...new Set(input.actorAccountIds)];
-    if (actorAccountIds.length === 0) return result;
+    if (actorAccountIds.length === 0) return new Map();
     const row = await readFactsInTx(tx, input.machineId, actorAccountIds.length === 1 ? actorAccountIds[0] : undefined);
-    const roles = row ? await machineRolesInTx(tx, [row], actorAccountIds) : new Map();
-    for (const actorAccountId of actorAccountIds) {
-        result.set(actorAccountId, row ? await accessFromFactsInTx(tx, row, actorAccountId, undefined, roles.get(row.id)?.get(actorAccountId) ?? null) : null);
+    if (!row) return new Map(actorAccountIds.map(accountId => [accountId, null]));
+    const roles = (await machineRolesInTx(tx, [row], actorAccountIds)).get(row.id);
+    if (actorAccountIds.length === 1) {
+        const [accountId] = actorAccountIds;
+        const access = await accessFromFactsInTx(tx, row, accountId, undefined, roles?.get(accountId) ?? null);
+        return new Map([[accountId, access]]);
     }
-    return result;
+    return accessFromFactsForActorsInTx(tx, row, actorAccountIds, roles);
 }
 export async function resolveMachineAccessInTx(tx: Tx, input: MachineActor): Promise<MachineAccessFacts | null> {
     const access = await resolveMachineAccessForActorsInTx(tx, { machineId: input.machineId, actorAccountIds: [input.actorAccountId] });
@@ -695,10 +715,13 @@ export async function listMachineAccessGrantsInTx(tx: Tx, input: MachineActor): 
         ? projectTeamGroupNameForRecipient({ serialized: source.groupNameSerialized, recipientAccountId: input.actorAccountId })
         : undefined;
     const grants: MachineAccessGrantRowV1[] = [];
+    const rosterRecipients = canManage ? [...new Set(sources.flatMap(source => source.accountIds))].filter(accountId =>
+        accountId !== row.accountId && accountId !== input.actorAccountId) : [];
+    const rosterStates = await accessFromFactsForActorsInTx(tx, row, rosterRecipients, roles.get(row.id));
+    rosterStates.set(input.actorAccountId, access);
     if (canManage) for (const source of sources) {
         const accountIds = source.accountIds.filter(accountId => accountId !== row.accountId);
-        const states = await Promise.all(accountIds.map(accountId => accessFromFactsInTx(tx, row, accountId, undefined,
-            roles.get(row.id)?.get(accountId) ?? null)));
+        const states = accountIds.map(accountId => rosterStates.get(accountId) ?? null);
         const afterRemoval = projectMachineRoles(graph, source.accountIds, new Map([[row.id, sources.filter(candidate => candidate !== source)]]));
         const groupName = projectGroupName(source);
         grants.push({ machineId: row.id, principal: source.principal, level: source.level, display: {
@@ -828,13 +851,7 @@ export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Re
     const source = current && contributions(current).find(candidate => isDeepStrictEqual(candidate.principal, principal));
     const recipients = source?.accountIds.filter(id => id !== row.accountId) ?? [];
     const roles = current ? (await machineRolesInTx(tx, [current], recipients)).get(current.id) : undefined;
-    const encrypted = current && classifyMachineAvailabilityState(current) === 'available'
-        && resourceMode(current) === 'e2ee' && resourceContentMatchesMode(current, 'e2ee')
-        ? recipients.filter(accountId => roles?.get(accountId)).map(actorAccountId => ({ actorAccountId, machineId: row.id }))
-        : [];
-    const materials = await readRecipientAccessMaterialsInTx(tx, encrypted);
-    const states = current ? await Promise.all(recipients.map(id => accessFromFactsInTx(tx, current, id, materials.get(id),
-        roles?.get(id) ?? null))) : [];
+    const states = current ? [...(await accessFromFactsForActorsInTx(tx, current, recipients, roles)).values()] : [];
     return { kind: 'saved', grant: { machineId: row.id, principal, level: input.level }, ...grantReadiness(states) };
 }
 

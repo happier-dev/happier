@@ -12,6 +12,8 @@ import * as access from './machineAccess';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { readMachineAudienceAccountIdsInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
+import { applyMachineAccessImpactsInTx, captureMachineAccessImpactsInTx } from './machineAccessEffects';
+import { acquireTeamMutationAccountAdmissionInTx } from '@/app/teams/memberships/sessionAccessEffects';
 
 const provider = getDbProviderFromEnv(process.env, 'postgres');
 describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', () => {
@@ -71,10 +73,47 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
             }
         });
 
-    it('saves an encrypted Team grant with a set read for recipient readiness', async () => {
+    it('reads Machine custody as a set when one Team membership removes fleet access', async () => {
         const { owner, machine } = await fixture();
-        const team = await db.team.create({ data: { name: 'Batch grant readiness' } });
-        const recipients = await Promise.all(Array.from({ length: 8 }, account));
+        const member = await account();
+        const team = await db.team.create({ data: { name: 'Fleet Machine access' }, select: { id: true } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const machineIds = [machine.id, ...Array.from({ length: 109 }, () => randomUUID())];
+        await db.machine.createMany({ data: machineIds.slice(1).map(id => ({
+            id, accountId: owner.id, metadata: machine.metadata, installationId: randomUUID(),
+        })) });
+        await db.machineGrant.createMany({ data: machineIds.map(machineId => ({
+            machineId, teamId: team.id, principalKind: 'team', accessLevel: 'view', createdByAccountId: owner.id,
+        })) });
+        const rollback = new Error('roll back after measuring access loss');
+        let reads: readonly string[] = [];
+        await expect(inTx(async tx => {
+            await acquireTeamMutationAccountAdmissionInTx(tx, { teamId: team.id, accountIds: [member.id],
+                membershipChange: { kind: 'teamMembership', teamId: team.id }, affectedAccountIds: [member.id] });
+            const observed = observePrismaReads(tx, ['machine']);
+            const impacts = await captureMachineAccessImpactsInTx(observed.tx, { machineIds, accountIds: [member.id] });
+            await tx.teamMembership.update({ where: { id: membership.id }, data: { status: 'suspended' } });
+            observed.reads.length = 0;
+            const result = await applyMachineAccessImpactsInTx(observed.tx, { impacts: impacts.values() });
+            expect(result).toEqual({ changedAccountIds: [member.id], revokedAccountIds: [member.id] });
+            reads = observed.reads;
+            throw rollback;
+        })).rejects.toBe(rollback);
+        console.info('machine-access-loss-read-counts', JSON.stringify({
+            machines: machineIds.length, totalMachineReads: reads.length,
+            pointReads: reads.filter(read => read === 'machine.findUnique').length,
+        }));
+        expect(reads).not.toContain('machine.findUnique');
+        expect(reads).toHaveLength(3);
+    });
+
+    it('uses a set read for encrypted Team readiness on grant save, roster and publication', async () => {
+        const { owner, machine } = await fixture();
+        const team = await db.team.create({ data: { name: 'Batch grant readiness' }, select: { id: true } });
+        const recipients = Array.from({ length: 110 }, () => ({
+            id: randomUUID(), encryptionMode: 'e2ee' as const, ...createSignedAccountContentBinding(tweetnacl.box.keyPair().publicKey),
+        }));
+        await db.account.createMany({ data: recipients });
         await db.teamMembership.createMany({ data: [
             { teamId: team.id, accountId: owner.id, role: 'owner' },
             ...recipients.map(recipient => ({ teamId: team.id, accountId: recipient.id, role: 'member' as const })),
@@ -96,6 +135,27 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
                 actorAccountId: owner.id, machineId: machine.id, principal: { kind: 'team', teamId: team.id }, level: 'view',
             })).toMatchObject({ kind: 'saved', readiness: 'key_pending', canPrepareKeys: true });
             expect(observed.reads.length + envelopeSql.length).toBe(1);
+
+            const machineActor = { actorAccountId: owner.id, machineId: machine.id };
+            observed.reads.length = 0;
+            envelopeSql.length = 0;
+            const roster = await access.listMachineAccessGrantsInTx(traced, machineActor);
+            expect(roster).toMatchObject({ canManage: true, grants: [{ readiness: 'key_pending',
+                audience: expect.arrayContaining(recipients.map(({ id }) => expect.objectContaining({
+                    accountId: id, readiness: 'key_pending', canPrepareKeys: true,
+                }))) }] });
+            const rosterReads = observed.reads.length + envelopeSql.length;
+
+            observed.reads.length = 0;
+            envelopeSql.length = 0;
+            const publication = await access.resolveMachineAccessForActorsInTx(traced, {
+                machineId: machine.id, actorAccountIds: [owner.id, ...recipients.map(({ id }) => id)],
+            });
+            expect(publication.get(owner.id)).toMatchObject({ accessState: 'ready', owned: true });
+            for (const { id } of recipients) expect(publication.get(id)).toMatchObject({ accessState: 'key_pending', canPrepareKeys: true });
+            const publicationReads = observed.reads.length + envelopeSql.length;
+            console.info('machine-recipient-key-read-counts', JSON.stringify({ recipients: recipients.length, rosterReads, publicationReads }));
+            expect({ rosterReads, publicationReads }).toEqual({ rosterReads: 1, publicationReads: 1 });
         });
     });
 
