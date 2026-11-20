@@ -9,6 +9,7 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 
 type MachineLike = Readonly<{
+    id?: string;
     revokedAt?: number | null;
 }>;
 
@@ -108,11 +109,7 @@ export type PortableMachineAdministrationTargetResolution<T extends MachineWithI
     }>;
 
 /** Raw scoped membership shared by presentation and fresh invocation admission. */
-export function readLiveMachineInventoryRows<T extends MachineWithId>(params: Readonly<{
-    activeServerId: string;
-    activeMachines: readonly T[];
-    machineListByServerId: Readonly<Record<string, readonly T[] | null | undefined>>;
-    machineListStatusByServerId: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
+export function readLiveMachineInventoryRows<T extends MachineWithId>(params: MachineInventoryState<T> & Readonly<{
     profile: ServerProfile;
     serverIdentityId: string;
     /** Presentation may retain opened content while a newer hint is pending; never grants fresh invocation authority. */
@@ -135,6 +132,10 @@ export function readLiveMachineInventoryRows<T extends MachineWithId>(params: Re
     const machines = inventory.machines;
     if (!machines) return EMPTY_LIVE_MACHINE_ROWS;
     const retainOpenedContent = params.retainOpenedContent === true;
+    if (params.machineId) {
+        const machine = machines[0];
+        return machine && isLiveMachineInventoryRow(machine, retainOpenedContent) ? new Set([machine]) : EMPTY_LIVE_MACHINE_ROWS;
+    }
     const mode = retainOpenedContent ? 'opened' : 'current';
     const cached = liveRowsByInventory.get(machines);
     const previous = cached?.[mode];
@@ -181,13 +182,19 @@ export function resolveServerScopedMachineInventoryKeys(params: Readonly<{
 }
 
 type MachineInventoryStatus = 'idle' | 'loading' | 'signedOut' | 'error' | undefined;
-type MachineInventoryInput<T extends MachineLike> = Readonly<{
-    serverId: string;
+export type MachineInventoryState<T extends MachineLike> = Readonly<{
     activeServerId: string;
-    serverIdAliases?: readonly string[];
-    activeMachines: ReadonlyArray<T>;
+    activeMachines?: readonly T[];
+    /** Read the addressed row through the store's index when one is available. */
+    activeMachineRecords?: Readonly<Record<string, T | undefined>>;
+    machineRecordsByServerId?: Readonly<Record<string, Readonly<Record<string, T | undefined>> | undefined>>;
     machineListByServerId: Readonly<Record<string, ReadonlyArray<T> | null | undefined>>;
     machineListStatusByServerId?: Readonly<Record<string, MachineInventoryStatus>>;
+    machineId?: string;
+}>;
+type MachineInventoryInput<T extends MachineLike> = MachineInventoryState<T> & Readonly<{
+    serverId: string;
+    serverIdAliases?: readonly string[];
 }>;
 
 /** Ordered and exact readers consume one source decision, including the loading fallback. */
@@ -210,7 +217,7 @@ function resolveMachineInventorySource(
     }
     const targetsActiveServer = activeServerId.length > 0
         && serverIds.some((serverId) => areServerProfileIdentifiersEquivalent(serverId, activeServerId, resolveScopeId));
-    if (targetsActiveServer && (hasActiveMachines() || status === 'idle')) {
+    if (targetsActiveServer && (status === 'idle' || hasActiveMachines())) {
         return { kind: 'active', status };
     }
 
@@ -222,9 +229,29 @@ export function resolveServerScopedMachineInventory<T extends MachineLike>(param
     machines: ReadonlyArray<T> | null;
     status: MachineInventoryStatus;
 }> {
-    const source = resolveMachineInventorySource(params, () => params.activeMachines.length > 0, resolveScopeId);
-    return { machines: source.kind === 'active' ? params.activeMachines
-        : source.serverId ? params.machineListByServerId[source.serverId] ?? null : null, status: source.status };
+    const { activeMachineRecords, machineId } = params;
+    let activeRows: readonly T[] | undefined;
+    const readActiveRows = () => activeRows ??= params.activeMachines
+        ?? Object.values(activeMachineRecords ?? {}).filter((row): row is T => row !== undefined);
+    const source = resolveMachineInventorySource(params, () => {
+        if (!machineId || !activeMachineRecords) return readActiveRows().length > 0;
+        if (Object.hasOwn(activeMachineRecords, machineId) && activeMachineRecords[machineId]) return true;
+        for (const id in activeMachineRecords) if (activeMachineRecords[id]) return true;
+        return false;
+    }, resolveScopeId);
+    const { status } = source;
+    if (source.kind === 'scoped' && !source.serverId) return { machines: null, status };
+    const scopedServerId = source.kind === 'scoped' ? source.serverId : undefined;
+    const records = scopedServerId ? params.machineRecordsByServerId?.[scopedServerId] : activeMachineRecords;
+    const readRows = () => scopedServerId ? params.machineListByServerId[scopedServerId] : readActiveRows();
+    if (machineId) {
+        const machine = records
+            ? Object.hasOwn(records, machineId) ? records[machineId] : undefined
+            : readRows()?.find(row => row.id === machineId);
+        // An observed list without the requested Machine still answers the inventory read.
+        return { machines: machine ? [machine] : [], status };
+    }
+    return { machines: readRows() ?? null, status };
 }
 
 export function resolveServerScopedMachines<T extends MachineLike>(params: Parameters<typeof resolveServerScopedMachineInventory<T>>[0], resolveScopeId?: ProfileScopeResolver): ReadonlyArray<T> | null {
@@ -250,25 +277,19 @@ export function selectMachineInventoryRowsById<T extends Readonly<{ id: string }
  */
 export function resolveExactServerScopedMachine<T extends MachineWithId>(params: MachineInventoryInput<T> & Readonly<{
     machineId: string;
-    /** The inventory writer publishes these alongside its ordered rows. Partial-state callers may omit them. */
-    machineRecordsByServerId?: Readonly<Record<string, Readonly<Record<string, T | undefined>> | undefined>>;
-    activeMachineRecords?: Readonly<Record<string, T | undefined>>;
 }>): T | null {
     const machineId = String(params.machineId ?? '').trim();
     if (!machineId) return null;
 
-    const source = resolveMachineInventorySource(params, () => {
-        if (!params.activeMachineRecords) return params.activeMachines.length > 0;
-        if (params.activeMachineRecords[machineId]) return true;
-        for (const id in params.activeMachineRecords) if (params.activeMachineRecords[id]) return true;
-        return false;
-    }, captureServerProfileScopeResolver());
-    const records = source.kind === 'active' ? params.activeMachineRecords
-        : source.serverId ? params.machineRecordsByServerId?.[source.serverId] : undefined;
-    if (records) return records[machineId] ?? null;
-    const machines = source.kind === 'active' ? params.activeMachines
-        : source.serverId ? params.machineListByServerId[source.serverId] : null;
-    return machines?.find((machine) => machine.id === machineId) ?? null;
+    return resolveServerScopedMachineInventory({
+        serverId: params.serverId, serverIdAliases: params.serverIdAliases, activeServerId: params.activeServerId,
+        get activeMachines() { return params.activeMachines; },
+        activeMachineRecords: params.activeMachineRecords,
+        machineListByServerId: params.machineListByServerId,
+        machineRecordsByServerId: params.machineRecordsByServerId,
+        machineListStatusByServerId: params.machineListStatusByServerId,
+        machineId,
+    }).machines?.[0] ?? null;
 }
 
 /**

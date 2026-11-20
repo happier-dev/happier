@@ -415,7 +415,7 @@ function createPresenceInputReader(targets: readonly MachinePresenceTarget[], ac
     let rawInputs: readonly unknown[] | undefined;
     let inputs: readonly unknown[] = [];
     return state => {
-        const nextRawInputs = [state.machines, state.machineListByServerId, state.machineListStatusByServerId,
+        const nextRawInputs = [state.machines, state.machineListByServerId, state.machineRecordsByServerId, state.machineListStatusByServerId,
             state.machinePresenceByServerId, state.machinePresenceById];
         if (rawInputs && samePresenceInputs(rawInputs, nextRawInputs)) return inputs;
         rawInputs = nextRawInputs;
@@ -424,9 +424,10 @@ function createPresenceInputReader(targets: readonly MachinePresenceTarget[], ac
         for (const [targetIndex, target] of targets.entries()) {
             if (target.machineIds?.length === 0) continue;
             const serverId = target.serverId?.trim() || activeServerId;
+            const machineId = target.machineIds?.length === 1 ? target.machineIds[0] : undefined;
             const keys = resolveServerScopedMachineInventoryKeys({ serverId, machineListByServerId: state.machineListByServerId }, resolveScopeId);
             let usedActiveRows = false;
-            const inventory = resolveServerScopedMachineInventory({ serverId, activeServerId,
+            const inventory = resolveServerScopedMachineInventory({ serverId, activeServerId, machineId,
                 get activeMachines() {
                     usedActiveRows = true;
                     if (activeMap !== state.machines) {
@@ -435,14 +436,18 @@ function createPresenceInputReader(targets: readonly MachinePresenceTarget[], ac
                     }
                     return activeRows;
                 },
+                activeMachineRecords: state.machines,
                 machineListByServerId: state.machineListByServerId,
+                machineRecordsByServerId: state.machineRecordsByServerId,
                 machineListStatusByServerId: state.machineListStatusByServerId,
             }, resolveScopeId);
             const presenceKey = keys.find(key => state.machinePresenceByServerId[key] !== undefined);
             const presence = presenceKey ? state.machinePresenceByServerId[presenceKey]
                 : areServerProfileIdentifiersEquivalent(serverId, activeServerId, resolveScopeId) ? state.machinePresenceById : undefined;
             nextInputs.push(inventory.status);
-            if (target.machineIds) {
+            if (machineId) {
+                nextInputs.push(inventory.machines?.[0] ?? null, presence?.[machineId]);
+            } else if (target.machineIds) {
                 let selected = selections[targetIndex];
                 if (!selected || selected.inventory !== inventory.machines) {
                     selected = { inventory: inventory.machines, rows: selectMachineInventoryRowsById(inventory.machines, target.machineIds) };
@@ -585,7 +590,7 @@ export function createMachinePresenceSnapshotSource<T>(
             inputs = next;
             invalidate();
             reconcileActivity();
-        }, { machines: true, machineListByServerId: true, machineListStatusByServerId: true,
+        }, { machines: true, machineListByServerId: true, machineRecordsByServerId: true, machineListStatusByServerId: true,
             machinePresenceByServerId: true, machinePresenceById: true });
         const stopRequests = subscribeMachineRequestReachability(change => {
             if (change && !observedTargets.some(target => target.machineIds?.length !== 0

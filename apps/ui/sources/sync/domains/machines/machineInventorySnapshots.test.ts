@@ -71,6 +71,34 @@ describe('resolveAllProfileMachineInventorySnapshots', () => {
         expect(snapshots.map(snapshot => snapshot.serverName)).toEqual(['This Home', 'https://b.example.test']);
     });
     beforeEach(clearMachineRequestReachabilityForTest);
+    it('reads one live Machine by id without visiting the rest of its Home inventory', () => {
+        const selected = machine({ id: 'selected', active: true });
+        publishMachineActivityForTest([selected]);
+        const rows = Array.from({ length: 127 }, (_, index) => machine({ id: `other-${index}` }));
+        rows.push(selected);
+        let unrelatedRowReads = 0;
+        const records = Object.fromEntries(rows.map(row => [row.id, row]));
+        for (const row of rows.slice(0, -1)) {
+            const id = row.id;
+            Object.defineProperty(row, 'id', { get: () => { unrelatedRowReads++; return id; } });
+            Object.defineProperty(row, 'availability', { get: () => { unrelatedRowReads++; return { kind: 'available' }; } });
+        }
+        const input = {
+            profiles, serverId: 'srv_server_a', machineId: selected.id, activeServerId: 'local-a',
+            activeMachines: rows, activeMachineRecords: records, machineListByServerId: { 'local-a': rows },
+            machineRecordsByServerId: { 'local-a': records }, machineListStatusByServerId: { 'local-a': 'idle' as const },
+            accountScopesByServerId, nowMs: selected.activeAt, loadWarmEntries: () => ({}),
+        };
+        expect(resolveAllProfileMachineInventorySnapshots(input)).toEqual([expect.objectContaining({
+            kind: 'resolved', settled: true, machines: [expect.objectContaining({ id: selected.id })],
+            executionEligibleMachineIds: [selected.id],
+        })]);
+        expect(unrelatedRowReads).toBe(0);
+        expect(resolveAllProfileMachineInventorySnapshots({ ...input,
+            machineRecordsByServerId: { 'local-a': {} }, machineListByServerId: { 'local-a': [] },
+        })).toEqual([expect.objectContaining({ kind: 'resolved', settled: true, machines: [], executionEligibleMachineIds: [] })]);
+    });
+
     it('keeps the scoped last-known name and home while opening live content, without admitting the cached row', () => {
         const live = { ...machine({ id: 'selected' }), metadata: null, availability: undefined };
         const cached: MachineDisplayCacheEntryV1 = { machineId: live.id, metadataVersion: 1, updatedAt: 10,

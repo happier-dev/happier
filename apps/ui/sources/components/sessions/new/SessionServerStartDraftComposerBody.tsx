@@ -75,7 +75,7 @@ function ComposerChips(props: Readonly<{
     model: SessionServerStartDraftRecipe;
     onMoveMachine?: (machineId: string, directory: string) => void;
 }>) {
-    const { selectedTarget, selectedPlacement, machine, directory, error, facts,
+    const { selectedTarget, machineReady, machine, directory, error, facts,
         agentTargets, selection, changeFields, changeField, daemonMergedProjection } = props.model;
     const agentsReady = daemonMergedProjection.phase === 'ready' && agentTargets.length > 0;
     const { onMoveMachine } = props;
@@ -116,7 +116,7 @@ function ComposerChips(props: Readonly<{
                 onSelectNoFolder={clearDirectory}
                 {...(placementCandidates ? { placementCandidates } : {})}
             />
-            {selectedPlacement.machineReady ? null : (
+            {machineReady ? null : (
                 <Text testID="server-start-draft-machine-not-ready" style={styles.note}>{t('newSession.recipeComposerMachineNotReady')}</Text>
             )}
             {error ? (
@@ -132,7 +132,7 @@ function ComposerFields(props: Readonly<{
     seed: SessionServerStartDraftSeed;
     model: SessionServerStartDraftRecipe;
 }>) {
-    const { selectedTarget, selectedPlacement, machine, directory, facts, agentTargets, error,
+    const { selectedTarget, machineReady, machine, directory, facts, agentTargets, error,
         selection, changeFields, changeField, organization, folderMenuOpen, setFolderMenuOpen, folderOptions,
         retainedFolderId, folderResolved, folderChoosable, showFolder, daemonMergedProjection } = props.model;
     const agentsReady = daemonMergedProjection.phase === 'ready' && agentTargets.length > 0;
@@ -180,7 +180,7 @@ function ComposerFields(props: Readonly<{
                 <SessionPlacementChips
                     presentation="fields"
                     title={t('workflows.page.sections.whereTitle')}
-                    {...(selectedPlacement.machineReady ? {} : { subtitle: t('newSession.recipeComposerMachineNotReady') })}
+                    {...(machineReady ? {} : { subtitle: t('newSession.recipeComposerMachineNotReady') })}
                     rowTestID="server-start-draft-placement"
                     serverId={selectedTarget.serverId}
                     machine={machine}

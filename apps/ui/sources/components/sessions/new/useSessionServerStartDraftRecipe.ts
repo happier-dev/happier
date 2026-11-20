@@ -1,12 +1,14 @@
 import * as React from 'react';
+import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 
 import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { WorkflowSessionAuthoringSelection, WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { buildSessionConfigOptionOverridesFromServerStart } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
 
-import { useMachineListStatusByServerId, useActiveMachineFacts, useMachineListByServerId } from '@/sync/domains/state/storage';
+import { useServerScopedMachine } from '@/sync/store/hooks';
 import { useSessionPlacementCandidateRows } from './useSessionPlacementCandidateRows';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
@@ -15,7 +17,6 @@ import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/or
 import {
     buildSessionFolderSelectionOptions,
 } from '@/components/sessions/organization/sessionFolderSelectionOptions';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
     buildNewSessionAuthoringDraftFromResolvedInputs,
@@ -29,10 +30,7 @@ import type {
     SessionServerStartDraftSeed,
     SessionServerStartDraftTarget,
 } from './serverStartDraftComposer';
-import {
-    findSessionServerStartCandidateForDirectory,
-    resolveSessionServerStartCandidateSelection,
-} from './serverStartDraftCandidateSelection';
+import { findSessionServerStartCandidateForDirectory } from './serverStartDraftCandidateSelection';
 
 
 type RecipeSelection = WorkflowSessionAuthoringSelection & Pick<WorkflowStepExecutionSelection, 'teamCredentialBindings'>;
@@ -65,10 +63,6 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
     const seededDirectoryIntent = props.seed.directoryIntent
         ?? (props.seed.directory ? { kind: 'path' as const, path: props.seed.directory } : existingDraft?.directory);
     const seededDirectory = seededDirectoryIntent?.kind === 'path' ? seededDirectoryIntent.path : undefined;
-    const machines = useActiveMachineFacts();
-    const machineListByServerId = useMachineListByServerId();
-    const machineListStatusByServerId = useMachineListStatusByServerId();
-    const activeServer = useActiveServerSnapshot();
     const initialCandidateIndex = seededDirectory === undefined
         ? -1
         : props.seed.candidates?.findIndex((candidate) => (
@@ -80,19 +74,18 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
     const selectedPlacementCandidate = selectedCandidateIndex < 0
         ? undefined
         : props.seed.candidates?.[selectedCandidateIndex];
-    const { binding } = useServerCredentialAccountScopeBinding(selectedPlacementCandidate?.serverId ?? props.target.serverId);
+    const selectedTarget = React.useMemo(() => selectedPlacementCandidate ? {
+        serverId: selectedPlacementCandidate.serverId, machineId: selectedPlacementCandidate.machineId,
+    } : props.target, [props.target, selectedPlacementCandidate]);
+    const { binding } = useServerCredentialAccountScopeBinding(selectedTarget.serverId);
     const accountScope = binding?.isCurrent() ? binding.scope : null;
-    const reachabilityRevision = useMachineReachabilityRevision();
-    const selectedPlacement = React.useMemo(() => resolveSessionServerStartCandidateSelection({
-        accountScope,
-        mountedTarget: props.target,
-        selectedCandidate: selectedPlacementCandidate,
-        activeServerId: String(activeServer.serverId ?? ''),
-        activeMachines: machines,
-        machineListByServerId,
-        machineListStatusByServerId,
-    }), [activeServer.serverId, machineListByServerId, machineListStatusByServerId, machines, props.target, selectedPlacementCandidate, accountScope, reachabilityRevision]);
-    const selectedTarget = selectedPlacement.target;
+    useMachineReachabilityRevision(accountScope !== null, accountScope ?? undefined, selectedTarget.machineId);
+    const machine = useServerScopedMachine(selectedTarget.serverId, selectedTarget.machineId);
+    const machineReady = resolveMachineSpawnReadiness({
+        machine,
+        selectedMachineId: selectedTarget.machineId,
+        scope: selectActiveServerAccountScopeForServer(accountScope, selectedTarget.serverId),
+    }).status === 'ready';
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         // Readers use only the fresh answer's phase; no catalogue body is read.
         sections: [],
@@ -101,9 +94,8 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         enabled: true,
         staleMs: 0,
     });
-    const machine = selectedPlacement.machine;
     const [directory, setDirectory] = React.useState(() => (
-        seededDirectory ?? selectedPlacement.directory ?? machine?.metadata?.homeDir ?? ''
+        seededDirectory ?? selectedPlacementCandidate?.rootPath ?? machine?.metadata?.homeDir ?? ''
     ));
     const [directoryEdited, setDirectoryEdited] = React.useState(false);
     const noFolderSelected = !directoryEdited && seededDirectoryIntent?.kind === 'managed';
@@ -169,7 +161,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         }
     }, [directory, machine?.metadata?.homeDir, props.seed.directory]);
 
-    const canSubmit = selectedPlacement.machineReady
+    const canSubmit = machineReady
         && daemonMergedProjection.phase === 'ready'
         && selection.agentTarget != null
         && (!props.requireWorkspaceWriteDenial || findSessionAuthoringAgentTargetOption(agentTargets, selection.agentTarget) !== null)
@@ -250,7 +242,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
     }, [canSubmit, directory, directoryEdited, edited, existingDraft, noFolderSelected, organization.placement, props, selectedTarget, selection]);
     // The candidate this draft names stays drawn even when its Machine is no longer a launch choice.
     const placementRows = useSessionPlacementCandidateRows(props.seed.candidates, directoryCandidateIndex < 0 ? undefined : directoryCandidateIndex);
-    return { canSubmit, resolveDraft, selectedTarget, selectedPlacement, machine, directory, noFolderSelected, setDirectory,
+    return { canSubmit, resolveDraft, selectedTarget, machineReady, machine, directory, noFolderSelected, setDirectory,
         setDirectoryEdited, directoryCandidateIndex, setSelectedCandidateIndex, error, setError, facts, agentTargets,
         selection, changeFields, changeField, organization, folderMenuOpen, setFolderMenuOpen, folderOptions,
         retainedFolderId, folderResolved, folderChoosable, showFolder, daemonMergedProjection,

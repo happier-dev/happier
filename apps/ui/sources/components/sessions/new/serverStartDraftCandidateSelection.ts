@@ -6,7 +6,7 @@ import { t } from '@/text';
 import { leafFolderName } from '@/utils/path/pathUtils';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
-import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { resolveExactServerScopedMachine, type MachineInventoryState } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { normalizeLocalPathForComparison } from '@/utils/path/resolvePathRelativeToRoot';
 import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { resolveMachineDisplayNames, type MachineNameSource } from '@/utils/sessions/machineDisplayNames';
@@ -17,49 +17,7 @@ import type {
 } from './serverStartDraftComposer';
 
 type Candidate = NonNullable<SessionServerStartDraftSeed['candidates']>[number];
-
-export function resolveSessionServerStartCandidateSelection(params: Readonly<{
-    mountedTarget: SessionServerStartDraftTarget;
-    accountScope?: MachineReachabilityScope | null;
-    selectedCandidate?: Candidate;
-    activeServerId: string;
-    activeMachines: readonly Machine[];
-    machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
-}>): Readonly<{
-    candidate?: Candidate;
-    target: SessionServerStartDraftTarget;
-    machine: Machine | null;
-    directory?: string;
-    machineReady: boolean;
-}> {
-    const target = params.selectedCandidate === undefined
-        ? params.mountedTarget
-        : {
-            serverId: params.selectedCandidate.serverId,
-            machineId: params.selectedCandidate.machineId,
-        };
-    const machine = resolveExactServerScopedMachine({
-        machineId: target.machineId,
-        serverId: target.serverId,
-        activeServerId: params.activeServerId,
-        activeMachines: params.activeMachines,
-        machineListByServerId: params.machineListByServerId,
-        machineListStatusByServerId: params.machineListStatusByServerId,
-    });
-
-    return {
-        ...(params.selectedCandidate === undefined ? {} : { candidate: params.selectedCandidate }),
-        target,
-        machine,
-        ...(params.selectedCandidate === undefined ? {} : { directory: params.selectedCandidate.rootPath }),
-        machineReady: resolveMachineSpawnReadiness({
-            machine,
-            selectedMachineId: target.machineId,
-            scope: selectActiveServerAccountScopeForServer(params.accountScope ?? null, target.serverId),
-        }).status === 'ready',
-    };
-}
+type PlacementInventory = Omit<MachineInventoryState<Machine>, 'machineId'>;
 
 /**
  * The candidate the working directory currently stands for: same Home and Machine as the chosen target, same
@@ -110,24 +68,17 @@ function placementUnavailableReason(readiness: ReturnType<typeof resolveMachineS
  * removed Machine is known as removed. The candidate a draft already names (`currentIndex`) stays as its current,
  * unavailable value, so the draft's choice is never swapped silently.
  */
-export function presentSessionPlacementCandidates(params: Readonly<{
+export function presentSessionPlacementCandidates(params: PlacementInventory & Readonly<{
     candidates: readonly Candidate[];
     accountScope?: MachineReachabilityScope | null;
-    activeServerId: string;
-    activeMachines: readonly Machine[];
-    machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-    machineListStatusByServerId?: Readonly<Record<string, 'idle' | 'loading' | 'signedOut' | 'error' | undefined>>;
     nowMs?: number;
     /** The candidate the draft already names; kept even where it is no longer a launch choice. */
     currentIndex?: number;
 }>): readonly SessionPlacementCandidateRow[] {
     const resolved = params.candidates.map((candidate, index) => ({ candidate, index, machine: resolveExactServerScopedMachine({
+        ...params,
         machineId: candidate.machineId,
         serverId: candidate.serverId,
-        activeServerId: params.activeServerId,
-        activeMachines: params.activeMachines,
-        machineListByServerId: params.machineListByServerId,
-        machineListStatusByServerId: params.machineListStatusByServerId,
     }) })).filter(({ index, machine }) => index === params.currentIndex || machine === null || isMachineVisibleForLaunchSelection(machine));
     const spansHomes = new Set(params.candidates.map((candidate) => candidate.serverId)).size > 1;
     const namesByServerId = new Map<string, ReadonlyMap<string, string>>();

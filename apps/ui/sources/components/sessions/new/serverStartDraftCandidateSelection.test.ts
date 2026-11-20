@@ -1,71 +1,47 @@
 import { describe, expect, it } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
+import { resolveExactServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachines';
 
 import {
     findSessionServerStartCandidateForDirectory,
     presentSessionPlacementCandidates,
-    resolveSessionServerStartCandidateSelection,
 } from './serverStartDraftCandidateSelection';
 
 describe('Session server-start candidate selection', () => {
-    it('uses settled exact-machine absence for both candidate readiness and its machine caption', () => {
+    it('uses the two named Machines without visiting the other rows in a 128-Machine Home', () => {
+        const machines = Array.from({ length: 128 }, (_, index) => createMachineFixture({ id: `machine-${index}` }));
+        const selected = machines.slice(-2);
+        let unrelatedRowReads = 0;
+        const records = Object.fromEntries(machines.map(machine => [machine.id, machine]));
+        for (const machine of machines.slice(0, -2)) {
+            const id = machine.id;
+            Object.defineProperty(machine, 'id', { get: () => { unrelatedRowReads++; return id; } });
+        }
+        const serverId = 'server-a';
+        const candidates = selected.map((machine, index) => ({
+            projectKey: { id: `project-${index}` }, serverId, machineId: machine.id,
+            rootPath: `/repo-${index}`, reachable: true, worktrees: [],
+        }));
+        const context = { activeServerId: serverId, activeMachines: machines, activeMachineRecords: records,
+            machineListByServerId: { [serverId]: machines }, machineRecordsByServerId: { [serverId]: records },
+            machineListStatusByServerId: { [serverId]: 'idle' as const } };
+        expect(resolveExactServerScopedMachine({ ...context, ...candidates[0] })).toBe(selected[0]);
+        expect(presentSessionPlacementCandidates({ ...context, candidates }).map(row => row.title)).toEqual(['repo-0', 'repo-1']);
+        expect(unrelatedRowReads).toBe(0);
+    });
+
+    it('agrees with settled exact-machine absence when captioning a checkout', () => {
         const stale = createMachineFixture({ id: 'machine-gone', active: true, activeAt: Date.now() });
         const other = createMachineFixture({ id: 'machine-other' });
         const candidate = { projectKey: { id: 'project-gone' }, serverId: 'server-a', machineId: stale.id,
             rootPath: '/repo', reachable: true, worktrees: [] };
         const context = { activeServerId: 'server-a', activeMachines: [stale],
             machineListByServerId: { 'server-a': [other] }, machineListStatusByServerId: { 'server-a': 'idle' as const } };
-        expect(resolveSessionServerStartCandidateSelection({ mountedTarget: candidate, ...context })).toMatchObject({
-            machine: null, machineReady: false,
-        });
+        expect(resolveExactServerScopedMachine({ ...context, ...candidate })).toBeNull();
         expect(presentSessionPlacementCandidates({ candidates: [candidate], ...context })[0]).toMatchObject({
             title: 'repo', subtitle: 'Removed machine · /repo', availability: 'unavailable',
-        });
-    });
-
-    it('keeps the selected server, machine, path, and readiness on one candidate', () => {
-        const mountedMachine = createMachineFixture({
-            id: 'shared-machine-id',
-            active: false,
-            activeAt: 0,
-        });
-        const selectedMachine = createMachineFixture({
-            id: 'shared-machine-id',
-            active: true,
-            activeAt: Date.now(),
-            metadata: {
-                host: 'selected.example',
-                platform: 'darwin',
-                happyCliVersion: '1.0.0',
-                happyHomeDir: '/selected/.happier',
-                homeDir: '/selected',
-            },
-        });
-        const candidate = {
-            projectKey: { id: 'project-selected' },
-            serverId: 'server-selected',
-            machineId: 'shared-machine-id',
-            rootPath: '/selected/project',
-            reachable: true,
-            worktrees: [],
-        };
-
-        const selection = resolveSessionServerStartCandidateSelection({
-            accountScope: { serverId: 'server-selected', accountId: 'selected-account' },
-            mountedTarget: { serverId: 'server-mounted', machineId: 'shared-machine-id' },
-            selectedCandidate: candidate,
-            activeServerId: 'server-mounted',
-            activeMachines: [mountedMachine],
-            machineListByServerId: { 'server-selected': [selectedMachine] },
-        });
-
-        expect(selection).toEqual({
-            candidate,
-            target: { serverId: 'server-selected', machineId: 'shared-machine-id' },
-            machine: selectedMachine,
-            directory: '/selected/project',
-            machineReady: true,
         });
     });
 
@@ -92,6 +68,7 @@ describe('Session server-start candidate selection', () => {
         };
         const context = { activeServerId: 'server-1', activeMachines: [machine], machineListByServerId: {} };
 
+        publishMachineActivityForTest([machine]);
         const accountScope = { serverId: 'server-1', accountId: 'account-1' };
         const present = (input: typeof candidate & { label?: string }) => presentSessionPlacementCandidates({ candidates: [input], accountScope, ...context })[0]!;
         expect(present(candidate)).toMatchObject({ title: 'app', subtitle: 'Studio · ~/code/app', availability: 'available' });
@@ -112,6 +89,7 @@ describe('Session server-start candidate selection', () => {
         const at = (machineId: string, rootPath: string) => ({ projectKey: { id: rootPath }, serverId: 'srv_raw_home_id', machineId, rootPath, reachable: true, worktrees: [] });
         const removed = createMachineFixture({ id: 'machine-removed', active: true, activeAt: Date.now(), revokedAt: 1,
             metadata: { host: 'old', platform: 'linux', happyCliVersion: '1', happyHomeDir: '/home/o/.happier', homeDir: '/home/o', displayName: 'Old box' } });
+        publishMachineActivityForTest([live, twin, asleep, removed]);
         const candidates = [at('machine-gone-1234', '/old/retired'), at(asleep.id, '/Users/a/notes'), at(live.id, '/home/a/app'), at(twin.id, '/home/a/site'), at(removed.id, '/home/o/past')];
         const rows = presentSessionPlacementCandidates({ candidates, accountScope: { serverId: 'srv_raw_home_id', accountId: 'account-1' }, activeServerId: 'srv_raw_home_id',
             activeMachines: [live, twin, asleep, removed], machineListByServerId: { srv_raw_home_id: [live, twin, asleep, removed] },

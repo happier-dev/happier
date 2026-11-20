@@ -5,7 +5,6 @@ import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { resolveMachinesForActiveServerFromState } from '@/sync/store/domains/machines/resolveMachinesForActiveServerFromState';
 
 import { presentSessionPlacementCandidates, type SessionPlacementCandidateRow } from './serverStartDraftCandidateSelection';
 
@@ -20,8 +19,9 @@ export function readSessionPlacementCandidateRows(candidates: readonly PluginUiS
         accountScope: state.profileScope,
         activeServerId: getActiveServerId(),
         // The full records: the presenter decides which Machines are launch choices.
-        activeMachines: resolveMachinesForActiveServerFromState(state),
+        activeMachineRecords: state.machines,
         machineListByServerId: state.machineListByServerId ?? {},
+        machineRecordsByServerId: state.machineRecordsByServerId,
         machineListStatusByServerId: state.machineListStatusByServerId ?? {},
     });
 }

@@ -56,19 +56,19 @@ export function useAllProfileMachineInventorySnapshots(enabled = true, selection
         ...(machineId ? { machineIds: [machineId] } : {}) })), [selectedProfiles, machineId]);
     const readInputs = React.useCallback(() => {
         const state = store.getState();
-        return { activeServerId: activeServer.serverId, activeMachines: Object.values(state.machines),
+        return { activeServerId: activeServer.serverId, activeMachineRecords: state.machines,
             machineListByServerId: state.machineListByServerId,
+            machineRecordsByServerId: state.machineRecordsByServerId,
             machineListStatusByServerId: state.machineListStatusByServerId };
     }, [store, activeServer.serverId]);
     const readInventories = React.useCallback(() => {
         const inputs = readInputs();
         return selectedProfiles.map(profile => {
             const inventoryInputs = { ...inputs, serverId: profile.serverIdentityId ?? profile.id,
-                serverIdAliases: [profile.id, ...(profile.legacyServerIds ?? [])] };
+                serverIdAliases: [profile.id, ...(profile.legacyServerIds ?? [])], machineId };
             const inventory = resolveServerScopedMachineInventory(inventoryInputs);
             return { profile, ...inventory,
-                scoped: resolveServerScopedMachineInventory({ ...inventoryInputs, activeServerId: '' }).machines !== null,
-                machines: machineId ? inventory.machines?.filter(machine => machine.id === machineId) ?? null : inventory.machines };
+                scoped: resolveServerScopedMachineInventory({ ...inventoryInputs, activeServerId: '' }).machines !== null };
         });
     }, [readInputs, selectedProfiles, machineId]);
     const readMachines = React.useCallback(() => readInventories().flatMap(inventory => inventory.machines ?? EMPTY_MACHINES), [readInventories]);

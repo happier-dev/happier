@@ -6,7 +6,7 @@ import type { MachineDisplayCacheEntryV1 } from '@/sync/domains/state/warmCacheP
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { isPersistentMachine } from '@happier-dev/protocol/machines/machineKind';
 import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, type ProfileScopeResolver, type ServerProfile } from '@/sync/domains/server/serverProfiles';
-import { readLiveMachineInventoryRows, readMachineInventoryRowReadiness, resolveServerScopedMachineInventory } from './resolveServerScopedMachines';
+import { readLiveMachineInventoryRows, readMachineInventoryRowReadiness, resolveServerScopedMachineInventory, type MachineInventoryState } from './resolveServerScopedMachines';
 import { isMachineSelectableForFleet } from './administration/fleetUnion';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -17,7 +17,6 @@ import {
 } from './machineDisplayRenderable';
 
 export type MachineInventoryStatus = 'idle' | 'loading' | 'signedOut' | 'error';
-type MachineListStatus = MachineInventoryStatus;
 
 export type ServerMachineInventorySnapshotV1 =
     | Readonly<{
@@ -86,13 +85,9 @@ function compareMachineDisplays(left: MachineDisplayRenderable, right: MachineDi
     return compareCodeUnits(left.id, right.id);
 }
 
-function resolveRawMachineList(params: Readonly<{
+function resolveRawMachineList(params: MachineInventoryState<Machine> & Readonly<{
     profile: ServerProfile;
     serverIdentityId: string;
-    activeServerId: string;
-    activeMachines: readonly Machine[];
-    machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-    machineListStatusByServerId: Readonly<Record<string, MachineListStatus | undefined>>;
 }>, resolveScopeId: ProfileScopeResolver): Readonly<{ machines: readonly Machine[] | null; observation: 'live' | 'stale'; settled: boolean; inventoryStatus: MachineInventoryStatus }> {
     const keys = uniqueNonEmpty([
         params.serverIdentityId,
@@ -100,12 +95,9 @@ function resolveRawMachineList(params: Readonly<{
         ...(params.profile.legacyServerIds ?? []),
     ]);
     const { machines, status } = resolveServerScopedMachineInventory({
+        ...params,
         serverId: params.serverIdentityId,
         serverIdAliases: keys,
-        activeServerId: params.activeServerId,
-        activeMachines: params.activeMachines,
-        machineListByServerId: params.machineListByServerId,
-        machineListStatusByServerId: params.machineListStatusByServerId,
     }, resolveScopeId);
     const inventoryStatus = status ?? 'loading';
     return {
@@ -125,15 +117,10 @@ function resolveRawMachineList(params: Readonly<{
  * warm cache. It preserves raw live rows, but stale cache entries are always
  * explicitly labelled and can never become an RPC target by themselves.
  */
-export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
+export function resolveAllProfileMachineInventorySnapshots(params: MachineInventoryState<Machine> & Readonly<{
     profiles: readonly ServerProfile[];
     /** Optional admitted Home demand; identity conflicts are still checked against all profiles. */
     serverId?: string;
-    machineId?: string;
-    activeServerId: string;
-    activeMachines: readonly Machine[];
-    machineListByServerId: Readonly<Record<string, readonly Machine[] | null | undefined>>;
-    machineListStatusByServerId: Readonly<Record<string, MachineListStatus | undefined>>;
     accountScopesByServerId: ReadonlyMap<string, ServerAccountScope>;
     nowMs?: number;
     loadWarmEntries: (
@@ -184,33 +171,18 @@ export function resolveAllProfileMachineInventorySnapshots(params: Readonly<{
             continue;
         }
 
-        const raw = resolveRawMachineList({
-            profile,
-            serverIdentityId,
-            activeServerId: params.activeServerId,
-            activeMachines: params.activeMachines,
-            machineListByServerId: params.machineListByServerId,
-            machineListStatusByServerId: params.machineListStatusByServerId,
-        }, resolveScopeId);
+        const inventoryInputs = { ...params, profile, serverIdentityId };
+        const raw = resolveRawMachineList(inventoryInputs, resolveScopeId);
         const inventoryStatus = raw.inventoryStatus;
         const scopeCandidate = params.accountScopesByServerId.get(serverIdentityId);
         const accountScope = scopeCandidate?.serverId === serverIdentityId ? scopeCandidate : null;
         if (raw.machines !== null) {
-            const liveRows = readLiveMachineInventoryRows({
-                activeServerId: params.activeServerId,
-                activeMachines: params.activeMachines,
-                machineListByServerId: params.machineListByServerId,
-                machineListStatusByServerId: params.machineListStatusByServerId,
-                profile,
-                serverIdentityId,
-                retainOpenedContent: true,
-            }, resolveScopeId);
+            const liveRows = readLiveMachineInventoryRows({ ...inventoryInputs, retainOpenedContent: true }, resolveScopeId);
             const executionEligibleMachineIds: string[] = [];
             const executionPendingMachineIds: string[] = [];
             const machines: MachineDisplayRenderable[] = [];
             let warmById: ReadonlyMap<string, MachineDisplayRenderable> | undefined;
             for (const machine of raw.machines) {
-                if (params.machineId && machine.id !== params.machineId) continue;
                 // Presence is a live, self-expiring fact. Resolve it once for
                 // both projections without making display reuse an admission.
                 if (isMachineSelectableForFleet(accountScope, machine, params.nowMs, resolveScopeId)) {
