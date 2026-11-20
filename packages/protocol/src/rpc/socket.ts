@@ -613,7 +613,7 @@ export type SocketRpcSessionWriteClassificationV1 = Readonly<{
   actionId?: ActionId;
   serverMintedContext?: 'session.read' | 'session.permission.respond' | 'session.presentation.origin';
   /** Decoded request field bound to the server-admitted Session at the daemon. */
-  sessionIdParam?: 'sourceSessionId';
+  sessionIdParam?: 'sourceSessionId' | 'parentSessionId';
   /**
    * True when the mutation must execute on the Session owner's daemon. A shared
    * collaborator holding the required capability needs no personal AccessKey for
@@ -826,6 +826,16 @@ const SOCKET_RPC_SESSION_WRITE_AUTHORIZATION: ReadonlyMap<string, SocketRpcSessi
     { method: RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_OPTIONS, authority: 'sessionOwner', routeToSessionOwnerDaemon: false, serverMintedContext: 'session.read' },
     { method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_CHOICES, authority: 'sessionOwner', routeToSessionOwnerDaemon: false, serverMintedContext: 'session.read' },
     { method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET, authority: 'sessionOwner', routeToSessionOwnerDaemon: false },
+    // Child-agent rosters and transcripts are Session content on the custodian's daemon:
+    // a Machine Use grant never stands in for access to the parent Session.
+    { method: RPC_METHODS.SESSIONS_SUBAGENTS_LIST, authority: 'readTranscript', routeToSessionOwnerDaemon: false, serverMintedContext: 'session.read' },
+    { method: RPC_METHODS.SESSIONS_SUBAGENTS_GET, authority: 'readTranscript', routeToSessionOwnerDaemon: false, serverMintedContext: 'session.read' },
+    { method: RPC_METHODS.SESSIONS_SUBAGENTS_WATCH, authority: 'readTranscript', routeToSessionOwnerDaemon: false, serverMintedContext: 'session.read', sessionIdParam: 'parentSessionId' },
+    ...[
+      RPC_METHODS.SESSIONS_SUBAGENTS_UPSERT,
+      RPC_METHODS.SESSIONS_SUBAGENTS_UPDATE_STATUS,
+      RPC_METHODS.SESSIONS_SUBAGENTS_COMPLETE,
+    ].map((method) => ({ method, authority: 'sessionOwner' as const, routeToSessionOwnerDaemon: false, sessionIdParam: 'parentSessionId' as const })),
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_CONFIRMED_BACKGROUND, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
     { method: RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_V2, authority: 'submitAgentInput', routeToSessionOwnerDaemon: false },
