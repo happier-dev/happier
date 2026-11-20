@@ -3,6 +3,7 @@ import {
   Avatar,
   Badge,
   Button,
+  Collection,
   Icon,
   IconButton,
   Markdown,
@@ -11,8 +12,10 @@ import {
   Spinner,
   Stack,
   Text,
+  useHappierCollection,
   usePluginTheme,
   usePluginTranslation,
+  type CollectionAnatomy,
 } from '@happier-dev/plugin-ui';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/components';
 import type {
@@ -424,7 +427,12 @@ function AssetDownloadNotice(
   return null;
 }
 
-/** Assets as a quiet table: name, size and downloads in one right-aligned tabular column, then Download. */
+/**
+ * Assets as the shared Collection list in its rounded sheet (owner: every table sits in a rounded sheet with an outer
+ * edge, F-AUDIT row 40): a group titled Assets with what GitHub adds, then one row per asset (its name, why its last
+ * download did not finish, its size and downloads, its Download control). A page of assets reads the rest from the
+ * list's own "Show all assets".
+ */
 export function ReleaseAssets(
   props: Readonly<{
     release: ForgeReleaseV1;
@@ -436,7 +444,6 @@ export function ReleaseAssets(
   }>,
 ): React.ReactElement {
   const t = usePluginTranslation();
-  const theme = usePluginTheme();
   const rows = props.release.assets.rows;
   const numbers = React.useMemo(
     () => new Intl.NumberFormat(props.locale),
@@ -444,6 +451,59 @@ export function ReleaseAssets(
   );
   const { assetCount, downloadCount: total } = projectGithubReleaseAssetFactsV1(props.release.assets);
   const partial = assetCount === null;
+  const { compact, downloads, locale, onDownload, onShowAll } = props;
+  const groups = React.useMemo(() => ({
+    axis: [{
+      key: 'assets',
+      title: t('plugins.github.releases.assets.title', 'Assets'),
+      ...(compact ? {} : {
+        description: total === null
+          ? t('plugins.github.releases.assets.plusSource', 'plus source code')
+          : t('plugins.github.releases.assets.plusSourceDownloads', 'plus source code · {count} downloads',
+            { count: numbers.format(total) }),
+      }),
+    }],
+    groupOf: () => 'assets',
+  }), [compact, numbers, t, total]);
+  const window = React.useMemo(() => partial && onShowAll ? {
+    kind: 'partial' as const,
+    continuations: [{ key: 'all', label: t('plugins.github.releases.assets.showAll', 'Show all assets'), load: onShowAll }],
+  } : { kind: 'complete' as const }, [onShowAll, partial, t]);
+  const model = useHappierCollection<ForgeReleaseAssetV1>({
+    items: rows,
+    keyOf: (asset) => asset.assetId,
+    groups,
+    window,
+    openKey: null,
+    onOpenChange: () => {},
+  });
+  const anatomy = React.useMemo((): CollectionAnatomy<ForgeReleaseAssetV1> => ({
+    glyph: () => <Icon name="asset" size="small" tone="muted" />,
+    title: (asset) => asset.name,
+    byline: (asset) => <AssetDownloadNotice result={downloads.get(asset.assetId)?.result ?? null} />,
+    listFact: (asset) => [
+      formatHappierDataBytes(asset.size, { kind: 'storage', locale }),
+      !compact && asset.downloadCount !== undefined
+        ? asset.downloadCount === 1
+          ? t('plugins.github.releases.assets.downloadsOne', '{count} download', { count: numbers.format(asset.downloadCount) })
+          : t('plugins.github.releases.assets.downloads', '{count} downloads', { count: numbers.format(asset.downloadCount) })
+        : null,
+    ].filter(Boolean).join(' · '),
+    action: (asset) => {
+      const state = downloads.get(asset.assetId);
+      return state?.pending ? <Spinner size="small" /> : (
+        <IconButton
+          accessibilityLabel={t('plugins.github.releases.assets.download', 'Download {name}', { name: asset.name })}
+          icon={<Icon name={state?.result?.status === 'completed' ? 'check' : 'download'} size="small" />}
+          onPress={() => onDownload(asset)}
+          disabled={state?.result?.status === 'unknown' || state?.result?.status === 'accepted'}
+        />
+      );
+    },
+    accessibilityLabel: (asset) => asset.name,
+    testID: (asset) => `github-release-asset:${asset.assetId}`,
+    columnTitles: { title: t('plugins.github.releases.assets.title', 'Assets') },
+  }), [compact, downloads, locale, numbers, onDownload, t]);
   if (assetCount === 0) {
     return (
       <Row gap="small" align="center">
@@ -458,133 +518,20 @@ export function ReleaseAssets(
     );
   }
   return (
-    <Stack gap="none">
-      <Row
-        gap="small"
-        align="center"
-        justify="space-between"
-        style={{ paddingBottom: theme.spacing.small }}
-      >
-        <Row gap="small" align="center">
-          <Text
-            variant="label"
-            value={t('plugins.github.releases.assets.title', 'Assets')}
-          />
-          {assetCount === null ? null : <Text
-            variant="label"
-            tone="muted"
-            value={numbers.format(assetCount)}
-          />}
-        </Row>
-        {!props.compact ? (
-          <Text
-            variant="meta"
-            tone="muted"
-            value={
-              total === null
-                ? t(
-                    'plugins.github.releases.assets.plusSource',
-                    'plus source code',
-                  )
-                : t(
-                    'plugins.github.releases.assets.plusSourceDownloads',
-                    'plus source code · {count} downloads',
-                    { count: numbers.format(total) },
-                  )
-            }
-          />
-        ) : null}
-      </Row>
-      {rows.map((asset) => {
-        const state = props.downloads.get(asset.assetId);
-        return (
-          <Row
-            key={asset.assetId}
-            gap="medium"
-            align="center"
-            style={{
-              minHeight: 40,
-              borderTopWidth: 1,
-              borderColor: theme.colors.divider,
-            }}
-          >
-            <Icon name="asset" size="small" tone="muted" />
-            <Stack grow gap="none" style={{ minWidth: 0 }}>
-              <Text variant="code" value={asset.name} numberOfLines={1} />
-              <AssetDownloadNotice result={state?.result ?? null} />
-            </Stack>
-            <Text
-              variant="meta"
-              tone="secondary"
-              value={formatHappierDataBytes(asset.size, {
-                kind: 'storage',
-                locale: props.locale,
-              })}
-            />
-            {!props.compact && asset.downloadCount !== undefined ? (
-              <Text
-                variant="meta"
-                tone="muted"
-                value={
-                  asset.downloadCount === 1
-                    ? t(
-                        'plugins.github.releases.assets.downloadsOne',
-                        '{count} download',
-                        { count: numbers.format(asset.downloadCount) },
-                      )
-                    : t(
-                        'plugins.github.releases.assets.downloads',
-                        '{count} downloads',
-                        { count: numbers.format(asset.downloadCount) },
-                      )
-                }
-              />
-            ) : null}
-            {state?.pending ? (
-              <Stack gap="none" style={{ width: 32, alignItems: 'center' }}>
-                <Spinner size="small" />
-              </Stack>
-            ) : (
-              <IconButton
-                accessibilityLabel={t(
-                  'plugins.github.releases.assets.download',
-                  'Download {name}',
-                  { name: asset.name },
-                )}
-                icon={
-                  <Icon
-                    name={state?.result?.status === 'completed' ? 'check' : 'download'}
-                    size="small"
-                  />
-                }
-                onPress={() => props.onDownload(asset)}
-                disabled={state?.result?.status === 'unknown' || state?.result?.status === 'accepted'}
-              />
-            )}
-          </Row>
-        );
-      })}
-      {partial && props.onShowAll ? (
-        <Row
-          style={{
-            borderTopWidth: 1,
-            borderColor: theme.colors.divider,
-            paddingTop: theme.spacing.small,
-          }}
-        >
-          <ReleaseEdgeAligned>
-            <Button
-              variant="plain"
-              size="small"
-              title={t(
-                'plugins.github.releases.assets.showAll',
-                'Show all assets',
-              )}
-              onPress={props.onShowAll}
-            />
-          </ReleaseEdgeAligned>
-        </Row>
-      ) : null}
-    </Stack>
+    <Collection<ForgeReleaseAssetV1>
+      testID="github-release-assets"
+      accessibilityLabel={t('plugins.github.releases.assets.title', 'Assets')}
+      model={model}
+      anatomy={anatomy}
+      presentation="list"
+      detail="none"
+      scroll="page"
+      minListWidth={RELEASE_ASSETS_MIN_WIDTH_PX}
+      minDetailWidth={RELEASE_ASSETS_MIN_WIDTH_PX}
+      preferredListRatio={1}
+    />
   );
 }
+
+/** The narrowest readable asset row (a phone). */
+const RELEASE_ASSETS_MIN_WIDTH_PX = 280;
