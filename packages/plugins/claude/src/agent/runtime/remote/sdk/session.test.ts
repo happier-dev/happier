@@ -654,7 +654,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       await operations.sendProviderTurnPrompt('use the configured helper');
       await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
       const args = exec.spawnClient.mock.calls[0]?.[0].launch.args ?? [];
-      expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}').env).toEqual(helperModelEnv);
+      expect(JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8')).env).toEqual(helperModelEnv);
       expect(args).toEqual(expect.arrayContaining(['--model', 'gateway-selected']));
       expect(args.join(' ')).not.toContain('CLAUDE_CODE_SUBAGENT_MODEL');
     } finally {
@@ -1222,7 +1222,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       await operations.sendProviderTurnPrompt('coordinate the work');
       await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
       const args = exec.spawnClient.mock.calls[0]?.[0].launch.args ?? [];
-      const settings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}');
+      const settings = JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'));
       expect(settings.permissions?.deny).toEqual(expect.arrayContaining(['Edit', 'Write', 'Bash']));
       expect(settings.permissions?.deny).not.toContain('mcp__happier__*');
       expect(settings.permissions?.allow).toContain('mcp__happier__change_title');
@@ -1248,7 +1248,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       const args = exec.spawnClient.mock.calls[0]?.[0].launch.args ?? [];
       const settingsIndex = args.indexOf('--settings');
       expect(settingsIndex).toBeGreaterThanOrEqual(0);
-      const settings = JSON.parse(args[settingsIndex + 1] ?? '{}');
+      const settings = JSON.parse(await readFile(args[settingsIndex + 1]!, 'utf8'));
       expect(settings.permissions?.allow).toContain('mcp__happier__change_title');
     } finally {
       await operations.disposeProviderSession();
@@ -1503,7 +1503,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       const args = exec.spawnClient.mock.calls[1]?.[0].launch.args ?? [];
       expect(args).toEqual(expect.arrayContaining(['--resume', 'native-configured-continuation', ...expectedArgs]));
       if (name === 'ultracode') {
-        expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}')).toMatchObject({ ultracode: true });
+        expect(JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'))).toMatchObject({ ultracode: true });
       }
       if (name === 'default model') expect(args).not.toContain('--model');
       if (name === 'default fallback') expect(args).not.toContain('--fallback-model');
@@ -5570,7 +5570,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
     }
   });
 
-  it('applies an ultracode runtime update as a single inline --settings overlay on the next SDK query', async () => {
+  it('applies an ultracode runtime update as a single --settings file on the next SDK query', async () => {
     const terminalHost = createTerminalHostFixture();
     const events = createEventsFixture();
     const exec = createSdkExecFixture();
@@ -5598,7 +5598,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       });
 
       const args = exec.spawnClient.mock.calls[0]?.[0].launch.args as string[];
-      expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}')).toMatchObject({
+      expect(JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'))).toMatchObject({
         permissions: { allow: expect.arrayContaining(['mcp__happier__change_title']) },
         ultracode: true,
       });
@@ -5637,7 +5637,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
 
       const args = exec.spawnClient.mock.calls[0]?.[0].launch.args as string[];
       expect(args).toEqual(expect.arrayContaining(['--model', 'claude-fable-5[1m]']));
-      expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}')).toMatchObject({
+      expect(JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'))).toMatchObject({
         permissions: { allow: expect.arrayContaining(['mcp__happier__change_title']) },
         ultracode: true,
       });
@@ -5674,7 +5674,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       });
 
       const args = exec.spawnClient.mock.calls[0]?.[0].launch.args as string[];
-      expect(JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}')).toMatchObject({
+      expect(JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'))).toMatchObject({
         permissions: { allow: expect.arrayContaining(['mcp__happier__change_title']) },
       });
       expect(args.join(' ')).not.toContain('ultracode');

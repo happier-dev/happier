@@ -475,7 +475,7 @@ describe('createClaudeNativeRuntime', () => {
       expect(args[args.indexOf('--tools') + 1]).toBe('');
       expect(args[args.indexOf('--allowedTools') + 1]).toBe('mcp__wilson__*');
       expect(args[args.indexOf('--permission-mode') + 1]).toBe('dontAsk');
-      const nativeSettings = JSON.parse(args[args.indexOf('--settings') + 1] ?? '{}');
+      const nativeSettings = JSON.parse(await readFile(args[args.indexOf('--settings') + 1]!, 'utf8'));
       expect(JSON.parse(await readFile(args[args.indexOf('--mcp-config') + 1], 'utf8'))).toEqual({
         mcpServers: { linear: { command: 'linear-bridge', args: ['--config-file', '/tmp/private-mcp.json'] } },
       });

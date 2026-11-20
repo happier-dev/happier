@@ -22,7 +22,7 @@ describe('Claude SDK turn/control launch parity', () => {
       exec.spawnClient.mockImplementation(async (...input) => {
         const launch = input[0].launch;
         const args = await Promise.all(launch.args.map(async (arg: string, index: number) =>
-          ['--mcp-config', '--append-system-prompt-file'].includes(launch.args[index - 1])
+          ['--mcp-config', '--append-system-prompt-file', '--settings'].includes(launch.args[index - 1])
             ? await readFile(arg, 'utf8') : arg));
         launches.push({ args, env: launch.env });
         return await spawn(...input);

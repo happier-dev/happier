@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, expect, it, vi } from 'vitest';
@@ -20,6 +20,13 @@ const observer = createAgentLaunchObserver({ home });
 const boundaries = observer.boundaries as AgentLaunchObserverBoundaries;
 const sdkEmitters = new WeakMap<AgentSessionRuntime, (record: unknown) => void>();
 
+function recordClaudeLaunch(argv: readonly string[], env: Readonly<Record<string, string>> | undefined) {
+    boundaries.recordLaunch({
+        argv: argv.map((arg, index) => argv[index - 1] === '--settings' ? readFileSync(arg, 'utf8') : arg),
+        env,
+    });
+}
+
 async function open(request: AgentSessionOpenRequest, terminal: boolean) {
     boundaries.reset();
     let sdkEmit: ((record: unknown) => void) | undefined;
@@ -39,7 +46,7 @@ async function open(request: AgentSessionOpenRequest, terminal: boolean) {
         run: async () => exited,
         clients: {
             async spawn(spec: Readonly<{ launch: Readonly<{ args?: readonly string[]; env?: Readonly<Record<string, string>> }> }>) {
-                boundaries.recordLaunch({ argv: spec.launch.args ?? [], env: spec.launch.env });
+                recordClaudeLaunch(spec.launch.args ?? [], spec.launch.env);
                 const listeners = new Set<(record: unknown) => void>();
                 let finish!: (value: typeof exited) => void;
                 const done = new Promise<typeof exited>(resolve => { finish = resolve; });
@@ -93,7 +100,7 @@ async function open(request: AgentSessionOpenRequest, terminal: boolean) {
         const presentation = await runtime.prepareTerminalPresentation({ modelSelection: null });
         if (presentation.kind !== 'managed_terminal') throw new Error('Expected unified terminal');
         const launch = terminalHost.service.createOrAttachHost.mock.calls.at(-1)?.[0].launch;
-        boundaries.recordLaunch({ argv: launch?.args ?? [], env: launch?.env });
+        recordClaudeLaunch(launch?.args ?? [], launch?.env);
     } else {
         const result = await runtime.send({ inputIds: ['contract-input'], input: { text: 'Read the skill supporting file' },
             delivery: { kind: 'newTurn', turnId: 'contract-turn' } });
@@ -137,7 +144,8 @@ it('prepares SDK terminal launch skills once without treating preparation as an 
         if (presentation.kind !== 'terminal_launch') throw new Error('Expected SDK terminal launch plan');
         const argv = presentation.plan.argv;
         expect(argv.filter(value => value === skills.pluginRoot)).toHaveLength(1);
-        expect(JSON.parse(argv[argv.indexOf('--settings') + 1]).skillOverrides).toMatchObject({ 'contract-native-blocked': 'off' });
+        expect(JSON.parse(readFileSync(argv[argv.indexOf('--settings') + 1]!, 'utf8')).skillOverrides)
+            .toMatchObject({ 'contract-native-blocked': 'off' });
         expect(await runtime.refreshSkills?.({ skills })).toEqual({ kind: 'applied' });
         expect(observer.observeLaunch().filesWritten).toEqual([]);
     } finally {
