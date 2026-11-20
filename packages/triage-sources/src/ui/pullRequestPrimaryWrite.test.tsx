@@ -65,7 +65,11 @@ describe('portable source primary write', () => {
       execute: async () => { throw new Error('Raw plugin execution must not run for a press'); },
       onSettled: (execution, admitted) => { observed.push({ execution, admitted }); } }, host);
     await act(async () => { await host.press('Host merge'); });
-    expect(calls).toEqual([{ action: operations.primary.actionRef, input: operations.primary.variants[1]?.input }]);
+    expect(calls).toEqual([{
+      action: operations.primary.actionRef,
+      input: operations.primary.variants[1]?.input,
+      signal: expect.any(AbortSignal),
+    }]);
     expect(observed).toEqual([{ execution: { status: 'success', result: { outcome } }, admitted: outcome }]);
     expect(await mounted?.getByText('Host merge confirmed')).toBeDefined();
   });

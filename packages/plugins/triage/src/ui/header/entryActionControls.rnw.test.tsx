@@ -467,7 +467,7 @@ describe("the source's own write in the header", () => {
       controllerFor: () => ({ prepare: async () => ({ input: { revision: 'reviewed' } }),
         onSettled: execution => { settlements.push(execution); } }) }, 'host-primary', false, [], host);
     await act(async () => { await host.press('Mark ready'); });
-    expect(sent).toEqual([{ action: actionRef, input: { revision: 'reviewed' } }]);
+    expect(sent).toEqual([{ action: actionRef, input: { revision: 'reviewed' }, signal: expect.any(AbortSignal) }]);
     expect(settlements).toEqual([{ ok: true, result: null }]);
   });
 
