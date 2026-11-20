@@ -9512,6 +9512,13 @@ explicit source whose resolved choices intersect both the type schema and its
 declared Resource choices. Workflow input declarations retain their
 existing domain exclusion between a type and an explicit source or enum, and
 public plugin Action hints still do not admit arbitrary `optionsSourceId`.
+In 0.3 development, a contributed Action hint can declare the draft paths its
+options Resource reads in `optionsDraftDependencies`. The UI keys and sends the
+request using those values and the draft's Connected Account reference,
+credential principal, and provider Account IDs when present. Omit the
+declaration when the Resource needs the full draft. The serving Action admits
+the credential through its declared purpose.
+
 The shared
 [value admission](../packages/protocol/src/inputs/inputTypeRuntime.ts) intersects
 the type schema with resolved choices for new own selections, picker results and

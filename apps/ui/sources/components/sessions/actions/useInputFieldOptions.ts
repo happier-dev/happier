@@ -21,7 +21,7 @@ import {
 } from './inputFieldOptionsStore';
 
 export type InputFieldOptionsRequest = InputFieldOptionsContext & Readonly<{
-    field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions'>;
+    field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions' | 'optionsDraftDependencies'>;
 }>;
 const NO_READS: readonly InputOptionsRead[] = Object.freeze([]);
 
@@ -34,9 +34,10 @@ function needsOptionsRead(field: InputFieldOptionsRequest['field']): boolean {
     return !hasLocalStaticOptions(field) && (readInputFieldOptionsSourceId(field) !== undefined || !!field.connectedAccountOptions);
 }
 
-function fieldKey(field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'inputType'> & { path?: string }, context?: InputFieldOptionsContext): string {
+function fieldKey(field: InputFieldOptionsRequest['field'], context?: InputFieldOptionsContext): string {
     return JSON.stringify([field.path, field.optionsSourceId, field.inputType, context?.actionId, context?.consumer,
-        projectInputOptionsDependencies(context?.draftInput ?? {}, context?.consumer, context?.actionId), context?.values, context?.query, context?.cursor]);
+        projectInputOptionsDependencies(context?.draftInput ?? {}, context?.consumer, context?.actionId, field.optionsDraftDependencies),
+        context?.values, context?.query, context?.cursor]);
 }
 
 /** Account choices do not release their demand when a sibling's serving relay changes. */
@@ -117,7 +118,7 @@ export function useInputFieldOptions(params: Readonly<{
     });
     const signature = JSON.stringify([accountScope?.accountId, params.accountLifetime?.revision, optionServerId, machineId,
         { sessionId: params.sessionId }, producerRoutes, pickerRelays, params.requests.map((request) => ({ ...request,
-            draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId) }))]);
+            draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId, request.field.optionsDraftDependencies) }))]);
     const { reads, keys, defaultContexts, fieldTargets } = React.useMemo(() => {
         const keys = new Map<string, string>();
         const defaultContexts = new Map<string, InputFieldOptionsContext>();
@@ -145,7 +146,7 @@ export function useInputFieldOptions(params: Readonly<{
                 ...(request.values ? { values: request.values } : {}),
                 ...(request.query === undefined ? {} : { query: request.query }),
                 ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
-                draftInput: { ...projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId),
+                draftInput: { ...projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId, request.field.optionsDraftDependencies),
                     ...(requestMachineId ? { machineId: requestMachineId } : {}),
                     ...(requestSessionId === undefined ? {} : { sessionId: requestSessionId }) },
             };

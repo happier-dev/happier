@@ -180,13 +180,17 @@ export const targetOptionInputTypes = {
     valueSchema: choiceSchema, options: { resource: 'pages-target-options' } },
 } as const;
 export const targetOptionInputHints = { fields: [
-  ...([['providerIdentity.providerAccountId', 'Cloudflare Account'],
-    ['providerIdentity.providerResourceId', 'Project or Worker'], ['providerEnvironment', 'Environment']] as const).map(([path, title]) => ({
-      path, title, required: true, widget: 'select' as const, inputType: { pluginId, localId: 'target-choice' },
-    })),
-  { path: 'preparedNative.projectName', title: 'Pages project name', widget: 'select', inputType: { pluginId, localId: 'target-choice' },
+  ...([['providerIdentity.providerAccountId', 'Cloudflare Account', []],
+    ['providerIdentity.providerResourceId', 'Project or Worker', ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName']],
+    ['providerEnvironment', 'Environment', ['product', 'resourceName', 'providerEnvironment.kind', 'providerEnvironment.scriptName']],
+  ] as const).map(([path, title, optionsDraftDependencies]) => ({
+    path, title, optionsDraftDependencies, required: true, widget: 'select' as const, inputType: { pluginId, localId: 'target-choice' },
+  })),
+  { path: 'preparedNative.projectName', title: 'Pages project name', widget: 'select',
+    optionsDraftDependencies: ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName'], inputType: { pluginId, localId: 'target-choice' },
     requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.scriptName' } } },
-  { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select', inputType: { pluginId, localId: 'target-choice' },
+  { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select',
+    optionsDraftDependencies: ['providerIdentity.providerResourceId', 'providerEnvironment.scriptName'], inputType: { pluginId, localId: 'target-choice' },
     requiredWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
       { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] },
     visibleWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },

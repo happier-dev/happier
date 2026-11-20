@@ -1,13 +1,21 @@
 import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import { hasOwn } from './inputRecords.js';
 import type { InputOptionsConsumerV1 } from './inputOptionsConsumer.js';
-import { readInputPath } from './inputPredicates.js';
+import { writeInputPath } from './inputFieldRuntime.js';
+import { readInputPath, type InputPath } from './inputPredicates.js';
 
-/** The input facts consumed by incumbent built-in readers; free text cannot invalidate choices. */
-export function projectInputOptionsDependencies(input: Readonly<Record<string, unknown>>, consumer?: InputOptionsConsumerV1, actionId?: string | null): Record<string, unknown> {
-  // Contributed Action dependencies are plugin-defined, like widget bindings;
-  // a host-maintained key list cannot describe their partial input schemas.
-  if (parseQualifiedPluginActionId(actionId)) return { ...input };
+/** Retain declared option operands and the custody that authorizes the read. */
+export function projectInputOptionsDependencies(input: Readonly<Record<string, unknown>>, consumer?: InputOptionsConsumerV1,
+  actionId?: string | null, declaredPaths?: readonly InputPath[]): Record<string, unknown> {
+  if (parseQualifiedPluginActionId(actionId)) {
+    if (declaredPaths === undefined) return { ...input };
+    let projected: Record<string, unknown> = {};
+    for (const path of ['credentialRef', 'credentialPrincipal', 'providerAccountId', 'providerIdentity.providerAccountId', ...declaredPaths]) {
+      const value = readInputPath(input, path);
+      if (value !== undefined) projected = writeInputPath(projected, path, value);
+    }
+    return projected;
+  }
   // Widget drafts are already projected from declared non-secret bindings at the binder. Their
   // arbitrary typed fields can be option dependencies; the built-in Action shortlist cannot name them.
   if (consumer?.kind === 'widget') return { ...input };

@@ -132,8 +132,8 @@ function OptionsProbe(props: Readonly<{ serverId: string; workflow: string; rest
 }
 
 const platformActionId = 'happier.deploy.vercel/actions/targets-inspect-v1';
-const platformField = { path: 'providerIdentity.providerAccountId',
-    inputType: { pluginId: 'happier.deploy.vercel', localId: 'provider-account' } };
+const platformField = { path: 'providerEnvironment', optionsDraftDependencies: ['projectId'],
+    inputType: { pluginId: 'happier.deploy.vercel', localId: 'provider-environment' } };
 function PlatformOptionsProbe(props: Readonly<{ serverId: string; draftInput: Record<string, unknown>; cursor?: string }>) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const options = useInputFieldOptions({ serverId: props.serverId, machineId: 'controller-a', enabled: !!binding, accountLifetime: binding,
@@ -221,21 +221,27 @@ describe('qualified input field options scope', () => {
         const serverId = await harness.addHome({ name: 'Review choices', serverUrl: origin,
             serverIdentityId, accountId: 'viewer', currentAccount: true });
         const engine = ReviewEngineListItemSchema.parse({ engineId: 'codex', value: 'codex', label: 'Detached reviewer',
-            enabled: true, capabilities: { structuredNarration: true } });
+            enabled: true, available: true, readiness: 'ready', reviewScopes: ['worktree', 'paths'],
+            capabilities: { structuredNarration: true } });
+        const setupEngine = ReviewEngineListItemSchema.parse({ engineId: 'claude', value: 'claude', label: 'Install reviewer',
+            enabled: false, available: false, readiness: 'notInstalled', unavailableCode: 'notInstalled',
+            reviewScopes: ['worktree'], capabilities: { structuredNarration: true } });
         // Review inventory crosses Machine HTTP; the UI's options owner and target selection stay real.
         optionsBoundaries.set(origin, await createExternalActionAccountHttpBoundary({ serverUrl: origin, serverIdentityId,
             accountId: 'viewer', machineId: 'controller-a', actionId: 'review.engines.list', tokenEpoch: 0, requesterInvocation: 'none',
             execute: input => typeof input === 'object' && input !== null && 'sessionId' in input && input.sessionId === null
                 && 'machineId' in input && input.machineId === 'controller-a'
-                ? { items: [engine] } : { items: [] } }));
+                ? { items: [engine, setupEngine] } : { items: [] } }));
         const machine = createPlainMachineRowFixture({ id: 'controller-a', accountId: 'viewer' });
         harness.answer(serverId, 'GET /v1/machines/controller-a', { body: { machine } });
         harness.answer(serverId, 'GET /v1/machines', { body: [machine] });
         const reviewField = { path: 'engineIds', optionsSourceId: 'review.engines.available' };
+        let observed: InputFieldOptionsState | undefined;
         function ReviewOptions() {
             const options = useActionFieldOptionsForMachine({ machineId: 'controller-a', serverId, enabled: true,
                 requests: [{ actionId: 'review.start', field: reviewField, draftInput: {} }] });
             const state = options.state?.(reviewField);
+            observed = state;
             return <View testID="review.options" accessibilityLabel={state?.status} accessibilityHint={state?.errorCode}>
                 {options(reviewField).map(option => <Text key={option.label}>{option.label}</Text>)}
             </View>;
@@ -246,6 +252,7 @@ describe('qualified input field options scope', () => {
             expect({ status: screen.findByTestId('review.options')?.props.accessibilityLabel,
                 error: screen.findByTestId('review.options')?.props.accessibilityHint }).toEqual({ status: 'ready', error: undefined });
             expect(screen.getTextContent()).toContain('Detached reviewer');
+            expect(observed).toMatchObject({ reviewEngineInventory: { items: [engine, setupEngine] } });
         } finally { await screen.unmount(); }
     });
 
@@ -336,25 +343,46 @@ describe('qualified input field options scope', () => {
         harness.answer(serverId, 'GET /v1/machines', { body: [machine] });
         const credentialRef = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'selected' };
         const draftInput = { v: 1, serverId, environmentId: 'environment-options', expectedRevision: 1, credentialRef,
+            providerAccountId: 'team-a', providerIdentity: { providerAccountId: 'team-a', providerResourceId: 'extra-id' }, projectId: 'project-a',
             credentialPrincipal: { kind: 'account', accountId: 'viewer', purpose: { consumer: {
                 pluginId: 'happier.deploy.vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
                 target: { kind: 'account', account: credentialRef } } };
+        const projected = { credentialRef, credentialPrincipal: draftInput.credentialPrincipal,
+            providerAccountId: 'team-a', providerIdentity: { providerAccountId: 'team-a' }, projectId: 'project-a', machineId: 'controller-a' };
         rpc.read.mockImplementation(async input => ({ actionId: platformActionId, fieldPath: platformField.path,
-            optionsSourceId: 'plugin-input:happier.deploy.vercel/provider-account',
-            options: [{ value: input.cursor ? 'team-selected' : 'user-selected', label: input.cursor ? 'Selected team' : 'Selected user' }] }));
+            optionsSourceId: 'plugin-input:happier.deploy.vercel/provider-environment',
+            options: [{ value: 'selection', label: input.cursor ? 'Selected next page'
+                : `${input.draftInput.credentialRef.accountId}/${input.draftInput.providerAccountId}` }] }));
         const screen = await renderScreen(<PlatformOptionsProbe serverId={serverId} draftInput={draftInput} />);
         try {
             await waitForHomeGovernance(() => expect(screen.findByTestId('platform.options')?.props.accessibilityLabel).not.toBe('loading'));
             expect({ status: screen.findByTestId('platform.options')?.props.accessibilityLabel,
                 error: screen.findByTestId('platform.options')?.props.accessibilityHint, requests: rpc.read.mock.calls.length })
                 .toEqual({ status: 'ready', error: undefined, requests: 1 });
-            expect(screen.getTextContent()).toContain('Selected user');
+            expect(screen.getTextContent()).toContain('selected/team-a');
             expect(rpc.read).toHaveBeenLastCalledWith({ actionId: platformActionId, fieldPath: platformField.path,
-                draftInput: { ...draftInput, machineId: 'controller-a' } });
-            await screen.update(<PlatformOptionsProbe serverId={serverId} draftInput={draftInput} cursor="from:next-team" />);
-            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Selected team'));
+                draftInput: projected });
+            const renamed = { ...draftInput, resourceName: 'unrelated draft edit' };
+            await screen.update(<PlatformOptionsProbe serverId={serverId} draftInput={renamed} />);
+            expect(screen.getTextContent()).toContain('selected/team-a');
+            expect(rpc.read).toHaveBeenCalledTimes(1);
+            const otherTeam = { ...renamed, providerAccountId: 'team-b', providerIdentity: { providerAccountId: 'team-b' } };
+            await screen.update(<PlatformOptionsProbe serverId={serverId} draftInput={otherTeam} />);
+            expect(screen.getTextContent()).not.toContain('selected/team-a');
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('selected/team-b'));
+            expect(rpc.read).toHaveBeenCalledTimes(2);
+            const otherCredentialRef = { ...credentialRef, accountId: 'other' };
+            const otherCredential = { ...otherTeam, credentialRef: otherCredentialRef,
+                credentialPrincipal: { ...draftInput.credentialPrincipal, target: { kind: 'account', account: otherCredentialRef } } };
+            await screen.update(<PlatformOptionsProbe serverId={serverId} draftInput={otherCredential} />);
+            expect(screen.getTextContent()).not.toContain('selected/team-b');
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('other/team-b'));
+            expect(rpc.read).toHaveBeenCalledTimes(3);
+            await screen.update(<PlatformOptionsProbe serverId={serverId} draftInput={otherCredential} cursor="from:next-team" />);
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Selected next page'));
             expect(rpc.read).toHaveBeenLastCalledWith({ actionId: platformActionId, fieldPath: platformField.path,
-                draftInput: { ...draftInput, machineId: 'controller-a' }, query: 'selected', cursor: 'from:next-team' });
+                draftInput: { ...projected, credentialRef: otherCredentialRef, credentialPrincipal: otherCredential.credentialPrincipal,
+                    providerAccountId: 'team-b', providerIdentity: { providerAccountId: 'team-b' } }, query: 'selected', cursor: 'from:next-team' });
             rpc.read.mockResolvedValue('resource-context-unavailable');
             await expect(callWorkflowAction({ actionId: 'action.options.resolve',
                 input: { actionId: platformActionId, fieldPath: platformField.path, draftInput }, parseResult: value => value,

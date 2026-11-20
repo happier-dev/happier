@@ -104,7 +104,10 @@ const InputHintCoreFieldSchema = lazyZodSchema(() => z.strictObject({
   disabledWhen: z.optional(InputPredicateSchema),
 }));
 
+const OptionsDraftDependenciesSchema = z.optional(z.readonly(z.array(InputPathSchema)));
+
 const InputHintCanonicalSourceShape = {
+  optionsDraftDependencies: OptionsDraftDependenciesSchema,
   optionsSourceId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   connectedAccountOptions: z.optional(z.literal(true)),
   /**
@@ -116,6 +119,7 @@ const InputHintCanonicalSourceShape = {
 };
 
 const InputHintPluginActionSourceShape = {
+  optionsDraftDependencies: OptionsDraftDependenciesSchema,
   connectedAccountOptions: z.optional(z.literal(true)),
 };
 
@@ -161,6 +165,8 @@ export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonl
   /** Choices restrict admitted values unless allowCustomValue is true; they never widen a type schema. */
   options?: readonly InputHintOptionDescriptor<TText, TValue>[];
   optionsSourceId?: string;
+  /** Partial draft operands needed by this contributed field’s options Resource. */
+  optionsDraftDependencies?: readonly InputPath[];
   connectedAccountOptions?: true;
   visibleWhen?: InputPredicate;
   visibleWhenContextSlot?: InputPath;
@@ -208,6 +214,11 @@ function validateInputHintField(
     || value.inputType !== undefined;
   const hasConnectedAccountOptions = value.connectedAccountOptions === true;
   const hasResolvedEmptyConnectedAccountOptions = value.resolvedEmptyConnectedAccountOptions === true;
+
+  if (value.optionsDraftDependencies !== undefined
+      && (!value.inputType || typeof value.inputType !== 'object' || !('pluginId' in value.inputType))) {
+    context.addIssue({ code: 'custom', path: ['optionsDraftDependencies'], message: 'Draft dependencies require a contributed input type.' });
+  }
 
   if (value.allowCustomValue !== undefined && widget !== 'select') {
     context.addIssue({ code: 'custom', path: ['allowCustomValue'], message: 'allowCustomValue is only valid for select fields.' });
@@ -536,6 +547,7 @@ export function normalizeInputHintsText<TText>(
       ...(field.optionsSourceId === undefined
         ? {}
         : { optionsSourceId: field.optionsSourceId }),
+      ...(field.optionsDraftDependencies === undefined ? {} : { optionsDraftDependencies: field.optionsDraftDependencies }),
       ...(field.connectedAccountOptions === undefined ? {} : { connectedAccountOptions: field.connectedAccountOptions }),
       ...(field.visibleWhen === undefined ? {} : { visibleWhen: field.visibleWhen }),
       ...(field.visibleWhenContextSlot === undefined ? {} : { visibleWhenContextSlot: field.visibleWhenContextSlot }),

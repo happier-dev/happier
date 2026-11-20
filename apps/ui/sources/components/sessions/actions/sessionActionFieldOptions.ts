@@ -15,10 +15,10 @@ export type InputFieldOptionsContext = Readonly<Pick<PublicActionInputById['acti
     /** Check these picked values only: a source that can answer them directly does not read its whole inventory. */
     values?: readonly JsonValue[] }>;
 export type ResolveSessionActionFieldOptions = ((
-    field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions'> & { path?: string },
+    field: Pick<ActionInputFieldHint, 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions' | 'optionsDraftDependencies'> & { path?: string },
     context?: InputFieldOptionsContext,
 ) => readonly ActionFieldOption[]) & Readonly<{
-    state?: (field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions'>, context?: InputFieldOptionsContext) => InputFieldOptionsState;
+    state?: (field: Pick<ActionInputFieldHint, 'path' | 'optionsSourceId' | 'options' | 'inputType' | 'connectedAccountOptions' | 'optionsDraftDependencies'>, context?: InputFieldOptionsContext) => InputFieldOptionsState;
     retry?: () => void;
     pickerContext?: InputTypePickerHostContext;
 }>;

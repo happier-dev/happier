@@ -129,7 +129,9 @@ export const targetInputTypes = {
   'provider-environment': { title: 'Vercel environment', semantic: 'vercelEnvironment', valueSchema: base.providerEnvironment!, options: { resource: 'target-options' } },
 } satisfies NonNullable<DefinePluginInput['inputTypes']>;
 export const targetInputHints = { fields: [
-  { path: paths[0], title: 'Vercel account or Team', widget: 'select', required: true, inputType: { pluginId, localId: 'provider-account' } },
-  { path: paths[1], title: 'Vercel project', widget: 'select', required: true, inputType: { pluginId, localId: 'provider-project' } },
-  { path: paths[2], title: 'Vercel environment', widget: 'select', required: true, inputType: { pluginId, localId: 'provider-environment' } },
+  { path: paths[0], title: 'Vercel account or Team', widget: 'select', required: true, optionsDraftDependencies: [], inputType: { pluginId, localId: 'provider-account' } },
+  { path: paths[1], title: 'Vercel project', widget: 'select', required: true, optionsDraftDependencies: [], inputType: { pluginId, localId: 'provider-project' } },
+  { path: paths[2], title: 'Vercel environment', widget: 'select', required: true,
+    optionsDraftDependencies: ['projectId', 'providerIdentity.providerResourceId', 'providerEnvironment.kind', 'providerEnvironment.gitBranch'],
+    inputType: { pluginId, localId: 'provider-environment' } },
 ] } as const;
