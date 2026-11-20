@@ -114,10 +114,6 @@ export type DeploymentDraftFrame = Readonly<{
   runsOn: Readonly<{ kind: 'machine' | 'platform'; title: string | null }> | null;
   /** The Project's repository and branch, once its Source is read. */
   source: Readonly<{ title: string; note: string | null }> | null;
-  /** Where obtains Compose for the Machine choice, or what the selected repository still needs. */
-  ownServerSourceCompose?:
-    | Readonly<{ kind: 'catalogTemplate' | 'generatedFromImage' }>
-    | Readonly<{ kind: 'noRootComposeObserved' | 'composeUnverified'; projectSourceId: string }>;
   appName: string | null;
   /** Review after Create refused: nothing was created (journey-deploy revFail). */
   refused: boolean;
@@ -433,9 +429,27 @@ export const DeploymentEnvironmentDraft = React.memo(
         if (stepped) props.onDiscard();
         router.push(PLUGINS_APP_ROUTE);
     };
+    const draftStep: DeploymentDraftStep = stepReview || prepared || partial ? 'review' : formStep;
+    const whereScope = props.lifetime?.scope;
+    const ownServerWhere = stepped && draftStep === 'where' && !props.copyFrom;
+    const catalogProvidesCompose = ownServerWhere && props.catalogApp != null;
+    const generatesComposeFromImage = ownServerWhere && definitionKind === 'image' && !catalogProvidesCompose;
+    const whereRepository = ownServerWhere && !storedDefinition && !catalogProvidesCompose
+      && !generatesComposeFromImage && source?.repository ? source : null;
+    const whereProjectRefs = useProjectAccountRows(rows => areServerAccountScopesEqual(rows?.scope, whereScope)
+      ? readProjectAccountWorkspaceRefs({ projectAccountRows: rows }) : undefined, whereRepository !== null);
+    const rootCompose = React.useMemo(() => {
+      if (!whereRepository || !whereScope || !whereProjectRefs) return 'unknown';
+      const facts = projectSourceRepositoryFacts(whereScope.serverId, [whereRepository], whereProjectRefs).get(whereRepository.id);
+      return facts?.status === 'observed' ? facts.observation.rootFiles.compose : 'unknown';
+    }, [whereRepository, whereScope, whereProjectRefs]);
+
     const targetTiles: Array<SelectionTile<string>> = [
       { id: OWN_SERVER_TARGET, icon: 'hard-drives', title: t('projects.deployments.platformLink.onMachine'),
-        subtitle: t('projects.deployments.whereDescription') },
+        subtitle: t(catalogProvidesCompose ? 'newApp.deploy.whereCatalogCompose'
+          : generatesComposeFromImage ? 'newApp.deploy.whereImageCompose'
+          : rootCompose === 'absent' ? 'newApp.deploy.whereNoRootCompose'
+          : 'projects.deployments.whereDescription') },
       ...offeredPlatformTargets.map((target): SelectionTile<string> => ({
         id: target.key, title: target.title, mark: <PluginMark title={target.title} pluginId={target.pluginId} />,
         ...(target.description ? { subtitle: target.description } : {}),
@@ -492,21 +506,6 @@ export const DeploymentEnvironmentDraft = React.memo(
       testID: 'project-deployments.draft.save',
     };
 
-    const draftStep: DeploymentDraftStep = stepReview || prepared || partial ? 'review' : formStep;
-    const whereScope = props.lifetime?.scope;
-    const ownServerWhere = stepped && draftStep === 'where' && targetKey === OWN_SERVER_TARGET && !props.copyFrom;
-    const catalogProvidesCompose = ownServerWhere && props.catalogApp != null;
-    const generatesComposeFromImage = ownServerWhere && definitionKind === 'image' && !catalogProvidesCompose;
-    const whereRepository = ownServerWhere && !storedDefinition && !catalogProvidesCompose
-      && !generatesComposeFromImage && source?.repository ? source : null;
-    const whereProjectRefs = useProjectAccountRows(rows => areServerAccountScopesEqual(rows?.scope, whereScope)
-      ? readProjectAccountWorkspaceRefs({ projectAccountRows: rows }) : undefined, whereRepository !== null);
-    const rootCompose = React.useMemo(() => {
-      if (!whereRepository || !whereScope || !whereProjectRefs) return 'unknown';
-      const facts = projectSourceRepositoryFacts(whereScope.serverId, [whereRepository], whereProjectRefs).get(whereRepository.id);
-      return facts?.status === 'observed' ? facts.observation.rootFiles.compose : 'unknown';
-    }, [whereRepository, whereScope, whereProjectRefs]);
-    const whereRepositoryId = whereRepository?.id;
     // Where continues only on a Machine that answers (whereErr): an away one says so in its tile instead.
     const whereReady = chosen !== null && answers(chosen) && platformDefinitionAccepted;
     // Every deploy, a platform's too, runs from an answering Machine; without one Where says so where Continue is.
@@ -550,18 +549,11 @@ export const DeploymentEnvironmentDraft = React.memo(
       runsOn: runsOnKind ? { kind: runsOnKind, title: runsOnTitle } : null,
       waitingFor: whereWaitingFor,
       source: sourceTitle ? { title: sourceTitle, note: sourceNote } : null,
-      ownServerSourceCompose: catalogProvidesCompose ? { kind: 'catalogTemplate' }
-        : generatesComposeFromImage ? { kind: 'generatedFromImage' }
-        : whereRepositoryId && rootCompose !== 'present' ? {
-          kind: rootCompose === 'absent' ? 'noRootComposeObserved' : 'composeUnverified',
-          projectSourceId: whereRepositoryId,
-        } : undefined,
       appName,
       refused: draftStep === 'review' && !partial && refusal?.kind === 'refused',
       primary: { title: primary.title, disabled: primary.disabled, loading: primary.loading, testID: primary.testID },
       press: pressStep, back: backStep, toWhere,
-    }), [draftStep, runsOnKind, runsOnTitle, whereWaitingFor, sourceTitle, sourceNote, branch, rootCompose, whereRepositoryId,
-      catalogProvidesCompose, generatesComposeFromImage, appName, partial, refusal, primary.title, primary.disabled,
+    }), [draftStep, runsOnKind, runsOnTitle, whereWaitingFor, sourceTitle, sourceNote, appName, partial, refusal, primary.title, primary.disabled,
       primary.loading, primary.testID, pressStep, backStep, toWhere]);
     const stepsHost = React.useRef(props.steps);
     stepsHost.current = props.steps;

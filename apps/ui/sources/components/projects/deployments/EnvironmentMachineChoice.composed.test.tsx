@@ -32,7 +32,7 @@ const { SoftwareInputFields } = await import('@/components/store/StoreSoftwareIn
 const { MachineSetupRecipeInputs } = await import('@/components/settings/machines/managed/MachineSetupRecipeInputs');
 const { DEPLOY_HOST_DOCKER_ITEM } = await import('@happier-dev/protocol/deployments/deployHostReadiness');
 
-it('tells Where when the last inspected repository root had no Compose file', async () => {
+it.each(['absent', 'present'] as const)('renders the inspected repository Compose fact in Where (%s)', async compose => {
   const serverIdentityId = `srv_${'6'.repeat(32)}`;
   const serverId = await homes.addHome({ name: 'Static app', serverUrl: 'https://deploy-host-static-app.test',
     accountId: 'alice', serverIdentityId, currentAccount: true });
@@ -50,7 +50,7 @@ it('tells Where when the last inspected repository root had no Compose file', as
     const source = { sourceId: 'static-app', revision: 3 };
     applyProjectAccountRowsFixture(storage, { workspaceRefs: [{ id: 'bakery-checkout', serverId: serverIdentityId,
       machineId: 'host', rootPath: '/work/bakery', createdAtMs: 1, source, repositoryObservation: {
-        source, observedAtMs: 2, coverage: 'complete', rootFiles: { dockerfile: 'absent', compose: 'absent' }, applications: [],
+        source, observedAtMs: 2, coverage: 'complete', rootFiles: { dockerfile: 'absent', compose }, applications: [],
       },
     }] });
     await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'host',
@@ -61,16 +61,21 @@ it('tells Where when the last inspected repository root had no Compose file', as
       onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
     try {
       await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({
-        step: 'where', source: { title: 'Bakery', note: null },
+        step: 'where', source: expect.objectContaining({ title: 'Bakery' }),
       })));
-      await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({
-        step: 'where', ownServerSourceCompose: { kind: 'noRootComposeObserved', projectSourceId: 'static-app' },
-      })));
+      if (compose === 'absent') {
+        expect(screen.getTextContent()).toMatch(/no Compose file at its root/i);
+      } else {
+        expect(screen.getTextContent()).not.toMatch(/no Compose file at its root/i);
+      }
     } finally { await screen.unmount(); }
   } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
 });
 
-it.each(['catalogTemplate', 'generatedFromImage'] as const)('publishes the %s Compose source for Where', async kind => {
+it.each([
+  ['catalogTemplate', 'The catalog template supplies a Compose file.'],
+  ['generatedFromImage', 'Happier creates a Compose file from the image.'],
+] as const)('shows the %s Compose source in Where', async (kind, fact) => {
   const serverId = await homes.addHome({ name: 'Prepared app', serverUrl: `https://deploy-host-${kind}.test`,
     accountId: 'alice', serverIdentityId: `srv_${'7'.repeat(32)}`, currentAccount: true });
   const account = await captureLazyActionAccountContext(serverId);
@@ -88,9 +93,8 @@ it.each(['catalogTemplate', 'generatedFromImage'] as const)('publishes the %s Co
       phone={false} actions={null} steps={{ onFrame, onExit: () => {} }}
       onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
     try {
-      await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({
-        step: 'where', ownServerSourceCompose: { kind },
-      })));
+      await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({ step: 'where' })));
+      expect(screen.getTextContent()).toContain(fact);
     } finally { await screen.unmount(); }
   } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
 });
