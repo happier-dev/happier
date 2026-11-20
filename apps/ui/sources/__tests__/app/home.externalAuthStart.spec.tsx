@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/testkit';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -77,11 +78,18 @@ const tauriDesktopState = vi.hoisted(() => ({
     value: false,
 }));
 const invokeDesktopHostSpy = vi.hoisted(() => vi.fn<(command: string, args?: Record<string, unknown>) => Promise<unknown>>(async () => undefined));
-vi.mock('@/utils/platform/desktopHost', () => ({
-    isDesktopHost: () => tauriDesktopState.value,
-    desktopHostKind: () => tauriDesktopState.value ? 'tauri' : null,
-    invokeDesktopHost: (command: string, args?: Record<string, unknown>) => invokeDesktopHostSpy(command, args),
-}));
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({
+        importOriginal,
+        overrides: {
+            isDesktopHost: () => tauriDesktopState.value,
+            desktopHostKind: () => tauriDesktopState.value ? 'tauri' : null,
+            invokeDesktopHost: invokeDesktopHostSpy,
+            listenDesktopHostEvent: async () => () => {},
+        },
+    });
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -368,34 +376,34 @@ describe('Home external auth start', () => {
     });
 
     it('holds the unauthenticated wizard until a cross-server override settles, then resumes auth actions on the target relay', async () => {
-        (globalThis as any).document = {};
-        (globalThis as any).window = {
-            location: {
-                href: 'https://app.example.test/?server=https%3A%2F%2Fstack.example.test',
-                pathname: '/',
-                search: '?server=https%3A%2F%2Fstack.example.test',
-                hash: '',
-            },
-            history: { replaceState: vi.fn() },
-        };
-
-        const Home = await loadHome();
-        mockGithubAuthFeatures('provision', 'keyed');
-        const screen = await renderHome(Home);
-        await flushHookEffects({ cycles: 1, turns: 2 });
-        expect(screen.findAllHostsByTestId('welcome-scan-existing-home')).toHaveLength(0);
-        expect(screen.findAllHostsByTestId('welcome-primary-start')).toHaveLength(0);
-
-        await act(async () => {
-            await setActiveServer({ serverId: targetHomeProfileId, scope: 'device' });
+        const browser = await installBrowserRuntimeForTests({
+            url: 'https://app.example.test/?server=https%3A%2F%2Fstack.example.test',
         });
-        await flushHookEffects({ cycles: 1, turns: 2 });
-        await advanceWizardToAuth(screen);
+        try {
+            const Home = await loadHome();
+            mockGithubAuthFeatures('provision', 'keyed');
+            const screen = await renderHome(Home);
+            await flushHookEffects({ cycles: 1, turns: 2 });
+            expect(screen.findAllHostsByTestId('welcome-scan-existing-home')).toHaveLength(0);
+            expect(screen.findAllHostsByTestId('welcome-primary-start')).toHaveLength(0);
 
-        await waitForHomeGovernance(() => {
-            expect(screen.findAllHostsByTestId('welcome-scan-existing-home')).toHaveLength(1);
-            expect(screen.findAllHostsByTestId('welcome-primary-start').length).toBeGreaterThan(0);
-        });
+            expect(screen.findByTestId('already-use-happier.home-address')?.props.value).toBe('https://stack.example.test');
+            await screen.pressByTestIdAsync('already-use-happier.home-connect');
+
+            await waitForHomeGovernance(() => {
+                expect(screen.findByTestId('already-use-happier.pane.home-sign-in')).not.toBeNull();
+                expect(screen.findAllHostsByTestId('welcome-primary-start').length).toBeGreaterThan(0);
+            });
+            await screen.pressByTestIdAsync('welcome-primary-start');
+            await waitForHomeGovernance(() => {
+                expect(githubOAuthParamsRequest()).toMatchObject({
+                    serverId: targetHomeProfileId,
+                    serverUrl: 'https://stack.example.test',
+                });
+            });
+        } finally {
+            browser.restore();
+        }
     });
 
     it('lets users enter restore from the welcome decision', async () => {
@@ -416,11 +424,8 @@ describe('Home external auth start', () => {
         });
 
         await flushHookEffects({ cycles: 1, turns: 2 });
-        expect(setPendingSetupIntentSpy).toHaveBeenLastCalledWith({
-            branch: 'thisComputer',
-            phase: 'awaiting_auth',
-            relayUrl: 'https://api.example.test',
-        });
+        expect(screen.findByTestId('restore-open-manual')).not.toBeNull();
+        expect(setPendingSetupIntentSpy).not.toHaveBeenCalled();
     });
 
     it('uses / as the auth returnTo when a setup continuation is pending (wizard resumes after auth)', async () => {
