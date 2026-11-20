@@ -121,18 +121,18 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
 
   // Git only prepares this fixture's repository. Both worktree mutations use
   // the ordinary Action executor and the enrolled daemon's native backend.
+  // Settle their approvals before reading the native outcomes.
   await initGitRepo({ repoDir: machine.workspaceDir });
   execGit(machine.workspaceDir, ['commit', '--allow-empty', '-m', 'Initial']);
-  const created = await actor.execute('scm.worktree.create', { cwd: machine.workspaceDir,
+  const created = await actor.executeReviewed('scm.worktree.create', { cwd: machine.workspaceDir,
     displayName: 'f6-removal' }, { ...targetContext, presentUserConfirmation: { actionId: 'scm.worktree.create' } });
   expect(created.ok, JSON.stringify(created)).toBe(true);
   if (!created.ok) throw new Error(`Worktree creation refused (${created.errorCode})`);
   const checkout = ScmWorktreeCreateResponseSchema.parse(created.result);
   if (!checkout.success) throw new Error(`Native worktree creation failed (${checkout.errorCode})`);
   const checkoutPhysicalRoot = await realpath(checkout.worktreePath);
-  const opened = await actor.execute('projects.open', { ...machine.target,
-    source: { kind: 'folder', path: checkout.worktreePath }, materialization: { kind: 'attach' } },
-  { presentUserConfirmation: { actionId: 'projects.open' } });
+  const opened = await actor.executeReviewed('projects.open', { ...machine.target,
+    source: { kind: 'folder', path: checkout.worktreePath }, materialization: { kind: 'attach' } });
   expect(opened.ok, JSON.stringify(opened)).toBe(true);
   if (!opened.ok) throw new Error('Created checkout was not accepted');
   const accepted = OpenProjectResultV1Schema.parse(opened.result);
@@ -148,7 +148,7 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   // directory that Git never registered exercises a genuine native refusal.
   const unregisteredPath = join(machine.workspaceDir, 'f6-unregistered-directory');
   await mkdir(unregisteredPath);
-  const rejected = await actor.execute('scm.worktree.remove', { ...removalInput,
+  const rejected = await actor.executeReviewed('scm.worktree.remove', { ...removalInput,
     worktreePath: unregisteredPath }, removalContext);
   expect(rejected).toMatchObject({ ok: true, result: { success: false } });
   await expect(access(unregisteredPath)).resolves.toBeUndefined();
@@ -168,7 +168,7 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
     return WorkflowRunGetResultV1Schema.parse(opened.result).acceptedContext.inputs.payload;
   };
   expect(await readRuns()).toEqual([]);
-  const removed = await actor.execute('scm.worktree.remove', removalInput, removalContext);
+  const removed = await actor.executeReviewed('scm.worktree.remove', removalInput, removalContext);
   expect(removed, removed.ok ? undefined : JSON.stringify({ errorCode: removed.errorCode,
     failureCause: removed.failureCause })).toMatchObject({ ok: true, result: { success: true } });
   await expect(access(checkout.worktreePath)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -208,7 +208,7 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
   // Storage uses the same settled producer. These checkouts have no accepted
   // Workspace, and retirement moves the root before the observation is read.
   for (const [index, removalKind] of (['deleted', 'retired'] as const).entries()) {
-    const create = await actor.execute('scm.worktree.create', { cwd: machine.workspaceDir,
+    const create = await actor.executeReviewed('scm.worktree.create', { cwd: machine.workspaceDir,
       displayName: `f6-storage-${removalKind}` },
     { ...targetContext, presentUserConfirmation: { actionId: 'scm.worktree.create' } });
     if (!create.ok) throw new Error(`Storage fixture creation refused (${create.errorCode})`);
@@ -226,7 +226,7 @@ it('P01.F6 settled producer fact survives notification fan-out', async () => {
     const review = PileReviewV1Schema.parse(checked.result);
     expect(review.items).toHaveLength(1);
     const actionId = removalKind === 'retired' ? 'machines.storage.trash.move' : 'machines.storage.deleteNow';
-    const applied = await actor.execute(actionId, { ...machine.target, items: review.items.map(row => ({
+    const applied = await actor.executeReviewed(actionId, { ...machine.target, items: review.items.map(row => ({
       ref: row.ref, expect: row.expect,
       ...(removalKind === 'retired' ? { claimedVerdict: row.verdict, reason: row.reason } : {}),
     })) }, { presentUserConfirmation: { actionId } });
