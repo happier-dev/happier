@@ -223,9 +223,10 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         .map(account => isConnectedServiceUsageCapable(account.ref.service)) ?? []);
     let observedUsageCapabilities = readUsageCapabilities();
     let observedMachineFacts = readMachineFacts(observedInputs[3], Date.now(), observedInputs[0]);
-    let detachedReachabilityRevision = readMachineRequestReachabilityRevision();
+    let observedReachabilityRevision = readMachineRequestReachabilityRevision();
     const reconcile = (refreshMachineFacts = false) => {
         const inputs = readInputs();
+        const reachabilityRevision = readMachineRequestReachabilityRevision();
         const nowMs = Date.now();
         // Retain the listener's already-observed projection before doing any
         // machine enumeration, parsing, sorting or serialization.
@@ -267,10 +268,13 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
         observedInputs = inputs;
         observedUsageCapabilities = readUsageCapabilities();
         observedMachineFacts = machineFacts;
+        // A synchronous Resource invalidation can re-enter admission. Those
+        // reads already consume these facts, including this request revision.
+        observedReachabilityRevision = reachabilityRevision;
         if (changed) invalidate(materialInputsChanged ? 'material-inputs' : quotaPoolInputsChanged ? 'quota-pool-inputs'
             : changedInputs[7] ? 'quota-projection-inputs' : 'projection-inputs');
     };
-    const reconcileMissedInputs = () => reconcile(readMachineRequestReachabilityRevision() !== detachedReachabilityRevision);
+    const reconcileMissedInputs = () => reconcile(readMachineRequestReachabilityRevision() !== observedReachabilityRevision);
     const dispose = observe(() => {
         // Detect observations missed while no view was subscribed.
         reconcileMissedInputs();
@@ -307,7 +311,6 @@ export function subscribeUsageQueryStateInvalidation(invalidate: (input: UsageQu
             unwatchReachability();
             unwatchMachineActivity?.();
             unwatchRegistry();
-            detachedReachabilityRevision = readMachineRequestReachabilityRevision();
         };
     });
     return Object.assign(dispose, { reconcile: reconcileMissedInputs });
