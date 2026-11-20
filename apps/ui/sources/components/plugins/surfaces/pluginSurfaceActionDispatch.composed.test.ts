@@ -2867,7 +2867,7 @@ describe('Account Action placement through the executable dispatcher', () => {
         } finally { controller.abort(); release(); accountBrowserRelay.enabled = false; }
     });
 
-    it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit', 'explicit-offline'] as const)('places Account Actions using receiver runtime availability (%s)', async state => {
+    it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit', 'explicit-offline', 'guest-read', 'guest-explicit-read', 'guest-write'] as const)('places Account Actions using receiver runtime availability (%s)', async state => {
         const { executeAccountActionAtRuntimeHost } = await import('./accountActionPlacement');
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { createMachineFixture, createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
@@ -2880,13 +2880,20 @@ describe('Account Action placement through the executable dispatcher', () => {
         const previous = getStorage().getState();
         const identity = { pluginId: 'acme.placement', localId: 'read' };
         const action = createClientTargetAction({ identity, accountPlacement: true });
+        const guest = state === 'guest-read' || state === 'guest-explicit-read' || state === 'guest-write';
+        const artifactFailure = { errorCode: 'artifact_source_unavailable', error: 'artifact_source_unavailable' };
         let effects = 0;
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'usable',
-            actionId: 'action.invoke', tokenEpoch: 0, execute: () => { effects++; return { selected: 'usable' }; } });
+            actionId: 'action.invoke', tokenEpoch: 0, execute: request => {
+                if (state === 'guest-read') expect(request).not.toHaveProperty('expectedContributorOccurrenceId', 'placement-fixture');
+                effects++;
+                return { selected: 'usable' };
+            } });
         const fixtureBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'fixture',
-            actionId: 'action.invoke', tokenEpoch: 0, execute: () => ({ selected: 'fixture' }) });
+            actionId: 'action.invoke', tokenEpoch: 0, execute: () => ({ selected: 'fixture' }),
+            ...(guest ? { failure: () => artifactFailure } : {}) });
         const offline = state === 'offline' || state === 'explicit-offline';
         const machines = ['fixture', 'usable'].map(id => createMachineFixture({ id, createdAt: id === 'fixture' ? 2 : 1,
             active: !offline || id !== 'fixture', activeAt: id === 'fixture' && offline ? 0 : Date.now(), access: boundary.machine.access }));
@@ -2898,20 +2905,26 @@ describe('Account Action placement through the executable dispatcher', () => {
             const usable = request.machineId === 'usable' && state !== 'none';
             const snapshot = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: (usable ? 'a' : 'b').repeat(64), projection: {
                 v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
-                actionsById: usable || state === 'unavailable' || state === 'offline'
-                    ? { 'acme.placement/read': { ...action, available: usable || state === 'offline' } } : {},
+                actionsById: usable || state === 'unavailable' || state === 'offline' || guest
+                    ? { 'acme.placement/read': { ...action, available: usable || state === 'offline',
+                        ...(guest ? { occurrenceId: `placement-${request.machineId}`, readOnly: state !== 'guest-write' } : {}) } } : {},
             } });
             const read = request.payload?.sectionRead;
             return read ? snapshot.read(read.digest, read.offset, read.includeDigests) : snapshot.manifest;
         });
         network.setHttpResponder(async (url, init) => {
-            if (new URL(String(url)).pathname === '/v1/machines/read-batch') {
+            const endpoint = new URL(String(url));
+            if (endpoint.pathname === '/v1/machines/read-batch') {
                 return createMachineReadBatchResponseFixture(init?.body, id =>
                     [boundary, fixtureBoundary].find(item => item.machine.id === id)?.machine ?? null);
             }
-            return await boundary.handle(new URL(String(url)), init)
-                ?? await fixtureBoundary.handle(new URL(String(url)), init)
-                ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init);
+            const addressed = endpoint.pathname.startsWith('/v1/actions/') && typeof init?.body === 'string'
+                ? JSON.parse(init.body) : null;
+            const receiver = (addressed?.envelope?.target ?? addressed?.target)?.machineId === 'fixture'
+                ? fixtureBoundary : boundary;
+            return await receiver.handle(endpoint, init)
+                ?? await fixtureBoundary.handle(endpoint, init)
+                ?? createEmptyAccountBootstrapHttpResponse(endpoint.pathname, init);
         });
         accountBrowserRelay.enabled = true;
         try {
@@ -2924,14 +2937,17 @@ describe('Account Action placement through the executable dispatcher', () => {
             const reads = network.requests.length;
             const result = executeAccountActionAtRuntimeHost({ accountScope: lifetime.scope, action: identity,
                 execution: { target: 'account', account: { artifactId: 'fixture', exportName: 'activate' } }, input: {},
+                ...(guest ? { sourceMachineId: 'fixture', expectedContributorOccurrenceId: 'placement-fixture',
+                    readOnly: state !== 'guest-write' } : {}),
                 context: { serverId: lifetime.scope.serverId, runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-                    ...(state === 'explicit' || state === 'explicit-offline'
-                        ? { externalActionTarget: { kind: 'machine' as const, machineId: state === 'explicit-offline' ? 'fixture' : 'usable' } } : {}) },
+                    ...(state === 'explicit' || state === 'explicit-offline' || state === 'guest-explicit-read'
+                        ? { externalActionTarget: { kind: 'machine' as const, machineId: state === 'explicit' ? 'usable' : 'fixture' } } : {}) },
                 signal: new AbortController().signal, executeLocal: () => { throw new Error('No local fallback on browser'); } });
             if (state === 'none') await expect(result).rejects.toMatchObject({ code: 'target_unavailable' });
             else if (state === 'explicit-offline') await expect(result).rejects.toMatchObject({ code: 'machine_unreachable' });
+            else if (state === 'guest-explicit-read' || state === 'guest-write') await expect(result).rejects.toMatchObject({ code: artifactFailure.errorCode });
             else await expect(result).resolves.toEqual({ selected: 'usable' });
-            expect(effects).toBe(state === 'none' || state === 'explicit-offline' ? 0 : 1);
+            expect(effects).toBe(state === 'none' || state === 'explicit-offline' || state === 'guest-explicit-read' || state === 'guest-write' ? 0 : 1);
             if (state === 'cold') {
                 expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
                     && !(request.payload as { sectionRead?: unknown }).sectionRead)).toHaveLength(2);

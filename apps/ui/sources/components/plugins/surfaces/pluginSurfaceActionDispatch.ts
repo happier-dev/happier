@@ -2536,8 +2536,9 @@ async function executeContributedAction(
         const serverId = lifetime?.scope.serverId ?? input.hostAction?.context?.serverId ?? machineOrigin.serverId;
         const accountId = lifetime?.scope.accountId ?? input.hostAction?.context?.expectedAccountId;
         if (!serverId || !accountId) return clientActionFailure('plugin_surface_account_action_unavailable');
-        if (input.requiredReadOnly && !pluginActionDeclarationIsReadOnlyForInput(
-            projectedAction.accountActionDeclaration ?? projectedAction, settlement.input)) {
+        const readOnly = pluginActionDeclarationIsReadOnlyForInput(
+            projectedAction.accountActionDeclaration ?? projectedAction, settlement.input);
+        if (input.requiredReadOnly && !readOnly) {
             return clientActionFailure('plugin_action_read_only_required');
         }
         const execution = projectedAction.execution;
@@ -2551,6 +2552,7 @@ async function executeContributedAction(
                 const result = await executeAccountActionAtRuntimeHost({ accountScope: { serverId, accountId },
                     action: identity, execution, input: settlement.input,
                     sourceMachineId: machineOrigin.machineId, expectedContributorOccurrenceId: occurrenceId,
+                    readOnly,
                     signal: input.signal ?? new AbortController().signal,
                     context: { ...context, surface: input.invocationSurface ?? 'ui',
                         ...(context.actionCaller?.kind === 'plugin' ? {} : { authority }) },

@@ -25,9 +25,11 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
     action: PluginContributionIdentityV1;
     execution: Extract<PluginActionExecutionV2, { target: 'account' }>;
     input: unknown;
-    /** Selected Machine declaration; no browser executable is required there. */
+    /** Machine that supplied the mounted declaration. */
     sourceMachineId?: string;
     expectedContributorOccurrenceId?: string;
+    /** The mounted declaration admits these operands as a read. */
+    readOnly?: boolean;
     context: ActionExecutorContext;
     signal: AbortSignal;
     /** Produced only after the mounted presenter approved and its gate admitted. */
@@ -50,13 +52,12 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
         }
         const account = await captureLazyActionAccountContext(params.accountScope.serverId, params.signal);
         try {
-            const input = { action: params.action,
-                ...(params.expectedContributorOccurrenceId === undefined ? {} : { expectedContributorOccurrenceId: params.expectedContributorOccurrenceId }),
+            const actionInput = { action: params.action,
                 ...(params.input === undefined ? {} : { input: params.input }) };
             const pinnedTarget = params.context.externalActionTarget
-                ?? (params.sourceMachineId ? { kind: 'machine' as const, machineId: params.sourceMachineId } : undefined);
+                ?? (params.sourceMachineId && !params.readOnly ? { kind: 'machine' as const, machineId: params.sourceMachineId } : undefined);
             const receiver = pinnedTarget && pinnedTarget.kind !== 'machine' ? null
-                : await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input,
+                : await resolveUiAccountActionReceiverMachineId(account, { actionId: ACTION_INVOKE_ACTION_ID_V1, input: actionInput,
                     context: { ...params.context, externalActionTarget: pinnedTarget }, signal: params.signal });
             if (receiver && typeof receiver === 'object') {
                 throw new PluginError({ code: receiver.errorCode, message: receiver.error, data: receiver.details });
@@ -66,6 +67,12 @@ export function executeAccountActionAtRuntimeHost(params: Readonly<{
                 const failure = actionTargetUnavailable('own_reachable_machine_absent');
                 throw new PluginError({ code: failure.errorCode, message: failure.error, data: failure.details });
             }
+            // A declaration supplier can show an Account read without hosting its
+            // executable. Bind a different receiver by Action identity, not by the
+            // supplier's runtime occurrence.
+            const occurrenceId = params.sourceMachineId && !pinnedTarget && receiver !== params.sourceMachineId
+                ? undefined : params.expectedContributorOccurrenceId;
+            const input = { ...actionInput, ...(occurrenceId === undefined ? {} : { expectedContributorOccurrenceId: occurrenceId }) };
             const requestId = params.context.actionRequestId ?? randomUUID();
             const confirmation = params.confirmedInvocation && sameStrictJsonValue(params.confirmedInvocation.input, input)
                 ? { actionId: ACTION_INVOKE_ACTION_ID_V1, inputDigest: params.confirmedInvocation.inputDigest, requestId,

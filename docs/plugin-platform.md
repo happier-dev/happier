@@ -2542,6 +2542,11 @@ activation. Action preparation completes before the dispatcher reads executable
 parsers or observation metadata. The captured Account lifetime owns cleanup.
 Mounted renderers and daemon background services retain their own demand.
 
+For finite Account reads supplied by a mounted Machine declaration, automatic
+placement uses the Account's existing reachable receiver lookup. An explicit
+execution target remains exact. A different receiver admits the Action by its
+qualified identity and resolves the Connected Account purpose on that runtime.
+
 Dynamic Resource callbacks in the 0.3 development source can compose admitted
 Action reads through `options.readAction(ref, input, { signal })`. The canonical
 Action executor retains the Resource's owning plugin caller, captured Account,
