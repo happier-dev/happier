@@ -49,13 +49,16 @@ export const ProjectWorktreeRecoveryToast = React.memo((props: Readonly<{
     const [visibleKey, setVisibleKey] = React.useState<string | null>(null);
 
     React.useEffect(() => {
-        if (!props.recoveryToastKey) return;
-        setVisibleKey((currentKey) => currentKey === props.recoveryToastKey ? currentKey : props.recoveryToastKey);
+        if (props.recoveryToastKey) setVisibleKey(props.recoveryToastKey);
+    }, [props.recoveryToastKey]);
+
+    React.useEffect(() => {
+        if (!visibleKey) return;
         const timeout = setTimeout(() => {
-            setVisibleKey((currentKey) => currentKey === props.recoveryToastKey ? null : currentKey);
+            setVisibleKey((currentKey) => currentKey === visibleKey ? null : currentKey);
         }, TOAST_HIDE_DELAY_MS);
         return () => clearTimeout(timeout);
-    }, [props.recoveryToastKey]);
+    }, [visibleKey]);
 
     if (!visibleKey) {
         return null;

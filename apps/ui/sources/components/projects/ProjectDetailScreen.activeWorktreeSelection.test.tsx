@@ -402,6 +402,26 @@ describe('ProjectDetailScreen active worktree selection', () => {
         });
     });
 
+    it('dismisses the worktree recovery notice after the controlled route switches to the repaired checkout', async () => {
+        const screen = await mount({ activeRootPath: '/repo' });
+        const onSelectRootPath = vi.fn();
+        const updateCheckout = (activeRootPath: string) => screen.update(<runtime.Wrapper>
+            <ProjectDetailScreen workspaceRefId="wr_1" activeRootPath={activeRootPath} onSelectRootPath={onSelectRootPath} />
+        </runtime.Wrapper>);
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+        try {
+            await updateCheckout('/repo/.worktrees/deleted-worktree');
+            expect(onSelectRootPath).toHaveBeenCalledWith('/repo');
+            expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
+            await updateCheckout('/repo');
+            expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
+            await act(async () => { vi.runOnlyPendingTimers(); });
+            expect(screen.findByTestId('project-worktree-recovery-toast')).toBeNull();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('repairs a controlled invalid worktree path through onSelectRootPath so route-backed screens recover', async () => {
         const onSelectRootPath = vi.fn();
         const screen = await mount({ activeRootPath: '/repo/.worktrees/deleted-worktree', onSelectRootPath });
