@@ -50,7 +50,17 @@ async function fixture(options: { async?: boolean; lostCapture?: boolean; failed
       if (options.lostCapture) throw new Error('private transport error');
       return json(snapshot, options.async ? 202 : 201);
     }
-    if (url.pathname.endsWith('/snapshots')) return json({ snapshots: snapshot ? [snapshot] : [] });
+    if (url.pathname.endsWith('/snapshots')) {
+      const snapshots = options.lostCapture && snapshot
+        ? Array.from({ length: 125 }, (_, index) => ({
+          ...snapshot!, name: 'snapshots/other-' + index, uid: 'other-' + index, displayName: 'other-' + index,
+        })).concat(snapshot) : snapshot ? [snapshot] : [];
+      const filter = url.searchParams.get('filter');
+      const matches = filter ? snapshots.filter(item => 'display_name=' + item.displayName === filter) : snapshots;
+      const offset = Number(url.searchParams.get('pageToken') ?? 0);
+      return json({ snapshots: matches.slice(offset, offset + 25),
+        ...(offset + 25 < matches.length ? { nextPageToken: String(offset + 25) } : {}) });
+    }
     if (url.pathname.endsWith('/snapshots/prepared-fixture')) {
       if (request.method === 'DELETE') { snapshot = undefined; return json({}, 204); }
       return snapshot ? json(snapshot) : json({ code: 'notFound' }, 404);
@@ -102,7 +112,9 @@ describe('Docker cloud registered preparation', () => {
       const start = h.requests.length;
       const inspected = await h.invoke('cloud-prepare-inspect', { operationId: build.operationId, launch });
       expect(inspected).toMatchObject({ kind: 'failed', code: 'docker_cloud_cleanup_required', nativeOperationRef: { value: { snapshotName: 'snapshots/prepared-fixture' } } });
-      expect(h.requests.slice(start).filter(r => new URL(r.url).hostname !== 'hub.docker.com').every(r => r.method === 'GET')).toBe(true);
+      const recovery = h.requests.slice(start).filter(r => new URL(r.url).hostname !== 'hub.docker.com');
+      expect(recovery.every(r => r.method === 'GET')).toBe(true);
+      expect(recovery.filter(r => new URL(r.url).pathname.endsWith('/v1/snapshots'))).toHaveLength(1);
       expect(h.wait).not.toHaveBeenCalled();
       if (!inspected || typeof inspected !== 'object' || !('nativeOperationRef' in inspected)) throw new Error('Missing retained cleanup identity');
       expect(await h.invoke('cloud-prepare-destroy', { nativeOperation: inspected.nativeOperationRef })).toEqual({ kind: 'confirmed' });

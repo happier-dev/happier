@@ -34,7 +34,8 @@ export function createCloudPreparation(client: Client, waitForNativeObservation:
         if (found.name !== operation.snapshotName) return invalidResponse();
         return found;
       }
-      const matches = (await client.list('snapshots')).map(snapshot).filter(item => item.displayName === displayName(operation.operationId));
+      const name = displayName(operation.operationId);
+      const matches = (await client.list('snapshots', name)).map(snapshot).filter(item => item.displayName === name);
       if (matches.length > 1) throw new CloudError('docker_cloud_snapshot_identity_unconfirmed');
       return matches[0];
     } catch (error) { if (error instanceof CloudError && error.status === 404) return undefined; throw error; }
@@ -89,9 +90,8 @@ export function createCloudPreparation(client: Client, waitForNativeObservation:
       if (image.status !== 'ready') return unknown(operation, 'docker_cloud_snapshot_failed');
       // Delete once, then observe. A 202 does not authorize a new build or a
       // second setup run. Native absence proves the billed builder is gone.
-      const removed = await client.destroy(resource);
-      if (removed.kind !== 'confirmed' && removed.code) return unknown(operation, removed.code);
-      while (await builder(operation)) await waitForNativeObservation();
+      const removed = await client.destroy(resource, waitForNativeObservation);
+      if (removed.kind !== 'confirmed') return unknown(operation, removed.code ?? 'docker_cloud_delete_unconfirmed');
       return ready(image.name, operation);
     } catch (error) { return unknown(operation, cloudCode(error)); }
   }

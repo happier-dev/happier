@@ -87,16 +87,23 @@ export function createCloudClient(context: CloudContext) {
     if (item.name !== resource.sandboxName) return invalidResponse();
     return item;
   }
-  async function list(path = 'sandboxes') {
-    const values: unknown[] = []; let next: string | undefined;
-    do {
-      const body = object(json((await management(path + (next ? `?pageToken=${encodeURIComponent(next)}` : ''))).body));
-      const page = body[path] ?? [];
-      if (!Array.isArray(page)) return invalidResponse();
-      values.push(...page);
-      next = body.nextPageToken === undefined || body.nextPageToken === '' ? undefined : text(body.nextPageToken);
-    } while (next);
-    return values;
+  async function listPage(path: 'sandboxes' | 'snapshots', query: URLSearchParams) {
+    const body = object(json((await management(path + (query.size ? '?' + query : ''))).body));
+    const items = body[path] ?? [];
+    if (!Array.isArray(items)) return invalidResponse();
+    const next = body.nextPageToken;
+    return { items, next: next === undefined || next === '' ? undefined : text(next) };
+  }
+  async function list(path: 'sandboxes' | 'snapshots', displayName?: string) {
+    const query = new URLSearchParams();
+    if (displayName !== undefined) query.set('filter', 'display_name=' + displayName);
+    const values: unknown[] = [];
+    for (;;) {
+      const page = await listPage(path, query);
+      values.push(...page.items);
+      if (!page.next) return values;
+      query.set('pageToken', page.next);
+    }
   }
   function settle(item: Sandbox, operation: Operation): Reconciled {
     if (item.status === 'running') return { kind: 'bound', resource: { ...reference({ sandboxName: item.name }), origin: 'created' } };
@@ -107,9 +114,10 @@ export function createCloudClient(context: CloudContext) {
   // name preserves lost-reply recovery without replaying the expiring POST key.
   const restoreName = (id: string) => 'happier-' + createHash('sha256').update(id).digest('hex').slice(0, 56);
   async function locate(operation: Operation) {
+    const displayName = 'snapshotName' in operation.launch ? restoreName(operation.managedId) : undefined;
     const items = operation.sandboxName ? [await read({ sandboxName: operation.sandboxName })]
-      : (await list()).map(sandbox).filter(item => 'snapshotName' in operation.launch
-        ? item.displayName === restoreName(operation.managedId) : item.labels['happier-managed-id'] === operation.managedId);
+      : (await list('sandboxes', displayName)).map(sandbox).filter(item => displayName === undefined
+        ? item.labels['happier-managed-id'] === operation.managedId : item.displayName === displayName);
     return items.length === 1 ? items[0] : undefined;
   }
   async function recover(operation: Operation): Promise<Reconciled> {
@@ -212,16 +220,21 @@ export function createCloudClient(context: CloudContext) {
     const response = await management(item.name + '/' + intent, 'POST', {}, { 'If-Match': item.etag });
     return response.status === 202 ? { kind: 'unknown' } : (await read(resource)).status === desired ? { kind: 'confirmed' } : { kind: 'unknown' };
   }
-  async function destroy(resource: Resource): Promise<MachineProvisionerPowerResultV1> {
+  async function destroy(resource: Resource, waitForObservation?: () => Promise<void>): Promise<MachineProvisionerPowerResultV1> {
     try {
       const item = await read(resource);
-      if (item.status === 'deleting') return { kind: 'unknown' };
-      await management(item.name, 'DELETE', undefined, { 'If-Match': item.etag });
+      if (item.status !== 'deleting') await management(item.name, 'DELETE', undefined, { 'If-Match': item.etag });
+      else if (!waitForObservation) return { kind: 'unknown' };
     } catch (error) {
       if (!(error instanceof CloudError && error.status === 404)) return { kind: 'unknown', code: cloudCode(error) };
     }
-    return projectMachineProvisionerDeleteReadback(await inspect(resource), 'docker_cloud_delete_unconfirmed');
+    let observed = await inspect(resource);
+    while (observed.availability === 'present' && waitForObservation) {
+      await waitForObservation();
+      observed = await inspect(resource);
+    }
+    return projectMachineProvisionerDeleteReadback(observed, 'docker_cloud_delete_unconfirmed');
   }
   return { authorize, management, list, read, locate, acquire, recover, settle, execute, exec, putFile, bootstrap, inspect, power, destroy,
-    async check() { try { await list(); return { available: true }; } catch (error) { return { available: false, code: cloudCode(error) }; } } };
+    async check() { try { await listPage('sandboxes', new URLSearchParams({ pageSize: '1' })); return { available: true }; } catch (error) { return { available: false, code: cloudCode(error) }; } } };
 }

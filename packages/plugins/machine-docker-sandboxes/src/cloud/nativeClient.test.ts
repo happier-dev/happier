@@ -10,7 +10,7 @@ const resource = { sandboxName: sandboxFixture.name };
 const launch = { imageRef: 'ubuntu:24.04', cpus: 2, memoryMib: 4096, timeoutSeconds: 3600 };
 const json = (value: unknown, status = 200) => ({ status, body: new TextEncoder().encode(JSON.stringify(value)), headers: { 'content-type': 'application/json' } });
 function vendor(options: { loseCreate?: boolean; createStatus?: number; pending?: boolean; deleteStatus?: number; refusal?: number; mismatch?: boolean;
-  emptyList?: boolean } = {}) {
+  emptyList?: boolean; largeInventory?: boolean } = {}) {
   const requests: HttpRequest[] = [];
   const run = vi.fn(); const dependency = vi.fn(); let status = options.pending ? 'creating' : 'running';
   const http = vi.fn(async (request: HttpRequest): Promise<HttpResponse> => {
@@ -35,7 +35,19 @@ function vendor(options: { loseCreate?: boolean; createStatus?: number; pending?
         if (options.createStatus === 409) return json(conflictFixture, 409);
         return json({ ...sandboxFixture, core: { ...sandboxFixture.core, status } }, options.pending ? 202 : 201);
       }
-      if (url.pathname.endsWith('/sandboxes')) return json(options.emptyList ? {} : { sandboxes: [sandboxFixture], nextPageToken: '' });
+      if (url.pathname.endsWith('/sandboxes')) {
+        if (options.emptyList) return json({});
+        if (!options.largeInventory) return json({ sandboxes: [sandboxFixture] });
+        const sandboxes = Array.from({ length: 125 }, (_, index) => ({
+          ...sandboxFixture, name: 'sandboxes/other-' + index, uid: 'other-' + index, displayName: 'other-' + index,
+        })).concat({ ...sandboxFixture, displayName: 'happier-9faf6c23ca198bab1dd6389f65d065747773421c0fb0b150a0136c9e' });
+        const filter = url.searchParams.get('filter');
+        const matches = filter ? sandboxes.filter(item => 'display_name=' + item.displayName === filter) : sandboxes;
+        const offset = Number(url.searchParams.get('pageToken') ?? 0);
+        const pageSize = Number(url.searchParams.get('pageSize') ?? 25);
+        return json({ sandboxes: matches.slice(offset, offset + pageSize),
+          ...(offset + pageSize < matches.length ? { nextPageToken: String(offset + pageSize) } : {}) });
+      }
       return json({ ...sandboxFixture, core: { ...sandboxFixture.core, status } });
     })();
     return { ...response, finalUrl: request.url };
@@ -59,6 +71,22 @@ describe('Docker cloud through registered Actions and vendor HTTP', () => {
   it('accepts an empty account inventory with the optional page array omitted', async () => {
     await withVendor({ emptyList: true }, async (_h, invoke) => {
       expect(await invoke('cloud-check', {})).toMatchObject({ available: true });
+    });
+  });
+  it('checks sandbox API access without walking a 126-sandbox inventory', async () => {
+    await withVendor({ largeInventory: true }, async (h, invoke) => {
+      expect(await invoke('cloud-check', {})).toMatchObject({ available: true });
+      const reads = h.requests.filter(r => r.method === 'GET');
+      expect(reads).toHaveLength(1);
+      expect(new URL(reads[0]!.url).searchParams.get('pageSize')).toBe('1');
+    });
+  });
+  it('recovers a restore by its deterministic name without reading unrelated sandbox pages', async () => {
+    await withVendor({ largeInventory: true }, async (h, invoke) => {
+      const launch = { snapshotName: 'snapshots/prepared-fixture' };
+      expect(await invoke('cloud-reconcile', { correlation: { managedId: 'warm-fixture', requestId: 'fixture-request', launch } }))
+        .toMatchObject({ kind: 'bound', resource: { value: resource } });
+      expect(h.requests.filter(r => r.method === 'GET')).toHaveLength(1);
     });
   });
   it('does no work on activation; acquires, installs via native bootstrap and reports TTL without sbx', async () => {
