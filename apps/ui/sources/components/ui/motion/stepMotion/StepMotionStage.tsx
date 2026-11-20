@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { AppState, Dimensions, Platform, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { Dimensions, Platform, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import normalizeColor from '@react-native/normalize-colors';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { GlyphSurfaceProps, GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
+import { readHostActivelyFocused, subscribeToHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import { captureElementFlightRect } from '../rectFlight';
 import { readNativeStepAnchor } from './capturePressedElement.native';
@@ -17,6 +18,7 @@ import type { StepAnchor, StepBuild, StepBuildResult, StepFreeze, StepGrid, Step
 
 type AnimatedGrammar = Exclude<StepGrammar, 'fade'>;
 type StepMotionPresentation = typeof import('./stepMotionPresentation');
+type StepEndpoints = Readonly<{ source?: StepAnchor['rect']; target?: StepAnchor['rect'] }>;
 type PendingMove = {
     outgoing: StepMotionLayerHandle;
     destination: string;
@@ -25,7 +27,7 @@ type PendingMove = {
     grid: StepGrid;
     anchor?: StepAnchor;
     returnTo?: StepAnchor;
-    startProgress?: number;
+    reverse?: Readonly<{ progress: number; grammar: 'morph' | 'fold'; endpoints: StepEndpoints }>;
     freeze?: StepFreeze;
     complete?: (outcome: StepBuildResult) => void;
     cancelled: boolean;
@@ -85,7 +87,7 @@ function createStepMotionStage(
     const laidOutLayers = new WeakSet<StepMotionLayerHandle>();
     let pressed: StepAnchor | null = null;
     let pending: PendingMove | null = null;
-    let active: { layer: string; animation?: StepAnimation; stop: () => void } | null = null;
+    let active: { layer: string; animation?: StepAnimation; endpoints?: StepEndpoints; stop: () => void } | null = null;
     let commitOrder = 0;
     let glyphReady = false;
     let buildPrepared = false;
@@ -152,6 +154,7 @@ function createStepMotionStage(
         freeze?: StepFreeze;
         source?: StepAnchor;
         returnTo?: StepAnchor;
+        endpoints?: StepEndpoints;
         complete?: (outcome: StepBuildResult) => void;
     }) {
         const { layer, animation, grid, freeze, source, returnTo, complete } = input;
@@ -166,8 +169,11 @@ function createStepMotionStage(
         const reversing = animation.to === 0;
         const focalTarget = layer.focal();
         const returnTarget = returnTo?.testID ? layer.focal(returnTo.testID) : undefined;
-        const sourceRect = reversing ? targetRect(returnTarget) ?? returnTo?.rect : source?.rect;
-        const target = reversing ? source?.rect : targetRect(focalTarget);
+        const endpoints = input.endpoints ?? {
+            source: reversing ? targetRect(returnTarget) ?? returnTo?.rect : source?.rect,
+            target: reversing ? source?.rect : targetRect(focalTarget),
+        };
+        const { source: sourceRect, target } = endpoints;
         const web = layer.webElement();
         const leaves = web ? readStepLeaves(web, grid) : null;
         const { primary, tertiary, page } = colors();
@@ -255,7 +261,7 @@ function createStepMotionStage(
             complete?.(outcome);
         };
         const skip = () => finish('skipped');
-        active = { layer: layer.key, animation, stop: skip };
+        active = { layer: layer.key, animation, endpoints, stop: skip };
         syncPresentation();
         publish({ animation, duration, freeze, freezeOpacity, scene, releaseFreeze, finish: () => finish('settled') });
     }
@@ -274,12 +280,15 @@ function createStepMotionStage(
         const grammar = move.grammar;
         const animation: StepAnimation = {
             grammar,
-            from: back ? move.startProgress ?? 1 : 0,
+            from: back ? move.reverse?.progress ?? 1 : 0,
             to: back ? 0 : 1,
             secondsPerProgress: grammar === 'home' ? stepMotionTiming.homeS : back ? stepMotionTiming.backS : stepMotionTiming.forwardS,
             epoch: performance.now(),
         };
-        showAnimated({ layer, animation, grid: move.grid, freeze: move.freeze, source: move.anchor, returnTo: move.returnTo, complete: move.complete });
+        showAnimated({
+            layer, animation, grid: move.grid, freeze: move.freeze, source: move.anchor,
+            returnTo: move.returnTo, endpoints: move.reverse?.endpoints, complete: move.complete,
+        });
     }
 
     function layerFor(target: EventTarget | null) {
@@ -305,14 +314,14 @@ function createStepMotionStage(
     }
 
     function observeInput() {
+        const unwatchHost = subscribeToHostActivelyViewed(() => {
+            if (!readHostActivelyFocused()) settle();
+        });
         if (Platform.OS !== 'web') {
-            const visibility = AppState.addEventListener('change', state => {
-                if (state !== 'active') settle();
-            });
             const resize = Dimensions.addEventListener('change', settle);
-            return () => { visibility.remove(); resize.remove(); };
+            return () => { unwatchHost(); resize.remove(); };
         }
-        if (typeof document === 'undefined') return undefined;
+        if (typeof document === 'undefined') return unwatchHost;
         const pointer = (event: PointerEvent) => {
             pointerCommits.set(event.pointerId, commitOrder);
             webInput(event.target);
@@ -340,14 +349,12 @@ function createStepMotionStage(
             if (event.key === 'Enter' || event.key === ' ') webInput(document.activeElement);
             else { settle(); pressed = null; }
         };
-        const visibility = () => { if (document.hidden) settle(); };
         document.addEventListener('pointerdown', pointer, true);
         document.addEventListener('pointercancel', cancelPointer, true);
         document.addEventListener('mousedown', mouseDown, true);
         document.addEventListener('click', click, true);
         document.addEventListener('keydown', key, true);
         document.addEventListener('beforeinput', settle, true);
-        document.addEventListener('visibilitychange', visibility);
         window.addEventListener('resize', settle);
         return () => {
             document.removeEventListener('pointerdown', pointer, true);
@@ -356,7 +363,7 @@ function createStepMotionStage(
             document.removeEventListener('click', click, true);
             document.removeEventListener('keydown', key, true);
             document.removeEventListener('beforeinput', settle, true);
-            document.removeEventListener('visibilitychange', visibility);
+            unwatchHost();
             window.removeEventListener('resize', settle);
         };
     }
@@ -436,9 +443,13 @@ function createStepMotionStage(
         isBuildReady: () => glyphReady,
         run<T>(move: StepMove<T>): T {
             const previous = active?.animation;
-            const startProgress = move.kind === 'back' && previous?.to === 1 && active?.layer === move.layer
-                && (previous.grammar === 'morph' || previous.grammar === 'fold')
-                ? presentation?.readStepProgress(previous, (performance.now() - previous.epoch) / 1000)
+            const reverse = move.kind === 'back' && previous?.to === 1 && active?.layer === move.layer
+                && (previous.grammar === 'morph' || previous.grammar === 'fold') && active.endpoints && presentation
+                ? {
+                    grammar: previous.grammar,
+                    progress: presentation.readStepProgress(previous, (performance.now() - previous.epoch) / 1000),
+                    endpoints: active.endpoints,
+                }
                 : undefined;
             const outgoing = findLayer(move.layer);
             // Approval can request navigation while auth publishes the same Home in its mounted route.
@@ -467,15 +478,21 @@ function createStepMotionStage(
                 stack.push(anchor);
                 anchors.set(move.layer, stack);
             }
+            if (!readHostActivelyFocused()) {
+                const result = move.commit();
+                move.onSettled?.('skipped');
+                return result;
+            }
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
-            const grammar = presentation?.resolveMoveGrammar({
-                ...move, reduced: reduced || !glyphReady, compact: outgoing.compact,
-            }) ?? 'fade';
+            const still = reduced || !glyphReady;
+            const grammar = (!still ? reverse?.grammar : undefined)
+                ?? presentation?.resolveMoveGrammar({ ...move, reduced: still, compact: outgoing.compact })
+                ?? 'fade';
             const grid = gridForWindow();
             const next: PendingMove = {
                 outgoing,
-                kind: move.kind, grammar, grid, anchor, returnTo, startProgress, complete: move.onSettled,
+                kind: move.kind, grammar, grid, anchor, returnTo, reverse, complete: move.onSettled,
                 cancelled: false, layoutReady: false,
                 destination: move.kind === 'home' ? 'home' : move.layer,
             };
