@@ -1,3 +1,4 @@
+import * as accountKeyBinding from "@happier-dev/protocol/crypto/accountContentKeyBindingV1";
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -67,7 +68,7 @@ describe('Team label envelope repair for credential, external-key and Pool label
     return { account, content };
   }
 
-  it('discovers the one owed label without validating 1,001 stored recipient arrays', async () => {
+  it('discovers the one owed label and performs no binding verification once all 1,001 labels are prepared', async () => {
     const { account: owner } = await e2eeAccount();
     const { account: newcomer } = await e2eeAccount();
     const team = await db.team.create({ data: { name: 'Label census at scale' } });
@@ -97,6 +98,7 @@ describe('Team label envelope repair for credential, external-key and Pool label
     } });
     const parses = vi.spyOn(PrivateLabelStoredV1Schema, 'safeParse');
     const reparses = vi.spyOn(PrivateLabelStoredV1Schema, 'parse');
+    const bindings = vi.spyOn(accountKeyBinding, 'verifyAccountContentKeyBindingV1');
     try {
       const response = await app.inject({ method: 'GET', url: '/v2/teams/label-envelopes', headers: { 'x-test-user-id': owner.id } });
       expect(response.statusCode).toBe(200);
@@ -104,7 +106,16 @@ describe('Team label envelope repair for credential, external-key and Pool label
       expect(work.teams.flatMap(row => row.labels.map(label => label.binding.id))).toEqual([owedId]);
       expect(queries.filter(query => query.includes('TeamGroup') && query.startsWith('SELECT')).length).toBe(1);
       expect({ parses: parses.mock.calls.length, reparses: reparses.mock.calls.length }).toEqual({ parses: 0, reparses: 0 });
+      await db.teamGroup.update({ where: { id: owedId }, data: { name: current } });
+      bindings.mockClear();
+      queries.length = 0;
+      const settled = await app.inject({ method: 'GET', url: '/v2/teams/label-envelopes', headers: { 'x-test-user-id': owner.id } });
+      expect(settled.statusCode).toBe(200);
+      expect(settled.json()).toEqual({ teams: [] });
+      expect(queries.filter(query => query.includes('TeamGroup') && query.startsWith('SELECT'))).toHaveLength(1);
+      expect(bindings).not.toHaveBeenCalled();
     } finally {
+      bindings.mockRestore();
       parses.mockRestore();
       reparses.mockRestore();
       db.$transaction = transaction;

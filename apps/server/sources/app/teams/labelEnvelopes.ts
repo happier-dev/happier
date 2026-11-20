@@ -9,13 +9,14 @@ import {
   type PrivateLabelStoredV1,
   serializePrivateLabelStoredV1,
 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import {
   RESOURCE_RECIPIENT_ACCOUNT_SELECT,
-  projectSavedSecretRecipientEnvelopeCensusRecipientsV1,
+  projectStoredResourceRecipientEnvelopeCensusV1,
   readRequiredResourceRecipientEnvelopeRejectionV1,
   resolveSavedSecretAudienceAccountIdsInTx,
-  readTeamRecipientEnvelopeCensusesInTx,
+  readTeamResourceRecipientAccountsInTx,
 } from '@/app/encryption/savedSecretRecipientEnvelopeCensus';
 import { readMachinePoolPublicationAudienceInTx } from '@/app/machines/pools/machinePoolAccess';
 import type { Tx } from '@/storage/inTx';
@@ -181,10 +182,10 @@ function projectOwedTeamLabel(
   serialized: string | null,
   actorAccountId: string,
   ready: ReadonlyMap<string, string>,
-  extra: Census[number] | undefined,
+  extraAccountId: string | undefined,
+  extraFingerprint: string | undefined,
 ) {
-  const extraReady = extra?.readiness.status === 'available' ? extra.readiness : undefined;
-  const expected = ready.size + Number(extraReady !== undefined);
+  const expected = ready.size + Number(extraFingerprint !== undefined);
   if (!expected || !serialized?.startsWith('{')) return null;
   let stored: PrivateLabelStoredV1 | null;
   try {
@@ -199,9 +200,7 @@ function projectOwedTeamLabel(
     if (!recipient?.envelope) continue;
     const { accountId, envelope } = recipient;
     if (accountId === actorAccountId) actorEnvelope = envelope;
-    const fingerprint = accountId === extra?.account.accountId
-      ? extraReady?.contentPublicKeyFingerprint
-      : ready.get(accountId);
+    const fingerprint = accountId === extraAccountId ? extraFingerprint : ready.get(accountId);
     if (fingerprint !== undefined && envelope.recipientContentPublicKeyFingerprint === fingerprint) prepared++;
   }
   if (!actorEnvelope || prepared >= expected) return null;
@@ -212,7 +211,7 @@ function projectOwedTeamLabel(
       recipientContentPublicKeyFingerprint: actorEnvelope.recipientContentPublicKeyFingerprint,
     },
   });
-  return projected.success ? projected.data : null;
+  return projected.success ? { label: projected.data, storedRecipients: stored.recipients } : null;
 }
 
 /** Discover only encrypted labels this current member can open and whose current audience needs envelopes. */
@@ -223,51 +222,57 @@ export async function readTeamLabelEnvelopeWorkInTx(
 ): Promise<TeamLabelEnvelopeWorkV1> {
   const teamIds = await eligibleTeams(tx, actorAccountId, authentication);
   if (!teamIds.length) return { teams: [] };
-  const [rows, censuses] = await Promise.all([
-    readStoredTeamLabelsInTx(tx, teamIds),
-    readTeamRecipientEnvelopeCensusesInTx(tx, teamIds),
-  ]);
-  const readyByTeam = new Map([...censuses].map(([teamId, recipients]) => [
-    teamId,
-    new Map(recipients.flatMap(({ account, readiness }) => readiness.status === 'available'
-      ? [[account.accountId, readiness.contentPublicKeyFingerprint] as const]
-      : [])),
-  ]));
-  const memberIdsByTeam = new Map([...censuses].map(([teamId, recipients]) => [
-    teamId, new Set(recipients.map(({ account }) => account.accountId)),
-  ]));
-  const extraIds = [...new Set(rows.flatMap(({ teamId, extraAudienceAccountId }) =>
-    extraAudienceAccountId && !memberIdsByTeam.get(teamId)?.has(extraAudienceAccountId)
-      ? [extraAudienceAccountId] : [],
-  ))];
-  const extraAccounts = extraIds.length
-    ? await tx.account.findMany({
-        where: { id: { in: extraIds } },
-        select: RESOURCE_RECIPIENT_ACCOUNT_SELECT,
-      })
-    : [];
-  const extraById = new Map(
-    projectSavedSecretRecipientEnvelopeCensusRecipientsV1({
-      accounts: extraAccounts,
-      envelopes: [],
-    }).map((recipient) => [recipient.account.accountId, recipient]),
+  const rows = await readStoredTeamLabelsInTx(tx, teamIds);
+  if (rows.every(row => row.serialized === null)) return { teams: [] };
+  const { memberIdsByTeam, accountsById } = await readTeamResourceRecipientAccountsInTx(
+    tx, teamIds, rows.flatMap(row => row.extraAudienceAccountId ?? []),
   );
-  const byTeam = new Map<
-    string,
-    TeamLabelEnvelopeWorkV1['teams'][number]['labels']
-  >();
+  // Unverified fingerprints can exclude a prepared row from repair. Only
+  // verified Account bindings can become recipients in a response.
+  const candidates = new Map([...accountsById].flatMap(([id, account]) =>
+    account.encryptionMode === 'e2ee' && account.contentPublicKey !== null && account.contentPublicKeySig !== null
+      ? [[id, computeContentPublicKeyFingerprint(account.contentPublicKey)] as const] : [],
+  ));
+  const readyByTeam = new Map([...memberIdsByTeam].map(([teamId, ids]) => [
+    teamId, new Map(ids.flatMap(id => {
+      const fingerprint = candidates.get(id);
+      return fingerprint === undefined ? [] : [[id, fingerprint] as const];
+    })),
+  ]));
+  const memberSetsByTeam = new Map([...memberIdsByTeam].map(([teamId, ids]) => [teamId, new Set(ids)]));
+  const projected = new Map<string, Census[number]>();
+  const projectRecipient = (id: string) => {
+    const existing = projected.get(id);
+    if (existing) return existing;
+    const account = accountsById.get(id);
+    if (!account) return undefined;
+    const recipient = projectStoredResourceRecipientEnvelopeCensusV1(account, null);
+    projected.set(id, recipient);
+    return recipient;
+  };
+
+  const byTeam = new Map<string, TeamLabelEnvelopeWorkV1['teams'][number]['labels']>();
   for (const row of rows) {
     const ready = readyByTeam.get(row.teamId);
-    if (!ready) continue;
-    const extra = row.extraAudienceAccountId && !memberIdsByTeam.get(row.teamId)?.has(row.extraAudienceAccountId)
-      ? extraById.get(row.extraAudienceAccountId)
-      : undefined;
-    const label = projectOwedTeamLabel(row.serialized, actorAccountId, ready, extra);
-    if (!label) continue;
-    const teamRecipients = censuses.get(row.teamId) ?? [];
-    const recipients: Census = extra ? [extra, ...teamRecipients] : [...teamRecipients];
+    const members = memberIdsByTeam.get(row.teamId);
+    if (!ready || !members) continue;
+    const extraId = row.extraAudienceAccountId && !memberSetsByTeam.get(row.teamId)?.has(row.extraAudienceAccountId)
+      ? row.extraAudienceAccountId : undefined;
+    const extraFingerprint = extraId === undefined ? undefined : candidates.get(extraId);
+    const work = projectOwedTeamLabel(row.serialized, actorAccountId, ready, extraId, extraFingerprint);
+    if (!work) continue;
+    const storedFingerprints = new Map(work.storedRecipients.flatMap(recipient => recipient?.envelope
+      ? [[recipient.accountId, recipient.envelope.recipientContentPublicKeyFingerprint] as const] : []));
+    const ids = extraId === undefined ? members : [extraId, ...members];
+    const owed = ids.some(id => {
+      const candidate = candidates.get(id);
+      return candidate !== undefined && candidate !== storedFingerprints.get(id)
+        && projectRecipient(id)?.readiness.status === 'available';
+    });
+    if (!owed) continue;
+    const recipients: Census = ids.flatMap(id => projectRecipient(id) ?? []);
     const labels = byTeam.get(row.teamId) ?? [];
-    labels.push({ binding: row.binding, label, recipients });
+    labels.push({ binding: row.binding, label: work.label, recipients });
     byTeam.set(row.teamId, labels);
   }
   return { teams: [...byTeam].map(([teamId, labels]) => ({ teamId, labels })) };

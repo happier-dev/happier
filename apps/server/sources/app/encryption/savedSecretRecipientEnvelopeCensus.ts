@@ -71,21 +71,21 @@ async function readTeamAudienceAccountIdsInTx(tx: Tx, teamIds: readonly string[]
     return byTeam;
 }
 
-/** Batch the same Team audience policy for membership-driven envelope distribution. */
-export async function readTeamRecipientEnvelopeCensusesInTx(
+/** Capture each Team recipient Account row once, including controller or Pool owners named by storage. */
+export async function readTeamResourceRecipientAccountsInTx(
     tx: Tx,
     teamIds: readonly string[],
-): Promise<ReadonlyMap<string, readonly SavedSecretResourceEnvelopeCensusRecipientV1[]>> {
-    const byTeam = await readTeamAudienceAccountIdsInTx(tx, teamIds);
-    const accountIds = [...new Set([...byTeam.values()].flat())];
+    additionalAccountIds: readonly string[] = [],
+): Promise<Readonly<{
+    memberIdsByTeam: ReadonlyMap<string, readonly string[]>;
+    accountsById: ReadonlyMap<string, ResourceRecipientAccountRow>;
+}>> {
+    const memberIdsByTeam = await readTeamAudienceAccountIdsInTx(tx, teamIds);
+    const accountIds = [...new Set([...additionalAccountIds, ...[...memberIdsByTeam.values()].flat()])];
     const accounts = accountIds.length === 0 ? [] : await tx.account.findMany({
         where: { id: { in: accountIds } }, select: RESOURCE_RECIPIENT_ACCOUNT_SELECT,
     });
-    const recipients = projectSavedSecretRecipientEnvelopeCensusRecipientsV1({ accounts, envelopes: [] });
-    const byAccount = new Map(recipients.map(recipient => [recipient.account.accountId, recipient]));
-    return new Map([...byTeam].map(([teamId, ids]) => [
-        teamId, ids.flatMap(id => byAccount.get(id) ?? []),
-    ]));
+    return { memberIdsByTeam, accountsById: new Map(accounts.map(account => [account.id, account])) };
 }
 
 /**
