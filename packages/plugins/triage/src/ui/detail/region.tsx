@@ -315,6 +315,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
     instance: TriageDetailSurfaceInputV1['instance'];
   }>;
   linkedSessionIds: readonly string[];
+  linkedSessions: readonly TriageLinkedSessionProjectionV1[];
   taskSessionId?: string;
   /** Whether the reader opened this entry; it decides which action leads. */
   viewerIsAuthor: boolean;
@@ -423,8 +424,14 @@ function TriageEntryScopedActionRegion(props: Readonly<{
       const action = request.launchMode === undefined ? executable.action
         : applyTriageActionLaunchModeV1(executable.action, request.launchMode);
       if (action === null) return { kind: 'missing' as const };
+      // The link index's order carries no Session recency. Follow the reader's
+      // selected Session, or the most recently active linked Session.
       const teamModelFromSessionId = action.profileId === null && readTriageActionIntentV1(action) === 'fix'
-        ? props.linkedSessionIds[0] : undefined;
+        ? props.taskSessionId ?? props.linkedSessions.reduce<TriageLinkedSessionProjectionV1 | undefined>(
+            (latest, session) => !latest || (session.updatedAtMs ?? -1) > (latest.updatedAtMs ?? -1) ? session : latest,
+            undefined,
+          )?.sessionId
+        : undefined;
       let comparisonSource;
       if (action.target.kind === 'reviewStart') {
         try { comparisonSource = await readComparison(); } catch { /* Findings-only review remains available. */ }
@@ -1365,6 +1372,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           display={display}
           presentation={actionPresentation}
           linkedSessionIds={linkedSessionIds}
+          linkedSessions={header.linkedSessions}
           {...(selectedSessionId === null ? {} : { taskSessionId: selectedSessionId })}
           {...(comparisonRead === undefined ? {} : { comparisonRead })}
           {...(locator === undefined ? {} : { lastKnownLocator: locator })}

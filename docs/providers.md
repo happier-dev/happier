@@ -1122,7 +1122,8 @@ resource, Team, revision and delivery choice. Creation does not project V2 into 
 older carrier. The composed launcher validation for this source change is pending.
 
 In 0.3 development, a profile-free Triage Fix composer can seed its Team model
-from the linked Session. The New Session draft carries the same qualified V2
+from the selected linked Session, or from the most recently active Session
+among the entry's loaded links. The New Session draft carries the qualified V2
 choice and verifies it against the selected Home's current Team model catalog.
 If the resource is unavailable, the composer gives the reason and waits for
 another choice or for access to return. Team models remain scoped to the draft

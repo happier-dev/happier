@@ -1428,9 +1428,11 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(JSON.stringify(newSessionSeeds[0])).toContain('Fix this.');
     }, 60_000);
 
-    it('opens a fresh Fix composer from the linked investigation', async () => {
+    it('opens a fresh Fix composer from the recent linked investigation despite storage order', async () => {
         const harness = createHarness({ linkedSessions: [
+            { sessionId: 'session-older', displayTitle: 'Earlier investigation', updatedAtMs: 1_000 },
             { sessionId: 'session-investigation', displayTitle: 'Investigate this failure', updatedAtMs: 3_000 },
+            { sessionId: 'session-other', displayTitle: 'Other linked work', updatedAtMs: 2_000 },
         ] });
         const shell = await mountShell(harness);
         await openTheRow(shell);
