@@ -91,7 +91,6 @@ export function projectActionInputIssues(error: core.$ZodError): readonly Action
 /** Read the canonical compiler's last failure; never revalidate or copy input/prose. */
 export function projectActionInputJsonSchemaIssues(
   validate: PluginJsonSchemaValidator,
-  schema: object,
   input: unknown,
 ): readonly ActionInputIssue[] {
   // The Protocol JSON Schema compiler owns this AJV error-bag boundary.
@@ -105,13 +104,9 @@ export function projectActionInputJsonSchemaIssues(
       return key;
     });
     if (error.keyword === 'required' && typeof error.params.missingProperty === 'string') path.push(error.params.missingProperty);
-    let constraint: unknown = schema;
-    for (const encoded of error.schemaPath.slice(2).split('/')) {
-      constraint = constraint !== null && typeof constraint === 'object'
-        ? Reflect.get(constraint, encoded.replace(/~1/g, '/').replace(/~0/g, '~')) : undefined;
-    }
-    const acceptedValues = error.keyword === 'enum' && Array.isArray(constraint) ? constraint.filter(isJsonPrimitive)
-      : error.keyword === 'const' && isJsonPrimitive(constraint) ? [constraint] : undefined;
+    const { allowedValues, allowedValue } = error.params;
+    const acceptedValues = error.keyword === 'enum' && Array.isArray(allowedValues) ? allowedValues.filter(isJsonPrimitive)
+      : error.keyword === 'const' && isJsonPrimitive(allowedValue) ? [allowedValue] : undefined;
     const expected = error.keyword === 'type' && typeof error.params.type === 'string' ? error.params.type
       : error.keyword === 'required' ? 'nonoptional' : undefined;
     // AJV prose and additionalProperty can carry rejected content; use only the declared repair facts.

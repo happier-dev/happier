@@ -233,6 +233,32 @@ describe('createPluginActionInvocation', () => {
     });
   });
 
+  it('reports the declared repair values for a nested optional Action operand', () => {
+    const invocation = createInvocation({ inputSchema: {
+      type: 'object', additionalProperties: false, properties: {
+        mode: { enum: ['unrelated'] },
+        version: { const: 99 },
+        recovery: {
+          type: 'object', additionalProperties: false, required: ['mode', 'version'], properties: {
+            mode: { enum: ['resume', 'restart'] },
+            version: { const: 1 },
+          },
+        },
+      },
+    } });
+    const result = invocation.prepare({ recovery: { mode: 'private-rejected-value', version: 2 } });
+    expect(result).toMatchObject({
+      kind: 'settled', result: {
+        status: 'invalid', code: 'plugin_action_input_schema_invalid', issues: [
+          { code: 'enum', path: ['recovery', 'mode'], acceptedValues: ['resume', 'restart'] },
+          { code: 'const', path: ['recovery', 'version'], acceptedValues: [1] },
+        ],
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain('private-rejected-value');
+    expect(invocation.prepare({ recovery: { mode: 'restart', version: 1 } }).kind).toBe('ready');
+  });
+
   it('uses null as the canonical handler input only when an input-less Action omits input', async () => {
     const inputlessHandler = vi.fn(() => ({ accepted: true }));
     await expect(createInvocation().invoke(undefined, {

@@ -1011,8 +1011,8 @@ export function createPluginActionInvocation(params: Readonly<{
         normalizedInput = parsedNormalizedInput.data;
       }
       if (!validates(inputValidator, normalizedInput)) {
-        return settled(inputParser ? inputSchemaProjectionMismatch : inputValidator && params.inputSchema
-          ? invalidInputFromParserIssues(projectActionInputJsonSchemaIssues(inputValidator, params.inputSchema, normalizedInput)
+        return settled(inputParser ? inputSchemaProjectionMismatch : inputValidator
+          ? invalidInputFromParserIssues(projectActionInputJsonSchemaIssues(inputValidator, normalizedInput)
             .map(issue => ({ ...issue, message: issue.message ?? invalidInput.message })))
           : invalidInput);
       }

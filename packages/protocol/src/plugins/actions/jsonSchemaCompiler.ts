@@ -1,5 +1,5 @@
 /** Shared executable JSON Schema semantics; dialect admission belongs to each contract owner. */
-import { Ajv } from 'ajv';
+import { Ajv, _ } from 'ajv';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import formatsImport, { type FormatName, type FormatsPlugin } from 'ajv-formats';
 
@@ -98,12 +98,20 @@ function createAjv(dialect: 'draft-07' | 'draft-2020-12', inlineRefs: boolean): 
       return createPluginJsonEnumValidator(allowed);
     },
     errors: false,
+    error: {
+      message: 'must be equal to one of the allowed values',
+      params: ({ schemaCode }) => _`{allowedValues: ${schemaCode}}`,
+    },
   });
   ajv.removeKeyword('const');
   ajv.addKeyword({
     keyword: 'const',
     validate: (expected: unknown, value: unknown) => pluginJsonValuesEqual(expected, value),
     errors: false,
+    error: {
+      message: 'must be equal to constant',
+      params: ({ schemaCode }) => _`{allowedValue: ${schemaCode}}`,
+    },
   });
   ajv.removeKeyword('uniqueItems');
   ajv.addKeyword({
