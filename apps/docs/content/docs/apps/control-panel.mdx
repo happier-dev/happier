@@ -96,6 +96,12 @@ rule.
 
 Lima, Lume, Cua local sandboxes (container and QEMU runtimes) and newly created Cua Spaces are under development for 0.3. They are not released managed Machine support. The selected computer must have the native runtime installed and be reachable; a phone or browser controls that computer rather than running the guest itself.
 
+On macOS, Cua QEMU also needs the `cua-netgw` network gateway. The pinned Cua
+0.27.5 macOS archives omit it. When your Mac has QEMU and Cua cannot find the
+gateway, Happier shows that requirement and marks the QEMU option unavailable.
+Use a Cua installation on that Mac that can find the gateway, then check the
+option again.
+
 For Lima, choose a human-readable machine name; Happier generates the native
 instance name. There is no separate native instance-name field. Recovery and
 cleanup keep the recorded storage and native identity, including after you edit

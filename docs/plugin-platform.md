@@ -124,6 +124,12 @@ controller has no usable Cua CLI. If the managed dependency host can install it,
 the prerequisite offers the existing **Install Cua** Action. After installation,
 retry options on the same controller to read its native runtime and image choices.
 
+For local QEMU on macOS, the selected CLI’s doctor must also find `cua-netgw`.
+Cua uses that same gateway lookup when creating a QEMU guest. The pinned Cua
+0.27.5 macOS release archives omit the gateway. Happier’s Check, Options and
+launch qualification report `cua_qemu_gateway_unavailable` when the CLI finds
+QEMU but cannot find the gateway.
+
 Matching Protocol, SDK projection, plugin declaration and daemon readers reload
 together under the unpublished 0.3 direct cut. Older strict development readers
 reject the new executable-declaration field; existing declarations can omit it.
