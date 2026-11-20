@@ -34,6 +34,15 @@ export async function startSessionMcpAgent(params: Readonly<{
   if (spawned.status !== 200 || !spawned.data.success || !sessionId) {
     throw new Error(`Agent Session failed to start (HTTP ${spawned.status})`);
   }
+  // A completed ordinary turn lets the native runtime confirm its applied
+  // model before a tool spends that Session's Agent-start authority.
+  const warmed = await params.executeAsPerson('session.message.send', {
+    sessionId, message: 'Confirm this Session is ready.', reply: 'wait',
+  });
+  if (!warmed.ok) {
+    await params.executeAsPerson('session.stop', { sessionId });
+    throw new Error(`Agent warm-up turn refused (${warmed.errorCode})`);
+  }
   return {
     sessionId,
     stop: () => params.executeAsPerson('session.stop', { sessionId }),

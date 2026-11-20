@@ -494,7 +494,7 @@ describe('AE.P02.F8-shared-consent', () => {
       await waitExecuted(botApprovalId);
       const botReply = await botCommand;
       if (consent !== 'current') {
-        const visibleNotice = botReply.content?.map(content => typeof content.text === 'string' ? content.text : '').join('\n');
+        const visibleNotice = botReply.content?.map(content => content.type === 'text' ? content.text : '').join('\n');
         expect(visibleNotice).toContain('actorConsentUnavailableForRequester');
         expect(visibleNotice).toContain(shared.set.automationId);
         expect(visibleNotice).toContain(shared.triggerId);

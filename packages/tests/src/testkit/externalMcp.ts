@@ -1,15 +1,13 @@
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { repoRootDir } from './paths';
 import type { CliTestLaunchSpec } from './process/cliLaunchSpec';
 
-export type McpToolCallResult = Readonly<{
-  content?: readonly Readonly<{ text?: unknown }>[];
-  isError?: boolean;
-}>;
+export type McpToolCallResult = Readonly<Pick<CallToolResult, 'content' | 'isError'>>;
 
 export type ExternalMcpTransport = Readonly<{
   stderr?: {
@@ -92,7 +90,8 @@ export async function connectStdioMcp(params: Readonly<{
 }
 
 export function parseToolJson<T = Record<string, unknown>>(call: McpToolCallResult): T {
-  return JSON.parse(String(call.content?.[0]?.text ?? '')) as T;
+  const block = call.content[0];
+  return JSON.parse(block?.type === 'text' ? block.text : '') as T;
 }
 
 /** Native Action tools return the result payload, or the typed failure payload. */

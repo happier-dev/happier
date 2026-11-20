@@ -96,7 +96,7 @@ describe('Action automation admission with empty and unloaded keys', () => {
       } });
       expect(result.isError).not.toBe(true);
       expect(parseToolJson(result)).toEqual(preference);
-      const notices = result.content?.flatMap(block => typeof block.text === 'string'
+      const notices = result.content?.flatMap(block => block.type === 'text'
         ? readRecordListProperty(JSON.parse(block.text), 'automationNotices') : [])
         .map(notice => ActionAutomationNoticeV1Schema.parse(notice));
       expect(notices).toMatchObject([{ code: 'action_automations_not_checked' }]);
