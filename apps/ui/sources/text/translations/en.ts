@@ -10353,6 +10353,7 @@ const enSession = {
         stateApplied: 'Changed',
         stateSwitched: 'Switched',
         stateSkipped: 'Skipped',
+        reasonNoChange: 'No change',
         retryFailed: 'Retry failed',
         review: 'Review',
         reasonArchived: 'Archived',

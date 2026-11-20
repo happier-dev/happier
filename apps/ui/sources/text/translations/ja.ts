@@ -9172,6 +9172,7 @@ localTailscale: {
               stateApplied: "変更済み",
               stateSwitched: "切り替え済み",
               stateSkipped: "スキップ",
+              reasonNoChange: "変更なし",
               retryFailed: "失敗分を再試行",
               review: "確認",
               reasonArchived: "アーカイブ済み",

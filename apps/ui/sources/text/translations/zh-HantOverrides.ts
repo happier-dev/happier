@@ -7395,6 +7395,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     stateApplied: "已修改",
                     stateSwitched: "已切換",
                     stateSkipped: "已略過",
+                    reasonNoChange: "無變更",
                     retryFailed: "重試失敗項目",
                     review: "查看",
                     reasonArchived: "已封存",

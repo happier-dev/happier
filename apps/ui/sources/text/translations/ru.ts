@@ -9322,6 +9322,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
               stateApplied: "Изменено",
               stateSwitched: "Агент сменён",
               stateSkipped: "Пропущена",
+              reasonNoChange: "Без изменений",
               retryFailed: "Повторить неудачные",
               review: "Проверить",
               reasonArchived: "В архиве",

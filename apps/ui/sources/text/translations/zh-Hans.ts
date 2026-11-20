@@ -8551,6 +8551,7 @@ export const zhHans: TranslationStructure = {
             stateApplied: "已修改",
             stateSwitched: "已切换",
             stateSkipped: "已跳过",
+            reasonNoChange: "无变化",
             retryFailed: "重试失败项",
             review: "查看",
             reasonArchived: "已归档",
