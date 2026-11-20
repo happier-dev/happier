@@ -2747,6 +2747,7 @@ const actionFamilyTranslations = { 'zh-Hant': translated({
             session_control: '工作階段控制',
             session_capabilities: '工作階段能力',
             intent_start: '審查與委派',
+            review_reads: "檢視審查",
             review_comments: '審查留言',
             subagent_registry: '子代理',
             execution_run_control: '背景執行',

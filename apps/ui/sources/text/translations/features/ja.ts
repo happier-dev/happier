@@ -2801,6 +2801,7 @@ const actionFamilyTranslations = { ja: translated({
             session_control: 'セッションの操作',
             session_capabilities: 'セッションの機能',
             intent_start: 'レビューと委任',
+            review_reads: "レビューの閲覧",
             review_comments: 'レビューコメント',
             subagent_registry: 'サブエージェント',
             execution_run_control: 'バックグラウンド実行',

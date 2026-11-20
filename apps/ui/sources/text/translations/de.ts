@@ -18645,6 +18645,7 @@ settingsSession: {
     }
 ,
     projects: {
+        title: "Projekte",
         readiness: projectReadinessTranslations['de'],
         authoring: {
           open: "Mit einem Agenten einrichten",

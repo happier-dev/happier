@@ -2843,6 +2843,7 @@ const actionFamilyTranslations = { ca: translated({
             session_control: 'Controls de sessió',
             session_capabilities: 'Capacitats de la sessió',
             intent_start: 'Revisions i delegació',
+            review_reads: "Consulta de revisions",
             review_comments: 'Comentaris de revisió',
             subagent_registry: 'Agents subordinats',
             execution_run_control: 'Execucions en segon pla',

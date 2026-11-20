@@ -17339,6 +17339,7 @@ La meva pregunta: `,
     }
 ,
     projects: {
+        title: "Projectes",
         readiness: projectReadinessTranslations['ca'],
         authoring: {
           open: "Configura amb un agent",

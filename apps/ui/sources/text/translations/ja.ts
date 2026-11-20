@@ -18443,6 +18443,7 @@ settingsSession: {
   },
 
     projects: {
+        title: "プロジェクト",
         readiness: projectReadinessTranslations['ja'],
     authoring: {
       open: "エージェントでセットアップ",

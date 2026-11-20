@@ -18149,6 +18149,7 @@ settingsSession: {
   },
 
     projects: {
+        title: "项目",
         readiness: projectReadinessTranslations['zh-Hans'],
     authoring: {
       open: "使用智能体设置",

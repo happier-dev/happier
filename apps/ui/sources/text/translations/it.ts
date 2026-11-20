@@ -18533,6 +18533,7 @@ settingsSession: {
   },
 
     projects: {
+        title: "Progetti",
         readiness: projectReadinessTranslations['it'],
     authoring: {
       open: "Configura con un agente",

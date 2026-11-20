@@ -2746,6 +2746,7 @@ const actionFamilyTranslations = { 'zh-Hans': translated({
             session_control: '会话控制',
             session_capabilities: '会话能力',
             intent_start: '评审与委派',
+            review_reads: "查看评审",
             review_comments: '评审评论',
             subagent_registry: '子代理',
             execution_run_control: '后台运行',

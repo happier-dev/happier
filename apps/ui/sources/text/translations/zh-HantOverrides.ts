@@ -14004,6 +14004,7 @@ settingsSession: {
     },
 
   projects: {
+      title: "專案",
         deployments: {
             databaseQuery: {
                 title: "唯讀查詢", database: "資料庫名稱", run: "執行查詢", sql: "SQL", parameters: "參數 (JSON)",

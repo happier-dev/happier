@@ -18483,6 +18483,7 @@ settingsSession: {
   },
 
     projects: {
+        title: "Проекты",
         readiness: projectReadinessTranslations['ru'],
     authoring: {
       open: "Настроить с агентом",

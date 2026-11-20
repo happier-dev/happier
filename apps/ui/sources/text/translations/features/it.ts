@@ -2850,6 +2850,7 @@ const actionFamilyTranslations = { it: translated({
             session_control: 'Controlli di sessione',
             session_capabilities: 'Funzionalità della sessione',
             intent_start: 'Revisioni e delega',
+            review_reads: "Lettura delle revisioni",
             review_comments: 'Commenti di revisione',
             subagent_registry: 'Subagenti',
             execution_run_control: 'Esecuzioni in background',

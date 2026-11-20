@@ -2847,6 +2847,7 @@ const actionFamilyTranslations = { ru: translated({
             session_control: 'Управление сессиями',
             session_capabilities: 'Возможности сессии',
             intent_start: 'Ревью и делегирование',
+            review_reads: "Чтение ревью",
             review_comments: 'Комментарии ревью',
             subagent_registry: 'Субагенты',
             execution_run_control: 'Фоновые запуски',

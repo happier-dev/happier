@@ -18356,6 +18356,7 @@ settingsSession: {
   },
 
     projects: {
+        title: "Projekty",
         readiness: projectReadinessTranslations['pl'],
     authoring: {
       open: "Skonfiguruj z agentem",

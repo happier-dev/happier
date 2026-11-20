@@ -125,6 +125,7 @@ export const english = {
         messaging: 'Messaging',
         session_control: 'Session controls',
         intent_start: 'Reviews and delegation',
+        review_reads: "Read reviews",
         review_comments: 'Review comments',
         subagent_registry: 'Subagents',
         execution_run_control: 'Background runs',

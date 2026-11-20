@@ -21929,6 +21929,7 @@ const enProfiles = {
 };
 
 const enProjects = {
+  title: "Projects",
         readiness: projectReadinessTranslations['en'],
   authoring: {
     fromPage: ({ project, page }: { project: string; page: string }) => `From ${project} · ${page}`,
