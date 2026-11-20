@@ -9,6 +9,9 @@ import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation
 import { readExecutionRunErrorCode } from './errors';
 import { resolveModelStructuredOutputSupport, type AgentModelDescriptor } from '@happier-dev/protocol/models/descriptor';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { DaemonProviderModelProjectionRequestV1, DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc/providers';
+import { projectObservedNativeModelCatalog } from '@/providers/modelManagement/nativeModelObservation';
 
 type ModelAdmissionParams = Pick<ExecutionRunManagerStartParams,
   'backendTarget' | 'modelId' | 'modelSelection' | 'teamCredentialModel' | 'cwd'
@@ -56,8 +59,17 @@ export async function readNativeExecutionRunOfferedModel(params: Parameters<NonN
     signal?: AbortSignal;
     createAgentInvocationServices?: CreateAgentInvocationServices;
     isCurrent?: () => boolean;
+    machineId?: string;
+    readProviderModels?: (request: DaemonProviderModelProjectionRequestV1) => Promise<DaemonProviderModelProjectionResponseV1>;
     preflightDependencies?: Pick<CliProbeDependencies, 'createApiClient' | 'activatePurposeBindings' | 'connectedAccountsOwner' | 'savedSecretOperationContext'>;
   }>) {
+  if (params.connectedServices && !params.runtimeDescriptorV1 && params.machineId && params.readProviderModels) {
+    const agentTargetKey = buildBackendTargetKeyV2(readBackendTargetRefV2(params.backendTarget));
+    const projection = await params.readProviderModels({ machineId: params.machineId, agentTargetKey,
+      connectedServices: params.connectedServices, mode: 'picker' });
+    const catalog = projectObservedNativeModelCatalog(projection, agentTargetKey);
+    if (catalog) return findNativeExecutionRunOfferedModel(catalog.availableModels, params.modelId);
+  }
   const agentId = resolveExecutionRunRuntimeBackendId(params.backendTarget);
   // Structured-output runs are rare; the probe owner loads on the first one.
   const { invokeCliPreflightMethod } = await import('@/capabilities/probes/agentPreflight');

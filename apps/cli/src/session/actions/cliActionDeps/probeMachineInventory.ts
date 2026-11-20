@@ -6,6 +6,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import type { z } from 'zod/mini';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc/providers';
 import type { createCliActionInventoryDeps } from './createCliActionInventoryDeps';
+import { projectObservedNativeModelCatalog } from '@/providers/modelManagement/nativeModelObservation';
 
 /** The selected Machine, not the calling MCP process, owns native inventory. */
 export function createMachineInventoryProbe(params: Pick<Parameters<typeof createCliActionInventoryDeps>[0], 'callMachineAction' | 'serverId'>) {
@@ -47,13 +48,9 @@ export function createMachineInventoryProbe(params: Pick<Parameters<typeof creat
             ...(transportTimeoutMs === undefined ? {} : { timeoutMs: transportTimeoutMs }),
           }));
           signal?.throwIfAborted();
-          if (projected.success && projected.data.status === 'success' && projected.data.agentTargetKey === agentTargetKey
-            && projected.data.groups.length > 0 && projected.data.groups.every(group => group.catalogObserved === true)) {
-            const models = new Map(projected.data.groups.flatMap(group => group.rows
-              .filter(row => row.ref.providerConnectionId === null && row.compatibility.confirmed)
-              .map(row => [row.ref.modelId, { ...row.descriptor, id: row.ref.modelId }] as const)));
-            const observation = input.schema.safeParse({ agentId: input.agentId, source: 'dynamic',
-              availableModels: [...models.values()], supportsFreeform: projected.data.groups.some(group => group.supportsFreeformModelIds) });
+          const catalog = projected.success ? projectObservedNativeModelCatalog(projected.data, agentTargetKey) : null;
+          if (catalog) {
+            const observation = input.schema.safeParse({ agentId: input.agentId, source: 'dynamic', ...catalog });
             if (observation.success) return observation.data;
           }
         } catch {

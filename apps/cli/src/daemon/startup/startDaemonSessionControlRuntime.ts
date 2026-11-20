@@ -9463,6 +9463,22 @@ export async function startDaemonSessionControlRuntime(
         agentId: resolveExecutionRunRuntimeBackendId(request.backendTarget), signal,
       }, catalog => readNativeExecutionRunOfferedModel({ ...request, ...catalog, signal,
         promptCredentials: requester.bootstrap.credentials, accountSettings: requester.readAccountSettingsSnapshot().settings,
+        machineId: params.machineId,
+        ...(params.projectProviderModelsForAccount && requester.resolveManagedPurposeBindingIntent ? {
+          readProviderModels: (projectionRequest: import('@happier-dev/protocol/rpc/providers').DaemonProviderModelProjectionRequestV1) => {
+            const isCurrent = () => requester.isCurrent(signal);
+            return params.projectProviderModelsForAccount!(projectionRequest, {
+              getAccountSettingsSnapshot: requester.readAccountSettingsSnapshot,
+              resolveManagedPurposeBindingIntent: requester.resolveManagedPurposeBindingIntent!,
+              resolveManagedPurposeBindingIntentSelection: requester.resolveManagedPurposeBindingIntentSelection,
+              savedSecretOperationContext: requester.bootstrap.savedSecretOperationContext,
+              signal: signal ?? new AbortController().signal, isCurrent,
+              accountReadScope: { serverUrl: requester.bootstrap.serverHttpBaseUrl,
+                readCredentials: async () => requester.bootstrap.credentials,
+                readAccountSettingsSnapshot: async () => requester.readAccountSettingsSnapshot(), isCurrent },
+            });
+          },
+        } : {}),
         preflightDependencies: { createApiClient: async () => requester.api,
           activatePurposeBindings: requester.activatePurposeBindings, connectedAccountsOwner: requester.connectedAccountsOwner },
       })));

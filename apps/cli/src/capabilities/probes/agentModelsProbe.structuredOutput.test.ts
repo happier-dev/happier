@@ -102,6 +102,24 @@ describe('model probe structured output evidence', () => {
     expect(models?.find((model) => model.id === 'default')).toMatchObject({ capabilities: { structuredOutput: 'unsupported' } });
   });
 
+  it('keeps an explicit runtime descriptor on its native catalog instead of a selected source projection', async () => {
+    const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
+    if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');
+    const catalogEntry: AgentCatalogEntry = { ...entry, getPreflightSessionControlsProbeAdapter: async () => ({
+      // Only the native process response is replaced; descriptor routing stays real.
+      probeModelsRaw: async () => [{ id: 'native-only', name: 'Native only', capabilities: { structuredOutput: 'unsupported' } }],
+    }) };
+    const native = { backendTarget: { kind: 'builtInAgent' as const, agentId: 'codex' }, modelId: 'native-only',
+      cwd: '/explicit-native-runtime', catalogEntry, machineId: 'machine',
+      runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: {} },
+      connectedServices: { v: 2 as const, bindingsByServiceId: {} },
+      readProviderModels: async (): Promise<never> => { throw new Error('Explicit runtime must not read a different source catalog'); },
+    };
+    await expect(readNativeExecutionRunOfferedModel(native)).resolves.toMatchObject({
+      id: 'native-only', capabilities: { structuredOutput: 'unsupported' },
+    });
+  });
+
   it('distinguishes an unavailable native model read from unsupported structured output', async () => {
     const entry = readAgentCatalogSnapshot().catalogEntriesById.codex;
     if (!entry) throw new Error('Bundled Codex catalog fixture is unavailable');

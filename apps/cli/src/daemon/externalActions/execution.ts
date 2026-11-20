@@ -799,6 +799,40 @@ resolveServerFeaturesSnapshot?: () =>
           });
           return { purposes: requesterPurposeRuntime.purposes, isCurrent };
         };
+        const createProviderReadContext = async (actionContext: ActionExecutorContext,
+          preparedRuntime?: NonNullable<Awaited<ReturnType<typeof readRequesterPurposeRuntime>>>): Promise<import('@/providers/modelManagement/runtimeServices').RuntimeProviderAccountModelProjectionContext | null> => {
+          const signal = actionContext.signal ?? new AbortController().signal;
+          const runtime = preparedRuntime ?? await readRequesterPurposeRuntime(signal);
+          if (!runtime || !account) return null;
+          const { purposes, isCurrent } = runtime;
+          return {
+            getAccountSettingsSnapshot: account.operationContext.readSnapshot,
+            resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
+            resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+            savedSecretOperationContext: account.operationContext,
+            managedRuntimeAccount: {
+              readCredentials: async () => await isCurrent() ? account.operationContext.credentials : null,
+              connectedAccountsOwner: purposes.owner,
+              operationAuthority: createManagedProviderOperationAuthority({
+                materializationBaseDir: join(configuration.happyHomeDir, 'providers', 'managed-operation-auth'),
+                purposeBindingOwner: purposes, requestAuthRegistry: connectedAccountRequestAuthRegistry,
+                resolveRequestAuthHttpPort: requireConnectedAccountRequestAuthHttpPort,
+                createRedactionLease: () => createProviderRedactionLease({ values: [] }),
+              }),
+              resolveSharedGateway: createMachineSharedProviderGatewayResolver({ machineId: params.machineId,
+                readAccountId: () => account.accountId,
+                readOrigin: async () => await isCurrent()
+                  ? await params.resolveCurrentMachineExecutionOriginContext?.(signal) ?? null : null }),
+            },
+            accountReadScope: {
+              serverUrl: account.operationContext.serverHttpBaseUrl,
+              readCredentials: async () => account.operationContext.credentials,
+              readAccountSettingsSnapshot: async () => account.operationContext.readSnapshot(),
+              isCurrent,
+            },
+            signal, isCurrent,
+          };
+        };
         const readNativeOfferedModel: NonNullable<RequesterAccountActionContext['readNativeOfferedModel']> = async (request, signal) => {
           const runtime = await readRequesterPurposeRuntime(signal);
           const snapshot = account?.operationContext.readSnapshot();
@@ -809,6 +843,12 @@ resolveServerFeaturesSnapshot?: () =>
           return await withAgentPreflightCatalog({ agentId: resolveExecutionRunRuntimeBackendId(request.backendTarget), signal },
             catalog => readNativeExecutionRunOfferedModel({ ...request, ...catalog, signal,
               promptCredentials: operation.credentials, accountSettings: snapshot.settings,
+              machineId: params.machineId,
+              ...(params.projectProviderModelsForAccount ? { readProviderModels: async (projectionRequest: import('@happier-dev/protocol/rpc/providers').DaemonProviderModelProjectionRequestV1) => {
+                const context = await createProviderReadContext({ signal }, runtime);
+                if (!context) throw modelCatalogUnavailable(request.modelId, 'requester_account_context_unavailable');
+                return await params.projectProviderModelsForAccount!(projectionRequest, context);
+              } } : {}),
               preflightDependencies: {
                 createApiClient: async credentials => await runWithServerHttpBaseUrl(operation.serverHttpBaseUrl,
                   async () => (await import('@/api/api')).ApiClient.create(credentials)),
@@ -817,9 +857,10 @@ resolveServerFeaturesSnapshot?: () =>
               },
             }));
         };
-        return { readRequesterPurposeRuntime, readNativeOfferedModel };
+        return { readRequesterPurposeRuntime, readNativeOfferedModel, createProviderReadContext };
       };
       const requesterAccountReaders = createRequesterAccountReaders(providerProjectionAccount);
+      const createProviderReadContext = requesterAccountReaders.createProviderReadContext;
       const decorateRequesterAuthorization = (authorization: Parameters<typeof rebindRequesterAccountActionContext>[0]) => {
         const requester = readRequesterAccountActionContext(authorization);
         if (!requester) return authorization;
@@ -833,39 +874,6 @@ resolveServerFeaturesSnapshot?: () =>
             });
         return rebindRequesterAccountActionContext(authorization, authorization,
           { ...requester, readNativeOfferedModel: readers.readNativeOfferedModel });
-      };
-      const createProviderReadContext = async (actionContext: ActionExecutorContext): Promise<import('@/providers/modelManagement/runtimeServices').RuntimeProviderAccountModelProjectionContext | null> => {
-        const signal = actionContext.signal ?? new AbortController().signal;
-        const runtime = await requesterAccountReaders.readRequesterPurposeRuntime(signal);
-        if (!runtime || !providerProjectionAccount) return null;
-        const { purposes, isCurrent } = runtime;
-        return {
-          getAccountSettingsSnapshot: providerProjectionAccount.operationContext.readSnapshot,
-          resolveManagedPurposeBindingIntent: purposes.resolveBindingIntent,
-          resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
-          savedSecretOperationContext: providerProjectionAccount.operationContext,
-          managedRuntimeAccount: {
-            readCredentials: async () => await isCurrent() ? providerProjectionAccount.operationContext.credentials : null,
-            connectedAccountsOwner: purposes.owner,
-            operationAuthority: createManagedProviderOperationAuthority({
-              materializationBaseDir: join(configuration.happyHomeDir, 'providers', 'managed-operation-auth'),
-              purposeBindingOwner: purposes, requestAuthRegistry: connectedAccountRequestAuthRegistry,
-              resolveRequestAuthHttpPort: requireConnectedAccountRequestAuthHttpPort,
-              createRedactionLease: () => createProviderRedactionLease({ values: [] }),
-            }),
-            resolveSharedGateway: createMachineSharedProviderGatewayResolver({ machineId: params.machineId,
-              readAccountId: () => providerProjectionAccount.accountId,
-              readOrigin: async () => await isCurrent()
-                ? await params.resolveCurrentMachineExecutionOriginContext?.(signal) ?? null : null }),
-          },
-          accountReadScope: {
-            serverUrl: providerProjectionAccount.operationContext.serverHttpBaseUrl,
-            readCredentials: async () => providerProjectionAccount.operationContext.credentials,
-            readAccountSettingsSnapshot: async () => providerProjectionAccount.operationContext.readSnapshot(),
-            isCurrent,
-          },
-          signal, isCurrent,
-        };
       };
       const nativeManagedMachineAdapter = createDaemonManagedMachineActionAdapter({
           readGuestHomeHostIdentity,
