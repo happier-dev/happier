@@ -33,7 +33,7 @@ function createHomeDeliverySubmitPort(port: SessionSubmitPort, args: Parameters<
         shouldDelegatePendingActivationToDaemon: undefined,
         enqueuePendingMessage: async (sessionId, text, displayText, meta, options) => {
             const sent = await send(sessionId, text, displayText, { ...args.messageMeta, ...meta },
-                options?.requestedAction, options?.localId);
+                options?.requestedAction ?? args.requestedAction, options?.localId);
             return sent;
         },
         sendMessage: async (sessionId, text, displayText, meta, options) => {
@@ -68,9 +68,8 @@ export async function submitUiSessionMessage(port: SessionSubmitPort, options: S
                 ...(options.hostAdmissionOrigin ? { hostAdmissionOrigin: options.hostAdmissionOrigin } : {}) });
             const selection = readSessionMessageModelSelectionV1(record.meta);
             if (selection.status === 'invalid') throw new HappyError('Invalid model selection', false, { code: 'invalid_parameters' });
-            return buildExistingSessionMessageActionInput({
+            const input = buildExistingSessionMessageActionInput({
                 sessionId: options.sessionId, message: options.text,
-                ...(options.metaOverrides?.happierStructuredInputV1 !== undefined ? { structuredInput: options.metaOverrides.happierStructuredInputV1 } : {}),
                 messageMeta: record.meta,
                 ...(selection.status === 'valid' ? { modelSelection: selection.selection }
                     : typeof record.meta?.model === 'string' || record.meta?.model === null ? { modelOverride: record.meta.model } : {}),
@@ -78,6 +77,8 @@ export async function submitUiSessionMessage(port: SessionSubmitPort, options: S
                 ...(options.recipient ? { recipient: options.recipient } : {}),
                 ...(options.requestedAction ? { requestedAction: options.requestedAction } : {}),
             });
+            const structuredInput = options.metaOverrides?.happierStructuredInputV1;
+            return structuredInput === undefined ? input : { ...input, structuredInput };
         },
         sessionSendMessage: async (args, delivery) => {
             const { permissionModeOverride, context } = args;

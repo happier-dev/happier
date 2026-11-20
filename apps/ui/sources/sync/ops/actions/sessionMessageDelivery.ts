@@ -18,10 +18,12 @@ export type SessionMessageDelivery = NonNullable<ActionExecutorDeps['sessionSend
 
 export function projectSessionMessageTarget({ session, target }: Awaited<ReturnType<typeof readMachineControlTargetForSessionAuthority>>) {
   const metadata = readSessionOwnerMetadataView(session);
+  const processStartTime = metadata?.hostProcessStartTimeMs;
+  const processFingerprint = metadata?.hostProcessInstanceFingerprint;
   return { sessionId: session.id, machineId: target?.machineId ?? null,
     isRecipient: isSessionAccessRecipient(session.access, session.accessLevel),
-    hostOccurrence: [metadata?.hostPid ?? null, metadata?.hostProcessStartTimeMs ?? null,
-      metadata?.hostProcessInstanceFingerprint ?? null] as const };
+    hostOccurrence: [metadata?.hostPid ?? null, typeof processStartTime === 'number' ? processStartTime : null,
+      typeof processFingerprint === 'string' ? processFingerprint : null] as const };
 }
 
 export const preparedSessionMessageTarget = Symbol('preparedSessionMessageTarget');

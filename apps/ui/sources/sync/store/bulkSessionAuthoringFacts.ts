@@ -2,6 +2,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionAddressV1';
 import type { ExistingSessionPlanningTarget } from '@happier-dev/protocol/sessions/authoring/existingSessionPlanner';
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
+import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
 import { type ResumeCapabilityOptions } from '@/agents/runtime/resumeCapabilities';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { resolveSessionOwnerMetadataViewRead } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -24,6 +25,7 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
     const metadataRead = session ? resolveSessionOwnerMetadataViewRead(session) : null;
     const metadata = metadataRead?.kind === 'available' ? metadataRead.metadata : null;
     const snapshot = session ? deriveSessionAuthoringSnapshot({ session }) : null;
+    const connectedServices = readSessionConnectedServiceBindings({ metadata, agentId: snapshot?.agentId ?? '' });
     const configOptions = readSessionConfigOptionsState(metadata);
     const modeControl = snapshot?.agentId ? computeSessionModePickerControl({ agentId: snapshot.agentId, metadata }) : null;
     const actionTarget = session ? createSessionActionTarget({ session, serverId: address.serverId, resumeCapabilityOptions: resumeOptions }) : null;
@@ -48,7 +50,7 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
         agentTarget: snapshot?.agentTarget ?? null,
         modelSelection: snapshot?.modelSelection ? { ...snapshot.modelSelection, updatedAt: 0 } : null,
         permissionMode: snapshot?.permissionMode ?? null,
-        connectedServices: snapshot?.connectedServices ?? null,
+        connectedServices,
         capabilitySelection: snapshot?.capabilitySelection ?? null,
         sessionConfigOptionOverrides,
         acpSessionModeId: modeControl?.effectiveModeId ?? null,
@@ -72,7 +74,7 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
         directory,
         modelId: snapshot?.modelId ?? null,
         permissionMode: snapshot?.permissionMode ?? null,
-        connectedServices: snapshot?.connectedServices ?? null,
+        connectedServices,
         sessionConfigOptionOverrides,
         values,
         planningTarget,

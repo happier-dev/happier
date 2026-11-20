@@ -13,6 +13,7 @@ import {
   type ExternalActionExecutionAuthorizationV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { encodeBase64 } from '@/api/encryption';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { createRequesterSessionStopEffect } from './requesterSessionStop';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
@@ -43,7 +44,7 @@ describe('createRequesterSessionStopEffect', () => {
     const reads = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: rawSession } });
     const physicalStop = vi.fn(async () => ({ status: 'stopped' as const }));
     const stop = createRequesterSessionStopEffect({ requester, purpose: { kind: 'external_action' },
-      machineId: 'machine-1', installation: { installationId: 'installation-1', privateKey: keys.secretKey },
+      machineId: 'machine-1', installation: { installationId: 'installation-1', privateKey: encodeBase64(keys.secretKey, 'base64url') },
       stopSession: physicalStop });
 
     await expect(stop({ sessionId, stopIntent: 'lifecycle_control', context })).resolves.toMatchObject({ stopped: true });

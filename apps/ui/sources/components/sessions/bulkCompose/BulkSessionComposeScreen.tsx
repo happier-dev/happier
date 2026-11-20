@@ -249,7 +249,7 @@ function BulkSessionComposer(
   }, [composer.agentSwitchingEnabled, controlTargets.targets]);
   const enginePicker = useSessionAuthoringEnginePicker({
     values: composer.selection,
-    facts: engineControl.kind === 'options' ? leadFacts : undefined,
+    facts: engineControl.kind === 'options' ? leadFacts ?? undefined : undefined,
     engineOptions: engineControl.kind === 'options' ? engineControl.options : undefined,
     catalogRetries: engineCatalogRetries,
     disabled: engineControl.kind !== 'options',
