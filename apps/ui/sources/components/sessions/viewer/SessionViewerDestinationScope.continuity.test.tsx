@@ -8,6 +8,8 @@ import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { renderScreen } from '@/dev/testkit';
 import { invokeTestInstanceHandler } from '@/dev/testkit/render/renderScreen';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
     createRetainedPresentationSlotsStore,
     RetainedPresentationSlotsProvider,
@@ -26,6 +28,9 @@ import { SessionViewerDestinationScope, useSessionDestinationAccountBinding, use
 import { RetainedSessionViewerSource } from './RetainedSessionViewerSource';
 import { SessionViewerHost } from './SessionViewerHost';
 import { SessionViewerStickySlot } from './SessionViewerStickySlot';
+
+installDisconnectedServerSocketBoundary();
+await loadSyncSingletonForTests();
 
 const presence: SessionViewerPresence = {
     presence: { kind: 'agent', activity: null, target: null, controlEpoch: 1 },

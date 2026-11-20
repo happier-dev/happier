@@ -87,7 +87,15 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         expect(hook.getCurrent().canManage).toBe(true);
         await act(async () => { await hook.getCurrent().remove(); });
         expect(homes.requestsFor(`/v1/artifacts/${artifactId}/revision/1/1`).filter(row => row.method === 'DELETE')).toHaveLength(1);
-        expect(Modal.alert).toHaveBeenLastCalledWith(t('approvals.transientFailureTitle'), t('approvals.transientFailure'));
+        // 38e2096ca47 preserves the typed delete refusal behind deliberate disclosure.
+        expect(Modal.alert).toHaveBeenLastCalledWith(t('approvals.transientFailureTitle'), t('approvals.transientFailure'), [
+            { text: t('approvals.technicalDetails'), onPress: expect.any(Function) },
+            { text: t('common.ok'), style: 'cancel' },
+        ]);
+        const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.[0];
+        if (!details?.onPress) throw new Error('Expected deliberate failure details');
+        details.onPress();
+        expect(Modal.alert).toHaveBeenLastCalledWith(t('approvals.technicalDetails'), 'database_transaction_conflict_exhausted');
         expect(onDeleted).not.toHaveBeenCalled();
         expect(storage.getState().artifacts[artifactId]).toBeDefined();
         refuse = false;
@@ -171,6 +179,9 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         const created = await createArtifactActionsClient(scope).createArtifact({ header: { kind: 'artifact.legacy', title: 'Release notes' }, body: 'Private body' });
         if (!('ok' in created) || !created.ok) throw new Error('Expected Doc');
         const artifactId = created.value.artifactId;
+        // Finish the setup write's Account-change repair before measuring this missing-label read.
+        const { sync } = await import('@/sync/sync');
+        await sync.resumeSync('changes-catch-up');
         storage.getState().deleteArtifact(artifactId);
         const artifactIds = [artifactId];
         const before = homes.requests.length;

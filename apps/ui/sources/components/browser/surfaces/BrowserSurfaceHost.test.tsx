@@ -47,6 +47,7 @@ import { createMachineFixture, createPlainMachineReadHttpResponseFixture } from 
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { BROWSER_RUNTIME_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/browser';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
@@ -97,6 +98,10 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
 });
 
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+
+// The renderer has no measured portal anchor; keep real menu rows and Actions beneath it.
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -648,6 +653,7 @@ beforeEach(async () => {
         const actionResponse = await browserActionHttp?.(input, init);
         if (actionResponse) return actionResponse;
         const path = new URL(String(input)).pathname;
+        if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return Response.json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
         const previewResponse = await previewActionBoundary.handle(new URL(String(input)), init);
         if (previewResponse) return previewResponse;
         if (path === '/v1/features' && browserFeatures) return Response.json(browserFeatures);
