@@ -129,6 +129,16 @@ describe('RootLayoutRedirectGate', () => {
 
     afterEach(() => { locks.restore(); });
 
+    it('lets the signed-out desktop opening presenter mount without redirecting to welcome', async () => {
+        authState.isAuthenticated = false;
+        setNav('/desktop/opening', ['(app)', 'desktop', 'opening']);
+        const screen = await renderGateScreen(<RootLayoutRedirectGate><div data-testid="opening-presenter" /></RootLayoutRedirectGate>);
+        try {
+            expect(screen.findAll(node => node.props['data-testid'] === 'opening-presenter')).toHaveLength(1);
+            expect(screen.findAllByType('Redirect' as never)).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('preserves the explicit Home when redirecting a protected route to sign-in', async () => {
         authState.isAuthenticated = false;
         setNav('/settings', ['settings']);

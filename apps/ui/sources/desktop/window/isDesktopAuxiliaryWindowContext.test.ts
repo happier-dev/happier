@@ -29,6 +29,7 @@ describe('isDesktopAuxiliaryWindowContext', () => {
         '/desktop/pet-overlay',
         '/desktop/capture',
         '/desktop/capture-selection',
+        '/desktop/opening',
     ])('recognizes the dedicated %s presenter route', async (pathname) => {
         isDesktopHostMock.mockReturnValue(true);
         setWindowLocation(`http://localhost:8081${pathname}`);

@@ -320,6 +320,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     options={rootStackRouteOptions['desktop/activity-overlay']}
                 />
                 <Stack.Screen
+                    name="desktop/opening"
+                    options={rootStackRouteOptions['desktop/activity-overlay']}
+                />
+                <Stack.Screen
                     name="automations/index"
                     options={rootStackRouteOptions['automations/index']}
                 />

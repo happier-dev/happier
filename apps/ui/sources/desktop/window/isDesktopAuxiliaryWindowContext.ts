@@ -40,6 +40,7 @@ function resolveNativeBootPathnameContext(pathname: string | null): DesktopWindo
         case '/desktop/activity-overlay':
         case '/desktop/pet-overlay':
         case '/desktop/capture':
+        case '/desktop/opening':
         case '/desktop/capture-selection': return PRESENTER;
         default: return PRIMARY;
     }

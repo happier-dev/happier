@@ -98,6 +98,8 @@ describe('isPublicRouteForUnauthenticated', () => {
         { name: 'desktop activity overlay route', segments: ['desktop', 'activity-overlay'], expected: true },
         { name: 'desktop Capture window route', segments: ['(app)', 'desktop', 'capture'], expected: true },
         { name: 'desktop capture selection route', segments: ['(app)', 'desktop', 'capture-selection'], expected: true },
+        { name: 'desktop opening presenter is public', segments: ['(app)', 'desktop', 'opening'], expected: true },
+        { name: 'children of the desktop opening presenter stay private', segments: ['desktop', 'opening', 'nested'], expected: false },
         { name: 'grouped desktop activity overlay route', segments: ['(app)', 'desktop', 'activity-overlay'], expected: true },
         { name: 'other dev route stays private', segments: ['(app)', 'dev', 'other'], expected: false },
         { name: 'private settings route', segments: ['settings'], expected: false },

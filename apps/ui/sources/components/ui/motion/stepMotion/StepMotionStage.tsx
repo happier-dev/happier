@@ -88,6 +88,7 @@ function createStepMotionStage(
     let commitOrder = 0;
     let glyphReady = false;
     let buildPrepared = false;
+    let reportBuildReady: ((ready: boolean) => void) | undefined;
     let presentation: StepMotionPresentation | null = null;
     let stopObserving: (() => void) | undefined;
 
@@ -400,17 +401,24 @@ function createStepMotionStage(
             pressed = null;
         },
         glyphReadiness(readiness: GlyphSurfaceReadiness) {
-            glyphReady = readiness === 'ready';
+            const ready = readiness === 'ready';
+            if (ready !== glyphReady) {
+                glyphReady = ready;
+                reportBuildReady?.(ready);
+            }
             if (!glyphReady && active?.animation) settle();
         },
         loadPresentation(loaded: StepMotionPresentation) {
             presentation = loaded;
         },
-        prepareBuild() {
+        prepareBuild(onReady?: (ready: boolean) => void) {
             buildPrepared = true;
+            reportBuildReady = onReady;
+            onReady?.(glyphReady);
             warm();
             return () => {
                 buildPrepared = false;
+                reportBuildReady = undefined;
                 syncPresentation();
             };
         },
@@ -559,9 +567,9 @@ export function useStepMotionStage() {
 }
 
 /** Warm the admitted opening without delaying its first layout. */
-export function usePrepareStepBuild(admitted: boolean): () => boolean {
+export function usePrepareStepBuild(admitted: boolean, onReady?: (ready: boolean) => void): () => boolean {
     const stage = useStepMotionStage();
-    React.useLayoutEffect(() => admitted ? stage?.prepareBuild() : undefined, [admitted, stage]);
+    React.useLayoutEffect(() => admitted ? stage?.prepareBuild(onReady) : undefined, [admitted, onReady, stage]);
     return React.useCallback(() => stage?.isBuildReady() ?? false, [stage]);
 }
 
