@@ -81,3 +81,33 @@ it('admits Run authority once, reuses it at commit, and refuses an explicitly wi
     await fixture.cleanup();
   }
 });
+
+it('identifies the attached Run account scope mismatch before Provider preparation', async () => {
+  const fixture = await createAttachedManagedRunFixture({ issuedRequester: true });
+  const diagnostics = vi.spyOn(logger, 'infoFile');
+  let snapshotId: string | undefined;
+  try {
+    const backendTarget = { kind: 'backend' as const, backendId: fixture.fixture.agentId };
+    const acquired = await fixture.dispatch({ kind: 'execution_run.snapshot.acquire_v1', backendTarget });
+    if (!acquired.ok || acquired.result.kind !== 'execution_run.snapshot') throw new Error('Expected real Run snapshot');
+    snapshotId = acquired.result.snapshotId;
+    const prepared = await fixture.dispatchRequest({ v: 1,
+      context: { token: 'a'.repeat(43), sessionId: 'parent-session', executionRunSnapshotId: snapshotId },
+      operation: { kind: 'execution_run.provider.prepare_v1',
+        selection: { agentTargetKey: fixture.fixture.agentTargetKey, providerConnectionId: 'run-gateway', modelId: 'example' },
+        backendTarget, agentId: fixture.fixture.agentId, runId: fixture.proof.executionRunId,
+        controllerOccurrenceId: fixture.proof.executionRunOccurrenceId, expectedAccountSettingsScopeKey: 'wrong-fixture-scope' },
+    });
+    expect(prepared).toMatchObject({ ok: true, result: { kind: 'execution_run.provider.prepared', ok: false,
+      providerError: { code: 'provider_authorization_changed',
+        failureCause: { nativeErrorReason: 'request_settings_scope_mismatch' } } } });
+    const refusals = diagnostics.mock.calls.flatMap(([marker, record]) =>
+      marker === '[PROVIDER] Run authorization refused' ? [JSON.parse(String(record))] : []);
+    expect(refusals).toEqual([{ code: 'provider_authorization_changed', reason: 'request_settings_scope_mismatch',
+      scopeKind: 'requester_account' }]);
+  } finally {
+    diagnostics.mockRestore();
+    if (snapshotId) await fixture.dispatch({ kind: 'execution_run.snapshot.release_v1', snapshotId });
+    await fixture.cleanup();
+  }
+});
