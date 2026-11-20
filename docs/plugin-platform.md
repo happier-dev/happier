@@ -4457,11 +4457,10 @@ the callback does not turn daemon Actions into Account Actions.
 
 When a controller executes an Account provisioner role, the containing operation
 supplies its held native registry for connected-account credential materialization.
-The requester Account still owns the credential reads and purpose bindings; the
-same purpose owner serves both the Action and managed acquisition. This allows
-native-only authentication materializers, such as Boat's, to serve the Account
-role without another action or client. Account execution without a controller
-continues to use its own registry.
+The requester Account owns the credential reads and purpose bindings. The same
+purpose owner serves both the Action and managed acquisition. A reviewed Action
+running in the requester Account uses that Account's registry. Boat registers
+its portable credential handler there so reviewed Prepare can read its options.
 
 #### Vendor-native credential delivery (0.3 development contract)
 

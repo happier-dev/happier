@@ -30,4 +30,5 @@ const account = createMachineProvisionerApiKeyAccount({
   },
 });
 export const connectedAccountRuntime = account.runtime;
+export const connectedAccountPortableRuntime = account.portableRuntime;
 export const nativeFetch = account.nativeFetch;

@@ -21,7 +21,7 @@ import { projectMachineProvisionerActionFailure,
   type MachineProvisionerNativeCauseV1,
 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import type { resolveMachineProvisionerSshBootstrap } from '@happier-dev/plugin-sdk/machine-provisioners/ssh';
-import { ACCOUNT_ID, ACCOUNT_PURPOSE, BOAT_NATIVE_HTTP_METHODS, connectedAccountRuntime, nativeFetch } from './account.js';
+import { ACCOUNT_ID, ACCOUNT_PURPOSE, BOAT_NATIVE_HTTP_METHODS, connectedAccountRuntime, connectedAccountPortableRuntime, nativeFetch } from './account.js';
 import { BOAT_STOPPED_STORAGE_NOTICE, createBoatNativeClient, type BoatSize } from './machine/nativeClient.js';
 import {
   BoatLaunchV1Schema,
@@ -152,7 +152,8 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
   ], optional: [] },
   systemTools: { 'ssh-keyscan': { title: 'OpenSSH host key scanner', executableNames: ['ssh-keyscan'] } },
   connectedAccountDescriptors: { [ACCOUNT_ID]: {
-    declaration: { title: 'Boat account', ui: { category: 'cloud-machines' }, authentication: { defaultModeId: 'token', modes: [{
+    declaration: { title: 'Boat account', ui: { category: 'cloud-machines' }, authentication: {
+      account: defaults.execution.account, defaultModeId: 'token', modes: [{
       id: 'token', kind: 'manual', title: 'API key', apiKey: true, outcomeReconciliation: 'none',
       setup: { url: 'https://boat.dev/dashboard', createKeyTitle: 'Open Boat dashboard',
         // https://docs.boat.dev/api-keys/scopes does not enumerate ci's
@@ -167,6 +168,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
       fields: [{ id: 'token', title: 'API key', schema: { type: 'string', minLength: 1 }, secret: true }],
     }] } },
     runtime: connectedAccountRuntime,
+    accountRuntime: connectedAccountPortableRuntime,
   } },
   machineProvisioners: { [PROVISIONER_ID]: MACHINE_PROVISIONER },
   actions: {

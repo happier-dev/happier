@@ -2,13 +2,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import fastify from 'fastify';
+import { Agent, MockAgent } from 'undici';
 import { afterEach, expect, it, vi } from 'vitest';
 import { accountSettingsParse, FeaturesResponseSchema, QualifiedConnectedAccountRefSchema, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
-import { createManagedMachineAcquisitionDriver } from '@/machines/managed/acquire';
+import { createManagedMachineAcquisitionDriver, ManagedMachineControllerError } from '@/machines/managed/acquire';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -40,17 +41,22 @@ import { createCommittedContributedActionInvoker, listRuntimeContributedActionDe
 import { createStablePluginUiResourceWatchOwner } from './invocation/services/uiResourceWatch';
 
 const vendor = vi.hoisted(() => ({ request: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>() }));
-// test-policy-boundary: Undici is the third-party network transport; credential composition stays real.
-vi.mock('undici', async importOriginal => ({ ...await importOriginal<typeof import('undici')>(),
-    fetch: (url: string, init?: RequestInit) => vendor.request(url, init),
-}));
+// test-policy-boundary: The Vercel stream is driven frame by frame at the network boundary.
+vi.mock('undici/index.js', async importOriginal => {
+    const native = await importOriginal<typeof import('undici/index.js')>();
+    const fetch = (url: string, init?: RequestInit) => vendor.request.getMockImplementation()
+        ? vendor.request(url, init)
+        : native.fetch(url, init as Parameters<typeof native.fetch>[1]);
+    return { ...native, default: { ...native.default, fetch }, fetch };
+});
 afterEach(() => { vi.restoreAllMocks(); });
 
 it.each([
-    { name: 'Boat native-only credentials on the held Machine registry', borrowNativeRegistry: true, manifest: boatManifest, directory: 'machine-boat', serviceId: 'boat-account', provisionerId: 'boat', origin: 'https://boat.dev' },
+    { name: 'Boat credentials on the held Machine registry', borrowNativeRegistry: true, manifest: boatManifest, directory: 'machine-boat', serviceId: 'boat-account', provisionerId: 'boat', origin: 'https://boat.dev' },
+    { name: 'Boat reviewed choices on the requester Account registry', borrowNativeRegistry: false, manifest: boatManifest, directory: 'machine-boat', serviceId: 'boat-account', provisionerId: 'boat', origin: 'https://boat.dev', readsOptions: true },
     { name: 'Agent37 portable credentials on the held Machine registry', borrowNativeRegistry: true, manifest: agent37Manifest, directory: 'machine-agent37', serviceId: 'agent37-account', provisionerId: 'agent37', origin: 'https://api.agent37.com' },
     { name: 'Agent37 portable credentials on the default Account registry', borrowNativeRegistry: false, manifest: agent37Manifest, directory: 'machine-agent37', serviceId: 'agent37-account', provisionerId: 'agent37', origin: 'https://api.agent37.com' },
-])('runs controller-bound Account checks with the selected $name', async fixture => {
+])('reads controller-bound provisioner facts with the selected $name', async fixture => {
     const directory = await mkdtemp(join(tmpdir(), 'account-role-credentials-'));
     const app = fastify();
     const home = 'https://account-role-credentials.test';
@@ -91,11 +97,23 @@ it.each([
     let runtime: Awaited<ReturnType<typeof resolveAccountExecutionRuntime>> | undefined;
     let current = true;
     vendor.request.mockReset();
-    vendor.request.mockImplementation(async (url, init) => {
-        expect(new URL(url).origin).toBe(fixture.origin);
-        expect(new Headers(init?.headers).get('authorization')).toBe('Bearer selected-private-key');
-        return Response.json(fixture.directory === 'machine-boat' ? { ok: true, type: 'limits.info' } : { data: [] });
-    });
+    // test-policy-boundary: Intercept the actual network dispatcher, including concurrent first requests.
+    const mockTransport = new Agent();
+    mockTransport.dispatch = mockTransport.dispatch.bind(mockTransport);
+    const vendorNetwork = new MockAgent({ agent: mockTransport });
+    vendorNetwork.disableNetConnect();
+    const dispatch = vi.spyOn(Agent.prototype, 'dispatch').mockImplementation(vendorNetwork.dispatch.bind(vendorNetwork));
+    const vendorPool = vendorNetwork.get(fixture.origin);
+    const headers = { authorization: 'Bearer selected-private-key' };
+    if (fixture.directory === 'machine-boat') {
+        vendorPool.intercept({ path: '/api/v1/limits', method: 'GET', headers }).reply(200, { ok: true, type: 'limits.info' });
+        if (fixture.readsOptions) {
+            vendorPool.intercept({ path: '/api/v1/saved-snapshots', method: 'GET', headers }).reply(200, { ok: true, type: 'snapshot.saved.list', snapshots: [] });
+            vendorPool.intercept({ path: '/api/v1/sandboxes', method: 'GET', headers }).reply(200, { ok: true, type: 'sandbox.list', sandboxes: [] });
+        }
+    } else {
+        vendorPool.intercept({ path: /.*/, method: 'GET', headers }).reply(200, { data: [] });
+    }
     try {
         await runWithServerHttpBaseUrl(home, async () => {
             await ensureCliActionPolicySettings(credentials, home);
@@ -129,11 +147,26 @@ it.each([
                     canonicalServerUrl: home, revision: 1, endpoints: [{ kind: 'https', url: home }] }, authority: 'current_connection' }),
                 resolveAccountRuntime: async () => ({ runtimeRegistry: accountHost.registry, managedProviderOperationAuthority: authority }),
             });
-            const checked = await driver.execute('machines.provisioners.check', { homeId: 'srv_role_credentials', controller, contribution,
+            const probe = { homeId: 'srv_role_credentials', controller, contribution,
                 credentials: [{ purpose: { consumer: contribution, purpose: 'cloud-api' }, account }],
-            }, { requestId: 'controller-check' });
-            expect(checked, JSON.stringify(checked)).toMatchObject({ available: true });
-            expect(vendor.request).toHaveBeenCalled();
+            };
+            if (fixture.readsOptions) {
+                const lease = await runtime.registry.resolveConnectedAccountRuntime?.(account.service);
+                expect(lease).toMatchObject({ ref: account.service, realm: 'account' });
+                const options = await driver.execute('machines.provisioners.options', { ...probe, selectors: {} }, { requestId: 'requester-options' })
+                    .catch((error: unknown) => {
+                        if (!(error instanceof ManagedMachineControllerError)) throw error;
+                        const pendingPaths = vendorNetwork.pendingInterceptors().map(entry => entry.path);
+                        throw new Error(`Reviewed options failed (${error.code}). Cause: ${JSON.stringify(error.failureCause)}. Unmatched fixture paths: ${pendingPaths.join(', ')}.`);
+                    });
+                expect(options).toMatchObject({ dimensions: { image: [{ id: 'blank', nativeFacts: {
+                    preparationGuest: { target: { os: 'linux', arch: 'x64' } },
+                } }] } });
+            } else {
+                const checked = await driver.execute('machines.provisioners.check', probe, { requestId: 'controller-check' });
+                expect(checked, JSON.stringify(checked)).toMatchObject({ available: true });
+            }
+            vendorNetwork.assertNoPendingInterceptors();
             current = false;
             await expect(runtime.purposeRuntime.established.invokeWithReceipt({ account,
                 operation: { kind: 'materialize', request: { kind: 'httpHeaders', origin: fixture.origin, headerNames: ['authorization'] } },
@@ -142,6 +175,8 @@ it.each([
     } finally {
         await runtime?.registry.dispose();
         await native?.dispose();
+        dispatch.mockRestore();
+        await vendorNetwork.close();
         restoreHttp();
         await app.close();
         await rm(directory, { recursive: true, force: true });
