@@ -162,12 +162,14 @@ replay() { # new HEAD -> fresh tree and parent; never reuse an old tree with a n
 # With P03_CP_GATED="<candidate> <its head>" the packet's passed gate carries over too: the loop rechecks it on the
 # moved HEAD instead of running the full gate again (20 wrappers re-gating at once on an install would cost ~5 GB each).
 resumed=""
+cas_losses=0
 rechecked_after_release=0
 if [ -n "${P03_CP_FROZEN:-}" ] && [ -s "$P03_CP_FROZEN" ]; then
   [ "$P03_CP_FROZEN" = "$packet" ] || mv -f "$P03_CP_FROZEN" "$packet"
   unset P03_CP_FROZEN
   if [ -n "${P03_CP_GATED:-}" ] && git cat-file -e "${P03_CP_GATED%% *}^{commit}" 2>/dev/null; then
     commit=${P03_CP_GATED%% *}; head=${P03_CP_GATED#* }; resumed=1
+    cas_losses=${P03_CP_CAS_LOSSES:-0}
     rechecked_after_release=${P03_CP_RECHECKED_AFTER_RELEASE:-0}
   else head=$(git rev-parse HEAD); replay "$head"; fi
   unset P03_CP_GATED
@@ -181,12 +183,13 @@ check_gate() {
   local rc=0
   echo "BUILD GATE on candidate $commit"
   rungate "$GATE" "$1" "$commit" || rc=$?
-  if [ $rc -ne 0 ] && [ $rc -ne 10 ]; then
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 10 ] && [ "$rc" -ne 11 ]; then
     echo "gate unavailable (exit $rc); re-running it once"
     rc=0; rungate "$GATE" "$1" "$commit" || rc=$?
   fi
   [ $rc -eq 0 ] || {
     [ $rc -eq 10 ] && { echo "candidate refused by the gate; abort"; exit 1; }
+    [ "$rc" -eq 11 ] && { echo "candidate gate incomplete; no ref changed"; exit 11; }
     echo "gate unavailable twice (exit $rc; not your candidate); retry later or report to P03"; exit 75
   }
 }
@@ -214,7 +217,7 @@ replay_onto_now() {
 }
 resume_frozen_packet() {
   exec 9>&-
-  P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_RECHECKED_AFTER_RELEASE=$rechecked_after_release \
+  P03_CP_FROZEN=$packet P03_CP_GATED="$gated $head" P03_CP_CAS_LOSSES=$cas_losses P03_CP_RECHECKED_AFTER_RELEASE=$rechecked_after_release \
     exec bash "$SELF" "${ARGS[@]}"
 }
 requeue_after_full_gate() {
@@ -228,15 +231,26 @@ requeue_after_full_gate() {
 locked_recheck() {
   local rc=0 t0=$SECONDS
   replay_onto_now
+  if [ "$cas_losses" -ge 2 ]; then
+    echo "two CAS losses; final scoped recheck under the commit lock"
+    if both_sides_deps; then
+      check_gate "$now"
+    else
+      P03_GATE_PRIOR=$gated check_gate "$now"
+    fi
+    gated=$commit; head=$now
+    return
+  fi
   if both_sides_deps; then
     echo "both sides edited a package manifest or the lockfile; releasing the commit lock for the full gate"
     requeue_after_full_gate
   fi
-  P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$gated P03_CP_RECHECKED_AFTER_RELEASE=$rechecked_after_release \
+  P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$gated \
     rungate "$GATE" "$now" "$commit" || rc=$?
   case $rc in
     0) ;;
     10) echo "candidate refused by the gate; abort"; exit 1;;
+    11) echo "candidate gate incomplete; no ref changed"; exit 11;;
     *) echo "recheck needs the full path (exit $rc); releasing the commit lock"
        requeue_after_full_gate "$gated";;
   esac
@@ -254,17 +268,19 @@ lock
 now=$(git rev-parse HEAD)
 if [ "$now" != "$head" ]; then
   rounds=1
+  if [ "$rechecked_after_release" -eq 1 ]; then cas_losses=$((cas_losses + 1)); fi
   locked_recheck
 fi
-if git update-ref -m "commit-partial: pid $$ $(head -1 "$msg" | cut -c1-80)" "refs/heads/$branch" "$commit" "$head"; then
-  unlock; publish_head_cache "$commit" || echo "gate cache: could not publish HEAD seed" >&2; echo "COMMITTED $commit parent $head (after $rounds recheck round(s))"
-  { git show --stat --format="%h %s" "$commit" | head -40 || true; }
-  register_new_paths; kick; exit 0
-fi
-now=$(git rev-parse HEAD)
-if [ "$now" = "$head" ]; then
-  echo "commit-partial: update-ref failed without a HEAD move; no ref changed; inspect the Git error above"; exit 75
-fi
-echo "CAS lost to a commit outside the wrapper (reflog: $(git reflog -1 --format=%gs "refs/heads/$branch" 2>/dev/null | cut -c1-80)); a full gate is required"
-replay_onto_now
-requeue_after_full_gate
+while ! git update-ref -m "commit-partial: pid $$ $(head -1 "$msg" | cut -c1-80)" "refs/heads/$branch" "$commit" "$head"; do
+  now=$(git rev-parse HEAD)
+  if [ "$now" = "$head" ]; then
+    echo "commit-partial: update-ref failed without a HEAD move; no ref changed; inspect the Git error above"; exit 75
+  fi
+  echo "CAS lost to a commit outside the wrapper (reflog: $(git reflog -1 --format=%gs "refs/heads/$branch" 2>/dev/null | cut -c1-80)); replaying the frozen packet"
+  cas_losses=$((cas_losses + 1))
+  rounds=$((rounds + 1))
+  locked_recheck
+done
+unlock; publish_head_cache "$commit" || echo "gate cache: could not publish HEAD seed" >&2; echo "COMMITTED $commit parent $head (after $rounds recheck round(s))"
+{ git show --stat --format="%h %s" "$commit" | head -40 || true; }
+register_new_paths; kick; exit 0

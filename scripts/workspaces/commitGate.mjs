@@ -6,7 +6,7 @@
 // import cycle, a manifest or lockfile break) landed through another.
 //
 //   node scripts/workspaces/commitGate.mjs --base=<rev> --tree=<tree-ish> [--prior=<tree-ish>] [--cheap-only]
-//   exit 0 pass, 10 refused, 3 needs a full recheck (--cheap-only), 75 unavailable (never the candidate's fault)
+//   exit 0 pass, 10 refused, 11 incomplete, 3 needs a full recheck (--cheap-only), 75 unavailable (never the candidate's fault)
 //
 // Every check reads the candidate's Git objects, never the moving checkout, and refuses only what the packet adds over
 // its base. The commit wrapper adds its cached bundle and export-scan tier (gate.sh) on top of this list.
@@ -23,9 +23,26 @@ import { commitLockfile } from './commitLockfile.mjs';
 import { commitProducerClosure, createRevisionViewReader, gitIn } from './commitProducerClosure.mjs';
 import { commitExtensionBoundaries } from './commitExtensionBoundaries.mjs';
 import { commitImportCycles } from './commitImportCycles.mjs';
-import { commitTreeGateMode, commitTreeEntryLoads, startCommitTreeEntryLoadReport } from './commitTreeEntryLoads.mjs';
+import { commitTreeGateMode, commitTreeEntryLoads, selectWorkspaceClosureInputs, startCommitTreeEntryLoadReport } from './commitTreeEntryLoads.mjs';
 
-export const COMMIT_GATE_EXIT = Object.freeze({ pass: 0, refused: 10, needsFull: 3, unavailable: 75 });
+export const COMMIT_GATE_EXIT = Object.freeze({ pass: 0, refused: 10, incomplete: 11, needsFull: 3, unavailable: 75 });
+
+const P03_DECLARATION_PACKAGES = ['packages/protocol', 'packages/plugin-sdk'];
+const SHARED_DECLARATION_INPUT = /^(?:package\.json$|pnpm-(?:lock|workspace)\.yaml$|\.npmrc$|tsconfig[^/]*\.json$|patches\/|scripts\/workspaces\/|\.github\/feature-policy\/)/u;
+
+async function changedDeclarationScopes(repo, base, tree, prior, priorBase, scopes) {
+  if (!prior || !scopes.length) return scopes;
+  const git = gitIn(repo);
+  if (!priorBase) {
+    try { priorBase = git(['rev-parse', '--verify', `${prior}^`]).trim(); }
+    catch { return scopes; } // With no accepted baseline, reuse cannot prove the comparison is still valid.
+  }
+  const changed = (from, to) => git(['diff', '--no-renames', '--name-only', '-z', from, to]).split('\0').filter(Boolean);
+  const moved = [...changed(priorBase, base), ...changed(prior, tree)];
+  if (!moved.length) return [];
+  if (moved.some(path => SHARED_DECLARATION_INPUT.test(path))) return scopes;
+  return selectWorkspaceClosureInputs({ repo, revisions: [prior, tree], scopes, paths: moved });
+}
 
 /**
  * The typecheck delta of touched packages/* workspaces (P03-GATE-TC): `report` (default) checks each landed commit after
@@ -47,8 +64,8 @@ class CommitGateUnavailable extends Error {
 }
 
 /**
- * Runs every check for the packet `base..tree`. Returns `{ verdict: 'pass' | 'refused' | 'needs-full', check, findings,
- * notes }`; `check` names the first refusing check. Throws (`error.unavailable`) when a check cannot judge.
+ * Runs every check for the packet `base..tree`. Returns `{ verdict: 'pass' | 'refused' | 'incomplete' | 'needs-full', check, findings,
+ * notes }`; `check` names the first refusing or incomplete check. Throws (`error.unavailable`) when a check cannot judge.
  * `prior`: the tree this packet passed as before HEAD moved (a recheck): work its earlier pass already judged and the
  * landed commits cannot change is reused, and nothing detached is started again. `cheapOnly`: try the quick recheck first;
  * a check that takes minutes returns `needs-full`.
@@ -75,11 +92,12 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   };
   const refused = (check, findings) => ({ verdict: 'refused', check, findings, notes });
   // The package typecheck waits for a worker compile, so it runs beside the checks below and is collected after them.
-  const typecheck = typecheckMode === 'block' && !prior ? judge('package typecheck', async () => {
+  const checkTypes = (packages, cachedOnly = false) => judge('package typecheck', async () => {
     const owner = await import('./commitPackageTypecheck.mjs');
-    const result = await owner.commitGateTypecheck({ repo, base, tree, env });
-    return { refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
-  }) : null;
+    const result = await owner.commitGateTypecheck({ repo, base, tree, env, packages, cachedOnly });
+    return { ...result, refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
+  });
+  const typecheck = typecheckMode === 'block' && !prior && !cheapOnly ? checkTypes() : null;
   typecheck?.catch(() => {});
 
   const syntax = await judge('syntax', () => commitSourceSyntax({ repo, base, tree }));
@@ -108,7 +126,27 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   notes.push(`lockfile: ${lockfile.note}`);
   if (lockfile.findings.length) return refused('lockfile', lockfile.findings);
 
-  if (typecheck) {
+  // R2 judges only authored Protocol and Plugin SDK packet scopes in the P03 wrapper.
+  const scopes = label === 'commit-partial'
+    ? P03_DECLARATION_PACKAGES.filter(dir => closure.changedSources.some(({ path }) => path.startsWith(`${dir}/src/`)))
+    : [];
+  const declarations = await changedDeclarationScopes(repo, base, tree, prior, priorBase, scopes);
+  if (declarations.length) {
+    const result = await (typecheck ?? checkTypes(declarations, cheapOnly));
+    notes.push(...result.lines);
+    if (result.fresh.length) return refused('new type errors in a package the packet touches', result.lines);
+    const unjudged = declarations.filter(dir => !result.packages.includes(dir)
+      || result.incomplete.includes(dir) || result.unavailable.includes(dir));
+    if (unjudged.length) {
+      const check = 'package declarations';
+      if (cheapOnly) return { verdict: 'needs-full', check, findings: [], notes };
+      const reason = { code: 'declaration-comparison-incomplete', packages: unjudged };
+      return { verdict: 'incomplete', check, reason, findings: [], notes };
+    }
+    if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
+  }
+
+  if (typecheck && !declarations.length) {
     const result = await typecheck;
     notes.push(...result.lines);
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
@@ -124,6 +162,10 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
     if (pid) notes.push(`tree entry loads: report started (pid ${pid})`);
   }
   return { verdict: 'pass', check: null, findings: [], notes };
+}
+
+export function formatCommitGateIncomplete(result) {
+  return `commit gate incomplete (${result.check}): ${JSON.stringify(result.reason)}`;
 }
 
 /** One message for a refusal, the same from every writer. */
@@ -168,15 +210,16 @@ export async function withCommitLock({ repo, ref = 'HEAD' }, run) {
 }
 
 /**
- * Shared replay for the JavaScript HEAD writers. Like the shell wrapper, the
- * locked gate may only reuse a prior pass and do cheap rechecks. A miss
- * releases the lock before the full gate and joins the queue again afterward.
+ * Shared replay for the JavaScript HEAD writers. Normally misses release the
+ * lock for the full gate. Two lost attempts keep it through the final recheck.
  */
 export async function finalizeGatedCommit({ repo, ref, label, packet, replay, createCommit }) {
   const git = gitIn(repo);
   const headAt = () => git(['rev-parse', 'HEAD']).trim();
   let accepted;
   let commit;
+  let losses = 0;
+  let recheckedAfterRelease = false;
   const check = async (cheapOnly) => {
     const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, priorBase: accepted?.base, cheapOnly, label });
     for (const note of gate.notes) console.error(`commit gate: ${note}`);
@@ -196,16 +239,19 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
       for (;;) {
         const head = headAt();
         if (head !== packet.base) {
+          if (recheckedAfterRelease) losses++;
+          recheckedAfterRelease = false;
           packet = replay(head);
           if (!packet) return {};
         }
         if (packet !== accepted) {
-          if (!accepted) return { recheck: 'the replay has no prior verdict' };
+          const finalRecheck = losses >= 2;
+          if (!accepted && !finalRecheck) return { recheck: 'the replay has no prior verdict' };
           let gate;
           try {
-            gate = await check(true);
+            gate = await check(!finalRecheck);
           } catch (error) {
-            if (!error.unavailable) throw error;
+            if (finalRecheck || !error.unavailable) throw error;
             return { recheck: error.message };
           }
           if (gate.verdict === 'needs-full') return { recheck: `${gate.check} needs a full recheck` };
@@ -217,6 +263,8 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
         } catch (error) {
           if (headAt() === head) throw error;
           // A writer outside the lock (or a host without flock) can still win CAS.
+          recheckedAfterRelease = false;
+          losses++;
         }
       }
     });
@@ -224,6 +272,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
     console.error(`commit gate: ${result.recheck}. Released the commit lock for the full gate`);
     const gate = await check(false);
     if (gate.verdict !== 'pass') return { gate };
+    recheckedAfterRelease = true;
   }
 }
 
@@ -239,6 +288,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     if (result.verdict === 'refused') {
       console.log(formatCommitGateRefusal(result));
       process.exitCode = COMMIT_GATE_EXIT.refused;
+    } else if (result.verdict === 'incomplete') {
+      console.log(formatCommitGateIncomplete(result));
+      process.exitCode = COMMIT_GATE_EXIT.incomplete;
     } else if (result.verdict === 'needs-full') {
       console.log(`commit gate: ${result.check} needs a full recheck`);
       process.exitCode = COMMIT_GATE_EXIT.needsFull;

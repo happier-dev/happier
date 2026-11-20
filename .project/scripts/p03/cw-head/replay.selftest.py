@@ -23,26 +23,29 @@ def case(kind):
     (d/'msg').write_text('test: packet A\n')
     idx = str(d/'private-b'); envb = dict(env, GIT_INDEX_FILE=idx)
     subprocess.check_call([REAL_GIT, 'read-tree', base], cwd=d, env=envb)
-    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
+    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','cas-churn','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
     content = initial.replace('line 20\n', 'packet B\n') if kind != 'conflict' else initial.replace('line 2\n', 'conflict B\n')
     blob = subprocess.check_output([REAL_GIT, 'hash-object', '-w', '--stdin'], input=content, cwd=d, text=True).strip()
     subprocess.check_call([REAL_GIT, 'update-index', '--cacheinfo', f'100644,{blob},{target}'], cwd=d, env=envb)
     tree = subprocess.check_output([REAL_GIT, 'write-tree'], cwd=d, env=envb, text=True).strip()
     b = git('commit-tree', tree, '-p', base, '-m', 'test: packet B')
+    later = git('commit-tree', tree, '-p', b, '-m', 'test: another writer landed')
     # Git process boundary: B wins exactly when A attempts its first CAS.
     bindir = d/'bin'; bindir.mkdir()
     shim = bindir/'git'
     shim.write_text(f'''#!/bin/bash
-if [ '{kind}' = cas-loss ] && [ "$1" = update-ref ] && [ ! -e '{d}/moved' ]; then
+if [[ '{kind}' = cas-loss || '{kind}' = cas-churn ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
  '{REAL_GIT}' update-ref refs/heads/main '{b}' '{base}' || exit 99
  # A must retain its gated snapshot, even when its working files change.
  echo 'later worktree edit' > '{d}/c.txt'
+elif [ '{kind}' = cas-churn ] && [ "$1" = update-ref ] && [ ! -e '{d}/moved-twice' ]; then
+ touch '{d}/moved-twice'
+ '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
 fi
 exec '{REAL_GIT}' "$@"
 '''); shim.chmod(0o755)
     # A second writer can land while the replayed candidate's full gate runs.
-    later = git('commit-tree', tree, '-p', b, '-m', 'test: another wrapper landed')
     gate = d/'gate.sh'; gate.write_text(f'''#!/bin/bash
 printf '%s\n' "$0" >> '{d}/gate-paths'
 if [ -n "${{P03_COMMIT_TREE_WORK_DIR:-}}" ]; then
@@ -71,7 +74,7 @@ if [ '{kind}' = signal ]; then
  exec sleep 120
 fi
 l=unlocked; flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" true || l=locked
-if [ '{kind}' != cas-loss ] && [ ! -e '{d}/moved' ]; then
+if [[ '{kind}' != cas-loss && '{kind}' != cas-churn && '{kind}' != incomplete ]] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
  flock -x "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{b}' '{base}' || exit 99
  echo 'later worktree edit' > '{d}/c.txt'
@@ -80,6 +83,11 @@ fi
 echo "$(git diff --name-only "$1" "$2" | sort | paste -sd,)|${{P03_GATE_PRIOR:+fast}}|$l" >> '{d}/gates'
 if [ '{kind}' = requeue ] && [ -e '{d}/.missed' ] && [ -z "${{P03_SCAN_CHEAP_ONLY:-}}" ] && [ "$l" = unlocked ]; then
  flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
+fi
+[ '{kind}' != incomplete ] || exit 11
+if [ '{kind}' = cas-churn ] && [ -e '{d}/moved-twice' ] && [ -n "${{P03_SCAN_CHEAP_ONLY:-}}" ]; then
+ echo 'final recheck did not allow a cold scoped comparison'
+ exit 99
 fi
 sleep 0.2
 [ '{kind}' != refused ] || [ \"$(wc -l < '{d}/gates')\" -lt 2 ] || exit 10
@@ -114,12 +122,15 @@ sleep 0.2
     (d/'run.log').write_text(run.stdout)
     gates=(d/'gates').read_text().splitlines()
     print(f'{kind}: {elapsed:.3f}s rc={run.returncode} gates={gates} evidence={d}', flush=True)
-    if kind in ('conflict', 'refused'):
+    if kind == 'incomplete':
+        assert run.returncode == 11 and git('rev-parse','HEAD') == base, run.stdout
+        assert len(gates) == 1 and 'candidate gate incomplete' in run.stdout, run.stdout
+    elif kind in ('conflict', 'refused'):
         assert run.returncode != 0 and git('rev-parse','HEAD') == b, run.stdout
         assert ('replay conflict' if kind == 'conflict' else 'candidate refused') in run.stdout.lower(), run.stdout
     else:
         assert run.returncode == 0, run.stdout
-        assert git('rev-parse','HEAD^') == (later if kind == 'requeue' else b)
+        assert git('rev-parse','HEAD^') == (later if kind in ('requeue', 'cas-churn') else b)
         if kind in ('retention', 'requeue'):
             head_tree = git('rev-parse', 'HEAD^{tree}')
             payloads = sorted(p.name for p in cache.rglob('*') if p.is_file() and not p.name.endswith('.lock') and not p.name.endswith('.slot'))
@@ -136,14 +147,17 @@ sleep 0.2
         full = {
             'manifest': [pk + '||unlocked'],
             'cheapmiss': fallback,
-            'cas-loss': [pk + '||unlocked'],
+            'cas-loss': [cheap],
+            'cas-churn': [cheap, cheap],
             'requeue': fallback + [cheap],
         }
         assert gates == [pk + '||unlocked'] + full.get(kind, [cheap]), gates
         assert not (d/'fasts').exists(), 'unnecessary fast gate'
-        if kind in full:
+        if kind in ('manifest', 'cheapmiss', 'requeue'):
             assert 'resumed the frozen packet' in run.stdout, run.stdout
-        if kind == 'cas-loss':
+        if kind in ('cas-loss', 'cas-churn'):
+            if kind == 'cas-churn':
+                assert 'final scoped recheck under the commit lock' in run.stdout, run.stdout
             assert 'CAS lost to a commit outside the wrapper' in run.stdout, run.stdout
         assert git('reflog', '-1', '--format=%gs', 'refs/heads/main').startswith('commit-partial: pid '), 'reflog does not name the wrapper'
         if kind == 'retention':
@@ -153,4 +167,4 @@ sleep 0.2
                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             assert dry.returncode == 0 and 'DRY candidate' in dry.stdout, dry.stdout
             assert not list(cache.glob('packet.*')), 'dry packet retained its private files'
-for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','requeue','signal','retention']: case(kind)
+for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','cas-churn','incomplete','requeue','signal','retention']: case(kind)

@@ -604,7 +604,8 @@ test('each selected tree prepares its own embedded policy before declaration imp
   const first = await commit('packages/sdk/src/index.ts', 'export const value = 2;\n');
   let installs = 0;
   const observed = [];
-  const { rowsAt } = treeTypechecker({ repo, state, env, log: () => {},
+  const messages = [];
+  const { rowsAt } = treeTypechecker({ repo, state, env, log: message => messages.push(message),
     bootstrap: () => { installs += 1; execFileSync(process.execPath, ['-e', 'require("node:fs").mkdirSync("node_modules")'], { cwd: join(state, 'worktree') }); },
     // The compiler process boundary reads the source input that declaration preparation imports.
     compile: (worktree, dir) => { observed.push({ dir, policy: policyAt(worktree) }); return { rows: [], ms: 0 }; },
@@ -618,7 +619,8 @@ test('each selected tree prepares its own embedded policy before declaration imp
   assert.equal(observed[1].policy.production.denyRaw, 'production-policy');
   assert.equal(installs, 1, 'source policy preparation does not reinstall unchanged dependencies');
   const malformed = await commit('.github/feature-policy/preview.json', '{');
-  assert.throws(() => rowsAt(tree(malformed), ['packages/sdk'], 'invalid'), /invalid JSON for preview/);
+  assert.equal(rowsAt(tree(malformed), ['packages/sdk'], 'invalid').get('packages/sdk'), null);
+  assert.ok(messages.some(line => line.includes('incomplete generated-input-preparation')));
   assert.equal(observed.length, 2, 'failed generation never reaches the compiler');
 });
 
@@ -717,4 +719,115 @@ test('an excluded fallback worker is never contacted for Git preparation', { ski
     treeId, ['packages/protocol'], 'head');
   assert.deepEqual(preparation, ['nl1']);
   assert.equal(rows.get('packages/protocol'), undefined);
+});
+
+
+test('the P03 gate refuses a declaration regression in Protocol or Plugin SDK using the rolling cache', async t => {
+  const { repo, commit } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const state = join(repo, '.git/typecheck-state');
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state,
+    HAPPIER_COMMIT_TYPECHECK_GATE: 'report', HAPPIER_COMMIT_TREE_GATE: 'off',
+    HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
+  await commit('packages/plugin-sdk/package.json', JSON.stringify({ name: '@x/plugin-sdk', scripts: { typecheck: 'tsc' } }));
+  await commit('packages/plugin-sdk/src/index.ts', 'export function api(): number { return 0; }\n');
+  const judge = (base, tree, options) => runCommitGate({ repo, base, tree, env, label: 'commit-partial', ...options });
+  // Seed the existing worker-result boundary, keeping the Git comparison and gate real.
+  const cache = async (rev, dir, rows) => {
+    const tree = git('rev-parse', `${rev}^{tree}`);
+    const results = join(state, 'results', tree);
+    await mkdir(results, { recursive: true });
+    await writeFile(join(results, `${dir.replaceAll('/', '__')}.prepared-declarations.json`), JSON.stringify({ rows }));
+  };
+  for (const dir of ['packages/protocol', 'packages/plugin-sdk']) {
+    await commit(`${dir}/tsconfig.json`, JSON.stringify({ compilerOptions: { declaration: true, isolatedDeclarations: true } }));
+    const file = `${dir}/src/index.ts`;
+    const clean = await commit(file, 'export function api(): number { return 1; }\n');
+    const broken = await commit(file, 'export function api() { return 1; }\n');
+    const diagnostic = { file, line: 1, column: 17, code: 9007,
+      text: 'Function must have an explicit return type annotation with --isolatedDeclarations.' };
+    await cache(clean, dir, []);
+    await cache(broken, dir, [diagnostic]);
+    const verdict = await judge(clean, broken);
+    assert.equal(verdict.verdict, 'refused', dir);
+    assert.match(verdict.findings.join('\n'), /TS9007/u);
+    const replay = await judge(clean, broken, { prior: clean, cheapOnly: true });
+    assert.equal(replay.verdict, 'refused', dir);
+    assert.match(replay.findings.join('\n'), /TS9007/u);
+    assert.equal((await judge(clean, broken, { prior: clean })).verdict, 'refused', dir);
+
+    const inherited = await commit(file, 'export function api() { return 2; }\n');
+    await cache(inherited, dir, [diagnostic]);
+    assert.equal((await judge(broken, inherited)).verdict, 'pass', dir);
+  }
+  const other = await commit('packages/leaf/src/index.ts', 'export const value = 3;\n');
+  const verdict = await judge(`${other}^`, other);
+  assert.equal(verdict.verdict, 'pass');
+  assert.ok(verdict.notes.every(note => !note.includes('package typecheck')));
+});
+
+
+test('the scoped declaration gate reports a typed incomplete result when no worker can judge', async t => {
+  const { repo, commit } = await workspace(t);
+  const tree = await commit('packages/protocol/src/index.ts', 'export const value = 2;\n');
+  const env = { ...process.env, HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+    HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, 'empty-cache'), HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
+  const gate = await runCommitGate({ repo, base: `${tree}^`, tree, env, label: 'commit-partial' });
+  assert.equal(gate.verdict, 'incomplete');
+  assert.deepEqual(gate.reason, { code: 'declaration-comparison-incomplete', packages: ['packages/protocol'] });
+  const cli = spawnSync(process.execPath, [fileURLToPath(new URL('./commitGate.mjs', import.meta.url)),
+    '--label=commit-partial', `--base=${tree}^`, `--tree=${tree}`], { cwd: repo, env, encoding: 'utf8' });
+  assert.equal(cli.status, 11, cli.stdout + cli.stderr);
+  assert.match(cli.stdout, /"code":"declaration-comparison-incomplete"/u);
+});
+
+test('the scoped declaration replay reuses Protocol across unrelated commits and rechecks SDK dependencies', async t => {
+  const { repo, commit } = await workspace(t);
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const env = { ...process.env, HAPPIER_COMMIT_TREE_GATE: 'off', HAPPIER_COMMIT_TYPECHECK_GATE: 'report',
+    HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, 'empty-cache'), HAPPIER_COMMIT_TYPECHECK_WORKERS: ' ' };
+  await commit('packages/plugin-sdk/package.json', JSON.stringify({
+    name: '@x/plugin-sdk', dependencies: { '@x/sdk': 'workspace:*' },
+  }));
+  await commit('packages/plugin-sdk/src/index.ts', 'export const sdk = 1;\n');
+  const protocol = 'packages/protocol/src/index.ts';
+  const sdk = 'packages/plugin-sdk/src/index.ts';
+  const history = async (packetPath, packet, landedPath, landed) => {
+    const base = git('rev-parse', 'HEAD');
+    const prior = await commit(packetPath, packet);
+    await commit(packetPath, git('show', `${base}:${packetPath}`) + '\n');
+    const nextBase = await commit(landedPath, landed);
+    const tree = await commit(packetPath, packet);
+    return { base: nextBase, tree, prior, priorBase: base };
+  };
+  const run = options => runCommitGate({ repo, env, label: 'commit-partial', cheapOnly: true, ...options });
+  const unrelated = await run(await history(protocol, 'export const value = 2;\n',
+    'packages/leaf/src/index.ts', 'export const value = 3;\n'));
+  assert.equal(unrelated.verdict, 'pass');
+  assert.ok(unrelated.notes.every(note => !note.includes('package typecheck')));
+
+  const relevant = await run(await history(sdk, 'export const sdk = 2;\n', protocol, 'export const value = 5;\n'));
+  assert.equal(relevant.verdict, 'needs-full', 'SDK reads Protocol through its workspace dependency closure');
+  assert.equal(relevant.check, 'package declarations');
+  assert.match(relevant.notes.join('\n'), /package typecheck: packages\/plugin-sdk /u);
+});
+
+test('the gate reports missing published workspace declarations as incomplete instead of attributing them', async t => {
+  const { repo, commit } = await workspace(t);
+  await commit('packages/protocol/package.json', JSON.stringify({ name: '@x/protocol', scripts: { typecheck: 'tsc' },
+    exports: { './*': { 'happier-source': './src/*.ts', types: './dist/*.d.ts', default: './dist/*.js' } } }));
+  const base = await commit('packages/sdk/src/index.ts', 'export const value = 2;\n');
+  const tree = await commit('packages/sdk/src/index.ts', 'export const value = 3;\n');
+  const head = execFileSync('git', ['rev-parse', `${tree}^{tree}`], { cwd: repo, encoding: 'utf8' }).trim();
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, 'declaration-cache') };
+  const row = { file: 'packages/sdk/src/index.ts', line: 1, column: 1, code: 7016,
+    text: "Could not find a declaration file for module '@x/protocol/index'. '/worker/packages/protocol/dist/index.js' implicitly has an 'any' type." };
+  const compare = (text = row.text) => commitGateTypecheck({ repo, base, tree, env, record: false,
+    remote: (revisions, dirs) => new Map(revisions.map(id => [id,
+      new Map(dirs.map(dir => [dir, id === head ? [{ ...row, text }] : []]))])) });
+  const incomplete = await compare();
+  assert.deepEqual(incomplete.incomplete, ['packages/sdk']);
+  assert.deepEqual(incomplete.fresh, []);
+  const sourceError = await compare(row.text.replace('@x/protocol/index', '@x/protocol/missing'));
+  assert.equal(sourceError.fresh[0]?.code, 7016, 'an export whose TypeScript source is absent can still be a real regression');
 });

@@ -60,6 +60,28 @@ function treeWorkspacePackages(git, tree) {
   return packages;
 }
 
+export function readCommitTreeWorkspacePackages(repo, tree) {
+  return treeWorkspacePackages(gitAt(repo), tree);
+}
+
+/** Scope inputs use the same Git-tree manifests and workspace closure as entry loads. */
+export async function selectWorkspaceClosureInputs({ repo, revisions, scopes, paths }) {
+  const git = gitAt(repo);
+  const { workspaceSourcePackageClosure } = await import(new URL('packages/cli-common/sourceRuntimeEntries.mjs', tooling).href);
+  const selected = new Set(scopes.filter(dir => paths.some(path => path.startsWith(`${dir}/`))));
+  if (selected.size === scopes.length) return scopes;
+  for (const revision of revisions) {
+    const packages = treeWorkspacePackages(git, revision);
+    const byRoot = new Map([...packages].map(([name, { root }]) => [root, name]));
+    for (const dir of scopes) {
+      if (selected.has(dir)) continue;
+      const inputs = workspaceSourcePackageClosure(packages, [byRoot.get(dir)]);
+      if ([...inputs].some(name => paths.some(path => path.startsWith(`${packages.get(name).root}/`)))) selected.add(dir);
+    }
+  }
+  return scopes.filter(dir => selected.has(dir));
+}
+
 /**
  * The entry graphs a packet can reach: a graph runs when the workspace that owns a changed path is
  * in the workspace dependency closure of the package that owns the graph's entry (the same closure

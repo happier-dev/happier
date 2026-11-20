@@ -35,12 +35,16 @@ import { createHash } from 'node:crypto';
 import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
 import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { ARCHIVED_BOARD_PATH, BOARD_PATH } from '../board/postBoardEntry.mjs';
+import packageExportMatch from '../../packages/cli-common/packageExportMatch.cjs';
+import { packageNameOfSpecifier, resolveWorkspaceSource } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
+import { readCommitTreeWorkspacePackages } from './commitTreeEntryLoads.mjs';
+import { collectPackageBuildOutputTargets } from '../../packages/cli-common/packageBuildOutputTargets.mjs';
 
 const COMPILER_INPUT = /\.(?:[cm]?[jt]sx?|json)$/u;
 /** App workspaces the rolling HEAD typecheck follows, one scope each. */
@@ -361,6 +365,39 @@ export function treeDependencyPreparer({ repo, state, env = process.env, log = (
   return prepare;
 }
 
+// TS7016 from a published workspace JS export is a missing input when that
+// exact tree declares the corresponding type and supplies its authored TS source.
+function missingPublishedDeclaration(repo, treeId, rows) {
+  let workspaces;
+  for (const row of rows) {
+    if (row.code !== 7016) continue;
+    const match = /for module '([^']+)'. '([^']+)'/u.exec(row.text);
+    if (!match) continue;
+    const [, specifier, resolvedJs] = match;
+    const name = packageNameOfSpecifier(specifier);
+    workspaces ??= readCommitTreeWorkspacePackages(repo, treeId);
+    const owner = workspaces.get(name);
+    const resolvedPath = resolvedJs.replaceAll('\\', '/');
+    if (!owner || !resolvedPath.includes(`/${owner.root}/dist/`)) continue;
+    const subpath = specifier === name ? '.' : `.${specifier.slice(name.length)}`;
+    const exported = packageExportMatch.matchPackageExport(owner.manifest.exports, subpath);
+    if (!exported) continue;
+    const emittedDeclaration = resolvedPath.replace(/\.([cm]?)js$/u, '.d.$1ts');
+    const declarationTargets = collectPackageBuildOutputTargets({ exports: exported.declaration })
+      .filter(target => target.startsWith('./dist/') && /\.d\.[cm]?ts$/u.test(target));
+    if (!declarationTargets.some(target => {
+      const output = packageExportMatch.substitutePackageExportTarget(target, exported.replacement);
+      return emittedDeclaration.endsWith(`/${owner.root}/${output.slice(2)}`);
+    })) continue;
+    let source;
+    try { source = resolveWorkspaceSource(workspaces, specifier); } catch { continue; }
+    const sourcePath = relative(resolve('.'), source).replaceAll('\\', '/');
+    if (!/\.[cm]?tsx?$/u.test(sourcePath) || /\.d\.[cm]?ts$/u.test(sourcePath)) continue;
+    if (gitAt(repo)(['ls-tree', '--name-only', treeId, '--', sourcePath]).trim() === sourcePath) return specifier;
+  }
+  return null;
+}
+
 /** Rows per (tree, package) from the result cache, compiling the missing ones in the warm worktree, or, with
  * `remote`, taking them from a worker (`remote(treeId, dirs, side)` -> Map of rows or null per package).
  * The caller holds the worktree lock and, when anything compiles here, compiler admission. */
@@ -369,11 +406,29 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
   const compileEnv = compileEnvOf(env);
   const prepareDependencies = treeDependencyPreparer({ repo, state, env, log, bootstrap, worktreeRev });
   const timings = [];
+  const judgeRows = (treeId, rows, side, dir) => {
+    if (!rows) return rows;
+    const missing = missingPublishedDeclaration(repo, treeId, rows);
+    if (!missing) return rows;
+    log(`[commit-package-typecheck] ${side} ${dir} incomplete missing-workspace-declaration: ${missing}`);
+    return null;
+  };
+  const readCachedRows = (treeId, dir, side) => {
+    try {
+      const { rows } = JSON.parse(readFileSync(resultCachePath(state, treeId, dir), 'utf8'));
+      return judgeRows(treeId, rows, side, dir);
+    } catch (error) {
+      if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+      return null;
+    }
+  };
   const rowsAt = (treeId, packages, side = treeId.slice(0, 10)) => {
     const rows = new Map();
     const missing = [];
     for (const dir of packages) {
-      try { rows.set(dir, JSON.parse(readFileSync(resultCachePath(state, treeId, dir), 'utf8')).rows); } catch { missing.push(dir); }
+      const cached = readCachedRows(treeId, dir, side);
+      if (cached) rows.set(dir, cached);
+      else missing.push(dir);
     }
     if (!missing.length) return rows;
     const store = (dir, compiled) => {
@@ -389,7 +444,7 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
       timings.push({ side, step: 'worker', ms });
       for (const dir of missing) {
         // undefined: no worker judged the tree (unreachable, no rows); null: its compile did not complete.
-        const workerRows = fetched?.get(dir);
+        const workerRows = judgeRows(treeId, fetched?.get(dir), side, dir);
         log(`[commit-package-typecheck] ${side} ${dir} worker ${(ms / 1000).toFixed(1)}s ${workerRows ? `${workerRows.length} diagnostics` : 'incomplete'}`);
         rows.set(dir, workerRows);
         if (workerRows) store(dir, { rows: workerRows, ms });
@@ -406,15 +461,24 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
     // ignored source input from the selected tree before declaration analysis
     // imports Protocol, including policy-only moves with unchanged dependencies.
     const policyGenerator = join(worktree, 'packages/protocol/scripts/generate-embedded-feature-policies.mjs');
-    if (existsSync(policyGenerator)) execFileSync(process.execPath, [policyGenerator], {
-      cwd: worktree, env: compileEnv, stdio: ['ignore', 'ignore', 'pipe'],
-    });
+    if (existsSync(policyGenerator)) {
+      try {
+        execFileSync(process.execPath, [policyGenerator], {
+          cwd: worktree, env: compileEnv, stdio: ['ignore', 'ignore', 'pipe'],
+        });
+      } catch (error) {
+        log(`[commit-package-typecheck] ${side} incomplete generated-input-preparation: ${error.message}`);
+        for (const dir of missing) rows.set(dir, null);
+        return rows;
+      }
+    }
     for (const dir of missing) {
       const compiled = compile(worktree, dir, compileEnv);
       timings.push({ side, step: dir, ms: compiled.ms, complete: Boolean(compiled.rows) });
       log(`[commit-package-typecheck] ${side} ${dir} ${(compiled.ms / 1000).toFixed(1)}s${compiled.declarationMs === undefined ? '' : ` (declaration emit ${(compiled.declarationMs / 1000).toFixed(1)}s)`} ${compiled.rows ? `${compiled.rows.length} diagnostics` : `incomplete ${compiled.failure} ${compiled.tail?.join(' | ') ?? ''}`}`);
-      rows.set(dir, compiled.rows);
-      if (compiled.rows) store(dir, compiled);
+      const judged = judgeRows(treeId, compiled.rows, side, dir);
+      rows.set(dir, judged);
+      if (judged) store(dir, compiled);
     }
     return rows;
   };
@@ -426,7 +490,9 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
       const rows = new Map();
       const missing = [];
       for (const dir of packages) {
-        try { rows.set(dir, JSON.parse(readFileSync(resultCachePath(state, treeId, dir), 'utf8')).rows); } catch { missing.push(dir); }
+        const cachedRows = readCachedRows(treeId, dir, side);
+        if (cachedRows) rows.set(dir, cachedRows);
+        else missing.push(dir);
       }
       return { treeId, side, rows, missing };
     });
@@ -439,7 +505,7 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
       timings.push({ side: pending.map(entry => entry.side).join('+'), step: 'worker', ms });
       for (const entry of pending) {
         for (const dir of entry.missing) {
-          const workerRows = fetched?.get(entry.treeId)?.get(dir);
+          const workerRows = judgeRows(entry.treeId, fetched?.get(entry.treeId)?.get(dir), entry.side, dir);
           log(`[commit-package-typecheck] ${entry.side} ${dir} worker ${(ms / 1000).toFixed(1)}s ${workerRows ? `${workerRows.length} diagnostics` : 'incomplete'}`);
           entry.rows.set(dir, workerRows);
           if (workerRows) {
