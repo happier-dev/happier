@@ -50,7 +50,7 @@ function unboundResult(family: ReturnType<typeof resultFamily>) {
     return { kind: family === 'mutation' ? 'rejected' : 'unavailable', failure };
 }
 
-function unknownMutation(input: ForgeCiActionInputByOperationV1[ForgeCiOperationIdV1]): ForgeCiMutationResultV1 {
+function unknownMutation(input: ForgeCiActionInputByOperationV1[ForgeCiOperationIdV1]): Extract<ForgeCiMutationResultV1, { kind: 'outcome_unknown' }> {
     const run: ForgeCiRunRefV1 | undefined = 'runId' in input
         ? { v: 1, repository: input.repository, runId: input.runId }
         : undefined;
