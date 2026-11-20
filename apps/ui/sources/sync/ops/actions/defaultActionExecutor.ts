@@ -3093,10 +3093,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       payload: { ...(instructions !== undefined ? { instructions } : {}) },
     }),
 
-    sessionTurnCancel: async ({ sessionId, serverId, signal }) => {
-      await withAccountLifetime(signal, ownedSignal => sessionAbort(sessionId, { serverId: serverId ?? undefined, signal: ownedSignal }));
-      return { requested: true };
-    },
+    sessionTurnCancel: ({ sessionId, serverId, signal }) =>
+      withAccountLifetime(signal, ownedSignal => sessionAbort(sessionId, { serverId: serverId ?? undefined, signal: ownedSignal })),
 
     sessionTerminalComposerClear: async ({ sessionId, expectedStateAtMs, serverId }) =>
       await actionSessionRpc({

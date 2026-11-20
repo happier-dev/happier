@@ -88,8 +88,10 @@ export async function dispatchSessionControls1(inv: Pick<CoreInvocation, 'action
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.turn.cancel' };
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
-          return completeActionResult(await deps.sessionTurnCancel({ sessionId, context: ctx,
-            ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+          const acknowledgement = await deps.sessionTurnCancel({ sessionId, context: ctx,
+            ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          // The Session abort RPC acknowledges delivery with no response body.
+          return completeActionResult(acknowledgement ?? { requested: true });
         }
 
         if (actionId === 'session.runtime.refresh') {

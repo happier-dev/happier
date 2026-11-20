@@ -18,6 +18,14 @@ describe('operation and retained output Actions', () => {
       .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
   });
 
+  it('exposes abort delivery without reporting completion or accepting a negative receipt', () => {
+    const receipt = { requested: true };
+    expect(settleActionOutput('session.turn.cancel', { ok: true, result: receipt }))
+      .toEqual({ ok: true, result: receipt });
+    expect(settleActionOutput('session.turn.cancel', { ok: true, result: { requested: false } }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+  });
+
   it('binds a plugin exact-request lookup to its mounted runtime without changing qualified operands', async () => {
     const transport = vi.fn(async () => ({ items: [], nextCursor: null }));
     const executor = createActionExecutor({

@@ -20,7 +20,6 @@ vi.mock('../../sync', () => ({
 }));
 
 import { sessionAbort } from '../../ops';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
@@ -70,13 +69,7 @@ describe('sessionAbort', () => {
     expect(after?.optimisticThinkingAt ?? null).toBeNull();
   });
 
-  it('does not throw when RPC method is unavailable (errorCode)', async () => {
-    mockSessionRpcWithPreferredSessionScope.mockRejectedValue(new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
-
-    await expect(sessionAbort('sid-1')).resolves.toBeUndefined();
-  });
-
-  it('does not throw when scoped session encryption is unavailable', async () => {
+  it('reports unavailable encryption and still recovers local thinking state', async () => {
     const sessionId = 'sid-encryption-missing';
     storage.getState().applySessions([buildSession(sessionId)]);
     storage.getState().markSessionOptimisticThinking(sessionId);
@@ -85,7 +78,10 @@ describe('sessionAbort', () => {
       new RpcError('Unable to resolve session encryption for scoped RPC', 'scoped_session_encryption_unavailable'),
     );
 
-    await expect(sessionAbort(sessionId)).resolves.toBeUndefined();
+    await expect(sessionAbort(sessionId)).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'scoped_session_encryption_unavailable',
+    });
 
     const after = storage.getState().sessions[sessionId];
     expect(after?.thinking).toBe(false);

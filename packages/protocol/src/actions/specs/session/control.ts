@@ -1,6 +1,6 @@
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
-import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
+import { SessionTargetV1Schema, withSessionTargetFanoutResultV1 } from '../../sessionTargetV1.js';
 import { RestartSessionRunnerResultV1Schema } from '../../../sessions/control/sessionRunnerRestartV1.js';
 import { SessionRunnerRuntimeRefreshActionInputV1Schema } from '../../../sessions/control/sessionRunnerRestartV2.js';
 import { SessionPendingWithdrawInputV1Schema, SessionPendingWithdrawResultV1Schema } from '../../../sessions/control/pendingWithdrawV1.js';
@@ -66,7 +66,7 @@ function createSessionLifetimeControlActionSpecs() {
       fields: [{ path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text', required: true }],
     },
     inputSchema: SessionTurnCancelInputSchema,
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: lazyZodSchema(() => withSessionTargetFanoutResultV1(z.strictObject({ requested: z.literal(true) }))),
     cli: { commands: [{ path: ['session', 'turn', 'cancel'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,
   {

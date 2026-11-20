@@ -526,12 +526,12 @@ describe('current-turn cancellation through the CLI Action owner', () => {
     const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
     http.mockResolvedValueOnce({ status: 200, data: currentness })
       .mockResolvedValueOnce({ status: 200, data: { session } });
-    nextRpcAck = { ok: true, result: { cancelled: true } };
+    nextRpcAck = { ok: true, result: undefined };
     const signal = new AbortController().signal;
     expect(await harness().executor.execute('session.turn.cancel', { sessionId }, {
       authority, surface, signal, ...(surface === 'agent' ? { defaultSessionId: sessionId } : {}),
     }))
-      .toEqual({ ok: true, result: { cancelled: true } });
+      .toEqual({ ok: true, result: { requested: true } });
     expect(http.mock.calls.map(([url]) => url)).toEqual([
       `${home.serverHttpBaseUrl}/v1/account/encryption/currentness`,
       `${home.serverHttpBaseUrl}/v2/sessions/${sessionId}`,
@@ -573,7 +573,7 @@ describe('current-turn cancellation through the CLI Action owner', () => {
     const http = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected Home HTTP boundary'));
     http.mockResolvedValueOnce({ status: 200, data: currentness })
       .mockResolvedValueOnce({ status: 200, data: { session } });
-    const result = actionId === 'session.compact' ? { status: 'admitted' } : { cancelled: true };
+    const result = actionId === 'session.compact' ? { status: 'admitted' } : null;
     nextRpcAck = { ok: true, result };
     const owner = createCliActionExecutorHarness({ token: credentials.token, credentials,
       sessionId: 'construction-session', mode: 'plain', ctx: null, ...home, serverIdentityId: 'home',

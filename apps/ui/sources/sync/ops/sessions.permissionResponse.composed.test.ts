@@ -239,7 +239,7 @@ describe('permission response admission through real Home and Account owners', (
             storage.getState().markSessionOptimisticThinking(session.id);
             const before = storage.getState().sessions[session.id];
             reply.resolve(undefined);
-            await expect(pending).resolves.toBeUndefined();
+            expect(await pending ?? null).toBeNull();
             expect(network.requests.filter(request => request.method === 'abort')).toMatchObject([
                 { serverUrl: target.serverUrl, token: target.token },
             ]);
@@ -247,7 +247,7 @@ describe('permission response admission through real Home and Account owners', (
             expect(storage.getState().sessions[session.id]?.thinking).toBe(scenario !== 'same-account');
             if (scenario === 'account-replacement') {
                 await waitForHomeSocket();
-                await expect(sessionAbort(session.id)).resolves.toBeUndefined();
+                expect(await sessionAbort(session.id) ?? null).toBeNull();
                 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
                 const replacement = await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
                 expect(replacement?.token).not.toBe(home.token);

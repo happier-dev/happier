@@ -4586,8 +4586,47 @@ export type SessionControlActionResultById = {
     readonly "session.compact": {
         status: 'admitted' | 'already_pending' | 'unsupported';
     };
-    readonly "session.turn.cancel": boolean | null | number | readonly JsonValue[] | string | {
-        readonly [key: string]: JsonValue;
+    readonly "session.turn.cancel": {
+        kind: 'fanout';
+        results: {
+            target: {
+                serverId: string;
+                sessionId: string;
+            };
+            result: {
+                ok: false;
+                errorCode: string;
+                error: string;
+                requestId?: string | undefined;
+                effectAttempted?: boolean | undefined;
+                details?: unknown;
+                setupRetry?: undefined | {
+                    runId: string;
+                    invocationId: string;
+                };
+                failureCause?: ActionFailureCauseV1 | undefined;
+                goalControlFailure?: undefined | {
+                    phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+                };
+                automationNotices?: ({
+                    code: 'action_automation_skipped';
+                    reason: string;
+                    automationId: string;
+                    triggerId: string;
+                    workflowId: string;
+                } | {
+                    code: 'action_automations_not_checked';
+                    reason: string;
+                })[] | undefined;
+            } | {
+                ok: true;
+                result: {
+                    requested: true;
+                };
+            };
+        }[];
+    } | {
+        requested: true;
     };
     readonly "session.runtime.refresh": {
         ok: boolean;

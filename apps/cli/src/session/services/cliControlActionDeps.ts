@@ -166,7 +166,7 @@ export function createCliControlActionDeps(
         }
         try {
           const { callSessionRpc } = await import("@/session/transport/rpc/sessionRpc");
-          const result = await callSessionRpc({
+          return await callSessionRpc({
             ...transport, token: credentials.token, sessionId: transport.sessionId,
             method: `${transport.sessionId}:abort`,
             request: { reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.` },
@@ -179,9 +179,6 @@ export function createCliControlActionDeps(
               } } : {}),
             ...(signal ? { signal } : {}),
           });
-          // The host's abort callback acknowledges delivery without a result.
-          // Project that receipt at the Action boundary, including encrypted RPC.
-          return result ?? { requested: true };
         } catch (error) {
           const errorCode = readRpcErrorCode(error) ?? 'session_rpc_failed';
           return { ok: false, errorCode, error: errorCode,

@@ -1038,51 +1038,40 @@ function applySessionThinkingDecisionRecovery(
     storage.getState().applySessions([{ ...session, thinking: false, updatedAt: nowServerMs() }], 'projection');
 }
 
-export async function sessionAbort(sessionId: string, options?: Readonly<{ serverId?: string; signal?: AbortSignal }>): Promise<void> {
+export async function sessionAbort(sessionId: string, options?: Readonly<{ serverId?: string; signal?: AbortSignal }>): Promise<unknown> {
     const recoveryScope = getActiveServerAccountScope();
     const serverId = options?.serverId ?? resolvePreferredServerIdForSessionId(sessionId)
         ?? getActiveServerSnapshot().serverId;
+    let acknowledgement: unknown;
     try {
-        await sessionRpcWithPreferredSessionScope<void, { reason: string }>({
+        acknowledgement = await sessionRpcWithPreferredSessionScope<unknown, { reason: string }>({
             sessionId,
             ...(options?.serverId !== undefined ? { serverId: options.serverId } : {}),
             method: 'abort',
             ...(options?.signal ? { signal: options.signal } : {}),
             payload: {
-            reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
+                reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
             },
         });
-    } catch (e) {
-        const errorCode = readSessionRpcErrorCode(e);
-        if (
-            e instanceof Error
-            && (
-                isRpcMethodNotAvailableError(e)
-            )
-        ) {
-            // Session RPCs are unavailable when no agent process is attached (inactive/resumable).
-            // Treat abort as a no-op in that case.
-            return;
+    } catch (error) {
+        if (!(error instanceof Error)) throw error;
+        const errorCode = readSessionRpcErrorCode(error);
+        if (errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+            return { ok: false, errorCode, error: error.message };
         }
-        if (
-            e instanceof Error
-            && (
-                errorCode === 'scoped_session_encryption_unavailable'
-                || errorCode === 'session_encryption_not_found'
-            )
-        ) {
-            // Scoped session RPC encryption can be unavailable when the provider is already detached.
-            // Abort is best-effort; do not block follow-up user actions (e.g. sending pending messages).
-        } else {
-            throw e;
+        if (errorCode !== 'scoped_session_encryption_unavailable' && errorCode !== 'session_encryption_not_found') {
+            throw error;
         }
+        // The provider may already be detached. Keep local recovery best-effort
+        // but let the Action report that the abort could not be delivered.
+        acknowledgement = { ok: false, errorCode, error: error.message };
     }
 
-    // The caller's Account lifetime can retire after an authoritative reply.
-    if (options?.signal?.aborted) return;
-
-    // Best-effort recovery belongs only to the Account and Home captured before issuance.
-    applySessionThinkingDecisionRecovery(sessionId, recoveryScope, serverId);
+    if (!options?.signal?.aborted) {
+        // Best-effort recovery belongs only to the Account and Home captured before issuance.
+        applySessionThinkingDecisionRecovery(sessionId, recoveryScope, serverId);
+    }
+    return acknowledgement;
 }
 
 /** Omits per approval variant, so `approved` keeps its discriminant instead of collapsing to `boolean | undefined`. */

@@ -190,6 +190,13 @@ describe('session resume and fork routing through the Home and Account boundary'
         } finally { publishAppliedActiveServerRuntimeAvailability(previousAvailability); }
     });
 
+    it('reports an unavailable abort instead of acknowledging delivery to a detached Session', async () => {
+        rejectRpc(RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+        await expect(ops.sessionAbort('session-1', { serverId: home.id })).resolves.toMatchObject({
+            ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+        });
+    });
+
     it('restores an archived session before issuing its resume spawn', async () => {
         setSession('session-1', { archivedAt: 123 });
         boundary.setRpcResponder(async () => {
