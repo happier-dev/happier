@@ -80,6 +80,26 @@ describe('reactive Machine presence', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('keeps empty Machine observations inert while a real Home credential resolves', async () => {
+        let observations = 0;
+        const hook = await renderHook(() => {
+            observations++;
+            return {
+                absent: useMachinePresenceSummary(serverId, null),
+                blank: useMachinePresenceSummaries(serverId, [' ', '']),
+            };
+        });
+        try {
+            const owner = await renderHook(() => useServerCredentialAccountScopeBinding(serverId).binding);
+            try {
+                await waitForHomeGovernance(() => expect(owner.getCurrent()).not.toBeNull());
+            } finally { await owner.unmount(); }
+            expect(hook.getCurrent().absent).toMatchObject({ reachability: 'unknown', machineIsKnown: false });
+            expect(hook.getCurrent().blank.map(row => row.reachability)).toEqual(['unknown', 'unknown']);
+            expect(observations).toBe(1);
+        } finally { await hook.unmount(); }
+    });
+
     it('does not resolve a Home inventory until a mounted consumer demands a Machine', async () => {
         const machine = createMachineFixture({ id: 'demanded-machine', activeAt: Date.now() });
         machine.metadata = { ...machine.metadata!, displayName: 'Demanded Machine' };

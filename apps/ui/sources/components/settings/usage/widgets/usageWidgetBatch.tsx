@@ -433,13 +433,13 @@ const EMPTY_RESULTS: readonly UsageQueryResultSlice[] = Object.freeze([]);
 
 /**
  * The page batch's decoded slices for page chrome (filter options, freshness line). It reads the same
- * Resource entry the widgets read and adds no request of its own; outside a page it is empty.
+ * Resource live admission as the widgets. A static subscriber would acquire a separate baseline.
  */
 function useDecodedUsageWidgetBatchSelection<T>(select: (slices: readonly UsageQueryResultSlice[]) => T,
     equal: (left: T, right: T) => boolean): T {
     const batch = React.useContext(UsageWidgetBatchContext);
     const entry = batch?.resource.entry ?? null;
-    const subscribe = useUsageWidgetResourceSubscription(entry, false);
+    const subscribe = useUsageWidgetResourceSubscription(entry);
     const lifetime = batch?.resource.lifetime;
     const getSnapshot = React.useMemo(() => {
         let previous: { value: T } | undefined;

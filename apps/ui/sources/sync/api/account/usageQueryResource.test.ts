@@ -2769,6 +2769,10 @@ describe('usage query captured Resource adapter', () => {
     const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
       input: projectNativeJsonValueForTransport({ queries: [summary, detail] }) });
     const release = entry.subscribe(() => {}, false);
+    const account = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+    const actionContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    let releaseSummary: (() => void) | undefined;
     const slice = (query: typeof summary) => {
       const content = entry.getSnapshot().value;
       return content ? decodeUsageQueryResource(content).results.find(row => row.key === getUsageQueryKey(query)) : undefined;
@@ -2778,13 +2782,31 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => slice(summary)?.howYouWork?.agentCalendar?.periodSummary.totals.tokens).toBe(15);
       expect(slice(summary)?.pending).toBe(false);
       expect(slice(detail)?.pending).toBe(true);
+      // The current Resource admission is useful before optional private evidence settles.
+      const progressive = await executor.execute('usage.query', { queries: [summary, detail] }, actionContext);
+      expect(progressive).toMatchObject({ ok: true, result: { results: expect.arrayContaining([
+        expect.objectContaining({ key: getUsageQueryKey(detail), pending: true }),
+      ]) } });
       session.resolve(Response.json({ error: 'denied' }, { status: 403 }));
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       expect(slice(summary)?.howYouWork?.agentCalendar?.periodSummary.totals.tokens).toBe(15);
       expect(slice(detail)?.howYouWork?.agentCalendar?.periodSummary.totals.busyMs).toBeNull();
       expect(slice(detail)?.pending).toBe(false);
       expect(entry.getSnapshot().error).toBeUndefined();
-    } finally { session.resolve(Response.json({ error: 'denied' }, { status: 403 })); release(); }
+      const accountingOnly = normalizeUsageQuery({ ...summary, includeActivity: false, includeCoach: false });
+      const summaryEntry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+        input: projectNativeJsonValueForTransport({ queries: [accountingOnly] }) });
+      releaseSummary = summaryEntry.subscribe(() => {}, true);
+      await summaryEntry.refresh({ supersede: false });
+      const retained = summaryEntry.getSnapshot().value;
+      storage.getState().applySettingsLocal({ usageCoachPreferencesV1: {
+        ...storage.getState().settings.usageCoachPreferencesV1, disabledChecks: [...USAGE_COACH_DETECTOR_IDS],
+      } });
+      // Coach preferences change admission without changing this Coach-excluded query's bytes.
+      const unchanged = await executor.execute('usage.query', { queries: [accountingOnly] }, actionContext);
+      expect(unchanged).toMatchObject({ ok: true });
+      expect(summaryEntry.getSnapshot().value).toBe(retained);
+    } finally { session.resolve(Response.json({ error: 'denied' }, { status: 403 })); releaseSummary?.(); account.dispose(); release(); }
   });
 
   it('keeps the accounting calendar stable while a sibling private read progresses and is refused', async () => {

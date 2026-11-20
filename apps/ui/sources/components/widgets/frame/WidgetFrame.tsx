@@ -284,9 +284,9 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
     }, [updateViewportLayout]);
     const width = viewportLayout?.width;
     const height = fixedBody ? viewportLayout?.height : declaredRoomHeight;
-    const widgetPresentation = React.useMemo(() => props.widgetPresentation
-        ? { ...props.widgetPresentation, ...(width !== undefined && height !== undefined ? { geometry: { width, height } } : {}) }
-        : inheritedPresentation, [props.widgetPresentation, width, height, inheritedPresentation]);
+    const widgetPresentation = React.useMemo(() => props.widgetPresentation && width !== undefined && height !== undefined
+        ? { ...props.widgetPresentation, geometry: { width, height } }
+        : props.widgetPresentation ?? inheritedPresentation, [props.widgetPresentation, width, height, inheritedPresentation]);
     // Read the first layout before paint on the web. A deferred body already has useful width at zero
     // height. Retry when it activates if its width was unavailable.
     const viewportContentRef = React.useRef<View | null>(null);
@@ -295,7 +295,7 @@ export const WidgetFrame = React.memo(function WidgetFrame(props: WidgetFramePro
         const content = viewportContentRef.current as unknown as Element | null;
         const room = readViewportRoom(fixedBody ? content?.closest?.(`[data-testid="${props.testID}.viewport"]`) : content);
         if (room) updateViewportLayout(room);
-    }, [props.testID, props.widgetPresentation, props.body, fixedBody, widgetPresentation, updateViewportLayout]);
+    }, [props.testID, props.widgetPresentation, props.body, fixedBody, height, widgetPresentation, updateViewportLayout]);
     // A fixed body whose rows run past it fades at the cut edge, so no line reads as cut off mid-height.
     const bodyFades = useScrollEdgeFades({ enabledEdges: FIXED_BODY_FADE_EDGES });
     const onFixedViewportLayout = React.useCallback((event: HappierLayoutChangeEvent) => {

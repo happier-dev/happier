@@ -135,7 +135,8 @@ export function createUiUsageActionPorts(account: UsageQueryAccountContext & Pic
             try {
               account.assertCurrent();
               throwIfAborted(context.signal);
-              const snapshot = entry.getSnapshot();
+              const snapshot = entry.getCurrentSnapshot();
+              if (!snapshot) return;
               if (snapshot.error) throw new HappyError(snapshot.error.message, false, { code: snapshot.error.code, details: snapshot.error.details });
               if (!snapshot.value || snapshot.freshness !== 'fresh') return;
               const batch = decodeUsageQueryResource(snapshot.value);

@@ -47,11 +47,13 @@ import { buildUsageRouteParams, resolveUsagePageInitialFilters } from './usageRo
 import { describeUsageWidgetSlotValue, type UsageWidgetPageScope } from './usageWidgetPageContext';
 import { USAGE_SESSION_WIDGET_PRESET_ID, USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
 import * as usageAnalytics from '@/sync/api/account/usageAnalytics';
+import * as usageWidgetResource from './useUsageWidgetResource';
 import { UsageCostFactsWidget } from './widgets/UsageCostFactsWidget';
 import { UsageRhythmWidget } from './widgets/UsageRhythmWidget';
 import { UsageFilterBar } from './UsageFilterBar';
 import { UsageProjectLedgerWidget } from './widgets/UsageProjectLedgerWidget';
 import { HappierDataRows } from '@happier-dev/plugin-ui/presentation';
+import * as pluginResource from '@happier-dev/plugin-ui/advanced';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { t } from '@/text';
@@ -1836,6 +1838,95 @@ describe('mounted Usage page scope commands', () => {
         const demands = reads().flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests);
         expect(demands.filter(demand => !demand.query.includeTranscriptEvidence)).toHaveLength(1);
         expect(demands.filter(demand => demand.query.includeTranscriptEvidence)).toHaveLength(1);
+    });
+
+    it('executes each real How you work body only for registration and content on a warm return', async () => {
+        vi.spyOn(Date, 'now').mockReturnValue(Math.floor(Date.now() / 60_000) * 60_000 + 1_000);
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-warm-body.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                if (request.path === USAGE_SESSION_EVIDENCE_PATH) {
+                    const { requests } = UsageSessionEvidenceRequestSchema.parse(request.body);
+                    return Response.json({ requests: requests.map(({ query, sessionIds }) => ({ query, sessionIds: sessionIds ?? [] })), results: [] });
+                }
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        let warmAcquisition: { reads: number; watches: number; confirmed: number } | undefined;
+        const createStore = pluginResource.createPluginUiResourceStore;
+        vi.spyOn(pluginResource, 'createPluginUiResourceStore').mockImplementation(input => {
+            const { client } = input;
+            const { readResource, watchResource } = client;
+            const isUsage = (reference: Parameters<typeof readResource>[0]) =>
+                typeof reference !== 'string' && 'hostRead' in reference && reference.hostRead === 'usage.query';
+            return createStore({ ...input, client: { ...client,
+                readResource(reference, options) {
+                    if (warmAcquisition && isUsage(reference)) warmAcquisition.reads++;
+                    return readResource(reference, options);
+                },
+                ...(watchResource ? { watchResource(reference: Parameters<typeof watchResource>[0],
+                    listener: Parameters<typeof watchResource>[1], options?: Parameters<typeof watchResource>[2]) {
+                    const observed = isUsage(reference) ? warmAcquisition : undefined;
+                    if (observed) observed.watches++;
+                    const result = watchResource(reference, listener, options);
+                    if (observed) void result.then(admission => {
+                        if (admission.admittedIdentity !== undefined) observed.confirmed++;
+                    }, () => {});
+                    return result;
+                } } : {}),
+            } });
+        });
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <CurrentContextPort /><RoutedUsagePage />
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const { sync } = await import('@/sync/sync');
+        await sync.awaitBootstrapForegroundAcquisition();
+        await waitForHomeGovernance(() => {
+            expect(screen.findAllByType(UsagePeriodSummaryWidget)[0]?.props.slice.accounting).toBeDefined();
+        });
+        const bodyModel = vi.spyOn(usageWidgetResource, 'useUsageWidgetBodyModel');
+        const select = async (id: 'coach' | 'how-you-work') => {
+            await act(async () => screen.findByType(WidgetAreaLayoutBar).props.onSelect(id));
+            await waitForHomeGovernance(() => {
+                expect(screen.findByType(WidgetAreaLayoutBar).props.selectedId).toBe(id);
+                const instances = screen.findAllByType(WidgetSurface).map(node => node.props.instance.id as string);
+                expect(instances).toHaveLength(id === 'coach' ? 1 : 8);
+                const models = new Map(bodyModel.mock.calls.map(([, instanceId], index) =>
+                    [instanceId, bodyModel.mock.results[index]?.value] as const));
+                for (const instanceId of instances)
+                    expect(models.get(instanceId)).toMatchObject({ slice: expect.any(Object), pending: false, refreshing: false });
+            });
+            await flushHookEffects({ cycles: 4 });
+        };
+        await select('coach');
+        await select('how-you-work');
+        await select('coach');
+        bodyModel.mockClear();
+        const before = home.requests.length;
+        warmAcquisition = { reads: 0, watches: 0, confirmed: 0 };
+        await select('how-you-work');
+        const reads = home.requests.slice(before).map(request => request.path).filter(path => path === '/v2/usage/query'
+            || path === '/v2/usage/query-batch' || path === USAGE_SESSION_EVIDENCE_PATH);
+        const phases = new Map<string, string[]>();
+        bodyModel.mock.calls.forEach(([, id], index) => {
+            const { requestedQuery, slice, pending, refreshing } = bodyModel.mock.results[index]!.value;
+            const runs = phases.get(id) ?? [];
+            runs.push(!requestedQuery ? 'registration' : pending || refreshing ? 'reading' : slice ? 'content' : 'unavailable');
+            phases.set(id, runs);
+        });
+        expect(reads, 'returning to admitted facts makes no usage read').toEqual([]);
+        expect(phases.size).toBe(8);
+        expect(warmAcquisition, 'unchanged admitted content is reused by one live watch without a read')
+            .toEqual({ reads: 0, watches: 1, confirmed: 1 });
+        expect(Object.fromEntries([...phases].filter(([, runs]) => runs.length > 2 || runs.at(-1) !== 'content')),
+            'each occurrence runs at most twice and settles on its admitted content').toEqual({});
     });
 
     it('follows the route-selected view and converges on the last selection', async () => {

@@ -73,12 +73,12 @@ export function useMachinePresenceSummaries(
     const targetServerId = serverId?.trim() || getActiveServerSnapshot().serverId;
     const idsKey = JSON.stringify(machineIds);
     const ids = React.useMemo(() => (JSON.parse(idsKey) as string[]).map(id => id.trim()), [idsKey]);
-    // A read of no Machine observes nothing, so it binds no Home Account: every Session row reads its managed-wake
-    // Machine, most have none, and each one's own binding resolving rendered the row a second time.
-    const scope = useMachinePresenceScope(ids.length > 0 ? targetServerId : null, ids.length > 0 ? suppliedLifetime : null);
+    // Blank slots keep their position in the returned summaries without demanding a Home credential or inventory.
+    const hasMachine = ids.some(Boolean);
+    const scope = useMachinePresenceScope(hasMachine ? targetServerId : null, hasMachine ? suppliedLifetime : null);
     const cached = React.useRef<readonly MachinePresenceSummary[]>([]);
     const readMachines = React.useCallback((resolveScopeId: ProfileScopeResolver = captureServerProfileScopeResolver()) => {
-        if (ids.length === 0) return [];
+        if (!hasMachine) return ids.map(() => null);
         const state = store.getState();
         const activeServerId = getActiveServerSnapshot().serverId;
         const serverId = targetServerId || activeServerId;
@@ -91,7 +91,7 @@ export function useMachinePresenceSummaries(
         }, resolveScopeId) : null;
         return serverId ? selectMachineInventoryRowsById(machines, ids)
             : ids.map(id => id ? state.machines[id] ?? null : null);
-    }, [store, targetServerId, ids]);
+    }, [store, targetServerId, ids, hasMachine]);
     const readSnapshot = React.useCallback((nowMs: number): readonly MachinePresenceSummary[] => {
         const resolveScopeId = captureServerProfileScopeResolver();
         const next = readMachines(resolveScopeId).map((machine, index): MachinePresenceSummary => {

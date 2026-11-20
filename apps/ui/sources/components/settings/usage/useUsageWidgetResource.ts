@@ -19,11 +19,11 @@ export type UsageWidgetQueryIdentity = Readonly<{ query: UsageQuery; authority: 
 /** A body selects its consumed facts and source facets; shared Resource authority and transport lifecycle stay intact. */
 export type UsageWidgetSliceProjection = (slice: UsageQueryResultSlice, previous: UsageQueryResultSlice | undefined) => UsageQueryResultSlice;
 const identitySlice: UsageWidgetSliceProjection = slice => slice;
-/** Hidden retained bodies and page chrome admit no live or static reads. */
-export function useUsageWidgetResourceSubscription(entry: UsageQueryResourceEntry | null, live: boolean) {
+/** Presented bodies and page chrome share one live admission. Retained hidden views lend no demand. */
+export function useUsageWidgetResourceSubscription(entry: UsageQueryResourceEntry | null) {
     const presented = useLayoutPresentationActive();
-    return React.useCallback((listener: () => void) => presented ? entry?.subscribe(listener, live) ?? (() => {}) : () => {},
-        [entry, live, presented]);
+    return React.useCallback((listener: () => void) => presented ? entry?.subscribe(listener, true) ?? (() => {}) : () => {},
+        [entry, presented]);
 }
 /** The visual lane consumes these facts directly; no widget computes accounting or source state. */
 export type UsageWidgetBodyModel = Readonly<{
@@ -151,7 +151,7 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
     const prior = React.useRef<UsageWidgetPrior | null>(null);
     const queryIdentity = React.useRef<Readonly<{ key: string; lifetime: ServerAccountScopeLifetime;
         value: UsageWidgetQueryIdentity }> | null>(null);
-    const subscribe = useUsageWidgetResourceSubscription(entry, true);
+    const subscribe = useUsageWidgetResourceSubscription(entry);
     const getSnapshot = React.useMemo(() => {
         let previous: UsageWidgetBodySnapshot | undefined;
         return (): UsageWidgetBodySnapshot => {

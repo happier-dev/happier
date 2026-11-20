@@ -1780,6 +1780,8 @@ export type UsageQueryResourceEntry = Omit<PluginUiResourceEntry, 'refresh'> & R
     refresh(options?: Readonly<{ supersede?: boolean; callerContext?: ActionExecutorContext }>): ReturnType<PluginUiResourceEntry['refresh']>;
     /** Only the canonical Usage Action port calls this after admission. */
     acquire(callerContext: ActionExecutorContext): ReturnType<PluginUiResourceEntry['refresh']>;
+    /** A current read consumes admitted projection inputs; presentation may retain its previous facts. */
+    getCurrentSnapshot(): ReturnType<PluginUiResourceEntry['getSnapshot']> | undefined;
     isAllowanceReadPending(): boolean;
     /** Cold presentations wait for admission; revisits immediately retain their last-known facts. */
     isPresentationReady(): boolean;
@@ -1795,7 +1797,9 @@ function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
     withCaller: <T>(callerContext: ActionExecutorContext | undefined, admitted: boolean, acquire: () => T) => T,
     requestFresh: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => void,
     isAllowanceReadPending: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => boolean,
-    hasReusableAdmission: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => boolean,
+    readAdmission: (reference: Parameters<PluginUiResourceStore['getEntry']>[0]) => Readonly<{
+        reusable: boolean; currentSnapshot: ReturnType<PluginUiResourceEntry['getSnapshot']> | undefined;
+    }>,
     createPresentationReadiness: (reference: Parameters<PluginUiResourceStore['getEntry']>[0],
         entry: PluginUiResourceEntry) => () => boolean): UsageQueryResourceStore {
     return Object.freeze<UsageQueryResourceStore>({
@@ -1825,9 +1829,10 @@ function withExplicitAllowanceRefresh(store: PluginUiResourceStore,
                 refresh,
                 acquire(context) {
                     initialCaller = undefined;
-                    return withCaller(context, true, () => hasReusableAdmission(reference)
+                    return withCaller(context, true, () => readAdmission(reference).reusable
                         ? Promise.resolve(entry.getSnapshot()) : entry.refresh({ supersede: false }));
                 },
+                getCurrentSnapshot: () => readAdmission(reference).currentSnapshot,
                 isAllowanceReadPending: () => entry.getSnapshot().pending !== 'idle' && isAllowanceReadPending(reference),
                 isPresentationReady: () => (presentationReady ??= createPresentationReadiness(reference, entry))(),
                 select(projection, selector) {
@@ -2116,11 +2121,14 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const quotaClockCurrent = !!admission && nowMs >= admission.quotaInterval.fromMs && nowMs < admission.quotaInterval.untilMs;
         // Inside the derivation interval only source freshness can have moved: a reprojection, not a reread.
         const derivationCurrent = !!admission && nowMs >= admission.derivationInterval.fromMs && nowMs < admission.derivationInterval.untilMs;
-        const admitted = !snapshot.error && admission?.settled === true && admission.inputs.length === readInputs.length
-            && admission.inputs.every((identity, index) => identity === readInputs[index]) && quotaClockCurrent;
+        const inputsCurrent = !!admission && admission.inputs.length === readInputs.length
+            && admission.inputs.every((identity, index) => identity === readInputs[index]);
+        const current = !snapshot.error && inputsCurrent;
+        const admitted = current && admission?.settled === true && quotaClockCurrent;
         const sourcesCurrent = admission?.settled === true && admission.inputs.length === readInputs.length
             && admission.inputs.every((identity, index) => index === 0 || identity === readInputs[index]);
         return { readInputs, nowMs, admission, quotaClockCurrent, derivationCurrent, sourcesCurrent, error: !!snapshot.error,
+            currentSnapshot: current || snapshot.error ? snapshot : undefined,
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
     const owner: AccountResourceOwner = {
@@ -2605,11 +2613,16 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // read's lifetime. Let that read settle as stale instead of
                     // feeding an endless chain of queued replacement reads.
                     if (!accountModeChanged && accountingWake && activeReadDemand) return;
+                    // Projection changes retain the admitted source facts for presentation.
+                    // Current reads consume their own Resource admission through getCurrentSnapshot.
+                    const content = projectionOnly === true && event.kind === 'invalidated'
+                        ? owner.store.getEntry(reference).getSnapshot().value : undefined;
                     // A reconnect recovers an interrupted transport, so it cannot
                     // wait behind the pre-reconnect read it is meant to replace.
                     const notification = typeof change === 'object' && change.source === 'connected'
                         ? { kind: 'invalidated' as const, supersede: true as const }
-                        : event;
+                        : content && event.kind === 'invalidated'
+                            ? { kind: 'invalidated' as const, contentIdentity: decodedValues.get(content)?.value } : event;
                     if (!accountModeChanged && accountingWake) {
                         // Committed facts in one synchronous burst invalidate now,
                         // then admit their one replacement together. Starting a read
@@ -2713,7 +2726,8 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         }, reference => [...listeners.values()].some(watched => resourceKey(watched.reference) === resourceKey(reference)
             && watched.isAllowanceReadPending()), reference => typeof reference !== 'string' && 'hostRead' in reference
                 && reference.hostRead === 'usage.query'
-                && readUsageAdmission(reference, normalizeUsageQueryBatchInput(reference.input).queries).reusable, (reference, entry) => {
+                ? readUsageAdmission(reference, normalizeUsageQueryBatchInput(reference.input).queries)
+                : { reusable: false, currentSnapshot: undefined }, (reference, entry) => {
             if (typeof reference === 'string' || !('hostRead' in reference) || reference.hostRead !== 'usage.query') return usagePresentationReady;
             const queries = normalizeUsageQueryBatchInput(reference.input).queries;
             const { readInputs, reusable } = readUsageAdmission(reference, queries);
