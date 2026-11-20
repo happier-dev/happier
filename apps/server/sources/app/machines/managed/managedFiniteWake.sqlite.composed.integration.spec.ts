@@ -27,6 +27,8 @@ import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResp
 import { ExternalActionDaemonDispatchRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import { signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { MANAGED_FINITE_WAKE_RPC_METHOD, ManagedFiniteWakeRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { ManagedIntentResultSchema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { SOCKET_RPC_EVENTS, SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
@@ -64,6 +66,7 @@ import { createAuthenticatedTestApp, withAuthenticatedTestApp } from '@/app/api/
 import { sessionPendingRoutes } from '@/app/api/routes/session/pendingRoutes';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { registerSessionListingRoutes } from '@/app/api/routes/session/registerSessionListingRoutes';
+import { registerSessionReadBatchRoute } from '@/app/api/routes/session/registerSessionReadBatchRoute';
 import { registerAccountEncryptionRoutes } from '@/app/api/routes/account/registerAccountEncryptionRoutes';
 import { registerAutomationActionIndexRoutes } from '@/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { PendingActivationHoldReasonV1Schema, ManagedPendingActivationFailureRequestV1Schema,
@@ -147,11 +150,32 @@ describe('finite managed wake original Action authority (real storage)', () => {
         const authentication = createPresentUserSessionAccessAuthentication();
         const envBefore = snapshotEnv();
         applyEnvValues({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' });
-        const app = createAuthenticatedTestApp({ authentication: 'real' });
+        const app: ServerFastify = createAuthenticatedTestApp({ authentication: 'real' });
         sessionPendingRoutes(app);
         registerSessionListingRoutes(app);
+        registerSessionReadBatchRoute(app);
         registerAccountEncryptionRoutes(app);
+        registerManagedMachineRoutes(app);
         try {
+            const importCli = async <T,>(path: string) => await import(path) as T;
+            const { fixture: nativeFixture, pluginId } =
+                await importCli<typeof import('../../../../../cli/src/plugins/runtime/invocation/actions/managedCustody.testkit')>(
+                    '../../../../../cli/src/plugins/runtime/invocation/actions/managedCustody.testkit');
+            let nativeRunning = false;
+            const applyNativeStart = vi.fn(() => { nativeRunning = true; });
+            const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
+                supportedIntents: ['start', 'stop', 'delete'],
+                nativeRoleResults: { inspect: () => ({ observedAt: Date.now(), availability: 'present',
+                    power: nativeRunning ? 'running' : 'stopped', storage: 'retained' }) },
+                onNativeRole: (role, input) => {
+                    if (role === 'power') {
+                        expect(input).toMatchObject({ intent: 'start' });
+                        applyNativeStart();
+                    }
+                },
+            });
+            const [provisioner] = native.manifest.contributes.machineProvisioners;
+            if (!provisioner) throw new Error('Fixture provisioner was not published');
             await db.machine.update({ where: { id: machineId }, data: { active: true,
                 operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } } } });
             const publish = async (sessionId: string) => {
@@ -165,7 +189,8 @@ describe('finite managed wake original Action authority (real storage)', () => {
             const inputs: { sessionId: string; localId: string; message: string }[] = [];
             for (let index = 0; index < 4; index++) {
                 const session = await db.session.create({ data: { accountId, tag: randomUUID(), encryptionMode: 'plain',
-                    metadata: JSON.stringify({ machineId, path: '/work', runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } }) } });
+                    metadata: JSON.stringify({ machineId, path: '/work', flavor: 'claude', claudeSessionId: randomUUID(),
+                        runtimeDescriptorV1: { v: 1, agentId: 'claude', agent: {} } }) } });
                 expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId,
                     sessionId: session.id, machineId, data: 'fixture-session-key' }))).toMatchObject({ ok: true });
                 await publish(session.id);
@@ -174,19 +199,22 @@ describe('finite managed wake original Action authority (real storage)', () => {
             const controller = test.target.controller;
             const report = { homeId, managedId: test.row.id, controller, requestId: randomUUID(),
                 expectedIntentRevision: test.row.intentRevision };
+            const provider = { pluginId, localId: provisioner.id };
+            const launch = { provider, schemaVersion: provisioner.schemaVersion, name: 'Retained', choices: {} };
             await db.managedMachine.update({ where: { id: test.row.id }, data: {
+                launch, resource: { contributionRef: provider, schemaVersion: provisioner.schemaVersion, value: {} },
+                reviewedFacts: ManagedConfigurationFactsV1Schema.parse({ launch, controller, provisioner,
+                    optionStatus: 'current', prerequisites: [], billing: provisioner.billing, retentionCapabilities: provisioner.retention,
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true }),
                 observation: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' },
                 admittedInput: { submittedEffect: { ...report, intent: 'stop' } },
             } });
             expect((await reportManagedIntent({ ...report, result: { kind: 'confirmed' },
-                observation: { observedAt: Date.now(), availability: 'present', power: 'stopped' } })).machine.observation)
-                .toMatchObject({ power: 'stopped' });
+                observation: { observedAt: Date.now(), availability: 'present', power: 'stopped', storage: 'retained' } })).machine.observation)
+                .toMatchObject({ power: 'stopped', storage: 'retained' });
             expect(await db.machine.findUniqueOrThrow({ where: { id: machineId }, select: { active: true } }))
                 .toEqual({ active: false });
 
-            // The only substituted boundary is transport to the native guest. The real
-            // CLI Send, Home admission, publisher registration and Pending settlement run.
-            const importCli = async <T,>(path: string) => await import(path) as T;
             const { sendSessionMessage } = await importCli<{
                 sendSessionMessage: (input: Readonly<{ credentials: { token: string; encryption: null };
                     idOrPrefix: string; localId: string; message: string; wait: false; timeoutMs: number; explicitMessageSend: true;
@@ -194,17 +222,119 @@ describe('finite managed wake original Action authority (real storage)', () => {
             }>('../../../../../cli/src/session/services/sendSessionMessage');
             const { runWithServerHttpBaseUrl } = await importCli<{ runWithServerHttpBaseUrl: <T>(url: string, run: () => T) => T }>(
                 '../../../../../cli/src/api/client/serverHttpBaseUrl');
+            const { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } =
+                await importCli<typeof import('../../../../../cli/src/daemon/startup/managedMachinePolicyRuntime')>(
+                    '../../../../../cli/src/daemon/startup/managedMachinePolicyRuntime');
+            const { createManagedMachineAcquisitionDriver } =
+                await importCli<typeof import('../../../../../cli/src/machines/managed/acquire')>(
+                    '../../../../../cli/src/machines/managed/acquire');
+            const { createHostActionOperationRuntime } =
+                await importCli<typeof import('../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime')>(
+                    '../../../../../cli/src/daemon/actionOperations/createHostActionOperationRuntime');
+            const { createManagedProviderOperationAuthority } =
+                await importCli<typeof import('../../../../../cli/src/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority')>(
+                    '../../../../../cli/src/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority');
+            const { createConnectedAccountPurposeBindingOwner } =
+                await importCli<typeof import('../../../../../cli/src/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner')>(
+                    '../../../../../cli/src/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner');
+            const { resolveHomeTargetFromDescriptor } = await import('@happier-dev/cli-common/homeTarget');
+            const { createPendingSessionActivationRecovery } =
+                await importCli<typeof import('../../../../../cli/src/daemon/sessions/pendingSessionActivationRecovery')>(
+                    '../../../../../cli/src/daemon/sessions/pendingSessionActivationRecovery');
+            const { activatePendingInactiveSession } =
+                await importCli<typeof import('../../../../../cli/src/daemon/sessions/activatePendingInactiveSession')>(
+                    '../../../../../cli/src/daemon/sessions/activatePendingInactiveSession');
             const origin = await app.listen({ host: '127.0.0.1', port: 0 });
             const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
-            let boot: Promise<unknown> | undefined;
+            const credentials = { token, encryption: null };
+            const callerResume = vi.fn(async () => { throw new Error('Home owns the accepted-input wake'); });
             const results = await runWithServerHttpBaseUrl(origin, () => Promise.all(inputs.map(input => sendSessionMessage({
-                credentials: { token, encryption: null }, idOrPrefix: input.sessionId, localId: input.localId,
+                credentials, idOrPrefix: input.sessionId, localId: input.localId,
                 message: input.message, wait: false, timeoutMs: 10_000, explicitMessageSend: true,
-                machineResumeTransport: async (method, request) => {
-                    expect(method).toBe(RPC_METHODS.SPAWN_HAPPY_SESSION);
-                    expect(request).toMatchObject({ type: 'resume-session', sessionId: input.sessionId });
-                    boot ??= db.machine.update({ where: { id: machineId }, data: { active: true } });
-                    await boot;
+                machineResumeTransport: callerResume,
+            }))));
+            for (const [index, result] of results.entries()) expect(result).toMatchObject({ ok: true,
+                admissionResult: { status: 'accepted', localId: inputs[index]!.localId } });
+            expect(callerResume).not.toHaveBeenCalled();
+            const grants = await db.session.findMany({ where: { id: { in: inputs.map(input => input.sessionId) } },
+                select: { id: true, pendingActivationRequestId: true, pendingActivationStatus: true, pendingActivationManagedTarget: true } });
+            expect(grants).toEqual(expect.arrayContaining(inputs.map(input => ({
+                id: input.sessionId, pendingActivationRequestId: input.localId, pendingActivationStatus: 'waiting',
+                pendingActivationManagedTarget: expect.objectContaining({ homeId, managedId: test.row.id, enrolledMachineId: machineId }),
+            }))));
+
+            const census = (signal?: AbortSignal) => readManagedMachinePolicyCensus({ homeId, controller, token, serverUrl: origin,
+                custodianAccountId: accountId, privateKey: test.controllerKeys.secretKey, signal });
+            const origins = (await census()).targets.map(target => target.origin);
+            expect(origins).toHaveLength(inputs.length);
+            expect(origins).toEqual(expect.arrayContaining(inputs.map(input => expect.objectContaining({
+                kind: 'session-input', pendingRequestId: input.localId, session: expect.objectContaining({ sessionId: input.sessionId }),
+            }))));
+            const unavailableCredentialTransport = async (): Promise<never> => { throw new Error('Fixture provisioner has no credential purposes'); };
+            const managedProviderOperationAuthority = createManagedProviderOperationAuthority({
+                purposeBindingOwner: createConnectedAccountPurposeBindingOwner({
+                    store: { read: async () => ({ v: 1, bindings: [] }), update: unavailableCredentialTransport, subscribe: () => ({ dispose() {} }) },
+                    selectTarget: unavailableCredentialTransport, resolveTarget: unavailableCredentialTransport,
+                    materializeAccount: unavailableCredentialTransport, projectTargetAccounts: unavailableCredentialTransport,
+                    assertTargetAccountMaterializable: unavailableCredentialTransport,
+                }),
+            });
+            const driver = createManagedMachineAcquisitionDriver({ homeId, controller, token, serverUrl: origin, credentials,
+                runtimeRegistry: native.runtimeRegistry, managedProviderOperationAuthority,
+                homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
+                    canonicalServerUrl: origin, revision: 1, endpoints: [{ kind: 'https', url: origin }] }, authority: 'current_connection' }),
+                externalActionMachineRequestPrivateKey: test.controllerKeys.secretKey,
+            });
+            const operations = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => accountId });
+            const wakeRuns: ReturnType<typeof operations.observeExecution>[] = [];
+            const wakeErrors: unknown[] = [];
+            const policy = createDaemonManagedMachinePolicyRuntime({
+                readCensus: census,
+                executePolicy: ({ machine, purpose, signal }) => {
+                    // Enter the real controller driver at its approved operation port.
+                    const requestId = randomUUID();
+                    const run = operations.observeExecution({ actionId: 'machines.managed.power.set',
+                        input: { managedId: machine.id, purpose }, actionRequestId: requestId,
+                        execute: async operation => {
+                            const lifetime = signal ? AbortSignal.any([signal, operation.signal]) : operation.signal;
+                            return { ok: true, result: await driver.executePolicy(machine, purpose, {
+                                requestId, signal: lifetime, policySchedulerSignal: signal, context: { ...operation, signal: lifetime },
+                            }) };
+                        },
+                    });
+                    // Host observation acknowledges admission before native IO.
+                    const finished = run.then(async admitted => {
+                        expect(admitted).toMatchObject({ ok: true, result: { kind: 'accepted', managedId: machine.id } });
+                        if (!admitted.ok) throw new Error('Home wake operation was not admitted');
+                        const receipt = ManagedIntentResultSchema.parse(admitted.result);
+                        if (receipt.kind !== 'accepted' || !receipt.operation) throw new Error('Home wake needs an operation receipt');
+                        const operation = await operations.runner.waitForCompletion({ accountId, machineId: controller.machineId },
+                            receipt.operation.operationId);
+                        expect(operation).toMatchObject({ state: 'succeeded', result: { kind: 'accepted', managedId: machine.id } });
+                        return admitted;
+                    });
+                    wakeRuns.push(finished);
+                    return finished;
+                },
+                onUnavailable: error => { wakeErrors.push(error); },
+            });
+            try {
+                await policy.notifyChanged();
+                expect(wakeRuns).toHaveLength(1);
+                await Promise.all(wakeRuns);
+                expect(wakeErrors).toEqual([]);
+                expect(applyNativeStart).toHaveBeenCalledTimes(1);
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id }, select: { observation: true } }))
+                    .toMatchObject({ observation: { power: 'running' } });
+            } finally { await policy.stop(); }
+
+            await db.machine.update({ where: { id: machineId }, data: { active: true } });
+            const spawn = vi.fn<Parameters<typeof activatePendingInactiveSession>[0]['spawnSessionForInternalResume']>(
+                async (options, admission) => {
+                    const input = inputs.find(candidate => candidate.sessionId === options.existingSessionId);
+                    if (!input) throw new Error('The recovered Session did not have an accepted Send');
+                    expect(options).toMatchObject({ machineId, existingSessionId: input.sessionId });
+                    expect(admission).toMatchObject({ requestId: input.localId, requestedAt: expect.any(Number) });
                     const publisherAuthority = await publish(input.sessionId);
                     const host = { actorUserId: accountId, sessionId: input.sessionId, publisherAuthority };
                     expect(await materializeNextPendingMessage({ ...host, deliveryState: 'provider',
@@ -217,16 +347,24 @@ describe('finite managed wake original Action authority (real storage)', () => {
                     expect(await resolveAcceptedPendingDelivery({ ...host, localId: input.localId,
                         acceptedTurn: { kind: 'newTurn', turnId } })).toMatchObject({ ok: true, didResolve: true });
                     return { type: 'success', sessionId: input.sessionId };
+                });
+            const recovery = createPendingSessionActivationRecovery({ token,
+                activate: async hint => {
+                    expect(await activatePendingInactiveSession({ credentials, machineId, sessionId: hint.sessionId,
+                        requestId: hint.requestId, pendingVersion: hint.pendingVersion, spawnSessionForInternalResume: spawn }))
+                        .toEqual({ status: 'activated' });
                 },
-            }))));
-            for (const [index, result] of results.entries()) expect(result).toMatchObject({ ok: true,
-                admissionResult: { status: 'accepted', localId: inputs[index]!.localId } });
+                warn: (_message, _hint, error) => { throw error; },
+            });
+            await runWithServerHttpBaseUrl(origin, () => recovery.recoverAfterConnect());
+            expect(spawn).toHaveBeenCalledTimes(inputs.length);
             const committed = await db.sessionMessage.findMany({ where: { OR: inputs.map(({ sessionId, localId }) => ({ sessionId, localId })) },
                 select: { sessionId: true, localId: true } });
             const queued = await db.sessionPendingMessage.count({ where: { status: 'queued',
                 sessionId: { in: inputs.map(input => input.sessionId) } } });
             expect({ delivered: committed.length, queued }).toEqual({ delivered: 4, queued: 0 });
             expect(committed).toEqual(expect.arrayContaining(inputs.map(({ sessionId, localId }) => ({ sessionId, localId }))));
+            expect((await census()).targets).toEqual([]);
         } finally { await app.close(); restoreEnv(envBefore); }
     });
 
