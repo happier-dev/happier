@@ -32,7 +32,7 @@ import { db } from '../../../server/sources/storage/db';
 import { inTx } from '../../../server/sources/storage/inTx';
 import { removeTeamMemberForActorInTx } from '../../../server/sources/app/teams/memberships/memberAdministration';
 import { DATABASE_CAPTURE_PLUGIN } from '../../../../packages/plugins/telemetry/src/manifest';
-import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, requireDaemonEntrypoint } from '@/plugins/testkit/admittedRuntime';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
@@ -251,7 +251,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                 const mounted = await runWithServerHttpBaseUrl(home.baseUrl, () => createAuthoredAdmittedPluginRuntimeFixture({
                     controller: pluginReloadController, happyHomeDir: configuration.happyHomeDir,
                     plugins: [{ manifest: DATABASE_CAPTURE_PLUGIN.manifest, replaceExisting: true,
-                        files: { 'dist/index.js': 'export function activate() {}' },
+                        files: { [requireDaemonEntrypoint(DATABASE_CAPTURE_PLUGIN.manifest)]: 'export function activate() {}' },
                         instantiateCommittedModule: () => ({ activate: DATABASE_CAPTURE_PLUGIN.activate,
                             daemonDatabases: DATABASE_CAPTURE_PLUGIN.daemonDatabases }) }],
                     resolveContributes: readContributes, runtimeOptions,
