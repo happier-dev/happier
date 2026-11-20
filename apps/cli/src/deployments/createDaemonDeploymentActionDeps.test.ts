@@ -1416,7 +1416,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -1444,6 +1444,7 @@ describe('installed deployment storage and target composition', () => {
         const nativeDomainRequests: { method: string; path: string }[] = [];
         const domainRole = domainTeardown || domainRemove ? 'domains.remove' as const : domainAdd ? 'domains.add' as const : 'domains.verify' as const;
         const confirmedUpload = scenario === 'confirmed repository upload';
+        const confirmedTeardown = scenario === 'provider teardown confirm re-entry';
         const rootSource = scenario.startsWith('root source ');
         const rootSourceForeign = scenario === 'root source foreign';
         const rootApproval = scenario.startsWith('root source approval ');
@@ -1860,19 +1861,23 @@ describe('installed deployment storage and target composition', () => {
                     return lease;
                 },
                 runtime: { async acquire() { throw new Error('Platform must not acquire native execution'); } } });
-            if (confirmedUpload) {
-                environment.content.definition = { kind: 'repository', ref: 'main', compose: rootSourceIntent.compose };
-                put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
-                row.content = { ...row.content, sourceMethod: 'upload' };
-                put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
-                const actionId = 'deployments.deploy';
-                const input = { serverId: 'home', environmentId: environment.environment.id,
-                    targetLinkId: row.targetLink.id, sha: rootSourceIntent.sha };
+            if (confirmedUpload || confirmedTeardown) {
+                const input = { serverId: 'home', environmentId: environment.environment.id, targetLinkId: row.targetLink.id };
+                const teardownInput = { ...input, reason: 'manual' as const, providerRemoval: 'delete' as const, requestKey: 'confirmed-provider-delete' };
+                const uploadInput = { ...input, sha: rootSourceIntent.sha };
+                const authored = confirmedTeardown ? teardownInput : uploadInput;
+                const actionId = confirmedTeardown ? 'deployments.teardown' as const : 'deployments.deploy' as const;
+                if (confirmedUpload) {
+                    environment.content.definition = { kind: 'repository', ref: 'main', compose: rootSourceIntent.compose };
+                    put(environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content);
+                    row.content = { ...row.content, sourceMethod: 'upload' };
+                    put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                }
                 const target = { kind: 'machine' as const, machineId: 'machine-a' };
                 const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps });
                 const makeContext = async (requestId: string, retain?: NonNullable<
                     ExternalActionExecutionAuthorizationV1['binding']['deploymentCandidatePublication']>) => {
-                    const envelope = { v: 1 as const, requestId, target, input };
+                    const envelope = { v: 1 as const, requestId, target, input: authored };
                     const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
                     const publication = retain ?? createDeploymentCandidatePublicationV1({ accountId: 'owner', serverIdentityId: 'home',
                         actionId, requestId, requestEnvelopeDigest, environmentId: input.environmentId,
@@ -1881,7 +1886,7 @@ describe('installed deployment storage and target composition', () => {
                         serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
                         admittedMachineRole: 'manage', custodianAccountId: 'owner', machineId: 'machine-a', installationId: 'installation-a',
                         actionId, requestId, requestEnvelopeDigest, target, accountEncryptionMode: 'plain',
-                        deploymentCandidatePublication: publication,
+                        deploymentChildRoot: true, deploymentCandidatePublication: publication,
                     } });
                     const requester = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
                         machineId: 'machine-a', installationId: 'installation-a', installationPrivateKey: identity.secretKey,
@@ -1894,16 +1899,35 @@ describe('installed deployment storage and target composition', () => {
                         externalActionExecutionAuthorization: requester.authorization };
                     return { context, publication };
                 };
-                const first = await makeContext('review-upload');
-                const reviewed = await deps.prepareDeploymentAction({ actionId, input, context: first.context });
+                const first = await makeContext('review-candidate');
+                if (confirmedTeardown) {
+                    const readWorkflowInvocation = async () => { throw new Error('Runtime deletion has no Workflow custody'); };
+                    const reviewed = await deps.prepareDeploymentTeardown!({ input: teardownInput, context: first.context, readWorkflowInvocation });
+                    expect(reviewed).toMatchObject({ input: { contentArtifactId: first.publication.contentArtifactId },
+                        hostReviewedChildren: { children: [{ role: 'teardown' }, { role: 'observe' }] } });
+                    if (!('input' in reviewed) || !('contentArtifactId' in reviewed.input)) throw new Error(JSON.stringify(reviewed));
+                    const { contentArtifactId, contentHeaderVersion, contentBodyVersion } = reviewed.input;
+                    const confirm = await makeContext('confirm-candidate', { ...first.publication,
+                        reviewed: { contentArtifactId, contentHeaderVersion, contentBodyVersion } });
+                    await expect(deps.prepareDeploymentTeardown!({ input: teardownInput, context: confirm.context, readWorkflowInvocation }))
+                        .resolves.toEqual(reviewed);
+                    row.content = { ...row.content, providerIdentity: { ...row.content.providerIdentity, providerResourceId: 'moved-project' } };
+                    put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                    await expect(deps.prepareDeploymentTeardown!({ input: teardownInput, context: confirm.context, readWorkflowInvocation }))
+                        .resolves.toMatchObject({ ok: false, errorCode: 'approval_stale' });
+                    expect(candidatesCreated).toBe(1);
+                    return;
+                }
+                const reviewed = await deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: uploadInput, context: first.context });
                 expect(reviewed).toMatchObject({ input: { contentArtifactId: first.publication.contentArtifactId },
-                    preview: { sourceMethod: 'upload', sourceIntent: { sha: input.sha } },
+                    preview: { sourceMethod: 'upload', sourceIntent: { sha: rootSourceIntent.sha } },
                     hostReviewedChildren: { children: [{ role: 'uploadDeploy' }, { role: 'observe' }] } });
                 if (!('input' in reviewed)) throw new Error(JSON.stringify(reviewed));
                 const { contentArtifactId, contentHeaderVersion, contentBodyVersion } = reviewed.input;
                 const confirm = await makeContext('confirm-upload', { ...first.publication,
                     reviewed: { contentArtifactId, contentHeaderVersion, contentBodyVersion } });
-                await expect(deps.prepareDeploymentAction({ actionId, input: reviewed.input, context: confirm.context })).resolves.toEqual(reviewed);
+                await expect(deps.prepareDeploymentAction({ actionId: 'deployments.deploy', input: reviewed.input, context: confirm.context }))
+                    .resolves.toEqual(reviewed);
                 expect(candidatesCreated).toBe(1);
                 return;
             }
@@ -3405,6 +3429,135 @@ describe('installed deployment storage and target composition', () => {
             expect(grants.get(id)).toEqual({ principal: { kind: 'team', teamId: 'source-team' }, accessLevel: 'admin' });
         }
         expect(environmentWrites).toEqual([]);
+    });
+
+    it.each(['unchanged', 'new Project', 'moved Source', 'changed definition'] as const)('reviews compact Create at the installed Controller (%s)', async scenario => {
+        const { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1: actionId } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+        const { bindPresentUserActionConfirmationV1 } = await import('@happier-dev/protocol/actions/executor/approvalReview');
+        const serverHttpBaseUrl = 'https://compact-create-review.test';
+        const credentials: StoredCredentials = {
+            token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null,
+        };
+        const keys = tweetnacl.sign.keyPair();
+        const target = { kind: 'machine' as const, machineId: 'machine-a' };
+        const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({
+            serverId: 'home', ...(scenario === 'new Project' ? { newProject: { name: 'Project', requestKey: 'new-project',
+                owner: { kind: 'account', accountId: 'owner' } } } : { projectSourceId: 'source' }),
+            requestKey: 'create-reviewed', name: 'App',
+            controllerMachineId: target.machineId, retainPreviousDeployments: 1,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            definition: { from: 'image', image: 'nginx:1', port: 80 },
+        });
+        let sourceRevision = 1;
+        const artifacts = new Map<string, unknown>();
+        const environments: unknown[] = [];
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({
+            version: 1, installationId: 'installation-a', createdAt: 1,
+            publicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            privateKey: Buffer.from(keys.secretKey).toString('base64url'),
+        });
+        vi.spyOn(axios, 'request').mockImplementation(async request => {
+            const path = new URL(String(request.url)).pathname;
+            if (request.method === 'GET' && path === '/v1/projects/sources/source') return { status: 200,
+                data: { ok: true, canManage: true, source: { id: 'source', revision: sourceRevision, name: 'Project',
+                    owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner' } } };
+            if (request.method === 'GET' && path === '/v1/projects/source/deployment-defaults') return { status: 200,
+                data: { ok: true, projectSourceId: 'source', sourceRevision, revision: 0, content: null } };
+            if (request.method === 'POST' && path === '/v1/deployments/environments') {
+                const ref = readHomeRequestArtifactReference(request.data);
+                expect(artifacts.has(ref.contentArtifactId)).toBe(true);
+                environments.push(request.data);
+                return { status: 200, data: { ok: true, environmentId: 'created-env', revision: 1 } };
+            }
+            throw new Error(`Unexpected Create transport ${request.method} ${path}`);
+        });
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
+            if (path === '/v1/account/encryption/currentness') return { status: 200,
+                data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+            if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+            if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+            throw new Error(`Unexpected Create read ${path}`);
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/execution-authorization/verify')) return { status: 200, data: { ok: true } };
+            expect(path).toBe('/v1/artifacts');
+            const mutation = readCarrierMutation(body);
+            artifacts.set(String(mutation.id), mutation);
+            return { status: 200, data: { id: mutation.id, headerVersion: 1, bodyVersion: 1 } };
+        });
+        const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl,
+            machineId: target.machineId, resolveRequesterIdentity: resolveOwnerRequesterIdentity,
+            runtime: { async acquire() { throw new Error('Definition Create cannot run a workload'); } } });
+        const actionAutomations = createActionAutomationPortV1({ accountId: 'owner',
+            seed: async () => ({ v: 1, rows: [] }), settle: async () => {} });
+        onTestFinished(() => actionAutomations.dispose());
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps, actionAutomations,
+            resolveEnvironmentApprovalScope: async () => ({ scope: null }) });
+        const invoke = async (requestId: string, reviewDigest?: string) => {
+            const operands = reviewDigest && scenario === 'changed definition'
+                ? { ...input, definition: { from: 'image' as const, image: 'nginx:2', port: 80 } } : input;
+            const envelope = { v: 1 as const, requestId, target, input: operands };
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'create-admitted', binding: {
+                accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 }, admittedMachineRole: 'manage',
+                custodianAccountId: 'owner', machineId: target.machineId, installationId: 'installation-a',
+                serverIdentityId: 'home', actionId, requestId, target, accountEncryptionMode: 'plain',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, operands),
+            } });
+            const custody = await prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+                machineId: target.machineId, installationId: 'installation-a', installationPrivateKey: keys.secretKey,
+                serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl, ownCredentials: credentials,
+                isCurrent: async () => true, createExecutor: () => executor });
+            if (!custody) throw new Error('Expected installed Account custody');
+            try {
+                const context = { ...ownerContext, surface: 'ui' as const, interactivePresentation: 'unavailable' as const,
+                    actionCaller: { kind: 'host' as const }, actionRequestId: requestId, runtimeAccountId: 'owner',
+                    serverId: 'home', serverIdentityId: 'home', externalActionTarget: target,
+                    originalActionEnvelope: envelope, externalActionExecutionAuthorization: custody.authorization,
+                    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } }),
+                };
+                if (!reviewDigest) return await executor.execute(actionId, operands, context);
+                // The app binds the press before the signed Controller transport attaches custody.
+                const { externalActionExecutionAuthorization: _authorization, ...sender } = context;
+                const { presentUserConfirmation } = bindPresentUserActionConfirmationV1(actionId, operands, sender, reviewDigest);
+                expect(presentUserConfirmation?.reviewDigest).toBe(reviewDigest);
+                return await executor.execute(actionId, operands, { ...context, presentUserConfirmation });
+            } finally { await custody.dispose(); }
+        };
+        const review = await invoke('create-review');
+        expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
+            details: { reviewDigest: expect.any(String), review: { preview: {
+                deploymentReview: { definitionCommitment: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) },
+            } } } });
+        if (review.ok || !isRecord(review.details) || typeof review.details.reviewDigest !== 'string') throw new Error('Missing Create review');
+        expect(JSON.stringify(review.details.review)).not.toContain('nginx:1');
+        expect(artifacts.size).toBe(0);
+        expect(environments).toEqual([]);
+        if (scenario === 'moved Source') sourceRevision++;
+        const confirmed = await invoke('create-confirm', review.details.reviewDigest);
+        const unchanged = scenario === 'unchanged' || scenario === 'new Project';
+        expect(confirmed, JSON.stringify({ confirmed, artifacts: artifacts.size, environments: environments.length })).toMatchObject(unchanged
+            ? { ok: true, result: { ok: true, environmentId: 'created-env' } }
+            : { ok: false, errorCode: 'action_interactive_review_required' });
+        if (!unchanged) {
+            // An automatic check may hold the same review for later execution.
+            // Replay must also refuse moved Source pins and changed content.
+            const { DeploymentEnvironmentCreationReviewV1Schema } = await import('@happier-dev/protocol');
+            const carried = review.details.review;
+            if (!isRecord(carried) || !isRecord(carried.preview)) throw new Error('Missing Create review facts');
+            const replay = await deps.prepareDeploymentEnvironmentCreate({
+                input: scenario === 'changed definition'
+                    ? { ...input, definition: { from: 'image', image: 'nginx:2', port: 80 } } : input,
+                context: ownerContextFor(target.machineId),
+                creationReview: DeploymentEnvironmentCreationReviewV1Schema.parse(carried.preview.deploymentReview),
+            });
+            expect(replay).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+        }
+        expect(artifacts.size).toBe(unchanged ? 1 : 0);
+        expect(environments).toHaveLength(unchanged ? 1 : 0);
     });
 
     it.each(['plain', 'e2ee'] as const)('withdraws captured %s Account custody during real create preparation before any Artifact or Environment write', async mode => {

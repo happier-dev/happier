@@ -3689,7 +3689,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ? { ...baseApprovalRouting, result: 'required' as const }
       : baseApprovalRouting;
     // The one approval builder: an approval request, the native confirmation, and a review this host carries back.
-    const prepareCurrentApproval = () => prepareApprovalRequest({
+    const prepareCurrentApproval = (forCarriedReview = false) => prepareApprovalRequest({
       deps,
       actionId,
       input: admittedInput,
@@ -3697,6 +3697,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       semanticInput,
       context: ctx,
       ...(childrenApprovalPreview === undefined ? {} : { hostReviewedContent: childrenApprovalPreview }),
+      forCarriedReview,
       ...(deploymentReview === undefined ? {} : { deploymentReview }),
       ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
       ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
@@ -3719,7 +3720,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // already passed the input-bound consent owner and need no receiving-host review round trip.
     if (confirmedReviewDigest !== undefined) {
       // The person confirmed one exact review; changed consequences ask again with the fresh review.
-      const review = await prepareCurrentApproval();
+      const review = await prepareCurrentApproval(true);
       if (!review) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       if ('ok' in review) return review;
       if (computeActionReviewDigestV1(actionId, review) !== confirmedReviewDigest) return reviewRefusal(review);
@@ -3736,7 +3737,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if ((approvalRouting.required || approvalRouting.uiConfirmationRequired) && !isApprovalAction
       && (ctx.interactivePresentation === 'unavailable' || carriesOwnReview && noConfirmationPresenter)) {
       if (!carriesOwnReview) return reviewRefusal(null);
-      const review = await prepareCurrentApproval();
+      const review = await prepareCurrentApproval(true);
       if (review && 'ok' in review) return review;
       return reviewRefusal(review);
     }

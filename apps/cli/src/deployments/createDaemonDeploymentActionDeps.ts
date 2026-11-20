@@ -18,6 +18,8 @@ import { configuration } from '@/configuration';
 import { decodeBase64 } from '@/api/encryption';
 import type { TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { isHomeAdmittedPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
+import { isSharedRequesterActionV1 } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { normalizeDeploymentTargetLinkOriginV1 } from '@happier-dev/protocol/deployments/targetLinkInput';
@@ -61,6 +63,7 @@ import {
     DeploymentTemplateInstantiateInputV1Schema, deploymentOperationForRootActionV1,
 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DeploymentEnvironmentCreationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readHostAdmittedReviewedChildV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedRootV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { admitForkPreviewDeploymentForHost, prepareForkPreviewCreateForHost } from './forkPreviewCreateForHost';
 import { readPreviewDomainForHost, preparePreviewDomainFactForHost } from './previewDomainForHost';
@@ -108,7 +111,7 @@ import { preparePromotionForHost } from './preparePromotionForHost';
 import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { admitStoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { createPrepareDeploymentBindingsForHost } from './secrets/prepareDeploymentBindingsForHost';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -137,7 +140,7 @@ import { readDeploymentObservationForHost } from './readObservationForHost';
 import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readOwnServerDeploymentReceiptHistoryForHost } from './readReceiptForHost';
 import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDefaultsForHost, prepareDeploymentEnvironmentDefaultsForHost,
     type DeploymentCreationDefaultRequestForHost } from './readCreationDefaultsForHost';
-import { createPrepareEnvironmentCreateForHost, resolveEnvironmentCreateCopyForHost,
+import { createEnvironmentCreatePlannerForHost, resolveEnvironmentCreateCopyForHost,
     resolveEnvironmentCreatePreviewForHost } from './prepareEnvironmentCreateForHost';
 import { COPY_ENVIRONMENT_BINDINGS_ROLE, createEnvironmentWithCopyForHost } from './copyEnvironmentForHost';
 import { copyEnvironmentDataProvisionRole, copyEnvironmentDataLinkRole } from './copyEnvironmentDataForHost';
@@ -264,6 +267,14 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     const notificationCatalog = createCliNotificationCatalogForHost({ ...host,
         resolvePluginNotifications: createHostPluginNotificationChannels });
     const definitionRole = (context: ActionExecutorContext) => resolveDeploymentDefinitionRoleForHost(context, host);
+    const copyEnvironmentChildren = (plan: NonNullable<import('@happier-dev/protocol').DeploymentEnvironmentCreateInputV1['copyPlan']>):
+        HostReviewedChildrenPreparationV1['children'] => [
+        ...(plan.bindings.length ? [{ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, role: COPY_ENVIRONMENT_BINDINGS_ROLE }] : []),
+        ...(plan.data ?? []).flatMap(row => [
+            { action: row.provision.action, role: copyEnvironmentDataProvisionRole(row.targetLinkId) },
+            { action: DEPLOYMENT_TARGET_LINK_ACTION_ID_V1, role: copyEnvironmentDataLinkRole(row.targetLinkId) },
+        ]),
+    ];
     const requireDefinitionManage = async (context: ActionExecutorContext, code = 'action_forbidden') => {
         if (await definitionRole(context) !== 'manage') return refuse(code);
     };
@@ -888,7 +899,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         try {
             await requireDefinitionManage(context, 'deployment_access_denied');
             if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
-            if (input.definition?.from === 'catalogApp') return templates.prepareCreate(input, context, creationReview);
+            const reviewedCommitment = creationReview?.definitionCommitment;
+            if (input.definition?.from === 'catalogApp') return reviewedCommitment !== undefined
+                ? failure('approval_stale') : templates.prepareCreate(input, context, creationReview);
             const defaultsHost = atHome(() => creationDefaultsHost(context));
             const createHost = previewCreateHost(context);
             const preview = await resolveEnvironmentCreatePreviewForHost({ input, context }, createHost);
@@ -944,24 +957,49 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 details: { requiredFact: 'controller_machine', remedy: 'pass_controllerMachineId_or_set_project_default',
                     issues: [{ code: 'custom', path: ['controllerMachineId'] }] },
             };
-            const materializeCreate = createPrepareEnvironmentCreateForHost(createHost);
-            let hostReviewedChildren: HostReviewedChildrenPreparationV1 | undefined;
+            const planCreate = createEnvironmentCreatePlannerForHost(createHost);
+            // The person's compact Apply can cross two signed requests for review.
+            // Keep its definition plan stable until the receiving executor admits its effect.
+            const deferred = input.mode !== 'preview' && !authored.preview && !nativeOrigin
+                && context.surface === 'ui' && !isSharedRequesterActionV1(context)
+                && isHomeAdmittedPresentUserHostInvocation(context, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1);
             const { telemetry, ...creationValues } = defaults.values;
-            const prepared = await materializeCreate({ input: { ...authored, ...creationValues }, telemetry,
-                projectOwner: defaults.projectOwner, context, copy, nativeOrigin, admittedPreview: preview }, async (input, content) => {
-                    hostReviewedChildren = await preparePreviewCreateContinuation(preview, input, content, context);
-                });
+            const resolved = { ...authored, ...creationValues };
+            const plan = await planCreate({ input: resolved, telemetry, projectOwner: defaults.projectOwner,
+                context, copy, nativeOrigin, admittedPreview: preview }, deferred || reviewedCommitment !== undefined);
+            if ('errorCode' in plan) return plan;
+            if (reviewedCommitment !== undefined && (reviewedCommitment !== plan.definitionCommitment
+                || !sameStrictJsonValue(creationReview?.creationDefaultsBasis ?? null, defaults.reviewBasis ?? null)))
+                return failure('approval_stale');
+            const { controllerMachineId: _controller, buildMachineId: _build, ...otherDefaults } = defaults.values;
+            const review = (controllerMachineId: string, buildMachineId: string | undefined, definitionCommitment?: string) =>
+                normalizeStrictJsonValue({ creationDefaults: { values: { ...otherDefaults, controllerMachineId,
+                    ...(buildMachineId === undefined ? {} : { buildMachineId }) }, sources: defaults.sources },
+                    ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
+                    ...(definitionCommitment ? { definitionCommitment } : {}),
+                    ...(copy.review ? { copy: copy.review } : {}) });
+            if (deferred) {
+                if (!plan.definitionCommitment) return failure('invalid_action_output');
+                const preview = review(defaults.values.controllerMachineId, resolved.buildMachineId, plan.definitionCommitment);
+                return { input: resolved, preview,
+                    hostReviewedChildren: { children: copy.copyPlan ? copyEnvironmentChildren(copy.copyPlan) : [],
+                    async executeAdmittedAction({ context }) {
+                        const prepared = await plan.publish(context);
+                        if ('errorCode' in prepared) return prepared;
+                        const result = await deps.deploymentAction!(DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, prepared,
+                            context, DeploymentEnvironmentCreationReviewV1Schema.parse(preview));
+                        if ('errorCode' in result) return result;
+                        const created = DeploymentEnvironmentCreateResultV1Schema.parse(result);
+                        return created.ok ? { ok: true, result: created } : failure(created.error, created);
+                    } } };
+            }
+            const prepared = await plan.publish(context);
             if ('errorCode' in prepared) return prepared;
+            const hostReviewedChildren = await preparePreviewCreateContinuation(preview, prepared, plan.content, context);
             const selected = hostReviewedChildren?.input === undefined ? prepared
                 : DeploymentEnvironmentCreateInputV1Schema.parse(hostReviewedChildren.input);
-            const { controllerMachineId: _controller, buildMachineId: _build, ...otherDefaults } = defaults.values;
-            return { input: selected,
-                ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
-                preview: normalizeStrictJsonValue({ creationDefaults: {
-                values: { ...otherDefaults, controllerMachineId: selected.controllerMachineId,
-                    ...(selected.buildMachineId === undefined ? {} : { buildMachineId: selected.buildMachineId }) },
-                sources: defaults.sources }, ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
-                ...(copy.review ? { copy: copy.review } : {}) }) };
+            return { input: selected, ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
+                preview: review(selected.controllerMachineId, selected.buildMachineId) };
         } catch (error) { return failure(context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
     }
     const dispatchReceipt: NonNullable<Parameters<typeof createCliDeploymentActionDeps>[0]['dispatchReceipt']> = async request => {
@@ -1753,14 +1791,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
                 }
                 if (!copy.success || !copy.data.copyPlan) return null;
-                const plan = copy.data.copyPlan;
-                const children = [
-                    ...(plan.bindings.length ? [{ action: 'deployments.bindings.set' as const, role: COPY_ENVIRONMENT_BINDINGS_ROLE }] : []),
-                    ...(plan.data ?? []).flatMap(row => [
-                        { action: row.provision.action, role: copyEnvironmentDataProvisionRole(row.targetLinkId) },
-                        { action: 'deployments.targets.link' as const, role: copyEnvironmentDataLinkRole(row.targetLinkId) },
-                    ]),
-                ];
+                const children = copyEnvironmentChildren(copy.data.copyPlan);
                 return children.length ? { children } : null;
             }
             if (request.actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1) return null;

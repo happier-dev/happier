@@ -8,7 +8,8 @@ import { DeploymentTargetLinkProviderContentV1Schema,
 import type { DeploymentPreviewProvenanceV1 } from '@happier-dev/protocol/deployments/deploymentPreviewProvenanceV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { DeploymentEnvironmentContentV1Schema, createOwnServerEnvironmentConfigurationV1, DeploymentOwnServerTargetLinkContentV1Schema, type DeploymentNativeComposeOriginV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentEnvironmentContentV1Schema, createOwnServerEnvironmentConfigurationV1, DeploymentOwnServerTargetLinkContentV1Schema,
+    type DeploymentEnvironmentContentV1, type DeploymentNativeComposeOriginV1 } from '@happier-dev/deployments/contracts/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1,
     DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     readDeploymentTargetLinkArtifactV1 } from '@happier-dev/deployment-protocol';
@@ -155,12 +156,19 @@ export async function resolveEnvironmentCreatePreviewForHost(
 }
 
 /** Called once by Action preparation after defaults resolve, never by the prepared storage carrier. */
-export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHost) {
+export function createEnvironmentCreatePlannerForHost(host: EnvironmentCreateHost) {
     const artifacts = host.accountArtifacts ?? createCredentialedAccountArtifactStore(host.credentials);
     return async ({ input, context, projectOwner, copy, nativeOrigin, admittedPreview, telemetry }: EnvironmentCreateRequest,
-        retainPreparedPreview?: (prepared: DeploymentEnvironmentCreateInputV1,
-            content: import('@happier-dev/deployments/contracts/v1').DeploymentEnvironmentContentV1) => Promise<void>,
-    ): Promise<DeploymentEnvironmentCreateInputV1 | ActionExecuteFailure> => {
+        commitDefinitionForReview: boolean,
+    ): Promise<Readonly<{ content: DeploymentEnvironmentContentV1; definitionCommitment?: string;
+        publish(context: ActionExecutorContext): Promise<DeploymentEnvironmentCreateInputV1 | ActionExecuteFailure> }> | ActionExecuteFailure> => {
+        const projectFailure = (error: unknown, signal: AbortSignal | undefined) => {
+            if (!signal?.aborted && (error instanceof ArtifactEncryptionMaterialUnavailableError
+                || error instanceof Error && 'code' in error && error.code === 'account_storage_currentness_unavailable')) {
+                return projectDeploymentFailure('client_required', error);
+            }
+            return projectDeploymentException(error, { signal });
+        };
         try {
             await host.assertCurrent(context);
             context.signal?.throwIfAborted();
@@ -200,8 +208,8 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
                 ...(preview.nativeTemplate ? { template: preview.nativeTemplate.template } : {}),
                 ...(preview.provenance === undefined ? {} : { previewProvenance: preview.provenance,
                     ...(context.executionRunWorkflowRunId ? { previewCreationRunId: context.executionRunWorkflowRunId } : {}) }) });
-            let copyIntentCommitment: string | undefined;
-            if (input.copyFrom !== undefined) {
+            let definitionCommitment: string | undefined;
+            if (input.copyFrom !== undefined || commitDefinitionForReview) {
                 const requester = readRequesterAccountActionContext(context.externalActionExecutionAuthorization);
                 const credentials = context.externalActionExecutionAuthorization ? requester?.credentials : host.credentials;
                 const accountId = requester?.authorization.binding.accountId ?? (credentials && readAccountIdFromToken(credentials.token));
@@ -212,68 +220,71 @@ export function createPrepareEnvironmentCreateForHost(host: EnvironmentCreateHos
                 const storage = await resolveCliAccountStorageContext({ credentials, serverBaseUrl: host.serverHttpBaseUrl,
                     authorizationHeaders, signal: context.signal, usage: 'fresh-authority' });
                 const { mode: _presentationMode, ...resolvedInput } = input;
-                copyIntentCommitment = deriveDeploymentEnvironmentCreateCommitmentV1({ accountId, mode: storage.mode,
+                definitionCommitment = deriveDeploymentEnvironmentCreateCommitmentV1({ accountId, mode: storage.mode,
                     material: storage.material, intent: projectNativeJsonValueForTransport({ input: resolvedInput,
-                        content, projectOwner, targetLinkContent, copyPlan: copy!.copyPlan }) });
+                        content, projectOwner, targetLinkContent, copyPlan: copy?.copyPlan }) });
             }
-            const createContent = async (kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
-                body: unknown) => {
-                const binding = context.externalActionExecutionAuthorization?.binding;
-                // Every Environment-creating root (Create, adoption) publishes its one create-only candidate id.
-                const artifactId = kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 && binding
-                    && deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
-                    ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 })
-                    : undefined;
-                const created = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => createDeploymentArtifactForHost({
-                    artifacts, owner: projectOwner, publication: 'create', assertCurrent: () => host.assertCurrent(context), content: {
-                        ...(artifactId === undefined ? {} : { artifactId }),
-                        header: { kind, title: input.name }, body: JSON.stringify(body), signal: context.signal,
-                        beforeWrite: () => host.assertCurrent(context),
-                        authorizationHeaders: async transport => {
-                            const headers = await host.resolveRequestHeaders(context, 'deployments.environments.create', transport);
-                            if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
-                            return headers;
-                        },
-                } }));
-                return { contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
-                    contentBodyVersion: created.revision.bodyVersion };
-            };
-            const previewDataTargetLinks: NonNullable<DeploymentEnvironmentCreateInputV1['previewDataTargetLinks']> = [];
-            for (const data of preview.dataTargetLinks ?? []) previewDataTargetLinks.push({
-                templateDataTargetLinkId: data.targetLink.id, expectedTemplateTargetLinkRevision: data.targetLink.revision,
-                ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, data.content),
-            });
-            const prepared = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: input.serverId,
-                projectSourceId: input.projectSourceId, newProject: input.newProject, requestKey: input.requestKey, protection: input.protection,
-                purpose: input.purpose, deployerMode: input.deployerMode,
-                ...(input.previewCompanionOfEnvironmentId === undefined ? {} : {
-                    previewCompanionOfEnvironmentId: input.previewCompanionOfEnvironmentId }),
-                ...(input.managedRetention === undefined ? {} : { managedRetention: input.managedRetention }),
-                ...(input.deployerPrincipals === undefined ? {} : { deployerPrincipals: input.deployerPrincipals }),
-                controllerMachineId: input.controllerMachineId,
-                ...(input.preview === undefined ? {} : { preview: {
-                    templateEnvironmentId: input.preview.templateEnvironmentId, expectedTemplateRevision: input.preview.expectedTemplateRevision,
-                    pullRequestId: input.preview.pullRequestId, runtimeTargetLinkId: input.preview.runtimeTargetLinkId,
-                } }),
-                ...(previewDataTargetLinks.length ? { previewDataTargetLinks } : {}),
-                ...(input.buildMachineId === undefined ? {} : { buildMachineId: input.buildMachineId }),
-                ...(input.copyFrom === undefined ? {} : { copyFrom: input.copyFrom, copyPlan: copy!.copyPlan, copyIntentCommitment }),
-                ...await createContent(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content),
-                ...(input.firstTargetLink === undefined ? {} : { firstTargetLink: {
-                    machines: input.firstTargetLink.machines,
-                    ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, targetLinkContent),
-                } }),
-            });
-            await host.assertCurrent(context);
-            context.signal?.throwIfAborted();
-            await retainPreparedPreview?.(prepared, content);
-            return prepared;
+            async function publish(context: ActionExecutorContext): Promise<DeploymentEnvironmentCreateInputV1 | ActionExecuteFailure> {
+                try {
+                    const createContent = async (kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
+                        body: unknown) => {
+                        const binding = context.externalActionExecutionAuthorization?.binding;
+                        // Every Environment-creating root (Create, adoption) publishes its one create-only candidate id.
+                        const artifactId = kind === DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 && binding
+                            && deploymentPreparationOperationForActionV1(binding.actionId) === 'create'
+                            ? createDeploymentEnvironmentContentArtifactIdV1({ ...binding, actionId: DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 })
+                            : undefined;
+                        const created = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => createDeploymentArtifactForHost({
+                            artifacts, owner: projectOwner, publication: 'create', assertCurrent: () => host.assertCurrent(context), content: {
+                                ...(artifactId === undefined ? {} : { artifactId }),
+                                header: { kind, title: input.name }, body: JSON.stringify(body), signal: context.signal,
+                                beforeWrite: () => host.assertCurrent(context),
+                                authorizationHeaders: async transport => {
+                                    const headers = await host.resolveRequestHeaders(context, 'deployments.environments.create', transport);
+                                    if (!headers) throw createActionExecuteFailureError({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden' });
+                                    return headers;
+                                },
+                        } }));
+                        return { contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
+                            contentBodyVersion: created.revision.bodyVersion };
+                    };
+                    const previewDataTargetLinks: NonNullable<DeploymentEnvironmentCreateInputV1['previewDataTargetLinks']> = [];
+                    for (const data of preview.dataTargetLinks ?? []) previewDataTargetLinks.push({
+                        templateDataTargetLinkId: data.targetLink.id, expectedTemplateTargetLinkRevision: data.targetLink.revision,
+                        ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, data.content),
+                    });
+                    const prepared = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: input.serverId,
+                        projectSourceId: input.projectSourceId, newProject: input.newProject, requestKey: input.requestKey, protection: input.protection,
+                        purpose: input.purpose, deployerMode: input.deployerMode,
+                        ...(input.previewCompanionOfEnvironmentId === undefined ? {} : {
+                            previewCompanionOfEnvironmentId: input.previewCompanionOfEnvironmentId }),
+                        ...(input.managedRetention === undefined ? {} : { managedRetention: input.managedRetention }),
+                        ...(input.deployerPrincipals === undefined ? {} : { deployerPrincipals: input.deployerPrincipals }),
+                        controllerMachineId: input.controllerMachineId,
+                        ...(input.preview === undefined ? {} : { preview: {
+                            templateEnvironmentId: input.preview.templateEnvironmentId, expectedTemplateRevision: input.preview.expectedTemplateRevision,
+                            pullRequestId: input.preview.pullRequestId, runtimeTargetLinkId: input.preview.runtimeTargetLinkId,
+                        } }),
+                        ...(previewDataTargetLinks.length ? { previewDataTargetLinks } : {}),
+                        ...(input.buildMachineId === undefined ? {} : { buildMachineId: input.buildMachineId }),
+                        ...(input.copyFrom === undefined ? {} : { copyFrom: input.copyFrom, copyPlan: copy!.copyPlan,
+                            copyIntentCommitment: definitionCommitment }),
+                        ...await createContent(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, content),
+                        ...(input.firstTargetLink === undefined ? {} : { firstTargetLink: {
+                            machines: input.firstTargetLink.machines,
+                            ...await createContent(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, targetLinkContent),
+                        } }),
+                    });
+                    await host.assertCurrent(context);
+                    context.signal?.throwIfAborted();
+                    return prepared;
+                } catch (error) {
+                    return projectFailure(error, context.signal);
+                }
+            }
+            return { content, ...(definitionCommitment ? { definitionCommitment } : {}), publish };
         } catch (error) {
-            if (!context.signal?.aborted && (error instanceof ArtifactEncryptionMaterialUnavailableError
-                || error instanceof Error && 'code' in error && error.code === 'account_storage_currentness_unavailable')) {
-                return projectDeploymentFailure('client_required', error);
-            }
-            return projectDeploymentException(error, { signal: context.signal });
+            return projectFailure(error, context.signal);
         }
     };
 }

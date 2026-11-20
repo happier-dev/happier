@@ -22,7 +22,7 @@ import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/se
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
-import { createPrepareEnvironmentCreateForHost, resolveEnvironmentCreateCopyForHost,
+import { createEnvironmentCreatePlannerForHost, resolveEnvironmentCreateCopyForHost,
     resolveEnvironmentCreatePreviewForHost } from './prepareEnvironmentCreateForHost';
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
 import { createCliDeploymentActionDeps } from './createCliDeploymentActionDeps';
@@ -36,6 +36,14 @@ import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protoc
 import { createDeploymentArtifactForHost } from './createArtifactForHost';
 
 afterEach(() => vi.restoreAllMocks());
+
+function createPrepareEnvironmentCreateForHost(host: Parameters<typeof createEnvironmentCreatePlannerForHost>[0]) {
+    const planCreate = createEnvironmentCreatePlannerForHost(host);
+    return async (request: Parameters<typeof planCreate>[0]) => {
+        const plan = await planCreate(request, false);
+        return 'errorCode' in plan ? plan : plan.publish(request.context);
+    };
+}
 
 it.each(['plain', 'e2ee'] as const)('prepares %s preview intent from the selected template before writing child content', async mode => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;

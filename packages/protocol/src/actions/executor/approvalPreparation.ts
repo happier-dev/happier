@@ -17,6 +17,7 @@ import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
 import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { ComputerSelectedTargetResponseV1Schema, type ComputerApprovalDisplayV1 } from '../../computer/v1.js';
 import { type ActionId } from '../actionIds.js';
+import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { DeploymentActionInputSchemasV1, DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
   DeploymentEnvironmentCreationReviewV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentPromoteInputV1Schema,
   DeploymentDeployIntentInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteIntentInputV1Schema } from '../../deployments/deploymentActionsV1.js';
@@ -279,6 +280,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   semanticInput?: unknown;
   hostReviewedChildren?: HostReviewedChildrenPlanV1;
   hostReviewedContent?: JsonValue;
+  forCarriedReview?: boolean;
   handoffTargetReplacementApproval?: NonNullable<ActionExecutorContext['handoffTargetReplacementApproval']>;
   executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTemplateInstantiation']>>[0]['executeCanonicalAction'];
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
@@ -401,8 +403,23 @@ export async function prepareApprovalRequest(params: Readonly<{
   if (deployment && !('observePendingOperation' in deployment)) {
     if ('errorCode' in deployment) return deployment;
     const rolloutInput = readDeploymentRolloutSemanticInput(params.actionId, params.semanticInput ?? params.input);
-    return { actionArgs: deployment.input, preview: { actionId: params.actionId, actionArgs: deployment.input,
-      summary: appendTeamCredentialSourceSummary(buildApprovalSummary(spec, deployment.input, deployment.preview), teamCredentialSources),
+    const deferredCreate = params.actionId === DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+      && typeof readRecord(deployment.preview).definitionCommitment === 'string';
+    let displayArgs = deployment.input;
+    if (deferredCreate) {
+      // Compact Create has no stored reference before consent. Its commitment
+      // binds the normalized definition, including private copied content.
+      const input = readRecord(deployment.input);
+      displayArgs = projectNativeJsonValueForTransport({
+        serverId: input.serverId, projectSourceId: input.projectSourceId, newProject: input.newProject,
+        requestKey: input.requestKey, name: input.name, controllerMachineId: input.controllerMachineId,
+        buildMachineId: input.buildMachineId, protection: input.protection, purpose: input.purpose,
+        deployerMode: input.deployerMode, firstTargetLink: input.firstTargetLink,
+      });
+    }
+    return { actionArgs: params.forCarriedReview ? displayArgs : deployment.input,
+      preview: { actionId: params.actionId, actionArgs: displayArgs,
+      summary: appendTeamCredentialSourceSummary(buildApprovalSummary(spec, displayArgs, deployment.preview), teamCredentialSources),
       ...(teamCredentialSources.length ? { teamCredentialSources } : {}), deploymentReview: deployment.preview,
       ...(rolloutInput === undefined ? {} : { deploymentRolloutSemanticInput: rolloutInput }),
       ...(params.hostReviewedChildren ? { hostReviewedChildren: params.hostReviewedChildren } : {}) } };

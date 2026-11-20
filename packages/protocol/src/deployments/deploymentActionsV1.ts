@@ -805,6 +805,7 @@ export const DeploymentActionInputSchemasV1 = lazyDefinition(() => ({
 export const DeploymentEnvironmentCreationReviewV1Schema = lazyZodSchema(() => z.extend(z.pick(
   deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema, { creationDefaultsBasis: true }), {
   creationDefaults: z.nonoptional(deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema.shape.creationDefaults),
+  definitionCommitment: DeploymentEnvironmentCreateInputV1Schema.shape.copyIntentCommitment,
   template: z.optional(deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema),
   copy: z.optional(DeploymentEnvironmentCopyReviewV1Schema),
 }));
