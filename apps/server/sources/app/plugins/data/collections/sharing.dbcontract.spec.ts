@@ -1,9 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { Prisma } from '@prisma/client';
 import tweetnacl from 'tweetnacl';
 import { encodeBase64, computeContentPublicKeyFingerprint, sealEncryptedDataKeyEnvelopeV1, sealPluginCollectionPrivatePayloadV1 } from '@happier-dev/protocol';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
+import { decodeBase64 } from 'privacy-kit';
+import { listArtifactHeaderPageForCaller } from '@/app/artifacts/artifactAccessService';
+import { createDiscussion } from '@/app/discussions/mutations';
+import { listDiscussions } from '@/app/discussions/queries';
+import { readTeamSharedResourcesSummaryInTx } from '@/app/teams/sharedResources';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { db, getDbProviderFromEnv, initDbMysql, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -85,6 +92,7 @@ describe('Collection sharing database contract', () => {
         const account = () => db.account.create({ data: { encryptionMode: mode,
             ...(mode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
         const [owner, teamGuest, groupGuest, directGuest] = await Promise.all(Array.from({ length: 4 }, account));
+        const artifactId = randomUUID();
         const keyless = await db.account.create({ data: { encryptionMode: 'e2ee' } });
         const team = await db.team.create({ data: { name: 'Collection guest lifecycle' } });
         await db.teamMembership.createMany({ data: [
@@ -186,10 +194,68 @@ describe('Collection sharing database contract', () => {
             expect(before.map(row => row.recipientAccountId).sort()).toEqual(ownerWrap ? [owner.id, groupGuest.id, directGuest.id].sort() : []);
             await revokeCollectionGrant(owner.id, { ...address, principal: { kind: 'team', teamId: team.id } });
             await expect(read(directGuest)).resolves.toMatchObject({ access: 'view' });
+            if (mode === 'plain') {
+                vi.stubEnv('HAPPIER_FEATURE_SESSIONS__ENABLED', '1');
+                vi.stubEnv('HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED', '1');
+                onTestFinished(() => { vi.unstubAllEnvs(); });
+                await db.artifact.create({ data: {
+                    id: artifactId, accountId: owner.id, kind: 'v1:other:contributed.v1',
+                    header: decodeBase64(encodePlainArtifactStoredContent({ title: 'Group Artifact' })),
+                    body: decodeBase64(encodePlainArtifactStoredContent('Private body')),
+                    dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
+                } });
+                const created = await createDiscussion({ actorAccountId: owner.id, authentication, request: {
+                    creationLocalId: randomUUID(), titleContent: { t: 'plain', v: { v: 1, title: 'Group Discussion' } },
+                    firstMessage: { localId: randomUUID(), content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Start' }] } },
+                        mentionedAccountIds: [] },
+                } });
+                if (!created.ok) throw new Error(created.error);
+                const discussion = created.value.discussion;
+                const grants = [
+                    { principalKind: 'group', teamGroupId: group.id, createdByAccountId: owner.id, accessLevel: 'view' as const },
+                    { principalKind: 'account', accountId: directGuest.id, createdByAccountId: owner.id, accessLevel: 'view' as const },
+                ];
+                await db.artifactGrant.createMany({ data: grants.map(grant => ({ ...grant, artifactId })) });
+                await db.discussionGrant.createMany({ data: grants.map(grant => ({ ...grant, discussionId: discussion.id })) });
+                const readTeamResources = async (actorAccountId: string) => {
+                    const selection = { actorAccountId, sharedWithTeamId: team.id };
+                    const [summary, artifacts, discussions, collections] = await Promise.all([
+                        inTx(tx => readTeamSharedResourcesSummaryInTx(tx, {
+                            actorAccountId, teamId: team.id,
+                            authentication: { authenticationAuthority: 'present_user', authenticationEvidence: [] },
+                            sessionAuthentication: authentication,
+                        })),
+                        listArtifactHeaderPageForCaller({ ...selection, teamResourceKind: 'otherArtifacts', limit: 10, cursor: null }),
+                        listDiscussions({ ...selection, authentication }),
+                        listSharedCollectionResources(actorAccountId, scoped),
+                    ]);
+                    return { summary, artifacts: artifacts.items, discussions, collections: collections.resources };
+                };
+                await expect(readTeamResources(directGuest.id)).resolves.toMatchObject({
+                    summary: { ok: true, summary: { kinds: expect.arrayContaining([
+                        { kind: 'otherArtifacts', status: 'available', count: 1 },
+                        { kind: 'discussions', status: 'available', count: 1 },
+                        { kind: TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1, collection: { pluginId, collectionId: ref.collectionId }, status: 'available', count: 1 },
+                    ]) } },
+                    artifacts: [{ id: artifactId }],
+                    discussions: { ok: true, value: { discussions: [{ id: discussion.id }] } },
+                    collections: [{ rowId: address.rowId }],
+                });
+                await expect(readTeamResources(teamGuest.id)).resolves.toMatchObject({
+                    summary: { ok: true, summary: { kinds: expect.arrayContaining([
+                        { kind: 'otherArtifacts', status: 'available', count: 0 },
+                        { kind: 'discussions', status: 'available', count: 0 },
+                    ]) } },
+                    artifacts: [], discussions: { ok: true, value: { discussions: [] } }, collections: [],
+                });
+            }
             await expect(Promise.all([
                 listSharedCollectionResources(directGuest.id, scoped),
                 inTx(tx => countTeamSharedCollectionsInTx(tx, { actorAccountId: directGuest.id, sharedWithTeamId: team.id })),
-            ])).resolves.toEqual([{ resources: [], nextCursor: null }, { ok: true, collections: [] }]);
+            ])).resolves.toMatchObject([
+                { resources: [{ rowId: address.rowId }], nextCursor: null },
+                { ok: true, collections: [{ collection: { pluginId, collectionId: ref.collectionId }, count: 1 }] },
+            ]);
             await expect(listSharedCollectionResources(groupGuest.id, scoped)).resolves.toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'group' }] });
             await expect(listSharedCollectionResources(owner.id, scoped)).resolves.toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'group' }] });
             for (const { principal } of explicit) await setCollectionGrant(owner.id, { ...address, principal,
@@ -204,6 +270,7 @@ describe('Collection sharing database contract', () => {
             expect((await listSharedCollectionResources(groupGuest.id, { pluginId, collectionId: ref.collectionId, readerContext: ref })).resources).toEqual([]);
             expect(await envelopes()).toEqual(before);
         } finally {
+            await db.artifact.deleteMany({ where: { id: artifactId } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, teamGuest.id, groupGuest.id, directGuest.id, keyless.id] } } });
             await db.team.delete({ where: { id: team.id } });
             await db.pluginCollectionContract.deleteMany({ where: { pluginId } });

@@ -7,7 +7,7 @@ import type { PluginCollectionContentEnvelopeV1 } from '@happier-dev/protocol/pl
 import { assertPluginCollectionContentEnvelopeForModeV1, PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import type { Tx } from '@/storage/inTx';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
-import { mergeResourceGrantArmPages, resolveResourceGrantAccessFromFacts, resourceGrantArmWheres, resourceGrantPageAccessArms } from '@/app/teams/resourceGrantAccess';
+import { mergeResourceGrantArmPages, resolveResourceGrantAccessFromFacts, resourceGrantPageAccessArms } from '@/app/teams/resourceGrantAccess';
 import { resolveGrantableTeamForActorInTx } from '@/app/teams/queries';
 import { collectionAccessFactsSelect, collectionGrantFacts } from './sharingStorage';
 import { projectResourceRecipientEnvelope } from '@/app/teams/resourceGrantAccess';
@@ -109,12 +109,7 @@ async function sharedCollectionCandidatesInTx(tx: Tx, actorAccountId: string, sh
     }
     const selected = sharedWithTeamId ? await Promise.all([
         tx.pluginCollectionGrant.findMany({ where: { principalKind: 'team', teamId: sharedWithTeamId }, select: { rowDbId: true } }),
-        tx.pluginCollectionGrant.findMany({ where: {
-            principalKind: 'group',
-            teamGroup: { teamId: sharedWithTeamId },
-            // An independent grant to the row does not disclose its Group audience.
-            OR: [resourceGrantArmWheres(actorAccountId).group, { row: { accountId: actorAccountId } }],
-        }, select: { rowDbId: true, teamGroupId: true } }),
+        tx.pluginCollectionGrant.findMany({ where: { principalKind: 'group', teamGroup: { teamId: sharedWithTeamId } }, select: { rowDbId: true, teamGroupId: true } }),
     ]) : null;
     const teamRows = new Set(selected?.[0].map(row => row.rowDbId));
     const groupRows = new Set(selected?.[1].map(row => row.rowDbId));
