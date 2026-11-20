@@ -2130,7 +2130,8 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       await completion;
       expect(observations).toEqual([
         expect.objectContaining({ nativeRecordId: 'main-record', modelId: mainModel, turnId: 'host-paid-turn' }),
-        expect.objectContaining({ nativeRecordId: 'child-record', inferenceId: 'child-request', modelId: 'claude-haiku-4-5', tokens: expect.objectContaining({ total: 23 }) }),
+        expect.objectContaining({ nativeRecordId: 'child-record', inferenceId: 'child-request', modelId: 'claude-haiku-4-5',
+          tokens: expect.objectContaining({ input: 20, output: 3, total: null }) }),
         expect.objectContaining({ nativeRecordId: 'unknown-child-record', modelId: null }),
         expect.objectContaining({ source: 'claude-sdk-result', nativeRecordId: 'failed-summary', modelId: null,
           tokens: expect.objectContaining({ total: 35 }), cost: expect.objectContaining({ reportedUsd: 0.2, costSource: 'provider_reported_api_equivalent' }) }),
