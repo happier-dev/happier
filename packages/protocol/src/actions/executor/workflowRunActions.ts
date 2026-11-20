@@ -1325,6 +1325,12 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const projectTarget = admittedTarget;
     if (!projectTarget) throw workflowError('target_unavailable',
       actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details);
+    if (!replaySource && projectTarget.sessionPlacement?.kind === 'in_place') {
+      throw workflowError('target_unavailable', {
+        ...actionStartTargetUnavailableV1(args.context, 'workflow_workspace', 'workspace_unavailable').details,
+        errorCode: 'workflow_in_place_not_available',
+      });
+    }
     let materialization: Awaited<ReturnType<NonNullable<WorkflowAccountRunActionDeps['resolveMaterializationContext']>>> | undefined;
     let agentStartContext: ReturnType<typeof resolveActionAgentStartContextV1> | undefined;
     const readAgentStartContext = () => agentStartContext ??= resolveActionAgentStartContextV1(deps, args.context);

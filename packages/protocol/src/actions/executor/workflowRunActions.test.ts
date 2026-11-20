@@ -442,6 +442,30 @@ describe('shared Account workflow run owner', () => {
     } })).rejects.toMatchObject({ code: 'currentness_conflict' });
   });
 
+  it('refuses a managed Workflow before reading a repository definition without an admitted source', async () => {
+    let reads = 0;
+    const owner = createWorkflowAccountRunActionOwner({
+      ...ownerDeps({ execute: async () => { throw Object.assign(new Error('missing'), { code: 'run_not_found' }); } }),
+      readRepositoryWorkflow: async () => {
+        reads += 1;
+        throw new Error('unexpected controller repository read');
+      },
+    });
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-workspace', managedId: 'guest',
+      controller: { machineId: 'machine-a', installationId: 'installation' }, rootPath: '/repo' } as const;
+    const input = WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'repo_file', path: 'workflow.json' } });
+    const result = await owner.execute({ actionId: 'workflow.run.start', input, context: {
+      surface: 'cli', authority: 'present_user', callerPermissionMode: 'default', serverId: 'home',
+      externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: {
+        machineId: 'machine-a', directory: '/repo', sessionPlacement: { kind: 'in_place', workspace },
+      } },
+    } }).catch(normalizeWorkflowActionThrownError);
+    expect(reads).toBe(0);
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: {
+      errorCode: 'workflow_in_place_not_available',
+    } });
+  });
+
   it.each([false, true])('starts a repository workflow document and rejoins its frozen source without rereading the file (Discussion=%s)', async fromDiscussion => {
     const stored = new Map<string, ReturnType<typeof runSnapshot>>();
     let fileReads = 0;
