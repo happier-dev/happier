@@ -82,7 +82,7 @@ export type ProviderConformanceVendor = Readonly<{
 }>;
 export type ProviderConformanceFixture = (world: ProviderConformanceWorld) => ProviderConformanceVendor;
 /** Shared cases a provider can be known to fail while a named owner fixes it. */
-export type ProviderConformanceCase = 'accountPlacement' | 'nativeLifecycle' | 'deleteAfterLostReply' | 'powerReplyLost' | 'credentialRefusal';
+export type ProviderConformanceCase = 'accountPlacement' | 'nativeLifecycle' | 'deleteAfterLostReply' | 'credentialRefusal';
 /** Per contribution id: the case and the owning fix (lane and board post). Removing an entry is how the owner closes it. */
 export type ProviderConformanceExpectedFailures = Readonly<Record<string, Partial<Record<ProviderConformanceCase, string>>>>;
 export type ProviderFixture = Awaited<ReturnType<typeof cloudFixture>>;

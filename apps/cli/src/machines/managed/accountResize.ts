@@ -3,11 +3,13 @@ import { createManagedNativeObservationWait, settleManagedMachineResize, Managed
 import { ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerMachineOutputV1Schema,
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { readCurrentAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
 import { createCliManagedAccountNativeInvocation, resolveCliManagedAccountProvisioner } from './accountNative';
 import type { executeCliManagedAccountPower } from './accountPower';
 import { createManagedPresetHydrator, openManagedPresetCarrier } from './presetHydration';
+import { logger } from '@/ui/logger';
 
 /** The admitted declaration and exact approved size survive until native settlement. */
 export async function executeCliManagedAccountResize(input: Omit<Parameters<typeof executeCliManagedAccountPower>[0], 'body'> & Readonly<{
@@ -40,6 +42,8 @@ export async function executeCliManagedAccountResize(input: Omit<Parameters<type
         io: { signal: input.signal }, guestStartup: { transport: provisioner.bootstrapTransport,
             channel: resolveManagedCliReleaseChannelSync({ argv: process.argv, invokedPath: process.argv[1], processEnv: process.env }).label },
         waitForObservation: createManagedNativeObservationWait(input.signal),
+        onReportFailure: reportError => logger.warn('[MANAGED MACHINE] Native outcome report failed',
+            projectActionFailureCauseV1(reportError, MANAGED_RESIZE_ACTION_ID_V1)),
         report: async body => {
             const { report, output } = await hydrator.prepareResizeReport(body, input.signal);
             await input.post('report-resize', report, ManagedControllerMachineOutputV1Schema, null);

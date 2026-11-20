@@ -86,10 +86,17 @@ export async function executeManagedMachineResize(input: Readonly<{
 export async function settleManagedMachineResize(input: Parameters<typeof executeManagedMachineResize>[0] & Readonly<{
     requestId: string;
     report(body: Readonly<{ homeId: string; managedId: string; requestId: string }> & NativeResizeOutput): Promise<ResizeOutput>;
+    onReportFailure?(error: unknown): void;
 }>): Promise<ResizeOutput> {
     const { machine } = input;
     const outcome = await executeManagedMachineResize(input);
-    return ManagedResizeOutputV1Schema.parse(await input.report({
-        homeId: machine.homeId, managedId: machine.id, requestId: input.requestId, ...outcome,
-    }));
+    let reported: ResizeOutput;
+    try {
+        reported = await input.report({ homeId: machine.homeId, managedId: machine.id, requestId: input.requestId, ...outcome });
+    } catch (error) {
+        if (outcome.result.kind !== 'unsupported') throw error;
+        input.onReportFailure?.(error);
+        return outcome;
+    }
+    return ManagedResizeOutputV1Schema.parse(reported);
 }

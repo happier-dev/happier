@@ -70,6 +70,4 @@ export const providerConformanceFixture: ProviderConformanceFixture = world => {
 };
 
 /** Shared cases this provider is known to fail and the owner fixing each; the owner deletes its entry with the fix. */
-export const providerConformanceExpectedFailures: ProviderConformanceExpectedFailures = {
-    'maritime-sandbox': { powerReplyLost: 'MACH-CORE-SEAMS-1120 F1, one native-intent settlement owner settles a thrown power effect (O-MACH board 2026-11-19 23:26Z)' },
-};
+export const providerConformanceExpectedFailures: ProviderConformanceExpectedFailures = {};

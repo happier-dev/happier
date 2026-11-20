@@ -59,6 +59,7 @@ export async function executeUiManagedAccountControl(params: Readonly<{
                     io: { signal: params.signal },
                     guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: provisioner.bootstrapTransport },
                     waitForObservation: createManagedNativeObservationWait(params.signal),
+                    onReportFailure: error => log.log(JSON.stringify(projectActionFailureCauseV1(error, control.action))),
                     report: async body => {
                         if (opaque === null) {
                             const { result, observation } = body;

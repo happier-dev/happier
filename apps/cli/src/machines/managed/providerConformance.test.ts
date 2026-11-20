@@ -16,7 +16,7 @@ import { MACHINE_PROVISIONER_SIZE_DIMENSIONS_V1, MachineProvisionerContributionV
     requiresMachineProvisionerEffectReviewV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { createManagedNativeBootstrapIO, executeManagedMachineAcquire, executeManagedMachinePowerIntent, executeManagedMachineResize,
-    prepareManagedMachineDeleteIntent, projectAccountManagedProvisioners, reconcileManagedMachine, settleManagedMachineDeleteIntent,
+    prepareManagedMachineDeleteIntent, projectAccountManagedProvisioners, reconcileManagedMachine, settleManagedMachineDeleteIntent, settleManagedNativeIntent,
     type ManagedMachineReconciliation, type ManagedNativeInvocation, type ManagedNativeRole } from '@happier-dev/cli-common/machines/managed';
 import { cloudFixture, loadProviderConformanceExpectedFailures, MANAGED_ID, NATIVE_EXPIRY, PRIVATE_BINDING, PUBLIC_KEY,
     type ProviderConformanceCase } from './providerConformance.testkit';
@@ -437,21 +437,26 @@ for (const leaf of leaves) {
             });
 
             const stopIntent = (['stop', 'suspend'] as const).find(intent => provisioner.retention.supportedIntents.includes(intent));
-            if (stopIntent) known('powerReplyLost')('settles a power change whose vendor reply is lost as one outcome that never claims no effect, without resubmitting power (breaks if the core power owner throws past settlement, reports refused, or retries the effect)', async () => {
+            if (stopIntent) it('settles a power change whose vendor reply is lost as one outcome that never claims no effect, without resubmitting power (breaks if settlement omits the Home report, reports refused, or retries the effect)', async () => {
                 const h = await host();
                 try {
                     await h.acquire();
                     // The vendor applies the stop, then its reply is lost.
                     h.vendor.setFailure('effect-reply-lost');
                     const issued = h.roles.length;
-                    const settled = await executeManagedMachinePowerIntent({ machine: { ...h.read(), desired: stopIntent }, invoke: h.invoke })
-                        .then(power => ({ power }), (error: unknown) => ({ error: errorCode(error) ?? String(error) }));
+                    const reports: unknown[] = [];
+                    const settled = await settleManagedNativeIntent({
+                        invoke: () => executeManagedMachinePowerIntent({ machine: { ...h.read(), desired: stopIntent }, invoke: h.invoke }),
+                        report: async outcome => { reports.push(outcome); },
+                        onReportFailure: error => { throw error; },
+                    }).then(power => power, () => undefined);
                     expect(h.roles.slice(issued).filter(role => role === 'power')).toHaveLength(1);
-                    expect(settled).toMatchObject({ power: { result: { kind: expect.stringMatching(/^(unknown|confirmed)$/) } } });
-                    if ('power' in settled && settled.power.result.kind === 'confirmed') {
+                    expect(reports).toHaveLength(1);
+                    expect(reports[0]).toMatchObject({ result: { kind: expect.stringMatching(/^(unknown|confirmed)$/) } });
+                    if (settled?.result.kind === 'confirmed') {
                         // Confirmation is an observation of the applied state, never the lost acknowledgement.
-                        expect(settled.power.observation).toMatchObject({ availability: 'present', power: stopIntent === 'suspend' ? 'suspended' : 'stopped' });
-                    }
+                        expect(reports[0]).toMatchObject({ observation: { availability: 'present', power: stopIntent === 'suspend' ? 'suspended' : 'stopped' } });
+                    } else if (!settled) expect(reports[0]).toMatchObject({ result: { kind: 'unknown', code: 'native_intent_unconfirmed' } });
                     expect(h.leaked()).toBe(false);
                 } finally { await h.dispose(); }
             });
