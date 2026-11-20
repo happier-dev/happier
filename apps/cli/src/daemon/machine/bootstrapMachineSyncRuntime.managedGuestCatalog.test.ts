@@ -17,12 +17,17 @@ import { createApiMachineTransportFixture } from '@/testkit/apiMachineTransport'
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt } from './bootstrapMachineSyncRuntime';
 
+const processIdentity = { kind: 'guestProcess', role: 'sandbox' } as const;
+const dedicatedIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+    role: 'server', adminAccessAtCreation: 'preauthorized' } as const;
+
 it.each([
-    { label: 'plain Lima process enrollment', opaque: false, nativeProcess: false, sameCustodian: true, usesController: true },
-    { label: 'opaque Coder native process enrollment', opaque: true, nativeProcess: true, sameCustodian: true, usesController: true },
-    { label: 'opaque enrollment without process placement', opaque: true, nativeProcess: false, sameCustodian: true, usesController: false },
-    { label: 'opaque native process enrollment with a foreign custodian', opaque: true, nativeProcess: true, sameCustodian: false, usesController: false },
-])('resolves the Home-enrolled Connected Account catalog for $label', async ({ opaque, nativeProcess, sameCustodian, usesController }) => {
+    { label: 'Lima process enrollment', identity: processIdentity, sameCustodian: true, hasController: true, usesController: true },
+    { label: 'Lima dedicated user enrollment', identity: dedicatedIdentity, sameCustodian: true, hasController: true, usesController: true },
+    { label: 'opaque Coder enrollment', identity: null, sameCustodian: true, hasController: true, usesController: true },
+    { label: 'dedicated user enrollment with a foreign custodian', identity: dedicatedIdentity, sameCustodian: false, hasController: true, usesController: false },
+    { label: 'enrollment without a controller', identity: processIdentity, sameCustodian: true, hasController: false, usesController: false },
+])('resolves the Home-enrolled Connected Account catalog for $label', async ({ identity, sameCustodian, hasController, usesController }) => {
     const machineId = 'guest';
     const controllerMachineId = 'controller';
     const homeId = 'home';
@@ -34,16 +39,17 @@ it.each([
     const provider = { pluginId: 'happier.machine.lima', localId: 'lima' };
     const managed = ManagedMachineV1Schema.parse({
         id: 'managed-guest', homeId, custodianAccountId: sameCustodian ? accountId : 'other-account', enrollmentAccountId: accountId,
-        enrolledMachineId: machineId, controller: { machineId: controllerMachineId, installationId: 'controller-installation' },
-        ...(opaque ? { preset: { id: 'coder-preset', revision: 0, contentEncryptionMode: 'e2ee' } } : {
-            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+        enrolledMachineId: machineId,
+        ...(hasController ? { controller: { machineId: controllerMachineId, installationId: 'controller-installation' } } : {}),
+        ...(!identity ? { preset: { id: 'coder-preset', revision: 0, contentEncryptionMode: 'e2ee' } } : {
+            enrollmentIdentity: identity,
             launch: { provider, name: 'Lima', schemaVersion: 1, choices: {} },
             resource: { contributionRef: provider, schemaVersion: 1, value: {} },
         }),
         allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now',
         intentRevision: 0, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
     });
-    const read = opaque ? { machine: managed, presetContent: {
+    const read = !identity ? { machine: managed, presetContent: {
         content: { t: 'encrypted', c: Buffer.alloc(64).toString('base64') }, recipientEnvelope: null,
     } } : managed;
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
@@ -101,10 +107,8 @@ it.each([
     try {
         const controller = await boot(controllerMachineId, controllerObserve);
         runtimes.push(controller);
-        vi.stubEnv('HAPPIER_MANAGED_GUEST_PROCESS', nativeProcess ? '1' : undefined);
         const guest = await boot(machineId, guestObserve);
         runtimes.push(guest);
-        vi.unstubAllEnvs();
         const controllerServices = controller.providerOperationsProducer!.machineServices;
         const guestServices = guest.providerOperationsProducer!.machineServices;
         rpc.mockImplementation(async request => {
@@ -132,7 +136,6 @@ it.each([
         expect(guestObserve).not.toHaveBeenCalled();
         expect(managedLookups).toEqual([{ homeId, enrolledMachineId: machineId }, { homeId, enrolledMachineId: controllerMachineId }]);
     } finally {
-        vi.unstubAllEnvs();
         await Promise.all(runtimes.map(runtime => retireMachineSyncRuntimeAttempt(runtime)));
         resetActiveAccountSettingsSnapshotForTests();
         rpc.mockRestore();

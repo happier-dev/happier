@@ -10,7 +10,6 @@ import os from 'os';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
-import { MANAGED_GUEST_PROCESS_ENV } from '@happier-dev/cli-common/machines/managed';
 import { readLocalHostIdentity } from '@happier-dev/cli-common/process';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
@@ -1202,7 +1201,6 @@ export async function bootstrapMachineSyncRuntime(
           })(request, signal);
         }
       : undefined;
-    const launchedAsManagedGuestProcess = process.env[MANAGED_GUEST_PROCESS_ENV] === '1';
     providerRuntimeServices = createRuntimeProviderModelManagementServices({
       secretSources: params.secretSources,
       machineId: params.machineId,
@@ -1227,11 +1225,7 @@ export async function bootstrapMachineSyncRuntime(
           const machines = await readManagedMachines({ credentials: storedCredentials,
             serverHttpBaseUrl: readProviderHomeServerUrl(), homeId: origin.serverIdentityId,
             enrolledMachineId: origin.machineId, signal });
-          // The local launch supplies process placement for opaque rows. Only
-          // Home's exact same-Account enrollment supplies controller custody.
-          const guest = machines.find(machine => machine.custodianAccountId === accountId
-            && (machine.enrollmentIdentity?.kind === 'guestProcess'
-              || (launchedAsManagedGuestProcess && !machine.enrollmentIdentity)));
+          const guest = machines.find(machine => machine.custodianAccountId === accountId && machine.controller);
           return guest?.controller?.machineId;
         },
       } : {}),
