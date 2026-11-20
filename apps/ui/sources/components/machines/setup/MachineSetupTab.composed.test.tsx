@@ -244,9 +244,17 @@ it('reads bodyless setup notices and preserves the attached copy until candidate
   harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
     const request = MachineSetupPlanInputV1Schema.parse(envelope.input);
-    const reviewed = request.candidatePreset ? MachineSetupPlanResultV1Schema.parse({ ...plan, recipePlans: [],
-      sources: plan.sources.map(source => source.kind === 'accountPresetOpaque' && source.presetId === 'changed'
-        ? { ...source, presetRevision: 5, setupRevision: 2 } : source) }) : plan;
+    const sources = plan.sources.map(source => source.kind === 'accountPresetOpaque' && source.presetId === 'changed'
+      ? { ...source, presetRevision: 5, setupRevision: 2 } : source);
+    const reviewed = request.candidatePreset ? MachineSetupPlanResultV1Schema.parse({ ...plan, sources, recipePlans: [],
+      candidatePreset: request.candidatePreset,
+      resolvedSources: sources.map(source => source.kind !== 'accountPresetOpaque' ? source : source.presetId === 'changed'
+        ? { ...source, presetContent: { content: { t: 'plain', v: { v: 1, name: 'Updated', setup: { scripts: [
+          { body: 'echo unchanged' }, { body: 'echo revised' },
+        ] } } }, recipientEnvelope: null } } : null),
+      review: { target: { homeId: request.homeId, machineId: request.machineId }, administratorRequired: false,
+        downtime: 'unknown', presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 1 }] } },
+    }) : plan;
     return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId,
       execution: { ok: true, result: reviewed } } };
   } });
@@ -291,10 +299,15 @@ it('reads bodyless setup notices and preserves the attached copy until candidate
   await act(async () => { await hook.getCurrent().prepare({ kind: 'presetUpdate', presetId: 'changed',
     presetRevision: 5, setupRevision: 2 }); });
   expect(hook.getCurrent().failure).toBeNull();
-  expect(hook.getCurrent().review?.prepared).toMatchObject({ ok: true, input: { targets: [{ sources: [
-    { kind: 'accountPresetOpaque', presetId: 'changed', presetRevision: 5, setupRevision: 2 },
-    ...plan.sources.slice(1),
-  ] }] } });
+  const prepared = hook.getCurrent().review?.prepared;
+  expect(prepared).toMatchObject({ ok: true, input: { targets: [{ candidatePreset: { presetId: 'changed', presetRevision: 5 },
+    sources: [{ kind: 'accountPresetOpaque', presetId: 'changed', presetRevision: 5, setupRevision: 2 }, ...plan.sources.slice(1)],
+  }] } });
+  if (!prepared?.ok || !('targets' in prepared.input)) throw new Error('Expected a reviewed preset update');
+  const { groupMachineSetupChanges } = await import('@/components/settings/machines/managed/machineSetupReviewChanges');
+  expect(groupMachineSetupChanges(prepared.input.targets, prepared.sourcePresentations)).toMatchObject([
+    { kind: 'commands', added: 1, lines: [{ operand: '$ echo revised' }] },
+  ]);
   expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan'))
     .toHaveLength(plansBeforeReview + 1);
   await act(async () => { hook.getCurrent().cancelReview(); });
@@ -1173,8 +1186,9 @@ describe('Machine → Setup tab (P-M1)', () => {
     // The reviewed change replaces only Build box's reference with the candidate the owner named.
     const proposedSources = () => currentPlan.sources.map(source => source.kind === 'accountPresetOpaque' && source.presetId === 'build'
       ? { ...source, presetRevision: 2, setupRevision: 2 } : source);
+    const candidatePreset = { presetId: 'build', presetRevision: 2 };
     const expectedInput = () => MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_build', machineId: 'devbox',
-      targets: [{ homeId: 'srv_build', machineId: 'devbox', sources: proposedSources(),
+      targets: [{ homeId: 'srv_build', machineId: 'devbox', sources: proposedSources(), candidatePreset,
         desiredRevision: currentPlan.desiredRevision, recipePlans: [], exclusions: [] }],
     });
     // The remote process is represented by its real policy/approval executor. Only
@@ -1191,7 +1205,11 @@ describe('Machine → Setup tab (P-M1)', () => {
         return planInput.mode === 'effects'
           ? { ...currentPlan, sources: planSources, resolvedSources: planSources.map(source => source.kind === 'accountPresetOpaque'
             ? { ...source, presetContent: source.presetId === 'build' ? projectManagedMachinePresetForRecipientV1({ ...presetWire(preset('build', 'Build box', creation)), recipientAccountId: 'owner' })
-              : currentPlan.resolvedSources!.find((resolved): resolved is Extract<typeof resolved, { kind: 'accountPresetOpaque' }> => resolved?.kind === 'accountPresetOpaque' && resolved.presetId === source.presetId)!.presetContent } : source), recipePlans: [] } : currentPlan;
+              : currentPlan.resolvedSources!.find((resolved): resolved is Extract<typeof resolved, { kind: 'accountPresetOpaque' }> => resolved?.kind === 'accountPresetOpaque' && resolved.presetId === source.presetId)!.presetContent } : source), recipePlans: [],
+            ...(candidate ? { candidatePreset: candidate, review: { target: { homeId: planInput.homeId, machineId: planInput.machineId },
+              administratorRequired: null, downtime: 'unknown', presetUpdateEffects: { toolchain: true,
+                scripts: [{ sourceIndex: 1, scriptIndex: 0 }] } } } : {}),
+          } : currentPlan;
       },
       machineSetupApply: async ({ input, context }) => {
         if (!context.operationAcceptance) throw new Error('The receiving operation must own native effect acceptance');
@@ -1378,11 +1396,10 @@ describe('Machine → Setup tab (P-M1)', () => {
     // Review uses the held baseline, and Apply prepares its effects once.
     // The UI checks again when it observes the settled operation.
     phase = 'post-Apply check';
-    const candidatePreset = { presetId: 'build', presetRevision: 2 };
     await waitForHomeGovernance(() => expect(plans).toEqual([
       { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', candidatePreset },
-      { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', sources: proposedSources(), exclusions: [] },
+      { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', candidatePreset, exclusions: [] },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
     ]));
     expect(applied).toHaveLength(1);
@@ -1440,6 +1457,9 @@ describe('Machine → Setup tab (P-M1)', () => {
           backend: { observe: async () => { throw new Error('Unknown origin never observes native removal'); } } });
         if (!removals.ok) throw new Error(removals.error);
         result = { ...setupPlanFromOpened({ ...current, sources: proposed }), sources: wireSources, recipePlans: [],
+          ...(candidate ? { candidatePreset: candidate, review: { target: { homeId: request.homeId, machineId: request.machineId },
+            administratorRequired: false, downtime: 'unknown', presetUpdateEffects: { toolchain: true,
+              scripts: [{ sourceIndex: 1, scriptIndex: 0 }] } } } : {}),
           removalOffers: removals.removalOffers, removalPlans: removals.removalPlans };
       }
       return { body: { v: 1, actionId: 'machines.setup.plan', requestId: envelope.requestId, execution: { ok: true, result } } };

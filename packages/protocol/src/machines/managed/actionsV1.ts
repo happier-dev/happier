@@ -150,6 +150,7 @@ export const MachineSetupAppReviewV1Schema = lazyZodSchema(() => z.strictObject(
 export type MachineSetupAppReviewV1 = z.infer<typeof MachineSetupAppReviewV1Schema>;
 export const MachineSetupApplyTargetV1Schema = lazyZodSchema(() => z.extend(MachineSetupSourcesApplyInputV1Schema, {
   desiredRevision: revision(), recipePlans: z.array(MachineSetupRecipePlanV1Schema),
+  candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
   preset: z.optional(z.strictObject({ id: id(), revision: revision(), name: z.optional(id()) })),
   exclusions: z.optional(MachineSetupExclusionsV1Schema), removeItemKeys: z.optional(removalKeys()),
   removalPlans: z.optional(z.array(MachineSetupRemovalPlanV1Schema)),
@@ -219,6 +220,9 @@ export const MachineSetupPlanReviewV1Schema = lazyZodSchema(() => z.strictObject
   /** The receiving Plan's known prerequisite; presentation only, never an Apply operand. */
   administratorUnavailable: z.optional(z.strictObject({ reasonCode: z.literal('mode_none') })),
   downtime: z.enum(['none', 'possible', 'unknown']),
+  /** Native effect addresses within the opened copies; command bodies stay in their recipient projection. */
+  presetUpdateEffects: z.optional(z.strictObject({ toolchain: z.boolean(),
+    scripts: z.array(z.strictObject({ sourceIndex: revision(), scriptIndex: revision() })) })),
   requiresSessionRefresh: z.optional(MachineSetupSessionRefreshV1Schema),
   apps: z.optional(z.array(z.strictObject({ sourceIndex: revision(), itemIndex: revision(),
     kind: z.enum(['new', 'completed', 'not_completed', 'failed', 'unknown']), environmentId: z.optional(id()),
@@ -246,6 +250,7 @@ function sameMachineSetupPlanResolvedSourceV1(
 
 export const MachineSetupPlanResultV1Schema = lazyZodSchema(() => z.strictObject({
   desiredRevision: revision(), sources: MachineSetupSourceApplyV1Schema, exclusions: z.array(MachineSetupExclusionV1Schema),
+  candidatePreset: z.optional(MachineSetupPresetCandidateV1Schema),
   /** Presentation-only caller-relative content. Null marks an opaque source kept from the admitted copy. */
   resolvedSources: z.optional(z.array(z.nullable(MachineSetupResolvedSourceEntryV1Schema))),
   sourceFacts: z.optional(MachineSetupSourceFactsMapV1Schema),
@@ -288,6 +293,7 @@ export function machineSetupApplyTargetFromPlanV1(
   return MachineSetupApplyTargetV1Schema.parse({ homeId: target.homeId, machineId: target.machineId,
     desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
     recipePlans: plan.recipePlans,
+    ...(plan.candidatePreset === undefined ? {} : { candidatePreset: plan.candidatePreset }),
     ...(plan.removeItemKeys === undefined ? {} : { removeItemKeys: plan.removeItemKeys }),
     ...(plan.removalPlans === undefined ? {} : { removalPlans: plan.removalPlans }),
     ...(plan.appChildren === undefined ? {} : { appChildren: plan.appChildren }),
@@ -297,6 +303,15 @@ export function machineSetupApplyTargetFromPlanV1(
 /** A single exact native target remains an ordinary canonical Apply operand. */
 export function buildMachineSetupTargetApplyInput(target: MachineSetupApplyTargetV1): MachineSetupApplyInputV1 {
   return { homeId: target.homeId, machineId: target.machineId, targets: [target] };
+}
+
+/** Recheck the same proposal authorized by the reviewed Apply target. */
+export function machineSetupPlanInputFromApplyTargetV1(target: MachineSetupApplyTargetV1): MachineSetupPlanInputV1 {
+  return { homeId: target.homeId, machineId: target.machineId,
+    ...(target.candidatePreset === undefined ? { sources: target.sources } : { candidatePreset: target.candidatePreset }),
+    ...(target.exclusions === undefined ? {} : { exclusions: target.exclusions }),
+    ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }),
+    ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }), mode: 'effects' };
 }
 
 export const MachineSetupCombinedPlanInputV1Schema = lazyZodSchema(() => z.strictObject({
@@ -321,10 +336,7 @@ export function readMachineSetupPlanChildInputV1(params: Readonly<{
     const root = MachineSetupApplyInputV1Schema.safeParse(params.rootInput);
     const target = root.success && root.data.targets.find(target => target.machineId === params.machineId
       && target.homeId === child.data.homeId);
-    return target && sameStrictJsonValue(child.data, { homeId: target.homeId, machineId: target.machineId,
-      sources: target.sources, ...(target.exclusions === undefined ? {} : { exclusions: target.exclusions }),
-      ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }),
-      ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }), mode: 'effects' }) ? child.data : null;
+    return target && sameStrictJsonValue(child.data, machineSetupPlanInputFromApplyTargetV1(target)) ? child.data : null;
   }
   if (params.rootActionId === 'machines.setup.remove') {
     const root = MachineSetupRemoveInputV1Schema.safeParse(params.rootInput);

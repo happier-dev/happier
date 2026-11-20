@@ -2325,6 +2325,19 @@ requires full entries. Matching 0.3 development readers and daemons load togethe
 for nullable slots. The inspected `../0.2` frontier at `73c533b470` has no managed
 Machine Setup Plan contract.
 
+An addressed preset update carries its exact `candidatePreset` from Plan into
+the reviewed Apply target and its retained Workflow invocation. The receiving
+daemon selects the candidate's changed native scripts and its effective shared
+toolchain change. Selected scripts can use the installed toolchain without
+reinstalling it. Exact Workflow Retry uses the same candidate address for its
+pending commands. Updates leave other attached presets' pending scripts for
+normal Setup recovery. `review.presetUpdateEffects` projects the selected command
+coordinates and a toolchain flag for Review. Command bodies still come from the
+exact recipient projection. The Apply input carries the candidate address and
+full desired sources. Matching 0.3 development CLI, Home, UI, Protocol and
+generated SDK DTO readers load together. The inspected 0.2 frontier at
+`24731ff73c` has no managed Machine Setup Plan or Apply contract.
+
 ## Credential-free native Actions (unreleased 0.3)
 
 The host-private Action declaration may set

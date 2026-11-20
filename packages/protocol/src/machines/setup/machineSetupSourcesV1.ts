@@ -100,23 +100,25 @@ export function readMachineSetupFirstPresentV1(sources: MachineSetupSourceV1,
 /** Confirmed script completion is target-owned and bound to its ordered inputs. */
 function projectMachineSetupScriptExecution(currentSources: MachineSetupSourceV1,
   proposedSources: MachineSetupSourceV1, sourceFacts: MachineSetupSourceFactsMapV1 | undefined,
-  changedOnly: boolean): MachineSetupV1[] {
+  changedOnly: boolean, candidateSourceIndex?: number): MachineSetupV1[] {
   const pending = new Map(Object.entries(sourceFacts ?? {}).map(([origin, facts]) => [origin, new Set(facts.pendingScripts)]));
   const recovering = [...pending.values()].some(indices => indices.size > 0);
-  if (!changedOnly && !recovering) return proposedSources.map(source => source.setup);
+  if (!changedOnly && !recovering && candidateSourceIndex === undefined) return proposedSources.map(source => source.setup);
   const current = mergeMachineSetupsV1(currentSources.map(source => source.setup));
   const proposed = mergeMachineSetupsV1(proposedSources.map(source => source.setup));
   const sameToolchain = current.ok && proposed.ok && sameStrictJsonValue(current.setup.toolchain, proposed.setup.toolchain);
   const previous = new Map(currentSources.map(source => [machineSetupSourceOriginKeyV1(source), source.setup]));
-  return proposedSources.map(source => {
+  return proposedSources.map((source, sourceIndex) => {
     const origin = machineSetupSourceOriginKeyV1(source);
     const saved = previous.get(origin);
     return { ...source.setup, ...(source.setup.scripts ? { scripts: source.setup.scripts.map((script, index) => {
-      const completed = sameToolchain && sameStrictJsonValue(saved?.secretRefs, source.setup.secretRefs)
-        && sameStrictJsonValue(saved?.scripts?.[index], script)
-        && (!recovering || !pending.get(origin)?.has(index));
+      const unchanged = sameToolchain && sameStrictJsonValue(saved?.secretRefs, source.setup.secretRefs)
+        && sameStrictJsonValue(saved?.scripts?.[index], script);
+      const unfinished = pending.get(origin)?.has(index) ?? false;
+      const execute = candidateSourceIndex === undefined ? !unchanged || unfinished
+        : sourceIndex === candidateSourceIndex && (changedOnly ? !unchanged : unfinished);
       // Keep the full source coordinates used by finiteCommand failure.step.
-      return completed && script.body ? { ...script, body: '' } : script;
+      return !execute && script.body ? { ...script, body: '' } : script;
     }) } : {}) };
   });
 }
@@ -124,16 +126,17 @@ function projectMachineSetupScriptExecution(currentSources: MachineSetupSourceV1
 /** Full copies remain saved; Update and partial recovery share one execution projection. */
 export function projectMachineSetupSourceChangeExecutionV1(currentSources: MachineSetupSourceV1,
   proposedSources: MachineSetupSourceV1, mergedSetup: MachineSetupV1, currentExclusions: readonly MachineSetupExclusionV1[],
-  options: Readonly<{ currentSourceFacts?: MachineSetupSourceFactsMapV1; mode?: 'update' | 'recovery' }> = {}):
+  options: Readonly<{ currentSourceFacts?: MachineSetupSourceFactsMapV1; mode?: 'update' | 'recovery'; candidateSourceIndex?: number }> = {}):
   Readonly<{ ok: true; sources: MachineSetupV1[]; setup: MachineSetupV1 }>
   | Extract<ReturnType<typeof mergeMachineSetupsV1>, { ok: false }> {
   const current = mergeMachineSetupsV1(currentSources.map(source => source.setup));
   if (!current.ok) return current;
-  const scriptSources = projectMachineSetupScriptExecution(currentSources, proposedSources, options.currentSourceFacts, options.mode !== 'recovery');
+  const scriptSources = projectMachineSetupScriptExecution(currentSources, proposedSources, options.currentSourceFacts,
+    options.mode !== 'recovery', options.candidateSourceIndex);
   // Scripts run after recipes and toolchain setup. Confirmed partial script
   // progress therefore retains those completed effects, like an Update.
   const recoveringScripts = Object.values(options.currentSourceFacts ?? {}).some(facts => facts.pendingScripts?.length);
-  if (options.mode === 'recovery' && !recoveringScripts) return { ok: true, sources: scriptSources,
+  if (options.mode === 'recovery' && !recoveringScripts && options.candidateSourceIndex === undefined) return { ok: true, sources: scriptSources,
     setup: { ...mergedSetup, scripts: scriptSources.flatMap(source => source.scripts ?? []) } };
   const unchangedToolchain = sameStrictJsonValue(current.setup.toolchain, mergedSetup.toolchain);
   const oldItems = new Set(selectMachineSetupRecipeItemsV1(currentSources.map(source => source.setup), currentExclusions)

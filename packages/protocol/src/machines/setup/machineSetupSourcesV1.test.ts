@@ -311,6 +311,15 @@ describe('Machine setup saved-copy publication', () => {
     } }] };
     expect(read('machines.setup.plan', { ...plan, targets: [reviewedTarget] }, changedApp)).toBeNull();
     expect(read('machines.setup.apply', reviewedApply, changedApp)).toBeNull();
+    const candidatePreset = { presetId: 'reviewed', presetRevision: 2 };
+    const presetSources = [{ kind: 'accountPresetOpaque' as const, ...candidatePreset, contentEncryptionMode: 'e2ee' as const },
+      ...proposed.sources];
+    const candidateApply = { ...apply, targets: [{ ...apply.targets[0], sources: presetSources, candidatePreset }] };
+    const candidatePlan = { ...current, mode: 'effects' as const, candidatePreset };
+    expect(read('machines.setup.apply', candidateApply, candidatePlan)).toEqual(candidatePlan);
+    expect(read('machines.setup.apply', candidateApply, { ...candidatePlan,
+      candidatePreset: { ...candidatePreset, presetRevision: 3 } })).toBeNull();
+    expect(read('machines.setup.apply', candidateApply, { ...proposed, sources: presetSources })).toBeNull();
     expect(read('machines.setup.apply', apply)).toBeNull();
     expect(read('machines.setup.plan', plan, { ...current, homeId: 'other-home' })).toBeNull();
     expect(read('machines.setup.plan', plan, { ...current, mode: 'check' })).toBeNull();

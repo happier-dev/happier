@@ -429,14 +429,27 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(machineSetupApplyTargetFromPlanV1({ homeId: 'srv_home', machineId: fixture.machine.id }, plan)).not.toHaveProperty('resolvedSources');
     expect(JSON.stringify(post.mock.calls)).not.toContain('private setup');
   });
-  it('reviews an addressed preset candidate without changing the attached desired copy', async () => {
+  it.each(['settled sibling', 'pending sibling', 'equal candidate', 'candidate retry'] as const)
+  ('applies only the addressed preset candidate with %s', async scenario => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
+    const script = (body: string) => ({ body, affects: 'none' as const });
     const local = { kind: 'accountPreset' as const, presetId: 'candidate-preset', presetRevision: 3, setupRevision: 1,
-      contentEncryptionMode: 'plain' as const, setup: { scripts: [{ body: 'echo incumbent', affects: 'none' as const }] } };
-    const retained = { ...local, presetId: 'unreadable-retained', presetRevision: 1, setup: {} };
+      contentEncryptionMode: 'plain' as const, setup: { scripts: [script('echo unchanged'), script('echo incumbent')] } };
+    const retained = { ...local, presetId: 'unreadable-retained', presetRevision: 1, setup: { scripts: [
+      script('echo retained'), script('exit 23'),
+    ] } };
+    const retainedFacts = { [`account:${retained.presetId}`]: { pendingScripts: [1] } };
+    const pending = scenario !== 'settled sibling';
+    const equal = scenario === 'equal candidate';
+    const fails = scenario === 'candidate retry';
+    const candidateScripts = equal ? local.setup.scripts : [script('echo unchanged'), script('echo candidate')];
     const direct = { kind: 'direct' as const, setup: {} };
     const target = { homeId: 'srv_home', machineId: fixture.machine.id };
-    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
+    const launchedBodies = () => nativeTerminal.launches.map(launch => launch.args.at(-1));
+    nativeTerminal.onLaunch = () => queueMicrotask(() => {
+      const body = launchedBodies().at(-1);
+      nativeTerminal.exit?.(body === 'exit 23' ? 23 : fails && body === 'echo candidate' ? 17 : 0);
+    });
     const control = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
       input: { ...target, mode: 'effects', sources: [{ kind: 'direct', setup: {
         scripts: [{ body: 'printf CONTROL', affects: 'none' }] } }] }, context: fixture.context('machines.setup.plan'),
@@ -444,7 +457,9 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, control),
       context: fixture.context('machines.setup.apply', 'known-good-control') })).toMatchObject({ operationId: expect.any(String) });
     expect(nativeTerminal.launches).toHaveLength(1);
-    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 1, sources: [local, retained, direct], exclusions: [] });
+    await fixture.client.captureMachineSetupDesired().apply({ expectedDesiredRevision: 1, sources: [local, retained, direct], exclusions: [],
+      ...(pending ? { observedSourceFacts: retainedFacts } : {}),
+    });
     const before = await fixture.client.getMachineSetupDesiredSnapshot();
     const candidate = { kind: 'accountPresetOpaque' as const, presetId: local.presetId, presetRevision: 4, setupRevision: 2,
       contentEncryptionMode: 'plain' as const };
@@ -460,7 +475,7 @@ describe('admitted Machine setup snapshot lifetime', () => {
       }
       expect(body).toEqual({ homeId: 'srv_home', machineId: fixture.machine.id, candidatePreset });
       return { status: 200, data: { sources: [{ ...candidate, presetContent: {
-        content: { t: 'plain', v: { v: 1, name: 'Candidate', setup: { scripts: [{ body: 'echo candidate', affects: 'none' }] } } },
+        content: { t: 'plain', v: { v: 1, name: 'Candidate', setup: { scripts: candidateScripts } } },
         recipientEnvelope: null } }, direct] } };
     });
     onTestFinished(() => post.mockRestore());
@@ -472,23 +487,45 @@ describe('admitted Machine setup snapshot lifetime', () => {
     expect(fixture.rootLaunches).toEqual([]);
     expect(post).toHaveBeenCalledTimes(1);
     const plan = MachineSetupPlanResultV1Schema.parse(result.ok ? result.result : null);
+    expect(plan).toMatchObject({ candidatePreset, review: { presetUpdateEffects: { toolchain: false,
+      scripts: equal ? [] : [{ sourceIndex: 0, scriptIndex: 1 }],
+    } } });
     const review = await hydrateManagedOpaqueSetupSourcePresentationsV1({
       sources: plan.sources, resolvedSources: plan.resolvedSources ?? [],
       open: ({ presetId, projection }) => openManagedMachinePresetRecipientProjectionV1({ presetId, mode: 'plain', projection }),
     });
     expect(review).toMatchObject([
-      { kind: 'opened', source: { presetRevision: 4, setup: { scripts: [{ body: 'echo candidate' }] } } },
+      { kind: 'opened', source: { presetRevision: 4, setup: { scripts: candidateScripts } } },
       { kind: 'unavailable', source: { presetId: retained.presetId } },
       { kind: 'opened', source: direct },
     ]);
-    expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, plan),
-      context: fixture.context('machines.setup.apply', 'reviewed-candidate') })).toMatchObject({ operationId: expect.any(String) });
+    const input = machineSetupApplyTargetFromPlanV1(target, plan);
+    const applied = await fixture.apply({ input, context: fixture.context('machines.setup.apply', 'reviewed-candidate') });
+    expect(applied).toMatchObject(fails ? { ok: false, errorCode: 'machine_setup_setup_failed',
+      details: { kind: 'finiteCommand', step: 1, exitCode: 17 } } : { operationId: expect.any(String) });
     expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: {
       revision: 3, sources: [{ kind: 'accountPreset', presetId: candidate.presetId,
         presetRevision: 4, setupRevision: 2 }, retained, direct],
+      ...(pending ? { sourceFacts: { ...retainedFacts, ...(fails ? { [`account:${candidate.presetId}`]: { pendingScripts: [1] } } : {}) } } : {}),
     } });
-    expect(nativeTerminal.launches).toHaveLength(2);
+    expect(launchedBodies()).toEqual(equal ? ['printf CONTROL'] : ['printf CONTROL', 'echo candidate']);
     expect(post).toHaveBeenCalledTimes(3);
+    if (fails) {
+      const retry = fixture.context('machines.setup.apply', 'retry-candidate');
+      const authorization = retry.externalActionExecutionAuthorization!;
+      nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(0));
+      expect(await fixture.apply({ input, context: { ...retry, externalActionExecutionAuthorization: { ...authorization,
+        binding: { ...authorization.binding, workflowActionOrigin: { runId: 'retained-candidate', requestId: 'retry-candidate' } } },
+      } })).toMatchObject({ operationId: expect.any(String) });
+      expect(launchedBodies()).toEqual(['printf CONTROL', 'echo candidate', 'echo candidate']);
+      expect(await fixture.client.getMachineSetupDesiredSnapshot()).toMatchObject({ status: 'ready', policy: { sourceFacts: retainedFacts } });
+
+      const recovery = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({ input: { ...target, mode: 'effects' },
+        context: fixture.context('machines.setup.plan', 'review-recovery') }));
+      expect(await fixture.apply({ input: machineSetupApplyTargetFromPlanV1(target, recovery),
+        context: fixture.context('machines.setup.apply', 'apply-recovery') })).toMatchObject({ operationId: expect.any(String) });
+      expect(launchedBodies()).toEqual(['printf CONTROL', 'echo candidate', 'echo candidate', 'exit 23']);
+    }
   });
   it('checks the admitted local copy without re-reading its preset authority', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });

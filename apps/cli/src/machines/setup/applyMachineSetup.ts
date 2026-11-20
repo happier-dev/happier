@@ -70,7 +70,8 @@ export type ApplyMachineSetupInput = Readonly<{
   exclusions?: readonly MachineSetupExclusionV1[];
   /** Captured by the receiving target, never supplied as caller authority. */
   sourceChange?: Readonly<{ currentSources: MachineSetupSourceV1; currentSourceFacts?: MachineSetupSourceFactsMapV1;
-    currentExclusions: readonly MachineSetupExclusionV1[]; sources: MachineSetupSourceV1; mode?: 'update' | 'recovery' }>;
+    currentExclusions: readonly MachineSetupExclusionV1[]; sources: MachineSetupSourceV1; mode?: 'update' | 'recovery';
+    candidateSourceIndex?: number }>;
   elevation?: MachineElevationDependencies;
   groupRefreshNative?: DaemonGroupRefreshNative;
   operation: ProjectSetupOperationContext;
@@ -102,6 +103,7 @@ export type ApplyMachineSetupInput = Readonly<{
 }>;
 type AdmittedMachineSetupInput = Omit<ApplyMachineSetupInput, 'setup'> & Readonly<{
   setup: MachineSetupV1; sources: readonly MachineSetupV1[];
+  retainedToolchain?: MachineSetupV1['toolchain'];
   plans: readonly MachineSetupEffectPlanV1[];
   taskKind: 'machine.setup.apply.v1' | 'machine.setup.remove.v1';
   emit?: MachineElevationDependencies['emit'];
@@ -122,7 +124,7 @@ export function isMachineSetupResultUnsettled(result: ActionExecuteResult): bool
 export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], recipePlans?: NonNullable<MachineSetupPlanResultV1['recipePlans']>,
   exclusions: readonly MachineSetupExclusionV1[] = [], sourceChange?: ApplyMachineSetupInput['sourceChange'],
   boundBasis?: MachineSetupBoundTargetBasisV1):
-  Readonly<{ ok: true; setup: MachineSetupV1; sources: readonly MachineSetupV1[] }> | ActionExecuteFailure {
+  Readonly<{ ok: true; setup: MachineSetupV1; sources: readonly MachineSetupV1[]; retainedToolchain?: MachineSetupV1['toolchain'] }> | ActionExecuteFailure {
   const merged = mergeMachineSetupsV1(sources);
   if (!merged.ok) return merged;
   if (recipePlans?.some(entry => {
@@ -136,7 +138,8 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
   };
   const execution = sourceChange ? projectMachineSetupSourceChangeExecutionV1(sourceChange.currentSources,
     sourceChange.sources, merged.setup, sourceChange.currentExclusions,
-    { currentSourceFacts: sourceChange.currentSourceFacts, mode: sourceChange.mode }) : { ok: true as const, setup: merged.setup, sources };
+    { currentSourceFacts: sourceChange.currentSourceFacts, mode: sourceChange.mode, candidateSourceIndex: sourceChange.candidateSourceIndex })
+    : { ok: true as const, setup: merged.setup, sources };
   if (!execution.ok) return execution;
   if (recipePlans === undefined && sources.some(setup => setup.items?.length)) return {
     ok: false, errorCode: 'machine_setup_items_unsupported', error: 'machine_setup_items_unsupported',
@@ -153,9 +156,11 @@ export function prepareMachineSetupStages(sources: readonly MachineSetupV1[], re
     ok: false, errorCode: 'machine_setup_script_check_unsupported', error: 'machine_setup_script_check_unsupported',
   };
   const selectedKeys = new Set(recipeItems.map(entry => machineSetupItemKeyV1(entry.item)));
+  const retainedToolchain = sourceChange?.candidateSourceIndex !== undefined && !execution.setup.toolchain
+    && execution.setup.scripts?.some(script => script.body) ? merged.setup.toolchain : undefined;
   return { ok: true, setup: execution.setup.items === undefined ? execution.setup : { ...execution.setup,
     items: execution.setup.items.filter(item => !isMachineSetupRecipeItemV1(item) || selectedKeys.has(machineSetupItemKeyV1(item))),
-  }, sources: execution.sources };
+  }, sources: execution.sources, retainedToolchain };
 }
 
 export async function applyMachineSetup(input: ApplyMachineSetupInput,
@@ -170,7 +175,8 @@ export async function applyMachineSetup(input: ApplyMachineSetupInput,
   if (!admitted) {
     return { ok: false, errorCode: 'plan_changed', error: 'plan_changed' };
   }
-  return await startMachineSetup({ ...input, setup: prepared.setup, sources: prepared.sources, plans, taskKind: 'machine.setup.apply.v1' });
+  return await startMachineSetup({ ...input, setup: prepared.setup, sources: prepared.sources,
+    retainedToolchain: prepared.retainedToolchain, plans, taskKind: 'machine.setup.apply.v1' });
 }
 
 export async function removeMachineSetup(input: RemoveMachineSetupInput): Promise<ActionExecuteResult> {
@@ -391,34 +397,36 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
     if (outcome.kind === 'outcome_uncertain') onUnsettledNativeProcess();
     return outcome.result;
   };
-  const toolchain = input.setup.toolchain;
+  const toolchain = input.setup.toolchain ?? input.retainedToolchain;
   if (toolchain) {
     // Consumes the exact builtin B3 contract, not a guessed adapter command.
     const adapter = listMachineSetupAdaptersV1(platform).find(candidate => candidate.id === toolchain.adapterId);
     if (!adapter) return fail('native_adapter_not_characterized');
-    const tool = await environmentIo.resolveTool(adapter.id, signal);
-    if (signal.aborted) return fail('cancelled');
-    if (!tool) return fail('native_tool_unavailable');
-    if (tool.version !== adapter.nativeVersion) return fail('native_version_not_characterized');
     // Mise v2026.10.4 crates/mise-util/src/env.rs (reexported by src/env.rs):
     // GLOBAL_CONFIG_FILE > CONFIG_FILE > CONFIG_DIR > XDG_CONFIG_HOME.
     const configured = hostEnv.MISE_GLOBAL_CONFIG_FILE || hostEnv.MISE_CONFIG_FILE;
     const configDirectory = hostEnv.MISE_CONFIG_DIR || targetPath.join(hostEnv.XDG_CONFIG_HOME || targetPath.join(input.userHomeDirectory, '.config'), 'mise');
     const configPath = targetPath.resolve(input.userHomeDirectory, expandHomeDirPath(configured || targetPath.join(configDirectory, adapter.globalEnvironment.configFile), hostEnv, platform));
-    try {
-      if (input.boundTarget) await input.boundTarget.writeConfiguration(configPath, toolchain.config, signal);
-      else {
-        await mkdir(targetPath.dirname(configPath), { recursive: true });
-        if (signal.aborted) return fail('cancelled');
-        await writeFile(configPath, toolchain.config, 'utf8');
+    if (input.setup.toolchain) {
+      const tool = await environmentIo.resolveTool(adapter.id, signal);
+      if (signal.aborted) return fail('cancelled');
+      if (!tool) return fail('native_tool_unavailable');
+      if (tool.version !== adapter.nativeVersion) return fail('native_version_not_characterized');
+      try {
+        if (input.boundTarget) await input.boundTarget.writeConfiguration(configPath, toolchain.config, signal);
+        else {
+          await mkdir(targetPath.dirname(configPath), { recursive: true });
+          if (signal.aborted) return fail('cancelled');
+          await writeFile(configPath, toolchain.config, 'utf8');
+        }
       }
+      catch { return fail('machine_setup_configuration_failed'); }
+      if (signal.aborted) return fail('cancelled');
+      const installed = await run('install', tool.executablePath, [...(tool.args ?? []), ...adapter.globalEnvironment.installArgs],
+        { ...hostEnv, MISE_OVERRIDE_CONFIG_FILENAMES: configPath }, 'machine_setup_install_failed');
+      if (!installed.ok) return installed;
+      if (signal.aborted) return fail('cancelled');
     }
-    catch { return fail('machine_setup_configuration_failed'); }
-    if (signal.aborted) return fail('cancelled');
-    const installed = await run('install', tool.executablePath, [...(tool.args ?? []), ...adapter.globalEnvironment.installArgs],
-      { ...hostEnv, MISE_OVERRIDE_CONFIG_FILENAMES: configPath }, 'machine_setup_install_failed');
-    if (!installed.ok) return installed;
-    if (signal.aborted) return fail('cancelled');
     const produced = await prepareProjectNativeToolchain({ selection: { kind: 'toolchain', tool: adapter.id, configPath: targetPath.basename(configPath) },
       ...(input.boundTarget ? { configurationContent: toolchain.config } : {}),
       root: targetPath.dirname(configPath), cwd: input.userHomeDirectory, env: hostEnv, platform, signal,

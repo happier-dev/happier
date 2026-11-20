@@ -9451,6 +9451,10 @@ export type ManagedMachinesActionInputById = {
                     selectedCheckIds?: string[] | undefined;
                 };
             }[];
+            candidatePreset?: undefined | {
+                presetId: string;
+                presetRevision: number;
+            };
             preset?: undefined | {
                 id: string;
                 revision: number;
@@ -36404,6 +36408,10 @@ export type ManagedMachinesActionResultById = {
             reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
             requiredFact?: string | undefined;
         }[];
+        candidatePreset?: undefined | {
+            presetId: string;
+            presetRevision: number;
+        };
         resolvedSources?: (MachineSetupNonAccountPresetSourceEntryV1 | null | {
             kind: 'accountPresetOpaque';
             presetId: string;
@@ -39323,6 +39331,13 @@ export type ManagedMachinesActionResultById = {
             administratorUnavailable?: undefined | {
                 reasonCode: 'mode_none';
             };
+            presetUpdateEffects?: undefined | {
+                toolchain: boolean;
+                scripts: {
+                    sourceIndex: number;
+                    scriptIndex: number;
+                }[];
+            };
             requiresSessionRefresh?: undefined | {
                 kind: 'requiresSessionRefresh';
                 username: string;
@@ -40347,6 +40362,10 @@ export type ManagedMachinesActionResultById = {
                     reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
                     requiredFact?: string | undefined;
                 }[];
+                candidatePreset?: undefined | {
+                    presetId: string;
+                    presetRevision: number;
+                };
                 resolvedSources?: (MachineSetupNonAccountPresetSourceEntryV1 | null | {
                     kind: 'accountPresetOpaque';
                     presetId: string;
@@ -43265,6 +43284,13 @@ export type ManagedMachinesActionResultById = {
                     downtime: 'none' | 'possible' | 'unknown';
                     administratorUnavailable?: undefined | {
                         reasonCode: 'mode_none';
+                    };
+                    presetUpdateEffects?: undefined | {
+                        toolchain: boolean;
+                        scripts: {
+                            sourceIndex: number;
+                            scriptIndex: number;
+                        }[];
                     };
                     requiresSessionRefresh?: undefined | {
                         kind: 'requiresSessionRefresh';

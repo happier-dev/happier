@@ -162,6 +162,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     let reviewedWireSources = wireSources;
     let localInput: MachineSetupLocalPlanInputV1 = inputWithoutSources;
     let resolvedSources: MachineSetupResolvedSourceV1 | undefined;
+    let candidateSourceIndex: number | undefined;
     const current = await params.apiMachine.getMachineSetupDesiredSnapshot();
     if ((signal ?? context.signal)?.aborted) return fail('cancelled');
     const requestHomeSources = async (body: HomeSetupCopyRequest) => {
@@ -210,13 +211,15 @@ export function createMachineSetupPlanAction(params: Readonly<{
       if (!params.installation || !params.apiMachine.resolveMachineSetupRuntime) return fail('admission_unavailable');
       const sourceIndex = current.policy.sources.findIndex(source => source.kind === 'accountPreset'
         && source.presetId === candidatePreset.presetId);
-      if (sourceIndex < 0) return fail('plan_changed');
+      const attached = current.policy.sources[sourceIndex];
+      if (attached?.kind !== 'accountPreset' || candidatePreset.presetRevision <= attached.presetRevision) return fail('plan_changed');
       try {
         const opened = await resolveHomeSources({ candidatePreset });
         if ('failure' in opened) return opened.failure;
         const candidate = opened.sources.find(source => source.kind === 'accountPreset'
           && source.presetId === candidatePreset.presetId && source.presetRevision === candidatePreset.presetRevision);
         if (!candidate || opened.sources.length !== 2) return fail('machine_setup_response_invalid');
+        candidateSourceIndex = sourceIndex;
         localInput = { ...inputWithoutSources, sources: current.policy.sources.map((source, index) => index === sourceIndex ? candidate : source) };
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
@@ -287,7 +290,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     const requestId = context.actionRequestId;
     const lifetime = signal ?? context.signal;
     try {
-      result = await prepareMachineSetupPlanV1({ input: localInput, current,
+      result = await prepareMachineSetupPlanV1({ input: localInput, current, candidateSourceIndex,
         observation: params.apiMachine.getMachineSetupObservationSnapshot?.(),
         ...(installationId ? { installationId } : {}),
         ...(administrator ? { readAdminAccessObservation: administrator.observe } : {}),
@@ -314,7 +317,9 @@ export function createMachineSetupPlanAction(params: Readonly<{
     const appPrepared = await prepareMachineSetupApps(localInput, result, { ...context, ...(signal ? { signal } : {}) }, {
       ...params.appPreparation, ...(params.installation ? { installationId: params.installation.installationId } : {}),
     });
-    return withAdministratorPrerequisite('errorCode' in appPrepared ? appPrepared : projectMachineSetupPlanResult(appPrepared, resolvedSources,
+    return withAdministratorPrerequisite('errorCode' in appPrepared ? appPrepared : projectMachineSetupPlanResult({ ...appPrepared,
+      ...(candidatePreset === undefined ? {} : { candidatePreset }),
+    }, resolvedSources,
       current.status === 'ready' && current.policy.sources.some(source => source.kind === 'accountPreset'
         && source.contentEncryptionMode !== undefined) || wireSources?.some(source => source.kind === 'accountPresetOpaque')
         ? reviewedWireSources : undefined));
@@ -437,13 +442,29 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           && sameStrictJsonValue(current.policy.pendingScriptSources ?? current.policy.sources, originalSources)
           && sameStrictJsonValue(current.policy.exclusions, input.exclusions ?? current.policy.exclusions);
         if (current.policy.revision !== input.desiredRevision && !continuingScripts) return fail('plan_changed');
+        let candidateSourceIndex: number | undefined;
+        let proposedSources = originalSources;
+        if (input.candidatePreset) {
+          const { presetId, presetRevision } = input.candidatePreset;
+          const index = current.policy.sources.findIndex(source => source.kind === 'accountPreset' && source.presetId === presetId);
+          const attached = current.policy.sources[index];
+          const candidate = originalSources[index];
+          if (attached?.kind !== 'accountPreset' || candidate?.kind !== 'accountPreset'
+            || candidate.presetId !== presetId || candidate.presetRevision !== presetRevision
+            || (continuingScripts ? attached.presetRevision !== presetRevision
+              || !current.policy.sourceFacts?.[machineSetupSourceOriginKeyV1(attached)]?.pendingScripts?.length
+              : attached.presetRevision >= presetRevision)) return fail('plan_changed');
+          candidateSourceIndex = index;
+          proposedSources = current.policy.sources.map((source, sourceIndex) => sourceIndex === index ? candidate : source);
+        }
         const reviewedRecipePlans = continuingScripts ? [] : input.recipePlans;
         if (continuingScripts) sources = current.policy.sources;
         else {
           const change = reviewMachineSetupSourceChangeV1({ currentSources: current.policy.sources,
-            currentSourceFacts: current.policy.sourceFacts, proposedSources: originalSources,
+            currentSourceFacts: current.policy.sourceFacts, proposedSources,
             ...(input.removeItemKeys === undefined ? {} : { removeItemKeys: input.removeItemKeys }) });
           if (!change.ok) return change;
+          if (candidateSourceIndex !== undefined && !sameStrictJsonValue(change.sources, originalSources)) return fail('plan_changed');
           sources = change.sources;
         }
         const retainedByOrigin = new Map(current.policy.sources.map(source => [machineSetupSourceOriginKeyV1(source), source]));
@@ -494,8 +515,9 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           ...resolveMachineEffectCli(), verifyCurrent: isActive });
         const setups = sources.map(source => source.setup);
         const sourceChange = { currentSources: current.policy.sources, currentSourceFacts: current.policy.sourceFacts,
-          currentExclusions: current.policy.exclusions, sources,
-          mode: input.removeItemKeys === undefined ? 'recovery' as const : 'update' as const };
+          currentExclusions: current.policy.exclusions, sources, candidateSourceIndex,
+          mode: continuingScripts || candidateSourceIndex === undefined && input.removeItemKeys === undefined
+            ? 'recovery' as const : 'update' as const };
         const prepared = mode === 'remove' ? undefined
           : prepareMachineSetupStages(setups, reviewedRecipePlans, exclusions, sourceChange);
         let credentialSelection: AccessProviderSelectionV1 | undefined;
@@ -619,11 +641,14 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
           if (mode === 'apply' && prepared?.ok) {
             let ordinal = 0;
             for (const [sourceIndex, source] of sources.entries()) {
+              const origin = machineSetupSourceOriginKeyV1(source);
+              const previouslyPending = new Set(candidateSourceIndex === undefined ? undefined : current.policy.sourceFacts?.[origin]?.pendingScripts);
               const pendingScripts = (prepared.sources[sourceIndex]?.scripts ?? []).flatMap((script, index) => {
                 const completed = completedScripts.has(ordinal++);
-                return script.body && !completed ? [index] : [];
+                if (script.body) return completed ? [] : [index];
+                // A scoped update never claims completion of an omitted script.
+                return previouslyPending.has(index) && source.setup.scripts?.[index]?.body ? [index] : [];
               });
-              const origin = machineSetupSourceOriginKeyV1(source);
               observedSourceFacts[origin] = { ...observedSourceFacts[origin], pendingScripts };
             }
           }

@@ -66,6 +66,7 @@ it('TS.E.presetReview publishes setup-only counters and bodyless notices through
   const id = randomUUID();
   const homeId = fixture.serverId;
   const marker = join(workspaceDir, 'preset-effects');
+  const retainedMarker = join(workspaceDir, 'retained-preset-effects');
   const initialScript = `printf INITIAL >> '${marker.replace(/'/g, "'\\''")}'`;
   const changedScript = `printf CHANGED >> '${marker.replace(/'/g, "'\\''")}'`;
   const owner = { kind: 'account' as const, accountId };
@@ -88,7 +89,7 @@ it('TS.E.presetReview publishes setup-only counters and bodyless notices through
   const original = created.result.preset as { revision: number };
   const retainedId = randomUUID();
   const retained = await action('machines.presets.create', { id: retainedId, homeId, owner, contentEncryptionMode: 'e2ee',
-    ...seal('Retained', '', retainedId) }, true);
+    ...seal('Retained', `printf RETAINED >> '${retainedMarker.replace(/'/g, "'\\''")}'`, retainedId) }, true);
   expect(retained).toMatchObject({ ok: true, result: { kind: 'saved' } });
   if (!retained.ok || !retained.result || typeof retained.result !== 'object' || !('preset' in retained.result))
     throw new Error('Expected retained preset');
@@ -116,6 +117,7 @@ it('TS.E.presetReview publishes setup-only counters and bodyless notices through
   };
   await apply(await planPreset(original.revision));
   expect(await readFile(marker, 'utf8')).toBe('INITIAL');
+  expect(await readFile(retainedMarker, 'utf8')).toBe('RETAINED');
   // The admitted native Apply is the known-good control before the new producer assertion.
   expect(created).toMatchObject({ ok: true, result: { kind: 'saved', preset: { id, setupRevision: 0 } } });
   expect(await action('machines.presets.archive', { homeId, id: retainedId, expectedRevision: retainedRevision }, true))
@@ -153,6 +155,8 @@ it('TS.E.presetReview publishes setup-only counters and bodyless notices through
     return MachineSetupPlanResultV1Schema.parse(planned.result);
   };
   const candidate = await planCandidate();
+  expect(candidate).toMatchObject({ candidatePreset: { presetId: id, presetRevision: candidateRevision },
+    review: { presetUpdateEffects: { toolchain: false, scripts: [{ sourceIndex: 0, scriptIndex: 0 }] } } });
   if (!account.credentials.encryption) throw new Error('Review fixture requires E2EE custody');
   const accountKey = resolveAccountContentSecretKey(account.credentials.encryption);
   const review = await hydrateManagedOpaqueSetupSourcePresentationsV1({ sources: candidate.sources,
@@ -167,6 +171,7 @@ it('TS.E.presetReview publishes setup-only counters and bodyless notices through
   expect(await readFile(marker, 'utf8')).toBe('INITIAL');
   await apply(await planCandidate());
   expect(await readFile(marker, 'utf8')).toBe('INITIALCHANGED');
+  expect(await readFile(retainedMarker, 'utf8')).toBe('RETAINED');
   expect(await action('machines.setup.plan', { homeId, machineId, mode: 'check' })).toMatchObject({ ok: true,
     result: { sources: [{ kind: 'accountPresetOpaque', presetId: id, setupRevision: 1 },
       { kind: 'accountPresetOpaque', presetId: retainedId, presetRevision: retainedRevision }, { kind: 'direct' }] } });

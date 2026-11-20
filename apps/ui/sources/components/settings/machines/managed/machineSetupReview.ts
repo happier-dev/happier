@@ -104,16 +104,42 @@ export async function prepareMachineSetupSourcesApplyInput(params: Readonly<{
         const plan = effects.data.appChildren === undefined && target?.appChildren !== undefined
             ? { ...effects.data, appChildren: target.appChildren } : effects.data;
         if (expected.appChildren !== undefined && plan.appChildren === undefined) return fail('managed_response_invalid');
-        if (effects.data.desiredRevision !== expected.desiredRevision || !sameStrictJsonValue(effects.data.sources, expectedSources[index])) return fail('plan_changed');
+        if (effects.data.desiredRevision !== expected.desiredRevision
+            || !sameStrictJsonValue(plan.candidatePreset, expected.candidatePreset)
+            || expected.candidatePreset === undefined && !sameStrictJsonValue(plan.sources, expectedSources[index])) return fail('plan_changed');
         if (!sameStrictJsonValue(effects.data.removeItemKeys, expected.removeItemKeys)) return fail('plan_changed');
         if (expected.removeItemKeys !== undefined && effects.data.removalPlans === undefined) return fail('managed_response_invalid');
-        const presentations = await openManagedMachineSetupPlanSourcesV1({
+        let presentations = await openManagedMachineSetupPlanSourcesV1({
             ...(typeof params.context.serverId === 'string' ? { serverId: params.context.serverId } : {}),
             ...(typeof params.context.expectedAccountId === 'string' ? { accountId: params.context.expectedAccountId } : {}),
             plan: effects.data,
             signal: params.context.signal,
         });
         if (!current()) return fail('continuation_retired');
+        if (expected.candidatePreset !== undefined) {
+            const effects = plan.review?.presetUpdateEffects;
+            if (!effects) return fail('plan_changed');
+            const scriptIndicesBySource = new Map<number, Set<number>>();
+            for (const { sourceIndex, scriptIndex } of effects.scripts) {
+                const presentation = presentations[sourceIndex];
+                if (presentation?.kind !== 'opened' || !presentation.source.setup.scripts?.[scriptIndex]?.body)
+                    return fail('managed_response_invalid');
+                const indices = scriptIndicesBySource.get(sourceIndex) ?? new Set<number>();
+                indices.add(scriptIndex);
+                scriptIndicesBySource.set(sourceIndex, indices);
+            }
+            if (effects.toolchain && !presentations.some(entry => entry.kind === 'opened' && entry.source.setup.toolchain))
+                return fail('managed_response_invalid');
+            presentations = presentations.map((entry, sourceIndex) => {
+                if (entry.kind !== 'opened') return entry;
+                const { scripts, toolchain, ...setup } = entry.source.setup;
+                const indices = scriptIndicesBySource.get(sourceIndex);
+                return { ...entry, source: { ...entry.source, setup: { ...setup,
+                    ...(effects.toolchain && toolchain ? { toolchain } : {}),
+                    ...(indices && scripts ? { scripts: scripts.filter((_script, scriptIndex) => indices.has(scriptIndex)) } : {}),
+                } } };
+            });
+        }
         admitted.push({ ...machineSetupApplyTargetFromPlanV1(expected, plan),
             ...(expected.preset ? { preset: expected.preset } : {}) });
         facts.push({ homeId: expected.homeId, machineId: expected.machineId, support: effects.data.support,

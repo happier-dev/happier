@@ -1,7 +1,7 @@
 import { isReviewedMachineSetupCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
-import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, buildMachineSetupTargetApplyInput, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema, buildMachineSetupTargetApplyInput, machineSetupPlanInputFromApplyTargetV1, type MachineSetupApplyInputV1, type MachineSetupApplyTargetV1, type MachineSetupCombinedPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { admitCombinedActionWorkflowHostV1, resolveCombinedActionWorkflowHostV1, prepareWorkflowRunStartV1 } from '@happier-dev/protocol/workflows/workflowStartPreparationV1';
 import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
@@ -148,10 +148,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
       if (!nativeLeaf && (opaqueSources || target.removeItemKeys !== undefined || target.exclusions === undefined
         || machineSetupTargetHasApps(target))) {
         const requestedExclusions = target.exclusions;
-        const result = await targetPlan({ input: { homeId: target.homeId, machineId: target.machineId,
-          sources: target.sources, ...(requestedExclusions === undefined ? {} : { exclusions: requestedExclusions }),
-          ...(target.removeItemKeys === undefined ? {} : { removeItemKeys: target.removeItemKeys }),
-          ...(target.appChildren === undefined ? {} : { appChildren: target.appChildren }), mode: 'effects' },
+        const result = await targetPlan({ input: machineSetupPlanInputFromApplyTargetV1(target),
         context, ...(context.signal ? { signal: context.signal } : {}) });
         if (context.signal?.aborted) return failure('cancelled');
         const refused = ActionExecuteFailureSchema.safeParse(result);
@@ -159,6 +156,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         const observed = MachineSetupPlanResultV1Schema.safeParse(result);
         if (!observed.success) return failure('invalid_action_output');
         if (observed.data.desiredRevision !== target.desiredRevision || !sameStrictJsonValue(observed.data.sources, target.sources)
+          || !sameStrictJsonValue(observed.data.candidatePreset, target.candidatePreset)
           || !sameStrictJsonValue(observed.data.removeItemKeys, target.removeItemKeys)
           || requestedExclusions !== undefined && !sameStrictJsonValue(observed.data.exclusions, requestedExclusions)) return failure('plan_changed');
         exclusions = observed.data.exclusions;

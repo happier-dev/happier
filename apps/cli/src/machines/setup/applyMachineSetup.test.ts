@@ -290,6 +290,23 @@ describe('applyMachineSetup', () => {
     expect(f.spawned[2]!.launch.options.env).toMatchObject({ B_ONLY: 'private-value' });
     expect(f.spawned[2]!.launch.options.env).not.toHaveProperty('A_ONLY');
   });
+  it('activates the retained toolchain for a changed preset command without reinstalling it', async () => {
+    const f = await fixture(true);
+    const toolchain = f.input.setup.toolchain;
+    expect(await applyMachineSetup({ ...f.input, setup: { toolchain } })).toMatchObject({ ok: true });
+    const prior = { kind: 'accountPreset' as const, presetId: 'preset', presetRevision: 1,
+      setup: { toolchain, scripts: [{ body: 'echo old', affects: 'none' as const }] } };
+    const direct = { kind: 'direct' as const, setup: {} };
+    const currentSources = [prior, direct];
+    const sources = [{ ...prior, presetRevision: 2,
+      setup: { ...prior.setup, scripts: [{ body: 'echo updated', affects: 'none' as const }] } }, direct];
+    expect(await applyMachineSetup({ ...f.input, setup: sources.map(source => source.setup),
+      sourceChange: { currentSources, sources, currentExclusions: [], mode: 'update', candidateSourceIndex: 0 },
+    })).toMatchObject({ ok: true });
+    expect(f.spawned.map(process => process.launch.args.at(-1))).toEqual(['install', 'echo updated']);
+    expect(f.spawned.at(-1)?.launch.options.env?.PATH).toBe('/native');
+  });
+
   it('retains only the failing ordered command phase, step and exit for Action readers', async () => {
     const f = await fixture(launch => launch.args.at(-1)?.includes('exit 23') ? 23 : 0);
     const result = await applyMachineSetup({ ...f.input, setup: { scripts: [

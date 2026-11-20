@@ -41,6 +41,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   onCredentialSelection?: Parameters<typeof prepareMachineRecipeProgramV1>[0]['onCredentialSelection'];
   current: Awaited<ReturnType<typeof getMachineSetupDesiredV1>>;
   observation?: MachineSetupObservationV1;
+  candidateSourceIndex?: number;
   /** Receiving Apply reuses its prepared changed operands. */
   executionSources?: readonly MachineSetupV1[];
   readRecipes?: () => Promise<readonly PluginProjectedMachineRecipeEntryV1[] | undefined>;
@@ -76,7 +77,8 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     else {
       const execution = projectMachineSetupSourceChangeExecutionV1(current.policy.sources, sources,
         merged.setup, current.policy.exclusions, { currentSourceFacts: current.policy.sourceFacts,
-          mode: input.removeItemKeys === undefined ? 'recovery' : 'update' });
+          mode: params.candidateSourceIndex !== undefined || input.removeItemKeys !== undefined ? 'update' : 'recovery',
+          candidateSourceIndex: params.candidateSourceIndex });
       if (!execution.ok) return execution;
       executionSources = execution.sources;
     }
@@ -234,6 +236,11 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     return { target: { homeId: input.homeId, machineId: input.machineId },
       // This is the execution owner's existing gate, not an OS/user guess.
       administratorRequired: machineSetupPlansRequireAdministratorV1(selectedPlans) ? true : incomplete ? null : false,
+      ...(params.candidateSourceIndex === undefined ? {} : { presetUpdateEffects: {
+        toolchain: executingSetups.some(setup => setup.toolchain !== undefined),
+        scripts: executingSetups.flatMap((setup, sourceIndex) => (setup.scripts ?? [])
+          .flatMap((script, scriptIndex) => script.body ? [{ sourceIndex, scriptIndex }] : [])),
+      } }),
       ...(requiresSessionRefresh ? { requiresSessionRefresh } : {}),
       downtime: possible ? 'possible' : unknown ? 'unknown' : 'none' };
   })() : undefined;
