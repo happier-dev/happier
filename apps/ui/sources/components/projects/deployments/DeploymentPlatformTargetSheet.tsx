@@ -30,6 +30,7 @@ import {
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { ConnectedAccountPurposeTargetChooser } from '@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser';
 import { useProjectSource } from '@/components/projects/sources/useProjectSources';
+import { deriveRepositoryName } from '@/components/projects/starters/newAppDraft';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import {
   DropdownMenu,
@@ -205,7 +206,9 @@ const EMPTY_VALUES: Readonly<Record<string, unknown>> = Object.freeze({});
  */
 export function DeploymentPlatformTargetEditor(
   props: Omit<DeploymentPlatformTargetSheetInput, 'environment'> & CustomModalInjectedProps & Readonly<{
-    environment: Readonly<{ id?: string; revision?: number; projectSourceId: string; controllerMachineId?: string }>;
+    environment: Readonly<{ id?: string; revision?: number; projectSourceId: string; controllerMachineId?: string;
+      /** What runs owns the repository choice in the guided draft. Null means a choice is still required. */
+      repositoryBranch?: string | null }>;
     /** Drafts review the same provider result in place; the creating page commits the association. */
     /** Inside the new-Environment draft: the chosen existing resource or reviewed create intent, linked after Create. */
     onPrepared?: (prepared: PreparedPlatformTargetLink | null) => void;
@@ -305,7 +308,7 @@ export function DeploymentPlatformTargetEditor(
   const [platformMenuOpen, setPlatformMenuOpen] = React.useState(false);
   const [account, setAccount] =
     React.useState<QualifiedConnectedAccountRef | null>(null);
-  const [values, setValues] =
+  const [enteredValues, setValues] =
     React.useState<Readonly<Record<string, unknown>>>(EMPTY_VALUES);
   // One page of choices per field; Previous walks back the cursors this field was asked with.
   const [cursors, setCursors] = React.useState<
@@ -333,6 +336,19 @@ export function DeploymentPlatformTargetEditor(
     () => readProjectRepositoryIdentityV1({ source }),
     [source],
   );
+
+  const takesRepositoryBranch = create?.fields.some(field => field.path === 'productionBranch') === true;
+  const usesDraftBranch = takesRepositoryBranch && props.environment.repositoryBranch !== undefined;
+  const repositoryName = source?.repository?.repository.nameWithOwner.split('/').at(-1);
+  const suggestedName = takesRepositoryBranch && repositoryName ? deriveRepositoryName(repositoryName) : '';
+  const draftBranch = usesDraftBranch ? props.environment.repositoryBranch
+    : source?.defaultRef ?? source?.repository?.repository.defaultBranch;
+  const values = React.useMemo(() => ({
+    ...enteredValues,
+    ...(suggestedName && enteredValues.resourceName === undefined ? { resourceName: suggestedName } : {}),
+    ...(takesRepositoryBranch && (usesDraftBranch || enteredValues.productionBranch === undefined)
+      ? { productionBranch: draftBranch } : {}),
+  }), [draftBranch, enteredValues, suggestedName, takesRepositoryBranch, usesDraftBranch]);
 
   const draft = React.useMemo(
     () =>
@@ -394,11 +410,12 @@ export function DeploymentPlatformTargetEditor(
   });
   // One failed read is said once, at the sheet; an optional choice this target has nothing for is not drawn.
   const drawn = drawPlatformFields(fields, values, (field) => options.state(field), (field) => (cursors[field.path]?.length ?? 0) > 0);
-  const visibleFields = drawn.fields;
-  const missing = fields.some(
-    (field) =>
-      field.required && getValueAtPath(values, field.path) === undefined,
-  );
+  const visibleFields = usesDraftBranch ? drawn.fields.filter(field => field.path !== 'productionBranch') : drawn.fields;
+  const missingField = fields.find(field => {
+    const value = getValueAtPath(values, field.path);
+    return field.required && (value == null || (typeof value === 'string' && value.trim() === ''));
+  });
+  const missing = missingField !== undefined;
 
   const resetValues = (createFields: readonly EffectiveActionInputField[] | null = create?.fields ?? null) => {
     setValues(createFields ? seedInputByFieldHints({ inputHints: { fields: [...createFields] } }, EMPTY_VALUES) : EMPTY_VALUES);
@@ -845,6 +862,10 @@ export function DeploymentPlatformTargetEditor(
                   })
                 : null}
             </ItemGroup>
+            {props.onPrepared && create && draft && !connectionNeeded && missingField ? (
+              <SurfaceStateCard testID="project-deployments.platform.reviewMissing" size="line" kind="unavailable"
+                title={t('projects.deployments.platformLink.reviewMissing', { field: missingField.title ?? t('projects.deployments.branch') })} />
+            ) : null}
             {draft && drawn.failure ? (
               <SurfaceStateCard
                 testID="project-deployments.platform.choicesFailed"

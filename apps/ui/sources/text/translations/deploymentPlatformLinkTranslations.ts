@@ -26,6 +26,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   modeCreate: string;
   create: (params: { platform: string }) => string;
   createConsequences: string;
+  reviewMissing: (params: { field: string }) => string;
   provisioned: string;
   created: string;
   branchSet: (params: { branch: string }) => string;
@@ -125,6 +126,7 @@ export const deploymentPlatformLinkTranslations = {
     modeCreate: "Create new",
     create: ({ platform }) => `Create and link ${platform}`,
     createConsequences: `Creates a resource. Provider charges may apply.`,
+    reviewMissing: ({ field }) => `Complete ${field} to review.`,
     provisioned: "Resource created; linking is incomplete",
     created: "Project created and linked",
     branchSet: ({ branch }) => `Production branch: ${branch}.`,

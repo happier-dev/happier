@@ -853,6 +853,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Crea nuovo",
     create: ({ platform }) => `Crea e collega ${platform}`,
     createConsequences: `Crea una risorsa. Il provider potrebbe applicare costi.`,
+    reviewMissing: ({ field }) => `Compila «${field}» per aprire la revisione.`,
     provisioned: "Risorsa creata; collegamento incompleto",
     created: "Progetto creato e collegato",
     branchSet: ({ branch }) => `Branch di produzione: ${branch}.`,

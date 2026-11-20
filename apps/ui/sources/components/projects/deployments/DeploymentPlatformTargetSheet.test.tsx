@@ -694,7 +694,7 @@ it('welcomes an Account with no platform account to add a token in place, then c
   }
 });
 
-it('uses the sole Pages account in Use existing and Create new', async () => {
+it('uses the sole Pages account and prepares one repository branch and normalized project name', async () => {
   const accountId = 'pages-owner';
   const serverId = await homes.addHome({ name: 'Pages target', serverUrl: 'https://pages-preselection.test',
     serverIdentityId: `srv_${'c'.repeat(32)}`, accountId, currentAccount: true });
@@ -718,6 +718,14 @@ it('uses the sole Pages account in Use existing and Create new', async () => {
   const previous = storage.getState();
   const ref = { service: cloudflare.service, accountId: 'pages-token' };
   const machineId = 'pages-options-controller';
+  const projectSourceId = 'pages-source';
+  homes.answer(serverId, `GET /v1/projects/sources/${projectSourceId}`, { body: { ok: true, canManage: true, source: {
+    id: projectSourceId, revision: 1, name: 'Display title', owner: { kind: 'account', accountId },
+    audience: [], createdByAccountId: accountId, defaultRef: 'master',
+    repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' }, protocol: 'https',
+      repository: { nameWithOwner: 'octocat/Rye_Orders', cloneUrl: 'https://github.com/octocat/Rye_Orders.git' } },
+  } } });
+  const prepared = vi.fn();
   const qualified = (localId: string) => buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId });
   const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
     familiesById: { inputTypes: { family: 'inputTypes', entriesById: Object.fromEntries(
@@ -747,10 +755,12 @@ it('uses the sole Pages account in Use existing and Create new', async () => {
         });
       } });
     storage.setState({ profileScope: context.accountLifetime.scope, profile: AccountProfileSchema.parse({ id: '' }) });
+    const draftEnvironment = { projectSourceId, definition: { kind: 'repository' as const },
+      controllerMachineId: machineId, repositoryBranch: 'master' };
     const screen = await renderScreen(<ModalProvider><DeploymentPlatformTargetEditor
-      name="Site" environment={{ projectSourceId: '', controllerMachineId: machineId }} ownerAccountId={accountId}
-      lifetime={context.accountLifetime} actions={createDeploymentActions(context.accountLifetime, '')}
-      initialTargetKey={`${manifest.id}/pages`} onClose={() => {}} onApproval={() => {}} onPrepared={() => {}} /></ModalProvider>);
+      name="Site" environment={draftEnvironment} ownerAccountId={accountId}
+      lifetime={context.accountLifetime} actions={createDeploymentActions(context.accountLifetime, projectSourceId)}
+      initialTargetKey={`${manifest.id}/pages`} onClose={() => {}} onApproval={() => {}} onPrepared={prepared} /></ModalProvider>);
     const chooser = () => screen.root.findByType(ConnectedAccountPurposeTargetChooser);
     await waitForHomeGovernance(() => expect(chooser().props.value).toBeNull());
     await act(async () => {
@@ -777,8 +787,60 @@ it('uses the sole Pages account in Use existing and Create new', async () => {
     await act(async () => mode?.props.onChange('create'));
     expect(chooser().props.value).toEqual({ kind: 'account', account: ref });
     await waitForHomeGovernance(expectProviderAccount);
+    await waitForHomeGovernance(() => {
+      expect(screen.root.findAllByType(ActionInputFields)
+        .some(node => node.props.fields.some(field => field.path === 'productionBranch'))).toBe(false);
+      expect(prepared).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'create', providerCreate: expect.objectContaining({
+        productionBranch: 'master', resourceName: 'rye-orders',
+      }) }));
+    });
+    const nameField = screen.root.findAllByType(ActionInputFields)
+      .find(node => node.props.fields[0]?.path === 'resourceName');
+    if (!nameField) throw new Error('Expected the editable Pages project name');
+    await act(async () => nameField.props.onPatch({ ...nameField.props.input, resourceName: '' }));
+    expect(prepared).toHaveBeenLastCalledWith(null);
+    expect(screen.getTextContent()).toMatch(/project name.*review/i);
   } finally {
     storage.setState({ profile: previous.profile, profileScope: previous.profileScope });
+    await installed.dispose();
+    context.dispose();
+  }
+});
+
+it('explains why a stored Compose Environment under a repository Project cannot use a platform', async () => {
+  const { manifest, activateAccount } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
+  const { manifest: vercel, activateAccount: activateVercel } = await import('../../../../../../packages/plugins/deploy-vercel/src/index');
+  const serverId = await homes.addHome({ name: 'Stored Compose Environment', serverUrl: 'https://stored-compose.test',
+    accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest, activate: activateAccount,
+    accountLifetime: context.accountLifetime, publishProjection: true });
+  const installedVercel = await installPortableAccountPluginReleaseForTest({ manifest: vercel, activate: activateVercel,
+    accountLifetime: context.accountLifetime, publishProjection: true });
+  const projectSourceId = 'source-with-repository';
+  homes.answer(serverId, `GET /v1/projects/sources/${projectSourceId}`, { body: { ok: true, canManage: true, source: {
+    id: projectSourceId, revision: 1, name: 'Repository project', owner: { kind: 'account', accountId: 'owner' },
+    audience: [], createdByAccountId: 'owner', repository: {
+      provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'example/site' }, protocol: 'https',
+    },
+  } } });
+  const inspectPlatformTarget = vi.fn();
+  const link = vi.fn();
+  try {
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'App',
+      environment: { id: 'stored-environment', revision: 1, projectSourceId, definition: { kind: 'stored' } },
+      lifetime: context.accountLifetime, ownerAccountId: 'owner', actions: { inspectPlatformTarget, link }, onApproval: () => {} }));
+    await waitForHomeGovernance(() =>
+      expect(screen.findHostByTestId('project-deployments.platform.sourceRefused'), screen.getTextContent()).not.toBeNull());
+    expect(screen.getTextContent()).toMatch(/repository.*own server/i);
+    expect(screen.findHostByTestId('project-deployments.platform.choice')).toBeNull();
+    expect(screen.findHostByTestId('project-deployments.platform.check')).toBeNull();
+    expect(inspectPlatformTarget).not.toHaveBeenCalled();
+    expect(link).not.toHaveBeenCalled();
+  } finally {
+    await installedVercel.dispose();
     await installed.dispose();
     context.dispose();
   }

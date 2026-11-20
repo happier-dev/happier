@@ -247,9 +247,10 @@ export const DeploymentEnvironmentDraft = React.memo(
     const chosen =
       machineId !== null ? machines.find((machine) => machine.id === machineId) ?? null :
       machines.find((machine) => machine.id === preferredId && deploysHere(machine)) ?? machines.find(deploysHere) ?? null;
-    const branch = ref ?? source?.defaultRef ?? null;
-    const platformEnvironment = React.useMemo(() => sourceId ? { projectSourceId: sourceId,
-      ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, chosen?.id]);
+    const defaultBranch = source?.defaultRef ?? source?.repository?.repository.defaultBranch ?? null;
+    const branch = ref ?? defaultBranch;
+    const platformEnvironment = React.useMemo(() => sourceId ? { projectSourceId: sourceId, repositoryBranch: branch,
+      ...(chosen ? { controllerMachineId: chosen.id } : {}) } : null, [sourceId, branch, chosen?.id]);
     React.useEffect(() => setPlatformProvider(null), [platformTarget?.key, chosen?.id, source?.revision]);
     // A repository-free Project has only stored definitions; a door may also ask for one in any Project.
     const definitionKind = props.definitionKind ?? (source !== null && source.repository === undefined ? 'compose' : null);
@@ -951,13 +952,11 @@ export const DeploymentEnvironmentDraft = React.memo(
               title={t('projects.deployments.branch')}
               value={ref}
               defaultLabel={
-                source?.defaultRef
-                  ? t('projects.deployments.branchDefault', {
-                      ref: source.defaultRef,
-                    })
+                defaultBranch
+                  ? t('projects.deployments.branchDefault', { ref: defaultBranch })
                   : t('projects.deployments.branchChoose')
               }
-              defaultIsPrompt={!source?.defaultRef}
+              defaultIsPrompt={!defaultBranch}
               compact={props.phone}
               onChange={setRef}
             />

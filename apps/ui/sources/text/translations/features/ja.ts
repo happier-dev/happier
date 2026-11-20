@@ -845,6 +845,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "新規作成",
     create: ({ platform }) => `${platform} を作成してリンク`,
     createConsequences: `リソースを作成します。プロバイダーの料金が発生する場合があります。`,
+    reviewMissing: ({ field }) => `確認するには「${field}」を入力してください。`,
     provisioned: "リソースを作成しました。リンクは未完了です",
     created: "プロジェクトを作成してリンクしました",
     branchSet: ({ branch }) => `本番ブランチ: ${branch}。`,

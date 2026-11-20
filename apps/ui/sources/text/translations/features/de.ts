@@ -851,6 +851,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Neu erstellen",
     create: ({ platform }) => `${platform} erstellen und verknüpfen`,
     createConsequences: `Erstellt eine Ressource. Es können Anbieterkosten anfallen.`,
+    reviewMissing: ({ field }) => `Fülle „${field}“ aus, um die Vorschau zu öffnen.`,
     provisioned: "Ressource erstellt; Verknüpfung unvollständig",
     created: "Projekt erstellt und verknüpft",
     branchSet: ({ branch }) => `Produktionsbranch: ${branch}.`,

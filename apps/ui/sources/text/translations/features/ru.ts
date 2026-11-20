@@ -849,6 +849,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Создать новый",
     create: ({ platform }) => `Создать и привязать ${platform}`,
     createConsequences: `Создаёт ресурс. Провайдер может взимать плату.`,
+    reviewMissing: ({ field }) => `Заполните поле «${field}», чтобы перейти к проверке.`,
     provisioned: "Ресурс создан; привязка не завершена",
     created: "Проект создан и привязан",
     branchSet: ({ branch }) => `Ветка production: ${branch}.`,

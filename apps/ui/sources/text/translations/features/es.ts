@@ -854,6 +854,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Crear nuevo",
     create: ({ platform }) => `Crear y vincular ${platform}`,
     createConsequences: `Crea un recurso. El proveedor puede aplicar cargos.`,
+    reviewMissing: ({ field }) => `Completa «${field}» para revisar.`,
     provisioned: "Recurso creado; la vinculación está incompleta",
     created: "Proyecto creado y vinculado",
     branchSet: ({ branch }) => `Rama de producción: ${branch}.`,

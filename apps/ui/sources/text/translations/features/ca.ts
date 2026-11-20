@@ -856,6 +856,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Crea’n un de nou",
     create: ({ platform }) => `Crea i enllaça ${platform}`,
     createConsequences: `Crea un recurs. El proveïdor pot aplicar càrrecs.`,
+    reviewMissing: ({ field }) => `Completa «${field}» per revisar.`,
     provisioned: "Recurs creat; l’enllaç és incomplet",
     created: "Projecte creat i enllaçat",
     branchSet: ({ branch }) => `Branca de producció: ${branch}.`,

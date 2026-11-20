@@ -848,6 +848,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "Utwórz nowy",
     create: ({ platform }) => `Utwórz i połącz ${platform}`,
     createConsequences: `Tworzy zasób. Dostawca może naliczać opłaty.`,
+    reviewMissing: ({ field }) => `Uzupełnij „${field}”, aby przejść do przeglądu.`,
     provisioned: "Zasób utworzony; łączenie nieukończone",
     created: "Projekt utworzony i połączony",
     branchSet: ({ branch }) => `Gałąź produkcyjna: ${branch}.`,

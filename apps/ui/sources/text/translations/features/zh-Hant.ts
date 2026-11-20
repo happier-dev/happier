@@ -836,6 +836,7 @@ const deploymentPlatformLinkTranslations = {
     modeCreate: "新建",
     create: ({ platform }) => `建立並連結 ${platform}`,
     createConsequences: `建立資源。供應商可能收費。`,
+    reviewMissing: ({ field }) => `填寫「${field}」即可檢閱。`,
     provisioned: "資源已建立；連結未完成",
     created: "專案已建立並連結",
     branchSet: ({ branch }) => `正式環境分支：${branch}。`,
