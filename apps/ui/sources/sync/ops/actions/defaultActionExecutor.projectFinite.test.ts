@@ -640,7 +640,7 @@ describe('Project finite delivery through the default UI Action host', () => {
         expect(homes.requestsFor(`${PROJECT_TRUST_ROUTE_V1}/mutate`)).toHaveLength(0);
     });
 
-    it.each(['confirmed_opened', 'invalid_json', 'mismatched', 'mismatched_refusal', 'outcome_unknown', 'acknowledged_502', 'pre_open_refusal'] as const)('keeps original Open custody after HTTP settlement: %s', async settlement => {
+    it.each(['confirmed_opened', 'managed_opened', 'different_managed_installation', 'invalid_json', 'mismatched', 'mismatched_refusal', 'outcome_unknown', 'acknowledged_502', 'pre_open_refusal'] as const)('keeps original Open custody after HTTP settlement: %s', async settlement => {
         const [{ createProjectOpenController }, { createSessionDraftRepository }, { createSessionDraftCipher },
             { captureLazyActionAccountContext }] = await Promise.all([
             import('@/components/projects/activation/projectOpenController'),
@@ -694,7 +694,10 @@ describe('Project finite delivery through the default UI Action host', () => {
                     return { status: 'updated', record: draftRow };
                 } },
         });
-        const input = { serverId, machineId: 'source', source: { kind: 'folder' as const, path: '/repo' }, materialization: { kind: 'attach' as const } };
+        const targetManaged = settlement === 'managed_opened' || settlement === 'different_managed_installation'
+            ? { managedId: 'accepted-guest', controller: { machineId: 'source', installationId } } : undefined;
+        const input = { serverId, machineId: 'source', source: { kind: 'folder' as const, path: '/repo' },
+            materialization: { kind: 'attach' as const, ...(targetManaged ? { targetManaged } : {}) } };
         let effects = 0;
         let carriedConfirmation: unknown;
         let openingRequestId: string | undefined;
@@ -702,6 +705,17 @@ describe('Project finite delivery through the default UI Action host', () => {
         homes.answer(requesterHomeId, '/v1/actions/projects.open', { select: body => {
             const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
             openingRequestId = request.envelope.requestId;
+            if (targetManaged) {
+                expect(request.envelope).toMatchObject({ input });
+                effects += 1;
+                return { body: { v: 1, actionId: 'projects.open', requestId: request.envelope.requestId,
+                    execution: { ok: true, result: { kind: 'opened', workspace: { v: 2, kind: 'managed',
+                        serverId, workspaceId: 'confirmed-project', rootPath: '/repo', ...targetManaged,
+                        ...(settlement === 'different_managed_installation' ? {
+                            controller: { ...targetManaged.controller, installationId: 'other-installation' },
+                        } : {}),
+                    }, directory: '/repo', setup: 'notRequired' } } } };
+            }
             if (settlement === 'confirmed_opened') {
                 carriedConfirmation = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization,
                     purpose: { kind: 'external_action' }, machineId: machine.id, installationId: machine.installationId,
@@ -733,6 +747,13 @@ describe('Project finite delivery through the default UI Action host', () => {
             const settlementCode = snapshot.result && 'errorCode' in snapshot.result ? snapshot.result.errorCode
                 : snapshot.result && 'kind' in snapshot.result ? snapshot.result.kind : 'no_result';
             expect(homes.requestsFor('/v1/actions/projects.open'), settlementCode).toHaveLength(1);
+            if (settlement === 'managed_opened') {
+                expect(snapshot).toMatchObject({ uncertainInput: null, result: { kind: 'opened',
+                    workspace: { kind: 'managed', ...targetManaged } } });
+                expect(navigation).toEqual([snapshot.result]);
+                expect(effects).toBe(1);
+                return;
+            }
             if (settlement === 'confirmed_opened') {
                 expect(carriedConfirmation).toEqual({ actionId: 'projects.open',
                     inputDigest: computeActionInputApprovalDigestV1('projects.open', getActionSpec('projects.open').inputSchema.parse(input)),

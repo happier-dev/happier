@@ -1,6 +1,6 @@
 import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { OpenProjectResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceAddressV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ProjectOpenDraftDocumentV2Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areSessionDraftCurrentnessCapturesEqual, type SessionDraftRepository, type ProjectOpenDraftPatch } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -42,6 +42,15 @@ export type ProjectOpenController = Readonly<{
     cancel(): void;
     dispose(): void;
 }>;
+
+function matchesOpenDestination(input: OpenProjectInputV1, workspace: WorkspaceAddressV2): boolean {
+    if (!areServerProfileIdentifiersEquivalent(workspace.serverId, input.serverId)) return false;
+    const target = 'targetManaged' in input.materialization ? input.materialization.targetManaged : undefined;
+    if (!target) return !isManagedWorkspaceRefV2(workspace) && workspace.machineId === input.machineId;
+    return isManagedWorkspaceRefV2(workspace) && workspace.managedId === target.managedId
+        && workspace.controller.machineId === target.controller.machineId
+        && workspace.controller.installationId === target.controller.installationId;
+}
 
 /** Only confirmation admits the Action; the incumbent draft owns recovery across mounts. */
 export function createProjectOpenController(options: ProjectOpenControllerOptions): ProjectOpenController {
@@ -158,8 +167,7 @@ export function createProjectOpenController(options: ProjectOpenControllerOption
                     if (!settlement.success || !['opened', 'refused', 'outcomeUnknown'].includes(settlement.data.kind)) return;
                     const result = settlement.data;
                     if (result.kind === 'outcomeUnknown') return; // Observation is not confirmation of an effect.
-                    if (result.kind === 'opened' && (!areServerProfileIdentifiersEquivalent(result.workspace.serverId, input.serverId)
-                        || result.workspace.machineId !== input.machineId)) return;
+                    if (result.kind === 'opened' && !matchesOpenDestination(input, result.workspace)) return;
                     write({ uncertainInputs: [], ...(selectionIsOriginal ? { result } : { result: null, retiredAttempt: { input, result } }) });
                     await repository.flushSessionDraftLocally({ scope });
                     if (isCurrent() && selectionIsOriginal && result.kind === 'opened') await options.onOpened(result, isCurrent);
@@ -247,8 +255,7 @@ export function createProjectOpenController(options: ProjectOpenControllerOption
                 } catch {
                     result = issued ? { kind: 'outcomeUnknown' } : failure('project_open_draft_unavailable');
                 }
-                if ('kind' in result && result.kind === 'opened'
-                    && (!areServerProfileIdentifiersEquivalent(result.workspace.serverId, input.serverId) || result.workspace.machineId !== input.machineId)) {
+                if ('kind' in result && result.kind === 'opened' && !matchesOpenDestination(input, result.workspace)) {
                     result = { kind: 'outcomeUnknown' };
                 }
                 const isCurrent = () => !disposed && !retired && lifetime.isCurrent()

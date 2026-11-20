@@ -8,7 +8,7 @@ import {
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { assertProjectAccountSnapshotTransition, parseProjectAccountSnapshotV1 } from '@happier-dev/protocol/projects/projectAccountSnapshotV1';
 import type { ProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
-import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV1, WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectRepositoryObservationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, resolveWorkspaceRefByScope, resolveWorkspaceRefRemoval, upsertWorkspaceRefByScope,
     workspaceRefResolutionContextV1, type WorkspaceRefAccountMutation, type WorkspaceRefAccountMutationResult } from '@/sync/domains/workspaces/workspaceRefs';
@@ -139,7 +139,7 @@ export function createProjectAccountRowsSync(options: Readonly<{
         return censused && held ? held : await refresh(signal);
     }
     /** An Open ACK commits a ref; its existing change hint completes the app's materialization. */
-    async function waitForWorkspaceRef(address: WorkspaceAddressV1, signal?: AbortSignal): Promise<WorkspaceRefV1> {
+    async function waitForWorkspaceRef(address: WorkspaceAddressV2, signal?: AbortSignal): Promise<WorkspaceRefV1> {
         await read(signal);
         signal?.throwIfAborted(); assertCurrent();
         const key = { kind: 'workspace-ref' as const, serverId: address.serverId, id: address.workspaceId };

@@ -1,6 +1,6 @@
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import type { ProjectAccountOrganizationV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
-import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV1, WorkspaceAddressV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectRepositoryObservationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAccountRowsSync';
@@ -74,7 +74,7 @@ export function createUiProjectAccountRowsClient(account: Account) {
     mutateSessionDefaults: async (input: Readonly<{
       serverId: string; projectKey: string; expectedRevision: number | 'absent'; defaults: ProjectSessionDefaultsV1 | null; signal?: AbortSignal;
     }>) => (await getOwner()).mutateSessionDefaults(input),
-    waitForWorkspaceRef: async (address: WorkspaceAddressV1, signal?: AbortSignal) => {
+    waitForWorkspaceRef: async (address: WorkspaceAddressV2, signal?: AbortSignal) => {
       // Only the app retains a hint-maintained projection. Finite foreign-Home readers
       // take their census at their next Action and have no pending push to await.
       const app = appOwner();

@@ -141,8 +141,8 @@ describe('Project Account row sync owner', () => {
             .toEqual({ ok: false, code: 'workspace_ref_not_found' });
         expect(h.requests).toHaveLength(1);
     });
-    it('settles an acknowledged Workspace wait through its exact pushed row, cancellation, absence or failed materialization', async () => {
-        const h = harness('plain');
+    it.each(['plain', 'e2ee'] as const)('settles an acknowledged Workspace wait through its exact pushed row, cancellation, absence or failed materialization in %s', async mode => {
+        const h = harness(mode);
         await h.owner.refresh();
         const address = { serverId: 'home', machineId: 'machine', workspaceId: 'new-ref', rootPath: '/new-repo' };
         const key = { kind: 'workspace-ref' as const, serverId: address.serverId, id: address.workspaceId };
@@ -176,13 +176,19 @@ describe('Project Account row sync owner', () => {
         await failedWait;
     });
 
-    it.each(['plain', 'e2ee'] as const)('settles an acknowledged Workspace when its row was committed before the push hint in %s', async mode => {
+    it.each([
+        { mode: 'plain', managed: false }, { mode: 'e2ee', managed: false }, { mode: 'plain', managed: true },
+    ] as const)('settles an acknowledged Workspace before its push hint ($mode, managed=$managed)', async ({ mode, managed }) => {
         const h = harness(mode);
         await h.owner.refresh();
-        const address = { serverId: 'home', machineId: 'machine', workspaceId: 'committed-before-hint', rootPath: '/committed' };
+        const namespace = managed
+            ? { v: 2 as const, kind: 'managed' as const, managedId: 'guest',
+                controller: { machineId: 'machine', installationId: 'installation' } }
+            : { machineId: 'machine' };
+        const address = { serverId: 'home', workspaceId: 'committed-before-hint', rootPath: '/committed', ...namespace };
         const key = { kind: 'workspace-ref' as const, serverId: address.serverId, id: address.workspaceId };
         const physicalKey = buildProjectAccountRowPhysicalKeyV1(key);
-        const ref = { id: address.workspaceId, serverId: address.serverId, machineId: address.machineId, rootPath: address.rootPath, createdAtMs: 2 };
+        const ref = { id: address.workspaceId, serverId: address.serverId, rootPath: address.rootPath, createdAtMs: 2, ...namespace };
         h.rows.set(physicalKey, { key, revision: 0, content: h.cipher.seal({ key, value: ref }) });
         const cancelled = new AbortController();
         const waiting = h.owner.waitForWorkspaceRef(address, cancelled.signal);
