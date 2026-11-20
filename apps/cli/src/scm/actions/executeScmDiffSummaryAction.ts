@@ -3,7 +3,7 @@ import { ExecutionRunStartResponseSchema, ExecutionRunStartFailureDetailsV1Schem
 import { randomUUID } from 'node:crypto';
 import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryFailureReasonCodeSchema, buildScmDiffSummaryCacheKey, SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION } from '@happier-dev/protocol/scm/diffSummary';
 import { ActionApprovalRequestCreatedResultSchema, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { BackendTargetRefV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ActionExecuteResult, BackendTargetRefV2, ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
 
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
@@ -23,6 +23,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
 import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
+import { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 
 type ExecuteCanonicalAction = (
     actionId: 'execution.run.start' | 'scm.pullRequest.openCompose',
@@ -94,7 +96,19 @@ async function executeScmDiffSummaryActionInAccountScope(
         backendTargetKey: selector.modelSelection.agentTargetKey, modelId: selector.modelSelection.modelId };
     let backendTarget = params.backendTarget;
     if (selector?.backendTargetKey && (selector.modelId || selector.profileId)) {
-        try { backendTarget = readBackendTargetRefV2(parseBackendTargetKeyV2(selector.backendTargetKey)); }
+        try {
+            const target = parseBackendTargetKeyV2(selector.backendTargetKey);
+            if (target.kind === 'backend' || target.definitionId) {
+                backendTarget = readBackendTargetRefV2(target);
+            } else {
+                const agentId = readAgentRoutingIdForContributionIdentity(
+                    indexAgentRoutingIdsByContributionIdentity([...readAgentCatalogSnapshot().agentDefinitionsById.values()]), target.identity);
+                // Protocol can resolve bundled identities without a host; installed Agents require its active catalog.
+                backendTarget = agentId
+                    ? BackendTargetRefV2Schema.parse({ kind: 'backend', backendId: agentId, sourceKind: 'built_in' })
+                    : readBackendTargetRefV2(target);
+            }
+        }
         catch { return failure('Diff-summary model target is unavailable', 'MODEL_UNAVAILABLE'); }
     }
     // No per-run model: the stored runner, or Auto through the task-runner owner. Auto stays on the

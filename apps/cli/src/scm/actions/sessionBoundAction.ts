@@ -22,9 +22,7 @@ import type { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugin
 import { isStoredScmReviewEvidenceAction, type bindScmActionToSessionWorkspace, type isRetainedScmReviewAction } from '@/scm/actions/placement';
 import { resolveSocketRpcSessionAuthorization } from '@happier-dev/protocol/socketRpc';
 import type { ActionExecutorDeps, ActionExecutorContext, ScmDiffSummaryGenerateInput } from '@happier-dev/protocol';
-import { BackendTargetRefV2Schema, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { getActionSpec, requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/actionSpecs';
-import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { configuration } from '@/configuration';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { isOriginalAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
@@ -32,8 +30,6 @@ import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalA
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
-import type { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
-import type { indexAgentRoutingIdsByContributionIdentity, readAgentRoutingIdForContributionIdentity } from '@/plugins/projection/registry/agentRoutingIdentity';
 import type { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
@@ -97,7 +93,7 @@ export function createSessionBoundScmAction(
     };
     const localReviewContext = { ...context, serverId: configuration.activeServerId };
     const requesterAccountId = readActionPrincipalAccountId(context);
-    const [{ createCliScmReviewedMarkAction }, { resolveBackendTargetFromSessionMetadata }, { readAgentRoutingIdForContributionIdentity, indexAgentRoutingIdsByContributionIdentity }, { createRepositoryCheckpointTranscriptPageReader }, { isRetainedScmReviewAction, bindScmActionToSessionWorkspace }, { resolveSessionMachineWorkspacePath }, { executeScmActionOperation }] = await Promise.all([import("@/scm/actions/executeScmReviewedMarkAction"), import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata"), import("@/plugins/projection/registry/agentRoutingIdentity"), import("@/scm/checkpoints/readRepositoryCheckpointTranscriptPage"), import("@/scm/actions/placement"), import("@/session/machineControlLocality"), import("@/scm/actions/executeScmActionOperation")]);
+    const [{ createCliScmReviewedMarkAction }, { resolveBackendTargetFromSessionMetadata }, { createRepositoryCheckpointTranscriptPageReader }, { isRetainedScmReviewAction, bindScmActionToSessionWorkspace }, { resolveSessionMachineWorkspacePath }, { executeScmActionOperation }] = await Promise.all([import("@/scm/actions/executeScmReviewedMarkAction"), import("@/session/backendTargets/resolveBackendTargetFromSessionMetadata"), import("@/scm/checkpoints/readRepositoryCheckpointTranscriptPage"), import("@/scm/actions/placement"), import("@/session/machineControlLocality"), import("@/scm/actions/executeScmActionOperation")]);
     const accountMarksDeps = params.credentials ? {
       executeReviewedMarks: (evidence: import('@happier-dev/protocol').ScmComparison | import('@happier-dev/protocol').ScmReviewedMarksSource, request: import('@happier-dev/protocol').ScmReviewedUnmarkInput, reviewed: boolean) => createCliScmReviewedMarkAction({
         credentials: params.credentials!, ...('id' in evidence ? { comparison: evidence } : { source: evidence }),
@@ -139,22 +135,6 @@ export function createSessionBoundScmAction(
         return await sendFileReviewNoteToSession({ credentials: reviewNoteCredentials, sessionId, note });
       }
       : undefined;
-    const { readAgentCatalogSnapshot } = await import("@/agent/catalog/snapshot");
-    const resolveScmBackendTarget = (metadata: Record<string, unknown> | null) => {
-      const selector = inputRecord.modelSelector;
-      const selectorRecord = selector && typeof selector === 'object' && !Array.isArray(selector)
-        ? selector as Readonly<Record<string, unknown>> : {};
-      const targetKey = normalizeStringValue(selectorRecord.backendTargetKey);
-      if (!targetKey) return resolveBackendTargetFromSessionMetadata(metadata);
-      try {
-        const target = parseBackendTargetKeyV2(targetKey);
-        if (target.kind === 'backend' || target.definitionId) return readBackendTargetRefV2(target);
-        const catalog = readAgentCatalogSnapshot();
-        const agentId = readAgentRoutingIdForContributionIdentity(
-          indexAgentRoutingIdsByContributionIdentity([...catalog.agentDefinitionsById.values()]), target.identity);
-        return agentId ? BackendTargetRefV2Schema.parse({ kind: 'backend', backendId: agentId, sourceKind: 'built_in' }) : null;
-      } catch { return null; }
-    };
     const readComparisonTranscriptPage = params.credentials ? createRepositoryCheckpointTranscriptPageReader({
       credentials: params.credentials,
       resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, 'session.transcript.get', request),
@@ -299,7 +279,7 @@ export function createSessionBoundScmAction(
                 request: summary, machineId, credentials: params.credentials,
                 ...(context.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
                 ...(readComparisonTranscriptPage ? { readTranscriptPage: readComparisonTranscriptPage } : {}), readPullRequestComparisonPage,
-                backendTarget: resolveScmBackendTarget(metadata), executeCanonicalAction,
+                backendTarget: resolveBackendTargetFromSessionMetadata(metadata), executeCanonicalAction,
                 ...(context.signal ? { signal: context.signal } : {}),
               });
             },

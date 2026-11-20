@@ -34,6 +34,7 @@ import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/exe
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import { executeScmDiffSummaryAction } from './executeScmDiffSummaryAction';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import { registerExecutionRunHandlers } from '@/rpc/handlers/executionRuns';
 import { createEncryptedRpcTestClient } from '@/rpc/handlers/encryptedRpc.testkit';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -91,10 +92,13 @@ type UiGenerationModule = Readonly<{
 const { createScmDiffSummaryOperations }: UiGenerationModule = await import(
     new URL('../../../../ui/sources/sync/ops/scmDiffSummary/generate.ts', import.meta.url).href);
 
+// Load the fixture before the fs mock: its policy import also reads node:fs.
+const { createBundledPluginPublicationFsFixture } = await vi.hoisted(async () =>
+    await import('@/plugins/projection/registry/builtIn/locators.testkit'));
+
 // Model discovery's installation/filesystem boundary uses the canonical publication fixture.
 vi.mock('node:fs', async (importOriginal) => {
     const actual = await importOriginal<typeof import('node:fs')>();
-    const { createBundledPluginPublicationFsFixture } = await import('@/plugins/projection/registry/builtIn/locators.testkit');
     return createBundledPluginPublicationFsFixture(actual);
 });
 
@@ -216,6 +220,37 @@ describe('SCM generation through real host admission', () => {
         afterAll(async () => {
             try { await admitted?.dispose(); } finally { await realRegistrations?.dispose(); }
         }, 0);
+
+        it.each(['installed', 'bundled', 'unknown'] as const)('resolves explicit SCM model target through the host catalog (%s)', async kind =>
+            runWithScmAccountScope('scm-model-target-test', async () => {
+                const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-model-target-' });
+                directories.push(fixture.rootPath);
+                await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Changed model-target fixture\n');
+                const selectedTarget: BackendTargetRefV2 = kind === 'installed' ? backendTarget
+                    : { kind: 'backend', backendId: kind === 'bundled' ? 'codex' : 'acme.not-installed/claude', sourceKind: 'built_in' };
+                const starts: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+                const output = await executeScmDiffSummaryAction({
+                    request: { cwd: fixture.rootPath, source: { kind: 'workingTree' },
+                        modelSelector: { backendTargetKey: buildBackendTargetKeyV2(selectedTarget), modelId: 'selected-model' } },
+                    sessionId: 'model-target-parent', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+                    // Execution transport is the boundary; capture, catalog resolution, Start input and result retention stay real.
+                    executeCanonicalAction: async (_actionId, input) => {
+                        starts.push(ExecutionRunStartRequestSchema.parse(input));
+                        return { ok: true, result: { runId: 'model-target-run', callId: 'call', sidechainId: 'sidechain' } };
+                    },
+                });
+                if (kind === 'unknown') {
+                    expect(output).toMatchObject({ success: false, errorCode: 'MODEL_UNAVAILABLE', nextAction: 'chooseModel' });
+                    expect(starts).toEqual([]);
+                } else {
+                    expect(output).toMatchObject({ success: true, runId: 'model-target-run' });
+                    expect(starts).toHaveLength(1);
+                    expect(starts[0]).toMatchObject({ backendTarget: selectedTarget, modelId: 'selected-model' });
+                    const saved = await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath,
+                        sessionId: 'model-target-parent', resultId: output.resultId! });
+                    expect(saved).toMatchObject({ success: true, result: { generator: { backendTarget: selectedTarget } } });
+                }
+            }));
 
         it.each([
             { investigateSurroundingFiles: false, parentAvailable: true, automaticModel: false },
