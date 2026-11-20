@@ -211,7 +211,7 @@ export type PluginSettingsScreenState = Readonly<{
     routineOperationSettlement: PluginRoutineOperationSettlement | null;
     readOnlySnapshotNotice: PluginReadOnlySnapshotNoticeState | null;
     refreshPluginTruth: () => void;
-    isPluginActionInFlight: (pluginId: string) => boolean;
+    isPluginActionInFlight: (pluginId: string, sourceId?: string) => boolean;
     refreshDiscover: () => void;
     loadingDiscover: boolean;
     pluginProjectionById: ReturnType<typeof useDaemonMergedProjectionInputs>['inputs'] extends infer TInputs
@@ -319,7 +319,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     const { discoverEntries } = catalog;
     const installReviewSet = usePluginInstallReviewSet({ resolveInstallEntry: catalog.resolveInstallEntry,
         candidates: administrationTargetSelection.candidates, getSignal: installedExecution.getSignal });
-    const [pluginActionsInFlight, setPluginActionsInFlight] = React.useState<ReadonlySet<string>>(() => new Set());
+    const [pluginActionsInFlight, setPluginActionsInFlight] = React.useState<ReadonlyMap<string, string | null>>(() => new Map());
     const [routineOperationSettlement, setRoutineOperationSettlement] = React.useState<PluginRoutineOperationSettlement | null>(null);
     const pluginActionsInFlightRef = React.useRef(pluginActionsInFlight);
     const selectedMachineScopeKeyRef = React.useRef(selectedMachineScopeKey);
@@ -461,22 +461,25 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         : !catalog.current ? t('settingsPlugins.discover.status.stale') : null;
     const canRunDiscoverActions = discoverInstallDisabledReason === null;
 
-    const markPluginActionStarted = React.useCallback((scopeKey: string, pluginId: string) => {
+    const markPluginActionStarted = React.useCallback((scopeKey: string, pluginId: string, sourceId: string | null = null) => {
         setRoutineOperationSettlement(null);
-        const next = new Set(pluginActionsInFlightRef.current).add(pluginActionKey(scopeKey, pluginId));
+        const next = new Map(pluginActionsInFlightRef.current).set(pluginActionKey(scopeKey, pluginId), sourceId);
         pluginActionsInFlightRef.current = next;
         setPluginActionsInFlight(next);
     }, []);
 
     const markPluginActionFinished = React.useCallback((scopeKey: string, pluginId: string) => {
-        const next = new Set(pluginActionsInFlightRef.current);
+        const next = new Map(pluginActionsInFlightRef.current);
         next.delete(pluginActionKey(scopeKey, pluginId));
         pluginActionsInFlightRef.current = next;
         setPluginActionsInFlight(next);
     }, []);
 
-    const isPluginActionInFlight = React.useCallback((pluginId: string) => {
-        return selectedMachineScopeKey !== null && pluginActionsInFlightRef.current.has(pluginActionKey(selectedMachineScopeKey, pluginId));
+    const isPluginActionInFlight = React.useCallback((pluginId: string, sourceId?: string) => {
+        if (selectedMachineScopeKey === null) return false;
+        const activeSource = pluginActionsInFlightRef.current.get(pluginActionKey(selectedMachineScopeKey, pluginId));
+        // Admission stays per plugin. A listing's progress also identifies its source.
+        return activeSource !== undefined && (sourceId === undefined || sourceId === activeSource);
     }, [selectedMachineScopeKey, pluginActionsInFlight]);
     // Withdrawal hides a receipt from a different Account/view; it never aborts admitted daemon work.
     const captureMutationPublication = React.useCallback(() => {
@@ -535,7 +538,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         }
 
         void (async () => {
-            markPluginActionStarted(selectedMachineScopeKey, params.pluginId);
+            markPluginActionStarted(selectedMachineScopeKey, params.pluginId, exactInstallEntry?.sourceId);
             try {
                 // An install's outcome reads inline under the Install that was pressed (and on its card), in one
                 // sentence with the next action, never as an alert carrying a raw code.

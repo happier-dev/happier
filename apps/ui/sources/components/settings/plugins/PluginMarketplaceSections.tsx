@@ -1183,7 +1183,7 @@ export function DiscoverListingsSection(props: Readonly<{
     serverId?: string | null;
     canRunActions: boolean;
     installDisabledReason?: string | null;
-    isPluginActionInFlight: (pluginId: string) => boolean;
+    isPluginActionInFlight: PluginSettingsScreenState['isPluginActionInFlight'];
     /** The last install's outcome; a card whose install failed or could not be confirmed says so in place. */
     settlement?: PluginRoutineOperationSettlement | null;
     installFromBrowse: PluginSettingsScreenState['installFromBrowse'];
@@ -1298,7 +1298,7 @@ type DiscoverListingActionInputs = Readonly<{
     canRunActions: boolean;
     installDisabledReason?: string | null;
     loading: boolean;
-    isPluginActionInFlight: (pluginId: string) => boolean;
+    isPluginActionInFlight: PluginSettingsScreenState['isPluginActionInFlight'];
     installFromBrowse: PluginSettingsScreenState['installFromBrowse'];
     onNavigateToPlugin: (pluginId: string) => void;
 }>;
@@ -1310,7 +1310,7 @@ function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: Dis
         entry={entry}
         machineName={props.machineName}
         disabled={!props.canRunActions || props.isPluginActionInFlight(entry.id) || props.loading}
-        pending={props.isPluginActionInFlight(entry.id)}
+        pending={props.isPluginActionInFlight(entry.id, entry.sourceId)}
         disabledReason={props.installDisabledReason ?? undefined}
         installFromBrowse={props.installFromBrowse}
     />;

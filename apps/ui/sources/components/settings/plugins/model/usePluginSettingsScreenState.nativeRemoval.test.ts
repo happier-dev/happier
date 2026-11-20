@@ -514,6 +514,29 @@ describe('Plugin install/update originating approval state', () => {
         expect(censusReads).toHaveLength(0);
     });
 
+    it('projects Browse install progress only for the selected source while retaining the plugin guard', async () => {
+        let releaseResponse!: () => void;
+        const response = new Promise<void>(resolve => { releaseResponse = resolve; });
+        const { hook, catalog, actionRequests } = await renderRemovalOwner('disable', [], {
+            catalog: true, browse: true, beforeActionResponse: async () => { await response; },
+        });
+        const pluginId = 'example.compute';
+        const sourceId = catalog.source.id;
+        await act(async () => { hook.getCurrent().openDiscoverListing({ sourceId, pluginId, itemId: pluginId, version: '1.2.3' }); });
+        await vi.waitFor(() => expect(hook.getCurrent().discoverEntries.some(entry => entry.sourceId === sourceId)).toBe(true));
+        try {
+            await act(async () => { hook.getCurrent().installFromBrowse({ pluginId, sourceId }); });
+            await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
+            const isPending: (pluginId: string, sourceId?: string) => boolean = hook.getCurrent().isPluginActionInFlight;
+            expect(isPending(pluginId)).toBe(true);
+            expect(isPending(pluginId, sourceId)).toBe(true);
+            expect(isPending(pluginId, 'alternate-source')).toBe(false);
+        } finally {
+            await act(async () => { releaseResponse(); });
+            await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight(pluginId)).toBe(false));
+        }
+    });
+
     it('opens registry selection when the receiving daemon requires a profile before catalog install', async () => {
         const requirement = { registryOrigin: 'https://nldw4-5-40-40.tailfce179.ts.net:39178',
             packageName: '@qa-l12/dash104-provider', registryProfileId: null };

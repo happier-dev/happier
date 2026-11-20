@@ -122,7 +122,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
         <ListingInstall
             entry={entry}
             disabled={!state.canRunDiscoverActions || state.loadingDiscover || state.isPluginActionInFlight(entry.id)}
-            pending={state.isPluginActionInFlight(entry.id)}
+            pending={state.isPluginActionInFlight(entry.id, entry.sourceId)}
             targetMachine={state.administrationTargetLabel?.machine ?? null}
             onInstall={() => state.runCatalogAction({ method: 'install', pluginId: entry.id, sourceId: entry.sourceId })}
             onInstallOnMachines={installOnMachines.available ? installOnMachines.open : undefined}
