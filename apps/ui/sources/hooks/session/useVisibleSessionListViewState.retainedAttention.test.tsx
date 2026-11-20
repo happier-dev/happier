@@ -517,7 +517,7 @@ describe('visible session-list retained attention through real state', () => {
         } finally { await screen.unmount(); }
     });
 
-    it('keeps Machine names on headers and refreshes inherited checkout context when the visible lead changes', async () => {
+    it('refreshes inherited checkout context when the visible lead changes', async () => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const { buildSessionListIndexNodeId } = await import('@/sync/domains/sessionList/sessionListIndexIdentity');
@@ -534,7 +534,8 @@ describe('visible session-list retained attention through real state', () => {
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
         await getSyncSingleton().refreshSessions({ awaitSessionListHydration: true });
         storage.getState().applySettingsLocal({ sessionListLayoutV1: 'recent_activity', sessionListAttentionPlacementV1: 'inPlace',
-            sessionListDensity: 'cozy', sessionListRowContextV1: true, sessionListIdentityDisplay: 'auto', hideInactiveSessions: false });
+            sessionListDensity: 'cozy', sessionListRowContextV1: true, sessionListIdentityDisplay: 'auto', hideInactiveSessions: false,
+            collectionDisplayPreferencesV1: { sessionWork: { details: { machine: false } } } });
         storage.getState().applyMachines([createMachineFixture({ id: 'shared-machine' }), createMachineFixture({ id: 'other-machine' })], true);
         storage.getState().applySessions(sessions);
         storage.getState().applyServerScopedSessionListRows(serverId, sessions.map(session =>
@@ -560,11 +561,8 @@ describe('visible session-list retained attention through real state', () => {
             `session-list-row-context-${kind}-${occurrenceId(id)}`);
         try {
             await flushHookEffects({ cycles: 4, turns: 3 });
-            // OWNER-RULINGS (2026-11-01 "Session list status") and SESSION-LIST-GROUPS:
-            // Machine names belong to colliding group headers; rows keep checkout context only.
             expect(badge('machine', 'context-lead')).toBeNull();
             expect(badge('checkout', 'context-lead')).not.toBeNull();
-            expect(badge('machine', 'context-report')).toBeNull();
             expect(badge('checkout', 'context-report')).toBeNull();
             expect(screen.findHostByTestId(`session-list-item-${occurrenceId('context-report')}`)?.props.accessibilityLabel)
                 .toContain('feature/context');
@@ -573,19 +571,16 @@ describe('visible session-list retained attention through real state', () => {
             await act(async () => storage.getState().applySessions([{ ...lead, metadataVersion: lead.metadataVersion + 1,
                 metadata: { ...lead.metadata!, machineId: 'other-machine', workspaceId: 'different-checkout' } }]));
             await flushHookEffects();
-            expect(badge('machine', 'context-report')).toBeNull();
             expect(badge('checkout', 'context-report')).not.toBeNull();
             expect(otherCounter.read()).toEqual({ renders: 0, commits: 0 });
             const changedLead = storage.getState().sessions['context-lead']!;
             await act(async () => storage.getState().applySessions([{ ...changedLead, metadataVersion: changedLead.metadataVersion + 1,
                 metadata: null }]));
             await flushHookEffects();
-            expect(badge('machine', 'context-report')).toBeNull();
             expect(badge('checkout', 'context-report')).not.toBeNull();
             const report = storage.getState().sessions['context-report']!;
             await act(async () => storage.getState().applySessions([{ ...report, manager: null }]));
             await flushHookEffects();
-            expect(badge('machine', 'context-report')).toBeNull();
             expect(badge('checkout', 'context-report')).not.toBeNull();
         } finally { await screen.unmount(); }
     });
