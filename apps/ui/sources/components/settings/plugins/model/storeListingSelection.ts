@@ -8,6 +8,8 @@ import type { BuiltInPetId } from '@/components/pets/builtIns/builtInPetRegistry
 
 export type StoreSoftwareListingReference = Extract<MarketplaceCatalogReferenceV1, { type: 'software' }> & Readonly<{
     target?: Readonly<{ scope: ServerAccountScope; machine: MachineAdministrationTargetV1 }>;
+    /** A recipe's inputs to start from (a stopped Setup run's own proposal); the listing's form still owns the draft. */
+    inputs?: Readonly<Record<string, unknown>>;
 }>;
 /** Host navigation only; Software retains its native P20 identity, without a registry kind. */
 export type StorePluginThemeListingReference = Readonly<{ type: 'pluginTheme'; reference: Extract<ThemeReference, { kind: 'plugin' }> }>;
@@ -40,10 +42,15 @@ export function readStoreListingReference(value: unknown): StoreListingReference
     }
     const contributed = PluginStoreItemReferenceV1Schema.safeParse(value);
     if (contributed.success) return contributed.data;
-    if (record(value, ['type', 'target', 'value']) && value.type === 'software') {
+    const seeded = record(value, ['type', 'target', 'value', 'inputs']);
+    if ((seeded || record(value, ['type', 'target', 'value'])) && value.type === 'software') {
         const target = readStoreSoftwareTarget(value.target);
         const reference = MarketplaceCatalogReferenceV1Schema.safeParse({ type: value.type, value: value.value });
-        return target && reference.success && reference.data.type === 'software' ? { ...reference.data, target } : null;
+        const inputs = seeded && value.inputs && typeof value.inputs === 'object' && !Array.isArray(value.inputs)
+            ? value.inputs as Record<string, unknown> : undefined;
+        if (seeded && !inputs) return null;
+        return target && reference.success && reference.data.type === 'software'
+            ? { ...reference.data, target, ...(inputs ? { inputs } : {}) } : null;
     }
     const parsed = MarketplaceCatalogReferenceV1Schema.safeParse(value);
     return parsed.success ? parsed.data : null;

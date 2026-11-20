@@ -9,7 +9,7 @@ import { ActionOperationRows } from '@/components/inbox/actionOperations/ActionO
 import { ActionOperationSudoQuestion } from '@/components/inbox/actionOperations/ActionOperationSudoQuestion';
 import { MachineSetupStepsChecklist } from '@/components/inbox/actionOperations/MachineSetupStepsChecklist';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
-import { projectMachineSetupStepChecklist, type MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
+import { projectMachineSetupStepChecklist, readMachineSetupRunFailure, type MachineSetupStepChecklist } from '@/components/inbox/actionOperations/actionOperationDetailPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -31,6 +31,8 @@ type StoppedNoticeProps = Readonly<{
   step: string;
   cause: string | undefined;
   onRetry: (() => void) | null;
+  /** Reopens what the run was asked to install, with the inputs it was given (lab L7-failed: Edit beside Retry). */
+  onEdit?: (() => void) | null;
 }>;
 
 function StoppedHead(props: StoppedNoticeProps & Readonly<{
@@ -47,7 +49,7 @@ function StoppedHead(props: StoppedNoticeProps & Readonly<{
       title={t('machinePresets.setup.tab.stoppedAt', { step: props.step })}
       {...(props.cause ? { subtitle: props.cause, subtitleLines: 0 } : {})}
       showDivider
-      rightElement={props.investigate || props.onRetry ? (
+      rightElement={props.investigate || props.onRetry || props.onEdit ? (
         <View style={styles.headActions}>
           {props.investigate ? (
             <TextLinkButton
@@ -56,6 +58,14 @@ function StoppedHead(props: StoppedNoticeProps & Readonly<{
               tone="strong"
               disabled={props.investigate.pending}
               onPress={props.investigate.launch}
+            />
+          ) : null}
+          {props.onEdit ? (
+            <TextLinkButton
+              testID="machine-setup-stopped.edit"
+              label={t('common.edit')}
+              tone="strong"
+              onPress={props.onEdit}
             />
           ) : null}
           {props.onRetry ? (
@@ -106,6 +116,7 @@ export function MachineSetupRunProgress(
     machineName: string;
     localize: (pluginId: string, value: unknown) => string;
     onRetry: (() => void) | null;
+    onEdit?: (() => void) | null;
   }>,
 ) {
   const { setup, localize } = props;
@@ -113,18 +124,20 @@ export function MachineSetupRunProgress(
   const progressOperation = setup.progressOperation;
   const domainRef = progressOperation?.snapshot.domainRef;
   const observation = progressOperation?.observation;
+  // A stopped run explains its stopped step with its own typed failure (the root run or its native child settles it).
+  const runFailure = readMachineSetupRunFailure(progressOperation?.snapshot) ?? readMachineSetupRunFailure(setup.operation?.snapshot);
   // The operation's own reviewed steps, in place; their labels carry their own fallback words.
   const steps = React.useMemo(
     () => (domainRef?.kind === 'machineSetup'
-      ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label), null, observation) : null),
-    [domainRef, localize, observation],
+      ? projectMachineSetupStepChecklist(domainRef, (label) => localize('', label), null, observation, runFailure) : null),
+    [domainRef, localize, observation, runFailure],
   );
   const operationId = setup.operationId;
   if (!operationId) return null;
   if (steps && domainRef?.kind === 'machineSetup' && progressOperation) {
     return (
       <MachineSetupRunRegion serverId={props.serverId} operation={setup.operation} progressOperation={progressOperation}
-        steps={steps} machineName={props.machineName} onRetry={props.onRetry}
+        steps={steps} machineName={props.machineName} onRetry={props.onRetry} onEdit={props.onEdit ?? null}
         checkedAfter={setup.checkedAfterOperationId === operationId} />
     );
   }
@@ -158,6 +171,7 @@ export function MachineSetupRunRegion(
     steps: MachineSetupStepChecklist;
     machineName: string;
     onRetry: (() => void) | null;
+    onEdit?: (() => void) | null;
     /** The setup read owner completed a check after this run settled. */
     checkedAfter?: boolean;
   }>,
@@ -226,6 +240,7 @@ export function MachineSetupRunRegion(
                 step={stoppedTitle}
                 cause={typeof stopped?.subtitle === 'string' ? stopped.subtitle : undefined}
                 onRetry={runSettled ? props.onRetry : null}
+                onEdit={runSettled ? props.onEdit ?? null : null}
               />
             ) : null}
             {sudoPrompt ? (

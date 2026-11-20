@@ -1,5 +1,5 @@
 import type { ActionOperationProjection, ActionOperationSudoPrompt } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { MachineSetupFailureDetailsV1Schema, type ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { isWorkspacePathWithinRootV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
@@ -449,18 +449,23 @@ export function projectMachineSetupStepChecklist(
     localizeLabel: (label: MachineSetupStep['label']) => string,
     question: ActionOperationSudoPrompt | null = null,
     observation: ActionOperationObservation = 'available',
+    /** The stopped run's own typed failure ({@link readMachineSetupRunFailure}): it explains the step where the run stopped. */
+    runFailure: string | null = null,
 ): MachineSetupStepChecklist | null {
     const steps = attachment.steps;
     if (!steps || steps.length === 0) return null;
     const items: MachineSetupStepChecklistItem[] = [];
     const executionById: Record<string, PlanChecklistExecutionState> = {};
     let progressObservationLabel: string | null = null;
+    let stoppedStepFailure = runFailure;
     for (const step of steps) {
         const id = `${step.planIndex}:${step.stepId}`;
         const title = typeof step.label !== 'string' && step.label.key === 'machinePresets.setup.scriptNumbered'
             && typeof step.label.params?.index === 'number'
             ? t('machinePresets.setup.scriptNumbered', { index: step.label.params.index }) : localizeLabel(step.label);
-        const subtitle = step.state === 'failed' ? describeMachineSetupFailureCause(step.failureCause)
+        const stoppedHere = step.state === 'failed' ? stoppedStepFailure : null;
+        if (stoppedHere) stoppedStepFailure = null;
+        const subtitle = step.state === 'failed' ? stoppedHere ?? describeMachineSetupFailureCause(step.failureCause)
             : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : undefined;
         const unobserved = observation !== 'available' && (step.state === 'running' || step.state === 'pending');
         if (unobserved && step.state === 'running') {
@@ -511,6 +516,16 @@ export function projectProjectCommandStepChecklist(
         executionById[id] = { status: unobserved ? 'idle' : PROJECT_STEP_STATUS[step.state], logs: NO_LOGS };
     }
     return { items, selectedIds: items.map((item) => item.id), executionById, progressObservationLabel };
+}
+
+/**
+ * A stopped setup run's own failure in words, when the setup owner settled it with a typed remedy ("Check the selected
+ * packages…"): more exact than the step's coarse reason code, and the same sentence the operation's detail shows.
+ */
+export function readMachineSetupRunFailure(snapshot: ActionOperationSnapshot | null | undefined): string | null {
+    if (snapshot?.state !== 'failed' || !snapshot.error) return null;
+    const details = MachineSetupFailureDetailsV1Schema.safeParse(snapshot.error.details);
+    return details.success && 'remedy' in details.data.failure && details.data.failure.remedy ? presentFailure(snapshot)?.reason ?? null : null;
 }
 
 function projectMachineReboot(snapshot: ActionOperationSnapshot): Omit<ActionOperationDetailProjection, 'canCancel'> {

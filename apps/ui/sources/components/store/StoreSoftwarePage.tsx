@@ -244,7 +244,7 @@ export function StoreSoftwareRouteListing(props: Readonly<{
   // Exact selected details are read from a Machine that can answer; with none, the listing still shows what it is.
   const target = props.reference.target ?? machines.targets.find((entry) => entry.machine.online !== false)?.target
     ?? { scope, machine: null };
-  return <SoftwareListing target={target}
+  return <SoftwareListing target={target} initialInputs={props.reference.inputs}
     item={{ value: props.reference.value, label: t('capabilities.store.kinds.software.title') }}
     machines={machines} pushed={props.pushed} onClose={props.onClose} />;
 }
@@ -257,6 +257,8 @@ export function SoftwareListing(
     machines: SoftwareMachines;
     pushed: boolean;
     onClose: () => void;
+    /** The recipe's inputs to start from, as a stopped Setup run proposed them. */
+    initialInputs?: SoftwareInputDraft;
   }>,
 ): React.ReactNode {
   const focused = useIsFocused();
@@ -282,6 +284,7 @@ function SoftwareListingBody(
     pushed: boolean;
     onClose: () => void;
     state: StoreSoftwareEntryState;
+    initialInputs?: SoftwareInputDraft;
   }>,
 ): React.ReactNode {
   const { theme } = useUnistyles();
@@ -289,7 +292,7 @@ function SoftwareListingBody(
   const toolchain = isToolchain(item);
   const [config, setConfig] = React.useState('');
   // A recipe's schema and presentation hints ask for its inputs; what is typed is the draft.
-  const [draft, setDraft] = React.useState<SoftwareInputDraft>({});
+  const [draft, setDraft] = React.useState<SoftwareInputDraft>(() => props.initialInputs ?? {});
   // No Machine is chosen for the person: each one they turn on joins the one review. The Store page holds the
   // choice, so closing this listing and opening it again keeps it.
   const { chosen, setChosen } = useSoftwareTargetsDraft();

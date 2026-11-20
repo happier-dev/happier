@@ -7,7 +7,7 @@ import type { ActionOperationProjection } from '@/sync/domains/actionOperations/
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 
-import { projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist } from './actionOperationDetailPresentation';
+import { projectActionOperationDetail, projectAgentIsolationRecovery, projectMachineSetupStepChecklist, readMachineSetupRunFailure } from './actionOperationDetailPresentation';
 
 type ActionOperationSnapshot = ActionOperationProjection['snapshot'];
 
@@ -207,6 +207,24 @@ describe('action operation detail presentation', () => {
                 workspaceRefId: 'workspace', cwd: '/project', terminalId: 'terminal' });
             expect(detail.canCancel).toBe(false);
         }
+    });
+
+    it('says where a stopped run failed with the run\'s own failure, not a coarser step reason', () => {
+        const attachment = { kind: 'machineSetup' as const, serverId: 'home', machineId: 'web-2', steps: [
+            { planIndex: 0, stepId: 'package-apt', label: 'Install ripgrep', state: 'failed' as const, failureCause: 'required_fact_unavailable' },
+            { planIndex: 0, stepId: 'caddy', label: 'Caddy', state: 'cancelled' as const },
+        ] };
+        const runFailure = 'Check the selected packages and enabled apt repositories, then review and retry.';
+        const checklist = projectMachineSetupStepChecklist(attachment, String, null, 'available', runFailure);
+        expect(checklist?.items.map((item) => item.subtitle ?? null)).toEqual([runFailure, t('inbox.actionOperations.status.cancelled')]);
+        expect(projectMachineSetupStepChecklist(attachment, String)?.items[0]?.subtitle)
+            .toBe(t('machineDetailPage.security.reasons.requiredFactUnavailable'));
+        // The run's failure is read from the setup owner's typed remedy; a failure without one leaves the step reason.
+        const failed = (details: unknown) => operation({ actionId: 'machines.setup.apply', state: 'failed', settledAt: 2_000,
+            error: { errorCode: 'required_fact_unavailable', error: 'required_fact_unavailable', details } as ActionOperationSnapshot['error'] });
+        expect(readMachineSetupRunFailure(failed({ kind: 'machineSetup', failure: { kind: 'native_check_unsupported',
+            reason: 'required_fact_unavailable', requiredFact: 'packageAvailability', remedy: runFailure } }))).toBe(runFailure);
+        expect(readMachineSetupRunFailure(failed({ kind: 'machineSetup', failure: { kind: 'native_effect_failed' } }))).toBeNull();
     });
 
     it('maps reviewed setup steps onto checklist rows keyed by plan and step, with failures in words', () => {

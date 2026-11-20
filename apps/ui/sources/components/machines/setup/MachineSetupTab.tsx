@@ -61,6 +61,7 @@ import {
 import type { MachineSetupPresetUpdateV1 } from './useMachinePresetUpdates';
 import { describeMachineSetupReason } from './machineSetupReasonText';
 import { MachineSetupRunProgress } from './MachineSetupRunRegion';
+import { readMachineSetupRunRecovery } from './machineSetupRunRecovery';
 import { MachineSignInsSection } from './MachineSignInsSection';
 
 type SetupParams = Extract<MachinePageTabParams, { id: 'setup' }>;
@@ -263,6 +264,7 @@ function MachineSetupRoot(
       </ItemGroup>
       <MachineSetupAttention
         serverId={props.serverId}
+        machineId={props.machineId}
         setup={setup}
         machineName={machine}
         drifted={drifted}
@@ -504,6 +506,7 @@ const RECIPE_KIND_GROUPS = [
 function MachineSetupAttention(
   props: Readonly<{
     serverId: string;
+    machineId: string;
     setup: MachineSetupState;
     machineName: string;
     drifted: number;
@@ -514,10 +517,19 @@ function MachineSetupAttention(
 ) {
   const { setup, localize } = props;
   const router = useRouter();
+  const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+  const homeId = getServerProfileById(props.serverId)?.serverIdentityId ?? null;
   if (setup.operationId) {
+    // A stopped run offers its own proposal again (the native child carries it for a combined Apply).
+    const recovery = readMachineSetupRunRecovery(setup.progressOperation?.snapshot ?? setup.operation?.snapshot, setup.plan);
+    const { removeItemKeys, ...retry } = recovery.retry;
+    const edit = recovery.edit;
     return (
       <MachineSetupRunProgress serverId={props.serverId} setup={setup} machineName={props.machineName} localize={localize}
-        onRetry={props.editable && setup.operation ? () => { void setup.prepare({ kind: 'reapply' }); } : null} />
+        onRetry={props.editable && setup.operation ? () => { void setup.prepare(retry, removeItemKeys); } : null}
+        onEdit={props.editable && edit && binding && homeId ? () => router.push(buildStoreListingRoute({ type: 'software',
+          value: edit.ref, target: { scope: binding.scope, machine: { serverIdentityId: homeId, machineId: props.machineId } },
+          inputs: edit.inputs }) as never) : null} />
     );
   }
   if (setup.failure) {

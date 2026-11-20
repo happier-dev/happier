@@ -141,9 +141,11 @@ describe('plugins surface routes', () => {
     it('admits exact Software option and target through the same selection and listing route without registry fabrication', () => {
         const target = { scope: { serverId: 'software-home', accountId: 'alice' },
             machine: { serverIdentityId: 'srv_software', machineId: 'same-id' } };
-        for (const value of [{ pluginId: 'example.software', recipeId: 'package', revision: '3' },
-            { kind: 'toolchain', adapterId: 'mise', tool: 'node' }] as const) {
-            const reference = { type: 'software' as const, target, value };
+        // A stopped Setup run's Edit reopens its recipe with the inputs it proposed.
+        for (const [value, inputs] of [[{ pluginId: 'example.software', recipeId: 'package', revision: '3' }, undefined],
+            [{ kind: 'toolchain', adapterId: 'mise', tool: 'node' }, undefined],
+            [{ pluginId: 'example.software', recipeId: 'package', revision: '3' }, { packages: ['ripgrep', 'fd-find'] }]] as const) {
+            const reference = { type: 'software' as const, target, value, ...(inputs ? { inputs } : {}) };
             expect(readStoreOpenItem({ selection: JSON.stringify(reference) })).toEqual(reference);
             expect(readStoreListingRoute({ selection: JSON.stringify(reference) })).toEqual({ kind: 'store', reference });
             const route = buildStoreListingRoute(reference);
@@ -156,6 +158,7 @@ describe('plugins surface routes', () => {
             { type: 'software', target: { ...target, machine: null }, value: { pluginId: 'example.software', recipeId: 'package', revision: '3' } },
             { type: 'software', target, value: { label: 'Package' } },
             { type: 'software', target, value: { kind: 'toolchain', adapterId: 'mise' } },
+            { type: 'software', target, value: { pluginId: 'example.software', recipeId: 'package', revision: '3' }, inputs: ['ripgrep'] },
         ]) expect(readStoreListingRoute({ selection: JSON.stringify(reference), sourceId: 'wrong', pluginId: 'fallback' })).toBeNull();
     });
     it('admits every Store view through workspace navigation without losing narrowing or grouping', () => {

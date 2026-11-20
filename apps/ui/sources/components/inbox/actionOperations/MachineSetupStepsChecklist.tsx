@@ -9,7 +9,8 @@ import { t } from '@/text';
 
 import { ProjectCommandOutputPane } from './ProjectCommandOutputPane';
 import type { ProjectCommandAttachmentV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { projectMachineSetupStepChecklist, projectProjectCommandStepChecklist, type MachineSetupOutputAttachment } from './actionOperationDetailPresentation';
+import { projectMachineSetupStepChecklist, projectProjectCommandStepChecklist, readMachineSetupRunFailure,
+  type MachineSetupOutputAttachment } from './actionOperationDetailPresentation';
 
 /**
  * A Setup operation's reviewed steps: the one run checklist the Machine's Setup tab and the operation
@@ -32,7 +33,8 @@ export function MachineSetupStepsChecklist(props: Readonly<{
     const question = readActionOperationSudoPrompt(operation.snapshot);
     const projected = props.attachment.kind === 'projectCommand'
       ? projectProjectCommandStepChecklist(props.attachment, operation.observation)
-      : projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question, operation.observation);
+      : projectMachineSetupStepChecklist(props.attachment, (label) => localize('', label), question, operation.observation,
+        readMachineSetupRunFailure(operation.snapshot));
     if (!projected || !stepOutput) return projected;
     const items = projected.items.map((item): PlanChecklistItem => {
       const output = item.output;
