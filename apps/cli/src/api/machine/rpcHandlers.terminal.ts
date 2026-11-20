@@ -446,7 +446,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     const managedProject = custody?.kind === undefined && custody?.workspace !== undefined;
     const requesterIdentity = purpose === 'control' && !managedProject ? (await resolveRequesterIdentity(context)).identity : undefined;
     if (requesterIdentity?.kind === 'unknown') return false;
-    const terminal = manager.list().find(candidate => candidate.terminalId === terminalId);
+    const terminal = manager.get(terminalId);
     // Removal ends terminal custody. A still-admitted reader must reach the
     // manager's not-found result; only a live owner can require custody checks.
     if (!terminal) return context?.machineAdmission

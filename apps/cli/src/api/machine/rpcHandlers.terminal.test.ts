@@ -2171,12 +2171,17 @@ describe('registerMachineTerminalRpcHandlers', () => {
     try {
       const handlers = register('session-one');
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!({ terminalKey: 'after-daemon-restart', sessionId: 'session-one' }, ownerIngress('session-one'))).resolves.toMatchObject({ ok: true });
+      await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!({ terminalKey: 'second-terminal', sessionId: 'session-one' }, ownerIngress('session-one'))).resolves.toMatchObject({ ok: true });
+      const census = vi.spyOn(sessionManager, 'list');
       await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_LIST)!({}, ownerIngress('session-one'))).resolves.toMatchObject({ ok: true, terminals: [
         { terminalKey: 'after-daemon-restart', sessionId: 'session-one' },
+        { terminalKey: 'second-terminal', sessionId: 'session-one' },
       ] });
+      expect(census).toHaveBeenCalledOnce();
+      census.mockRestore();
       const restricted = register('session-one');
       await expect(restricted.get(RPC_METHODS.DAEMON_TERMINAL_RESTART)!({ terminalKey: 'sibling', sessionId: 'session-two' }, ownerIngress('session-one'))).resolves.toMatchObject({ ok: false, errorCode: 'terminal_invalid_request' });
-      expect(provider.spawned).toHaveLength(1);
+      expect(provider.spawned).toHaveLength(2);
     } finally { sessionManager.dispose(); }
   });
   it('fails closed when explicitly disabled', async () => {

@@ -212,6 +212,7 @@ export type TerminalByteStreamAckResponse = Readonly<{ ok: true }> | Readonly<{ 
 
 export type TerminalPtySessionManager = Readonly<{
   list: () => DaemonTerminalListEntryV1[];
+  get: (terminalId: string) => DaemonTerminalListEntryV1 | undefined;
   getLiveWorkProducer: () => LiveWorkProducerV1;
   readGuardResources(): readonly TerminalGuardResource[];
   setGuardState(input: Readonly<{ terminalId: string; expectedLastActivityAtMs: number; state?: TerminalGuardStateV1; failedPolicy?: Readonly<{ afterMs: number; warnBeforeMs: number }> }>): boolean;
@@ -1539,6 +1540,16 @@ export function createTerminalPtySessionManager(params: Readonly<{
       && session.lastActivityAtMs === input.expectedLastActivityAtMs ? session : undefined;
   };
 
+  const projectListEntry = (session: PtySession): DaemonTerminalListEntryV1 => ({
+    terminalId: session.terminalId,
+    terminalKey: session.terminalKey,
+    cwd: session.cwd,
+    ...(session.sessionId ? { sessionId: session.sessionId } : {}),
+    ended: session.ended,
+    exit: session.exit ? { ...session.exit } : null,
+    ...(session.terminalGuardStateV1 ? { terminalGuardStateV1: session.terminalGuardStateV1 } : {}),
+  });
+
   return {
     getLiveWorkProducer,
     readGuardResources: () => Array.from(sessionsById.values()).filter(session => !session.serviceOwned).map(session => ({
@@ -1593,15 +1604,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
       return { ok: true };
     },
     // A read-only projection: listing neither reaps nor renews a terminal's activity.
-    list: () => Array.from(sessionsById.values(), (session) => ({
-      terminalId: session.terminalId,
-      terminalKey: session.terminalKey,
-      cwd: session.cwd,
-      ...(session.sessionId ? { sessionId: session.sessionId } : {}),
-      ended: session.ended,
-      exit: session.exit ? { ...session.exit } : null,
-      ...(session.terminalGuardStateV1 ? { terminalGuardStateV1: session.terminalGuardStateV1 } : {}),
-    })),
+    list: () => Array.from(sessionsById.values(), projectListEntry),
+    get: terminalId => {
+      const session = sessionsById.get(terminalId);
+      return session && projectListEntry(session);
+    },
     ensure,
     async spawnManagedService(input) {
       const opened = await ensure({ terminalKey: input.terminalKey, cwd: input.launch.cwd ?? input.custody.rootPath,
