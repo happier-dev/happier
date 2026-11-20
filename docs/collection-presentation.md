@@ -83,9 +83,10 @@ or the viewer's private Project placement. The Runs collection model groups by
 Date, Project or Workflow over the shared Account list window. The collection
 Spaces Action accepts Run-specific filters and saved Spaces.
 Sessions Lines 1, 2 and 3 still write the existing `sessionListDensity` key.
-Session Row details and the View menu share independent choices. Current work
-and Progress default on. Project, Machine and Branch inherit the retained
-context choice until set independently. PR and Changes default off. Artifacts
+Session Settings and the View menu offer the same four Row details. Current
+work and Progress default on. Project and Branch inherit the retained context
+choice until set independently. Existing Machine, Pull request and Changes
+preferences remain readable. Artifacts
 use `{ kind: 'artifact', presentation: 'grid' | 'list' | 'folders' }` and fall
 back to the previous device preference before an Account choice exists.
 

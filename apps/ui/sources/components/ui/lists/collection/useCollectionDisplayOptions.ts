@@ -23,15 +23,12 @@ const readWorkflowDetails = (settings: Settings) => settings.collectionDisplayPr
 const readRunDetails = (settings: Settings) => settings.collectionDisplayPreferencesV1.workflowRun?.details;
 const readArtifactPresentation = (settings: Settings) => settings.collectionDisplayPreferencesV1.artifact?.presentation;
 
-/** Settings and the View menu use the same choices and writer. */
+/** Settings and View offer the details Session rows can draw. Stored details can include other keys. */
 export const SESSION_COLLECTION_ROW_DETAILS = [
     { id: 'currentWork', labelKey: 'settingsSession.sessionList.detailCurrentWork' },
     { id: 'progress', labelKey: 'settingsSession.sessionList.detailProgress' },
     { id: 'project', labelKey: 'settingsSession.sessionList.detailProject' },
-    { id: 'machine', labelKey: 'settingsSession.sessionList.detailMachine' },
     { id: 'branch', labelKey: 'settingsSession.sessionList.detailBranch' },
-    { id: 'pullRequest', labelKey: 'settingsSession.sessionList.detailPullRequest' },
-    { id: 'changes', labelKey: 'settingsSession.sessionList.detailChanges' },
 ] as const satisfies readonly Readonly<{ id: keyof SessionCollectionRowDetails; labelKey: string }>[];
 
 export function useSessionCollectionRowDetails(): SessionCollectionRowDetails {

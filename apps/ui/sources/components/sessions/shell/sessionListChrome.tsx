@@ -156,12 +156,6 @@ const SESSION_LIST_ORGANIZE_MENU_ITEM_ID = 'organize';
 const SESSION_LIST_NEW_SECTION_MENU_ITEM_ID = 'newSection';
 const SESSION_LIST_FILTER_MENU_ITEM_ID = 'filter';
 const SESSION_LIST_ROW_DETAIL_MENU_PREFIX = 'detail:';
-/**
- * The details a Session row can draw today. Machine, Pull request and Changes stay in the declaration but out of the
- * menu until the row has those facts, so no switch changes nothing.
- */
-const SESSION_LIST_VIEW_ROW_DETAILS = SESSION_COLLECTION_ROW_DETAILS.filter((detail) =>
-    detail.id === 'currentWork' || detail.id === 'progress' || detail.id === 'project' || detail.id === 'branch');
 const SESSION_LIST_SETTINGS_MENU_ITEM_ID = 'settings';
 /** The View menu holds whole placement sentences (lab `clfilter:view`) at the menu's own type size. */
 const VIEW_MENU_OVERLAY_STYLE = { minWidth: 300 } as const;
@@ -238,7 +232,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
                 submenu: { items: withSelection(identityItems, selectedIdentity.id, ''), placement: 'right' },
             },
             // One switch per detail the row can draw (lab ideas-1118-shell scene 7), from the declaration Settings uses.
-            ...SESSION_LIST_VIEW_ROW_DETAILS.map((detail) => ({
+            ...SESSION_COLLECTION_ROW_DETAILS.map((detail) => ({
                 id: `${SESSION_LIST_ROW_DETAIL_MENU_PREFIX}${detail.id}`,
                 testID: `session-list-view-detail-${detail.id}`,
                 title: t(detail.labelKey),
@@ -308,7 +302,7 @@ export const SessionListViewOptionsButton = React.memo(function SessionListViewO
         }
         if (itemId.startsWith('menu:')) return;
         if (itemId.startsWith(SESSION_LIST_ROW_DETAIL_MENU_PREFIX)) {
-            const detail = SESSION_LIST_VIEW_ROW_DETAILS.find((entry) => `${SESSION_LIST_ROW_DETAIL_MENU_PREFIX}${entry.id}` === itemId);
+            const detail = SESSION_COLLECTION_ROW_DETAILS.find((entry) => `${SESSION_LIST_ROW_DETAIL_MENU_PREFIX}${entry.id}` === itemId);
             if (detail) writeRowDetail(detail.id, !rowDetails[detail.id]);
             return;
         }

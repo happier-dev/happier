@@ -117,6 +117,58 @@ afterEach(async () => {
 });
 
 describe('Session settings session list density', () => {
+    it('changes a Session row for every displayed Row details switch', async () => {
+        const { default: SessionSettingsScreen } = await import('../../../../app/(app)/settings/session');
+        const { buildSessionListRowViewModels } = await import('@/components/sessions/shell/sessionListRowViewModels');
+        const { readSessionCollectionRowDetails } = await import('@/components/ui/lists/collection/collectionDisplaySettings');
+        const { projectGroupIdentityKey } = await import('@/sync/domains/workspaces/projectGroupDisplay');
+        const { buildSessionListServerScopedRowKey } = await import('@/sync/domains/session/listing/sessionListKeyNormalization');
+        const project = { serverId: 'home', projectKey: 'example' };
+        const sessionId = 'row-details';
+        const item = { type: 'session', sessionId, serverId: 'home', projectKey: project } as const;
+        const rowKey = buildSessionListServerScopedRowKey(item.serverId, item.sessionId)!;
+        const row = () => {
+            const settings = storage.getState().settings;
+            return buildSessionListRowViewModels({
+                listItems: [item], reachableSessionDisplayById: new Map(),
+                rowRenderableByKey: new Map([[rowKey, {
+                    id: sessionId, encryptionMode: 'plain', seq: 1, createdAt: 100, updatedAt: 200,
+                    active: false, activeAt: 0, metadataVersion: 1, agentStateVersion: 1,
+                    metadata: { name: 'Example session', path: '/repo/example', homeDir: '/repo',
+                        host: 'localhost', machineId: 'machine-a', branch: 'fix/details',
+                        work: { statusReason: 'Running tests', statusProgress: { done: 1, total: 2 } } },
+                    thinking: false, thinkingAt: 0, presence: 'online',
+                }]]),
+                pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null,
+                showServerBadge: false, showPinnedServerBadge: false, relativeNowMs: 1_000, runtimeNowMs: 1_000,
+                rowContext: {
+                    enabled: true, identityDisplay: 'agentLogo', groupProjectByGroupKey: new Map(),
+                    projectDisplayByKey: new Map([[projectGroupIdentityKey(project), {
+                        project, baseline: null, title: 'Example project', hasCustomLabel: true,
+                    }]]),
+                    details: readSessionCollectionRowDetails(settings.collectionDisplayPreferencesV1.sessionWork?.details,
+                        settings.sessionListRowContextV1),
+                },
+            })[0]?.rowContext;
+        };
+        const screen = await renderSettingsView(<SessionSettingsScreen />);
+        const prefix = 'settings-session:row-detail:';
+        const details = screen.findAllByType(Item)
+            .map(item => item.props.testID)
+            .filter((id): id is string => typeof id === 'string' && id.startsWith(prefix));
+        expect(details.length).toBeGreaterThan(0);
+        for (const testID of details) {
+            const id = testID.slice(prefix.length);
+            const before = row();
+            expect(before).toBeTruthy();
+            const control = screen.findAllByType(Item).find(item => item.props.testID === testID)!.props.rightElement;
+            const enabled = !control.props.value;
+            await act(async () => { control.props.onValueChange(enabled); });
+            await expectPersistedSettings({ collectionDisplayPreferencesV1: { sessionWork: { details: { [id]: enabled } } } });
+            expect(row(), id).not.toEqual(before);
+        }
+    });
+
     it('persists all background-work attention choices through the declared setting', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
         const screen = await renderSettingsView(React.createElement(mod.default));
@@ -254,7 +306,7 @@ describe('Session settings session list density', () => {
 
     });
 
-    it('offers the list menu\'s leading marks and places Show where it runs beside them', async () => {
+    it('persists the list menu’s leading marks and status-word choices', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
 
@@ -268,11 +320,6 @@ describe('Session settings session list density', () => {
         ]);
         await act(async () => { identityDropdown!.props.onSelect('identity:projectWithAgent'); });
         await expectPersistedSettings({ sessionListIdentityDisplay: 'projectWithAgent' });
-
-        const rowContext = screen.findAllByType(Item).find((node: any) => node.props?.testID === 'settings-session-rowContext-item');
-        expect(rowContext?.props.rightElement.props.value).toBe(true);
-        await act(async () => { rowContext!.props.onPress(); });
-        await expectPersistedSettings({ sessionListRowContextV1: false });
 
         const statusWords = screen.findAllByType(Item).find((node: any) => node.props?.testID === 'settings-session-statusWords-item');
         expect(statusWords?.props.rightElement.props.value).toBe(false);
