@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 import type {
   ConnectedAccountsService,
-  PluginConnectedAccountBindingSummary,
+  ConnectedAccountBindingSummary,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
   ManagedProviderRuntime,
@@ -88,7 +88,7 @@ const healthyIdentityResponse = (): ManagedServiceResponse => response(
   JSON.stringify(healthyIdentity),
 );
 
-function boundAccount(purpose: ManagedPurpose): PluginConnectedAccountBindingSummary {
+function boundAccount(purpose: ManagedPurpose): ConnectedAccountBindingSummary {
   const service = purpose === 'openai-upstream'
     ? Object.freeze({
         pluginId: 'happier.agent.codex',

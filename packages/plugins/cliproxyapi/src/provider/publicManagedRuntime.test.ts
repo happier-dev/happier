@@ -9,7 +9,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
   ConnectedAccountsService,
-  PluginConnectedAccountBindingSummary,
+  ConnectedAccountBindingSummary,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
   ManagedProviderRuntime,
@@ -45,7 +45,7 @@ const healthySnapshot = Object.freeze({
   diagnosticsTruncated: false,
 } satisfies ManagedServiceSnapshot);
 
-function bindingFor(purpose: ManagedPurpose): PluginConnectedAccountBindingSummary {
+function bindingFor(purpose: ManagedPurpose): ConnectedAccountBindingSummary {
   const service = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES.find((family) => family.purpose === purpose)!.connectedAccount.service;
   return Object.freeze({
     purpose,
