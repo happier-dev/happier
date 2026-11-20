@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS } from './machineConnectionActionIdsV1.js';
+import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './machineConnectionActionIdsV1.js';
 export { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS } from './machineConnectionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
@@ -94,6 +94,17 @@ export const MACHINE_PAGE_ACTION_OUTPUT_SCHEMAS = {
 export type MachinePageActionInput = z.infer<(typeof MACHINE_PAGE_ACTION_INPUT_SCHEMAS)[MachinePageActionId]>;
 export const HomeReconnectInputSchema = lazyZodSchema(() => z.strictObject({ serverId: id }));
 export const HomeReconnectOutputSchema = HomeReconnectInputSchema;
+export const PersonalHomeCreateInputSchema = lazyZodSchema(() => z.discriminatedUnion('method', [
+  z.strictObject({ method: z.literal('this_computer') }),
+  z.strictObject({ method: z.literal('ssh'), host: id, username: z.optional(id),
+    port: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(65535))) }),
+]));
+export const PersonalHomeCreateOutputSchema = lazyZodSchema(() => z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('setup_started') }),
+  z.strictObject({ status: z.literal('task_started'), taskId: id }),
+  z.strictObject({ status: z.literal('created'), address: z.nullable(id) }),
+  z.strictObject({ status: z.literal('outcome_unknown'), taskId: id }),
+]));
 export const HomeConnectInputSchema = lazyZodSchema(() => z.strictObject({
   address: id,
   displayName: z.optional(id),
@@ -337,6 +348,22 @@ function createMachineConnectionActionSpecs() {
       { path: 'displayName', title: 'Home name', widget: 'text' },
       { path: 'acceptInsecureHttp', title: 'Accept insecure HTTP', widget: 'boolean' },
       { path: 'acceptCanonicalUrl', title: 'Use the advertised canonical address', widget: 'boolean' }] },
+  },
+  {
+    id: PERSONAL_HOME_CREATE_ACTION_ID_V1, title: 'Create a personal Home',
+    description: 'Start Personal Home setup on the answering desktop or install it over SSH. For SSH use a configured host alias or address. The desktop handles any SSH trust or credential prompts.',
+    approval: { result: 'required' }, approvalPolicy: { agentDefault: 'authority' },
+    safety: 'danger', sideEffectClass: 'write', executionPlacement: 'client', placements: [], surfaces: setupClientSurfaces,
+    bindings: { mcpToolName: 'homes_personal_create' },
+    toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
+    inputSchema: PersonalHomeCreateInputSchema, outputSchema: PersonalHomeCreateOutputSchema,
+    inputHints: { fields: [
+      { path: 'method', title: 'Install on', widget: 'select', required: true,
+        options: [{ value: 'this_computer', label: 'This computer' }, { value: 'ssh', label: 'Over SSH' }] },
+      { path: 'host', title: 'SSH host or alias', widget: 'text', required: true, visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
+      { path: 'username', title: 'SSH user', widget: 'text', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
+      { path: 'port', title: 'SSH port', widget: 'number', visibleWhen: { op: 'eq', path: 'method', value: 'ssh' } },
+    ] },
   },
   {
     id: 'machines.add.command', approval: {result: 'required'}, title: 'Prepare machine setup command',

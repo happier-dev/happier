@@ -11,6 +11,7 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { canSetUpPersonalHomeOverSsh } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { t } from '@/text';
 
 import { StepFieldHelp } from '@/components/onboarding/unauthShell/StepFormParts';
@@ -35,8 +36,9 @@ export function ServerHomePane(props: Readonly<{
     // Admission owns whether this computer can host one. When it can't, setup over SSH is the only
     // path left, so the choice between two places goes away rather than leading to a dead button.
     const canCreateHere = useRequestPersonalHomeBootstrap() != null;
+    const canCreateOverSsh = canSetUpPersonalHomeOverSsh();
     const [chosen, setWhere] = React.useState<Where>('thisComputer');
-    const where: Where = canCreateHere ? chosen : 'ssh';
+    const where: Where = canCreateHere && canCreateOverSsh ? chosen : canCreateHere ? 'thisComputer' : 'ssh';
     const [primary, setPrimary] = React.useState<PrimaryAction | null>(null);
     const tabs = React.useMemo((): ReadonlyArray<SegmentedTab<Where>> => [
         { id: 'thisComputer', label: t('addFlows.pathThisComputerTitle') },
@@ -49,7 +51,7 @@ export function ServerHomePane(props: Readonly<{
         <SettingAnchor setting={HOMES_ADD_SETTINGS.settings.createPersonalHome}>
             <View testID={props.testID} style={styles.pane}>
                 {/* The chosen path card already names this pane; the pane opens on where it runs. */}
-                {canCreateHere ? (
+                {canCreateHere && canCreateOverSsh ? (
                     <SegmentedTabBar
                         tabs={tabs}
                         activeTabId={where}
@@ -58,7 +60,7 @@ export function ServerHomePane(props: Readonly<{
                         segmentSizing="content"
                         role="radiogroup"
                     />
-                ) : <OrganizationPolicyFieldNotice field="personalHome" />}
+                ) : !canCreateHere ? <OrganizationPolicyFieldNotice field="personalHome" /> : null}
                 <StepFieldHelp>
                     {where === 'thisComputer' ? t('setupOnboarding.personalHomeOfferSubtitle') : t('homesJourneys.addServerHomeSubtitle')}
                 </StepFieldHelp>
@@ -67,7 +69,7 @@ export function ServerHomePane(props: Readonly<{
                         testID={`${props.testID}.thisComputer`}
                         onWizardPrimaryChange={setPrimary}
                     />
-                ) : (
+                ) : canCreateOverSsh ? (
                     <RemoteSshChecklistStep
                         testID={`${props.testID}.ssh`}
                         mode="remoteRelayHost"
@@ -78,7 +80,7 @@ export function ServerHomePane(props: Readonly<{
                             if (payload.relayRuntimeUrl) onHomeReady(payload.relayRuntimeUrl);
                         }}
                     />
-                )}
+                ) : null}
                 {primary ? (
                     <View style={styles.actions}>
                         <RoundButton

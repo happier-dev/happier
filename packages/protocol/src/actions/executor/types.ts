@@ -99,6 +99,7 @@ import type { MachineAddSshActionId, MachinePageActionId, MachinePageActionInput
 import type { MachineAccessHttpActionId } from '../specs/machine/access.js';
 import type { MachineVitalsActionId, MachineVitalsActionInput } from '../specs/machineVitals.js';
 import type { MachineTerminalActionId, MachineTerminalActionInput } from '../specs/machineTerminal.js';
+import type { PersonalHomeCreateInputSchema, PersonalHomeCreateOutputSchema } from '../specs/machineConnection.js';
 import type { HomeConnectInputSchema, HomeConnectOutputSchema, HomeReconnectInputSchema, HomeReconnectOutputSchema, MachineAddCommandInputSchema, MachineAddCommandOutputSchema, MachinePairingCreateInputSchema, MachinePairingCreateOutputSchema, MachineTerminalOpenInputSchema, MachineTerminalListInputSchema } from '../specs/machineConnection.js';
 import type {
   DaemonAgentInstallStartRequest, DaemonAgentInstallStartResponse,
@@ -2380,6 +2381,7 @@ export type ActionExecutorDeps = Readonly<{
       target?: import('../../daemon/contributionRegistryProjection.js').MachineRecipeReadTargetV1 }> | ActionExecuteFailure
   >;
   homeConnect?: (input: z.infer<typeof HomeConnectInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof HomeConnectOutputSchema> | ActionExecuteFailure>;
+  personalHomeCreate?: (input: z.infer<typeof PersonalHomeCreateInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof PersonalHomeCreateOutputSchema> | ActionExecuteFailure>;
   homeReconnect?: (input: z.infer<typeof HomeReconnectInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof HomeReconnectOutputSchema> | ActionExecuteFailure>;
   machineAddCommand?: (input: z.infer<typeof MachineAddCommandInputSchema>, context: ActionExecutorContext) => Promise<z.infer<typeof MachineAddCommandOutputSchema> | ActionExecuteFailure>;
   machineAddSshTaskAction?: (actionId: MachineAddSshActionId, input: unknown, context: ActionExecutorContext) => Promise<unknown>;

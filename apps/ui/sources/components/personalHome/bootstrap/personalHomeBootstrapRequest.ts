@@ -9,6 +9,19 @@ export function useRequestPersonalHomeBootstrap(): RequestPersonalHomeBootstrap 
     return React.useContext(PersonalHomeBootstrapRequestContext);
 }
 
+let mountedRequest: RequestPersonalHomeBootstrap | null = null;
+
+export function bindPersonalHomeBootstrapRequest(request: RequestPersonalHomeBootstrap): () => void {
+    mountedRequest = request;
+    return () => { if (mountedRequest === request) mountedRequest = null; };
+}
+
+export function requestMountedPersonalHomeBootstrap(): boolean {
+    if (!mountedRequest) return false;
+    mountedRequest();
+    return true;
+}
+
 /** The verified result survives the bootstrap's mounting boundary until the wizard opens it. */
 export const FirstRunPersonalHomeContext = React.createContext<Readonly<{
     profile: ServerProfile | null;

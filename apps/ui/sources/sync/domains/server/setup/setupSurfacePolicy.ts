@@ -102,3 +102,7 @@ export function canSetUpServerHomeHere(policy: SetupSurfacePolicy = resolveSetup
         && policy.relay.allowRelaySelection
         && (policy.relay.allowLocalRelayHost || policy.relay.allowRemoteSshRelayHost);
 }
+
+export function canSetUpPersonalHomeOverSsh(policy: SetupSurfacePolicy = resolveSetupSurfacePolicy()): boolean {
+    return desktopHostKind() === 'tauri' && policy.relay.allowRelaySelection && policy.relay.allowRemoteSshRelayHost;
+}

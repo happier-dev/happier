@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { PersonalHomeAdmission } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
-import { FirstRunPersonalHomeContext, PersonalHomeBootstrapRequestContext } from './personalHomeBootstrapRequest';
+import { bindPersonalHomeBootstrapRequest, FirstRunPersonalHomeContext, PersonalHomeBootstrapRequestContext } from './personalHomeBootstrapRequest';
 
 type BootstrapRequest = { kind: 'standard' } | { kind: 'first-run'; profile: ServerProfile | null };
 
@@ -27,9 +27,11 @@ export function PersonalHomeBootstrapAdmission(props: Readonly<{
         setActivation(entry === 'first-run' ? { kind: 'first-run', profile: null } : { kind: 'standard' });
         if (entry !== 'first-run') props.onRequest?.();
     }, [props.onRequest]);
+    const admittedRequest = props.admission === 'off' ? null : request;
+    React.useLayoutEffect(() => admittedRequest ? bindPersonalHomeBootstrapRequest(admittedRequest) : undefined, [admittedRequest]);
     const Runtime = props.runtime;
     return (
-        <PersonalHomeBootstrapRequestContext.Provider value={props.admission === 'off' ? null : request}>
+        <PersonalHomeBootstrapRequestContext.Provider value={admittedRequest}>
             <FirstRunPersonalHomeContext.Provider value={firstRun ? { profile: firstRun.profile, finish } : null}>
                 {props.recoverExistingHome || (props.admission !== 'off' && (props.admission === 'auto' || activation))
                     ? <Runtime requested={requested} onSettled={settle}>{props.children}</Runtime>

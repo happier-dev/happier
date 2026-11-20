@@ -32,7 +32,7 @@ import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDra
 import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
 import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
 import { SshConfiguredHostPicker } from '@/components/ssh/SshConfiguredHostPicker';
-import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
+import { resolveRemoteRelayCompletionUrl } from '@/components/systemTasks/remoteSshBootstrap/remoteSshBootstrapTask';
 
 import { buildRemoteSshChecklistItems } from './buildRemoteSshChecklistItems';
 import { mapRemoteSshTaskToChecklistExecution } from './mapRemoteSshTaskToChecklistExecution';
@@ -101,23 +101,6 @@ function toPlanChecklistItem(
         badge: item.optional ? t('common.optional') : undefined,
         details: item.details,
     };
-}
-
-function resolveRemoteRelayCompletionUrl(params: Readonly<{
-    publicRelayUrl?: string | null;
-    relayRuntimeUrl?: string | null;
-}>): string | null {
-    const publicRelayUrl = typeof params.publicRelayUrl === 'string' ? params.publicRelayUrl.trim() : '';
-    if (publicRelayUrl.length > 0 && !isLoopbackServerUrl(publicRelayUrl)) {
-        return publicRelayUrl;
-    }
-
-    const relayRuntimeUrl = typeof params.relayRuntimeUrl === 'string' ? params.relayRuntimeUrl.trim() : '';
-    if (relayRuntimeUrl.length > 0 && !isLoopbackServerUrl(relayRuntimeUrl)) {
-        return relayRuntimeUrl;
-    }
-
-    return null;
 }
 
 function buildRelayAccessTargetFromResolvedFormState(params: Readonly<{
@@ -445,21 +428,7 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         }
         checklist.publishSnapshot(activeTaskSnapshot);
     }, [activeTaskSnapshot, checklist.publishSnapshot, phase]);
-    const relayRuntimeResult = React.useMemo(() => {
-        if (!activeTaskSnapshot?.result?.ok) {
-            return null;
-        }
-        const relayRuntime = (activeTaskSnapshot.result.data as {
-            relayRuntime?: { relayUrl?: unknown };
-        } | undefined)?.relayRuntime;
-        return typeof relayRuntime?.relayUrl === 'string' ? relayRuntime.relayUrl : null;
-    }, [activeTaskSnapshot]);
-    const completionRelayUrl = React.useMemo(() => {
-        return resolveRemoteRelayCompletionUrl({
-            publicRelayUrl: props.publicRelayUrl,
-            relayRuntimeUrl: relayRuntimeResult,
-        });
-    }, [props.publicRelayUrl, relayRuntimeResult]);
+    const completionRelayUrl = resolveRemoteRelayCompletionUrl(activeTaskSnapshot?.result, props.publicRelayUrl);
 
     React.useEffect(() => {
         if (phase !== 'execution') {
@@ -535,7 +504,6 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
         privateKeyMaterialDraft,
         props.mode,
         props.onCompleted,
-        relayRuntimeResult,
         completionRelayUrl,
         remoteHostsManagementEnabled,
         remoteHostsSecretMaterialEnabled,

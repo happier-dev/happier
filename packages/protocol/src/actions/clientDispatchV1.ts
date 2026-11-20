@@ -20,6 +20,7 @@ import { isVoiceConversationActionId } from './voiceConversationActionFamily.js'
 import type { SocketRpcAnsweringClientCandidateV1 } from '../rpc/socket.js';
 import { AdmittedHostReviewedChildrenV1Schema, type AdmittedHostReviewedChildrenV1 } from './executor/hostReviewedChildrenV1.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
+import { PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActionIdsV1.js';
 export { withoutClientActionInput } from './clientActionInput.js';
 
 /** One deterministic recovery contract for every client-placed Action family. */
@@ -36,7 +37,7 @@ export function clientActionAmbiguous(clients: readonly SocketRpcAnsweringClient
 export const DESKTOP_UI_ACTION_CLIENT_RPC_METHOD = `${RPC_METHODS.UI_ACTION_EXECUTE}.desktop` as const;
 
 const DESKTOP_ACTION_IDS: ReadonlySet<ActionId> = new Set([
-  ...ACTION_ID_FAMILIES_V1.desktop_shell, ...ACTION_ID_FAMILIES_V1.desktop_windows,
+  ...ACTION_ID_FAMILIES_V1.desktop_shell, ...ACTION_ID_FAMILIES_V1.desktop_windows, PERSONAL_HOME_CREATE_ACTION_ID_V1,
 ]);
 
 /** Desktop effects use the Home's desktop responder, even for an Agent with a bound Session. */

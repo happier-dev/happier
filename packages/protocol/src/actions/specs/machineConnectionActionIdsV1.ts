@@ -1,6 +1,7 @@
 export const MACHINE_REMOVE_ACTION_ID_V1 = 'machines.remove' as const;
 export const MACHINE_REPLACEMENT_SET_ACTION_ID_V1 = 'machines.replacement.set' as const;
 export const MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 = 'machines.replacement.clear' as const;
+export const PERSONAL_HOME_CREATE_ACTION_ID_V1 = 'homes.personal.create' as const;
 
 /** Action identity leaf: schema modules and the registry share these constants. */
 export const MACHINE_RUN_MARKERS_LIST_ACTION_ID = 'machines.runs.list' as const;

@@ -1,8 +1,9 @@
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
-import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { SystemTaskRunState, SystemTaskRunner } from '../types';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import { isLoopbackServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { buildRemoteSshManageHostSystemTaskSpec } from '../specs/remoteSsh/buildRemoteSshManageHostSystemTaskSpec';
 import { buildRemoteSshBootstrapMachineSystemTaskSpec, type RemoteSshPromptResolution } from './buildRemoteSshBootstrapMachineSystemTaskSpec';
 import type { RemoteSshBootstrapFormState, RemoteSshBootstrapPrompt } from './useRemoteSshBootstrapTask';
@@ -14,6 +15,17 @@ export type RemoteSshTaskTarget = Readonly<{
     intent?: 'machineSetup' | 'personalHome.create';
     startSpec?: (spec: SystemTaskSpec) => Promise<string>;
 }>;
+
+export function resolveRemoteRelayCompletionUrl(result: SystemTaskResult | null | undefined, publicRelayUrl?: string | null): string | null {
+    const data = result?.ok ? result.data : null;
+    const relayRuntime = data && typeof data === 'object' && 'relayRuntime' in data ? data.relayRuntime : null;
+    const relayUrl = relayRuntime && typeof relayRuntime === 'object' && 'relayUrl' in relayRuntime ? relayRuntime.relayUrl : null;
+    for (const value of [publicRelayUrl, relayUrl]) {
+        const address = typeof value === 'string' ? value.trim() : '';
+        if (address && !isLoopbackServerUrl(address)) return address;
+    }
+    return null;
+}
 
 /** One imperative task producer for the hook and the Action client. */
 export async function startRemoteSshBootstrapTask(options: RemoteSshTaskTarget, form: RemoteSshBootstrapFormState, promptResolution: RemoteSshPromptResolution = {}): Promise<string> {
