@@ -799,22 +799,17 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         createCandidate: createReceiptCandidate,
     });
     const findTeardownReceipt: Parameters<typeof createDataTeardownForHost>[0]['findReceipt'] = async (input, context) => {
-            let cursor: string | undefined;
-            for (;;) {
-                const result = await storage('deployments.receipts.list', {
-                    serverId: host.serverId, environmentId: input.environmentId, ...(cursor ? { cursor } : {}),
-                }, context);
-                if ('ok' in result && !result.ok && 'errorCode' in result) return refuse(result);
-                const page = DeploymentReceiptListResultV1Schema.parse(result);
-                if (!page.ok) return refuse(page.error);
-                const found = page.items.find(item => item.requestKey === input.requestKey);
-                if (found) {
-                    if (found.targetLinkId !== input.targetLinkId) return refuse('deployment_conflict');
-                    return targetHostReaders.readAnyReceipt({ environmentId: input.environmentId, deploymentId: found.id, context });
-                }
-                if (!page.nextCursor) return null;
-                cursor = page.nextCursor;
-            }
+        const result = await storage('deployments.receipts.list', {
+            serverId: host.serverId, environmentId: input.environmentId, teardownRequestKey: input.requestKey,
+        }, context);
+        if ('ok' in result && !result.ok && 'errorCode' in result) return refuse(result);
+        const selection = DeploymentReceiptListResultV1Schema.parse(result);
+        if (!selection.ok) return refuse(selection.error);
+        const [found] = selection.items;
+        if (!found) return null;
+        if (found.targetLinkId !== input.targetLinkId || found.requestKey !== input.requestKey
+            || found.environmentId !== input.environmentId || found.operation !== 'teardown') return refuse('deployment_conflict');
+        return targetHostReaders.readAnyReceipt({ environmentId: input.environmentId, deploymentId: found.id, context });
     };
     const ownServerTeardown = createOwnServerTeardownForHost({ ...targetHost, sendChild, findReceipt: findTeardownReceipt,
         async *readHistoryHeaders(request) {

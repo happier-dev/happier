@@ -658,6 +658,7 @@ export const DeploymentEnvironmentListInputV1Schema = lazyZodSchema(() => z.stri
     { message: 'Activity selects one Home or Source, without an inventory page or Machine filter.' })));
 export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...deploymentEnvironmentReadAddress,
+  teardownRequestKey: z.optional(DeploymentReceiptMetadataV1Schema.shape.requestKey),
   state: z.optional(DeploymentReceiptMetadataV1Schema.shape.state),
   actorAccountId: z.optional(DeploymentReceiptMetadataV1Schema.shape.requestedByAccountId),
   requestedAtFromMs: z.optional(DeploymentTimestampV1Schema),

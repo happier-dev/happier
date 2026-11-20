@@ -2379,6 +2379,13 @@ settlement and public/stored reads. Plain teardown retains its existing behavior
 These unreleased closed contracts require matching Protocol, Home, daemon and UI
 readers; no new migration, child admission or fallback transport is introduced.
 
+The daemon selects a teardown retry with `teardownRequestKey` on the existing
+Environment receipt list. Home checks current teardown admission and reads the
+exact Environment and request key through the same index used by teardown
+admission. This selector is separate from history paging. Protocol, Home and
+daemon use the same unreleased 0.3 contract. The 0.2 branch has no deployment
+receipt list.
+
 ## Workspace Sync controls (unreleased 0.3)
 
 `workspace.sync.relationship.replace` uses the existing relationship creation

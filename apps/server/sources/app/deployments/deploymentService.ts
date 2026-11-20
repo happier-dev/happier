@@ -111,6 +111,10 @@ export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string
     return receiptResult(current, loaded.row.revision);
 }
 
+export function readDeploymentReceiptByRequestKeyInTx(tx: Tx, environmentId: string, requestKey: string) {
+    return tx.deployment.findUnique({ where: { environmentId_requestKey: { environmentId, requestKey } } });
+}
+
 /** Admission reserves one Environment receipt slot; it never dispatches or observes an effect. */
 export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     input: DeploymentDeployAdmissionInputV1 | DeploymentRollbackAdmissionInputV1 | DeploymentPromoteAdmissionInputV1 | DeploymentTeardownAdmissionInputV1, operation: 'deploy' | 'rollback' | 'promote' | 'teardown',
@@ -130,7 +134,7 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     const promotedFromDeploymentId = 'sourceDeploymentId' in input ? input.sourceDeploymentId : null;
     const reviewed = executionBinding?.deploymentCandidatePublication?.reviewed;
     if (reviewed && !isDeepStrictEqual(projectDeploymentReviewedCandidateV1(input), reviewed)) return deploymentFailure('deployment_conflict');
-    const repeated = await tx.deployment.findUnique({ where: { environmentId_requestKey: { environmentId: input.environmentId, requestKey: input.requestKey } } });
+    const repeated = await readDeploymentReceiptByRequestKeyInTx(tx, input.environmentId, input.requestKey);
     if (repeated) {
         // Artifact identity pins the prepared intent. Its head versions may have
         // advanced through this same receipt's signed stage writer.

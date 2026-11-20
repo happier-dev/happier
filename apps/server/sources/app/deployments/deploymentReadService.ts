@@ -10,7 +10,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_
 import type { Tx } from '@/storage/inTx';
 import { evaluateApiTokenGrantV1, type ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { deploymentFailure, resolveDeploymentEnvironmentAdmissionInTx, projectDeploymentSourceAdmission,
-    canDeployDeploymentEnvironment, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
+    canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, projectDeploymentEnvironmentHeader,
     readDeploymentEnvironmentRequiredSecretUsesInTx, readDeploymentPreviewTemplateEnvironmentId } from './deploymentEnvironmentService';
 import { readEnvironmentSecretGrantCoverageInTx } from './environmentSecretGrantRepository';
@@ -19,7 +19,7 @@ import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './d
 import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 import { openDeploymentReadCursor, refuseDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
-import { projectDeploymentReceiptHeader } from './deploymentService';
+import { projectDeploymentReceiptHeader, readDeploymentReceiptByRequestKeyInTx } from './deploymentService';
 import { admitDeploymentStoredContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import type { MachineDeploymentReferencesInputV1, MachineDeploymentReferencesPageV1, MachineReferenceV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
@@ -491,14 +491,22 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         nextCursor };
 }
 
-/** One newest-first Environment history window; no Artifact header or body census. */
+/** One exact teardown retry or one newest-first history window, without private content. */
 export async function listDeploymentReceiptsInTx(tx: Tx, actorAccountId: string, input: DeploymentReceiptListInputV1,
     authentication: DeploymentAuthentication = {},
     acceptedRead?: AcceptedDeploymentRead,
 ) {
-    const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication,
-        acceptedEnvironmentRead(acceptedRead, input.environmentId));
+    const { serverId, environmentId, teardownRequestKey, ...history } = input;
+    const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, serverId, environmentId, authentication,
+        teardownRequestKey === undefined ? acceptedEnvironmentRead(acceptedRead, environmentId) : undefined);
     if (!loaded.ok) return loaded;
+    if (teardownRequestKey !== undefined) {
+        if (!canTeardownDeploymentEnvironment(loaded.admission, loaded.row)) return deploymentFailure('deployment_access_denied');
+        if (Object.values(history).some(value => value !== undefined)) return deploymentFailure('deployment_invalid');
+        const receipt = await readDeploymentReceiptByRequestKeyInTx(tx, environmentId, teardownRequestKey);
+        if (receipt && receipt.operation !== 'teardown') return deploymentFailure('deployment_conflict');
+        return { ok: true as const, items: receipt ? [projectDeploymentReceiptHeader(receipt)] : [], nextCursor: null };
+    }
     const filters: Prisma.DeploymentWhereInput = { environmentId: input.environmentId,
         ...(input.state ? { state: input.state } : {}),
         ...(input.actorAccountId ? { requestedByAccountId: input.actorAccountId } : {}),

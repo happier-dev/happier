@@ -362,7 +362,25 @@ describe('public Domain storage and native custody', () => {
             // An authorized teammate resolves the same receipt. Home still owns
             // Environment admission and reevaluates it on a new replay request.
             expect((await request(teammate.id, replay)).json()).toEqual(first.json());
+            const read = (accountId: string, environmentId = input.environmentId) => {
+                const query = new URLSearchParams({ serverId, teardownRequestKey: input.requestKey });
+                return app.inject({ method: 'GET', url: `/v1/deployments/environments/${environmentId}/deployments?${query}`,
+                    headers: { 'x-test-user-id': accountId } });
+            };
+            const receiptReads: string[] = [];
+            const stop = observeSqliteRequests({ before: query => {
+                if (query.model === 'Deployment') receiptReads.push(query.action);
+            } });
+            const selected = await read(teammate.id).finally(stop);
+            expect(selected.statusCode, selected.body).toBe(200);
+            expect(selected.json()).toEqual({ ok: true, items: [expect.objectContaining({
+                environmentId: input.environmentId, targetLinkId: input.targetLinkId, requestKey: input.requestKey,
+            })], nextCursor: null });
+            expect(receiptReads).toEqual(['findUnique']);
+            expect((await read(other.owner.id, other.environment.id)).json()).toEqual({ ok: true, items: [], nextCursor: null });
             await db.teamMembership.delete({ where: { teamId_accountId: { teamId: team.id, accountId: teammate.id } } });
+            expect((await read(teammate.id)).statusCode).toBe(404);
+            expect((await read(original.foreign.id)).statusCode).toBe(404);
             const withdrawn = await request(teammate.id, replay);
             expect(withdrawn.statusCode).toBe(404);
             expect(withdrawn.json()).toMatchObject({ ok: false, error: 'deployment_unavailable' });
