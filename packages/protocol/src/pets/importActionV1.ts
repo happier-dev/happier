@@ -5,9 +5,10 @@ import { computeSha256HexDigest } from '../crypto/canonicalDigest.js';
 import { AccountPetCreateRequestV1Schema, AccountPetDeleteRequestV1Schema, AccountPetLibraryEntryV1Schema, type AccountPetCreateRequestV1 } from './accountLibrary.js';
 import { PET_PACKAGE_LIMITS_V1 } from './constants.js';
 import { PetRegistryOriginV1Schema } from './portablePetV1.js';
-import { DaemonPetImportAccountPackageRequestV1Schema, DaemonPetValidatePackageResponseV1Schema, PetPackageValidationResultV1Schema, hasPetPackageLocatorV1 } from './daemonRpc.js';
+import { DaemonPetImportAccountPackageRequestV1Schema, DaemonPetValidatePackageResponseV1Schema, PetPackageValidationResultV1Schema, hasPetPackageLocatorV1, type DaemonPetValidatePackageRequestV1 } from './daemonRpc.js';
 import { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1 } from '../actions/actionIdsPetsV1.js';
 import type { ApprovalExecutionV2 } from '../approvals/approvalRequestV1.js';
+import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
 
 /** Portable sources carry either registry identity or the Account create owner's package envelope. */
 export const PetPortableImportSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -50,6 +51,24 @@ export const PetImportPreviewV1Schema = lazyZodSchema(() => z.strictObject({
   previewHandle: DaemonPetValidatePackageResponseV1Schema.def.options[0].def.shape.previewHandle.def.innerType,
 }));
 export type PetImportPreviewV1 = z.infer<typeof PetImportPreviewV1Schema>;
+
+/** Every host prepares the same validated package and opaque locator before approval. */
+export async function prepareMachinePetImportV1(
+  input: PetImportInputV1,
+  validate: (machineId: string, request: DaemonPetValidatePackageRequestV1) => Promise<unknown>,
+): Promise<Readonly<{ input: PetImportInputV1; preview: PetImportPreviewV1 }> | ActionExecuteFailure> {
+  if (input.source.kind !== 'machine') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  const source = input.source;
+  const response = DaemonPetValidatePackageResponseV1Schema.parse(await validate(source.machineId, {
+    ...(source.packagePath ? { packagePath: source.packagePath } : {}),
+    ...(source.sourceKey ? { sourceKey: source.sourceKey } : {}), strict: true,
+  }));
+  if (!response.ok) return response;
+  if (!response.validation.ok) return { ok: false, errorCode: 'validation_failed', error: 'validation_failed',
+    details: { validation: response.validation } };
+  const preview = PetImportPreviewV1Schema.parse({ validation: response.validation, previewHandle: response.previewHandle });
+  return { input: { source: { kind: 'machine', machineId: source.machineId, sourceKey: preview.previewHandle.sourceKey } }, preview };
+}
 
 export const PetImportOutcomeV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({

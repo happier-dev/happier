@@ -1,7 +1,7 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { PET_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
-import { DaemonPetImportResponseV1Schema, DaemonPetValidatePackageResponseV1Schema, PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
-import { buildAccountPetCreateRequestV1, PetImportPreviewV1Schema } from '@happier-dev/protocol/pets/importActionV1';
+import { DaemonPetImportResponseV1Schema, PET_DAEMON_RPC_METHODS } from '@happier-dev/protocol/pets/daemonRpc';
+import { buildAccountPetCreateRequestV1, prepareMachinePetImportV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { findMatchingAccountPetV1 } from '@happier-dev/protocol/pets/portablePetV1';
 import { isAccountPetEncryptedLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 import type { RegistryPetAcquisitionV1 } from '@happier-dev/protocol/registries/registryPetV1';
@@ -17,19 +17,14 @@ export function createUiPetImportPrepare(account: PetActionAccount | null): NonN
     return async ({ input, context }) => {
         if (!account) return { ok: false, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' };
         account.assertCurrent(); context.signal?.throwIfAborted();
-        if (input.source.kind !== 'machine') return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-        const source = input.source;
-        const response = DaemonPetValidatePackageResponseV1Schema.parse(await machineRpcWithServerScope({
-            serverId: account.serverId, machineId: source.machineId, method: PET_DAEMON_RPC_METHODS.VALIDATE_PACKAGE,
-            payload: { ...(source.packagePath ? { packagePath: source.packagePath } : {}),
-                ...(source.sourceKey ? { sourceKey: source.sourceKey } : {}), strict: true }, signal: context.signal,
-        }));
-        account.assertCurrent(); context.signal?.throwIfAborted();
-        if (!response.ok) return response;
-        if (!response.validation.ok) return { ok: false, errorCode: 'validation_failed', error: 'validation_failed',
-            details: { validation: response.validation } };
-        const preview = PetImportPreviewV1Schema.parse({ validation: response.validation, previewHandle: response.previewHandle });
-        return { input: { source: { kind: 'machine', machineId: source.machineId, sourceKey: preview.previewHandle.sourceKey } }, preview };
+        return prepareMachinePetImportV1(input, async (machineId, payload) => {
+            const response = await machineRpcWithServerScope({
+                serverId: account.serverId, machineId, method: PET_DAEMON_RPC_METHODS.VALIDATE_PACKAGE,
+                payload, signal: context.signal,
+            });
+            account.assertCurrent(); context.signal?.throwIfAborted();
+            return response;
+        });
     };
 }
 

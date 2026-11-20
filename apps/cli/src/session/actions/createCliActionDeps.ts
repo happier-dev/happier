@@ -99,6 +99,7 @@ export type { ResumeInactiveSessionWhenUsageLimitReady, ScheduleInactiveSessionU
 import { createSessionBoundScmAction } from '@/scm/actions/sessionBoundAction';
 import { createCliMemoryActionDeps } from './cliActionDeps/memory';
 import { createCliMachineActionTransport } from './cliActionDeps/machineTransport';
+import { createCliPetImportPrepare } from './cliActionDeps/pets';
 import type { isOriginalSessionInputAccountActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import type { getServerProfile } from '@/server/serverProfiles';
 import type { SessionModelSelectionV1, SessionSpawnNewInputV2, SessionCreationDirectoryApprovalV1, AgentExecutionTargetV1, SessionInputAdmissionResultV1 } from '@happier-dev/protocol';
@@ -1444,6 +1445,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...(approvalsStore?.promptLibraryStore.organization ? { artifactFolders: approvalsStore.promptLibraryStore.organization,
       promptStacks: approvalsStore.promptLibraryStore.organization, skillRules: approvalsStore.skillRules } : {}),
     prepareLocalServiceStartApproval,
+    preparePetImport: createCliPetImportPrepare(callMachineAction),
     browserProfileLoginsImport: async ({ input, context }) => {
       const rpc = (call: Readonly<{ machineId: string; method: string; input: unknown }>) => callMachineAction({ machineId: call.machineId,
         method: call.method, request: call.input, context, signal: context.signal, exactMachine: true,
