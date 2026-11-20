@@ -12,7 +12,7 @@ import type { ComputerScope, ComputerMachinePersonScope, ComputerActionExecute }
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
-import { useComputerScreenStream, type ComputerScreenTransport } from './useComputerScreenStream';
+import type { ComputerScreenTransport } from './useComputerScreenStream';
 import { useComputerSessionControl } from './useComputerSessionControl';
 import { resolveComputerRecovery } from '@/sync/domains/computer/targets';
 import { useComputerDriverRepair } from './useComputerDriverRepair';
@@ -67,7 +67,7 @@ export function useComputerScreen(props: Readonly<{
     }, writeClipboard), [clipboardOperation, writeClipboard]);
     const driverRepair = useComputerDriverRepair(scope, accountLifetime, control.refresh,
         control.failure ? resolveComputerRecovery({ kind: 'failed', code: control.failure, details: control.details }, 'use') : null);
-    const stream = useComputerScreenStream({
+    const streamInput = {
         scope,
         machineId: scope.machineId,
         serverId,
@@ -78,11 +78,8 @@ export function useComputerScreen(props: Readonly<{
         inputEnabled: control.canInput,
         clipboardShortcut,
         transport: props.transport,
-    });
-    const streamStatus = stream?.playerState?.phase ?? null;
-    const refreshControl = control.refresh;
-    // Source availability changes are meaningful; changing image URLs are not status invalidations.
-    React.useEffect(() => { if (enabled) refreshControl(); }, [enabled, refreshControl, streamStatus]);
+        onStatusChange: control.refresh,
+    };
 
     // Only while the capsule offers Take control: a see-only share or a machine denying input has none.
     const access = control.selection?.access ?? control.selection?.approvalDisplay.access;
@@ -140,7 +137,8 @@ export function useComputerScreen(props: Readonly<{
         openSettings: control.openSettings,
         onOpenSettings: control.requestSettings,
         onRefresh: control.refresh,
-        stream,
+        stream: null,
+        streamInput,
         presence: control.presence,
         agentActing: control.agentActing,
         checking: control.busy === 'check',

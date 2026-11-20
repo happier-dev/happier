@@ -22,11 +22,18 @@ import { sealMachineLiveStreamEnvelopeV1 } from '@happier-dev/protocol/machines/
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 
 const viewport = vi.hoisted(() => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }));
+const viewerHostRenders = vi.hoisted(() => ({ count: 0 }));
 
 vi.mock('react-native', async () => {
+    const React = await import('react');
     const { createReactNativeWebMock, createMeasuredImageMock } = await import('@/dev/testkit/mocks/reactNative');
     // Image measurement is native/browser-owned; the actual stream and picture remain real.
     return createReactNativeWebMock({ Image: createMeasuredImageMock({ width: 800, height: 600 }),
+        // Count native host renders without replacing the Computer model, controls or ingestion.
+        View: React.forwardRef<unknown, Record<string, unknown>>(function CountedView(props, ref) {
+            if (props.testID === 'computer-screen-viewer') viewerHostRenders.count++;
+            return React.createElement('View', { ...props, ref });
+        }),
         useWindowDimensions: () => viewport });
 });
 
@@ -227,6 +234,7 @@ describe('SessionComputerScreenPane retained source', () => {
         phase = 'mounting the real Computer body';
         const { SessionComputerScreenPane } = await import('./SessionComputerScreenPane');
         const { ComputerScreenViewer } = await import('./ComputerScreenViewer');
+        const { ComputerScreenStreamScope } = await import('./ComputerScreenStreamScope');
         const { useRouter } = await import('expo-router');
         const store = createRetainedPresentationSlotsStore();
         const destinationId = 'computer-destination';
@@ -341,6 +349,7 @@ describe('SessionComputerScreenPane retained source', () => {
         const screen = await renderScreen(<Harness shell="pane" />, {
             createNodeMock: () => ({ measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(16, 120, placeholderSize.width, placeholderSize.height) }),
         });
+        const readStream = () => screen.root.findByType(ComputerScreenStreamScope).props.runtime;
         const measurePicture = async () => { await act(async () => {
             invokeTestInstanceHandler(screen.findByTestId(`browser-keepalive-placeholder-${slotId}`)!, 'onLayout', {});
         }); };
@@ -348,7 +357,7 @@ describe('SessionComputerScreenPane retained source', () => {
             let mountedStreamId = '';
             await vi.waitFor(async () => {
                 await flushHookEffects();
-                const stream = screen.root.findByType(ComputerScreenViewer).props.stream;
+                const stream = readStream();
                 if (!stream?.input) throw new Error('The remounted Computer stream is not ready');
                 mountedStreamId = stream.input.streamId;
                 expect(activeStreams.has(mountedStreamId)).toBe(true);
@@ -361,10 +370,10 @@ describe('SessionComputerScreenPane retained source', () => {
             try {
                 const body = screen.root.findByType(ComputerScreenViewer);
                 lastBody = { shared: body.props.shared, title: body.props.targetTitle,
-                    presence: body.props.presence, stream: body.props.stream !== null,
-                    streamDiagnostic: body.props.stream?.playerState?.diagnostic,
-                    player: body.props.stream?.playerState,
-                    input: body.props.stream?.input?.streamId ?? null,
+                    presence: body.props.presence, stream: readStream() !== null,
+                    streamDiagnostic: readStream()?.playerState?.diagnostic,
+                    player: readStream()?.playerState,
+                    input: readStream()?.input?.streamId ?? null,
                     socketId: apiSocket.getSocketId(),
                     sockets: network.socketBoundaries.map(boundary => ({ id: boundary.socket.id, connected: boundary.socket.connected })),
                     slots: store.getPortalSnapshot().map(entry => ({ visible: entry.visible, geometry: entry.geometry })),
@@ -396,10 +405,10 @@ describe('SessionComputerScreenPane retained source', () => {
                     return parsed.success ? [parsed.data.actionId] : [];
                 }) })).toBe(true);
             expect(body.props.targetTitle).toBe('Retained window');
-            expect(body.props.stream).not.toBeNull();
+            expect(readStream()).not.toBeNull();
             phase = 'waiting for real grant and daemon stream admission';
             await act(async () => { await vi.waitFor(() => expect(activeStreams.size,
-                JSON.stringify({ stream: body.props.stream?.playerState, http: network.httpRequests.map(request => request.url) })).toBe(1)); });
+                JSON.stringify({ stream: readStream()?.playerState, http: network.httpRequests.map(request => request.url) })).toBe(1)); });
             await flushHookEffects();
             expect(activeStreams.size).toBe(1);
             const streamId = await waitForMountedStream();
@@ -415,11 +424,31 @@ describe('SessionComputerScreenPane retained source', () => {
             });
             await vi.waitFor(async () => {
                 await flushHookEffects();
-                expect(body.props.stream?.playerState?.lastFrameAtMs).toBe(1000);
+                expect(readStream()?.playerState?.lastFrameAtMs).toBe(1000);
             });
             const picture = () => screen.root.findAllByType('Image')
                 .filter(image => image.props.testID?.includes('player'))
                 .map(image => image.props.source?.uri);
+            phase = 'advancing real frames without rerendering the viewer controls';
+            await flushHookEffects();
+            viewerHostRenders.count = 0;
+            for (const [offset, payloadBase64] of ['AgID', 'AwID', 'BAID'].entries()) {
+                const previousPicture = picture();
+                const nextFrame = await sealMachineLiveStreamEnvelopeV1({
+                    v: 1, sourceMachineId: machineId, targetMachineId: machineId, viewerSocketId: apiSocket.getSocketId(),
+                    message: { kind: 'frame', frame: { v: 1, streamId, sequence: offset + 2,
+                        timestampMs: 1000, codecId: 'image.frame.v1', payloadKind: 'image_keyframe',
+                        payloadEncoding: 'binary_base64', payloadBase64, payloadSizeBytes: 3 } },
+                }, { mode: 'plain' });
+                if (!nextFrame.ok) throw new Error(nextFrame.code);
+                await act(async () => {
+                    for (const socket of network.socketBoundaries) socket.trigger(MACHINE_LIVE_STREAM_SOCKET_EVENT, nextFrame.value);
+                });
+                await vi.waitFor(() => expect(picture()).not.toEqual(previousPicture));
+                await flushHookEffects();
+            }
+            console.info('Computer frame render count', JSON.stringify({ frames: 3, viewerHostRenders: viewerHostRenders.count }));
+            expect(viewerHostRenders.count).toBe(0);
             const lastPicture = picture();
             expect(lastPicture).toHaveLength(1);
             const reflowSamples: Array<{ placement: string; durationMs: number; pictures: number; starts: number; live: number }> = [];
@@ -477,7 +506,7 @@ describe('SessionComputerScreenPane retained source', () => {
                 const entry = store.getPortalSnapshot().find(entry => entry.slotId === slotId);
                 transitionPictures.push({ pictures: picture().length, visible: entry?.visible === true,
                     placed: Boolean(entry?.geometry && entry.geometry.width > 0 && entry.geometry.height > 0),
-                    streamId: screen.root.findByType(ComputerScreenViewer).props.stream?.input?.streamId ?? null,
+                    streamId: readStream()?.input?.streamId ?? null,
                     starts: streamStarts });
             };
             await reflow('routed');
@@ -492,7 +521,7 @@ describe('SessionComputerScreenPane retained source', () => {
             expect(store.getPortalSnapshot().map(entry => entry.slotId)).toEqual([slotId]);
             expect(screen.root.findByType(ComputerScreenViewer)).toBe(body);
             expect(picture()).toEqual(lastPicture);
-            expect(body.props.stream?.input?.streamId).toBe(streamId);
+            expect(readStream()?.input?.streamId).toBe(streamId);
             expect(streamStarts).toBe(startsBeforePhone);
             phase = 'returning from phone Details through the actual Chat route';
             await act(async () => {
@@ -502,7 +531,7 @@ describe('SessionComputerScreenPane retained source', () => {
             expect(workspace.tabs[workspace.groups[workspace.focusedGroupId].activeTabId].target.kind).toBe('session');
             expect(screen.findByTestId('session-viewer-sticky')).not.toBeNull();
             expect(screen.root.findByType(ComputerScreenViewer)).toBe(body);
-            expect(body.props.stream?.input?.streamId).toBe(streamId);
+            expect(readStream()?.input?.streamId).toBe(streamId);
             expect(streamStarts).toBe(startsBeforePhone);
             expect(picture()).toEqual(lastPicture);
             viewport.width = 1440;
@@ -525,7 +554,7 @@ describe('SessionComputerScreenPane retained source', () => {
             expect(screen.root.findByType(ComputerScreenViewer)).toBe(body);
             expect(activeStreams.size).toBe(0);
             const parkedPicture = picture();
-            const parkedInput = body.props.stream?.input;
+            const parkedInput = readStream()?.input;
             const parkedReads = network.requests.length;
             await act(async () => { storage.getState().applySessions([{ ...session, thinking: true }]); });
             await flushHookEffects();
@@ -537,8 +566,8 @@ describe('SessionComputerScreenPane retained source', () => {
             expect(parkedPicture).toEqual(lastPicture);
             expect(parkedInput).toBeNull();
             expect(picture()).toEqual(lastPicture);
-            expect(body.props.stream?.input?.streamId).toBe(streamId);
-            expect(body.props.stream?.playerState?.lastFrameAtMs).toBe(1000);
+            expect(readStream()?.input?.streamId).toBe(streamId);
+            expect(readStream()?.playerState?.lastFrameAtMs).toBe(1000);
             expect(screen.root.findByType(ComputerScreenViewer)).toBe(body);
             expect(body.props.targetTitle).toBe('Retained window');
             expect(store.getPortalSnapshot().map(entry => entry.slotId)).toEqual([slotId]);
@@ -582,7 +611,7 @@ describe('SessionComputerScreenPane retained source', () => {
             placedPicture();
             await waitForMountedStream();
             expect(picture()).toEqual(lastPicture);
-            expect(body.props.stream?.input?.streamId).toBe(streamId);
+            expect(readStream()?.input?.streamId).toBe(streamId);
             expect(activeStreams.size).toBe(1);
             expect(streamStarts).toBe(startsBeforeViewports);
             console.info('Computer viewer placement measurement', JSON.stringify(reflowSamples));
@@ -640,7 +669,7 @@ describe('SessionComputerScreenPane retained source', () => {
             expect(reconnectedStreamId).not.toBe(streamId);
             expect(streamStarts).toBe(startsBeforeReconnect + 1);
             expect(screen.root.findByType(ComputerScreenViewer)).toBe(body);
-            expect(body.props.stream?.playerState?.phase).toBe('reconnecting');
+            expect(readStream()?.playerState?.phase).toBe('reconnecting');
             expect(picture()).toEqual(lastPicture);
             recordContinuity = null;
             expect(recoveryPictures.length).toBeGreaterThan(0);
@@ -663,7 +692,7 @@ describe('SessionComputerScreenPane retained source', () => {
             await flushHookEffects();
             const mountedStreamId = await waitForMountedStream();
             expect(mountedStreamId).not.toBe(streamId);
-            expect(screen.root.findByType(ComputerScreenViewer).props.stream?.playerState?.phase).not.toBe('error');
+            expect(readStream()?.playerState?.phase).not.toBe('error');
             expect(viewerController!.presence.get('computer')?.presence.kind).toBe('agent');
             const frame = await sealMachineLiveStreamEnvelopeV1({
                 v: 1, sourceMachineId: machineId, targetMachineId: machineId, viewerSocketId: apiSocket.getSocketId(),
@@ -678,7 +707,7 @@ describe('SessionComputerScreenPane retained source', () => {
             });
             await vi.waitFor(async () => {
                 await flushHookEffects();
-                const player = screen.root.findByType(ComputerScreenViewer).props.stream?.playerState;
+                const player = readStream()?.playerState;
                 expect(player?.lastFrameAtMs, JSON.stringify(player)).toBe(1234);
             });
             expect(viewerController!.presence.get('computer')?.presence.kind).toBe('agent');

@@ -9,8 +9,6 @@ import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionE
 
 import {
     containRect,
-    resolveBrowserStreamedSurfaceState,
-    useFirstFrameSize,
     type BrowserStreamedSurfaceRuntime,
 } from '@/components/browser/adapters/BrowserStreamedTarget';
 import { buildBrowserStreamSidebandControl } from '@/components/browser/adapters/browserStreamSidebandControl';
@@ -41,6 +39,13 @@ import { keepHyphenatedNameTogether } from '@/utils/sessions/machineDisplayNames
 import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 
 import { ComputerPermissionCard, type ComputerOpenSettingsState } from './ComputerPermissionCard';
+import {
+    ComputerScreenStreamOwner,
+    ComputerScreenStreamScope,
+    useComputerScreenChrome,
+    useComputerScreenPicture,
+    type ComputerScreenStreamRequest,
+} from './ComputerScreenStreamScope';
 
 /** Native click, release-time atomic drag, scroll and keys share the registered source relay. */
 const SCREEN_INPUT_KINDS: ReadonlySet<LiveStreamInputGesture['kind']> = new Set(['tap', 'drag', 'wheel', 'keyboard_text', 'keyboard_key']);
@@ -131,6 +136,8 @@ export type ComputerScreenViewerProps = Readonly<{
     /** The owner has not answered the initial share-selection read yet. */
     selectionPending?: boolean;
     stream: BrowserStreamedSurfaceRuntime | null;
+    /** Live callers leave frame ingestion beneath the control model; specimens may supply `stream`. */
+    streamInput?: ComputerScreenStreamRequest;
     onRemoteActionsChange?: (actions: RemoteViewerHostActions | null) => void;
     presence: BrowserCopresence;
     /** The agent's action is in flight ("is using"), not merely allowed ("can use"). */
@@ -299,23 +306,37 @@ function ViewerStreamInput(props: Readonly<{
  * same takeover, except while a stop is unconfirmed: then nobody can use the window from Happier.
  */
 export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.ReactElement {
+    const body = <ComputerScreenViewerBody {...props} />;
+    return props.streamInput
+        ? <ComputerScreenStreamOwner input={props.streamInput}>{body}</ComputerScreenStreamOwner>
+        : <ComputerScreenStreamScope runtime={props.stream}>{body}</ComputerScreenStreamScope>;
+}
+
+function ComputerStreamPicture(props: Readonly<{ testID: string }>): React.ReactElement | null {
+    const runtime = useComputerScreenPicture();
+    return runtime?.playerState
+        ? <LiveStreamPlayer testID={props.testID} state={runtime.playerState} statusOwnedByHost />
+        : null;
+}
+
+function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.ReactElement {
     const { theme } = useUnistyles();
     // The Details pane sits under the phone cockpit's floating tab bar, so its stage (and the presence
     // capsule on it) ends above that bar like every other cockpit pane; the floating frame needs none.
     const bottomChromeHeight = useSessionCockpitBottomChromeHeight();
     const testID = props.testID ?? 'computer-screen-viewer';
-    const playerState = props.stream?.playerState ?? null;
-    const streamSurfaceState = props.shared ? resolveBrowserStreamedSurfaceState(playerState) : 'unavailable';
+    const stream = useComputerScreenChrome();
+    const streamSurfaceState = props.shared ? stream.surfaceState : 'unavailable';
     // A stream that stopped on a failure (it carries a reason) did not end because the window closed:
     // say it is unavailable, with its code and Retry, never "closed" (the source may still be shared).
-    const surfaceState = streamSurfaceState === 'ended' && playerState?.diagnostic?.reasonCode ? 'unavailable' : streamSurfaceState;
+    const surfaceState = streamSurfaceState === 'ended' && stream.diagnosticCode ? 'unavailable' : streamSurfaceState;
     const pictureUp = surfaceState === 'live' || surfaceState === 'stalled';
     const [viewport, setViewport] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
         if (width > 0 && height > 0) setViewport((current) => (current && current.width === width && current.height === height ? current : { width, height }));
     }, []);
-    const frameSize = useFirstFrameSize(pictureUp ? playerState?.lastFrameUrl : null, playerState?.phase);
+    const frameSize = stream.frameSize;
     // A finger's input bar stands at the foot of the stage. The picture fits above it, with the bar's own
     // gap, so its labels stand on the stage and never on the remote screen, whatever glass the person chose.
     // The tallest bar seen holds that room: closing a panel never slides the picture back under it.
@@ -326,7 +347,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         const room = stageHeight > 0 ? 2 * (stageHeight - y) - height : 0;
         setControlsRoom(current => room > current ? room : current);
     }, [viewport?.height]);
-    const failure = props.failure ?? playerState?.diagnostic?.reasonCode;
+    const failure = props.failure ?? stream.diagnosticCode;
     const failureCause = props.failure ? props.failureCause : undefined;
     const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure, details: props.failureDetails }, resolveComputerAccess(props.access)) : null;
     const needsCapture = recovery?.action === 'capture';
@@ -383,7 +404,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
             : undefined;
     const inputOpen = surfaceState === 'live' && !hasRecovery
         && props.presence.kind !== 'unconfirmed' && props.presence.kind !== 'stopping';
-    const pictureArea = viewport && inputOpen && props.stream?.input && controlsRoom > 0 && controlsRoom < viewport.height
+    const pictureArea = viewport && inputOpen && stream.input && controlsRoom > 0 && controlsRoom < viewport.height
         ? { width: viewport.width, height: viewport.height - controlsRoom } : viewport;
     // A shared window is a small picture: it fits down to the stage but is never drawn past its own
     // pixels, so a small window stays sharp, centred on the neutral stage, instead of being blown up.
@@ -396,8 +417,8 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
         onPictureChange?.({ up: pictureUp, size: frameWidth && frameHeight ? { width: frameWidth, height: frameHeight } : null });
     }, [frameHeight, frameWidth, onPictureChange, pictureUp]);
 
-    const pausedAtMs = playerState?.lastFrameAtMs;
-    const onRetryStream = props.stream?.onRetry;
+    const pausedAtMs = stream.pausedAtMs;
+    const onRetryStream = stream.onRetry;
     const needsPermission = computerCaptureNeedsPermission(props);
     const stage = needsPermission && props.grants && props.onOpenSettings ? (
         <ComputerStateStage testID={`${testID}-permission`}>
@@ -452,7 +473,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 action={{ label: t('computerUse.request.choose'), onPress: props.onChooseWindow }}
             />
         </ComputerStateStage>
-    ) : props.selectionPending || surfaceState === 'connecting' || (props.stream?.connecting && surfaceState === 'unavailable') ? (
+    ) : props.selectionPending || surfaceState === 'connecting' || (stream.connecting && surfaceState === 'unavailable') ? (
         <ComputerStateStage testID={`${testID}-connecting`}>
             <SurfaceStateCard
                 kind="loading"
@@ -472,7 +493,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 action={{ label: t('computerUse.request.choose'), onPress: props.onChooseWindow }}
             />
         </ComputerStateStage>
-    ) : surfaceState === 'unavailable' || !playerState ? (
+    ) : surfaceState === 'unavailable' || !stream.hasPlayer ? (
         <ComputerStateStage testID={`${testID}-unavailable`}>
             <SurfaceStateCard
                 testID={`${testID}-unavailable-card`}
@@ -480,16 +501,16 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                 iconName="eye-slash"
                 title={t('computerUse.presentation.unavailableTitle')}
                 reason={unavailableReason}
-                diagnosticCode={playerState?.diagnostic?.reasonCode}
-                action={onRetryStream && playerState ? { label: t('common.retry'), onPress: onRetryStream } : undefined}
+                diagnosticCode={stream.diagnosticCode}
+                action={onRetryStream && stream.hasPlayer ? { label: t('common.retry'), onPress: onRetryStream } : undefined}
             />
         </ComputerStateStage>
     ) : (
         <View style={stylesheet.fill} testID={`${testID}-${surfaceState}`}>
-            <RemoteViewerStage key={props.stream?.input?.viewerKey} viewerKey={props.stream?.input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
-                enabled={Boolean(props.stream?.input && viewport && pageRect && inputOpen)} testID={testID}
-                renderInput={controls => props.stream?.input && viewport && pageRect && inputOpen ? (
-                    <ViewerStreamInput input={props.stream.input} viewport={viewport} content={pageRect} controls={controls}
+            <RemoteViewerStage key={stream.input?.viewerKey} viewerKey={stream.input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
+                enabled={Boolean(stream.input && viewport && pageRect && inputOpen)} testID={testID}
+                renderInput={controls => stream.input && viewport && pageRect && inputOpen ? (
+                    <ViewerStreamInput input={stream.input} viewport={viewport} content={pageRect} controls={controls}
                         controlling={props.presence.kind === 'human'} onRemoteActionsChange={props.onRemoteActionsChange}
                         onControlsLayout={onControlsLayout}
                         label={t('computerUse.presentation.inputA11y', {target})} testID={`${testID}-input`} />
@@ -500,7 +521,7 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                     ? { position: 'absolute', left: pageRect.x, top: pageRect.y, width: pageRect.width, height: pageRect.height }
                     : stylesheet.fill}
             >
-                <LiveStreamPlayer testID={`${testID}-player`} state={playerState} statusOwnedByHost />
+                <ComputerStreamPicture testID={`${testID}-player`} />
             </View>
             </RemoteViewerStage>
             {surfaceState === 'stalled' ? (
@@ -516,8 +537,8 @@ export function ComputerScreenViewer(props: ComputerScreenViewerProps): React.Re
                     text={pausedAtMs
                         ? t('computerUse.presentation.paused', { time: formatFrameTime(pausedAtMs) })
                         : t('computerUse.presentation.stalled')}
-                    busy={playerState.phase === 'reconnecting'}
-                    action={onRetryStream && playerState.phase !== 'reconnecting'
+                    busy={stream.phase === 'reconnecting'}
+                    action={onRetryStream && stream.phase !== 'reconnecting'
                         ? { label: t('common.retry'), onPress: onRetryStream }
                         : undefined}
                 />

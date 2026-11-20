@@ -29,7 +29,7 @@ export type ComputerScreenTransport = Readonly<{
  * the streamed browser use. Viewer input goes back on the same relay as the source's sideband controls;
  * the daemon turns the person's tap or key into a takeover and drains the agent first (W7).
  */
-export function useComputerScreenStream(input: Readonly<{
+export type ComputerScreenStreamInput = Readonly<{
     scope: ComputerScope;
     machineId: string | null;
     serverId: string | null;
@@ -40,7 +40,9 @@ export function useComputerScreenStream(input: Readonly<{
     inputEnabled?: boolean;
     clipboardShortcut?: RemoteViewerClipboardShortcut;
     transport?: ComputerScreenTransport;
-}>): BrowserStreamedSurfaceRuntime | null {
+}>;
+
+export function useComputerScreenStream(input: ComputerScreenStreamInput): BrowserStreamedSurfaceRuntime | null {
     const machineId = input.machineId?.trim() ?? '';
     const serverId = input.serverId?.trim() || input.accountLifetime?.scope.serverId || '';
     // Like the retained Browser, parking suspends ingestion, not source/socket identity.
@@ -97,6 +99,9 @@ export function useComputerScreenStream(input: Readonly<{
     }, [socket, sourceId, streamId, viewerSocketId]);
     const playerState = sourceId ? ingestion.playerStatesBySimulatorId[sourceId] ?? null : null;
     const machineName = input.machineName ?? null;
+    const viewerInput = React.useMemo(() => inputEnabled && sendControl && streamId && sourceId
+        ? { sourceId, streamId, viewerKey, send: sendControl, clipboardShortcut: input.clipboardShortcut }
+        : null, [input.clipboardShortcut, inputEnabled, sendControl, sourceId, streamId, viewerKey]);
     return React.useMemo<BrowserStreamedSurfaceRuntime | null>(() => {
         if (!sourceId) return null;
         return {
@@ -104,8 +109,7 @@ export function useComputerScreenStream(input: Readonly<{
             connecting: !socket || !playerState,
             playerState,
             onRetry: ingestion.retry,
-            input: inputEnabled && sendControl && streamId ? { sourceId, streamId, viewerKey, send: sendControl,
-                clipboardShortcut: input.clipboardShortcut } : null,
+            input: viewerInput,
         };
-    }, [ingestion.retry, input.clipboardShortcut, inputEnabled, machineName, playerState, sendControl, socket, sourceId, streamId, viewerKey]);
+    }, [ingestion.retry, machineName, playerState, socket, sourceId, viewerInput]);
 }
