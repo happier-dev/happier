@@ -24,7 +24,7 @@ import { mkdtemp, mkdir, writeFile, chmod, rm, readFile, realpath } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
-import { resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { prepareManagedGuestCliBuildInput, resolveRemoteInstalledFirstPartyBinaryPath } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { promisify } from 'node:util';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -51,6 +51,9 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodePlainArtifactStoredContent, ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { PluginError } from '@happier-dev/cli-common/plugins/errors';
+import type { JsonValue } from '@happier-dev/protocol';
+import { ManagedMachineControllerError } from './controllerErrors';
 
 const trustBoundary = vi.hoisted(() => ({ stopScan: false }));
 vi.mock('node:child_process', async original => {
@@ -151,27 +154,73 @@ exit 91
 
 describe('Session-target authority for managed provider channel roles', () => {
     it.each(['manager', 'member', 'same-cli', 'default', 'configuration-changed', 'codec-only',
-        'latest-configuration-changed', 'optin-removed', 'deferred-approval', 'latest-already-rebuilt'] as const)(
-      'consumes automatic prepared rebuild through first acquisition (%s)', async scenario => {
+        'latest-configuration-changed', 'optin-removed', 'deferred-approval', 'latest-already-rebuilt',
+        'cloud-same-cli', 'cloud-new-cli', 'cloud-stale', 'failed-image', 'absent-image', 'unknown-image', 'refused-image'] as const)(
+      'selects prepared or cold launch through first acquisition (%s)', async scenario => {
         await withConfiguredDaemonTestHome({ prefix: 'first-use-preparation-' }, async () => {
-            await installableGuestCliPayload();
-            const localPayloadRoot = process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT!;
-            vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: localPayloadRoot, identity: 'a'.repeat(64) }));
-            const manifest = normalizePluginManifestV2(createMachineProvisionerSpecializedPreparationAuthorFixture().manifest);
-            const provider = { pluginId: manifest.id, localId: manifest.contributes.machineProvisioners[0]!.id };
+            const cloud = scenario.startsWith('cloud-');
+            const guest = { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } as const;
+            const fixtureManifest = createMachineProvisionerSpecializedPreparationAuthorFixture().manifest;
+            const manifest = normalizePluginManifestV2(cloud ? { ...fixtureManifest, contributes: {
+                ...fixtureManifest.contributes, machineProvisioners: fixtureManifest.contributes.machineProvisioners.map(provisioner => ({
+                    ...provisioner, preparation: { ...provisioner.preparation!, cliPayloadDelivery: 'guest-download' },
+                })),
+            } } : fixtureManifest);
+            const provisioner = manifest.contributes.machineProvisioners[0]!;
+            const provider = { pluginId: manifest.id, localId: provisioner.id };
             const launch = { provider, schemaVersion: 1, name: 'Admitted name', choices: { name: 'local' } };
             const artifact = (name: string) => ({ contributionRef: provider, schemaVersion: 1, value: { launch: { name } } });
             let inspectedArtifact = artifact('old-image');
+            const nativeOperationRef = { contributionRef: provider, schemaVersion: 1, value: { claimId: 'native-image' } };
+            const refusal = scenario === 'unknown-image' ? 'native_observation_unavailable'
+                : scenario === 'refused-image' ? 'native_authorization_failed' : undefined;
             const acquired: unknown[] = [];
             const h = harness({ nativeOptions: { fixtureManifest: manifest, nativeRoleResults: {
                 check: { available: true },
-                options: { base: { launch: launch.choices, nativeFacts: { preparationGuest: {
-                    target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
+                options: { base: { launch: launch.choices, nativeFacts: { preparationGuest: guest } },
                     dimensions: { size: [], image: [], location: [], network: [], duration: [] } },
-                preparationInspect: () => ({ kind: 'ready', artifact: inspectedArtifact }),
+                preparationInspect: (): JsonValue => {
+                    if (scenario === 'failed-image') return { kind: 'failed', code: 'snapshot_inactive', nativeOperationRef };
+                    if (scenario === 'absent-image') return { kind: 'absent' };
+                    if (scenario === 'unknown-image') return { kind: 'unknown', code: 'native_observation_unavailable', nativeOperationRef };
+                    if (scenario === 'refused-image') throw new PluginError({ code: 'native_authorization_failed' });
+                    return { kind: 'ready', artifact: inspectedArtifact };
+                },
             } }, onNativeRole: async (role, body) => {
                 if (role === 'acquire') { acquired.push(body); throw new Error('Fixture stops before guest allocation'); }
             } });
+            let builtCliIdentity: string;
+            if (cloud) {
+                if (scenario === 'cloud-stale') {
+                    await installableGuestCliPayload();
+                    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({
+                        root: process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT, identity: 'a'.repeat(64),
+                    }));
+                } else {
+                    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', undefined);
+                    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', undefined);
+                }
+                let archiveDigest: string | undefined = 'b'.repeat(64);
+                vi.stubGlobal('fetch', async () => Response.json({
+                    homeConnectionDescriptor: { v: 1, revision: 1, homeServerIdentityId: homeId,
+                        canonicalServerUrl: h.input.serverUrl, endpoints: [{ kind: 'https', url: h.input.serverUrl }] },
+                    capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable',
+                        ...(archiveDigest === undefined ? {} : {
+                            payloads: [{ target: guest.target, sha256: archiveDigest, url: '/v1/runtime/guest-cli/payloads/linux/x64' }],
+                        }) } },
+                }));
+                onTestFinished(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+                const build = await prepareManagedGuestCliBuildInput({ ...guest, homeUrl: h.input.serverUrl, guestDownload: { homeId } });
+                builtCliIdentity = build.identity;
+                if (scenario === 'cloud-new-cli') archiveDigest = 'c'.repeat(64);
+                if (scenario === 'cloud-stale') archiveDigest = undefined;
+            } else {
+                await installableGuestCliPayload();
+                const localPayloadRoot = process.env.HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT!;
+                vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: localPayloadRoot, identity: 'a'.repeat(64) }));
+                const currentCli = scenario === 'same-cli' || scenario.endsWith('-image');
+                builtCliIdentity = `home-payload:${(currentCli ? 'a' : 'b').repeat(64)}`;
+            }
             const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 0,
                 provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
             const credentials = { token, encryption: null };
@@ -180,11 +229,12 @@ describe('Session-target authority for managed provider channel roles', () => {
                 acquisitionMode: 'resource-bound', allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now',
                 intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
             const content = { t: 'plain' as const, v: ManagedMachinePresetContentV1Schema.parse({ v: 1, name: 'Admitted name', launch,
-                preparation: { enabled: true, whenHappierUpdates: scenario === 'default' ? 'update-at-start' : 'rebuild-automatically' },
+                preparation: { enabled: true, whenHappierUpdates: scenario === 'default' || scenario === 'cloud-new-cli'
+                    ? 'update-at-start' : 'rebuild-automatically' },
                 prepared: { operationId: 'original-build', status: 'ready', artifact: inspectedArtifact, cliBinaryPath: '/prepared/happier',
-                    binding: createManagedMachinePresetPreparationBindingV1({ content: { launch: scenario === 'configuration-changed'
+                    binding: createManagedMachinePresetPreparationBindingV1({ content: { launch: scenario === 'configuration-changed' || scenario === 'cloud-stale'
                         ? { ...launch, choices: { name: 'other-configuration' } } : launch }, credentialConfigurations: [],
-                        cliIdentity: `home-payload:${(scenario === 'same-cli' ? 'a' : 'b').repeat(64)}` }) } }) };
+                        cliIdentity: builtCliIdentity }) } }) };
             let current = row;
             let presetContent = scenario === 'latest-configuration-changed'
                 ? { ...content, v: { ...content.v, launch: { ...launch, choices: { name: 'later-configuration' } } } }
@@ -314,12 +364,12 @@ describe('Session-target authority for managed provider channel roles', () => {
                 // The Account automation index is a network boundary; retain real admission with an empty Home index.
                 actionAutomations: createActionAutomationPortV1({ accountId: 'owner',
                     seed: async () => ({ v: 1, rows: [] }), settle: async () => {} }),
-                managedMachineAction: async ({ context }) => {
-                const options = { requestId: 'first-use', acquisitionMode: 'resource-bound' as const, context, signal: context.signal };
-                await reconcileManagedMachine({ input, options, hydrator, machine: opened, action: 'machines.managed.acquire',
-                    client: createManagedMachineControllerClient(input, options, 'machines.managed.acquire', hydrator) });
-                return {};
-            } });
+                managedMachineAction: async ({ context }) => ManagedMachineControllerError.withActionFailure('machines.managed.acquire', async () => {
+                    const options = { requestId: 'first-use', acquisitionMode: 'resource-bound' as const, context, signal: context.signal };
+                    await reconcileManagedMachine({ input, options, hydrator, machine: opened, action: 'machines.managed.acquire',
+                        client: createManagedMachineControllerClient(input, options, 'machines.managed.acquire', hydrator) });
+                    return {};
+                }) });
             const result = await executor.execute('machines.managed.acquire', acquisition, {
                 surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, actionRequestId: 'first-use',
                 runtimeAccountId: 'owner', externalActionExecutionAuthorization: scenario === 'codec-only' ? source : requester.authorization,
@@ -327,6 +377,12 @@ describe('Session-target authority for managed provider channel roles', () => {
                 externalActionTarget: source.binding.target, originalActionEnvelope,
                 actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.managed.acquire': ['cli'] } }),
                 operationOwnerUpdate: { update(value) { progress.push(value.progress); } } });
+            if (refusal) {
+                expect(result).toMatchObject({ ok: false, errorCode: refusal });
+                expect(acquired).toHaveLength(0);
+                expect(prepareCalls).toBe(0);
+                return;
+            }
             expect(acquired, JSON.stringify(result)).toHaveLength(1);
             expect(prepareCalls).toBe(scenario === 'manager' || scenario === 'deferred-approval' ? 1 : 0);
             expect(capabilityReads).toBe(scenario === 'member' ? 1 : 0);
@@ -335,7 +391,8 @@ describe('Session-target authority for managed provider channel roles', () => {
                     || scenario === 'latest-already-rebuilt' ? 1 : 0);
             expect(acquired).toMatchObject([{ managedId: row.id, launch: { name: scenario === 'manager'
                 || scenario === 'deferred-approval' || scenario === 'latest-already-rebuilt' ? 'new-image'
-                : scenario === 'configuration-changed' ? 'local' : 'old-image' } }]);
+                : scenario === 'configuration-changed' || scenario === 'cloud-stale'
+                    || scenario === 'failed-image' || scenario === 'absent-image' ? 'local' : 'old-image' } }]);
             expect(approvalReads).toBe(scenario === 'deferred-approval' ? 1 : 0);
             if (scenario === 'deferred-approval') expect(progress).toContainEqual({ phase: 'waiting_for_approval',
                 label: 'Waiting for approval', approval: { kind: 'approval_request_created', artifactId: 'prepare-approval',
@@ -343,7 +400,8 @@ describe('Session-target authority for managed provider channel roles', () => {
             expect(hydrator.readPresetDefinition(opened)?.name).toBe('Admitted name');
             expect(hydrator.readPresetDefinition(opened)?.preparationExecution?.updateCli).toBe(
                 scenario === 'member' || scenario === 'default' || scenario === 'codec-only'
-                    || scenario === 'latest-configuration-changed' || scenario === 'optin-removed' ? true : undefined);
+                    || scenario === 'latest-configuration-changed' || scenario === 'optin-removed'
+                    || scenario === 'cloud-new-cli' ? true : undefined);
         });
     });
     it.each([false, true])('uses the author digest for a cold source without preparation guest metadata (Prepare %s)', async enabled => {

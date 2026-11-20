@@ -26,6 +26,7 @@ import { prepareManagedGuestCliLocalBuildPayload, readManagedGuestCliLocalBuildP
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createManagedPresetHydrator } from '@/machines/managed/presetHydration';
+import { selectManagedPresetPreparationCliDelivery } from '@/machines/managed/presetPreparationCli';
 import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from '@/machines/managed/controllerErrors';
 import { prepareMachineSetupPreparationV1 } from '@/machines/setup/prepareMachineSetupPreparation';
 import { createManagedBootstrapTaskRunner } from '@/machines/managed/enrollmentTask';
@@ -171,10 +172,8 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
             const projection = projectMachineProvisionerSelectionV1({ options, launchSchema: provisioner.launchSchema,
                 selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) });
             if (projection.kind !== 'ready' || !projection.nativeFacts.preparationGuest) throw new ManagedMachineControllerError('provider_unavailable');
-            return {
-                ...projection.nativeFacts.preparationGuest,
-                ...(provisioner.preparation?.cliPayloadDelivery === 'guest-download' ? { guestDownload: { homeId: host.homeId } } : {}),
-            };
+            return { ...projection.nativeFacts.preparationGuest,
+                ...selectManagedPresetPreparationCliDelivery(provisioner, host.homeId) };
         };
         // Recovery needs the current supplier identity, not a newly archived payload.
         // Reuse this selected guest if the preset owner decides a rebuild is needed.

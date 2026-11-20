@@ -44,7 +44,8 @@ import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/re
 import { initializeManagedMachineEnrollmentPolicies } from './enrollmentPolicy';
 import { readManagedOpaquePresetReview } from './presetHydration';
 import type { ManagedPresetHydrator } from './presetHydration';
-import { readManagedMachinePresetPreparationV1 } from '@happier-dev/cli-common/machines/managed';
+import { readManagedMachinePresetPreparationV1, resolveManagedMachinePresetPreparationV1,
+    type ManagedMachinePresetPreparationDecisionV1 } from '@happier-dev/cli-common/machines/managed';
 import type { ManagedMachinePresetPreparationBindingV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationV1';
 import { resolveManagedGuestCliBuildIdentity } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { readManagedGuestCliLocalBuildPayloadMetadata } from '@happier-dev/cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller';
@@ -53,6 +54,7 @@ import { MachineProvisionerPreparationInspectResultV1Schema, readMachineProvisio
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { rebuildManagedPresetAtFirstUse } from './presetPreparationRebuild';
+import { selectManagedPresetPreparationCliDelivery } from './presetPreparationCli';
 
 export type ManagedMachineReconciliationInput = Readonly<{
     input: ManagedMachineAcquisitionDriverInput;
@@ -645,20 +647,22 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                 const projection = configuration.optionProjection;
                 const guest = projection?.kind === 'ready' ? projection.nativeFacts?.preparationGuest : undefined;
                 if (guest) {
-                    const cli = await resolveManagedGuestCliBuildIdentity({ homeUrl: params.input.serverUrl, target: guest.target,
-                        readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata, signal: params.options.signal,
-                        ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}) });
                     // Unsubmitted preparation captures this same basis before constructing native invocations.
-                    let decision = readManagedMachinePresetPreparationV1({ content,
-                        cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
-                    if (decision.kind === 'warm' && decision.updateCli
+                    const initial = await resolveManagedMachinePresetPreparationV1({ content, credentialConfigurations: credentialConfigurations!,
+                        readCliIdentity: async () => (await resolveManagedGuestCliBuildIdentity({
+                            target: guest.target, ...selectManagedPresetPreparationCliDelivery(retainedProvisioner.definition, machine.homeId),
+                            homeUrl: params.input.serverUrl, readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata,
+                            signal: params.options.signal, ...(params.input.guestCliFetch ? { fetchImpl: params.input.guestCliFetch } : {}),
+                        })).identity });
+                    let decision: ManagedMachinePresetPreparationDecisionV1 = initial;
+                    if (initial.kind === 'warm' && initial.updateCli
                         && content.preparation.whenHappierUpdates === 'rebuild-automatically') {
                         await rebuildManagedPresetAtFirstUse({ input: params.input, options: params.options,
-                            machine, hydrator, content, cliIdentity: cli.identity,
+                            machine, hydrator, content, cliIdentity: initial.cliIdentity,
                             credentialConfigurations: credentialConfigurations! });
                         content = hydrator.readPresetDefinition(machine)!;
                         decision = readManagedMachinePresetPreparationV1({ content,
-                            cliIdentity: cli.identity, credentialConfigurations: credentialConfigurations! });
+                            cliIdentity: initial.cliIdentity, credentialConfigurations: credentialConfigurations! });
                     }
                     if (decision.kind === 'warm') {
                         const preparedLaunch = readMachineProvisionerPreparedLaunchV1({ provisioner: retainedProvisioner.identity,
@@ -668,7 +672,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                             const observation = MachineProvisionerPreparationInspectResultV1Schema.parse(await native.invoke('preparationInspect',
                                 prepared.nativeOperationRef ? { nativeOperation: prepared.nativeOperationRef }
                                     : { operationId: prepared.operationId, launch: prepared.binding.configuration.launch.choices }));
-                            if (observation.kind === 'failed' || observation.kind === 'unknown') {
+                            if (observation.kind === 'unknown') {
                                 throw new ManagedMachineControllerError(observation.code, undefined,
                                     observation.nativeCause ? { kind: 'managedNative', nativeCause: observation.nativeCause } : undefined);
                             }

@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
 import { canonicalizePath, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
 import { defineProtocolObject, defineProtocolString, type ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
@@ -71,13 +71,13 @@ export function createCrabboxPreparation(context: PluginInvocationContext) {
       .trim().split(/\r?\n/u).filter(Boolean).map(normalizedImageId))];
     if (!ids.length) return { kind: 'absent' as const };
     if (ids.length !== 1 || operation.imageId && operation.imageId !== ids[0])
-      return { kind: 'failed' as const, code: 'resource_mismatch', nativeOperationRef: reference(operation) };
+      return { kind: 'refused' as const, code: 'resource_mismatch' };
     const raw: unknown = JSON.parse(text(await run(operation, ['image', 'inspect', name(operation)])));
     if (!Array.isArray(raw) || raw.length !== 1) return unknown(operation);
     const parsed = nativeImage.safeParse(raw[0]);
     if (!parsed.success || parsed.data.Config.Labels[operationLabel] !== operation.operationId
       || parsed.data.Config.Labels[providerLabel] !== providerIdentity)
-      return { kind: 'failed' as const, code: 'prepared_artifact_not_owned', nativeOperationRef: reference(operation) };
+      return { kind: 'refused' as const, code: 'prepared_artifact_not_owned' };
     const id = normalizedImageId(parsed.data.Id);
     if (id !== ids[0]) return unknown(operation, 'resource_mismatch');
     return { kind: 'ready' as const, artifact: { contributionRef, schemaVersion: 1, value: {
@@ -98,8 +98,7 @@ export function createCrabboxPreparation(context: PluginInvocationContext) {
       let directory: string | undefined;
       try {
         const retained = await inspectNative(operation);
-        if (retained.kind === 'ready' || retained.kind === 'unknown') return retained;
-        if (retained.kind === 'failed') return { kind: 'refused' as const, code: retained.code };
+        if (retained.kind !== 'absent') return retained;
         directory = await mkdtemp(join(tmpdir(), 'happier-crabbox-prepare-'));
         directory = await canonicalizePath(directory);
         const copies: string[] = [];
@@ -129,15 +128,18 @@ export function createCrabboxPreparation(context: PluginInvocationContext) {
     },
     async inspect(operation: Operation) {
       if (!supported(operation.launch)) return unknown(operation, 'crabbox_preparation_not_supported');
-      try { return await inspectNative(operation); } catch (error) { return failure(error, operation); }
+      try {
+        const observed = await inspectNative(operation);
+        if (observed.kind === 'refused') throw new PluginError({ code: observed.code });
+        return observed;
+      } catch (error) { return failure(error, operation); }
     },
     async destroy(operation: Operation) {
       if (!supported(operation.launch)) return { kind: 'refused' as const, code: 'crabbox_preparation_not_supported' };
       try {
         const observed = await inspectNative(operation);
         if (observed.kind === 'absent') return { kind: 'confirmed' as const };
-        if (observed.kind === 'unknown') return observed;
-        if (observed.kind === 'failed') return { kind: 'refused' as const, code: observed.code };
+        if (observed.kind !== 'ready') return observed;
         // Remove only our operation's tag, never force, prune, or delete an
         // image by digest that may now have another person's retained tags.
         if (!completed(await run(operation, ['image', 'rm', '--no-prune', '--', name(operation)]))) return unknown(operation);

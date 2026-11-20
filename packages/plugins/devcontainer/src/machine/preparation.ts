@@ -69,17 +69,17 @@ export function createDevcontainerPreparation(input: Readonly<{
     const ids = [...new Set(lines ? lines.split(/\r?\n/u).map(nativeId) : [])];
     if (!ids.length) return { kind: 'absent' as const };
     if (ids.length !== 1 || operation.imageId && ids[0] !== operation.imageId) return {
-      kind: 'failed' as const, code: 'resource_mismatch', nativeOperationRef: reference(operation),
+      kind: 'refused' as const, code: 'resource_mismatch',
     };
     const inspected: unknown = JSON.parse(text(await run(['image', 'inspect', ids[0]!])));
     if (!Array.isArray(inspected) || inspected.length !== 1 || nativeId(record(inspected[0]).Id) !== ids[0])
       return unknown(operation);
     const labels = record(record(record(inspected[0]).Config).Labels);
     if (labels[operationLabel] !== operation.operationId || labels[providerLabel] !== providerIdentity) return {
-      kind: 'failed' as const, code: 'prepared_artifact_not_owned', nativeOperationRef: reference(operation),
+      kind: 'refused' as const, code: 'prepared_artifact_not_owned',
     };
     if (operation.launch.configuration?.kind !== 'image') return {
-      kind: 'failed' as const, code: 'prepared_configuration_unavailable', nativeOperationRef: reference(operation),
+      kind: 'refused' as const, code: 'prepared_configuration_unavailable',
     };
     return { kind: 'ready' as const, artifact: reference({ ...operation, imageId: ids[0]!,
       launch: { ...operation.launch, configuration: { ...operation.launch.configuration, image: ids[0]! } } }) };
@@ -95,12 +95,10 @@ export function createDevcontainerPreparation(input: Readonly<{
       try {
         // Recover an acknowledged image or a lost build reply before another build.
         const retained = await inspectNative(operation);
-        if (retained.kind === 'ready' || retained.kind === 'unknown') return retained;
-        if (retained.kind === 'failed') return { kind: 'refused' as const, code: retained.code };
+        if (retained.kind !== 'absent') return retained;
         // A user-created tag collision must never be overwritten by preparation.
         const named = await inspectNative(operation, true);
-        if (named.kind === 'ready' || named.kind === 'unknown') return named;
-        if (named.kind === 'failed') return { kind: 'refused' as const, code: named.code };
+        if (named.kind !== 'absent') return named;
         directory = await mkdtemp(join(tmpdir(), 'happier-prepared-image-'));
         directory = await canonicalizePath(directory);
         const dockerfile = [`FROM ${source.image}`];
@@ -131,7 +129,7 @@ export function createDevcontainerPreparation(input: Readonly<{
         if (!completed(built)) return unknown(operation, 'native_build_failed');
         const inspected = await inspectNative(operation);
         if (inspected.kind === 'ready' || inspected.kind === 'unknown') return inspected;
-        return unknown(operation, inspected.kind === 'failed' ? inspected.code : 'native_build_unconfirmed');
+        return unknown(operation, inspected.kind === 'refused' ? inspected.code : 'native_build_unconfirmed');
       } catch { return unknown(operation); }
       finally { if (directory) await rm(directory, { recursive: true, force: true }); }
     },
@@ -142,8 +140,7 @@ export function createDevcontainerPreparation(input: Readonly<{
       try {
         const observed = await inspectNative(operation);
         if (observed.kind === 'absent') return { kind: 'confirmed' as const };
-        if (observed.kind === 'unknown') return observed;
-        if (observed.kind === 'failed') return { kind: 'refused' as const, code: observed.code };
+        if (observed.kind !== 'ready') return observed;
         const owned = observed.artifact.value;
         // No force: running consumers keep their image. No prune: source and
         // untagged parent images are outside this operation's ownership.

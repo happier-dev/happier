@@ -1,7 +1,7 @@
 import { readManagedDependencyExecutable, projectUnavailableManagedDependency } from '@happier-dev/plugin-sdk/managed-services';
 import { Buffer } from 'node:buffer';
 import { platform } from 'node:os';
-import { definePlugin } from '@happier-dev/plugin-sdk';
+import { definePlugin, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
 import { defineProtocolJsonValue, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
@@ -118,10 +118,13 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
       async run(input, context) {
         const operation = 'nativeOperation' in input ? input.nativeOperation.value
           : devcontainerPreparationOperation(input.operationId, { launch: input.launch });
-        try { return await (await preparation(context, operation.runtime)).inspect(operation); }
+        let observed;
+        try { observed = await (await preparation(context, operation.runtime)).inspect(operation); }
         catch (error) { return { kind: 'unknown' as const, code: code(error), nativeOperationRef: {
           contributionRef: { pluginId: DEVCONTAINER_PLUGIN_ID, localId: DEVCONTAINER_PROVISIONER_ID }, schemaVersion: 1, value: operation,
         } }; }
+        if (observed.kind === 'refused') throw new PluginError({ code: observed.code });
+        return observed;
       } },
     'prepare-destroy': { ...defaults, title: 'Delete owned prepared container image', dangerLevel: 'destructive',
       confirmation: { title: 'Delete this prepared container image?' },

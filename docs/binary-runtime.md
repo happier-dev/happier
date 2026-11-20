@@ -410,8 +410,10 @@ repair or start a daemon during the build. Ordinary CLI promotion retains its
 existing migration behavior.
 
 The same supplier exposes `resolveManagedGuestCliBuildIdentity` for the current
-target identity without constructing an archive. Guest-download recovery uses
-the selected archive's SHA-256. The Node filesystem adapters
+target identity without constructing an archive. Prepare recovery and acquisition
+both use the provider's declared delivery mode. For guest download, they compare
+the selected Home archive's SHA-256 with the prepared image's recorded identity.
+The Node filesystem adapters
 `readManagedGuestCliLocalBuildPayloadMetadata` and
 `prepareManagedGuestCliLocalBuildPayload` live behind
 `cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller`; the portable

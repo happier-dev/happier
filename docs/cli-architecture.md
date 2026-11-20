@@ -3595,9 +3595,12 @@ The shared preset owner compares authored launch, setup and source-review conten
 and the required captured Connected Account configuration revisions. Names and
 operational preset revisions do not invalidate an image. Reconnecting the same
 Account with a changed endpoint therefore makes the preparation stale. Stale
-preparation, an unsupported variant, or native image absence takes the ordinary
-cold launch path. A supplier CLI identity change alone keeps the physical launch
-warm and selects CLI replacement at Session start through the existing installer.
+preparation, an unsupported variant, or a native observation that confirms
+absence or failure takes the ordinary cold launch path. The preset's Rebuild
+action remains available. Pending or unknown inspections and typed refusals
+stop acquisition with the existing error. A supplier CLI identity change alone
+keeps the physical launch warm and selects CLI replacement at Session start
+through the existing installer.
 The retained build identity is provenance, not image freshness. The encrypted
 preset's `preparation.whenHappierUpdates` defaults to `update-at-start`. With
 `rebuild-automatically`, first use after a CLI identity change runs the existing

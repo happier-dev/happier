@@ -169,6 +169,20 @@ describe('Devcontainer image preparation', () => {
       .toMatchObject(foreign === 'tag' ? { kind: 'confirmed' } : { kind: 'refused', code: 'prepared_artifact_not_owned' });
     expect(h.requests.some(request => request.args?.[0] === 'build' || request.args?.[1] === 'rm')).toBe(false);
   });
+  it('reports foreign and mismatched prepared images as Inspect refusals', async () => {
+    const h = fixture({ foreign: 'provider' });
+    const services = { exec: { run: h.run }, managedServices: { dependencies: { status: async () => ({ state: 'ready',
+      executable: { kind: 'managedDependency', id: { pluginId: contributionRef.pluginId, localId: 'docker' } } }) } } } as unknown as PluginTestServicesFixture;
+    const kit = await createPluginTestkit({ manifest: DEVCONTAINER_PLUGIN.manifest, module: DEVCONTAINER_PLUGIN, services });
+    try {
+      const reference = { contributionRef, schemaVersion: 1, value: { ...nativeOperation(), imageId } };
+      await expect(kit.invokeAction('prepare-inspect', { nativeOperation: reference }, { surface: 'plugin' }))
+        .rejects.toMatchObject({ code: 'prepared_artifact_not_owned' });
+      const different = { ...reference, value: { ...reference.value, imageId: `sha256:${'b'.repeat(64)}` } };
+      await expect(kit.invokeAction('prepare-inspect', { nativeOperation: different }, { surface: 'plugin' }))
+        .rejects.toMatchObject({ code: 'resource_mismatch' });
+    } finally { await kit.dispose(); }
+  });
   it('retains the derived native identity after an interrupted build without issuing a second build', async () => {
     const h = fixture({ interrupted: true });
     const pending = await h.native.build(operationId, resolveDevcontainerPreparationInput(buildInput()));

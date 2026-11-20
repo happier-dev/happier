@@ -1004,6 +1004,9 @@ its native operation reference for recovery. Inspect also accepts the retained
 `operationId` and original `launch` choices to recover a build whose native identity
 was not returned. The helper takes the provider's existing launch schema separately
 from its build input schema; recovery does not need the CLI archive.
+For Inspect, `failed` confirms the operation cannot provide a usable image.
+Report an inconclusive read as `unknown` and a definitive authorization or
+ownership refusal through the contributed Action error.
 `artifactLaunchPath` selects complete launch choices inside the
 artifact value; the provisioner contract boundary validates those choices against
 the launch schema. The canonical prepared build input contains the validated

@@ -78,6 +78,11 @@ describe('Crabbox clean image preparation', () => {
     try {
       expect(await h.kit.invokeAction('prepare-build', { operationId, input }, { surface: 'plugin' })).toMatchObject({ kind: 'refused', code: 'prepared_artifact_not_owned' });
       const operation = { contributionRef, schemaVersion: 1, value: { operationId, launch } };
+      await expect(h.kit.invokeAction('prepare-inspect', { nativeOperation: operation }, { surface: 'plugin' }))
+        .rejects.toMatchObject({ code: 'prepared_artifact_not_owned' });
+      const differentImage = { ...operation, value: { ...operation.value, imageId: `sha256:${'b'.repeat(64)}` } };
+      await expect(h.kit.invokeAction('prepare-inspect', { nativeOperation: differentImage }, { surface: 'plugin' }))
+        .rejects.toMatchObject({ code: 'resource_mismatch' });
       expect(await h.kit.invokeAction('prepare-destroy', { nativeOperation: operation }, { surface: 'plugin' })).toMatchObject({ kind: 'refused', code: 'prepared_artifact_not_owned' });
       expect(h.requests.some(request => request.args?.[0] === 'build' || request.args?.[1] === 'rm')).toBe(false);
     } finally { await h.kit.dispose(); }

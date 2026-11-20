@@ -7,17 +7,21 @@ import { splitMachineSetupForPreparationV1, type MachineSetupV1 } from '@happier
 type PreparationIdentity = Readonly<{ cliIdentity: string;
   credentialConfigurations: ManagedMachinePresetPreparationBindingV1['credentialConfigurations'] }>;
 
+type PreparationContent = Pick<ManagedMachinePresetContentV1, 'setup' | 'authorEffectReview'> & {
+  launch: NonNullable<ManagedMachinePresetContentV1['launch']>;
+};
+
+function readPreparationConfiguration(content: PreparationContent): ManagedMachinePresetPreparationBindingV1['configuration'] {
+  const { name: _name, ...launch } = content.launch;
+  return { launch, ...(content.setup === undefined ? {} : { setup: content.setup }),
+    ...(content.authorEffectReview === undefined ? {} : { reviewedEffectDigest: content.authorEffectReview.reviewedEffectDigest }) };
+}
+
 export function createManagedMachinePresetPreparationBindingV1(params: PreparationIdentity & Readonly<{
-  content: Pick<ManagedMachinePresetContentV1, 'setup' | 'authorEffectReview'> & {
-    launch: NonNullable<ManagedMachinePresetContentV1['launch']>;
-  };
+  content: PreparationContent;
   machineId?: string;
 }>): ManagedMachinePresetPreparationBindingV1 {
-  const { name: _name, ...launch } = params.content.launch;
-  return { configuration: { launch, ...(params.content.setup === undefined ? {} : { setup: params.content.setup }),
-      ...(params.content.authorEffectReview === undefined ? {} : {
-        reviewedEffectDigest: params.content.authorEffectReview.reviewedEffectDigest,
-      }) },
+  return { configuration: readPreparationConfiguration(params.content),
     cliIdentity: params.cliIdentity,
     ...(params.machineId === undefined ? {} : { machineId: params.machineId }),
     credentialConfigurations: params.credentialConfigurations };
@@ -26,25 +30,26 @@ export function createManagedMachinePresetPreparationBindingV1(params: Preparati
 type PreparedImage = Readonly<{ artifact: ManagedNativeOperationReferenceV1; binaryPath: string;
   bakedSetup?: MachineSetupV1; deferredSetup?: MachineSetupV1 }>;
 
-export type ManagedMachinePresetPreparationDecisionV1 =
-  | PreparedImage & Readonly<{ kind: 'warm'; updateCli?: true }>
-  | PreparedImage & Readonly<{ kind: 'rebuild' }>
-  | Readonly<{ kind: 'cold'; reason: 'disabled' | 'unprepared' | 'stale' | 'building' | 'failed' | 'cancelled' }>;
+type PreparedImageDecision = PreparedImage & (Readonly<{ kind: 'warm'; updateCli?: true }> | Readonly<{ kind: 'rebuild' }>);
+type ColdDecision = Readonly<{ kind: 'cold'; reason: 'disabled' | 'unprepared' | 'stale' | 'building' | 'failed' | 'cancelled' }>;
+export type ManagedMachinePresetPreparationDecisionV1 = PreparedImageDecision | ColdDecision;
 
-/** Image freshness follows authored configuration; CLI changes follow the author's update policy. */
-export function readManagedMachinePresetPreparationV1(params: PreparationIdentity & Readonly<{
+type PreparationSelection = Pick<PreparationIdentity, 'credentialConfigurations'> & Readonly<{
   content: ManagedMachinePresetContentV1;
   /** Consume the caller's canonical Manage decision; absence never authorizes a build. */
   canManagePreset?: boolean;
-}>): ManagedMachinePresetPreparationDecisionV1 {
+}>;
+
+type PreparedCandidate = Readonly<{ kind: 'candidate'; image: PreparedImage; boundCliIdentity: string; rebuildForCliChange: boolean }>;
+
+function readPreparedCandidate(params: PreparationSelection): PreparedCandidate | ColdDecision {
   const { content } = params;
   if (content.preparation?.enabled !== true) return { kind: 'cold', reason: 'disabled' };
   const prepared = content.prepared;
   if (prepared === undefined) return { kind: 'cold', reason: 'unprepared' };
   if (content.launch === undefined || !sameStrictJsonValue({ configuration: prepared.binding.configuration,
     credentialConfigurations: prepared.binding.credentialConfigurations },
-    { configuration: createManagedMachinePresetPreparationBindingV1({ ...params,
-      content: { ...content, launch: content.launch } }).configuration,
+    { configuration: readPreparationConfiguration({ ...content, launch: content.launch }),
       credentialConfigurations: params.credentialConfigurations },
     { omitUndefinedObjectMembers: true })) return { kind: 'cold', reason: 'stale' };
   if (prepared.status !== 'ready') return { kind: 'cold', reason: prepared.status };
@@ -55,9 +60,28 @@ export function readManagedMachinePresetPreparationV1(params: PreparationIdentit
   const image = { artifact: prepared.artifact!, binaryPath: prepared.cliBinaryPath,
     ...(prepared.bakedSetup === undefined ? {} : { bakedSetup: prepared.bakedSetup }),
     ...(deferredSetup === undefined ? {} : { deferredSetup }) };
-  const cliChanged = prepared.binding.cliIdentity !== params.cliIdentity;
-  if (cliChanged && content.preparation.whenHappierUpdates === 'rebuild-automatically' && params.canManagePreset === true) {
-    return { kind: 'rebuild', ...image };
-  }
-  return { kind: 'warm', ...image, ...(cliChanged ? { updateCli: true } : {}) };
+  return { kind: 'candidate', image, boundCliIdentity: prepared.binding.cliIdentity,
+    rebuildForCliChange: content.preparation.whenHappierUpdates === 'rebuild-automatically' && params.canManagePreset === true };
+}
+
+function selectPreparedCli(candidate: PreparedCandidate, cliIdentity: string): PreparedImageDecision {
+  const cliChanged = candidate.boundCliIdentity !== cliIdentity;
+  if (cliChanged && candidate.rebuildForCliChange) return { kind: 'rebuild', ...candidate.image };
+  return { kind: 'warm', ...candidate.image, ...(cliChanged ? { updateCli: true } : {}) };
+}
+
+/** Image freshness follows authored configuration; CLI changes follow the author's update policy. */
+export function readManagedMachinePresetPreparationV1(params: PreparationSelection & Pick<PreparationIdentity, 'cliIdentity'>): ManagedMachinePresetPreparationDecisionV1 {
+  const candidate = readPreparedCandidate(params);
+  return candidate.kind === 'cold' ? candidate : selectPreparedCli(candidate, params.cliIdentity);
+}
+
+/** Resolve the supplier only when the saved configuration has an eligible image. */
+export async function resolveManagedMachinePresetPreparationV1(params: PreparationSelection & Readonly<{
+  readCliIdentity(): Promise<string>;
+}>): Promise<ColdDecision | PreparedImageDecision & Readonly<{ cliIdentity: string }>> {
+  const candidate = readPreparedCandidate(params);
+  if (candidate.kind === 'cold') return candidate;
+  const cliIdentity = await params.readCliIdentity();
+  return { ...selectPreparedCli(candidate, cliIdentity), cliIdentity };
 }
