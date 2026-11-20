@@ -33,7 +33,7 @@ test('accepts every allowed type, unrestricted body length, and duplicate posts'
   const { board, entryFile } = await fixture(t);
   for (const type of ['CLAIM', 'RESULT', 'ASK', 'URGENT', 'RULING', 'HOLD']) {
     const addressee = ['URGENT', 'RULING', 'HOLD'].includes(type) ? 'ALL leads' : 'LANE-A';
-    const entry = `### 2026-11-02 12:00 UTC — Writer → ${addressee} — ${type} — ${'long subject '.repeat(20)}\n${'body '.repeat(10000)}\n`;
+    const entry = `### 2026-11-02 12:00 UTC — Writer → ${addressee} — ${type} — ${'long subject '.repeat(20)}\n${addressee === 'ALL leads' ? 'affects: all\n' : ''}${'body '.repeat(10000)}\n`;
     await fs.writeFile(entryFile, entry);
     await postBoardEntry(board, entryFile);
     await postBoardEntry(board, entryFile);
@@ -278,7 +278,7 @@ async function seed(directory, files) {
 }
 
 async function post(f, heading) {
-  const entry = `### 2026-11-18 08:00 UTC — ${heading}\nBody\n`;
+  const entry = `### 2026-11-18 08:00 UTC — ${heading}\n${/ALL leads/.test(heading) ? 'affects: repo-dev\n' : ''}Body\n`;
   await fs.writeFile(f.entryFile, entry);
   return { entry, ...await run(process.execPath, [writer, f.board, f.entryFile], { cwd: f.directory }) };
 }
@@ -401,4 +401,22 @@ test('name and ended-lane discovery reads only the report surfaces, never deep s
   assert.deepEqual(read.filter((directory) => /store|checkout|[\\/]a\d+/.test(directory)), [], 'scratch trees are never listed');
   assert.ok(read.length <= 12, `bounded report-surface listings, got ${read.length}: ${read.join(', ')}`);
   assert.ok(elapsed < 1000, `post took ${Math.round(elapsed)} ms`);
+});
+
+test('an ALL leads post must say what it affects', async (t) => {
+  const { board, entryFile } = await fixture(t);
+  const before = await fs.readFile(board);
+  await fs.writeFile(entryFile, '### 2026-11-02 12:00 UTC — Writer → ALL leads — RULING — subject\n- body without a tag\n');
+  await assert.rejects(run(process.execPath, [writer, board, entryFile]), (error) => {
+    assert.match(error.stderr, /affects:/);
+    return true;
+  });
+  assert.deepEqual(await fs.readFile(board), before);
+  for (const body of ['affects: nl3, commit-gate\n- body\n', '\nAffects: all\n- body\n']) {
+    const entry = `### 2026-11-02 12:00 UTC — Writer → ALL leads, Other — URGENT — subject\n${body}`;
+    await fs.writeFile(entryFile, entry);
+    await run(process.execPath, [writer, board, entryFile]);
+  }
+  await fs.writeFile(entryFile, '### 2026-11-02 12:00 UTC — Writer → Other — ASK — subject\n- no tag needed\n');
+  await run(process.execPath, [writer, board, entryFile]);
 });

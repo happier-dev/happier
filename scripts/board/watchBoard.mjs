@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import { defaultBoard, parseBoardHeading } from './postBoardEntry.mjs';
 
-const usage = 'Usage: node scripts/board/watchBoard.mjs [--board <path> (default: the canonical BOARD.md; the archived handoff board only when named)] --name <caller> [--name <watched-lane>] [--self-name <sender-alias>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>] [--wake-on-backlog]';
+const usage = 'Usage: node scripts/board/watchBoard.mjs [--board <path> (default: the canonical BOARD.md; the archived handoff board only when named)] --name <caller> [--name <watched-lane>] [--self-name <sender-alias>] --seen <caller.jsonl> --heartbeat-ms <ms> [--reports <directory-or-*.md>] [--wake-regex <regex>] [--wake-on-backlog] [--affects <host|resource> ...]';
 
 async function main() {
   const { values } = parseArgs({ options: {
@@ -12,7 +12,7 @@ async function main() {
     'self-name': { type: 'string', multiple: true },
     seen: { type: 'string' }, reports: { type: 'string', multiple: true },
     'heartbeat-ms': { type: 'string' }, 'wake-regex': { type: 'string' },
-    'wake-on-backlog': { type: 'boolean' },
+    'wake-on-backlog': { type: 'boolean' }, affects: { type: 'string', multiple: true },
   } });
   const heartbeat = Number(values['heartbeat-ms']);
   if (!values.name?.length || !values.seen || !Number.isSafeInteger(heartbeat) || heartbeat <= 0) throw new Error(usage);
@@ -22,6 +22,15 @@ async function main() {
   // Recipient subscriptions include watched lanes; they are not caller identities.
   const selfNames = new Set([values.name[0], ...(values['self-name'] ?? [])]);
   const wakeRegex = values['wake-regex'] === undefined ? undefined : new RegExp(values['wake-regex']);
+  // A broadcast names what it affects; a watcher that listed its own hosts and resources sleeps through the rest.
+  const affects = (values.affects ?? []).map((tag) => tag.trim().toLowerCase()).filter(Boolean);
+  const concerns = (content, heading) => {
+    if (affects.length === 0) return true;
+    const tagged = /^\s*affects:\s*(.+)$/im.exec(content.slice(content.indexOf(heading) + heading.length).split(/\r?\n/, 4).join('\n').split(/^### /m)[0]);
+    if (!tagged) return true;
+    const tags = tagged[1].toLowerCase();
+    return /\ball\b/.test(tags) || affects.some((tag) => tags.includes(tag));
+  };
   const seenPath = path.resolve(values.seen);
   const seen = new Set();
   const reports = new Set();
@@ -88,7 +97,8 @@ async function main() {
       }
     }
     for (const board of boards) {
-      const headings = (await read(board)).match(/^### [^\r\n]*/gm) ?? [];
+      const content = await read(board);
+      const headings = content.match(/^### [^\r\n]*/gm) ?? [];
       for (const heading of headings) {
         const parsed = parseBoardHeading(heading);
         if (!parsed) continue;
@@ -104,8 +114,9 @@ async function main() {
         process.stdout.write(heading + '\n');
         // Informational cc posts remain delivered/seen, but cannot end this watch alone.
         const informationalCc = !addressed(entries[0]) && ['RESULT', 'CLAIM'].includes(kind);
+        const elsewhere = broadcast && !entries.some(addressed) && !concerns(content, heading);
         const wakesNow = !informationalCc && (addressed(entries[0])
-          || ['ASK', 'URGENT', 'HOLD', 'LIFTED', 'RULING'].includes(kind) || wakeRegex?.test(heading));
+          || (!elsewhere && ['ASK', 'URGENT', 'HOLD', 'LIFTED', 'RULING'].includes(kind)) || wakeRegex?.test(heading));
         if (!selfNames.has(sender) && wakesNow) wake = true;
       }
     }

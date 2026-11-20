@@ -257,3 +257,27 @@ test('wakes only on exact addressee names, including parenthesized lists, and on
   await fs.rm(f.seen);
   assert.deepEqual(await start(t, f, [], 10000, true, ['LANE (fresh)']).done, [lines[5], lines[6]]);
 });
+
+test('a tagged broadcast wakes only watchers whose --affects matches; untagged broadcasts and named posts still wake', async (t) => {
+  const f = await fixture(t);
+  const foreign = heading('ALL leads', 'RULING', 'nl1 is slow');
+  await fs.writeFile(f.board, `${foreign}\naffects: nl1, controller-disk\n- body\n`);
+  // Delivered once, but it cannot end the watch: the heartbeat does.
+  assert.deepEqual(await start(t, f, ['--affects', 'nl3'], 80).done, [foreign, 'HEARTBEAT']);
+  const mine = heading('ALL leads', 'HOLD', 'nl3 is full');
+  await fs.appendFile(f.board, `\n${mine}\n\naffects: commit-gate, NL3\n`);
+  assert.deepEqual(await start(t, f, ['--affects', 'nl3']).done, [mine]);
+  const untagged = heading('ALL leads', 'URGENT', 'no tag');
+  await fs.appendFile(f.board, `\n${untagged}\n- body\n`);
+  assert.deepEqual(await start(t, f, ['--affects', 'nl3']).done, [untagged]);
+  const everyone = heading('ALL leads', 'RULING', 'for everyone');
+  await fs.appendFile(f.board, `\n${everyone}\naffects: all\n`);
+  assert.deepEqual(await start(t, f, ['--affects', 'nl3']).done, [everyone]);
+  const named = heading('Programme, ALL leads', 'RULING', 'named too');
+  await fs.appendFile(f.board, `\n${named}\naffects: nl1\n`);
+  assert.deepEqual(await start(t, f, ['--affects', 'nl3']).done, [named]);
+  // Without --affects a watcher keeps today's behaviour.
+  const other = heading('ALL leads', 'RULING', 'nl1 again');
+  await fs.appendFile(f.board, `\n${other}\naffects: nl1\n`);
+  assert.deepEqual(await start(t, f).done, [other]);
+});

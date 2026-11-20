@@ -181,8 +181,15 @@ function validateEntry(entry) {
   for (const heading of headings) {
     const match = /^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — .+? → (.+?) — (CLAIM|RESULT|ASK|URGENT|RULING|HOLD) — .+$/.exec(heading);
     if (!match) throw new Error('Use a board heading: ### YYYY-MM-DD HH:MM UTC — SENDER → ADDRESSEE — CLAIM|RESULT|ASK|URGENT|RULING|HOLD — subject');
-    if (match[1].split(',').some((name) => name.trim().toLowerCase() === 'all leads') && !['RULING', 'URGENT', 'HOLD'].includes(match[2])) {
+    const allLeads = match[1].split(',').some((name) => name.trim().toLowerCase() === 'all leads');
+    if (allLeads && !['RULING', 'URGENT', 'HOLD'].includes(match[2])) {
       throw new Error('Address ALL leads only with RULING, URGENT or HOLD; name the intended lane for other posts.');
+    }
+    // P03 ruling 2026-11-20 09:30Z: watchers sleep through broadcasts about hosts and resources they do not use.
+    const text = entry.toString('utf8');
+    const lead = text.slice(text.indexOf(heading) + heading.length).split(/\r?\n/, 4).join('\n').split(/^### /m)[0];
+    if (allLeads && !/^\s*affects:\s*\S/im.test(lead)) {
+      throw new Error('Under an ALL leads heading add the line "affects: <host|resource>[, ...]" (or "affects: all" when every lead must act).');
     }
   }
   if (headings.length === 0) throw new Error('Add a board heading with an allowed type: CLAIM, RESULT, ASK, URGENT, RULING or HOLD.');
