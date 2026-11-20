@@ -302,20 +302,6 @@ async function pressRelayTile(screen: RelayTileScreen, testID: string): Promise<
     });
 }
 
-/** Opens the saved profile row's own menu through the shared DropdownMenu. */
-async function chooseSavedHomeMenuAction(screen: RelayTileScreen, alias: string, actionId: string): Promise<void> {
-    const tileTestID = homeRowTestId(alias);
-    relayTile(screen, tileTestID);
-    await screen.pressByTestIdAsync(`${tileTestID}-menu`);
-    // Opening measures the trigger before the menu's rows become pressable.
-    await vi.waitFor(() => {
-        const option = screen.findByTestId(`dropdown-option-${actionId}`);
-        expect(option).not.toBeNull();
-        for (let node = option; node; node = node.parent) expect(node.props.visible).not.toBe(false);
-    });
-    await screen.pressByTestIdAsync(`dropdown-option-${actionId}`);
-}
-
 async function focusHomeAtAddress(serverUrl: string, name: string = serverUrl) {
     if (!serverUrl) return;
     let profile = profiles.resolveUniqueServerProfileByUrl(serverUrl);
@@ -400,23 +386,6 @@ describe('OnboardingWizardSurface', () => {
         modalAlertAsyncMock.mockReset().mockResolvedValue();
         modalShowMock.mockClear();
         storage.setState(initialStorageState, true);
-    });
-
-    it('selects an onboarding Home in the full secondary without rewriting the device Home', async () => {
-        await focusHomeAtAddress('https://main-onboarding.example.test');
-        const deviceHome = profiles.getDeviceDefaultServerId();
-        const targetId = await homes.addHome({ name: 'Secondary onboarding', serverUrl: 'https://secondary-onboarding.example.test', accountId: null, active: false });
-        browser!.reconfigureUrl('https://app.happier.dev/desktop/app-window');
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(<OnboardingWizardSurface layout="portrait" isDesktopShell
-            initialStepId="relay_select" authEntryOptions={baseAuthOptions} />);
-        await pressOnboarding(screen, homeRowTestId(targetId));
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
-        await vi.waitFor(() => expect(getOnboardingStepId(screen)).toBe('auth'));
-        expect(profiles.getActiveServerId()).toBe(targetId);
-        expect(profiles.getTabActiveServerId()).toBe(targetId);
-        expect(profiles.getDeviceDefaultServerId()).toBe(deviceHome);
-        await screen.unmount();
     });
 
     it('exposes wizard state and navigation through the controller hook', async () => {
@@ -1158,21 +1127,6 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        await pressOnboarding(screen, 'welcome-self-hosting');
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
-        await act(async () => {
-            await relayRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const backButton = screen.findByTestId('onboarding-wizard-back')!;
-        await act(async () => {
-            await backButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
 
         await pressOnboarding(screen, 'welcome-primary-start');
@@ -1273,37 +1227,6 @@ describe('OnboardingWizardSurface', () => {
         }
         if (originalStorageScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = originalStorageScope;
-    });
-
-    it('offers the Home paths without a tile for the current Home', async () => {
-        // Plan 03 U6: "Where should your Home live?" lists where a Home can live. The Home the
-        // person already uses is named above the step, never offered (or preselected) as a choice.
-        await focusHomeAtAddress('https://relay.example.test', 'First Home');
-        await focusHomeAtAddress('https://relay-other.example.test', 'Other Home');
-        const rowFor = (serverUrl: string) => `onboarding-wizard-relay:profile:${profiles.resolveUniqueServerProfileByUrl(serverUrl)!.id}`;
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
-                initialStepId: 'relay_select',
-            }),
-        );
-
-        expect(screen.findAllByTestId(rowFor('https://relay-other.example.test'))).toHaveLength(0);
-        expect(relayTileText(screen, rowFor('https://relay.example.test'))).toContain('First Home');
-        expect(isRelayTileChecked(screen, rowFor('https://relay.example.test'))).toBe(false);
-        expect(screen.findAllByTestId('onboarding-wizard-relay:customUrl').length).toBeGreaterThan(0);
-
-        await act(async () => {
-            await focusHomeAtAddress('https://relay.example.test');
-            // The real profile write above published its subscription.
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expect(screen.findAllByTestId(rowFor('https://relay.example.test'))).toHaveLength(0);
-        expect(relayTileText(screen, rowFor('https://relay-other.example.test'))).toContain('Other Home');
     });
 
     it('stores an awaiting-auth resume intent when continuing past relay selection', async () => {
@@ -1620,20 +1543,8 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
     });
 
-    it('shows auth actions on welcome after the user picks a saved relay and returns back to the intro', async () => {
-        await focusHomeAtAddress('');
-
-        await saveHomeProfiles([
-            {
-                id: 'relay-b',
-                name: 'Relay B',
-                serverUrl: 'https://relay-b.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
+    it('returns to Welcome without changing the active Home after visiting Where', async () => {
+        await focusHomeAtAddress('https://relay-b.example.test');
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
@@ -1644,43 +1555,15 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        // Saving the first Home makes it the active Home; enter selection through
-        // Welcome's actual change-Home action rather than its sign-in primary.
         await pressOnboarding(screen, 'welcome-self-hosting');
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
-        await act(async () => {
-            await relayRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const backButton = screen.findByTestId('onboarding-wizard-back')!;
-        await act(async () => {
-            await backButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
+        await pressOnboarding(screen, 'onboarding-wizard-back');
 
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
-        expect(screen.findByTestId('onboarding-wizard-relay-hint')).toBeTruthy();
-        expect(screen.findByType(WizardModalShell as never).props.skipLabel).toBe('common.login');
+        expectFocusedHome('https://relay-b.example.test');
     });
 
     it('opens secret key login without waiting for a redundant active-server switch, then returns to restore and welcome', async () => {
-        await focusHomeAtAddress('');
-
-        await saveHomeProfiles([
-            {
-                id: 'relay-b',
-                name: 'Relay B',
-                serverUrl: 'https://relay-b.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-
+        await focusHomeAtAddress('https://relay-b.example.test');
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
@@ -1690,21 +1573,6 @@ describe('OnboardingWizardSurface', () => {
                 authEntryOptions: implicitHomeAuthOptions,
             }),
         );
-
-        await pressOnboarding(screen, 'welcome-self-hosting');
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
-        await act(async () => {
-            await relayRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const backButton = screen.findByTestId('onboarding-wizard-back')!;
-        await act(async () => {
-            await backButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(screen.findByTestId('welcome-decision-panel')).toBeTruthy();
 
@@ -1739,36 +1607,17 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('opens lost access without waiting for a redundant active-server switch', async () => {
-        await focusHomeAtAddress('');
-
-        await saveHomeProfiles([
-            {
-                id: 'relay-b',
-                name: 'Relay B',
-                serverUrl: 'https://relay-b.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-
+        await focusHomeAtAddress('https://relay-b.example.test');
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
                 layout: 'portrait',
                 isDesktopShell: true,
+                initialStepId: 'auth',
                 authEntryOptions: implicitHomeAuthOptions,
             }),
         );
-
-        await pressOnboarding(screen, 'welcome-self-hosting');
-        const relayRow = screen.findByTestId(homeRowTestId('relay-b'))!;
-        await act(async () => {
-            await relayRow.props.onPress?.();
-        });
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
 
         expect(getOnboardingStepId(screen)).toBe('auth');
         const lostAccess = screen.findByTestId('onboarding-wizard-lost-access')!;
@@ -1946,31 +1795,6 @@ describe('OnboardingWizardSurface', () => {
         // One address flow on every width and platform (owner 11-13): the connect step, not a second URL step.
         expect(getOnboardingStepId(screen)).toBe('connect_home');
         expect(screen.findByTestId('already-use-happier.home-address')).toBeTruthy();
-    });
-
-    it.each([
-        ['desktop', 'desktop'],
-        ['web', 'web'],
-        ['native', 'native'],
-    ] as const)('characterizes saved relay profile selection on %s', async (_label, platform) => {
-        await saveHomeProfiles([
-            {
-                id: `saved-${platform}`,
-                name: `${platform} saved relay`,
-                serverUrl: `https://${platform}.saved-relay.example.test`,
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-        const screen = await renderPreAuthRelayMatrix(platform);
-
-        await pressOnboarding(screen, homeRowTestId(`saved-${platform}`));
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
-
-        await vi.waitFor(() => expect(getOnboardingStepId(screen)).toBe('auth'));
-        expectFocusedHome(`https://${platform}.saved-relay.example.test`);
     });
 
     it('keeps Continue off on Where while only the Home in use is selected', async () => {
@@ -2619,7 +2443,7 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findAllByTestId('onboarding-wizard-relay-hint')).toHaveLength(1);
     });
 
-    it('offers other saved Homes on Where with none preselected', async () => {
+    it('keeps saved Homes off Where while leaving the address choice available', async () => {
         await focusHomeAtAddress('https://relay-b.example.test');
         await saveHomeProfiles([
             {
@@ -2653,197 +2477,13 @@ describe('OnboardingWizardSurface', () => {
         );
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(isRelayTileChecked(screen, homeRowTestId('relay-a'))).toBe(false);
+        expect(screen.findAllByTestId(homeRowTestId('relay-a'))).toHaveLength(0);
         expect(screen.findAllByTestId(homeRowTestId('relay-b'))).toHaveLength(0);
         expect(screen.findByTestId('onboarding-wizard-relay:customUrl')).toBeTruthy();
         expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:cloud')).toBe(false);
     });
 
-    it('marks an unreachable saved relay as unavailable and offers a retry action', async () => {
-        await saveHomeProfiles([
-            {
-                id: 'relay-offline',
-                name: 'Offline Relay',
-                serverUrl: 'https://unreachable-relay.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
-        );
-
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const offlineTile = homeRowTestId('relay-offline');
-        expect(isRelayTileDisabled(screen, offlineTile)).toBe(false);
-        expect(relayTileText(screen, offlineTile)).toEqual(expect.arrayContaining(['Offline Relay', 'common.unreachable']));
-
-        const callCountBefore = runtimeFetchMock.mock.calls.length;
-        await chooseSavedHomeMenuAction(screen, 'relay-offline', 'retry');
-        await vi.waitFor(() => expect(runtimeFetchMock.mock.calls.slice(callCountBefore).some(([input]) => (
-            (input instanceof Request ? input.url : String(input)).startsWith('https://unreachable-relay.example.test/')
-        ))).toBe(true));
-    });
-
-    it('does not auto-select another relay when removing the selected saved relay', async () => {
-        await focusHomeAtAddress('https://relay-b.example.test');
-        await saveHomeProfiles([
-            {
-                id: 'relay-a',
-                name: 'Relay A',
-                serverUrl: 'https://relay-a.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-            {
-                id: 'relay-b',
-                name: 'Relay B',
-                serverUrl: 'https://relay-b.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
-        );
-
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        const relayATile = homeRowTestId('relay-a');
-        const relayBTile = homeRowTestId('relay-b');
-        await pressRelayTile(screen, relayATile);
-        expect(isRelayTileChecked(screen, relayATile)).toBe(true);
-
-        await chooseSavedHomeMenuAction(screen, 'relay-a', 'remove');
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        await vi.waitFor(() => expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).toBeNull());
-
-        expect(screen.findAllByTestId(relayATile)).toHaveLength(0);
-        expect(screen.findAllByTestId(relayBTile)).toHaveLength(0);
-        expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(true);
-    });
-
-    it('keeps the selected saved relay when marked custody blocks profile removal', async () => {
-        await focusHomeAtAddress('https://relay-elsewhere.example.test');
-        await saveHomeProfiles([
-            {
-                id: 'relay-a',
-                name: 'Relay A',
-                serverUrl: 'https://relay-a.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-        const profile = profiles.getServerProfileById(homeProfileRef('relay-a'))!;
-        const createdAt = Date.now();
-        expect(await TokenStorage.setPendingExternalAuth({
-            provider: 'github', proof: 'proof', secret: 'marked-secret',
-            serverId: profile.id, serverUrl: profile.serverUrl, returnTo: '/settings/account',
-            accountEncryptionFirstKey: {
-                accountId: 'account-1', requestDigest: `aemrb1_${'A'.repeat(43)}`,
-                requestJson: '{"toMode":"e2ee"}', createdAt, expiresAt: createdAt + 600000,
-                pending: 'oauth-pending', migrationSubmissionAttempted: true,
-            },
-        })).toBe(true);
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
-        );
-
-        await flushHookEffects({ cycles: 2, turns: 2 });
-        await pressRelayTile(screen, homeRowTestId('relay-a'));
-
-        await chooseSavedHomeMenuAction(screen, 'relay-a', 'remove');
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        await vi.waitFor(() => expect(modalShowMock).toHaveBeenCalledTimes(1));
-        expect(profiles.getServerProfileById(profile.id)).not.toBeNull();
-        expect(isRelayTileChecked(screen, homeRowTestId('relay-a'))).toBe(true);
-        expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(false);
-    });
-
-    it('removes a saved relay even when modal confirm is unavailable', async () => {
-        modalConfirmMock.mockImplementation(async () => false);
-        await focusHomeAtAddress('https://relay-b.example.test');
-        const profilesState: ServerProfile[] = [
-            {
-                id: 'relay-a',
-                name: 'Relay A',
-                serverUrl: 'https://relay-a.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-            {
-                id: 'relay-b',
-                name: 'Relay B',
-                serverUrl: 'https://relay-b.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ];
-        await saveHomeProfiles(profilesState);
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
-        );
-
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        await pressRelayTile(screen, homeRowTestId('relay-a'));
-        expect(isRelayTileChecked(screen, homeRowTestId('relay-a'))).toBe(true);
-
-        expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).not.toBeNull();
-        await chooseSavedHomeMenuAction(screen, 'relay-a', 'remove');
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        await vi.waitFor(() => expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).toBeNull());
-        expect(screen.findAllByTestId(homeRowTestId('relay-a'))).toHaveLength(0);
-        expect(screen.findAllByTestId(homeRowTestId('relay-b'))).toHaveLength(0);
-        expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(true);
-    });
-
-    it('does not show a saved relay row as selected when the user selected the “On this computer” option', async () => {
+    it('shows only the local creation choice when selecting “On this computer” on a Home with the same address', async () => {
         browser?.reconfigureUrl('http://localhost:53288');
         await saveHomeProfiles([
             {
@@ -2871,7 +2511,7 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:thisComputer')).toBe(true);
-        expect(isRelayTileChecked(screen, homeRowTestId('local-relay'))).toBe(false);
+        expect(screen.findAllByTestId(homeRowTestId('local-relay'))).toHaveLength(0);
     });
 
     it('renders a single-line relay footer and keeps Cloud from showing a custom URL footer', async () => {
@@ -2905,58 +2545,6 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findByTestId('onboarding-wizard-relay-hint-line')).toBeTruthy();
         expect(screen.findByTestId('onboarding-wizard-relay-hint-label')).toBeTruthy();
         expect(screen.findAllHostsByTestId('onboarding-wizard-relay-hint-line')).toHaveLength(1);
-    });
-
-    it('keeps an unreachable selected Home selected and disables continue until a reachable Home is selected', async () => {
-        await focusHomeAtAddress('https://relay-elsewhere.example.test');
-        await saveHomeProfiles([
-            {
-                id: 'relay-offline',
-                name: 'Offline Relay',
-                serverUrl: 'https://unreachable-relay.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-            {
-                id: 'relay-ok',
-                name: 'Online Relay',
-                serverUrl: 'https://relay-ok.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
-        );
-
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        await pressRelayTile(screen, homeRowTestId('relay-offline'));
-        await flushHookEffects({ cycles: 1, turns: 1 });
-        expect(isRelayTileChecked(screen, homeRowTestId('relay-offline'))).toBe(true);
-        expect(isRelayTileDisabled(screen, homeRowTestId('relay-offline'))).toBe(false);
-
-        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
-        expect(continueButton.props.disabled).toBe(true);
-
-        expect(isRelayTileChecked(screen, 'onboarding-wizard-relay:cloud')).toBe(false);
-
-        await pressRelayTile(screen, homeRowTestId('relay-ok'));
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const continueButtonAfter = screen.findByTestId('onboarding-wizard-primary')!;
-        expect(continueButtonAfter.props.disabled).toBe(false);
     });
 
     it('keeps a manually entered unreachable Home address in the connect step without saving it', async () => {
@@ -3175,67 +2763,6 @@ describe('OnboardingWizardSurface', () => {
         runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
     });
 
-    it('surfaces mixed-content blocking as a distinct blocked status (not unreachable) on web', async () => {
-        const globalWithLocation = globalThis as unknown as { location?: unknown };
-        const previousLocation = globalWithLocation.location;
-        try {
-            reactNativeMockState.os = 'web';
-
-            try {
-                Object.defineProperty(globalThis, 'location', { value: { protocol: 'https:' }, configurable: true });
-            } catch {
-                if (previousLocation && typeof previousLocation === 'object') {
-                    try {
-                        (previousLocation as any).protocol = 'https:';
-                    } catch {
-                        // ignore
-                    }
-                }
-            }
-            expect((globalThis as any).location?.protocol).toBe('https:');
-
-            await focusHomeAtAddress('');
-            browser?.reconfigureUrl('https://app.happier.dev');
-            await saveHomeProfiles([
-                {
-                    id: 'local-http',
-                    name: 'Local HTTP',
-                    serverUrl: 'http://127.0.0.1:53288',
-                    createdAt: 0,
-                    updatedAt: 0,
-                    lastUsedAt: 0,
-                    source: 'manual' as const,
-                },
-            ]);
-
-            const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-            const screen = await renderScreen(
-                React.createElement(OnboardingWizardSurface, {
-                    layout: 'portrait',
-                    isDesktopShell: true,
-                    initialStepId: 'relay_select',
-                    authEntryOptions: baseAuthOptions,
-                }),
-            );
-
-            await flushHookEffects({ cycles: 4, turns: 4 });
-
-            const localRow = screen.findByTestId(homeRowTestId('local-http'))!;
-            await act(async () => {
-                await localRow.props.onPress?.();
-            });
-            await flushHookEffects({ cycles: 6, turns: 6 });
-
-            expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
-        } finally {
-            try {
-                Object.defineProperty(globalThis, 'location', { value: previousLocation, configurable: true });
-            } catch {
-                globalWithLocation.location = previousLocation;
-            }
-        }
-    });
-
     it('names the unreachable local Home in use without offering it or switching to This computer', async () => {
         await focusHomeAtAddress('http://localhost:53288');
         browser?.reconfigureUrl('http://localhost:53288');
@@ -3316,52 +2843,6 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findAllByTestId('onboarding-wizard-relay:thisComputer').some((node) => (
             node.props.accessibilityState?.checked === true
         ))).toBe(false);
-    });
-
-    it('selects a single saved relay row when multiple profiles share the same server URL', async () => {
-        await focusHomeAtAddress('https://relay-elsewhere.example.test');
-        browser?.reconfigureUrl('https://app.happier.dev');
-        await saveHomeProfiles([
-            {
-                id: 'dup-1',
-                name: 'Duplicate One',
-                serverUrl: 'https://duplicate-relay.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-            {
-                id: 'dup-2',
-                name: 'Duplicate Two',
-                serverUrl: 'https://duplicate-relay.example.test',
-                createdAt: 0,
-                updatedAt: 0,
-                lastUsedAt: 0,
-                source: 'manual',
-            },
-        ]);
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                initialStepId: 'relay_select',
-                authEntryOptions: baseAuthOptions,
-            }),
-        );
-
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        // The profile writer and reader coalesce equivalent unqualified endpoints.
-        // A second saved fixture must not create a second selected surface row.
-        expect(homeProfileRef('dup-1')).toBe(homeProfileRef('dup-2'));
-        const rows = screen.findAllByTestId(homeRowTestId('dup-1'))
-            .filter(row => typeof row.type === 'string' && row.props.accessibilityState?.checked !== undefined);
-        expect(rows).toHaveLength(1);
-        await pressRelayTile(screen, homeRowTestId('dup-1'));
-        expect(isRelayTileChecked(screen, homeRowTestId('dup-1'))).toBe(true);
     });
 
     it('disables continuing when the canonical cloud relay is unreachable and offers a retry affordance', async () => {
