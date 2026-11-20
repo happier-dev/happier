@@ -43,6 +43,8 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router'))
     .createExpoRouterMock({ params: () => routeState.params, router: { push: routerPush } }).module);
 vi.mock('@/components/ui/popover', async (importOriginal) => (await import('@/dev/testkit/mocks/popover'))
     .createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 280, placement: 'bottom' }));
+vi.mock('@/components/ui/popover/Popover', async (importOriginal) => (await import('@/dev/testkit/mocks/popover'))
+    .createInlinePopoverModuleMock(importOriginal, { maxHeight: 640, maxWidth: 280, placement: 'bottom' }));
 
 const home = createHomeGovernanceHarness();
 const httpBoundary = { ...home, request: createSessionReadBatchFetchBoundary(home.request) };
@@ -644,6 +646,10 @@ describe('Account Workflow Library and settings', () => {
 
     it('reads a canonical profile subject as itself: its own sentence, no legacy starters, and the selected read', async () => {
         const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
+        const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        let commands: ReturnType<typeof useCurrentUiContextComposedCommands> = [];
+        function Commands() { commands = useCurrentUiContextComposedCommands(); return null; }
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const requests: unknown[] = [];
@@ -653,7 +659,9 @@ describe('Account Workflow Library and settings', () => {
         } });
         const subject = { kind: 'approvalProfile' as const, serverId, profileId: 'artifact-careful' };
         const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
-            <SubjectTriggersSection subject={subject} subjectName="Careful agent" />
+            <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+                <Commands /><SubjectTriggersSection subject={subject} subjectName="Careful agent" />
+            </CurrentUiContextCommandsProvider>
         </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
         await waitForHomeGovernance(() => expect(requests).toContainEqual(expect.objectContaining({ subject })));
         await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-read')).toBeNull());
@@ -667,6 +675,9 @@ describe('Account Workflow Library and settings', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-link')).not.toBeNull());
         expect(screen.findByTestId('subject-triggers-link-pending')).toBeNull();
         expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+        expect(commands.find(command => command.title === 'workflows.triggers.section.automate')).toBeUndefined();
+        await screen.pressByTestIdAsync('subject-triggers-add');
+        expect(screen.findByTestId('workflow-builder')).not.toBeNull();
         await screen.unmount();
     });
     it('lets a widget frame head a Project\'s section: its actions become the frame\'s, its rows stay the section\'s', async () => {

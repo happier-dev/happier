@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useRouter } from 'expo-router';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { View } from 'react-native';
@@ -221,6 +222,10 @@ export const SubjectTriggersSectionContent = React.memo(
       setOpening({ kind: 'sentence', anchor, lifetime, key: sentenceKey.current, intent });
       return true;
     }, [accountLifetime, legacy, actionId, props.deploymentEnvironment, props.controllerMachineId, props.subjectName, project, session]);
+    const openAutomate = React.useCallback(() => openSentence(null, addAnchor), [openSentence]);
+    useCurrentUiContextLocalCommands([{
+      key: 'automate', title: t('workflows.triggers.section.automate'), invoke: openAutomate,
+    }], { contextKey: JSON.stringify(props.subject) });
     React.useImperativeHandle(props.actionsRef, () => ({ openNewTrigger: (anchor) => { openSentence(null, anchor); } }), [openSentence]);
     const consumedExactTurn = React.useRef<ExactTurnAutomationPrefill | null>(null);
     React.useEffect(() => {
@@ -263,17 +268,17 @@ export const SubjectTriggersSectionContent = React.memo(
         <View ref={addAnchor} collapsable={false}>
           <IconButton testID="subject-triggers-add" iconName="plus" variant="plain"
             accessibilityLabel={t('workflows.triggers.section.automate')} tooltip={t('workflows.triggers.section.automate')}
-            onPress={() => openSentence(null, addAnchor)} />
+            onPress={openAutomate} />
         </View>
       </View>
-    ), [widget, linkSlot, linkHeld, linkExpanded, openSentence]);
+    ), [widget, linkSlot, linkHeld, linkExpanded, openAutomate]);
     const sectionActions = widget ? null : (
       <View ref={addAnchor} collapsable={false} style={styles.actions}>
         <SectionActionButton
           testID="subject-triggers-add"
           icon="plus"
           title={t('workflows.triggers.section.automate')}
-          onPress={() => openSentence(null, addAnchor)}
+          onPress={openAutomate}
         />
         {linkSlot === 'offered' ? (
           <View ref={linkAnchor} collapsable={false}>
