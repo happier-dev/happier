@@ -17,6 +17,8 @@ import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflow
 import { useBoardMembership } from '@/components/boards/model/useBoardContent';
 import { createWorkflowRunSummaryFixture, createWorkflowRunRecentSummaryFixture as recent } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { CollectionProps } from '@happier-dev/plugin-ui';
+import type { WorkflowRunCollectionRow } from '../library/useWorkflowRunCollection';
 import { configureSessionDraftRepository, resetSessionDraftRepositoryForTests, writeNewSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { WorkflowsRunsRoute } from '@/app/(app)/workflows/runs/index';
 import { WorkflowsColumn } from './WorkflowsColumn';
@@ -869,6 +871,17 @@ describe('WorkflowsColumn', () => {
             // Main holds the Runs table (owner D2); it never repeats a Sessions list.
             expect(screen.findAllHostsByTestId('sessions-list-keyboard-frame')).toHaveLength(0);
             await vi.waitFor(() => expect(screen.findHostByTestId('workflow-runs:header')).not.toBeNull());
+            const { HostCollection } = await import('@happier-dev/plugin-ui');
+            const readTable = () => screen.findAllByType(HostCollection)
+                .find(node => node.props.testID === 'workflow-runs:collection')
+                ?.props as CollectionProps<WorkflowRunCollectionRow> | undefined;
+            const readRow = () => readTable()?.model.sections.flatMap(section => section.items).find(row => row.key === running.id);
+            await vi.waitFor(() => expect(readRow()).toBeDefined());
+            // Use the mounted table's field before the native viewport has measured its visible columns.
+            const result = readTable()!.anatomy.fields?.find(field => field.key === 'result');
+            const cell = await renderScreen(<>{result?.render(readRow()!)}</>, { wrapper: TestAuth });
+            expect(cell.findHostByTestId(`workflow-runs:row:${running.id}:result`)).not.toBeNull();
+            expect(cell.findHostByTestId(`session-row-attention-indicator-run-result-${running.id}`)).not.toBeNull();
         } finally {
             routeState.pathname = '/workflows';
         }

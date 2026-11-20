@@ -24,6 +24,7 @@ import { StatusWord } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
+import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { t, usePreferredLanguage } from '@/text';
 import { WorkflowRunsViewGroupBy } from './WorkflowsViewMenu';
 import { resolveWorkflowRunRowDetails } from './workflowLibraryCells';
@@ -55,9 +56,12 @@ export const WorkflowRunResult = React.memo(function WorkflowRunResult(
   if (label === null) return null;
   const variant = WORK_STATUS_PILL_VARIANT[status?.tone ?? 'neutral'];
   return (
-    <Text testID={props.testID} variant="meta" numberOfLines={1} style={variant === 'neutral' ? styles.result : undefined}>
-      {variant === 'neutral' ? label : <StatusWord variant={variant} label={label} />}
-    </Text>
+    <View style={styles.resultLine}>
+      {status?.glyph ? <WorkStatusGlyph status={status} testIDSuffix={`run-result-${props.row.key}`} /> : null}
+      <Text testID={props.testID} variant="meta" numberOfLines={1} style={[styles.resultWord, variant === 'neutral' && styles.result]}>
+        {variant === 'neutral' ? label : <StatusWord variant={variant} label={label} />}
+      </Text>
+    </View>
   );
 });
 
@@ -287,6 +291,14 @@ const RUNS_MIN_WIDTH_PX = 320;
 const passThroughPageScroller = (children: React.ReactNode) => children;
 
 const styles = StyleSheet.create((theme) => ({
+  resultLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s4,
+  },
+  resultWord: {
+    flexShrink: 1,
+  },
   result: {
     color: theme.colors.text.secondary,
   },
