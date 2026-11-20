@@ -777,7 +777,7 @@ it('Adjust changes one fact through the validator and asks again with a note, fr
   }
 });
 
-it('F2: canonical answers and adjustment notes each start one checked run with zero catalog reads; connect refresh reads once', async () => {
+it('F2: canonical answers and adjustment notes each start one checked run with zero catalog reads; Suggest again after a connect reads the catalog once', async () => {
   const { useNewAppAutoSuggestions } = await import('./auto/useNewAppAutoSuggestions');
   const questions = { kind: 'questions', questions: [{ id: 'purpose', type: 'text', prompt: 'What should visitors do?', required: true }] };
   let round = 0;
@@ -834,12 +834,26 @@ it('F2: canonical answers and adjustment notes each start one checked run with z
     expect(calls('execution.run.start')).toHaveLength(1);
     expect(calls('deployments.suggestions.check'), 'the dialog validates locally').toHaveLength(0);
     expect(calls('execution.run.start')[0]![1]).toMatchObject({ intentInput: { input: { catalog: snapshot, answers, note: 'Keep it free' } } });
+    // Connecting a platform mid-flow (e.g. from Where's connect sheet) lands in the Account's connected accounts;
+    // the person's next Suggest again rebuilds the snapshot once (AUTO-LIVE-GAPS row 3), later ones reuse it.
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { QualifiedConnectedAccountProfileV4Schema } = await import('@happier-dev/protocol/connect/qualifiedConnectedAccountProjectionsV4');
+    await act(async () => storage.setState((state) => ({ profile: { ...state.profile, connectedAccountsV4: [
+      QualifiedConnectedAccountProfileV4Schema.parse({ ref: { service: { pluginId: 'happier.deploy.vercel', localId: 'vercel' }, accountId: 'work' },
+        status: 'connected', authenticationModeId: 'token', configurationReady: true, configurationRevision: 'configuration',
+        revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] }),
+    ] } })));
     execute.mockClear();
-    await act(async () => current.refreshSuggestions());
-    await waitForHomeGovernance(() => expect(current.chosen).toBeTruthy());
-    expect(calls('deployments.suggestions.catalog')).toHaveLength(1);
-    expect(calls('execution.run.start')).toHaveLength(1);
+    await act(async () => current.suggestAgain('Host it on Vercel'));
+    await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
+    await waitForHomeGovernance(() => expect(current.view.kind).toBe('recommendations'));
+    expect(calls('deployments.suggestions.catalog'), 'after a connect = 1 catalog + 1 run').toHaveLength(1);
     expect(calls('deployments.suggestions.check'), 'the dialog validates locally').toHaveLength(0);
+    execute.mockClear();
+    await act(async () => current.suggestAgain('Keep it small'));
+    await waitForHomeGovernance(() => expect(calls('execution.run.start')).toHaveLength(1));
+    await waitForHomeGovernance(() => expect(current.view.kind).toBe('recommendations'));
+    expect(calls('deployments.suggestions.catalog'), 'no connect since the rebuilt snapshot').toHaveLength(0);
   } finally { await screen.unmount(); await fixture.dispose(); }
 });
 

@@ -21,6 +21,8 @@ import {
 } from '@/execution/llmTasks/suggestDeploySetup';
 import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { useSettingMutable } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storageStore';
+import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { t } from '@/text';
 
 import type {
@@ -76,7 +78,10 @@ export function useNewAppAutoSuggestions(
     serverId: string;
     catalog: DeploySuggestionCatalogV1;
     answers: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
+    /** The Account's connections when this snapshot was read; a connect since then makes it stale (PLAN §3). */
+    connections: string;
   }> | null>(null);
+  const connections = storage((state) => connectionsKey(state.profile.connectedAccountsV4), connectionKeys);
   // The accepted Run's own Stop, for a Retry after its target refused the first one.
   const runStop = React.useRef<RunStop | null>(null);
   const lastRecommendations = React.useRef<Extract<DeploySuggestionOutcome, { kind: 'recommendations' }> | null>(null);
@@ -115,7 +120,6 @@ export function useNewAppAutoSuggestions(
   const runSuggestion = React.useCallback((followUp?: Readonly<{
     answers?: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>;
     note?: string;
-    refreshCatalog?: boolean;
   }>) => {
     if (!params.serverId || !description.trim()) return;
     const serverId = params.serverId;
@@ -132,7 +136,8 @@ export function useNewAppAutoSuggestions(
     void suggestDeploySetup({
       serverId: params.serverId,
       description,
-      ...(previous && !followUp?.refreshCatalog ? { catalog: previous.catalog } : {}),
+      // A connect since the snapshot changes catalog facts: the follow-up reads the catalog once more.
+      ...(previous && previous.connections === connections ? { catalog: previous.catalog } : {}),
       ...(answers ? { answers } : {}),
       ...(followUp?.note === undefined ? {} : { note: followUp.note }),
       choice: runnerChoice ?? null,
@@ -164,18 +169,16 @@ export function useNewAppAutoSuggestions(
         setPhase({ kind: 'describe' });
         return;
       }
-      if ('catalog' in outcome) round.current = { serverId, catalog: outcome.catalog, answers: answers ?? {} };
+      if ('catalog' in outcome) round.current = { serverId, catalog: outcome.catalog, answers: answers ?? {}, connections };
       if (outcome.kind === 'recommendations') { lastRecommendations.current = outcome; setChosenCardId(cardId(0)); }
       setPhase({ kind: 'settled', outcome, runner });
     });
-  }, [description, params.serverId, runnerChoice]);
+  }, [connections, description, params.serverId, runnerChoice]);
 
   const suggest = React.useCallback(() => runSuggestion(), [runSuggestion]);
   const answerQuestions = React.useCallback((answers: Readonly<Record<string, InteractionTransientQuestionAnswerV1>>) =>
     runSuggestion({ answers }), [runSuggestion]);
   const suggestAgain = React.useCallback((note: string) => runSuggestion({ note }), [runSuggestion]);
-  // Connecting changes catalog facts. Only this explicit refresh reloads a follow-up snapshot.
-  const refreshSuggestions = React.useCallback(() => runSuggestion({ refreshCatalog: true }), [runSuggestion]);
 
   // Questions that came with cards are asked first; skipping shows those cards, with no new run (PLAN §4 steps 2 → 3).
   const skipQuestions = React.useCallback(() => setPhase((current) =>
@@ -289,7 +292,6 @@ export function useNewAppAutoSuggestions(
     answerQuestions,
     skipQuestions,
     suggestAgain,
-    refreshSuggestions,
     adjustChosen,
     stop,
     backToDescription,
@@ -319,6 +321,12 @@ function runnerAgentTitle(runner: Runner): string {
   return runner.agentTargetKey;
 }
 const cardId = deploySuggestionCardId;
+
+const connectionKeys = { profile: ['connectedAccountsV4'] } as const;
+/** Which accounts the Account has connected, as one comparable value (a connect or removal changes it). */
+function connectionsKey(rows: readonly Readonly<{ ref: Parameters<typeof buildQualifiedConnectedAccountLocalSubjectId>[0] }>[] | undefined): string {
+  return (rows ?? []).map(row => buildQualifiedConnectedAccountLocalSubjectId(row.ref)).sort().join('\n');
+}
 
 function runsOnLine(runner: Runner): string {
   return t('newApp.auto.runsOn', {
