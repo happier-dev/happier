@@ -71,6 +71,7 @@ import {
   readPlatformInspectOutcome,
   platformTargetAssociation,
   readPlatformReviewNotice,
+  readPlatformReviewRuntime,
   type PlatformInspectOutcome,
   applyPlatformFieldPatch,
   disclosePlatformFields,
@@ -620,7 +621,11 @@ export function DeploymentPlatformTargetEditor(
   const providerEnvironment = draft?.providerEnvironment;
   const noticeKey = onPrepared && create && createIntentReady && target && account
     ? JSON.stringify([target.key, account, createSourceMethod ?? null, providerEnvironment ?? null]) : null;
-  const [createNotice, setCreateNotice] = React.useState<Readonly<{ key: string; notice: string | null }> | null>(null);
+  const [createNotice, setCreateNotice] = React.useState<Readonly<{
+    key: string;
+    notice: string | null;
+    runtime: ReturnType<typeof readPlatformReviewRuntime>;
+  }> | null>(null);
   const selectSoleConnection = useEventCallback((next: QualifiedConnectedAccountPurposeBindingTargetV1 | null) => {
     if (next?.kind === 'account') setAccount(next.account);
   });
@@ -631,7 +636,11 @@ export function DeploymentPlatformTargetEditor(
       repository: null, values: providerEnvironment === undefined ? {} : { providerEnvironment },
       ...(createSourceMethod ? { sourceMethod: createSourceMethod } : {}) }),
       props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined)
-      .then(result => { if (isCurrent()) setCreateNotice({ key, notice: result.ok ? readPlatformReviewNotice(result.value) : null }); });
+      .then(result => {
+        if (!isCurrent()) return;
+        const value = result.ok ? result.value : null;
+        setCreateNotice({ key, notice: readPlatformReviewNotice(value), runtime: readPlatformReviewRuntime(value) });
+      });
   });
   React.useEffect(() => {
     if (!noticeKey) return;
@@ -639,13 +648,16 @@ export function DeploymentPlatformTargetEditor(
     readCreateNotice(noticeKey, () => current);
     return () => { current = false; };
   }, [noticeKey, readCreateNotice]);
-  const reviewNotice = createNotice && createNotice.key === noticeKey ? createNotice.notice : null;
+  const currentNotice = createNotice?.key === noticeKey ? createNotice : null;
   React.useEffect(() => {
     if (!onPrepared || !create) return;
     if (!createIntentReady || !draft) { onPrepared(null); return; }
     preparedCreateKey.current ??= randomUUID();
-    onPrepared({ kind: 'create', requestKey: preparedCreateKey.current, providerCreate: readProviderCreate(draft), reviewNotice });
-  }, [onPrepared, create, createIntentReady, draft, reviewNotice]);
+    onPrepared({ kind: 'create', requestKey: preparedCreateKey.current, providerCreate: readProviderCreate(draft),
+      reviewNotice: currentNotice?.notice ?? null,
+      ...(currentNotice?.runtime && controllerLabel ? { reviewRuntime: { ...currentNotice.runtime, machineName: controllerLabel } } : {}),
+    });
+  }, [onPrepared, create, createIntentReady, draft, currentNotice, controllerLabel]);
   // Before Connect there is nothing to check or link: no disabled Check anywhere, the connection leads (DESIGN-ACCEPT C1).
   const primary = createdBranchOutcome || provisioned || outcomeUnknown || duplicate || pendingLink || unresolvedLink
     || (create && props.onPrepared) || connectionNeeded ? null : {

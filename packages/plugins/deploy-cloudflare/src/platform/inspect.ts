@@ -6,11 +6,18 @@ import { pagesPrepare, pagesPrepareInput, pagesLinkSchema } from './pagesPrepare
 
 import { targetOptionInputHints, targetProductInputHints } from './targetOptions.js';
 import { cloudflareReviewNotice } from './reviewNotice.js';
+import { CLOUDFLARE_BUILD_IMAGE_PIN, CLOUDFLARE_BUILD_NODE_VERSION, CLOUDFLARE_WRANGLER_VERSION } from './cloudflareToolchain.js';
 
 const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
 const noticeResult: PluginJsonSchema = { type: 'object', additionalProperties: false,
   properties: { preparedNative: { type: 'object', additionalProperties: false,
-    properties: { reviewNotice: { type: 'string' } }, required: ['reviewNotice'] } }, required: ['preparedNative'] };
+    properties: {
+      reviewNotice: { type: 'string' },
+      buildRuntime: { type: 'object', additionalProperties: false,
+        properties: { name: { type: 'string' }, version: { type: 'string' }, pin: { type: 'string' },
+          tool: { type: 'string' }, toolVersion: { type: 'string' } },
+        required: ['name', 'version', 'pin', 'tool', 'toolVersion'] },
+    }, required: ['reviewNotice'] } }, required: ['preparedNative'] };
 
 /** Draft inspection describes consequences, without claiming a resource exists. */
 function withPreCreateNotice(action: typeof workersPrepare & { inputSchema: PluginJsonSchema; resultSchema: PluginJsonSchema }, product?: 'workers' | 'pages') {
@@ -28,9 +35,17 @@ function withPreCreateNotice(action: typeof workersPrepare & { inputSchema: Plug
       // Admission distinguishes a source-choice draft from an existing-resource input: the draft names no account
       // (native coordinates) and no identity.
       const request = input as unknown as DeploymentTargetPreparationBaseV1 & { product: 'workers' | 'pages' };
-      if (!request.providerIdentity && !request.providerAccountId) return { preparedNative: {
-        reviewNotice: cloudflareReviewNotice(product ?? request.product, request.sourceMethod!),
-      } };
+      if (!request.providerIdentity && !request.providerAccountId) {
+        const target = product ?? request.product;
+        const sourceMethod = request.sourceMethod!;
+        return { preparedNative: {
+          reviewNotice: cloudflareReviewNotice(target, sourceMethod),
+          ...(target === 'pages' && sourceMethod === 'upload' ? { buildRuntime: {
+            name: 'Node.js', version: CLOUDFLARE_BUILD_NODE_VERSION, pin: CLOUDFLARE_BUILD_IMAGE_PIN,
+            tool: 'Wrangler', toolVersion: CLOUDFLARE_WRANGLER_VERSION,
+          } } : {}),
+        } };
+      }
       return action.run(input, context);
     },
   };

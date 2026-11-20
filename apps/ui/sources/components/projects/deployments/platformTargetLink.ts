@@ -17,6 +17,7 @@ import { listDeploymentTargetsFromManifestsV1, readPluginActionCredentialPurpose
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
+import { formatContentDigestPrefix } from '@/utils/formatContentDigestPrefix';
 
 /**
  * One runtime platform a person can link (Vercel, Cloudflare Workers, Cloudflare Pages), read from the plugin's
@@ -218,7 +219,8 @@ export function buildPlatformTargetDraft(
  */
 export type PreparedPlatformTargetLink =
   | Readonly<{ kind: 'existing'; provider: DeploymentTargetLinkProviderContentV1; reviewNotice: string | null }>
-  | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate; reviewNotice: string | null }>;
+  | Readonly<{ kind: 'create'; requestKey: string; providerCreate: PlatformTargetProviderCreate; reviewNotice: string | null;
+      reviewRuntime?: PlatformTargetReviewRuntime & Readonly<{ machineName: string }> }>;
 
 /** The connected account a prepared platform draft acts through, when it names one Account-held account. */
 export function readPreparedPlatformAccount(prepared: PreparedPlatformTargetLink | null): QualifiedConnectedAccountRef | null {
@@ -238,6 +240,23 @@ export function readPlatformReviewNotice(value: unknown): string | null {
   const prepared = value.preparedNative;
   return typeof prepared === 'object' && prepared !== null && 'reviewNotice' in prepared
     && typeof prepared.reviewNotice === 'string' ? prepared.reviewNotice : null;
+}
+
+type PlatformTargetReviewRuntime = Readonly<{
+  name: string;
+  version: string;
+  pin: string;
+  tool: string;
+  toolVersion: string;
+}>;
+
+/** The provider names its build runtime. Review and Store Versions use the same abbreviated pin. */
+export function readPlatformReviewRuntime(value: unknown): PlatformTargetReviewRuntime | null {
+  const runtime = record(value) && record(value.preparedNative) ? value.preparedNative.buildRuntime : null;
+  if (!record(runtime)) return null;
+  const { name, version, pin, tool, toolVersion } = runtime;
+  if (!text(name) || !text(version) || !text(pin) || !text(tool) || !text(toolVersion)) return null;
+  return { name, version, pin: formatContentDigestPrefix(pin), tool, toolVersion };
 }
 
 /**

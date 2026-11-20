@@ -1,4 +1,5 @@
 import { DeploymentTemplateMappingCorrection } from '@/components/projects/deployments/DeploymentTemplateMappingCorrection';
+import { formatContentDigestPrefix } from '@/utils/formatContentDigestPrefix';
 import { useRegistrySourceDescriptor } from '@/registries/useRegistrySourceRevision';
 import { appListingCatalogFacts, appListingProse } from './catalog/storeAppListingFacts';
 import * as React from 'react';
@@ -203,7 +204,7 @@ export function StoreAppListing(
   const exactPin = catalogRef.kind === 'gitTree' ? (catalogRef.commit.trim()
     ? t('capabilities.store.appPage.catalogCommit', { ref: catalogRef.commit.trim().slice(0, 7) }) : null)
     : catalogRef.kind === 'version' ? (catalogRef.version.trim() && catalogRef.version.trim() !== '0.0.0' ? catalogRef.version.trim() : null)
-    : catalogRef.digest.trim() ? t('capabilities.store.appPage.catalogContent', { ref: shortDigest(catalogRef.digest.trim()) }) : null;
+    : catalogRef.digest.trim() ? t('capabilities.store.appPage.catalogContent', { ref: formatContentDigestPrefix(catalogRef.digest.trim()) }) : null;
   const release = catalogFacts.version?.trim();
   // The version the install runs: the App's release, else the image tag its primary service pins.
   const appVersion = (release === '0.0.0' ? null : release || null) ?? (state.kind === 'ready' ? state.imageTag : null);
@@ -398,9 +399,3 @@ const styles = StyleSheet.create((theme) => ({
   facts: { paddingTop: theme.space.s12 },
   mono: { ...Typography.mono() },
 }));
-
-/** `sha256:` and the first 12 hex digits: enough to tell two catalog contents apart at a glance. */
-function shortDigest(digest: string): string {
-  const [algorithm, hex] = digest.includes(':') ? digest.split(':', 2) as [string, string] : ['', digest];
-  return `${algorithm ? `${algorithm}:` : ''}${hex.slice(0, 12)}`;
-}

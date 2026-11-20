@@ -22,7 +22,7 @@ it('prepares and links a direct upload without requiring provider Git access', a
   try {
     const prepared = await kit.invokeAction('pages-inspect', { ...preparation, repository, sourceMethod: 'upload' });
     expect(prepared).toMatchObject({ sourceMethod: 'upload', providerIdentity: preparation.providerIdentity,
-      preparedNative: { reviewNotice: expect.stringContaining('Wrangler'), pages: { projectMode: 'directUpload' } } });
+      preparedNative: { reviewNotice: expect.stringContaining('Uploads build on the selected Machine'), pages: { projectMode: 'directUpload' } } });
     expect(prepared).not.toHaveProperty('repositoryAccess');
     if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Expected prepared Pages project');
     expect(await kit.invokeAction('pages-link', { ...preparation, ...prepared })).toEqual(prepared);

@@ -2,9 +2,13 @@ import { CLOUDFLARE_BUILD_IMAGE, CLOUDFLARE_WRANGLER_VERSION } from './cloudflar
 
 /** Inspect, Create and Prepare disclose the same source consequences. */
 export function cloudflareReviewNotice(target: 'pages' | 'workers', sourceMethod: 'gitIntegration' | 'upload'): string {
-  const deployment = sourceMethod === 'upload'
+  if (target === 'pages') {
+    const deployment = sourceMethod === 'upload'
+      ? 'Uploads build on the selected Machine.'
+      : 'Deploys the latest commit on the configured branch.';
+    return `A Pages source is final at creation. ${deployment}`;
+  }
+  return sourceMethod === 'upload'
     ? `Uploads build on the controller using ${CLOUDFLARE_BUILD_IMAGE} and Wrangler ${CLOUDFLARE_WRANGLER_VERSION}.`
-    : target === 'pages' ? 'Deploys the latest commit on the configured branch.'
-      : 'Cloudflare Workers Builds deploys the configured repository branch.';
-  return target === 'pages' ? `A Pages source is final at creation. ${deployment}` : deployment;
+    : 'Cloudflare Workers Builds deploys the configured repository branch.';
 }

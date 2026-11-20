@@ -16,6 +16,7 @@ import {
   readDeploymentPlatformTargets,
   readPlatformInspectOutcome,
   readPlatformReviewNotice,
+  readPlatformReviewRuntime,
 } from './platformTargetLink';
 
 const account = {
@@ -194,7 +195,7 @@ it('checks an existing Worker from its sheet choices and returns the selected sc
   }
 });
 
-it('reads the Pages pre-Create notice from the Create new draft through the Pages inspect Action', async () => {
+it('reads the Pages upload runtime as versioned facts through the Pages inspect Action', async () => {
   const kit = await createPluginTestkit({
     manifest: entry.manifest,
     module: entry,
@@ -210,13 +211,21 @@ it('reads the Pages pre-Create notice from the Create new draft through the Page
       account,
       repository: null,
       values: { providerEnvironment: { kind: 'production' } },
-      sourceMethod: 'gitIntegration',
+      sourceMethod: 'upload',
     });
     const result = await kit.invokeAction(
       platform.inspectLocalId,
       draft as JsonValue,
     );
     expect(readPlatformReviewNotice(result)).toContain('final at creation');
+    expect(readPlatformReviewNotice(result)).not.toMatch(/controller|sha256:/);
+    expect(readPlatformReviewRuntime(result)).toEqual({
+      name: 'Node.js',
+      version: '24.21.0',
+      pin: 'sha256:3d27e5c11e57',
+      tool: 'Wrangler',
+      toolVersion: '4.156.0',
+    });
   } finally {
     await kit.dispose();
   }

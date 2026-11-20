@@ -10,7 +10,7 @@ import { DeploymentTargetRoleResultV1ProtocolSchema, type JsonValue } from '@hap
 // https://developers.cloudflare.com/api/resources/pages/subresources/projects/methods/create/
 const credentialRef = { service: { pluginId: entry.manifest.id, localId: 'cloudflare' }, accountId: 'profile' };
 it.each([
-  { product: 'pages', sourceMethod: 'upload', notices: ['final at creation', 'controller', 'Wrangler'] },
+  { product: 'pages', sourceMethod: 'upload', notices: ['final at creation', 'Uploads build on the selected Machine'] },
   { product: 'pages', sourceMethod: 'gitIntegration', notices: ['final at creation', 'latest commit', 'branch'] },
   { product: 'workers', sourceMethod: 'upload', notices: ['controller', 'Wrangler'] },
   { product: 'workers', sourceMethod: 'gitIntegration', notices: ['Workers Builds', 'branch'] },
