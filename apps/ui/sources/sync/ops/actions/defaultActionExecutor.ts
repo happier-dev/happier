@@ -2957,35 +2957,33 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       // A strategy chooser owns its child hydration, restored draft and navigation.
       // Returning the exact fork result keeps a second navigation out of that flow.
       if (strategy !== undefined) return result;
-      if (childSessionId) {
-        await completeSessionForkNavigation({
-          childSessionId,
-          parentSessionId: sid,
-          ...(resolvedServerId ? { serverId: resolvedServerId } : {}),
-          navigate: async (targetSessionId, navigationOptions) => {
-            const navigationServerId = navigationOptions?.serverId ?? resolvedServerId;
-            if (opts?.openSession) {
-              if (navigationServerId) {
-                await opts.openSession(targetSessionId, { serverId: navigationServerId });
-              } else {
-                await opts.openSession(targetSessionId);
-              }
-              return;
+      await completeSessionForkNavigation({
+        childSessionId,
+        parentSessionId: sid,
+        ...(resolvedServerId ? { serverId: resolvedServerId } : {}),
+        navigate: async (targetSessionId, navigationOptions) => {
+          const navigationServerId = navigationOptions?.serverId ?? resolvedServerId;
+          if (opts?.openSession) {
+            if (navigationServerId) {
+              await opts.openSession(targetSessionId, { serverId: navigationServerId });
+            } else {
+              await opts.openSession(targetSessionId);
             }
-            await openSessionForVoiceTool({
-              sessionId: targetSessionId,
-              serverId: navigationServerId,
-              resolveServerIdForSessionId: navigationServerId
-                ? (candidateSessionId) => candidateSessionId === targetSessionId
-                  ? navigationServerId
-                  : opts?.resolveServerIdForSessionId?.(candidateSessionId) ?? null
-                : opts?.resolveServerIdForSessionId,
-              resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
-            });
-          },
-        });
-      }
-      return { ok: true, status: 'forked', parentSessionId: sid, childSessionId };
+            return;
+          }
+          await openSessionForVoiceTool({
+            sessionId: targetSessionId,
+            serverId: navigationServerId,
+            resolveServerIdForSessionId: navigationServerId
+              ? (candidateSessionId) => candidateSessionId === targetSessionId
+                ? navigationServerId
+                : opts?.resolveServerIdForSessionId?.(candidateSessionId) ?? null
+              : opts?.resolveServerIdForSessionId,
+            resolveServerNameForSessionId: opts?.resolveServerNameForSessionId,
+          });
+        },
+      });
+      return result;
     },
 
     sessionRuntimeRefresh: async ({ sessionId, machineId, serverId, mode, providerBindingSecurityChangeConfirmationV1, signal }) => withAccountLifetime(signal, async signal => {

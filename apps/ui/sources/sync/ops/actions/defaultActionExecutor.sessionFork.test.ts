@@ -210,7 +210,7 @@ describe('default Action executor Session lifecycle contracts', () => {
     const openSession = vi.fn();
     const result = await executor({ openSession, resolveServerIdForSessionId: () => serverId }).execute(
       'session.fork', { sessionId: 'sess_parent' }, context());
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'forked', childSessionId: 'sess_child' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { ok: true, childSessionId: 'sess_child' } });
     expect(rpcRequests(RPC_METHODS.SESSION_FORK)).toContainEqual(expect.objectContaining({ method: `machine_1:${RPC_METHODS.SESSION_FORK}`,
       params: expect.objectContaining({ v: 1, parentSessionId: 'sess_parent', forkPoint: { type: 'latest' } }) }));
     expect(homes.requests.filter(({ path }) => path.split('?')[0] === '/v2/sessions/sess_child'))

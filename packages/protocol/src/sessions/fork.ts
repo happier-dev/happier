@@ -63,8 +63,13 @@ export const SessionForkRpcParamsSchema = lazyZodSchema(() => z.strictObject({
   }));
 export type SessionForkRpcParams = z.infer<typeof SessionForkRpcParamsSchema>;
 
+export const SessionForkRpcSuccessSchema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(true),
+  childSessionId: z.string().check(z.minLength(1)),
+}));
+
 export const SessionForkRpcResultSchema = lazyZodSchema(() => z.union([
-  z.strictObject({ ok: z.literal(true), childSessionId: z.string().check(z.minLength(1)) }),
+  SessionForkRpcSuccessSchema,
   z.strictObject({ ok: z.literal(false), errorCode: z.string().check(z.minLength(1)), errorMessage: z.string().check(z.minLength(1)) }),
 ]));
 export type SessionForkRpcResult = z.infer<typeof SessionForkRpcResultSchema>;

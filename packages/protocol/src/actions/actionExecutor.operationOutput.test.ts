@@ -10,6 +10,14 @@ import { executeActionOperationActionV1 } from './executor/actionOperationAction
 import { ACTION_OPERATION_ACTION_IDS_V1, ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from './operations/actionIdsV1.js';
 
 describe('operation and retained output Actions', () => {
+  it('exposes the created Session on a fork receipt and rejects an empty child id', () => {
+    const receipt = { ok: true, childSessionId: 'child-session' };
+    expect(settleActionOutput('session.fork', { ok: true, result: receipt }))
+      .toEqual({ ok: true, result: receipt });
+    expect(settleActionOutput('session.fork', { ok: true, result: { ...receipt, childSessionId: '' } }))
+      .toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+  });
+
   it('binds a plugin exact-request lookup to its mounted runtime without changing qualified operands', async () => {
     const transport = vi.fn(async () => ({ items: [], nextCursor: null }));
     const executor = createActionExecutor({

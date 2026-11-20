@@ -8,7 +8,7 @@ import type { ActionSpecProjectionMetadata, ActionSpecSurfaceBindings, ActionSur
 import { actionInputServerId } from '../definition.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
-import { SessionForkRpcParamsSchema } from '../../../sessions/fork.js';
+import { SessionForkRpcParamsSchema, SessionForkRpcSuccessSchema } from '../../../sessions/fork.js';
 import { SessionResumeRequestV1Schema } from '../../../sessions/control/sessionResumeRequestV1.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { SessionOpenDestinationSchema } from '../../sessionOpenDestination.js';
@@ -321,7 +321,7 @@ function createSessionLifecycleActionSpecs() {
         { path: 'forkPoint', title: 'Fork point (optional)', widget: 'json' },
       ],
     },
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: SessionForkRpcSuccessSchema,
     inputSchema: SessionForkInputSchema,
     cli: { commands: [{ path: ['session', 'fork'], positionals: ['sessionId'], visibility: 'canonical' }] },
   } satisfies PreNormalizedActionSpec,

@@ -4025,8 +4025,9 @@ export type SessionLifecycleActionResultById = {
     readonly "session.open": boolean | null | number | readonly JsonValue[] | string | {
         readonly [key: string]: JsonValue;
     };
-    readonly "session.fork": boolean | null | number | readonly JsonValue[] | string | {
-        readonly [key: string]: JsonValue;
+    readonly "session.fork": {
+        ok: true;
+        childSessionId: string;
     };
     readonly "session.continue_with_replay": boolean | null | number | readonly JsonValue[] | string | {
         readonly [key: string]: JsonValue;
