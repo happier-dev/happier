@@ -7,5 +7,6 @@
   "machineLima.presentation.lima_2_required": "需要 Lima 2",
   "machineLima.presentation.qemu_unavailable": "QEMU 不可用",
   "machineLima.presentation.qemu_driver_unavailable": "QEMU 不可用",
-  "machineLima.presentation.vz_driver_unavailable": "虚拟化不可用"
+  "machineLima.presentation.vz_driver_unavailable": "虚拟化不可用",
+  "machineLima.presentation.agent_session_memory_too_small": "内存不足，无法启动代理会话。启动时的内存用量峰值为 {measuredPeakGiB} GiB。请选择至少 {minimumGiB} GiB，建议配置 {recommendedGiB} GiB。"
 }

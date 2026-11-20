@@ -7,5 +7,6 @@
   "machineLima.presentation.lima_2_required": "Lima 2 erforderlich",
   "machineLima.presentation.qemu_unavailable": "QEMU nicht verfügbar",
   "machineLima.presentation.qemu_driver_unavailable": "QEMU nicht verfügbar",
-  "machineLima.presentation.vz_driver_unavailable": "Virtualisierung nicht verfügbar"
+  "machineLima.presentation.vz_driver_unavailable": "Virtualisierung nicht verfügbar",
+  "machineLima.presentation.agent_session_memory_too_small": "Zu wenig Arbeitsspeicher für eine Agenten-Session. Beim Start lag der Spitzenverbrauch bei {measuredPeakGiB} GiB. Wähle mindestens {minimumGiB} GiB. Wir empfehlen {recommendedGiB} GiB."
 }

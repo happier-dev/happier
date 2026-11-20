@@ -7,5 +7,6 @@
   "machineLima.presentation.lima_2_required": "Lima 2 requis",
   "machineLima.presentation.qemu_unavailable": "QEMU indisponible",
   "machineLima.presentation.qemu_driver_unavailable": "QEMU indisponible",
-  "machineLima.presentation.vz_driver_unavailable": "Virtualisation indisponible"
+  "machineLima.presentation.vz_driver_unavailable": "Virtualisation indisponible",
+  "machineLima.presentation.agent_session_memory_too_small": "Mémoire insuffisante pour une session d’agent. Au démarrage, l’utilisation a atteint un pic de {measuredPeakGiB} Gio. Choisis au moins {minimumGiB} Gio. Nous recommandons {recommendedGiB} Gio."
 }

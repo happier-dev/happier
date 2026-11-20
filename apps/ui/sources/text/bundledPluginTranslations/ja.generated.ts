@@ -177,6 +177,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineHetzner.prices.compute": "コンピューティング",
   "machineHetzner.prices.primaryIpv4": "プライマリ IPv4",
   "machineHetzner.prices.primaryIpv6": "プライマリ IPv6",
+  "machineLima.presentation.agent_session_memory_too_small": "エージェントセッションに必要なメモリが不足しています。起動時の最大使用量は {measuredPeakGiB} GiB でした。{minimumGiB} GiB 以上を選んでください。推奨は {recommendedGiB} GiB です。",
   "machineLima.presentation.customSize": "カスタムサイズ",
   "machineLima.presentation.description": "コード、スクリプト、開発サーバー向けの軽量 Linux マシン。",
   "machineLima.presentation.kind": "マシン",

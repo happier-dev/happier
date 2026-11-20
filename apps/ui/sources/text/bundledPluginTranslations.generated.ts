@@ -185,6 +185,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Càlcul",
     "machineHetzner.prices.primaryIpv4": "IPv4 principal",
     "machineHetzner.prices.primaryIpv6": "IPv6 principal",
+    "machineLima.presentation.agent_session_memory_too_small": "Memòria insuficient per a una sessió d’agent. Durant l’arrencada, el consum va arribar a {measuredPeakGiB} GiB. Tria com a mínim {minimumGiB} GiB. Recomanem {recommendedGiB} GiB.",
     "machineLima.presentation.customSize": "Mida personalitzada",
     "machineLima.presentation.description": "Una màquina Linux lleugera per a codi, scripts i servidors de desenvolupament.",
     "machineLima.presentation.kind": "màquina",
@@ -4749,6 +4750,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Rechenleistung",
     "machineHetzner.prices.primaryIpv4": "Primäre IPv4",
     "machineHetzner.prices.primaryIpv6": "Primäre IPv6",
+    "machineLima.presentation.agent_session_memory_too_small": "Zu wenig Arbeitsspeicher für eine Agenten-Session. Beim Start lag der Spitzenverbrauch bei {measuredPeakGiB} GiB. Wähle mindestens {minimumGiB} GiB. Wir empfehlen {recommendedGiB} GiB.",
     "machineLima.presentation.customSize": "Eigene Größe",
     "machineLima.presentation.description": "Ein schlanker Linux-Rechner für Code, Skripte und Entwicklungsserver.",
     "machineLima.presentation.kind": "Rechner",
@@ -9313,6 +9315,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Compute",
     "machineHetzner.prices.primaryIpv4": "Primary IPv4",
     "machineHetzner.prices.primaryIpv6": "Primary IPv6",
+    "machineLima.presentation.agent_session_memory_too_small": "Too small for an agent Session. Startup peaked at {measuredPeakGiB} GiB. Choose at least {minimumGiB} GiB. We recommend {recommendedGiB} GiB.",
     "machineLima.presentation.customSize": "Custom size",
     "machineLima.presentation.description": "A lightweight Linux machine for code, scripts and dev servers.",
     "machineLima.presentation.kind": "Machine",
@@ -13877,6 +13880,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Cómputo",
     "machineHetzner.prices.primaryIpv4": "IPv4 principal",
     "machineHetzner.prices.primaryIpv6": "IPv6 principal",
+    "machineLima.presentation.agent_session_memory_too_small": "Memoria insuficiente para una sesión de agente. Durante el arranque, el uso alcanzó un máximo de {measuredPeakGiB} GiB. Elige al menos {minimumGiB} GiB. Recomendamos {recommendedGiB} GiB.",
     "machineLima.presentation.customSize": "Tamaño personalizado",
     "machineLima.presentation.description": "Una máquina Linux ligera para código, scripts y servidores de desarrollo.",
     "machineLima.presentation.kind": "máquina",
@@ -18441,6 +18445,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Calcul",
     "machineHetzner.prices.primaryIpv4": "IPv4 principale",
     "machineHetzner.prices.primaryIpv6": "IPv6 principale",
+    "machineLima.presentation.agent_session_memory_too_small": "Mémoire insuffisante pour une session d’agent. Au démarrage, l’utilisation a atteint un pic de {measuredPeakGiB} Gio. Choisis au moins {minimumGiB} Gio. Nous recommandons {recommendedGiB} Gio.",
     "machineLima.presentation.customSize": "Taille personnalisée",
     "machineLima.presentation.description": "Une machine Linux légère pour le code, les scripts et les serveurs de développement.",
     "machineLima.presentation.kind": "machine",
@@ -23005,6 +23010,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Calcolo",
     "machineHetzner.prices.primaryIpv4": "IPv4 primario",
     "machineHetzner.prices.primaryIpv6": "IPv6 primario",
+    "machineLima.presentation.agent_session_memory_too_small": "Memoria insufficiente per una sessione dell’agente. All’avvio il picco di utilizzo è stato di {measuredPeakGiB} GiB. Scegli almeno {minimumGiB} GiB. Consigliamo {recommendedGiB} GiB.",
     "machineLima.presentation.customSize": "Dimensioni personalizzate",
     "machineLima.presentation.description": "Una macchina Linux leggera per codice, script e server di sviluppo.",
     "machineLima.presentation.kind": "macchina",
@@ -27569,6 +27575,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "コンピューティング",
     "machineHetzner.prices.primaryIpv4": "プライマリ IPv4",
     "machineHetzner.prices.primaryIpv6": "プライマリ IPv6",
+    "machineLima.presentation.agent_session_memory_too_small": "エージェントセッションに必要なメモリが不足しています。起動時の最大使用量は {measuredPeakGiB} GiB でした。{minimumGiB} GiB 以上を選んでください。推奨は {recommendedGiB} GiB です。",
     "machineLima.presentation.customSize": "カスタムサイズ",
     "machineLima.presentation.description": "コード、スクリプト、開発サーバー向けの軽量 Linux マシン。",
     "machineLima.presentation.kind": "マシン",
@@ -32133,6 +32140,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Moc obliczeniowa",
     "machineHetzner.prices.primaryIpv4": "Podstawowy IPv4",
     "machineHetzner.prices.primaryIpv6": "Podstawowy IPv6",
+    "machineLima.presentation.agent_session_memory_too_small": "Za mało pamięci na sesję agenta. Podczas uruchamiania użycie pamięci osiągnęło {measuredPeakGiB} GiB. Wybierz co najmniej {minimumGiB} GiB. Zalecamy {recommendedGiB} GiB.",
     "machineLima.presentation.customSize": "Własny rozmiar",
     "machineLima.presentation.description": "Lekka maszyna Linux do kodu, skryptów i serwerów programistycznych.",
     "machineLima.presentation.kind": "maszyna",
@@ -36697,6 +36705,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Computação",
     "machineHetzner.prices.primaryIpv4": "IPv4 principal",
     "machineHetzner.prices.primaryIpv6": "IPv6 principal",
+    "machineLima.presentation.agent_session_memory_too_small": "Memória insuficiente para uma sessão de agente. O consumo de memória atingiu {measuredPeakGiB} GiB durante a inicialização. Escolha pelo menos {minimumGiB} GiB. Recomendamos {recommendedGiB} GiB.",
     "machineLima.presentation.customSize": "Tamanho personalizado",
     "machineLima.presentation.description": "Uma máquina Linux leve para código, scripts e servidores de desenvolvimento.",
     "machineLima.presentation.kind": "máquina",
@@ -41261,6 +41270,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "Вычисления",
     "machineHetzner.prices.primaryIpv4": "Основной IPv4",
     "machineHetzner.prices.primaryIpv6": "Основной IPv6",
+    "machineLima.presentation.agent_session_memory_too_small": "Недостаточно памяти для сессии агента. При запуске пиковое использование составило {measuredPeakGiB} ГиБ. Выберите не менее {minimumGiB} ГиБ. Рекомендуем {recommendedGiB} ГиБ.",
     "machineLima.presentation.customSize": "Свой размер",
     "machineLima.presentation.description": "Лёгкая машина Linux для кода, скриптов и серверов разработки.",
     "machineLima.presentation.kind": "машина",
@@ -45825,6 +45835,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "计算",
     "machineHetzner.prices.primaryIpv4": "主 IPv4",
     "machineHetzner.prices.primaryIpv6": "主 IPv6",
+    "machineLima.presentation.agent_session_memory_too_small": "内存不足，无法启动代理会话。启动时的内存用量峰值为 {measuredPeakGiB} GiB。请选择至少 {minimumGiB} GiB，建议配置 {recommendedGiB} GiB。",
     "machineLima.presentation.customSize": "自定义规格",
     "machineLima.presentation.description": "用于代码、脚本和开发服务器的轻量 Linux 机器。",
     "machineLima.presentation.kind": "机器",
@@ -50389,6 +50400,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Record<
     "machineHetzner.prices.compute": "運算",
     "machineHetzner.prices.primaryIpv4": "主要 IPv4",
     "machineHetzner.prices.primaryIpv6": "主要 IPv6",
+    "machineLima.presentation.agent_session_memory_too_small": "記憶體不足，無法啟動代理程式工作階段。啟動時的記憶體用量峰值為 {measuredPeakGiB} GiB。請選擇至少 {minimumGiB} GiB，建議配置 {recommendedGiB} GiB。",
     "machineLima.presentation.customSize": "自訂規格",
     "machineLima.presentation.description": "用於程式碼、腳本和開發伺服器的輕量 Linux 機器。",
     "machineLima.presentation.kind": "機器",
@@ -54955,6 +54967,7 @@ export type BundledPluginTranslationKey =
     | 'machineHetzner.prices.compute'
     | 'machineHetzner.prices.primaryIpv4'
     | 'machineHetzner.prices.primaryIpv6'
+    | 'machineLima.presentation.agent_session_memory_too_small'
     | 'machineLima.presentation.customSize'
     | 'machineLima.presentation.description'
     | 'machineLima.presentation.kind'

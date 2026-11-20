@@ -7,5 +7,6 @@
   "machineLima.presentation.lima_2_required": "Cal Lima 2",
   "machineLima.presentation.qemu_unavailable": "QEMU no disponible",
   "machineLima.presentation.qemu_driver_unavailable": "QEMU no disponible",
-  "machineLima.presentation.vz_driver_unavailable": "Virtualització no disponible"
+  "machineLima.presentation.vz_driver_unavailable": "Virtualització no disponible",
+  "machineLima.presentation.agent_session_memory_too_small": "Memòria insuficient per a una sessió d’agent. Durant l’arrencada, el consum va arribar a {measuredPeakGiB} GiB. Tria com a mínim {minimumGiB} GiB. Recomanem {recommendedGiB} GiB."
 }

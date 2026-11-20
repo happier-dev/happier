@@ -177,6 +177,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineHetzner.prices.compute": "Computação",
   "machineHetzner.prices.primaryIpv4": "IPv4 principal",
   "machineHetzner.prices.primaryIpv6": "IPv6 principal",
+  "machineLima.presentation.agent_session_memory_too_small": "Memória insuficiente para uma sessão de agente. O consumo de memória atingiu {measuredPeakGiB} GiB durante a inicialização. Escolha pelo menos {minimumGiB} GiB. Recomendamos {recommendedGiB} GiB.",
   "machineLima.presentation.customSize": "Tamanho personalizado",
   "machineLima.presentation.description": "Uma máquina Linux leve para código, scripts e servidores de desenvolvimento.",
   "machineLima.presentation.kind": "máquina",

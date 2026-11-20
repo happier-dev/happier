@@ -177,6 +177,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "machineHetzner.prices.compute": "運算",
   "machineHetzner.prices.primaryIpv4": "主要 IPv4",
   "machineHetzner.prices.primaryIpv6": "主要 IPv6",
+  "machineLima.presentation.agent_session_memory_too_small": "記憶體不足，無法啟動代理程式工作階段。啟動時的記憶體用量峰值為 {measuredPeakGiB} GiB。請選擇至少 {minimumGiB} GiB，建議配置 {recommendedGiB} GiB。",
   "machineLima.presentation.customSize": "自訂規格",
   "machineLima.presentation.description": "用於程式碼、腳本和開發伺服器的輕量 Linux 機器。",
   "machineLima.presentation.kind": "機器",

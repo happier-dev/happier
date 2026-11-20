@@ -7,5 +7,6 @@
   "machineLima.presentation.lima_2_required": "Lima 2 が必要",
   "machineLima.presentation.qemu_unavailable": "QEMU 利用不可",
   "machineLima.presentation.qemu_driver_unavailable": "QEMU 利用不可",
-  "machineLima.presentation.vz_driver_unavailable": "仮想化利用不可"
+  "machineLima.presentation.vz_driver_unavailable": "仮想化利用不可",
+  "machineLima.presentation.agent_session_memory_too_small": "エージェントセッションに必要なメモリが不足しています。起動時の最大使用量は {measuredPeakGiB} GiB でした。{minimumGiB} GiB 以上を選んでください。推奨は {recommendedGiB} GiB です。"
 }

@@ -176,6 +176,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "machineHetzner.prices.compute",
   "machineHetzner.prices.primaryIpv4",
   "machineHetzner.prices.primaryIpv6",
+  "machineLima.presentation.agent_session_memory_too_small",
   "machineLima.presentation.customSize",
   "machineLima.presentation.description",
   "machineLima.presentation.kind",
