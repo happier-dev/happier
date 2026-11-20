@@ -2,7 +2,7 @@ import * as React from 'react';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams';
 import { HomeHubLayoutResultSchema } from '@happier-dev/protocol/actions/specs/homeHub';
@@ -42,18 +42,25 @@ beforeAll(async () => {
   credentials = account.uiCredentials;
   const enrolled = await fixture.enrollDaemon(account);
   machineId = enrolled.target.machineId;
-  ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: account.uiCredentials });
+  await fixture.assertKnownGoodMachineControl(account, enrolled);
+  // Let the server and daemon startup phases report their own failures.
+}, 0);
+
+// The UI test environment clears saved Homes before each test. Restore the
+// mounted client after that reset while retaining the same PostgreSQL Home.
+beforeEach(async () => {
+  if (!fixture) throw new Error('Team Home fixture not started');
+  ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials });
   await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId), { timeoutMs: 60_000 });
 });
 
-afterAll(async () => {
-  const failures: unknown[] = [];
-  for (const close of [async () => (await import('../../../../apps/ui/sources/dev/testkit')).standardCleanup(),
-    () => ui?.close(), () => fixture?.stop()]) {
-    try { await close(); } catch (error) { failures.push(error); }
-  }
-  if (failures.length) throw new AggregateError(failures, 'Team Home fixture cleanup failed');
+afterEach(async () => {
+  const client = ui;
+  ui = undefined;
+  await client?.close();
 });
+
+afterAll(async () => { await fixture?.stop(); });
 
 it('TS.D.homeDemand offers the latest joined Team with setup without demanding it or revealing older joins on dismissal', async () => {
   if (!ui) throw new Error('UI Action client not started');
@@ -114,19 +121,20 @@ it('TS.D.homeDemand offers the latest joined Team with setup without demanding i
   }
   const latest = teams[1]!;
   expect(latest.viewerJoinedAt).toBeGreaterThan(teams[0]!.viewerJoinedAt!);
-  await vi.waitFor(() => expect(screen.findByTestId(`hub-setup.team:${latest.id}`)).not.toBeNull(),
+  const offerTestId = (teamId: string) => `hub-setup.team:${ui!.serverId}:${teamId}`;
+  await vi.waitFor(() => expect(screen.findByTestId(offerTestId(latest.id))).not.toBeNull(),
     { timeout: 10_000 });
   for (const team of teams) if (team.id !== latest.id) {
-    expect(screen.findByTestId(`hub-setup.team:${team.id}`)).toBeNull();
+    expect(screen.findByTestId(offerTestId(team.id))).toBeNull();
   }
   expect(machineCalls.mock.calls.filter(([, method]) => method === 'machines.setup.plan' || method === 'machines.setup.apply')).toHaveLength(0);
   const beforeDismiss = await ui.execute('home.hub.layout.get', {}, context);
   expect(beforeDismiss.ok).toBe(true);
   if (!beforeDismiss.ok) throw new Error(`Home layout unavailable (${beforeDismiss.errorCode})`);
   const beforeHidden = HomeHubLayoutResultSchema.parse(beforeDismiss.result).hiddenSetupStepIds;
-  await screen.pressByTestIdAsync(`hub-setup.team:${latest.id}.dismiss`);
-  await vi.waitFor(() => expect(screen.findByTestId(`hub-setup.team:${latest.id}`)).toBeNull());
-  for (const team of teams) expect(screen.findByTestId(`hub-setup.team:${team.id}`)).toBeNull();
+  await screen.pressByTestIdAsync(`${offerTestId(latest.id)}.dismiss`);
+  await vi.waitFor(() => expect(screen.findByTestId(offerTestId(latest.id))).toBeNull());
+  for (const team of teams) expect(screen.findByTestId(offerTestId(team.id))).toBeNull();
   const hidden = await ui.execute('home.hub.layout.get', {}, context);
   expect(hidden.ok).toBe(true);
   if (!hidden.ok) throw new Error(`Home layout unavailable (${hidden.errorCode})`);
