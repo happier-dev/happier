@@ -6,7 +6,7 @@ import { SessionInputAdmissionReceiptV1Schema } from './sessionInputAdmission.js
 import { SessionMessageAttentionImpactSchema } from './transcriptRawRecordV1.js';
 import { SessionMessageDeliveryResolutionV1Schema } from './sessionMessageDeliveryResolutionV1.js';
 import { SessionMessageRoleSchema, type SessionMessageRole } from './sessionMessageRole.js';
-import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent.js';
+import { SessionMessageToolOutputAvailabilitySchema, SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema } from './sessionStoredMessageContent.js';
 import { SessionTranscriptObservationProvenanceV1Schema, SessionTranscriptSurfaceItemReferenceInputV1Schema } from './transcriptObservationV1.js';
 import { FollowDeliveryProjectionV1Schema } from '../follow/sessionFollowDeliveryProjectionV1.js';
 import {
@@ -21,6 +21,8 @@ export const SessionMessageV1Schema = lazyZodSchema(() => z.object({
   messageRole: z.nullish(SessionMessageRoleSchema),
   attentionImpact: z.optional(SessionMessageAttentionImpactSchema),
   content: SessionStoredMessageContentSchema,
+  toolOutputAvailability: z.optional(SessionMessageToolOutputAvailabilitySchema),
+  toolOutputPart: z.optional(StrictSessionStoredMessageContentEnvelopeSchema),
   createdAt: z.number(), updatedAt: z.optional(z.number()),
   sourceCreatedAt: z.optional(z.number().check(z.int(), z.minimum(0))),
   sourceUpdatedAt: z.optional(z.number().check(z.int(), z.minimum(0))),
@@ -53,7 +55,7 @@ export type SessionMessagesPageV1 = z.infer<typeof SessionMessagesPageV1Schema>;
 // An external publication row may be an opaque cursor witness. Invalid content
 // and coarse actors are omitted; Account identity never crosses this projection.
 export const SessionExternalShareableMessagesPageV1Schema = lazyZodSchema(() => z.extend(z.omit(SessionMessagesPageV1Schema, { activity: true }), {
-  messages: z.array(z.extend(z.omit(SessionMessageV1Schema, { content: true, accountActor: true, inputAdmissionReceipt: true, followDeliveryProjection: true, pendingOwnsTranscript: true }), {
+  messages: z.array(z.extend(z.omit(SessionMessageV1Schema, { content: true, accountActor: true, inputAdmissionReceipt: true, followDeliveryProjection: true, pendingOwnsTranscript: true, toolOutputAvailability: true, toolOutputPart: true }), {
     content: z.pipe(z.optional(z.unknown()), z.transform((input) => {
       const parsed = SessionStoredMessageContentSchema.safeParse(input);
       return parsed.success ? parsed.data : undefined;
@@ -69,7 +71,7 @@ export const SessionExternalShareableMessagesPageV1Schema = lazyZodSchema(() => 
 export type SessionMessagesPageScope = 'main' | 'sidechain' | 'all';
 export type BuildSessionMessagesPathParams = Readonly<{
   sessionId: string; scope: SessionMessagesPageScope; sidechainId?: string | null;
-  limit?: number; beforeSeq?: number; afterSeq?: number; messageId?: string;
+  limit?: number; beforeSeq?: number; afterSeq?: number; messageId?: string; includeToolOutput?: true;
   role?: SessionMessageRole; roles?: readonly SessionMessageRole[]; projection?: 'turns' | 'externalShareableV1' | 'activity';
 }>;
 function appendFiniteInteger(query: URLSearchParams, key: string, value: number | undefined) {
@@ -79,7 +81,11 @@ export function buildSessionMessagesPath(params: BuildSessionMessagesPathParams)
   if (params.messageId !== undefined && (params.beforeSeq !== undefined || params.afterSeq !== undefined || params.projection !== undefined)) {
     throw new Error('Exact message selection cannot be combined with paging or projection');
   }
+  if (params.includeToolOutput && !params.messageId) {
+    throw new Error('Tool output requires exact message selection');
+  }
   const query = new URLSearchParams({ scope: params.scope });
+  if (params.includeToolOutput) query.set('includeToolOutput', 'true');
   if (params.role) query.set('role', params.role);
   if (params.roles?.length) query.set('roles', params.roles.join(','));
   if (params.projection) query.set('projection', params.projection);

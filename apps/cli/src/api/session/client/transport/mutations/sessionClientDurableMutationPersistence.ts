@@ -26,7 +26,7 @@ import { SessionStateTitleValueSchema } from '@happier-dev/protocol/sessions/sta
 import { SessionStateUsageLimitRecoveryValueSchema } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { SessionTurnProgressV1Schema } from '@happier-dev/protocol/sessions/state/valueSchemas/turnProgress';
 import { SessionWorkStateV1Schema as SessionStateWorkStateValueSchema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateV1';
-import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionTranscriptObservationProvenanceV1Schema, SessionTranscriptSurfaceItemReferenceInputV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { ExactSessionTurnEndMutationV1Schema, isExactSessionTurnEndMutationV1, SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
@@ -468,6 +468,9 @@ function parseTranscriptMessageAppendPayload(value: unknown, stored: boolean): P
     if (surfaceItemReference && !surfaceItemReference.success) {
         return null;
     }
+    const toolOutputPart = value.toolOutputPart === undefined ? undefined
+        : StrictSessionStoredMessageContentEnvelopeSchema.safeParse(value.toolOutputPart);
+    if (toolOutputPart && !toolOutputPart.success) return null;
     if (value.approvalRequestArtifactId !== undefined
         && (typeof value.approvalRequestArtifactId !== 'string' || !value.approvalRequestArtifactId.trim())) return null;
     const content = typeof value.content === 'string' ? undefined : SessionStoredMessageContentSchema.safeParse(value.content);
@@ -498,6 +501,7 @@ function parseTranscriptMessageAppendPayload(value: unknown, stored: boolean): P
         ...(typeof value.sidechainId === 'string' || value.sidechainId === null ? { sidechainId: value.sidechainId } : {}),
         ...(value.sessionEventType === 'ready' ? { sessionEventType: 'ready' as const } : {}),
         ...(surfaceItemReference?.success ? { surfaceItemReference: surfaceItemReference.data } : {}),
+        ...(toolOutputPart?.success ? { toolOutputPart: toolOutputPart.data } : {}),
         ...(typeof value.approvalRequestArtifactId === 'string' ? { approvalRequestArtifactId: value.approvalRequestArtifactId } : {}),
     };
     return provenance?.success ? { ...projected, provenance: provenance.data } : projected;

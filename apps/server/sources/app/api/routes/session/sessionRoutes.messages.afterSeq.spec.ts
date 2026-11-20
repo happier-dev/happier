@@ -89,6 +89,72 @@ describe("sessionRoutes v1 messages pagination", () => {
         } finally { await app.close(); }
     });
 
+    it("projects availability and expiry while keeping the shell and pre-detachment rows", async () => {
+        const rows = [
+            { id: "expired-result", seq: 2, localId: "result", sidechainId: null, messageRole: "agent",
+                content: { t: "encrypted", c: "sealed-result-shell" }, toolOutputExpiredAfterDays: 30,
+                createdAt: new Date(2), updatedAt: new Date(2) },
+            { id: "inline-0.2", seq: 1, localId: "old", sidechainId: null, messageRole: "agent",
+                content: "0.2-bare-ciphertext", toolOutputExpiredAfterDays: null,
+                createdAt: new Date(1), updatedAt: new Date(1) },
+            { id: "available-result", seq: 3, localId: "fresh", sidechainId: null, messageRole: "agent",
+                content: { t: "encrypted", c: "sealed-available-shell" }, toolOutputExpiredAfterDays: null,
+                createdAt: new Date(3), updatedAt: new Date(3) },
+        ];
+        sessionMessageFindMany.mockImplementation(async (query: Prisma.SessionMessageFindManyArgs) =>
+            query.where?.toolOutputBytes ? [{ id: "available-result" }] : rows);
+        const app = createAuthenticatedTestApp();
+        registerSessionMessageRoutes(app);
+        try {
+            const response = await app.inject({ method: "GET", url: "/v1/sessions/s1/messages",
+                headers: { "x-test-user-id": "u1" } });
+            expect(response.statusCode).toBe(200);
+            const page = SessionMessagesPageV1Schema.parse(response.json());
+            expect(page.messages.find(row => row.id === "expired-result")).toMatchObject({
+                content: { t: "encrypted", c: "sealed-result-shell" },
+                toolOutputAvailability: { status: "expired", days: 30 },
+            });
+            expect(page.messages.find(row => row.id === "inline-0.2")).toMatchObject({
+                content: { t: "encrypted", c: "0.2-bare-ciphertext" },
+            });
+            expect(page.messages.find(row => row.id === "inline-0.2")).not.toHaveProperty("toolOutputAvailability");
+            expect(page.messages.find(row => row.id === "available-result")).toMatchObject({
+                toolOutputAvailability: { status: "available" },
+            });
+            expect(sessionMessageFindMany).toHaveBeenCalledWith({
+                where: { id: { in: ["inline-0.2", "available-result"] }, toolOutputBytes: { not: null } },
+                select: { id: true },
+            });
+        } finally { await app.close(); }
+    });
+
+    it("serves detached bytes only on an admitted exact-message read", async () => {
+        const part = { t: "plain", v: { v: 1, fields: { stdout: "fixture" }, textBlocks: [] } };
+        const row = { id: "detached-result", seq: 1, localId: "result", sidechainId: null, messageRole: "agent",
+            content: { t: "plain", v: { role: "agent" } }, toolOutputExpiredAfterDays: null,
+            createdAt: new Date(1), updatedAt: new Date(1) };
+        sessionMessageFindMany.mockImplementation(async (query: Prisma.SessionMessageFindManyArgs) => {
+            if (query.select?.toolOutputBytes) {
+                return [{ id: row.id, toolOutputBytes: new TextEncoder().encode(JSON.stringify(part.v)) }];
+            }
+            return [row];
+        });
+        const app = createAuthenticatedTestApp();
+        registerSessionMessageRoutes(app);
+        try {
+            const headers = { "x-test-user-id": "u1" };
+            const url = "/v1/sessions/s1/messages";
+            const page = await app.inject({ method: "GET", url, headers });
+            expect(page.json().messages[0]).not.toHaveProperty("toolOutputPart");
+            expect(sessionMessageFindMany.mock.calls.some(([q]) => q.select?.toolOutputBytes)).toBe(false);
+            const broad = await app.inject({ method: "GET", url: url + "?includeToolOutput=true", headers });
+            expect(broad.statusCode).toBe(400);
+            const exact = await app.inject({ method: "GET", url: url + "?messageId=detached-result&includeToolOutput=true", headers });
+            expect(exact.statusCode).toBe(200);
+            expect(exact.json().messages[0]).toMatchObject({ id: row.id, toolOutputPart: part });
+        } finally { await app.close(); }
+    });
+
     it.each(["beforeSeq=10", "afterSeq=0", "limit=1", "projection=turns", "projection=externalShareableV1"])(
         "rejects exact selection combined with %s before acquiring messages", async extra => {
             sessionMessageFindMany.mockResolvedValue([]);

@@ -3,6 +3,7 @@ import { SessionMessageRoleSchema } from './sessionMessageRole.js';
 import { SessionMessageAttentionImpactSchema, SESSION_MESSAGE_USER_ATTENTION_IMPACT } from './transcriptRawRecordV1.js';
 import { SessionTranscriptObservationProvenanceV1Schema } from './transcriptObservationV1.js';
 import type { SessionMessageV1 } from './sessionMessagesPageV1.js';
+import { SessionMessageToolOutputAvailabilitySchema } from './sessionStoredMessageContent.js';
 
 const timestamp = z.number().check(z.int(), z.minimum(0));
 /** Closed bodyless observation. Full stored/HTTP messages remain a separate type. */
@@ -11,6 +12,7 @@ export const SessionMessageObservationFactsV1Schema = z.strictObject({
   localId: z.nullable(z.string()), sidechainId: z.optional(z.nullable(z.string())),
   messageRole: z.optional(z.nullable(SessionMessageRoleSchema)),
   attentionImpact: SessionMessageAttentionImpactSchema,
+  toolOutputAvailability: z.optional(SessionMessageToolOutputAvailabilitySchema),
   createdAt: timestamp, updatedAt: timestamp,
   sourceCreatedAt: z.optional(timestamp), sourceUpdatedAt: z.optional(timestamp),
   transcriptObservationProvenance: z.optional(SessionTranscriptObservationProvenanceV1Schema),
@@ -24,6 +26,7 @@ export function buildSessionMessageObservationFactsV1(message: SessionMessageV1)
     ...(message.sidechainId === undefined ? {} : { sidechainId: message.sidechainId }),
     ...(message.messageRole === undefined ? {} : { messageRole: message.messageRole }),
     attentionImpact: message.attentionImpact ?? SESSION_MESSAGE_USER_ATTENTION_IMPACT,
+    ...(message.toolOutputAvailability === undefined ? {} : { toolOutputAvailability: message.toolOutputAvailability }),
     createdAt: message.createdAt, updatedAt: message.updatedAt ?? message.createdAt,
     ...(message.sourceCreatedAt === undefined ? {} : { sourceCreatedAt: message.sourceCreatedAt }),
     ...(message.sourceUpdatedAt === undefined ? {} : { sourceUpdatedAt: message.sourceUpdatedAt }),

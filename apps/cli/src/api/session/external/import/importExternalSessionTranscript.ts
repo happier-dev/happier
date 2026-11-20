@@ -1,16 +1,23 @@
 import { buildSessionTranscriptMessageProvenanceV1, SESSION_MESSAGE_PROVENANCE_META_KEY, stripSessionInputProtectedMeta } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isMessageStructuredPresentationV1Candidate } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
+import type { ExternalSessionOperationSocketBatchItemV1 } from '@happier-dev/protocol/sessions/external/operationActionsV1';
+import { createLegacyInlineContentDigestV1 } from '@happier-dev/protocol/sessions/messages/sessionToolOutputBindingV1';
+import { normalizeSessionStoredMessageContentForStorage } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { SessionMessageRoleSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
-import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
-import type { ExternalSessionTranscriptRawMessageV1, SessionMessageRole, StrictSessionStoredMessageContentEnvelope, SidechainId } from '@happier-dev/protocol';
+import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import type { ExternalSessionTranscriptRawMessageV1, SessionMessageRole, StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol';
 
+import { splitDurableSessionToolOutput } from '@/api/session/client/transport/outboundSessionMessagePayload';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import {
   encryptSessionMessagePayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
+  type SessionStoredContentCryptoContext,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
 import {
@@ -77,7 +84,8 @@ function buildStoredMessageContent(params: Readonly<{
   rawSession: RawSessionRecord;
   credentials: StoredCredentials;
   raw: Record<string, unknown>;
-}>): StrictSessionStoredMessageContentEnvelope {
+  toolOutputStorage?: 'detached';
+}>): Pick<ExternalSessionOperationSocketBatchItemV1, 'content' | 'toolOutputPart' | 'legacyInlineContentDigest'> {
   // Structured presentation remains host-private prework. This is the one
   // historical-import boundary that still owns plaintext for both storage
   // modes, so share the canonical Message-writer profile reservation before
@@ -87,21 +95,29 @@ function buildStoredMessageContent(params: Readonly<{
   }
 
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
-  if (mode === 'plain') {
-    return { t: 'plain', v: params.raw };
+  let context: SessionStoredContentCryptoContext = { mode: 'plain', ctx: null };
+  if (mode === 'e2ee') {
+    const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession);
+    if (!ctx) throw new Error('session_encryption_material_unavailable');
+    context = { mode, ctx };
   }
+  const idempotencyKey = JSON.stringify([params.sessionId, params.localId]);
+  const seal = (payload: unknown): StrictSessionStoredMessageContentEnvelope => context.mode === 'plain'
+    ? { t: 'plain', v: payload }
+    : { t: 'encrypted', c: encryptSessionMessagePayload({ ctx: context.ctx, payload, idempotencyKey }) };
 
-  const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, params.rawSession);
-  if (!ctx) {
-    throw new Error('session_encryption_material_unavailable');
-  }
+  // Production imports stay inline until the exact output reader is available.
+  if (params.toolOutputStorage !== 'detached') return { content: seal(params.raw) };
+  const split = splitDurableSessionToolOutput(context, { ...params, content: redactTranscriptSecrets(params.raw) });
+  if (!split) return { content: seal(params.raw) };
+  const original = seal(params.raw);
+  const normalized = normalizeSessionStoredMessageContentForStorage(original.t === 'plain'
+    ? { t: 'plain', v: projectNativeJsonValueForTransport(original.v) } : original);
+  if (!normalized) throw new Error('invalid_legacy_inline_message');
   return {
-    t: 'encrypted',
-    c: encryptSessionMessagePayload({
-      ctx,
-      payload: params.raw,
-      idempotencyKey: JSON.stringify([params.sessionId, params.localId]),
-    }),
+    content: seal(split.shell),
+    toolOutputPart: split.toolOutputPart,
+    legacyInlineContentDigest: createLegacyInlineContentDigestV1(params.sessionId, params.localId, normalized),
   };
 }
 
@@ -110,6 +126,7 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
   linked: LoadedLinkedExternalSession;
   credentials: StoredCredentials;
   sessionId: string;
+  toolOutputStorage?: 'detached';
   workingDirectory: string | null;
   sourceReadRoots: readonly string[];
   createdWorkspaceMediaPaths?: string[];
@@ -124,14 +141,7 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
     workingDirectory: string;
     candidateWorkspaceRelativePath: string;
   }>) => Promise<void>;
-}>): Promise<Readonly<{
-  localId: string;
-  sidechainId: SidechainId | null;
-  messageRole: SessionMessageRole | null;
-  content: StrictSessionStoredMessageContentEnvelope;
-  usageTimingV1: UsageTimingBoundsV1 | null;
-  sourceCreatedAtMs?: number;
-}>> {
+}>): Promise<Readonly<ExternalSessionOperationSocketBatchItemV1>> {
   const localId = makeExternalSessionHistoricalImportLocalId({
     agentId: params.linked.agentId,
     remoteSessionId: params.linked.remoteSessionId,
@@ -172,14 +182,15 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
     throw new ExternalSessionHistoricalImportRequiredItemError('media');
   }
   raw = sanitizeHistoricalImportRaw({ item: params.item, messageRole, raw });
-  let content: StrictSessionStoredMessageContentEnvelope;
+  let stored: ReturnType<typeof buildStoredMessageContent>;
   try {
-    content = buildStoredMessageContent({
+    stored = buildStoredMessageContent({
       sessionId: params.sessionId,
       localId,
       rawSession: params.linked.rawSession,
       credentials: params.credentials,
       raw,
+      toolOutputStorage: params.toolOutputStorage,
     });
   } catch {
     throw new ExternalSessionHistoricalImportRequiredItemError('conversion');
@@ -188,7 +199,7 @@ export async function prepareExternalSessionHistoricalImportItem(params: Readonl
     localId,
     sidechainId: params.item.sidechainId ?? null,
     messageRole,
-    content,
+    ...stored,
     usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: params.sessionId,
       message: { id: localId, localId, content: raw, createdAt: params.item.createdAtMs } }),
     ...(typeof params.item.createdAtMs === 'number' && Number.isSafeInteger(params.item.createdAtMs) && params.item.createdAtMs >= 0
@@ -260,14 +271,8 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
   linked: LoadedLinkedExternalSession;
   credentials: StoredCredentials;
   sessionId: string;
-}>): Readonly<{
-  localId: string;
-  sidechainId: SidechainId | null;
-  messageRole: SessionMessageRole | null;
-  content: StrictSessionStoredMessageContentEnvelope;
-  usageTimingV1: UsageTimingBoundsV1 | null;
-  sourceCreatedAtMs?: number;
-}> {
+  toolOutputStorage?: 'detached';
+}>): Readonly<ExternalSessionOperationSocketBatchItemV1> {
   const localId = makeExternalSessionHistoricalImportLocalId({
     agentId: params.linked.agentId,
     remoteSessionId: params.linked.remoteSessionId,
@@ -276,7 +281,7 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
   const parsedMessageRole = SessionMessageRoleSchema.safeParse(params.staged.item.messageRole);
   const messageRole = parsedMessageRole.success ? parsedMessageRole.data : null;
   let raw: Record<string, unknown>;
-  let content: StrictSessionStoredMessageContentEnvelope;
+  let stored: ReturnType<typeof buildStoredMessageContent>;
   try {
     raw = sanitizeHistoricalImportRaw({
       item: params.staged.item, messageRole,
@@ -284,10 +289,13 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
         raw: params.staged.item.raw, sessionId: params.sessionId, messageLocalId: localId,
       }),
     });
-    content = buildStoredMessageContent({
+    stored = buildStoredMessageContent({
+      sessionId: params.sessionId,
+      localId,
       rawSession: params.linked.rawSession,
       credentials: params.credentials,
       raw,
+      toolOutputStorage: params.toolOutputStorage,
     });
   } catch {
     throw new ExternalSessionHistoricalImportRequiredItemError('conversion');
@@ -296,7 +304,7 @@ export function validateExternalSessionHistoricalImportStagedItem(params: Readon
     localId,
     sidechainId: params.staged.item.sidechainId ?? null,
     messageRole,
-    content,
+    ...stored,
     usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: params.sessionId,
       message: { id: localId, localId, content: raw, createdAt: params.staged.item.createdAtMs } }),
     ...(typeof params.staged.item.createdAtMs === 'number' && Number.isSafeInteger(params.staged.item.createdAtMs) && params.staged.item.createdAtMs >= 0

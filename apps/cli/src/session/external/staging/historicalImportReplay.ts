@@ -186,14 +186,20 @@ async function restorePreparedReplayItems(input: Readonly<{
     }
     return Object.freeze({
         ...input.current,
-        items: Object.freeze(input.current.items.map((entry, index) => Object.freeze({
-            ...entry,
-            item: Object.freeze({
-                ...entry.item,
-                content: prepared.items[index]!.item.content,
-                usageTimingV1: prepared.items[index]!.item.usageTimingV1,
-            }),
-        }))),
+        items: Object.freeze(input.current.items.map((entry, index) => {
+            const { toolOutputPart: _currentPart, legacyInlineContentDigest, ...current } = entry.item;
+            const stored = prepared.items[index]!.item;
+            return Object.freeze({
+                ...entry,
+                item: Object.freeze({
+                    ...current,
+                    content: stored.content,
+                    usageTimingV1: stored.usageTimingV1,
+                    ...(stored.toolOutputPart ? { toolOutputPart: stored.toolOutputPart } : {}),
+                    ...(stored.toolOutputPart && legacyInlineContentDigest ? { legacyInlineContentDigest } : {}),
+                }),
+            });
+        })),
     });
 }
 
@@ -571,7 +577,7 @@ export function createExternalSessionHistoricalImportReplay(input: Readonly<{
                             operationId,
                             captureIndex: group.captureIndex,
                             groupId: group.groupId,
-                            items: parsed.items.map((entry) => entry.item),
+                            items: parsed.items.map(({ item: { legacyInlineContentDigest: _comparisonOperand, ...prepared } }) => prepared),
                         });
                         if (persisted.status === 'refused') {
                             await Promise.all(parsed.items.map((entry) => entry.cleanup?.()));

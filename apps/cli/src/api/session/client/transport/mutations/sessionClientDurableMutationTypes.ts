@@ -1,3 +1,4 @@
+import { StrictSessionStoredMessageContentEnvelopeSchema, type StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { createHash, randomUUID } from 'node:crypto';
 import type { UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 
@@ -111,6 +112,7 @@ export type TranscriptMessageAppendMutationV1 = Readonly<{
     sessionEventType?: 'ready';
     provenance: SessionTranscriptObservationProvenanceV1;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferencesV1;
+    toolOutputPart?: StrictSessionStoredMessageContentEnvelope;
     approvalRequestArtifactId?: string;
     append?: TranscriptMessageAppendDeltaV1;
 }>;
@@ -300,6 +302,7 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
     updatedAt?: number;
     provenance: SessionTranscriptObservationProvenanceV1;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferenceInputV1;
+    toolOutputPart?: StrictSessionStoredMessageContentEnvelope;
     approvalRequestArtifactId?: string;
     append?: TranscriptMessageAppendDeltaV1;
 }>): TranscriptMessageAppendMutationV1 {
@@ -323,6 +326,9 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
         provenance: requireTranscriptMessageAppendProvenance(params.provenance),
         ...(params.surfaceItemReference === undefined ? {} : {
             surfaceItemReference: SessionTranscriptSurfaceItemReferenceInputV1Schema.parse(params.surfaceItemReference),
+        }),
+        ...(params.toolOutputPart === undefined ? {} : {
+            toolOutputPart: StrictSessionStoredMessageContentEnvelopeSchema.parse(params.toolOutputPart),
         }),
         ...(params.approvalRequestArtifactId === undefined ? {} : {
             approvalRequestArtifactId: readRequiredOpaqueString(params.approvalRequestArtifactId, 'approvalRequestArtifactId'),

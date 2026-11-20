@@ -5,7 +5,7 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
 import { SessionMessageRoleSchema } from './sessionMessageRole.js';
-import { SessionStoredMessageContentSchema } from './sessionStoredMessageContent.js';
+import { SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema } from './sessionStoredMessageContent.js';
 import { SessionTranscriptSourceTimestampMsSchema } from './transcriptSourceTimestampV1.js';
 import { SessionSurfaceItemIdSchema } from '../board/ids.js';
 import { SessionSystemRecordRevisionSchema } from '../system/records/sessionSystemRecordRevision.js';
@@ -166,6 +166,7 @@ export const SessionTranscriptObservationV1Schema = lazyZodSchema(() =>
 export const SessionTranscriptObservationV2Schema = lazyZodSchema(() =>
   z.extend(SessionTranscriptObservationBodyV1Schema, { v: z.literal(2),
     surfaceItemReference: z.optional(SessionTranscriptSurfaceItemReferenceInputV1Schema),
+    toolOutputPart: z.optional(StrictSessionStoredMessageContentEnvelopeSchema),
     approvalRequestArtifactId: z.optional(NonBlankStringSchema),
   }).check(z.superRefine(refineObservationTimestamps)));
 

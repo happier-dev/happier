@@ -13,6 +13,39 @@ describe('message revisions retain their parent Session recency', () => {
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it('clears the previous part on content corrections and preserves terminal expiry', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}', seq: 2,
+        } });
+        const original = { t: 'plain' as const, v: { role: 'agent', text: 'initial shell' } };
+        const replacement = { t: 'plain' as const, v: { role: 'agent', text: 'replacement' } };
+        const available = await db.sessionMessage.create({ data: {
+            sessionId: session.id, seq: 1, localId: 'available', content: original,
+            toolOutputBytes: new TextEncoder().encode('fixture detached bytes'),
+        } });
+        const expired = await db.sessionMessage.create({ data: {
+            sessionId: session.id, seq: 2, localId: 'expired', content: original, toolOutputExpiredAfterDays: 30,
+        } });
+        const metadataOnly = await inTx(tx => updateSessionMessageAtCurrentRevisionInTx({
+            tx, id: available.id, rowRevision: available.rowRevision,
+            data: { messageRole: 'agent', rowRevision: { increment: 1n } },
+        }));
+        expect((await db.sessionMessage.findUniqueOrThrow({ where: { id: available.id } })).toolOutputBytes)
+            .toEqual(available.toolOutputBytes);
+        await inTx(tx => updateSessionMessageAtCurrentRevisionInTx({
+            tx, id: available.id, rowRevision: metadataOnly.rowRevision,
+            data: { content: replacement, rowRevision: { increment: 1n } },
+        }));
+        expect(await db.sessionMessage.findUniqueOrThrow({ where: { id: available.id } }))
+            .toMatchObject({ toolOutputBytes: null, toolOutputExpiredAfterDays: null });
+        await expect(inTx(tx => updateSessionMessageAtCurrentRevisionInTx({
+            tx, id: expired.id, rowRevision: expired.rowRevision,
+            data: { content: replacement, rowRevision: { increment: 1n } },
+        }))).rejects.toMatchObject({ code: 'session_tool_output_already_expired' });
+        expect(await db.sessionMessage.findUniqueOrThrow({ where: { id: expired.id } })).toEqual(expired);
+    });
+
     it('advances Session.updatedAt for a content correction', async () => {
         const before = new Date('2020-01-01T00:00:00Z');
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });

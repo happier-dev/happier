@@ -1,3 +1,4 @@
+import { LegacyInlineContentDigestV1Schema } from '../messages/sessionToolOutputBindingV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
@@ -116,10 +117,15 @@ export const ExternalSessionOperationSocketBatchItemV1Schema = lazyZodSchema(() 
   sidechainId: z.nullable(SidechainIdSchema),
   messageRole: z.nullable(SessionMessageRoleSchema),
   content: StrictSessionStoredMessageContentEnvelopeSchema,
+  toolOutputPart: z.optional(StrictSessionStoredMessageContentEnvelopeSchema),
+  legacyInlineContentDigest: z.optional(LegacyInlineContentDigestV1Schema),
   usageTimingV1: z.optional(z.nullable(UsageTimingBoundsV1Schema)),
   sourceCreatedAtMs: z.optional(SessionTranscriptSourceTimestampMsSchema),
   sourceUpdatedAtMs: z.optional(SessionTranscriptSourceTimestampMsSchema),
 }).check(z.superRefine((item, context) => {
+  if (item.legacyInlineContentDigest !== undefined && item.toolOutputPart === undefined) {
+    context.addIssue({ code: 'custom', path: ['legacyInlineContentDigest'], message: 'Legacy comparison requires a detached part.' });
+  }
   if (
     item.sourceCreatedAtMs !== undefined
     && item.sourceUpdatedAtMs !== undefined

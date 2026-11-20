@@ -15,7 +15,8 @@ import { resolveSessionTurnProjectionSeqs, type SessionTurnProjectionSeqs } from
 import { resolveSessionAccessForOperation } from '@/app/session/access/sessionAccess';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
-import { SessionTranscriptMessagePageResponseSchema, type SessionListPreviewQuery, isAdmittedSessionListPreviewRequest, readExternalShareableSequence, projectExternalShareableReferencedUserRow, resolveRequestedMessageRoles, buildRequestedMessageRoleWhere, SESSION_MESSAGE_PAGE_ROW_SELECT, projectSessionMessagePage, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT } from './sessionMessagePageProjection';
+import { SessionTranscriptMessagePageResponseSchema, type SessionListPreviewQuery, isAdmittedSessionListPreviewRequest, readExternalShareableSequence, projectExternalShareableReferencedUserRow, resolveRequestedMessageRoles, buildRequestedMessageRoleWhere, SESSION_MESSAGE_PAGE_ROW_SELECT, findAvailableSessionToolOutputs, projectSessionMessagePage, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT } from './sessionMessagePageProjection';
+import { decodeSessionMessageToolOutput } from '@/storage/sessionMessageToolOutput';
 import { readSessionMessagePageActivity } from './readSessionMessagePageActivity';
 /** Paginated projections share admission and row projection with first-page batches. */
 export async function readSessionMessagePage(input: Readonly<{
@@ -96,7 +97,7 @@ export async function readSessionMessagePage(input: Readonly<{
     if (admittedAccessDecision?.status === 'allowed') {
         await ensureSessionTurnTranscriptAnchorProjection(sessionId);
     }
-    const { messages: resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, accessDecision: snapshotAccessDecision, turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, } = await captureReadSnapshot(async (tx) => {
+    const { messages: resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, accessDecision: snapshotAccessDecision, turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, availableToolOutputIds, exactToolOutput, } = await captureReadSnapshot(async (tx) => {
         const accessDecision = admittedAccessDecision ?? await resolveSessionAccessForOperation(tx, { accountId: userId,
             sessionId, authentication, capability: 'readTranscript' });
         if (accessDecision.status !== 'allowed')
@@ -301,10 +302,23 @@ export async function readSessionMessagePage(input: Readonly<{
                 ...(referencedUserRows.length > 0 ? { referencedUserRows } : {}),
             });
         }
+        const exactRow = query?.includeToolOutput === "true" && !externalShareableProjection && !sessionListPreviewProjection
+            ? messages.find(row => row.id === query.messageId && row.toolOutputExpiredAfterDays === null)
+            : undefined;
+        const exactOutput = exactRow ? (await tx.sessionMessage.findMany({
+            where: { sessionId, id: exactRow.id, toolOutputExpiredAfterDays: null, toolOutputBytes: { not: null } },
+            select: { id: true, toolOutputBytes: true },
+        })).find(row => row.id === exactRow.id) : undefined;
         return {
             messages,
             hasMore,
+            exactToolOutput: exactOutput?.toolOutputBytes && exactRow ? {
+                id: exactRow.id,
+                part: decodeSessionMessageToolOutput(exactOutput.toolOutputBytes, exactRow.content.t),
+            } : undefined,
             activity: activitySnapshot?.activity,
+            availableToolOutputIds: externalShareableProjection || sessionListPreviewProjection
+                ? undefined : await findAvailableSessionToolOutputs(tx, messages),
             pendingOwnsTranscriptLocalIds: activitySnapshot?.pendingOwnsTranscriptLocalIds,
             publicationBlocked: externalShareableProjection
                 && isSessionTranscriptPublicationBlocked(publication),
@@ -332,5 +346,5 @@ export async function readSessionMessagePage(input: Readonly<{
         return { status: 404, body: { error: 'Session not found' } };
     }
     return projectSessionMessagePage({ sessionId, resultMessages, hasMore, publicationBlocked, externalShareableSnapshot,
-        turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq });
+        turnProjectionNextBeforeSeq, pageAccountActors, activity, pendingOwnsTranscriptLocalIds, availableToolOutputIds, exactToolOutput, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq });
 }

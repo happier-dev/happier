@@ -10,6 +10,8 @@ import { eventRouter } from "@/app/events/eventRouter";
 import { projectSessionDeliveryForSocket } from "@/app/events/sessionDeliveryProjection";
 import { createAuthenticatedFakeSocket, getSocketHandler } from "@/app/api/testkit/socketHarness";
 import { db } from "@/storage/db";
+import { readRetentionPolicyFromEnv } from "@/app/retention/config/readRetentionPolicyFromEnv";
+import { runRetentionSweep } from "@/app/retention/runtime/runRetentionSweep";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 describe("transcript observation appends on SQLite", () => {
@@ -26,6 +28,63 @@ describe("transcript observation appends on SQLite", () => {
     }, 120_000);
     beforeEach(() => harness.resetEnv());
     afterAll(async () => await harness.close());
+
+    it("keeps the detached part with each admitted revision and never resurrects an expired part", async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID() }, select: { id: true } });
+        const machineId = randomUUID();
+        await db.machine.create({ data: { id: machineId, accountId: owner.id, metadata: "{}" } });
+        const session = await db.session.create({
+            data: { accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await db.accessKey.create({ data: { accountId: owner.id, machineId, sessionId: session.id, data: "encrypted" } });
+
+        const socket = createAuthenticatedFakeSocket();
+        sessionUpdateHandler(
+            owner.id,
+            socket as never,
+            { connectionType: "session-scoped", socket, userId: owner.id, sessionId: session.id } as never,
+            { presence: createSessionPublisherPresence(), binding: { accountId: owner.id, machineId, sessionId: session.id } },
+        );
+        await getSocketHandler(socket, "session-runtime-activity-snapshot")({
+            sessionId: session.id,
+            mutationId: `runtime-activity-snapshot:${session.id}`,
+            snapshot: { state: "idle", activeCount: 0 },
+        }, () => {});
+
+        const localId = randomUUID();
+        const sourceTime = Date.parse("2026-11-19T00:00:00.000Z");
+        const observe = async (shell: string, part: string, sourceRevision: number) => {
+            const acks: unknown[] = [];
+            await getSocketHandler(socket, "transcript-observation-v1")({
+                v: 2, sessionId: session.id, localId, messageRole: "agent", content: shell,
+                toolOutputPart: { t: "encrypted", c: part }, createdAt: sourceTime, updatedAt: sourceTime + sourceRevision,
+                provenance: { kind: "non_dependent", source: "external" },
+            }, (value: unknown) => acks.push(value));
+            expect(acks).toHaveLength(1);
+            return acks[0];
+        };
+        const read = () => db.sessionMessage.findFirstOrThrow({
+            where: { sessionId: session.id, localId },
+            select: { id: true, seq: true, content: true, toolOutputBytes: true, toolOutputExpiredAfterDays: true },
+        });
+        expect(await observe("first-shell", "Zmlyc3Q=", 0)).toMatchObject({ ok: true, didWrite: true });
+        expect(await read()).toMatchObject({ seq: 1, toolOutputBytes: new TextEncoder().encode("first") });
+        expect(await observe("corrected-shell", "Y29ycmVjdGVk", 1)).toMatchObject({ ok: true, didUpdate: true });
+        expect(await read()).toMatchObject({ seq: 1, toolOutputBytes: new TextEncoder().encode("corrected") });
+
+        const policy = readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__ENABLED: "true",
+            HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__MODE: "delete_older_than",
+            HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__DAYS: "30",
+        });
+        await runRetentionSweep({ policy, now: new Date("2027-01-01T00:00:00Z") });
+        const expired = await read();
+        expect(expired).toMatchObject({ seq: 1, toolOutputBytes: null, toolOutputExpiredAfterDays: 30 });
+        expect(await observe("corrected-shell", "Y29ycmVjdGVk", 1)).toMatchObject({ ok: true, didWrite: false });
+        expect(await observe("late-shell", "bGF0ZQ==", 2)).toMatchObject({ ok: false });
+        expect(await read()).toEqual(expired);
+    });
 
     it("relays only the appended text to the app's live consumer while the message grows, and the full row otherwise", async () => {
         const owner = await db.account.create({

@@ -9,6 +9,8 @@ import {
     UsageAnalyticsQueryRequestSchema,
 } from "@happier-dev/protocol";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
 import {
     buildSessionMessagePublicationWhere,
@@ -22,12 +24,15 @@ import { createSessionMessageFromPending } from "@/app/session/pending/pendingMe
 import {
     writeHistoricalSessionMessageBatch,
     writeHistoricalSessionMessageBatchInTx,
+    writeSessionTranscriptMessageInTx,
 } from "@/app/session/sessionTranscriptWrite";
 import {
     executeExternalSessionHistoricalImportCommand as executeExternalSessionHistoricalImportCommandWithLimits,
 } from "@/app/session/externalSessionHistoricalImportCommand";
 import { deriveSessionSystemRecordAddressKeys } from "@/app/session/systemRecords/sessionSystemRecordAddressKeys";
 import { loadUsageMessageStatsForQuery } from "@/app/usage/query/loadUsageMessageStatsForQuery";
+import { readRetentionPolicyFromEnv } from '@/app/retention/config/readRetentionPolicyFromEnv';
+import { runRetentionSweep } from '@/app/retention/runtime/runRetentionSweep';
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
@@ -137,6 +142,218 @@ describe("canonical transcript sequence writer on SQLite", () => {
         );
 
         expect(columns.map((column) => column.name)).toContain("rowRevision");
+    });
+
+    it("writes a detached part with its shell and rejects a mismatched mode before allocating a sequence", async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), encryptionMode: "plain", metadata: STORED_SHARED_METADATA,
+            metadataLayoutVersion: 1, ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
+        } });
+        const value = { v: 1, fields: { stdout: "fixture" }, textBlocks: [] };
+        const part = { t: "plain", v: value } as const;
+        const digest = computeCanonicalDomainSeparatedDigest('happier.session-message.tool-output.v1', [
+            session.id, 'result', createCanonicalJsonSigningInput(part),
+        ]);
+        const shell = { t: "plain", v: {
+            role: "agent", content: { type: "acp", data: { type: "tool-result", callId: "shell", output: { exitCode: 0 } } },
+            meta: { happierToolOutputV1: { v: 1, digest } },
+        } } as const;
+        const params = {
+            sessionId: session.id,
+            localId: "result",
+            sidechainId: "child",
+            messageRole: "agent",
+            writeAuthority: "hosted",
+            sessionEncryptionMode: "plain",
+            storagePolicy: "optional",
+            content: shell,
+            toolOutputPart: part,
+        } as const;
+        const written = await inTx(tx => writeSessionTranscriptMessageInTx(tx, params));
+        expect(written).toMatchObject({ ok: true, message: { seq: 1, content: shell } });
+        expect(await db.sessionMessage.findFirst({ where: { sessionId: session.id },
+            select: { toolOutputBytes: true, toolOutputExpiredAfterDays: true, sidechainId: true },
+        })).toEqual({ toolOutputBytes: new TextEncoder().encode(JSON.stringify(value)),
+            toolOutputExpiredAfterDays: null, sidechainId: "child" });
+        const mismatch = { ...params, localId: "invalid", toolOutputPart: { t: "encrypted", c: "Zml4dHVyZQ==" } } as const;
+        expect(await inTx(tx => writeSessionTranscriptMessageInTx(tx, mismatch))).toMatchObject({ ok: false });
+        expect(await inTx(tx => writeSessionTranscriptMessageInTx(tx, { ...params, localId: "same-key-wrong-row" })))
+            .toMatchObject({ ok: false });
+        const unbound = { t: "plain", v: { role: "agent", content: shell.v.content } } as const;
+        expect(await inTx(tx => writeSessionTranscriptMessageInTx(tx, { ...params, localId: "missing-descriptor", content: unbound })))
+            .toMatchObject({ ok: false });
+        const { toolOutputPart: _part, ...noPart } = params;
+        expect(await inTx(tx => writeSessionTranscriptMessageInTx(tx, noPart))).toMatchObject({ ok: false });
+
+        expect(await db.session.count({ where: { id: session.id, seq: 1 } })).toBe(1);
+    });
+
+    it("uses historical overlap evidence only to preserve matching published or staged inline rows", async () => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), encryptionMode: "plain", metadata: STORED_SHARED_METADATA,
+            metadataLayoutVersion: 1, ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
+            currentStorageState: "machine_only",
+        } });
+        const firstClaim = { sessionId: session.id, operationId: randomUUID(), operationClaimId: randomUUID() };
+        const secondClaim = { ...firstClaim, operationId: randomUUID(), operationClaimId: randomUUID() };
+        const execute = (command: unknown) => executeExternalSessionHistoricalImportCommand({
+            actorUserId: owner.id, transportMachineId: "historical-overlap-fixture", command,
+        });
+        const original = {
+            t: "plain", v: { role: "agent", content: { type: "acp", data: {
+                type: "tool-result", callId: "shell", output: { exitCode: 0, stdout: "fixture" },
+            } } },
+        } as const;
+        const legacy = (localId: string) => ({
+            localId, sidechainId: null, messageRole: "agent", content: original, sourceCreatedAtMs: 100,
+        } as const);
+        const split = (localId: string) => {
+            const toolOutputPart = { t: "plain", v: { v: 1, fields: { stdout: "fixture" }, textBlocks: [] } } as const;
+            const binding = computeCanonicalDomainSeparatedDigest("happier.session-message.tool-output.v1", [
+                session.id, localId, createCanonicalJsonSigningInput(toolOutputPart),
+            ]);
+            const legacyInlineContentDigest = computeCanonicalDomainSeparatedDigest(
+                "happier.session-message.historical-inline-overlap.v1", [
+                    session.id, localId, "plain", createCanonicalJsonSigningInput({ v: original.v, t: original.t }),
+                ],
+            );
+            return {
+                ...legacy(localId), toolOutputPart, legacyInlineContentDigest,
+                content: { t: "plain", v: {
+                    ...original.v,
+                    content: { type: "acp", data: { type: "tool-result", callId: "shell", output: { exitCode: 0 } } },
+                    meta: { happierToolOutputV1: { v: 1, digest: binding } },
+                } },
+            } as const;
+        };
+        const batch = (claim: typeof firstClaim, items: readonly { localId: string }[]) => execute({
+            v: 1, kind: "batch", claim, expectedRevision: 0, items,
+            batchId: makeExternalSessionHistoricalImportBatchIdV1(items.map(item => item.localId)),
+        });
+        await expect(execute({ v: 1, kind: "begin", claim: firstClaim, expectedRevision: 0,
+            expectedPriorStableStorage: { state: "machine_only" },
+        })).resolves.toMatchObject({ kind: "ready" });
+        await expect(batch(firstClaim, [legacy("published")])).resolves.toMatchObject({ kind: "batch_accepted" });
+        const finalized = await execute({ v: 1, kind: "finalize", claim: firstClaim, expectedRevision: 0,
+            expectedAcceptedThroughServerSeq: 1,
+        });
+        expect(finalized.kind).toBe("finalized");
+        if (finalized.kind !== "finalized") throw new Error("Expected published legacy history");
+        await expect(execute({ v: 1, kind: "begin", claim: secondClaim, expectedRevision: 0,
+            expectedPriorStableStorage: { state: "snapshot_complete", publication: finalized.publication },
+        })).resolves.toMatchObject({ kind: "ready" });
+        await expect(batch(secondClaim, [legacy("staged")])).resolves.toMatchObject({
+            kind: "batch_accepted", acceptedThroughServerSeq: 2,
+        });
+        const rows = () => db.sessionMessage.findMany({ where: { sessionId: session.id }, orderBy: { seq: "asc" } });
+        const legacyRows = await rows();
+
+        await expect(batch(secondClaim, [split("published"), split("staged")])).resolves.toMatchObject({
+            kind: "batch_accepted", acceptedThroughServerSeq: 2,
+        });
+        expect(await rows()).toEqual(legacyRows);
+        await expect(batch(secondClaim, [{ ...split("staged"), sourceCreatedAtMs: 101 }]))
+            .resolves.toMatchObject({ kind: "error", errorCode: "batch_conflict" });
+        await expect(batch(secondClaim, [{ ...split("staged"), legacyInlineContentDigest: "A".repeat(43) }]))
+            .resolves.toMatchObject({ kind: "error", errorCode: "batch_conflict" });
+        expect(await rows()).toEqual(legacyRows);
+
+        const fresh = split("fresh");
+        await expect(batch(secondClaim, [fresh])).resolves.toMatchObject({
+            kind: "batch_accepted", acceptedThroughServerSeq: 3,
+        });
+        const inserted = (await rows())[2]!;
+        expect(inserted).toMatchObject({ localId: "fresh", toolOutputExpiredAfterDays: null, content: fresh.content });
+        expect(inserted.toolOutputBytes).not.toBeNull();
+        const policy = readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__ENABLED: "true",
+            HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__MODE: "delete_older_than",
+            HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__DAYS: "30",
+        });
+        await runRetentionSweep({ policy, now: new Date(Date.now() + 31 * 86400_000) });
+        const swept = (await rows())[2]!;
+        expect(swept).toMatchObject({ toolOutputBytes: null, toolOutputExpiredAfterDays: 30 });
+        await expect(batch(secondClaim, [fresh])).resolves.toMatchObject({
+            kind: "batch_accepted", acceptedThroughServerSeq: 3,
+        });
+        expect((await rows())[2]).toEqual(swept);
+        await expect(batch(secondClaim, [{ ...fresh, content: original }]))
+            .resolves.toMatchObject({ kind: "error" });
+        expect((await rows())[2]).toEqual(swept);
+    });
+
+    it("bounds detached part reads by Account, Session and publication and reports the swept row", async () => {
+        const [owner, recipient, denied] = await Promise.all(Array.from({ length: 3 }, () =>
+            db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } })));
+        const snapshot = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), seq: 2, encryptionMode: "plain",
+            metadata: STORED_SHARED_METADATA, metadataLayoutVersion: 1, ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
+            currentStorageState: "snapshot_complete", acceptedThroughServerSeq: 2,
+            publishedThroughServerSeq: 1, materializationPublicationId: "tool-output-fixture",
+            materializedThroughSourceAt: 1000n,
+        } });
+        const other = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), seq: 1, encryptionMode: "plain",
+            metadata: STORED_SHARED_METADATA, metadataLayoutVersion: 1, ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
+        } });
+        await db.sessionGrant.create({ data: {
+            principalKind: "account", accountId: recipient.id, createdByAccountId: owner.id,
+            sessionId: snapshot.id, accessLevel: "view",
+        } });
+        const old = new Date("2026-09-01T00:00:00Z");
+        const present = new Date("2026-11-19T00:00:00Z");
+        const value = { v: 1, fields: { stdout: "synthetic route body" }, textBlocks: [] };
+        const part = { t: "plain", v: value } as const;
+        async function seedPart(sessionId: string, seq: number, createdAt: Date) {
+            const localId = randomUUID();
+            const digest = computeCanonicalDomainSeparatedDigest('happier.session-message.tool-output.v1', [
+                sessionId, localId, createCanonicalJsonSigningInput(part),
+            ]);
+            const content = { t: "plain", v: {
+                role: "agent", content: { type: "acp", data: { type: "tool-result", callId: "shell", output: { exitCode: 0 } } },
+                meta: { happierToolOutputV1: { v: 1, digest } },
+            } } as const;
+            return db.sessionMessage.create({ data: { sessionId, seq, createdAt, updatedAt: createdAt, localId,
+                messageRole: "agent", content, toolOutputBytes: new TextEncoder().encode(JSON.stringify(value)),
+            } });
+        }
+        const published = await seedPart(snapshot.id, 1, old);
+        const staged = await seedPart(snapshot.id, 2, present);
+        const foreign = await seedPart(other.id, 1, present);
+
+        await withAuthenticatedTestApp(sessionRoutes, async app => {
+            const read = async (accountId: string, rowId: string) =>
+                app.inject({ method: "GET", headers: { "x-test-user-id": accountId },
+                    url: `/v1/sessions/${snapshot.id}/messages?messageId=${rowId}&includeToolOutput=true`,
+                });
+            for (const accountId of [owner.id, recipient.id]) {
+                const response = await read(accountId, published.id);
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json().messages).toMatchObject([{
+                    id: published.id, toolOutputPart: part, toolOutputAvailability: { status: "available" },
+                }]);
+            }
+            expect((await read(denied.id, published.id)).statusCode).toBe(404);
+            for (const rowId of [staged.id, foreign.id]) {
+                const response = await read(recipient.id, rowId);
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json().messages).toEqual([]);
+            }
+            const policy = readRetentionPolicyFromEnv({
+                HAPPIER_SERVER_RETENTION__ENABLED: "true",
+                HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__MODE: "delete_older_than",
+                HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__DAYS: "30",
+            });
+            await runRetentionSweep({ policy, now: present });
+            const expired = await read(recipient.id, published.id);
+            expect(expired.statusCode, expired.body).toBe(200);
+            expect(expired.json().messages).toMatchObject([{
+                id: published.id, toolOutputAvailability: { status: "expired", days: 30 },
+            }]);
+            expect(expired.json().messages[0]).not.toHaveProperty("toolOutputPart");
+        });
     });
 
     it("preserves the admitted Account across direct retries and never attributes transcript-only observations", async () => {

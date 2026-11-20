@@ -19,3 +19,11 @@ it('rejects invalid row identities and cursors at the shared wire owner', () => 
   expect(SessionMessagesPageV1Schema.safeParse({ messages: [row], nextAfterSeq: -1 }).success).toBe(false);
   expect(SessionMessagesPageV1Schema.safeParse({ messages: [{ ...row, createdAt: Infinity }] }).success).toBe(false);
 });
+
+it('only requests detached output on the exact-message selector', () => {
+  const input = { sessionId: 's1', scope: 'all', includeToolOutput: true } as const;
+  expect(() => buildSessionMessagesPath(input)).toThrow();
+  const exact = new URL(buildSessionMessagesPath({ ...input, messageId: 'm1' }), 'https://home.test');
+  expect(exact.searchParams.get('messageId')).toBe('m1');
+  expect(exact.searchParams.get('includeToolOutput')).toBe('true');
+});

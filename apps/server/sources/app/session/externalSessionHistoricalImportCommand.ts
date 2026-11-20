@@ -1445,6 +1445,8 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                     sidechainId: item.sidechainId,
                     messageRole: item.messageRole,
                     content: item.content,
+                    toolOutputPart: item.toolOutputPart,
+                    legacyInlineContentDigest: item.legacyInlineContentDigest,
                     usageTimingV1: item.usageTimingV1,
                     transcriptObservationProvenance:
                         HISTORICAL_IMPORT_TRANSCRIPT_OBSERVATION_PROVENANCE,

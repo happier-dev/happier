@@ -114,6 +114,9 @@ export type SessionClientTranscriptSendPort = Readonly<{
     debugLargeJson: (message: string, data?: unknown) => void;
     getMetadataSnapshot: () => Metadata | null;
     buildOutboundSessionMessagePayload: (content: unknown) => PlainOrEncryptedPayload;
+    buildDurableOutboundSessionMessagePayload?: (input: Readonly<{
+        content: unknown; sessionId: string; localId: string; canonicalToolName?: string;
+    }>) => ReturnType<typeof import('../transport/outboundSessionMessagePayload').buildDurableOutboundSessionMessagePayload>;
     toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
     permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
     toolCallInputByProviderAndId: Map<string, unknown>;

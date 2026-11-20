@@ -21,6 +21,7 @@ import type {
     SessionMessageProvenance,
     SessionTranscriptObservationProvenanceV1,
 } from '@happier-dev/protocol';
+import type { StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import type { SessionTranscriptSurfaceItemReferencesV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
@@ -113,6 +114,7 @@ function readSessionMediaMetadata(meta: Readonly<Record<string, unknown>>): Read
 type EnqueueCommittedTranscriptMessageParams = Readonly<{
     usageTimingV1?: UsageTimingBoundsV1 | null;
     message: PlainOrEncryptedPayload;
+    toolOutputPart?: StrictSessionStoredMessageContentEnvelope;
     localId: string;
     sidechainId: string | null;
     messageRole: SessionMessageRole;
@@ -284,6 +286,7 @@ export type SessionClientTranscriptApiDeps = Readonly<{
     ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     usageObservationPublisher: SessionUsageObservationPublisher;
     buildOutboundSessionMessagePayload: (content: unknown) => PlainOrEncryptedPayload;
+    buildDurableOutboundSessionMessagePayload?: SessionClientTranscriptSendPort['buildDurableOutboundSessionMessagePayload'];
     toolCallCanonicalNameByProviderAndId: Map<string, { rawToolName: string; canonicalToolName: string }>;
     permissionToolCallRawInputByProviderAndId: Map<string, unknown>;
     toolCallInputByProviderAndId: Map<string, unknown>;
@@ -477,6 +480,7 @@ export function createSessionClientTranscriptApi(
         debugLargeJson: (message, data) => logger.debugLargeJson(message, data),
         getMetadataSnapshot: () => deps.getMetadataSnapshot(),
         buildOutboundSessionMessagePayload: (content) => deps.buildOutboundSessionMessagePayload(content),
+        buildDurableOutboundSessionMessagePayload: deps.buildDurableOutboundSessionMessagePayload,
         toolCallCanonicalNameByProviderAndId: deps.toolCallCanonicalNameByProviderAndId,
         permissionToolCallRawInputByProviderAndId: deps.permissionToolCallRawInputByProviderAndId,
         toolCallInputByProviderAndId: deps.toolCallInputByProviderAndId,
@@ -614,7 +618,7 @@ export function createSessionClientTranscriptApi(
         opts: CommittedTranscriptMessageOptions,
     ): Promise<Readonly<{ persisted: boolean; delivered: boolean; committedSequence?: number;
         whenCommitted?: Promise<CommittedTranscriptOriginal | null> }>> => {
-        const { normalizedBody, payload, localId, sidechainId, messageRole, surfaceItemReference, approvalRequestArtifactId, openedContent, source } = await prepareCommittedAgentMessageViaPort(
+        const { normalizedBody, payload, toolOutputPart, localId, sidechainId, messageRole, surfaceItemReference, approvalRequestArtifactId, openedContent, source } = await prepareCommittedAgentMessageViaPort(
             getTranscriptSendPort(),
             provider,
             body,
@@ -659,6 +663,7 @@ export function createSessionClientTranscriptApi(
             : undefined;
         const result = await deps.enqueueCommittedTranscriptMessage({
             message: payload,
+            ...(toolOutputPart ? { toolOutputPart } : {}),
             usageTimingV1: projectUsageSessionMessageTimingV1({ sessionId: deps.sessionId,
                 message: { id: localId, localId, content: openedContent, createdAt } }),
             localId,

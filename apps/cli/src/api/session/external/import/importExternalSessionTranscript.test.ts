@@ -10,6 +10,8 @@ import {
   type ExternalSessionTranscriptRawMessageV1,
 } from '@happier-dev/protocol';
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
+import { createLegacyInlineContentDigestV1 } from '@happier-dev/protocol/sessions/messages/sessionToolOutputBindingV1';
+import { encryptSessionMessagePayload, resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { garbageCollectUncommittedSessionMedia } from '@/session/media/garbageCollect';
 import {
   prepareExternalSessionHistoricalImportItem,
@@ -116,6 +118,40 @@ async function preparePlainHistoricalImportItem(params: Readonly<{
 }
 
 describe('external session historical import item preparation', () => {
+  it.each(['plain', 'e2ee'] as const)('uses the %s predecessor inline representation only for historical comparison', async encryptionMode => {
+    const sessionId = 'sess-managed';
+    const linked = createLinkedSession('/unused');
+    const rawSession = { ...linked.rawSession, encryptionMode, dataEncryptionKey: null };
+    const replayCredentials = { token: 'fixture', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
+    const raw = { role: 'agent', content: { type: 'acp', data: {
+      type: 'tool-result', callId: 'terminal', output: { exitCode: 0, stdout: 'fixture\u0000 output',
+        _happier: { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Bash', canonicalToolName: 'Bash' } },
+    } } };
+    const original = { ...raw, content: { ...raw.content, data: { ...raw.content.data,
+      output: { ...raw.content.data.output, stdout: 'fixture output' },
+    } } };
+    const input = { item: { id: 'result', localId: 'result', raw, createdAtMs: 123, messageRole: 'agent' as const },
+      linked: { ...linked, rawSession }, credentials: replayCredentials, sessionId, workingDirectory: null, sourceReadRoots: [] };
+    const detached = { ...input, toolOutputStorage: 'detached' as const };
+    const first = await prepareExternalSessionHistoricalImportItem(detached);
+    const second = await prepareExternalSessionHistoricalImportItem(detached);
+    const ctx = resolveSessionEncryptionContextFromCredentials(replayCredentials, rawSession);
+    if (encryptionMode === 'e2ee' && !ctx) throw new Error('expected historical key fixture');
+    const inline = encryptionMode === 'e2ee' && ctx ? { t: 'encrypted' as const, c: encryptSessionMessagePayload({
+      ctx, payload: raw, idempotencyKey: JSON.stringify([sessionId, first.localId]),
+    }) } : { t: 'plain' as const, v: original };
+    expect(first).toMatchObject({
+      legacyInlineContentDigest: createLegacyInlineContentDigestV1(sessionId, first.localId, inline),
+      toolOutputPart: { t: inline.t },
+    });
+    expect(first.content).not.toEqual(inline);
+    expect(second).toEqual(first);
+    const production = await prepareExternalSessionHistoricalImportItem(input);
+    expect(production.content).toEqual(inline.t === 'plain' ? { t: 'plain', v: raw } : inline);
+    expect(production).not.toHaveProperty('toolOutputPart');
+    expect(production).not.toHaveProperty('legacyInlineContentDigest');
+  });
+
   it('keeps per-record timing on both prepared and staged historical imports', async () => {
     const item = { id: 'timed-item', localId: 'timed-item', createdAtMs: 123,
       raw: { role: 'agent', content: { type: 'output', data: 'private text' } } };

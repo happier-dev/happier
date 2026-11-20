@@ -733,9 +733,9 @@ describe('historical import replay', () => {
         });
     });
 
-    it.each(['legacy', 'dataKey'] as const)(
-        'replays byte-identical E2EE content after a lost server acknowledgment (%s)',
-        async (encryptionVariant) => {
+    it.each([['legacy', 'inline'], ['dataKey', 'inline'], ['dataKey', 'split']] as const)(
+        'replays byte-identical E2EE content after a lost server acknowledgment (%s, %s)',
+        async (encryptionVariant, representation) => {
             const activeServerDir = await mkdtemp(
                 join(tmpdir(), 'happier-historical-import-replay-e2ee-'),
             );
@@ -748,7 +748,17 @@ describe('historical import replay', () => {
                 localId: `provider-item-${encryptionVariant}`,
                 createdAtMs: 123,
                 messageRole: 'agent',
-                raw: { role: 'agent', content: { type: 'output', data: 'accepted once' } },
+                raw: representation === 'split' ? {
+                    role: 'agent',
+                    content: { type: 'acp', provider: 'codex', data: {
+                        type: 'tool-result', callId: 'terminal-call', output: {
+                            stdout: 'accepted once',
+                            exitCode: 0,
+                            _happier: { v: 2, protocol: 'acp', provider: 'codex',
+                                rawToolName: 'Bash', canonicalToolName: 'Bash' },
+                        },
+                    } },
+                } : { role: 'agent', content: { type: 'output', data: 'accepted once' } },
             };
             const stagedItem = await stageExternalSessionHistoricalImportItem({
                 item: rawItem,
@@ -811,6 +821,7 @@ describe('historical import replay', () => {
                                     linked,
                                     credentials,
                                     sessionId,
+                                    ...(representation === 'split' ? { toolOutputStorage: 'detached' as const } : {}),
                                 }),
                             };
                         }
@@ -822,6 +833,7 @@ describe('historical import replay', () => {
                                 linked,
                                 credentials,
                                 sessionId,
+                                ...(representation === 'split' ? { toolOutputStorage: 'detached' as const } : {}),
                                 workingDirectory: null,
                                 sourceReadRoots: [],
                             }),
@@ -852,8 +864,10 @@ describe('historical import replay', () => {
             });
             const durableStaging = staging as ExternalSessionOperationPrivateStagingStore;
             let crashOnce = true;
+            const persistPreparedReplayGroup = vi.fn(durableStaging.persistPreparedReplayGroup);
             const crashingStaging: ExternalSessionOperationPrivateStagingStore = Object.freeze({
                 ...durableStaging,
+                persistPreparedReplayGroup,
                 async acknowledgeReplayGroup(input) {
                     if (crashOnce) {
                         crashOnce = false;
@@ -885,6 +899,14 @@ describe('historical import replay', () => {
             expect(writeHistoricalBatch.mock.calls[1]![0].items)
                 .toEqual(writeHistoricalBatch.mock.calls[0]![0].items);
             expect(persistedStableItemCount).toBe(1);
+            if (representation === 'split') {
+                expect(acceptedItem).toMatchObject({
+                    toolOutputPart: { t: 'encrypted' }, legacyInlineContentDigest: expect.any(String),
+                });
+                const saved = persistPreparedReplayGroup.mock.calls[0]?.[0].items[0];
+                expect(saved).toMatchObject({ toolOutputPart: acceptedItem?.toolOutputPart });
+                expect(saved).not.toHaveProperty('legacyInlineContentDigest');
+            }
             expect(phaseModes).toEqual(['validate', 'publish', 'validate', 'publish']);
             expect(publishPreparations).toHaveBeenCalledTimes(2);
             expect(batchEffectRevalidations).toHaveBeenCalledTimes(2);

@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { logger } from '@/ui/logger';
 import { withToolTraceFile } from '@/testkit/logger/toolTraceFile';
 import { createSessionClientTranscriptApi } from './sessionClientTranscriptApi';
+import { buildDurableOutboundSessionMessagePayload } from '../transport/outboundSessionMessagePayload';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
 import { createTurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshotStore';
 import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
@@ -24,6 +25,7 @@ function createTranscriptApi(params?: Readonly<{
     onPresence?: (presence: Readonly<{ thinking: boolean; mode: 'local' | 'remote' }>) => void;
     findPersistedSessionUserMessageAdmission?: Parameters<typeof createSessionClientTranscriptApi>[0]['findPersistedSessionUserMessageAdmission'];
     enqueueCommittedTranscriptMessage?: Parameters<typeof createSessionClientTranscriptApi>[0]['enqueueCommittedTranscriptMessage'];
+    splitToolOutput?: true;
     turnAssistantTextSnapshotStore?: Parameters<typeof createSessionClientTranscriptApi>[0]['turnAssistantTextSnapshotStore'];
     updateAgentState?: Parameters<typeof createSessionClientTranscriptApi>[0]['updateAgentState'];
     getAgentStateRequestStore?: () => AgentStateRequestStore | null;
@@ -62,6 +64,10 @@ function createTranscriptApi(params?: Readonly<{
         enqueueCommittedVoiceAgentTranscriptTurn: vi.fn(async () => ({ persisted: true, delivered: true })),
         usageObservationPublisher,
         buildOutboundSessionMessagePayload: (content) => ({ t: 'plain', v: content }),
+        ...(params?.splitToolOutput ? {
+            buildDurableOutboundSessionMessagePayload: (input: Parameters<typeof buildDurableOutboundSessionMessagePayload>[1]) =>
+                buildDurableOutboundSessionMessagePayload({ mode: 'plain', ctx: null }, input),
+        } : {}),
         toolCallCanonicalNameByProviderAndId: new Map(),
         permissionToolCallRawInputByProviderAndId: new Map(),
         toolCallInputByProviderAndId: new Map(),
@@ -88,6 +94,27 @@ function createTranscriptApi(params?: Readonly<{
 }
 
 describe('createSessionClientTranscriptApi hook dispatch', () => {
+    it('queues a normalized shell result with its detached output in the same durable message', async () => {
+        const { api, enqueueCommittedTranscriptMessage } = createTranscriptApi({ splitToolOutput: true });
+        const toolNormalizationSource = { protocol: 'acp', agent: { pluginId: 'example.agent', localId: 'fixture' } } as const;
+        await api.enqueueAgentMessageCommitted('codex', {
+            type: 'tool-call', id: 'call-1', name: 'Bash', callId: 'terminal-1', input: { command: 'echo fixture' },
+        }, { localId: 'call-1', toolNormalizationSource, provenance: { kind: 'non_dependent', source: 'background' } });
+        await api.enqueueAgentMessageCommitted('codex', {
+            type: 'tool-result', id: 'result-1', callId: 'terminal-1', output: { stdout: 'synthetic terminal output', exitCode: 0 },
+        }, { localId: 'result-1', toolNormalizationSource, provenance: { kind: 'non_dependent', source: 'background' } });
+        const result = enqueueCommittedTranscriptMessage.mock.calls.at(-1)?.[0];
+        expect(result?.message).toMatchObject({ t: 'plain', v: {
+            content: { data: { type: 'tool-result', callId: 'terminal-1', output: { exitCode: 0 } } },
+            meta: { happierToolOutputV1: { v: 1, digest: expect.any(String) } },
+        } });
+        expect(JSON.stringify(result?.message)).not.toContain('synthetic terminal output');
+        expect(result).toMatchObject({
+            localId: 'result-1',
+            toolOutputPart: { t: 'plain', v: { fields: { stdout: 'synthetic terminal output' } } },
+        });
+    });
+
     it.each(['absent', 'pending', 'completed', 'history', 'sidechain'] as const)('joins the canonical live permission publisher without replacing a %s original', async prior => {
         let state: AgentState = { requests: {}, completedRequests: {} };
         const notifications: Readonly<{ requestId: string; createdAt: number; turnId?: string; evidence: SessionFollowRuleSourceEvidenceV1 }>[] = [];

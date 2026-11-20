@@ -59,6 +59,8 @@ function buildTranscriptObservationPayload(mutation: TranscriptMessageAppendMuta
         provenance: mutation.provenance,
         ...(version === 2 && mutation.surfaceItemReference !== undefined
             ? { surfaceItemReference: mutation.surfaceItemReference } : {}),
+        ...(version === 2 && mutation.toolOutputPart !== undefined
+            ? { toolOutputPart: mutation.toolOutputPart } : {}),
         ...(version === 2 && mutation.approvalRequestArtifactId !== undefined
             ? { approvalRequestArtifactId: mutation.approvalRequestArtifactId } : {}),
         ...(mutation.sessionEventType ? { sessionEventType: mutation.sessionEventType } : {}),
@@ -200,13 +202,16 @@ export async function deliverTranscriptMessageMutation(params: Readonly<{
         ...params.mutation,
         provenance: parsedProvenance.data,
     };
-    if (params.connectionContract?.transcriptTransport.mode === 'released_server_v0_2_1') {
+    const mode = params.connectionContract?.transcriptTransport.mode;
+    if (mutation.toolOutputPart !== undefined && mode !== 'session_transcript_observation_v2') {
+        return { delivered: false, reason: 'transcript_message_transport_unavailable' };
+    }
+    if (mode === 'released_server_v0_2_1') {
         const releasedResult = params.socket
             ? await tryReleasedServerV021TranscriptMutation({ socket: params.socket, mutation, signal: params.signal })
             : { status: 'unavailable' as const };
         return toTranscriptMessageMutationDeliveryResult(releasedResult);
     }
-    const mode = params.connectionContract?.transcriptTransport.mode;
     if (mode !== 'session_transcript_observation_v1' && mode !== 'session_transcript_observation_v2') {
         return { delivered: false, reason: 'transcript_message_transport_unavailable' };
     }
@@ -244,7 +249,7 @@ export async function deliverTranscriptMessageMutationBatch(params: Readonly<{
     let encodedBytes = Buffer.byteLength(JSON.stringify([SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1,
         { v: 1, sessionId, observations: [] }]));
     for (const persisted of params.mutations) {
-        if (persisted.sessionId !== sessionId) break;
+        if (persisted.sessionId !== sessionId || (version !== 2 && persisted.toolOutputPart !== undefined)) break;
         const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(persisted.provenance);
         if (!provenance.success) break;
         const mutation: TranscriptMessageAppendMutationV1 = { ...persisted, provenance: provenance.data };

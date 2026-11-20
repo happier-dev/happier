@@ -12,7 +12,8 @@ import {
   prepareCommittedAgentMessageViaPort,
   prepareCommittedUserTextMessageViaPort,
 } from './commitMessages';
-import { buildOutboundSessionMessagePayload } from '../transport/outboundSessionMessagePayload';
+import { buildDurableOutboundSessionMessagePayload, buildOutboundSessionMessagePayload } from '../transport/outboundSessionMessagePayload';
+import { openSessionStoredContent } from '@/session/transport/encryption/sessionStoredContentCodec';
 
 const TOOL_SOURCE = { protocol: 'acp', agent: { pluginId: 'example.agent', localId: 'fixture' } } as const;
 
@@ -37,6 +38,59 @@ function createTranscriptSendPort(): SessionClientTranscriptSendPort {
 }
 
 describe('commitMessages', () => {
+  it.each([
+    { provider: 'claude', callId: 'toolu_shell', output: { stdout: 'fixture-claude-stdout', stderr: '', interrupted: false }, isError: false },
+    { provider: 'codex', callId: 'exec-shell', output: { aggregatedOutput: 'fixture-codex-stdout', stdout: 'fixture-codex-stdout', exitCode: 1 }, isError: true },
+    { provider: 'custom-acp/fixture', callId: 'acp-shell', output: { content: [{ type: 'text', text: 'fixture-acp-stdout' }] }, isError: false },
+  ])('keeps $provider output bytes out of the durable message shell', async ({ provider, callId, output, isError }) => {
+    const port = {
+      ...createTranscriptSendPort(),
+      buildDurableOutboundSessionMessagePayload: (input: Parameters<typeof buildDurableOutboundSessionMessagePayload>[1]) =>
+        buildDurableOutboundSessionMessagePayload({ mode: 'plain', ctx: null }, input),
+    };
+    await prepareCommittedAgentMessageViaPort(port, provider, {
+      type: 'tool-call', id: 'shell-call', callId, name: 'Bash', input: { command: 'printf fixture' },
+    }, { localId: 'shell-call', toolNormalizationSource: TOOL_SOURCE });
+    const prepared = await prepareCommittedAgentMessageViaPort(port, provider, {
+      type: 'tool-result', id: 'shell-result', callId, output, isError, sidechainId: 'sidechain-fixture',
+    }, { localId: 'shell-result', toolNormalizationSource: TOOL_SOURCE });
+    expect(prepared.payload).toMatchObject({
+      t: 'plain', v: { content: { data: { type: 'tool-result', callId, isError } } },
+    });
+    expect(prepared.toolOutputPart).toMatchObject({ t: 'plain' });
+    expect(prepared.sidechainId).toBe('sidechain-fixture');
+    expect(JSON.stringify(prepared.payload)).not.toMatch(/fixture-\w+-stdout/);
+    expect(JSON.stringify(prepared.toolOutputPart)).toMatch(/fixture-\w+-stdout/);
+  });
+
+  it('seals the detached tool body separately and retains an empty successful result inline', async () => {
+    const crypto = { mode: 'e2ee', ctx: { encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy' } } as const;
+    const makeResult = async (stdout: string) => {
+      const port = { ...createTranscriptSendPort(), buildDurableOutboundSessionMessagePayload:
+        (input: Parameters<typeof buildDurableOutboundSessionMessagePayload>[1]) => buildDurableOutboundSessionMessagePayload(crypto, input) };
+      await prepareCommittedAgentMessageViaPort(port, 'claude', {
+        type: 'tool-call', id: 'call', callId: 'shell', name: 'Bash', input: { command: 'printf fixture' },
+      }, { localId: 'call', toolNormalizationSource: TOOL_SOURCE });
+      return prepareCommittedAgentMessageViaPort(port, 'claude', {
+        type: 'tool-result', id: 'result', callId: 'shell', output: { stdout, exitCode: 0 }, isError: false,
+      }, { localId: 'result', toolNormalizationSource: TOOL_SOURCE });
+    };
+    const empty = await makeResult('');
+    expect(empty.toolOutputPart).toBeUndefined();
+    const prepared = await makeResult('synthetic output');
+    if (typeof prepared.payload !== 'string') throw new Error('Expected encrypted transcript shell');
+    expect(prepared.toolOutputPart?.t).toBe('encrypted');
+    const shell = openSessionStoredContent({ ...crypto, content: { t: 'encrypted', c: prepared.payload } });
+    expect(shell).toMatchObject({
+      content: { data: { callId: 'shell', isError: false, output: { exitCode: 0 } } },
+      meta: { happierToolOutputV1: { v: 1, digest: expect.any(String) } },
+    });
+    expect(JSON.stringify(shell)).not.toContain('synthetic output');
+    expect(openSessionStoredContent({ ...crypto, content: prepared.toolOutputPart })).toMatchObject({
+      v: 1, fields: { stdout: 'synthetic output' },
+    });
+  });
+
   it('preserves historical tool provenance without looking up a current Agent', async () => {
     const body = { type: 'tool-call', callId: 'historical-call', id: 'historical-row', name: 'Bash', input: {
       command: 'pwd', _happier: { v: 2, protocol: 'acp', provider: 'retired.external',

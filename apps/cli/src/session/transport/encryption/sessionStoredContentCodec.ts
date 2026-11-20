@@ -116,12 +116,15 @@ export function encryptSessionMessagePayload(params: Readonly<{
   ctx: SessionEncryptionContext;
   payload: unknown;
   idempotencyKey?: string;
+  purpose?: 'tool-output';
 }>): string {
   const idempotencyKey = params.idempotencyKey;
   return encodeBase64(encryptSessionMessage(params.ctx.encryptionKey, params.ctx.encryptionVariant, params.payload,
     idempotencyKey === undefined ? undefined : encodedPayload => deriveIdempotentSessionPayloadNonce({
       ctx: params.ctx, idempotencyKey, payloadBytes: encodedPayload,
-      domain: 'happier.session-message.idempotent-content.v1',
+      domain: params.purpose === 'tool-output'
+        ? 'happier.session-message.idempotent-tool-output.v1'
+        : 'happier.session-message.idempotent-content.v1',
     })), 'base64');
 }
 

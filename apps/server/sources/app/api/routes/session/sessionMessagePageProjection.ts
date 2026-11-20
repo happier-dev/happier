@@ -11,12 +11,13 @@ import { MessageActionReferenceV1Schema } from '@happier-dev/protocol/sessions/m
 import { ExternalShareableActorV1Schema, ExternalShareableTranscriptSnapshotV1Schema, deriveExternalShareableActorFromAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionExternalShareableTranscriptV1';
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { SessionInputAdmissionReceiptV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionMessageToolOutputAvailabilitySchema, SessionStoredMessageContentSchema, StrictSessionStoredMessageContentEnvelopeSchema, type StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionTranscriptObservationProvenanceV1Schema, isRecoveredHistoryTranscriptObservationProvenance } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { issueSessionMessageActionReference } from "@/app/session/sessionMessageActionLookup";
 import { projectSessionInputAdmissionReceipt } from "@/app/session/messages/sessionInputAdmission";
 import { projectSessionFollowWakeBatchDelivery } from "@/app/session/follow/projectSessionFollowWakeBatchDelivery";
+import { portableQueryChunks } from "@/storage/portableQueryChunks";
 import { recordAssembledResponse } from "@/app/api/utils/enableSchemaValidation";
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
 export const SessionTranscriptStoredContentUnavailableResponseSchema = z.strictObject({
@@ -24,6 +25,7 @@ export const SessionTranscriptStoredContentUnavailableResponseSchema = z.strictO
 });
 export type SessionListPreviewQuery = Readonly<{
     messageId?: string;
+    includeToolOutput?: "true";
     scope?: unknown;
     sidechainId?: unknown;
     limit?: number;
@@ -68,6 +70,8 @@ export const SessionTranscriptMessagePageResponseSchema = z.strictObject({
         id: z.string(),
         seq: z.number().check(z.int(), z.minimum(0)),
         content: SessionStoredMessageContentSchema,
+        toolOutputAvailability: z.optional(SessionMessageToolOutputAvailabilitySchema),
+        toolOutputPart: z.optional(StrictSessionStoredMessageContentEnvelopeSchema),
         localId: z.nullable(z.string()),
         sidechainId: z.optional(z.string().check(z.minLength(1))),
         messageRole: z.optional(SessionMessageRoleSchema),
@@ -233,6 +237,7 @@ export const SESSION_MESSAGE_PAGE_ROW_SELECT = {
     sidechainId: true,
     messageRole: true,
     contentBytes: true, content: true,
+    toolOutputExpiredAfterDays: true,
     deliveryResolution: true,
     acceptedTurnKind: true,
     acceptedTurnId: true,
@@ -249,6 +254,23 @@ export const SESSION_MESSAGE_PAGE_ROW_SELECT = {
 export type SessionMessagePageRow = Omit<Prisma.SessionMessageGetPayload<{
     select: typeof SESSION_MESSAGE_PAGE_ROW_SELECT;
 }>, "content" | "contentBytes"> & { content: PrismaJson.SessionMessageContent };
+
+export async function findAvailableSessionToolOutputs(
+    tx: Pick<Prisma.TransactionClient, 'sessionMessage'>,
+    rows: readonly SessionMessagePageRow[],
+): Promise<ReadonlySet<string>> {
+    const candidates = rows.filter(row => row.localId !== null && row.toolOutputExpiredAfterDays === null)
+        .map(row => row.id);
+    const available = new Set<string>();
+    for (const ids of portableQueryChunks({ values: candidates, bindingsPerValue: 1 })) {
+        const found = await tx.sessionMessage.findMany({
+            where: { id: { in: ids }, toolOutputBytes: { not: null } },
+            select: { id: true },
+        });
+        for (const row of found) available.add(row.id);
+    }
+    return available;
+}
 export type SessionMessagePageResponse = {
     status: 200;
     body: z.output<typeof SessionTranscriptMessagePageResponseSchema>;
@@ -266,6 +288,8 @@ export function projectSessionMessagePage(input: Readonly<{
     publicationBlocked?: boolean;
     externalShareableSnapshot?: z.infer<typeof ExternalShareableTranscriptSnapshotV1Schema>;
     activity?: SessionMessagePageActivityV1;
+    availableToolOutputIds?: ReadonlySet<string>;
+    exactToolOutput?: Readonly<{ id: string; part: StrictSessionStoredMessageContentEnvelope }>;
     pendingOwnsTranscriptLocalIds?: ReadonlySet<string>;
     turnProjectionNextBeforeSeq: number | null;
     pageAccountActors: readonly (z.infer<typeof SessionMessageAccountActorV1Schema> | null)[] | undefined;
@@ -274,7 +298,7 @@ export function projectSessionMessagePage(input: Readonly<{
     turnProjection: boolean;
     afterSeq?: number;
 }>): SessionMessagePageResponse {
-    const { sessionId, resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, activity, pendingOwnsTranscriptLocalIds, turnProjectionNextBeforeSeq, pageAccountActors, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq } = input;
+    const { sessionId, resultMessages, hasMore, publicationBlocked, externalShareableSnapshot, activity, availableToolOutputIds, exactToolOutput, pendingOwnsTranscriptLocalIds, turnProjectionNextBeforeSeq, pageAccountActors, sessionListPreviewProjection, externalShareableProjection, turnProjection, afterSeq } = input;
     const parsedResultContents: SessionStoredMessageContent[] = [];
     for (const message of resultMessages) {
         const parsedContent = SessionStoredMessageContentSchema.safeParse(message.content);
@@ -318,6 +342,14 @@ export function projectSessionMessagePage(input: Readonly<{
                     const messageRole = parseSessionMessageRole(v.messageRole);
                     return messageRole ? { messageRole } : {};
                 })(),
+                ...(!externalShareableProjection && !sessionListPreviewProjection
+                    ? (v.toolOutputExpiredAfterDays != null
+                        ? { toolOutputAvailability: { status: "expired" as const, days: v.toolOutputExpiredAfterDays } }
+                        : availableToolOutputIds?.has(v.id)
+                            ? { toolOutputAvailability: { status: "available" as const } }
+                            : {})
+                    : {}),
+                ...(exactToolOutput?.id === v.id ? { toolOutputPart: exactToolOutput.part } : {}),
                 ...(!sessionListPreviewProjection ? (() => {
                     const deliveryResolution = readStoredSessionMessageDeliveryResolutionV1(v.deliveryResolution);
                     return deliveryResolution ? { deliveryResolution } : {};

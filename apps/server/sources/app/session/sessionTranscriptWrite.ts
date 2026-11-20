@@ -3,6 +3,9 @@ import { decodeStoredSessionMessage, decodeStoredSessionMessages } from "@/stora
 import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredContent } from "@/storage/sessionMessageContent";
 import { UsageTimingBoundsV1Schema, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { isPrismaErrorCode, prismaRuntime } from '@/storage/prisma';
+import { createLegacyInlineContentDigestV1, readSessionToolOutputBindingV1 } from '@happier-dev/protocol/sessions/messages/sessionToolOutputBindingV1';
+import { prepareSessionMessageToolOutputForWrite, SessionMessageToolOutputInvalidError } from '@/storage/sessionMessageToolOutput';
+import type { StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { normalizeSessionMessageContentForStorage } from "@/app/session/normalizeSessionMessageContentForStorage";
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@happier-dev/protocol/sessions/control/contract';
@@ -108,6 +111,8 @@ export type SessionTranscriptWriteRejectionCode =
     | EncryptionPolicyRejectionCode
     | "session_storage_authority_mismatch"
     | "session_message_role_conflict"
+    | "session_tool_output_part_invalid"
+    | "session_tool_output_already_expired"
     | "session_structured_presentation_invalid"
     | "session_structured_presentation_unavailable";
 
@@ -265,6 +270,7 @@ export type SessionTranscriptMessageWriteParams = Readonly<{
     storagePolicy: SessionTranscriptStoragePolicy;
     content: PrismaJson.SessionMessageContent;
     usageTimingV1?: UsageTimingBoundsV1 | null;
+    toolOutputPart?: StrictSessionStoredMessageContentEnvelope;
     localId: string | null;
     sidechainId: string | null;
     messageRole: SessionMessageRole | null;
@@ -290,6 +296,8 @@ export type HistoricalSessionMessageItem = Readonly<{
     sidechainId: string | null;
     messageRole: SessionMessageRole | null;
     content: PrismaJson.SessionMessageContent;
+    toolOutputPart?: StrictSessionStoredMessageContentEnvelope;
+    legacyInlineContentDigest?: string;
     usageTimingV1?: UsageTimingBoundsV1 | null;
     sourceCreatedAt?: Date;
     sourceUpdatedAt?: Date;
@@ -325,6 +333,15 @@ export async function writeSessionTranscriptMessageInTx(
     params = { ...params, content };
     const storageAdmission = validateSessionTranscriptStoredContent(params);
     if (!storageAdmission.ok) return storageAdmission;
+    let toolOutputBytes: Uint8Array<ArrayBuffer> | null;
+    try {
+        if (params.toolOutputPart && !params.localId) throw new SessionMessageToolOutputInvalidError();
+        toolOutputBytes = prepareSessionMessageToolOutputForWrite(content, params.toolOutputPart && params.localId
+            ? { sessionId: params.sessionId, localId: params.localId, part: params.toolOutputPart } : undefined);
+    } catch (error) {
+        if (!(error instanceof SessionMessageToolOutputInvalidError)) throw error;
+        return { ok: false as const, error: "storage-mode-conflict" as const, code: error.code };
+    }
 
     // Writing a transcript row changes no Session audience.
     await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId], [], { reuseHeldAudience: true });
@@ -362,6 +379,7 @@ export async function writeSessionTranscriptMessageInTx(
             sessionId: params.sessionId,
             seq: next.seq,
             ...storedContent,
+            ...(toolOutputBytes !== null ? { toolOutputBytes } : {}),
             // Prisma requires its JSON-null sentinel; the generated custom JSON input omits that sentinel type.
             content: toPrismaSessionMessageStoredContent(storedContent.content),
             usageTimingV1: params.usageTimingV1 ?? prismaRuntime.DbNull,
@@ -446,16 +464,17 @@ function historicalItemMatchesStoredMessage(
         localId: string | null;
         sidechainId: string | null;
         messageRole: unknown;
-        content: unknown;
+        content: PrismaJson.SessionMessageContent;
         sourceCreatedAt: Date | null;
         sourceUpdatedAt: Date | null;
         transcriptObservationProvenance: unknown;
     }>,
+    matchesLegacyContent: boolean,
 ): boolean {
     return stored.localId === item.localId
         && stored.sidechainId === item.sidechainId
         && stored.messageRole === item.messageRole
-        && isDeepStrictEqual(stored.content, item.content)
+        && (isDeepStrictEqual(stored.content, item.content) || matchesLegacyContent)
         && stored.sourceCreatedAt?.getTime() === item.sourceCreatedAt?.getTime()
         && stored.sourceUpdatedAt?.getTime() === item.sourceUpdatedAt?.getTime()
         && isDeepStrictEqual(
@@ -514,6 +533,17 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
             storagePolicy: params.storagePolicy,
         });
         if (!storageAdmission.ok) return storageAdmission;
+        const output = item.toolOutputPart;
+        if (item.legacyInlineContentDigest !== undefined && (!output || params.writeAuthority !== "historical_import")) {
+            return { ok: false as const, error: "invalid-item" as const };
+        }
+        try {
+            prepareSessionMessageToolOutputForWrite(item.content, output
+                ? { sessionId: params.sessionId, localId: item.localId, part: output } : undefined);
+        } catch (error) {
+            if (!(error instanceof SessionMessageToolOutputInvalidError)) throw error;
+            return { ok: false as const, error: "storage-mode-conflict" as const, code: error.code };
+        }
         const prior = itemByLocalId.get(item.localId);
         if (prior && !isDeepStrictEqual(prior, item)) {
             return { ok: false as const, error: "stable-item-conflict" as const, localId: item.localId };
@@ -524,14 +554,27 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
     const orderedItems = [...itemByLocalId.values()];
     const existing = await tx.sessionMessage.findMany({
         where: { sessionId: params.sessionId, localId: { in: orderedItems.map((item) => item.localId) } },
-        select: { ...SESSION_TRANSCRIPT_WRITE_SELECT, surfaceItemReference: true, rowRevision: true },
+        select: { ...SESSION_TRANSCRIPT_WRITE_SELECT, surfaceItemReference: true, rowRevision: true, toolOutputExpiredAfterDays: true },
     }).then(row => decodeStoredSessionMessages(row));
     const existingByLocalId = new Map(
         existing.flatMap((message) => message.localId ? [[message.localId, message] as const] : []),
     );
+    const legacyCandidates = orderedItems.flatMap(item => {
+        const stored = existingByLocalId.get(item.localId);
+        return stored && item.legacyInlineContentDigest !== undefined && stored.toolOutputExpiredAfterDays === null
+            && stored.content.t === item.content.t && !isDeepStrictEqual(stored.content, item.content)
+            && (stored.content.t === 'encrypted' || readSessionToolOutputBindingV1(stored.content.v).status === 'absent')
+            ? [stored.id] : [];
+    });
+    const inlineRowIds = new Set(legacyCandidates.length > 0 ? (await tx.sessionMessage.findMany({
+        where: { sessionId: params.sessionId, id: { in: legacyCandidates }, toolOutputBytes: null },
+        select: { id: true },
+    })).map(row => row.id) : []);
     for (const item of orderedItems) {
         const stored = existingByLocalId.get(item.localId);
-        if (stored && !historicalItemMatchesStoredMessage(item, stored)) {
+        const matchesLegacyContent = stored !== undefined && inlineRowIds.has(stored.id)
+            && item.legacyInlineContentDigest === createLegacyInlineContentDigestV1(params.sessionId, item.localId, stored.content);
+        if (stored && !historicalItemMatchesStoredMessage(item, stored, matchesLegacyContent)) {
             return { ok: false as const, error: "stable-item-conflict" as const, localId: item.localId };
         }
     }
@@ -563,6 +606,7 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
             sessionEncryptionMode: params.sessionEncryptionMode,
             storagePolicy: params.storagePolicy,
             content: item.content,
+            toolOutputPart: item.toolOutputPart,
             usageTimingV1: item.usageTimingV1,
             localId: item.localId,
             ...(item.surfaceItemReference ? { surfaceItemReference: item.surfaceItemReference } : {}),

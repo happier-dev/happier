@@ -272,6 +272,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
             }),
             querystring: z.optional(z.object({
                 messageId: z.optional(z.string().check(z.minLength(1))),
+                includeToolOutput: z.optional(z.literal("true")),
                 scope: z.optional(z.enum(["main", "sidechain", "all"])),
                 sidechainId: z.optional(z.string().check(z.minLength(1))),
                 limit: z.optional(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1))),
@@ -281,6 +282,9 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 roles: z.optional(z.string()),
                 projection: z.optional(z.enum(["externalShareableV1", "turns", "activity"])),
             }).check(z.superRefine((value, ctx) => {
+                if (value.includeToolOutput === "true" && value.messageId === undefined) {
+                    ctx.addIssue({ code: "custom", message: "Tool output requires exact message selection" });
+                }
                 if (value.messageId !== undefined && (value.beforeSeq !== undefined
                     || value.afterSeq !== undefined || value.limit !== undefined || value.projection !== undefined)) {
                     ctx.addIssue({

@@ -1114,6 +1114,8 @@ export function sessionUpdateHandler(
                 trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
                 usageTimingV1: observation.usageTimingV1,
                 trustedTranscriptObservationProvenance: observation.provenance,
+                ...(observation.v === 2 && observation.toolOutputPart !== undefined
+                    ? { trustedToolOutputPart: observation.toolOutputPart } : {}),
                 ...(observation.v === 2 && observation.surfaceItemReference !== undefined
                     ? { trustedSurfaceItemReference: observation.surfaceItemReference } : {}),
                 ...(isRecoveredHistory

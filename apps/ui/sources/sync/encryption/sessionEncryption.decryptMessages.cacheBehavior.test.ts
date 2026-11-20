@@ -1,4 +1,6 @@
 import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { describe, it, expect, vi } from 'vitest';
 import { encodeBase64 } from '@/encryption/base64';
 import { EncryptionCache } from './encryptionCache';
@@ -12,6 +14,40 @@ import {
 } from './nativeCryptoWorker/types';
 
 describe('SessionEncryption.decryptMessages (cache behavior)', () => {
+  it('opens only the exact authenticated tool output even when another part uses the same Session key', async () => {
+    const sessionId = 'session-with-detached-output';
+    const localId = 'terminal-result';
+    const encryptor = new AES256Encryption(new Uint8Array(32).fill(4));
+    const body = { v: 1, fields: { stdout: 'synthetic output' }, textBlocks: [] };
+    const [partBytes, otherPartBytes] = await encryptor.encrypt([body, {
+      ...body, fields: { stdout: 'another terminal command' },
+    }]);
+    const part = { t: 'encrypted', c: encodeBase64(partBytes, 'base64') } as const;
+    const digest = computeCanonicalDomainSeparatedDigest('happier.session-message.tool-output.v1', [
+      sessionId, localId, createCanonicalJsonSigningInput(part),
+    ]);
+    const shell = {
+      role: 'agent', content: { type: 'acp', data: { type: 'tool-result', callId: 'shell', output: { exitCode: 0 } } },
+      meta: { happierToolOutputV1: { v: 1, digest } },
+    };
+    const [shellBytes] = await encryptor.encrypt([shell], { contentCodec: 'session-message' });
+    const message = {
+      id: 'tool-result', seq: 1, localId, createdAt: 1,
+      content: { t: 'encrypted', c: encodeBase64(shellBytes, 'base64') },
+      toolOutputAvailability: { status: 'available' }, toolOutputPart: part,
+    } satisfies SessionMessageV1;
+    const session = new SessionEncryption(sessionId, encryptor, new EncryptionCache());
+    const options = { toolOutput: true } as const;
+    expect(await session.decryptMessage(message, options)).toMatchObject({ toolOutput: { status: 'available', body } });
+    expect(await session.decryptMessage({ ...message, toolOutputPart: {
+      t: 'encrypted', c: encodeBase64(otherPartBytes, 'base64'),
+    } }, options)).toMatchObject({ toolOutput: { status: 'corrupt' } });
+    expect(await session.decryptMessage({ ...message, localId: 'different-local-id' }, options))
+      .toMatchObject({ toolOutput: { status: 'corrupt' } });
+    expect(await session.decryptMessage({ ...message, toolOutputPart: undefined }, options))
+      .toMatchObject({ toolOutput: { status: 'corrupt' } });
+  });
+
   it('opens accepted delivery facts and refreshes unchanged ciphertext after settlement', async () => {
     const encryptor = new AES256Encryption(new Uint8Array(32).fill(4));
     const facts = { v: 1, acceptedAtMs: 1234, delivery: { kind: 'steer', turnId: 'turn-1' } } as const;

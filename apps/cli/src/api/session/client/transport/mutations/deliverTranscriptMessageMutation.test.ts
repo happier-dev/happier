@@ -3,6 +3,7 @@ import axios from 'axios';
 import {
   SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
   SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+  SessionTranscriptObservationV2Schema,
 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 
 import { deliverTranscriptMessageMutation } from './deliverTranscriptMessageMutation';
@@ -38,6 +39,31 @@ describe('deliverTranscriptMessageMutation provenance boundary', () => {
       connectionContract: { ...serverContract(socket), transcriptTransport: { mode: 'session_transcript_observation_v2' } },
     })).resolves.toMatchObject({ delivered: true });
     expect(observations).toEqual([expect.objectContaining({ content: mutation.content, usageTimingV1 })]);
+  });
+
+  it('delivers the sealed tool-output part in the same authenticated observation as its shell', async () => {
+    const toolOutputPart = { t: 'encrypted', c: 'c2VhbGVkLW9wYXF1ZS1wYXJ0' } as const;
+    const mutation = createTranscriptMessageAppendMutation({
+      sessionId: 'session-1', localId: 'terminal-result', content: 'sealed-tool-shell',
+      toolOutputPart, createdAt: 100, provenance: { kind: 'non_dependent', source: 'background' },
+    });
+    const observations: unknown[] = [];
+    const socket = {
+      connected: true,
+      emit: vi.fn(),
+      emitWithAck: async (event: string, payload: unknown) => {
+        expect(event).toBe(SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1);
+        observations.push(SessionTranscriptObservationV2Schema.parse(payload));
+        return { ok: true, status: 'observed', id: 'message-1', seq: 1,
+          localId: 'terminal-result', didWrite: true, ingestedAt: 300 };
+      },
+    };
+    await expect(deliverTranscriptMessageMutation({ token: 'token', socket, mutation,
+      connectionContract: { ...serverContract(socket), transcriptTransport: { mode: 'session_transcript_observation_v2' } },
+    })).resolves.toMatchObject({ delivered: true });
+    expect(observations).toEqual([expect.objectContaining({
+      v: 2, localId: 'terminal-result', content: 'sealed-tool-shell', toolOutputPart,
+    })]);
   });
 
   it.each(['session_transcript_observation_v1', 'released_server_v0_2_1'] as const)(

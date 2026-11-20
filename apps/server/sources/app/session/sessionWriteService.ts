@@ -1,5 +1,7 @@
 import { decodeSessionStoredContent, encodeSessionStoredContent, sessionStoredContentWhere, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
+import { prepareSessionMessageToolOutputForWrite, SessionMessageToolOutputInvalidError } from '@/storage/sessionMessageToolOutput';
+import type { StrictSessionStoredMessageContentEnvelope } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { UsageSessionTimingV1Schema, UsageTimingBoundsV1Schema, type UsageTimingBoundsV1, type UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { nextSessionUsageTiming } from './metadata/sessionUsageTiming';
@@ -114,7 +116,7 @@ import {
 } from "@/app/automations/automationSessionLifecycleAdmission";
 import { rejoinAutomationOccurrenceInsertRace } from "@/app/automations/automationOccurrencePersistence";
 import { producesAutomationSessionLifecycleOccurrence } from "@/app/automations/automationSessionLifecycleTerminalTruth";
-import { SESSION_MESSAGE_WRITE_SELECT, SessionMessageRowRevisionRaceError, updateSessionMessageAtCurrentRevisionInTx } from './sessionMessageRevisionWrite';
+import { SESSION_MESSAGE_WRITE_SELECT, SessionMessageRowRevisionRaceError, SessionMessageToolOutputAlreadyExpiredError, updateSessionMessageAtCurrentRevisionInTx } from './sessionMessageRevisionWrite';
 import { loadSessionRollbackEligibleTurnStartsInTx } from "./turns/sessionRollbackEligibilityProjection";
 import { SessionTeamCredentialBindingMetadataPatchV1Schema, type SessionTeamCredentialBindingMetadataPatchV1, type SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { TEAM_CREDENTIAL_ROUTES_V1, type TeamCredentialRouteV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -998,6 +1000,7 @@ type CreateSessionMessageParamsBase = Readonly<{
     trustedSourceTimestamps?: Readonly<{ createdAt: number; updatedAt: number }>;
     trustedTranscriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
     trustedSurfaceItemReference?: SessionTranscriptSurfaceItemReferenceInputV1;
+    trustedToolOutputPart?: StrictSessionStoredMessageContentEnvelope;
 }>;
 
 type CreateSessionMessageParams = CreateSessionMessageParamsBase & (
@@ -1060,6 +1063,7 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
     usageTimingV1?: UsageTimingBoundsV1 | null;
     provenance: SessionTranscriptObservationProvenanceV1;
     surfaceItemReference?: SessionTranscriptSurfaceItemReferenceInputV1;
+    toolOutputPart?: StrictSessionStoredMessageContentEnvelope;
     storagePolicy: SessionTranscriptStoragePolicy;
 }>): Promise<TrustedLocalIdReconciliation> {
     if (
@@ -1138,6 +1142,10 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
             attentionImpact,
         };
     }
+
+    const toolOutput = params.toolOutputPart
+        ? { sessionId: params.sessionId, localId: params.localId, part: params.toolOutputPart } : undefined;
+    prepareSessionMessageToolOutputForWrite(params.content, toolOutput);
 
     // A pre-provenance writer may already have committed this deterministic
     // history local id before transcript-observation metadata existed. The
@@ -1281,6 +1289,7 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         tx: params.tx,
         id: existing.id,
         rowRevision: existing.rowRevision,
+        toolOutput,
         data: {
             content: params.content,
             usageTimingV1: params.usageTimingV1 ?? prismaRuntime.DbNull,
@@ -1339,6 +1348,7 @@ async function createSessionMessageAttempt(
         || params.trustedSessionEventType !== undefined
         || params.trustedTranscriptObservationProvenance !== undefined
         || params.trustedSurfaceItemReference !== undefined
+        || params.trustedToolOutputPart !== undefined
     )) return { ok: false, error: "invalid-params" };
     const localId = typeof params.localId === "string" ? params.localId : null;
     const parsedSidechainId = parseSessionMessageSidechainId(params.sidechainId, { emptyString: "invalid" });
@@ -1348,7 +1358,8 @@ async function createSessionMessageAttempt(
     const sidechainId = parsedSidechainId.sidechainId;
     const sourceTimestamps = params.trustedSourceTimestamps;
     const hasTrustedProvenance = params.trustedTranscriptObservationProvenance !== undefined;
-    if (params.trustedSurfaceItemReference !== undefined && !hasTrustedProvenance) {
+    if ((params.trustedSurfaceItemReference !== undefined && !hasTrustedProvenance)
+        || (params.trustedToolOutputPart !== undefined && (!hasTrustedProvenance || !localId))) {
         return { ok: false, error: 'invalid-params' };
     }
     if ((sourceTimestamps === undefined) !== !hasTrustedProvenance) {
@@ -1428,6 +1439,7 @@ async function createSessionMessageAttempt(
                     usageTimingV1: params.usageTimingV1,
                     provenance: params.trustedTranscriptObservationProvenance,
                     surfaceItemReference: params.trustedSurfaceItemReference,
+                    toolOutputPart: params.trustedToolOutputPart,
                     storagePolicy: encryptionPolicy.storagePolicy,
                 });
                 if (reconciliation.status === "reconciled") {
@@ -1504,6 +1516,7 @@ async function createSessionMessageAttempt(
                 sidechainId,
                 messageRole: resolvedRole,
                 surfaceItemReference: params.trustedSurfaceItemReference,
+                toolOutputPart: params.trustedToolOutputPart,
                 // A collaborator's declared transcript role cannot establish the role of opaque input.
                 ...(params.inputAdmission === "authenticatedAccount" && !hasTrustedProvenance
                     && (resolvedRole === "user" || access.access.level !== "owner")
@@ -1647,6 +1660,9 @@ async function createSessionMessageAttempt(
         if (e instanceof SessionInputPermissionModesDisjointError) {
             return { ok: false, error: "invalid-params", code: e.code };
         }
+        if (e instanceof SessionMessageToolOutputAlreadyExpiredError || e instanceof SessionMessageToolOutputInvalidError) {
+            return { ok: false, error: "invalid-params", code: e.code };
+        }
         if (e instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {
             // The conditional update did not mutate or publish. Restart through
             // the same owner once so access, publisher currentness, authority,
@@ -1678,6 +1694,8 @@ async function createSessionMessageAttempt(
                             sourceUpdatedAt,
                             usageTimingV1: params.usageTimingV1,
                             provenance: params.trustedTranscriptObservationProvenance,
+                            surfaceItemReference: params.trustedSurfaceItemReference,
+                            toolOutputPart: params.trustedToolOutputPart,
                             storagePolicy: encryptionPolicy.storagePolicy,
                         });
                         return reconciliation.status === "reconciled"
@@ -1685,6 +1703,9 @@ async function createSessionMessageAttempt(
                             : { ok: false, error: "invalid-params" };
                     }, { isolationLevel: "ReadCommitted" });
                 } catch (error) {
+                    if (error instanceof SessionMessageToolOutputAlreadyExpiredError || error instanceof SessionMessageToolOutputInvalidError) {
+                        return { ok: false, error: "invalid-params", code: error.code };
+                    }
                     if (error instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {
                         return await createSessionMessageAttempt(params, false);
                     }
@@ -1940,6 +1961,9 @@ async function createSessionMessageAttempt(
                 }, { isolationLevel: "ReadCommitted" });
             } catch (error) {
                 if (error instanceof SessionInputPermissionModesDisjointError) {
+                    return { ok: false, error: "invalid-params", code: error.code };
+                }
+                if (error instanceof SessionMessageToolOutputAlreadyExpiredError || error instanceof SessionMessageToolOutputInvalidError) {
                     return { ok: false, error: "invalid-params", code: error.code };
                 }
                 if (error instanceof SessionMessageRowRevisionRaceError && retryOnRowRevisionRace) {

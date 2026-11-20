@@ -8,7 +8,7 @@ import { inReadSnapshot } from '@/storage/inTx';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { readSessionMessagePage } from './readSessionMessagePage';
-import { SESSION_BATCH_MESSAGE_ROLES, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT, SESSION_MESSAGE_PAGE_ROW_SELECT, buildRequestedMessageRoleWhere, isAdmittedSessionListPreviewRequest, projectSessionMessagePage, type SessionMessagePageResponse, type SessionMessagePageRow, } from './sessionMessagePageProjection';
+import { SESSION_BATCH_MESSAGE_ROLES, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT, SESSION_MESSAGE_PAGE_ROW_SELECT, buildRequestedMessageRoleWhere, isAdmittedSessionListPreviewRequest, findAvailableSessionToolOutputs, projectSessionMessagePage, type SessionMessagePageResponse, type SessionMessagePageRow, } from './sessionMessagePageProjection';
 import { PRESENT_USER_REQUIRED_ERROR } from '@/app/api/utils/apiTokenRouteAdmission';
 /** The read-batch contract is one first page of all transcript roles per admitted Session. */
 export async function readSessionMessagePages(input: Readonly<{
@@ -38,6 +38,7 @@ export async function readSessionMessagePages(input: Readonly<{
                 const pages = new Map<string, {
                     rows: SessionMessagePageRow[];
                     actors: Awaited<ReturnType<typeof projectSessionMessageAccountActors>> | undefined;
+                    availableToolOutputIds: ReadonlySet<string>;
                 }>();
                 const denials = new Map<string, SessionMessagePageResponse>();
                 // SQL identifiers are static here; only values enter the parameterized query.
@@ -95,13 +96,15 @@ export async function readSessionMessagePages(input: Readonly<{
                         sessionRows.push(row);
                         visible.set(row.sessionId, sessionRows);
                     }
+                    const pageRows = [...visible.values()].flatMap(rows => rows.slice(0, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT));
+                    const availableToolOutputIds = await findAvailableSessionToolOutputs(tx, pageRows);
                     const actors = input.includeAccountActors === false ? undefined
                         : await projectSessionMessageAccountActors(tx,
-                            [...visible.values()].flatMap(rows => rows.slice(0, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT)));
+                            pageRows);
                     let actorIndex = 0;
                     for (const [sessionId, rows] of visible) {
                         const count = Math.min(rows.length, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT);
-                        pages.set(sessionId, { rows, actors: actors?.slice(actorIndex, actorIndex + count) });
+                        pages.set(sessionId, { rows, actors: actors?.slice(actorIndex, actorIndex + count), availableToolOutputIds });
                         actorIndex += count;
                     }
                 }
@@ -114,6 +117,7 @@ export async function readSessionMessagePages(input: Readonly<{
                     results.set(sessionId, { status: 'fulfilled', value: denied ?? projectSessionMessagePage({
                             sessionId, resultMessages: page?.rows.slice(0, SESSION_MESSAGE_PAGE_DEFAULT_LIMIT) ?? [],
                             hasMore: (page?.rows.length ?? 0) > SESSION_MESSAGE_PAGE_DEFAULT_LIMIT,
+                            availableToolOutputIds: page?.availableToolOutputIds,
                             turnProjectionNextBeforeSeq: null, pageAccountActors: input.includeAccountActors === false ? undefined : page?.actors ?? [],
                             sessionListPreviewProjection: false, externalShareableProjection: false, turnProjection: false,
                         }) });

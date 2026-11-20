@@ -1,3 +1,9 @@
+import {
+    createSessionToolOutputBindingV1,
+    readSessionToolOutputBindingV1,
+    SessionToolOutputBodyV1Schema,
+    type SessionToolOutputBodyV1,
+} from '@happier-dev/protocol/sessions/messages/sessionToolOutputBindingV1';
 import type { SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { readStoredSessionMessageDeliveryResolutionV1, SessionMessageAcceptedDeliveryFactsV1StoredSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { deriveSessionMutationEqualityTagV1, SESSION_DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1, SESSION_INPUT_EQUALITY_HKDF_LABEL_V1 } from '@happier-dev/protocol/sessions/mutations/sessionMutationEqualityV1';
@@ -14,6 +20,12 @@ import { syncPerformanceTelemetry } from '../runtime/syncPerformanceTelemetry';
 import { decryptBase64Payloads } from './decryptBase64Payloads';
 
 type EncryptedApiMessage = SessionMessageV1 & { content: { t: 'encrypted'; c: string } };
+
+export type SessionToolOutputOpenResult =
+    | Readonly<{ status: 'available'; body: SessionToolOutputBodyV1 }>
+    | Readonly<{ status: 'expired'; days: number }>
+    | Readonly<{ status: 'inline' | 'unavailable' | 'corrupt' }>;
+
 
 export type AgentStateOpenResult =
     | Readonly<{ status: 'available'; value: AgentState | null }>
@@ -260,12 +272,69 @@ export class SessionEncryption {
     /**
      * Single message convenience method
      */
-    async decryptMessage(message: SessionMessageV1 | null | undefined): Promise<DecryptedMessage | null> {
-        if (!message) {
-            return null;
+    decryptMessage(message: SessionMessageV1 | null | undefined): Promise<DecryptedMessage | null>;
+    decryptMessage(
+        message: SessionMessageV1 | null | undefined,
+        options: Readonly<{ toolOutput: true; signal?: AbortSignal }>,
+    ): Promise<(DecryptedMessage & { toolOutput: SessionToolOutputOpenResult }) | null>;
+    async decryptMessage(
+        message: SessionMessageV1 | null | undefined,
+        options?: Readonly<{ toolOutput: true; signal?: AbortSignal }>,
+    ): Promise<(DecryptedMessage & { toolOutput?: SessionToolOutputOpenResult }) | null> {
+        if (!message) return null;
+        if (!options) {
+            const results = await this.decryptMessages([message]);
+            return results[0];
         }
-        const results = await this.decryptMessages([message]);
-        return results[0];
+
+        const result: DecryptedMessage = {
+            id: message.id,
+            seq: message.seq,
+            localId: message.localId ?? null,
+            messageRole: message.messageRole ?? null,
+            content: null,
+            createdAt: message.createdAt,
+        };
+        if (!this.isCurrent() || options.signal?.aborted) {
+            return { ...result, toolOutput: { status: 'unavailable' } };
+        }
+        if (!isEncryptedApiMessage(message)) return { ...result, toolOutput: { status: 'corrupt' } };
+
+        // The ordinary shell cache uses a short fingerprint. An exact part
+        // open must authenticate the exact shell received in this read.
+        const open = async (ciphertext: string): Promise<unknown> => {
+            const [value] = await decryptBase64Payloads(this.encryptor, [ciphertext], {
+                decryptName: 'sync.encryption.decryptMessage.toolOutput',
+                decryptFields: { items: 1 },
+            }, { signal: options.signal });
+            return value;
+        };
+        try {
+            const shell = await open(message.content.c);
+            if (!this.isCurrent() || options.signal?.aborted) return { ...result, toolOutput: { status: 'unavailable' } };
+            if (shell == null) return { ...result, toolOutput: { status: 'corrupt' } };
+            const availability = message.toolOutputAvailability;
+            const binding = readSessionToolOutputBindingV1(shell);
+            const withShell = { ...result, content: shell };
+            if (availability?.status === 'expired') {
+                return { ...withShell, toolOutput: binding.status === 'bound' && message.toolOutputPart === undefined
+                    ? availability : { status: 'corrupt' } };
+            }
+            if (!availability && binding.status === 'absent' && message.toolOutputPart === undefined) {
+                return { ...withShell, toolOutput: { status: 'inline' } };
+            }
+            const part = message.toolOutputPart;
+            if (availability?.status !== 'available' || binding.status !== 'bound' ||
+                part?.t !== 'encrypted' || !message.localId ||
+                createSessionToolOutputBindingV1(this.sessionId, message.localId, part).digest !== binding.binding.digest) {
+                return { ...withShell, toolOutput: { status: 'corrupt' } };
+            }
+            const body = SessionToolOutputBodyV1Schema.safeParse(await open(part.c));
+            if (!this.isCurrent() || options.signal?.aborted) return { ...result, toolOutput: { status: 'unavailable' } };
+            return { ...withShell, toolOutput: body.success ? { status: 'available', body: body.data } : { status: 'corrupt' } };
+        } catch {
+            return { ...result, toolOutput: { status: !this.isCurrent() || options.signal?.aborted ? 'unavailable' : 'corrupt' } };
+        }
     }
 
     /**

@@ -41,8 +41,10 @@ it('whitelists a serialized hint without content, actor or acceptance detail', (
   const hint = buildSessionMessageObservationFactsV1({ id: 'm', seq: 4, localId: null,
     content: { t: 'encrypted', c: 'secret' }, accountActor: null,
     deliveryResolution: { v: 1, kind: 'manual_handled' }, createdAt: 100, updatedAt: 101,
-    sourceCreatedAt: 10, transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' } });
+    sourceCreatedAt: 10, transcriptObservationProvenance: { kind: 'non_dependent', source: 'history' },
+    toolOutputAvailability: { status: 'expired', days: 30 } });
   expect(SessionMessageObservationFactsV1Schema.parse(hint)).toEqual(hint);
+  expect(hint.toolOutputAvailability).toEqual({ status: 'expired', days: 30 });
   expect(hint).not.toHaveProperty('content');
   expect(hint).not.toHaveProperty('accountActor');
   expect(hint).not.toHaveProperty('deliveryResolution');

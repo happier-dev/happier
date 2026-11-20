@@ -1551,6 +1551,7 @@ export class ApiSessionClient extends EventEmitter {
                         sessionId: this.sessionId,
                         localId: params.localId,
                         content: params.message,
+                        ...(params.toolOutputPart === undefined ? {} : { toolOutputPart: params.toolOutputPart }),
                         usageTimingV1: params.usageTimingV1,
                         sidechainId: params.sidechainId,
                         messageRole: params.messageRole,

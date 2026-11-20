@@ -1,6 +1,7 @@
 import { decodeStoredSessionMessage } from "@/storage/sessionMessageContent";
 import { encodeSessionMessageContentForStorage, toPrismaSessionMessageStoredContent } from "@/storage/sessionMessageContent";
 import type { Prisma } from '@prisma/client';
+import { prepareSessionMessageToolOutputForWrite, type SessionMessageToolOutputWrite } from '@/storage/sessionMessageToolOutput';
 
 import {
     acquireSessionAccountCursorLocksInTx,
@@ -25,22 +26,43 @@ export class SessionMessageRowRevisionRaceError extends Error {
     }
 }
 
+export class SessionMessageToolOutputAlreadyExpiredError extends Error {
+    readonly code = 'session_tool_output_already_expired';
+
+    constructor() {
+        super('An expired Session tool output cannot be replaced by a content correction');
+        this.name = 'SessionMessageToolOutputAlreadyExpiredError';
+    }
+}
+
 /** The existing Message CAS owner serves corrections and explicit historical association enrichment. */
 export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly<{
     tx: Tx;
     id: string;
     rowRevision: bigint;
-    data: Omit<Prisma.SessionMessageUncheckedUpdateInput, "content" | "contentBytes"> & { content?: PrismaJson.SessionMessageContent };
+    toolOutput?: SessionMessageToolOutputWrite;
+    data: Omit<Prisma.SessionMessageUncheckedUpdateInput, "content" | "contentBytes" | "toolOutputBytes" | "toolOutputExpiredAfterDays"> & { content?: PrismaJson.SessionMessageContent };
 }>) {
     const storedContent = params.data.content === undefined ? undefined
         : encodeSessionMessageContentForStorage(params.data.content);
+    const toolOutputBytes = params.data.content === undefined ? null
+        : prepareSessionMessageToolOutputForWrite(params.data.content, params.toolOutput);
     try {
         const updated = await params.tx.sessionMessage.update({
-            where: { id: params.id, rowRevision: params.rowRevision },
+            where: {
+                id: params.id,
+                rowRevision: params.rowRevision,
+                ...(storedContent ? { toolOutputExpiredAfterDays: null } : {}),
+                ...(params.toolOutput ? { sessionId: params.toolOutput.sessionId, localId: params.toolOutput.localId } : {}),
+            },
             data: {
                 ...params.data,
                 // Prisma requires its JSON-null sentinel; the generated custom JSON input omits that sentinel type.
-                ...(storedContent ? { ...storedContent, content: toPrismaSessionMessageStoredContent(storedContent.content) } : {}),
+                ...(storedContent ? {
+                    ...storedContent,
+                    content: toPrismaSessionMessageStoredContent(storedContent.content),
+                    toolOutputBytes,
+                } : {}),
                 // Changed opaque content/delivery cannot retain the previous body's timing proof.
                 ...((params.data.content !== undefined || params.data.deliveryResolution !== undefined)
                     && params.data.usageTimingV1 === undefined ? { usageTimingV1: prismaRuntime.DbNull } : {}),
@@ -67,8 +89,14 @@ export async function updateSessionMessageAtCurrentRevisionInTx(params: Readonly
         });
         return updated;
     } catch (error) {
-        if (isPrismaErrorCode(error, 'P2025')) throw new SessionMessageRowRevisionRaceError();
-        throw error;
+        if (!isPrismaErrorCode(error, 'P2025')) throw error;
+        if (storedContent && await params.tx.sessionMessage.findFirst({
+            where: { id: params.id, toolOutputExpiredAfterDays: { not: null } },
+            select: { id: true },
+        })) {
+            throw new SessionMessageToolOutputAlreadyExpiredError();
+        }
+        throw new SessionMessageRowRevisionRaceError();
     }
 }
 

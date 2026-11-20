@@ -7,7 +7,7 @@ import { buildUserTextMessageContent } from '../../outbound/shared';
 import { resolveAcpSessionMessageRole } from '../../messageRole';
 import { getToolCallNameKey } from '../../toolCallInputHints';
 import { resolveTranscriptVisualReference } from '@/session/board/resolveTranscriptVisualReference';
-import type { ToolNormalizationSourceV3 } from '@happier-dev/protocol';
+import type { StrictSessionStoredMessageContentEnvelope, ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 import type { SessionTranscriptSurfaceItemReferencesV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { readTranscriptSessionBoardItemApprovalV1 } from '@happier-dev/protocol/sessions/board/transcriptReference';
 import { projectUsageSessionMessageTimingV1, type UsageTimingBoundsV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -28,6 +28,7 @@ export async function prepareCommittedAgentMessageViaPort(
   localId: string;
   sidechainId: string | null;
   payload: PlainOrEncryptedPayload;
+  toolOutputPart?: StrictSessionStoredMessageContentEnvelope;
   messageRole: SessionMessageRole;
   openedContent: unknown;
   surfaceItemReference?: SessionTranscriptSurfaceItemReferencesV1;
@@ -69,7 +70,10 @@ export async function prepareCommittedAgentMessageViaPort(
     ...(source ? { source } : {}),
     localId,
     sidechainId,
-    payload: port.buildOutboundSessionMessagePayload(content),
+    ...(port.buildDurableOutboundSessionMessagePayload?.({
+      content, sessionId: port.sessionId, localId,
+      ...(mapping ? { canonicalToolName: mapping.canonicalToolName } : {}),
+    }) ?? { payload: port.buildOutboundSessionMessagePayload(content) }),
     openedContent: content,
     messageRole: resolveAcpSessionMessageRole(normalizedBody),
     ...(surfaceItemReference ? { surfaceItemReference } : {}),

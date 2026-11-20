@@ -3293,6 +3293,28 @@ revision watermark unchanged (so the changes-feed revision skip cannot hide it) 
 full message. Home also relays an append only in the stored row's envelope mode (`encrypted`
 vs `plain`). This describes current 0.3 development source.
 
+## Detached Session tool output (0.3 development)
+
+The detached-output format keeps the tool result shell and optional output part on
+the same `SessionMessage` row. E2EE uses the existing Session key with a separate
+nonce purpose for the part. The shell's `happierToolOutputV1` digest binds the exact
+sealed part to the Session and local message ID. Plain writes verify the binding
+before storing either value. The keyed exact opener verifies the authenticated shell
+and binding before opening an encrypted part.
+
+Ordinary message pages carry availability and, on expiry, the applied retention days.
+An authorized exact read can return the available part within the same Session and
+publication boundary as the shell. The sweep clears the part and records the applied
+days in the row revision. A content correction changes the shell and part together.
+An exact replay preserves terminal expiry.
+
+A supported historical import may submit a comparison digest of the original normalized
+inline envelope through its authorized write transaction. Plain envelopes use canonical
+JSON and ciphertext uses the original encoded string. A matching existing inline
+row keeps its prior content and sequence. The digest is used only for the comparison.
+This describes the development format under review. Deployment activation and the
+loaded reconnect journey have separate gates.
+
 ## Daemon speech stream payloads (0.3 development)
 
 Daemon Voice STT audio follows Account mode, the same way Session content and the RPC
