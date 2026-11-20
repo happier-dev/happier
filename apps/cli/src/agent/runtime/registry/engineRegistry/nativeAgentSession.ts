@@ -5366,6 +5366,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 agentTargetKey: string;
                 modelId: string;
             }> | null = null;
+            let placedProviderEnvironmentKeys: readonly string[] | undefined;
             if (
                 teamCredentialBinding?.slot.kind === 'provider_model'
                 && teamCredentialBinding.resourceId !== null
@@ -5381,6 +5382,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     modelId: modelSelection.ref.modelId,
                     signal,
                 }));
+                if (teamCredentialBinding.deliveryMode === 'brokered') {
+                    placedProviderEnvironmentKeys = teamBinding.environmentOverlay.map(entry => entry.name);
+                }
                 liveTeamCredentialOpen = Object.freeze({
                     resourceId: teamCredentialBinding.resourceId,
                     ...(teamCredentialBinding.teamId ? { teamId: teamCredentialBinding.teamId } : {}),
@@ -5579,7 +5583,8 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             });
             // The Session's own Agent: the one a respawned runner adopts after a crash.
             const nativeLaunch = issueAgentNativeLaunchQualifierForHost(services.exec,
-                () => hostRuntimeParams.sessionMcpContext, () => hostRuntimeParams.mcpLaunchMaterial, undefined, 'primary');
+                () => hostRuntimeParams.sessionMcpContext, () => hostRuntimeParams.mcpLaunchMaterial, undefined, 'primary',
+                undefined, placedProviderEnvironmentKeys);
             let beforeToolExecution: ((toolName: string) => Promise<void>) | null = null;
             const nativeHostSessionServices = Object.freeze({ ...createNativeAgentSessionHostServices({
                     owners: sessionHostServices,

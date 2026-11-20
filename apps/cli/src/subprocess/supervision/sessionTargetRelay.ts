@@ -171,8 +171,8 @@ export function assertSessionTargetWorkspaceUnambiguous(workspace: SessionTarget
 
 /** Maps one Agent launch on this Machine to its launch in the target; refuses anything not placed there. */
 export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined,
-    request: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv }>,
-    environmentProjection?: Readonly<Record<string, string>>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv>; environmentDirectory?: string }> {
+    request: Parameters<NonNullable<SessionHolderTarget['prepareLaunch']>>[0],
+    environmentProjection?: Readonly<Record<string, string>>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }> {
     const command = launch?.executables[request.command];
     if (!command) throw targetLaunchError('agent_cli_target_unavailable', 'This Agent CLI was not placed in the Session target');
     const hostCwd = request.cwd === undefined ? undefined
@@ -184,11 +184,10 @@ export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined
     // This owner admits target environment keys. Required-file projection can
     // rewrite their paths, but cannot promote any host-only entry.
     const env: NodeJS.ProcessEnv = { ...launch?.env };
-    for (const key of launch?.providerEnvironmentKeys ?? []) {
+    for (const key of [...(launch?.providerEnvironmentKeys ?? []), ...(request.providerEnvironmentKeys ?? [])]) {
         env[key] = request.env?.[key];
     }
     return { ...locked,
-        ...(launch?.runtimeHome ? { environmentDirectory: launch.runtimeHome } : {}),
         ...(cwd !== undefined ? { cwd } : {}), env: environmentProjection
             ? Object.fromEntries(Object.keys(env).map(key => [key, environmentProjection[key] ?? env[key]])) : env };
 }

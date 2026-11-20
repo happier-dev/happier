@@ -312,6 +312,8 @@ export interface AcpBackendOptions {
 
   /** `primary`: the Session's own Agent, adopted by a respawned runner after a crash. */
   sessionHolderRole?: 'primary';
+  /** Broker overlay names admitted by the host for this primary native launch. */
+  sessionHolderProviderEnvironmentKeys?: readonly string[];
 
   /** Opaque host launch frame, not ACP data and never included in IO capture. */
   stdinPreamble?: Uint8Array;
@@ -880,6 +882,7 @@ export class AcpBackend implements CatalogAcpBackend {
           // ACP reads its own stdout/stderr streams; the supervisor retains neither.
           pipeStdout: true,
           maxStderrBytes: 0,
+          ...(this.options.sessionHolderProviderEnvironmentKeys ? { providerEnvironmentKeys: this.options.sessionHolderProviderEnvironmentKeys } : {}),
           ...(holder ? { sessionHolder: holder } : {}),
           spawnOptions: {
             detached: process.platform !== 'win32',

@@ -221,12 +221,14 @@ function assertNativeLaunchQualifier(qualifiers: NativeLaunchQualifiers, nativeL
     }
 }
 
-const INTERNAL_NATIVE_LAUNCH_ROLES = new WeakMap<object, SessionHolderRole>();
+type NativeHolderLaunch = Readonly<{ role: SessionHolderRole; providerEnvironmentKeys?: readonly string[] }>;
+const INTERNAL_NATIVE_HOLDER_LAUNCHES = new WeakMap<object, NativeHolderLaunch>();
+const AUXILIARY_HOLDER_LAUNCH: NativeHolderLaunch = Object.freeze({ role: 'auxiliary' });
 
-/** The holder role of launches under this qualifier: only the Session's own Agent is `primary`. */
-export function readAgentNativeLaunchHolderRoleForHost(nativeLaunch: unknown): SessionHolderRole {
+/** Placement inputs for the exact native launch this host qualified. */
+export function readAgentNativeHolderLaunchForHost(nativeLaunch: unknown): NativeHolderLaunch {
     return typeof nativeLaunch === 'object' && nativeLaunch !== null
-        ? INTERNAL_NATIVE_LAUNCH_ROLES.get(nativeLaunch) ?? 'auxiliary' : 'auxiliary';
+        ? INTERNAL_NATIVE_HOLDER_LAUNCHES.get(nativeLaunch) ?? AUXILIARY_HOLDER_LAUNCH : AUXILIARY_HOLDER_LAUNCH;
 }
 
 /** Only host composition qualifies cold native launch intent; ordinary admission still applies. */
@@ -235,7 +237,8 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     readMcpLaunchMaterial?: () => McpLaunchMaterial,
     nativeOperation?: HostAgentIsolationLaunchContext,
     holderRole: SessionHolderRole = 'auxiliary',
-    nativeAdmission?: HostAgentIsolationLaunchContext): AgentNativeLaunchQualifier {
+    nativeAdmission?: HostAgentIsolationLaunchContext,
+    providerEnvironmentKeys?: readonly string[]): AgentNativeLaunchQualifier {
     let qualifiers = INTERNAL_NATIVE_LAUNCH_QUALIFIERS.get(service);
     if (!qualifiers) {
         qualifiers = new WeakSet();
@@ -243,7 +246,8 @@ export function issueAgentNativeLaunchQualifierForHost(service: ExecService,
     }
     const qualifier = Object.freeze({});
     qualifiers.add(qualifier);
-    INTERNAL_NATIVE_LAUNCH_ROLES.set(qualifier, holderRole);
+    INTERNAL_NATIVE_HOLDER_LAUNCHES.set(qualifier, { role: holderRole,
+        ...(providerEnvironmentKeys?.length ? { providerEnvironmentKeys } : {}) });
     if (nativeOperation || nativeAdmission) INTERNAL_NATIVE_OPERATIONS.set(qualifier, {
         ...(nativeOperation ? { operation: nativeOperation } : {}),
         ...(nativeAdmission ? { admission: nativeAdmission } : {}),
@@ -477,6 +481,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
         linuxProcessLaunchScope?: LinuxProcessLaunchScope | null;
         /** Native environment helpers retain their existing Happier remainder custody. */
         ownerRemainder?: OwnerRemainderPort;
+        providerEnvironmentKeys?: readonly string[];
         recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
         readSpawnFailureLimits?: SpawnFailureLimitsReader;
         /** Transfer the final capture to the existing service's physical-settlement cleanup. */
@@ -536,6 +541,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
             env: scopedLaunch?.env ?? environment,
             ...(launch.stdin ? { stdin: launch.stdin } : {}),
             ...(launch.requiredFiles ? { requiredFiles: launch.requiredFiles } : {}),
+            ...(options.providerEnvironmentKeys ? { providerEnvironmentKeys: options.providerEnvironmentKeys } : {}),
             ...(launch.stdinPreamble ? { stdinPreamble: launch.stdinPreamble } : {}),
             ...(launch.timeoutMs === undefined ? {} : { timeoutMs: launch.timeoutMs }),
             ...(launch.maxStdoutBytes === undefined ? {} : { maxStdoutBytes: launch.maxStdoutBytes }),
@@ -1992,11 +1998,11 @@ export function createStablePluginExecService(params: Readonly<{
         if (managedCustody && options?.descendantDisposition === 'preserve-on-success') {
             throw withExecLaunchNotStarted(new PluginError({ code: 'plugin_exec_managed_handoff_forbidden', message: 'Managed process custody cannot be handed to a native tool' }));
         }
-        const holderDecision: Readonly<{ role?: SessionHolderRole; notHeld?: string }> = !openAccess ? { notHeld: 'not_open_access' }
+        const holderDecision: Readonly<{ role?: SessionHolderRole; notHeld?: string; providerEnvironmentKeys?: readonly string[] }> = !openAccess ? { notHeld: 'not_open_access' }
             : options?.nativeLaunch === undefined ? { notHeld: 'no_native_launch' }
             : managedCustody ? { notHeld: 'managed_custody' }
             : options.descendantDisposition === 'preserve-on-success' ? { notHeld: 'native_tool_handoff' }
-            : { role: readAgentNativeLaunchHolderRoleForHost(options.nativeLaunch) };
+            : readAgentNativeHolderLaunchForHost(options.nativeLaunch);
         const lifetime = managedCustody?.lifetime;
         const preparationSignal = AbortSignal.any([lifetime?.signal ?? params.signal,
             ...(options?.signal ? [options.signal] : []),
@@ -2054,6 +2060,7 @@ export function createStablePluginExecService(params: Readonly<{
         const supervised = spawnAuthorizedHostExecLaunchForHost({ ...launch, env: environment,
             processOwnerTag: managedCustody?.processOwnerTag ?? processOwnerTag }, {
             readSpawnFailureLimits: params.readSpawnFailureLimits,
+            ...(holderDecision.providerEnvironmentKeys ? { providerEnvironmentKeys: holderDecision.providerEnvironmentKeys } : {}),
             ...(protocolOwnsStdout ? { pipeStdout: true as const } : {}),
             ...(params.posixProcessGroup ? { posixProcessGroup: params.posixProcessGroup } : {}),
             ...(params.processTreeSystemBoundary ? { processTreeSystemBoundary: params.processTreeSystemBoundary } : {}),
@@ -2540,6 +2547,7 @@ export function createStablePluginExecService(params: Readonly<{
             }
             const uid = material?.nativeIdentity.agentUid ?? process.getuid?.();
             if (uid === undefined) return fail('agent_isolation_unavailable', 'Native Unix transport is unavailable');
+            const holderLaunch = readAgentNativeHolderLaunchForHost(nativeLaunch);
             const directory = await createSessionNativeDirectory({ uid, prefix: 'happier-codex-', access: 'rwx', runtimeRoot: '/tmp' })
                 .catch(error => fail('agent_isolation_unavailable', 'Native Unix transport is unavailable', error));
             try {
@@ -2550,8 +2558,8 @@ export function createStablePluginExecService(params: Readonly<{
                 const bound = issueAgentNativeLaunchQualifierForHost(service,
                     INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch), () => ({ ...material,
                         nativeSocketDirectory: { path: join(directory.path, 'private'), daemonUid: process.getuid!() } }),
-                    INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch)?.operation, readAgentNativeLaunchHolderRoleForHost(nativeLaunch),
-                    INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch)?.admission);
+                    INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch)?.operation, holderLaunch.role,
+                    INTERNAL_NATIVE_OPERATIONS.get(nativeLaunch)?.admission, holderLaunch.providerEnvironmentKeys);
                 return Object.freeze({ ...directory, nativeProxy, nativeLaunch: bound });
             } catch (error) { await directory.dispose(); throw error; }
         },

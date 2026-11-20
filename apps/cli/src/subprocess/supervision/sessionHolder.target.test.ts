@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Duplex } from 'node:stream';
+import { Duplex, PassThrough } from 'node:stream';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -71,7 +71,7 @@ function localTarget(directory: string, executable: string, targetEnvironment?: 
         }),
         openChannel: argv => {
             channelArguments.push([...argv]);
-            const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
+            const child = spawn(argv[0]!, argv.slice(1), { env: { ...process.env, ...targetEnvironment, HOME: directory }, stdio: ['pipe', 'pipe', 'ignore'] });
             channels.push(child);
             const channel = Duplex.from({ readable: child.stdout!, writable: child.stdin! });
             child.once('close', () => channel.destroy());
@@ -97,20 +97,18 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session hold
         const script = join(directory, 'credential-agent.mjs');
         const runtimeHome = join(directory, 'credential-session');
         const environmentPath = join(runtimeHome, 'env.sock.environment');
-        let permissions: number[] | null = null;
         await writeFile(script, `import { existsSync } from 'node:fs'; process.stdout.write(JSON.stringify({ present: process.env.PROVIDER_TOKEN === ${JSON.stringify(secret)}, fileRemoved: !existsSync(${JSON.stringify(environmentPath)}), clearedAbsent: process.env.CLEARED_PROVIDER === undefined, unrelatedAbsent: process.env.HAPPIER_TEST_HOST_ONLY === undefined }) + '\\n'); process.stdin.resume();`);
         const supervised = spawnSupervisedPluginProcess({ command: process.execPath, args: [script], cwd: directory,
             env: { PROVIDER_TOKEN: secret, HAPPIER_TEST_HOST_ONLY: 'synthetic-host-only' },
+            providerEnvironmentKeys: ['PROVIDER_TOKEN'],
             sessionHolder: { kind: 'spawn', executablePath: holderExecutable!, socketPath: join(directory, 'env.sock'), role: 'primary',
                 target: { ...provider.target, prepareLaunch: request => prepareTargetAgentLaunch({
                     runtimeHome, executables: { [process.execPath]: process.execPath }, env: {},
                     workspace: { hostRoot: directory, targetRoot: directory },
-                    providerEnvironmentKeys: ['PROVIDER_TOKEN', 'CLEARED_PROVIDER'],
+                    providerEnvironmentKeys: ['CLEARED_PROVIDER'],
                 }, request),
                     exec: async command => {
-                        if (command.includes('mkfifo')) {
-                            permissions = await Promise.all([environmentPath, runtimeHome].map(async path => (await stat(path)).mode & 0o777)).catch(() => null);
-                        }
+                        if (command.includes('mkfifo')) expect(await stat(environmentPath).catch(() => null)).toBeNull();
                         return provider.target.exec(command);
                     } } },
             spawnOptions: { detached: true } });
@@ -120,32 +118,36 @@ describe.skipIf(process.platform === 'win32' || !holderExecutable)('Session hold
         try {
             await new Promise<void>((resolve, reject) => { child.once('spawn', () => resolve()); child.once('error', reject); });
             await expect.poll(() => output).toBe('{"present":true,"fileRemoved":true,"clearedAbsent":true,"unrelatedAbsent":true}\n');
-            expect(permissions).toEqual([0o600, 0o700]);
+            expect(provider.channelArguments).toContainEqual(['sh', '-s']);
             expect(JSON.stringify([provider.commands, provider.channelArguments])).not.toContain('selected-');
             expect(JSON.stringify([provider.commands, provider.channelArguments])).not.toContain('PROVIDER_TOKEN');
         } finally { await supervised.dispose(); await supervised.handle.waitForExit(); }
     }, 60_000);
 
-    it('removes the private credential file when the provider refuses the holder launch', async () => {
+    it('leaves no credential file when the provider refuses the holder launch', async () => {
         const provider = localTarget(directory, holderExecutable!);
         const environmentPath = join(directory, 'refused-env.sock.environment');
-        let delivered = false;
+        let refusedChannel = false;
         const refusal = Object.assign(new Error('fixture provider unavailable'), { code: 'provider_unavailable' });
         const supervised = spawnSupervisedPluginProcess({ command: process.execPath, args: [agent], cwd: directory,
             sessionHolder: { kind: 'spawn', executablePath: holderExecutable!, socketPath: join(directory, 'refused-env.sock'), role: 'primary',
                 target: { ...provider.target, prepareLaunch: request => ({ ...request, env: { PROVIDER_TOKEN: 'selected-secret' } }),
                     exec: async command => {
-                        if (command.includes('mkfifo')) {
-                            delivered = (await stat(environmentPath).catch(() => null))?.isFile() === true;
-                            throw refusal;
-                        }
+                        if (command.includes('mkfifo')) throw refusal;
                         return provider.target.exec(command);
+                    },
+                    openChannel: argv => {
+                        if (argv[0] !== 'sh' || argv[1] !== '-s') return provider.target.openChannel(argv);
+                        refusedChannel = true;
+                        const channel = new PassThrough();
+                        queueMicrotask(() => channel.destroy(refusal));
+                        return channel;
                     } } },
             spawnOptions: { detached: true } });
         const child = supervised.child as unknown as SessionHolderChild;
         const error = await new Promise<Error>(resolve => child.once('error', resolve));
         expect(error).toBe(refusal);
-        expect(delivered).toBe(true);
+        expect(refusedChannel).toBe(true);
         await expect(stat(environmentPath)).rejects.toMatchObject({ code: 'ENOENT' });
         expect(JSON.stringify([provider.commands, provider.channelArguments])).not.toContain('selected-secret');
     }, 60_000);

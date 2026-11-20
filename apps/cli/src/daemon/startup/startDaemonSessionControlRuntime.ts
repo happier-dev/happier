@@ -6,6 +6,7 @@ import { createExternalActionHeaderRefusalError } from '@/api/externalActionHead
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createSparedHeldAgentCustody, type HeldAgentOwner } from '@/daemon/processSupervision/sparedHeldAgents';
 import { reachHeldTargetAgent, restoreSessionTargetRelay, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
+import { exposeManagedTargetProviderConsumer } from '@/machines/managed/providerConsumer';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { readNativeStartupFailureDetail } from '@/agent/runtime/session/errors/nativeStartupFailureDetail';
@@ -1249,6 +1250,7 @@ export async function startDaemonSessionControlRuntime(
         modelId: string;
         consumer?: import('@happier-dev/protocol').ProviderBrokerRuntimeConsumerV1;
         providerSettingsOperationContext?: SavedSecretOperationContextV1;
+        exposeEndpoint?: import('@/providers/broker/managedProviderConsumerApplication').ExposeManagedProviderConsumerEndpoint;
         beginBrokerRequest?: () => import('@/providers/broker/providerBrokerApplicationFailure').SessionBrokerApplicationOutcomeRecorder | undefined;
         observeBrokerCarrierFailure?: (read: () => Promise<import('@/daemon/peer/iroh/machineCarrier').MachineCarrierFailureDiagnostic | undefined>) => void;
         signal: AbortSignal;
@@ -3122,6 +3124,9 @@ export async function startDaemonSessionControlRuntime(
               const recipe = parsed.success ? parsed.data.recipe : undefined;
               const origin = recipe?.projectFilesOrigin;
               return await restoreSessionTargetRelay({ ...request, committedSessionId: sessionId, socketPath,
+                onRestored: target => {
+                  tracked.sessionProviderTarget = target;
+                },
                 ...(origin ? { projectFiles: { sessionId, primarySocketPath: held.socketPath, origin,
                   readBaseline: async signal => origin.targetWorkspace.kind === 'managed' && origin.contentPolicyDigest
                     ? await params.resolveManagedProjectFilesBaseline?.()?.({ sessionId, targetWorkspace: origin.targetWorkspace, credentials,
@@ -13201,6 +13206,10 @@ export async function startDaemonSessionControlRuntime(
                       ...(teamBinding.nativeDelivery ? { nativeDelivery: teamBinding.nativeDelivery } : {}) };
                   })();
                   if (!binding) throw new SessionTeamCredentialLaunchUnavailableError();
+                  const placedBroker = binding.deliveryMode === 'brokered'
+                    && operation.consumer?.kind !== 'execution_run' && tracked.spawnOptions?.managedTargetPlacement;
+                  const providerTarget = placedBroker ? tracked.sessionProviderTarget : undefined;
+                  if (placedBroker && !providerTarget) throw new SessionTeamCredentialLaunchUnavailableError('provider_endpoint_unavailable');
                   return await openTeamBinding({
                   sessionId,
                   teamId: binding.teamId,
@@ -13212,6 +13221,7 @@ export async function startDaemonSessionControlRuntime(
                   agentId: consumerAgentId,
                   agentTargetKey: operation.agentTargetKey,
                   modelId: operation.modelId,
+                  ...(providerTarget ? { exposeEndpoint: input => exposeManagedTargetProviderConsumer({ ...input, target: providerTarget }) } : {}),
                   ...(operation.consumer?.kind === 'execution_run' ? {} : (() => {
                     const sessionEvidence = () => tracked.teamCredentialBrokerEvidence ??= createSessionBrokerApplicationEvidence({
                       sessionId, pid: runner.pid, processStartTimeMs: runner.processStartTimeMs,

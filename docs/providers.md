@@ -3173,6 +3173,13 @@ by `SPAWN_VALIDATION_FAILED`, so retained operation results and the Session erro
 presenter can explain broker recovery using the credential owner's guidance.
 These are development-source behaviors; loaded-runtime validation is separate.
 
+For a placed Session, the Team broker projects its controller endpoint through
+the Session's existing guest loopback and preserves the discovered application
+path. The holder passes the admitted late credential overlay to the native
+Agent through the guest launch environment. The scoped capability travels
+through the private launch stream without an environment file or command-line
+value. Closing the broker binding closes its guest listener.
+
 An application-qualified catalog read distinguishes an unavailable transport,
 an invalid response, missing source authorization, incompatible rows and a
 current empty catalog with bounded `broker_unavailable.reason` values. These

@@ -92,6 +92,8 @@ export interface TrackedSession {
   activeTurnId?: string;
   /** Host-observed broker outcome for one admitted turn; never marker-persisted. */
   teamCredentialBrokerEvidence?: import('@/providers/broker/sessionBrokerApplicationEvidence').SessionBrokerApplicationEvidence;
+  /** The live carrier for this placed Session's Provider loopback. Never marker-persisted. */
+  sessionProviderTarget?: import('@/machines/managed/acquire').ManagedSessionTarget;
   /** Requester reason for this occurrence's planned signal; diagnostics only, never persisted. */
   plannedRestartReason?: string;
   /** Request-owned planned-restart hold; read by the runner only to retire a lost cancellation. Never persisted. */

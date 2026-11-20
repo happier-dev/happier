@@ -85,7 +85,7 @@ import {
 } from '@/agent/acp/runtime/definition/nativeSessionConfig';
 import { prepareAcpSessionSkills } from '@/agent/acp/runtime/definition/skillsSessionDelivery';
 import { buildScopedProcessEnv, stripUnsetEnvironmentVariables } from '@/utils/processEnv/buildScopedProcessEnv';
-import { authorizeResolvedAgentNativeExecLaunchForHost, readAgentNativeLaunchHolderRoleForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
+import { authorizeResolvedAgentNativeExecLaunchForHost, readAgentNativeHolderLaunchForHost, type HostAuthorizedPluginExecLaunch } from '@/plugins/runtime/invocation/services/exec';
 import { buildAcpToolNameResolverInput, createAcpToolIdentity } from '@/agent/acp/toolCalls';
 import { canonicalizeToolNameV2 } from '@/agent/tools/normalization';
 import { importAcpReplayHistoryV1 } from '@/agent/acp/history/importAcpReplayHistory';
@@ -968,6 +968,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
                 replayBackend = createAcpBackend({
                   ...backendOptions,
                   sessionHolderRole: undefined,
+                  sessionHolderProviderEnvironmentKeys: undefined,
                   extensions: [],
                   providerTurnSource: undefined,
                   providerTurnLifecycle: undefined,
@@ -1392,6 +1393,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     ? options.extensions?.publishPlan ?? createSessionTaskSnapshotPublisher(dependencies.planWorkState, {
       kind: 'todo', origin: 'vendor',
     }) : undefined;
+  const holderLaunch = readAgentNativeHolderLaunchForHost(dependencies.nativeLaunch);
   const backendOptions: CreateAcpBackendOptions = {
     ...(options.providerTurnSource && providerTurns ? {
       providerTurnSource: options.providerTurnSource,
@@ -1415,8 +1417,9 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           ...(launch.launcherCwd === undefined ? {} : { launcherCwd: launch.launcherCwd }),
           ...(launch.stdinPreamble === undefined ? {} : { stdinPreamble: launch.stdinPreamble }),
           ...(launch.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
-          ...(launch.hostFinalizedLaunch && readAgentNativeLaunchHolderRoleForHost(dependencies.nativeLaunch) === 'primary'
-            ? { sessionHolderRole: 'primary' as const } : {}),
+          ...(launch.hostFinalizedLaunch && holderLaunch.role === 'primary'
+            ? { sessionHolderRole: 'primary' as const,
+                ...(holderLaunch.providerEnvironmentKeys ? { sessionHolderProviderEnvironmentKeys: holderLaunch.providerEnvironmentKeys } : {}) } : {}),
           ...(launch.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
           ...(dependencies.transformAgentChildLaunchEnvironment
             ? {

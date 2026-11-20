@@ -192,6 +192,7 @@ function openSessionTargetAuthority(input: SessionTargetAuthorityRequest, lifeti
 export async function restoreSessionTargetRelay(input: SessionTargetAuthorityRequest & Readonly<{
     socketPath: string;
     readTrustedCallerPid(): number | null;
+    onRestored?(target: ManagedSessionTarget): void;
     projectFiles?: Readonly<{ sessionId: string; primarySocketPath: string; origin: SessionProjectFilesOriginV1;
         readBaseline?(signal: AbortSignal): Promise<WorkspaceManifest | null> }>;
 }>): Promise<(() => void) | null> {
@@ -211,6 +212,7 @@ export async function restoreSessionTargetRelay(input: SessionTargetAuthorityReq
                 workspace: { hostRoot: origin.sourceWorkspace.rootPath, targetRoot: origin.targetWorkspace.rootPath },
                 ...(baseline ? { baseline } : {}) });
         }
+        input.onRestored?.(target);
         return () => lifetime.abort();
     } catch (error) {
         lifetime.abort();

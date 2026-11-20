@@ -3,7 +3,7 @@ import { isPidPresent } from '@happier-dev/cli-common/process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
-import { basename, dirname, join, posix } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { finished, Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
@@ -16,7 +16,7 @@ import { logger } from '@/ui/logger';
 import { isOwnerOnlyPath, resolveOwnerOnlySocketRoot } from '@/utils/ipc/ownerOnlyLocalEndpoint';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
-import { execWithManagedChannelEnvironment } from '@/machines/managed/channelEnvironmentDelivery';
+import { launchWithManagedChannelEnvironment } from '@/machines/managed/channelEnvironmentDelivery';
 import { connectSessionTarget, createTargetHolderSocketPath, readSessionTargetPlacement } from './sessionTargetRelay';
 import { PROCESS_TERMINATION_GRACE_MS } from './terminationPolicy';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
@@ -179,8 +179,8 @@ export type SessionHolderTarget = Readonly<{
      * for anything the launch step did not place there.
      */
     prepareLaunch?(launch: Readonly<{ command: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv;
-        requiredFiles?: readonly string[]; signal?: AbortSignal }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv>; environmentDirectory?: string }>
-        | Promise<Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv>; environmentDirectory?: string }>>;
+        requiredFiles?: readonly string[]; providerEnvironmentKeys?: readonly string[]; signal?: AbortSignal }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }>
+        | Promise<Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<NodeJS.ProcessEnv> }>>;
 }>;
 
 export type AgentSessionHolderLaunch =
@@ -195,6 +195,8 @@ export type SessionHolderLaunch = Readonly<{
     cwd?: string;
     env?: NodeJS.ProcessEnv;
     requiredFiles?: readonly string[];
+    /** Exact late Provider overlay names admitted for this native Agent launch. */
+    providerEnvironmentKeys?: readonly string[];
     signal?: AbortSignal;
     /** Windows: the args are a rendered command-line tail, appended unquoted. */
     windowsVerbatimArguments?: boolean;
@@ -1140,8 +1142,8 @@ export function spawnSessionHolderChild(
 }
 
 /**
- * Starts the holder inside a target through one finite provider exec. The holder
- * detaches from the exec session (`nohup`, background), so the exec ends while it
+ * Starts the holder inside a target through its provider. The holder
+ * detaches from the launch (`nohup`, background), so the shell ends while it
  * keeps the Agent; its one readiness line comes back through a private FIFO. The
  * client then attaches over the target's provider channel.
  *
@@ -1164,23 +1166,27 @@ function spawnTargetSessionHolderChild(launch: SessionHolderLaunch & Readonly<{ 
         const prepared = target.prepareLaunch
             ? await target.prepareLaunch({ command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}),
                 ...(launch.env ? { env: launch.env } : {}), ...(launch.requiredFiles ? { requiredFiles: launch.requiredFiles } : {}),
+                ...(launch.providerEnvironmentKeys ? { providerEnvironmentKeys: launch.providerEnvironmentKeys } : {}),
                 ...(launch.signal ? { signal: launch.signal } : {}) })
-            : { command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}), env: {}, environmentDirectory: undefined };
+            : { command: launch.command, args: launch.args, ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}), env: {} };
         const argv = [prepared.command, ...prepared.args];
         const ready = `${launch.socketPath}.ready`;
-        const command = ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
+        const renderLaunch = (environmentSetup: string) => ['umask 077', `rm -f ${q(ready)}`, `mkfifo ${q(ready)}`,
             ...(prepared.cwd ? [`cd ${q(prepared.cwd)}`] : []),
             // Every held Agent's Session MCP relays reach this Machine through its own holder (`--session-mcp`).
-            `nohup ${[target.holderPath, 'serve', '--socket', launch.socketPath, '--session-mcp', ...holderTerminalArgs(launch), '--', ...argv].map(q).join(' ')} >${q(ready)} 2>/dev/null </dev/null &`,
+            '(', environmentSetup,
+            `exec nohup ${[target.holderPath, 'serve', '--socket', launch.socketPath, '--session-mcp', ...holderTerminalArgs(launch), '--', ...argv].map(q).join(' ')}`,
+            `) >${q(ready)} 2>/dev/null </dev/null &`,
             `head -n 1 ${q(ready)}`, `rm -f ${q(ready)}`].join('\n');
         launch.signal?.throwIfAborted();
-        return execWithManagedChannelEnvironment({ path: posix.join(prepared.environmentDirectory ?? target.socketDirectory, `${posix.basename(launch.socketPath)}.environment`),
+        if (Object.keys(prepared.env).length === 0) return (await target.exec(renderLaunch(''))).stdout;
+        return launchWithManagedChannelEnvironment({
             environment: prepared.env,
-            command, ...(launch.signal ? { signal: launch.signal } : {}),
-            exec: command => target.exec(command), openChannel: argv => target.openChannel(argv) });
+            renderLaunch, ...(launch.signal ? { signal: launch.signal } : {}),
+            openChannel: argv => target.openChannel(argv) });
     };
-    void prepare().then((result) => {
-        const line = result.stdout.split('\n')[0] ?? '';
+    void prepare().then(stdout => {
+        const line = stdout.split('\n')[0] ?? '';
         let readiness: { ready?: boolean; agentPid?: number; holderPid?: number; code?: string; kind?: string; errno?: number | null; message?: string };
         try { readiness = JSON.parse(line); } catch {
             fail(Object.assign(new Error('Session holder did not start in the target'), { code: 'session_holder_failed' }));

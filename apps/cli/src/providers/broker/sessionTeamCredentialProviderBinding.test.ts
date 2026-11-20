@@ -150,6 +150,38 @@ describe('Session Team credential Provider binding', () => {
     } finally { await opened.cleanup(); }
   });
 
+  it('materializes the broker path at the placed Agent endpoint and releases that exposure with the binding', async () => {
+    let materializedUrl: string | undefined;
+    let controllerUrl: string | undefined;
+    let exposureClosed = false;
+    const exposeEndpoint = async ({ endpointUrl }: { endpointUrl: string }) => {
+      controllerUrl = endpointUrl;
+      return { endpointUrl: 'http://127.0.0.1:43210', cleanup: async () => { exposureClosed = true; } };
+    };
+    const opened = await openExactSessionTeamCredentialProviderBinding({
+      sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
+      selection: { ...row.selection, descriptor: row.descriptor, application: row.application,
+        sourceRevision: row.sourceRevision, sourceFacts: row.sourceFacts, brokerMachineId: 'broker-1' },
+      lease: lease({ v: 1, adapterVersion: 1, prepare: prepareSpawnEnv, materialize(input) {
+        materializedUrl = input.binding.endpoint.normalizedUrl;
+        return materializeBrokerAuthoritySpawnEnv(input);
+      } }),
+      materializationBaseDir: '/tmp/happier-team-target', signal: new AbortController().signal,
+      ...{ exposeEndpoint },
+      openBroker: async () => ({ ok: true, authority, target: { custodianAccountId: 'account-2',
+        brokerMachineId: 'broker-1', endpointId: 'b'.repeat(64), endpointRevision: 1, endpoint: { endpointId: 'b'.repeat(64) } } }),
+      openTunnel: async () => ({ localPort: 43123, localCapability: 'c'.repeat(64), observedPath: 'relay',
+        retire: async () => undefined, close: async () => undefined }),
+    });
+    try {
+      expect(controllerUrl).toBe('http://127.0.0.1:43123/v1');
+      expect(materializedUrl).toBe('http://127.0.0.1:43210/v1');
+      expect(opened.providerBinding.upstream.normalizedUrl).toBe(materializedUrl);
+      expect(opened.environmentOverlay).toContainEqual({ name: 'BROKER_AUTHORITY', value: 'c'.repeat(64), source: 'provider' });
+    } finally { await opened.cleanup(); }
+    expect(exposureClosed).toBe(true);
+  });
+
   it.each(['brokered', 'direct', 'vendor-native'] as const)('admits an experimental Team pairing without anyone confirming (%s)', async deliveryMode => {
     const sourceFacts = { ...row.sourceFacts, compatibilityOverrides: row.sourceFacts.compatibilityOverrides!.map(override => ({
       ...override, status: 'experimental' as const,

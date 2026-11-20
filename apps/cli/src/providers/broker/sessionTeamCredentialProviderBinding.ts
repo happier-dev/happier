@@ -26,6 +26,7 @@ import { resolveProviderCredentialPlaintextAsync } from '@/providers/spawn/crede
 import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { PROVIDER_BROKER_MODEL_ID_HEADER, teamCredentialBrokerLocalCredentialTransport } from './providerBrokerPrivateProtocol';
 import { createProviderBrokerEndpointDiscovery } from './providerBrokerEndpointDiscovery';
+import type { ExposeManagedProviderConsumerEndpoint } from './managedProviderConsumerApplication';
 import { assertTeamCredentialModelAdmission, type TeamCredentialModelCompatibilityInput } from './teamCredentialModelCompatibility';
 import { resolveTeamCredentialModelCompatibility } from './teamCredentialModelCompatibility';
 import { ProviderErrorCodeV1Schema, type ProviderErrorCodeV1 } from '@happier-dev/protocol/providers/errors';
@@ -62,6 +63,7 @@ type SessionTeamCredentialProviderBindingOpenDependencies = Readonly<{
   lease: PluginRuntimeRegistryLease;
   materializationBaseDir: string;
   signal: AbortSignal;
+  exposeEndpoint?: ExposeManagedProviderConsumerEndpoint;
   openBroker(request: ProviderBrokerOpenRequestV1, signal: AbortSignal): Promise<ProviderBrokerOpenResponseV1>;
   initialBrokerOpen?: Extract<ProviderBrokerOpenResponseV1, { ok: true }>;
   openTunnel(request: Readonly<{
@@ -263,15 +265,23 @@ export async function openExactSessionTeamCredentialProviderBinding(
     signal: input.signal,
   }), input.signal);
   let composed: Awaited<ReturnType<typeof composeProviderBindingMaterialization>> | null = null;
+  let exposure: Awaited<ReturnType<ExposeManagedProviderConsumerEndpoint>> | undefined;
   try {
     input.signal.throwIfAborted();
-    const endpointUrl = await discovery.readEndpointUrl({
+    const controllerEndpointUrl = await discovery.readEndpointUrl({
       localOrigin: `http://127.0.0.1:${tunnel.localPort}`,
       headers: { [MACHINE_HTTP_LOCAL_CAPABILITY_HEADER]: tunnel.localCapability,
         [PROVIDER_BROKER_MODEL_ID_HEADER]: selection.modelId },
       signal: input.signal,
     });
+    exposure = await input.exposeEndpoint?.({ endpointUrl: controllerEndpointUrl, signal: input.signal }).catch(error => {
+      input.signal.throwIfAborted();
+      throw new SessionTeamCredentialLaunchUnavailableError('provider_endpoint_unavailable', 'binding', error);
+    });
     input.signal.throwIfAborted();
+    const endpointUrl = exposure
+      ? `${exposure.endpointUrl}${new URL(controllerEndpointUrl).pathname}`
+      : controllerEndpointUrl;
 
     const bindingKey = `team_resource:${selection.resourceId}:revision:${selection.expectedResourceRevision}:route:brokered`;
     const prepared = prepareLeasedAgentProviderBinding({
@@ -353,8 +363,11 @@ export async function openExactSessionTeamCredentialProviderBinding(
             // The carrier withdraws the public listener before retirement and
             // retains only the exact signed claim for a private control dial.
             // A failure leaves cleanup retryable, never inference reachable.
-            await tunnel.retire();
-            await tunnel.close();
+            try { await exposure?.cleanup(); }
+            finally {
+              await tunnel.retire();
+              await tunnel.close();
+            }
           }
         })().then(
           () => {
@@ -371,6 +384,7 @@ export async function openExactSessionTeamCredentialProviderBinding(
     });
   } catch (error) {
     composed?.cleanup?.();
+    await exposure?.cleanup().catch(() => undefined);
     await tunnel.retire().catch(() => undefined);
     await tunnel.close().catch(() => undefined);
     throw error;
@@ -396,6 +410,7 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
   readCatalog(signal: AbortSignal, application?: ProviderBrokerApplicationBindingV1): Promise<readonly TeamCredentialProviderModelCatalogEntryV1[]>;
   openBroker?: SessionTeamCredentialProviderBindingOpenDependencies['openBroker'];
   openTunnel?: SessionTeamCredentialProviderBindingOpenDependencies['openTunnel'];
+  exposeEndpoint?: ExposeManagedProviderConsumerEndpoint;
   openTeamDirect?: SessionTeamCredentialDirectOpen;
   openVendorNative?: SessionTeamCredentialNativeOpen;
 }>): Promise<SessionTeamCredentialProviderBinding | null> {
@@ -583,5 +598,6 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     openBroker: input.openBroker,
     initialBrokerOpen: opened,
     openTunnel: input.openTunnel,
+    ...(input.exposeEndpoint ? { exposeEndpoint: input.exposeEndpoint } : {}),
   });
 }

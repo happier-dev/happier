@@ -115,6 +115,7 @@ export async function openDaemonSessionTeamCredentialProviderBinding(input: Bind
           ...(input.nativeDelivery ? { nativeDelivery: input.nativeDelivery } : {}) },
         lease, materializationBaseDir: join(dependencies.happyHomeDir, 'providers', 'materialized'),
         signal: input.signal,
+        ...(input.exposeEndpoint ? { exposeEndpoint: input.exposeEndpoint } : {}),
         readCatalog: (signal, application) => observePhase('binding_read', () => readSessionTeamCredentialProviderModels({
           homeDomainAction, lease, agentId: input.agentId,
           agentTargetKey: input.agentTargetKey, resourceId: input.resourceId, teamId: input.teamId,

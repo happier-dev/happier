@@ -1721,6 +1721,7 @@ export async function executeSpawnSessionRequest(
                 readSpawnPluginRuntimeRegistry: () => pluginRuntimeLease.currentRegistry,
                 onTrackedSessionRegistered: (trackedSession) => {
                     if (pluginRuntimeLease.projectRefusals) trackedSession.pluginProjectRefusals = pluginRuntimeLease.projectRefusals;
+                    if (sessionTarget) trackedSession.sessionProviderTarget = sessionTarget.target;
                     sessionTargetRunner = trackedSession;
                     void observeSessionTargetRunnerExit(trackedSession).then(settleSessionTargetRunnerExit);
                     childLaunchSubmitted = true;
