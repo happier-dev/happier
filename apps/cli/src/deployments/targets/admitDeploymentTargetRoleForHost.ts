@@ -210,11 +210,17 @@ export async function admitDeploymentTargetRoleForHost(request: DeploymentTarget
         return { input: DeploymentTargetRoleInputSchemasV1[variablesRole].parse(input), role: variablesRole };
     }
     if (!preparation && variablesRole === 'variables.sync') return refuse('action_forbidden');
+    const parentOperation = admittedParent && deploymentOperationForRootActionV1(admittedParent.actionId);
+    // A compact Rollback approves the retained receipt. Preparation resolves its
+    // current runtime Link, which is still checked against the accepted receipt below.
     const admittedOperation = !preparation && 'deploymentId' in input
         && admittedParent?.input.serverId === input.serverId
         && admittedParent.input.environmentId === input.environmentId
-        && admittedParent.input.targetLinkId === input.targetLinkId
-        ? deploymentOperationForRootActionV1(admittedParent.actionId) : undefined;
+        && (admittedParent.input.targetLinkId === input.targetLinkId
+            || (parentOperation === 'rollback' && admittedParent.input.targetLinkId === undefined
+                && 'priorDeployment' in input && input.priorDeployment.environmentId === input.environmentId
+                && admittedParent.input.deploymentId === input.priorDeployment.deploymentId))
+        ? parentOperation ?? undefined : undefined;
     const reviewedTeardownRole = matched.every(entry => entry.binding.role === 'branches.delete') ? 'branches.delete'
         : matched.every(entry => entry.binding.role === 'projects.delete') ? 'projects.delete'
             : matched.every(entry => entry.binding.role === 'projects.observe') ? 'projects.observe' : null;

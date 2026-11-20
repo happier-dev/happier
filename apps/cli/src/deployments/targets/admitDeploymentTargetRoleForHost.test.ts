@@ -277,6 +277,48 @@ describe('deployment role host admission', () => {
             .rejects.toMatchObject({ code: 'deployment_access_denied' });
     });
 
+    it('continues an admitted compact Rollback for the exact retained release from a custody-only read', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('rollback');
+        fixture.state.environment.environment.capabilities.deploy = false;
+        const prior = structuredClone(fixture.state.receipt);
+        prior.deployment.id = 'retained-receipt';
+        prior.deployment.state = 'succeeded';
+        prior.content.platform!.observation.providerDeploymentId = 'retained-provider-deployment';
+        fixture.state.receipt.deployment.operation = 'rollback';
+        fixture.state.receipt.deployment.rollbackOfDeploymentId = prior.deployment.id;
+        const input = normalizeStrictJsonValue({ ...fixture.input, priorDeployment: {
+            environmentId: fixture.input.environmentId, deploymentId: prior.deployment.id,
+            expectedRevision: prior.deployment.revision, providerDeploymentId: 'retained-provider-deployment',
+        } });
+        const request = { ...fixture.request, input };
+        const host = { ...fixture.host, readReceipt: async (params: Parameters<typeof fixture.host.readReceipt>[0]) =>
+            params.deploymentId === prior.deployment.id ? prior : fixture.host.readReceipt(params) };
+        const action = { pluginId: request.pluginId, localId: request.localId };
+        const portFor = (deploymentId: string, admitted: boolean, environmentId = fixture.input.environmentId) => createHostReviewedChildPortV1({
+            actionId: 'deployments.rollback', input: { serverId: fixture.input.serverId, environmentId, deploymentId, requestKey: 'rollback' },
+            context: request.context, ...(admitted ? { reviewAdmitted: true } : {}),
+            plan: { children: [{ action, role: 'rollback', input }] }, policies: [{ action, role: 'rollback', surface: 'cli' }],
+            async execute(_envelope, context) {
+                const result = await admitDeploymentTargetRoleForHost({ ...request, context }, host);
+                return { ok: true, result: normalizeStrictJsonValue({ role: result.role }) };
+            },
+        });
+        const denied = { code: 'deployment_access_denied', data: { failureCause: {
+            phase: 'deployment.target.admission.role_capability' } } };
+        await expect(admitDeploymentTargetRoleForHost(request, host)).rejects.toMatchObject(denied);
+        for (const port of [portFor(prior.deployment.id, false), portFor('foreign-receipt', true),
+            portFor(prior.deployment.id, true, 'foreign-environment')]) {
+            await expect(admitDeploymentTargetRoleForHost({ ...request,
+                context: { ...request.context, hostReviewedChild: port } }, host)).rejects.toMatchObject(denied);
+        }
+        const port = portFor(prior.deployment.id, true);
+        await expect(admitDeploymentTargetRoleForHost({ ...request,
+            context: { ...request.context, hostReviewedChild: port } }, host)).resolves.toMatchObject({ role: 'rollback' });
+        await expect(port.invoke({ action, role: 'rollback', input })).resolves.toMatchObject({ ok: true, result: { role: 'rollback' } });
+        fixture.state.receipt.deployment.rollbackOfDeploymentId = 'unapproved-receipt';
+        await expect(port.invoke({ action, role: 'rollback', input })).rejects.toMatchObject({ code: 'target_mismatch' });
+    });
+
     it('continues the admitted Promote without re-admitting the prior Environment', async () => {
         const fixture = createDeploymentTargetRoleAdmissionFixture('promote');
         const priorEnvironment = structuredClone(fixture.state.environment);
