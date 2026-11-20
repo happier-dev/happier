@@ -785,10 +785,11 @@ export const accountDirectoryAuthClient = {
             const keyAuthSecret = pending.mode === 'keyed' && pending.secret ? decodeBase64(pending.secret, 'base64url') : undefined;
             try {
                 const recorded = await TokenStorage.recordAccountDirectoryOAuthReturn({
-                endpoint, serverIdentityId: pending.serverIdentityId, canonicalServerUrl,
-                entryIntent: pending.entryIntent, returnTo: destination.pathname,
-                ...(pending.accountEntryReturnTo ? { accountEntryReturnTo: pending.accountEntryReturnTo } : {}),
-                ...(keyAuthSecret ? { keyAuthSecret } : {}),
+                    endpoint, serverIdentityId: pending.serverIdentityId, canonicalServerUrl,
+                    entryIntent: pending.entryIntent, returnTo: destination.pathname,
+                    signInProviderId: pending.provider,
+                    ...(pending.accountEntryReturnTo ? { accountEntryReturnTo: pending.accountEntryReturnTo } : {}),
+                    ...(keyAuthSecret ? { keyAuthSecret } : {}),
                 }, { expectedCredentialToken: body.token.trim() });
                 if (!recorded) return failed('invalid-pending', false, undefined, true);
             } finally {

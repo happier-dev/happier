@@ -198,6 +198,8 @@ export type AccountDirectoryOAuthReturnCustody = Readonly<{
     entryIntent: AccountContinuationIntent;
     returnTo: string;
     accountEntryReturnTo?: string;
+    /** Display identity of the provider used by this exact Account Service exchange. */
+    signInProviderId?: string;
     /** Non-secret binding to the exact restricted credential committed for this return. */
     credentialTokenDigest: string;
     keyAuthSecret?: Uint8Array;

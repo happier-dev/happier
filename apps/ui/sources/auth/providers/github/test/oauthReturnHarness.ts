@@ -1,6 +1,7 @@
 import React from 'react';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { TeamLabelEnvelopeWorkV1Schema } from '@happier-dev/protocol/teams';
 import { parseToken } from '@/utils/auth/parseToken';
 import { afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -208,6 +209,9 @@ export function setOAuthRuntimeFetch(request: RuntimeFetch): RuntimeFetch {
         }
         if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
         if (url.pathname === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: null, version: 0 }));
+        if (url.pathname === '/v2/teams/label-envelopes' && (init?.method ?? 'GET') === 'GET') {
+            return Response.json(TeamLabelEnvelopeWorkV1Schema.parse({ teams: [] }));
+        }
         if (url.pathname === '/v1/account/encryption' || url.pathname === '/v1/account/encryption/currentness') {
             const credentials = await TokenStorage.getCredentialsForServerUrl(url.origin);
             const currentness = createAccountEncryptionCurrentnessFixtureForCredentials(credentials ?? { token: createAccountTokenForTests('oauth-account') });

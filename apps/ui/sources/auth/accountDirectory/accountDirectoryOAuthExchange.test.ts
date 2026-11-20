@@ -281,6 +281,25 @@ describe('Account Directory OAuth exchange custody', () => {
         expect(fixture.state.calls).toHaveLength(calls);
     });
 
+    it('attributes an unlinked Home to the provider recorded in the claimed exchange', async () => {
+        const input = await storedInput();
+        fixture.state.homes = [];
+        fixture.state.preferredHomeServerIdentityId = null;
+        const exchanged = await accountDirectoryAuthClient.exchangeOAuth(input);
+        if (exchanged.kind !== 'authenticated') throw new Error('Exchange failed');
+        const { consumeAccountServiceOAuthReturn } = await import('@/sync/ops/accountDirectory/consumeAccountServiceOAuthReturn');
+
+        const consumed = await consumeAccountServiceOAuthReturn(
+            { ...exchanged.destination.params, provider: 'untrusted-query-provider' },
+            { invokingSurface: '/setup/wizard', signal: new AbortController().signal },
+        );
+        expect(consumed).toMatchObject({
+            kind: 'consumed',
+            input: { signInProvider: { id: 'github' } },
+            result: { kind: 'explicit_target_not_linked', homeServerIdentityId: fixture.home.homeServerIdentityId },
+        });
+    });
+
     it('retries return discovery without repeating authentication or losing invoking custody', async () => {
         const input = await storedInput();
         const exchanged = await accountDirectoryAuthClient.exchangeOAuth(input);

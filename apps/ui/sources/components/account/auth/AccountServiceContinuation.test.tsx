@@ -678,7 +678,7 @@ describe('exact invoking-surface continuation', () => {
     });
 
     it('reports an unlinked Home as a status with direct sign-in first and scan-or-paste second', async () => {
-        const input = { service: fixture.service,
+        const input = { service: fixture.service, signInProvider: { id: 'github' },
             credentialTokenDigest: accountCredentialTokenDigest,
             session: new AccountDirectorySession({ endpoint: fixture.service.endpointUrl, serverIdentityId: fixture.service.serverIdentityId }, { capability: fixture.service.capability }),
             intent: { kind: 'enter' as const, target: { kind: 'explicit' as const, homeServerIdentityId: fixture.home.homeServerIdentityId } } };
@@ -690,6 +690,7 @@ describe('exact invoking-surface continuation', () => {
         // The sign-in succeeded; an unlinked Home is a state to act on, not a failure.
         const card = screen.findByTestId('account-service-continuation-explicit_target_not_linked');
         expect(card?.props.accessibilityLiveRegion).toBe('polite');
+        expect(card?.findByType('Icon').props.name).toBe('github-logo');
         expect(screen.getTextContent()).not.toContain('Connection failed');
         expect(screen.getTextContent()).toContain('isn’t linked to this account yet');
         // The body explains both ways forward in the order of the card's actions, without repeating the title.
@@ -750,9 +751,10 @@ describe('exact invoking-surface continuation', () => {
             result={{ kind: 'home_material_required', homeServerIdentityId: fixture.home.homeServerIdentityId, homeAccountId: 'account-home', intent: input.intent, reason: 'missing_material' }}
             onResult={() => {}} onBack={() => {}} />);
 
-        const scanButtons = screen.findAll((node) => node.props.title === t('connect.scanExistingHomeQrTitle') && typeof node.props.testID === 'string');
-        expect(scanButtons.map((node) => node.props.testID)).toEqual(['restore-manual-secondary']);
-        expect(scanButtons[0]?.props.display).toBe('inverted');
+        expect(screen.getTextContent()).toContain(t('connect.scanExistingHomeQrTitle'));
+        expect(screen.findByTestId('restore-manual-secondary')).toBeTruthy();
+        await screen.pressByTestIdAsync('restore-manual-secondary');
+        await vi.waitFor(() => expect(screen!.findByTestId('restore-manual-secondary')).toBeNull());
     });
 
     it('admits only one Home choice while the shared coordinator is refreshing', async () => {

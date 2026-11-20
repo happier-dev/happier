@@ -178,6 +178,7 @@ function RoutineAuthRouteStepFrame(props: AuthRouteStepFrameProps) {
     return (
         <WizardModalShell
             testID={props.testID}
+            titleLeading={props.mark}
             stepIndex={props.progress?.index ?? 0}
             stepCount={props.progress?.count ?? 1}
             showProgress={props.progress != null}

@@ -144,6 +144,56 @@ export function describeAccountServiceFailure(code: AccountServiceFailureCode): 
     }
 }
 
+/** Classify the OAuth redirect using fixed copy and the provider's standard cancellation signal. */
+export function classifyOAuthProviderRejection(code: string): AccountServiceFailureCode | 'cancelled' {
+    switch (code) {
+        case 'access_denied':
+            return 'cancelled';
+        case 'invalid_state':
+            return { source: 'oauth_callback', code: 'invalid_request' };
+        case 'server_error':
+        case 'temporarily_unavailable':
+        case 'oauth_not_configured':
+        case 'workos_platform_unavailable':
+            return { source: 'oauth_callback', code: 'service_unavailable' };
+        default:
+            return { source: 'oauth_callback', code: 'provider_failed' };
+    }
+}
+
+/** The button starts a new attempt, retries a transient failure, or leaves a disabled account. */
+export function describeOAuthSignInFailure(code: AccountServiceFailureCode, homeUrl?: string) {
+    const presentation = describeAccountServiceFailure(code);
+    if (code.source === 'directory' && code.code === 'account-disabled') {
+        return {
+            ...presentation,
+            body: homeUrl ? t('errors.accountDisabled', { home: homeUrl }) : presentation.body,
+            action: { kind: 'leave', label: t('common.done') },
+        } as const;
+    }
+    const unavailable = code.source === 'oauth_callback' && code.code === 'service_unavailable'
+        || code.source === 'directory' && (code.code === 'directory_unavailable' || code.code === 'home_unavailable' || code.code === 'rate_limited');
+    return {
+        ...presentation,
+        action: { kind: 'restart', label: unavailable ? t('common.retry') : t('settingsAccount.accountServiceOAuth.actions.startAgain') },
+    } as const;
+}
+
+/** Present the Home's finalization response without treating its status as an Account Service credential result. */
+export function describeHomeOAuthFinalizeFailure(code: string, status: number, homeUrl?: string) {
+    if (code === 'signup-disabled') {
+        return { title: t('errors.permissionDenied'), body: t('errors.signupDisabled'), action: { kind: 'leave', label: t('common.done') } } as const;
+    }
+    const failure = classifyAccountServiceOAuthCallbackFailure(code);
+    if (failure.source === 'oauth_callback' && failure.code === 'token_exchange_failed') {
+        return describeOAuthSignInFailure({
+            source: 'oauth_callback',
+            code: status >= 500 ? 'service_unavailable' : 'provider_failed',
+        });
+    }
+    return describeOAuthSignInFailure(failure, homeUrl);
+}
+
 /** A Directory write can refuse a stale target or leave the outcome unconfirmed. */
 export function describeAccountDirectoryMutationFailure(error: unknown, operation: 'set_preferred' | 'remove'): string {
     if (!(error instanceof AccountDirectoryRequestError)) return t('errors.operationFailed');

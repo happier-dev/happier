@@ -59,9 +59,13 @@ export async function consumeAccountServiceOAuthReturn(
         } finally {
             custody.keyAuthSecret?.fill(0);
         }
+        const providerId = custody.signInProviderId;
+        const providerPresentation = discovery.authenticationCatalog.methods.find((method) => method.id === providerId)?.presentation;
         const input: AccountPostAuthInput = { service: createVerifiedAccountServiceAuthority(discovery), session,
             credentialTokenDigest: claim.returnCustody.credentialTokenDigest,
-            intent: custody.entryIntent, signal: options.signal };
+            intent: custody.entryIntent, signal: options.signal,
+            ...(providerId ? { signInProvider: { id: providerId, presentation: providerPresentation } } : {}),
+        };
         adoptedInput = input;
         options.signal.addEventListener('abort', release, { once: true });
         const homeAuthentication = custody.authenticatedHome ?? custody.homeAuthenticationFailure;

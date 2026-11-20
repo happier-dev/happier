@@ -39,6 +39,8 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveUniqueServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { pressTestInstanceAsync } from '@/dev/testkit';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -471,6 +473,35 @@ describe('oauth/[provider] return (keyless)', () => {
         });
     });
 
+    it('names a failed managed GitHub sign-in and offers Back to the originating Home', async () => {
+        const provider = 'e031151c-a419-4cc1-93ca-50d0a51f06a1';
+        setPendingExternalAuthState({
+            ...oauthDefaultHome, provider, proof: 'proof', mode: 'keyless', returnTo: '/setup/wizard',
+            presentation: { displayName: 'GitHub', iconHint: 'github', providerKind: 'github_app_identity' },
+        });
+        localSearchParamsMock.mockReturnValue({
+            provider, flow: 'auth', error: 'missing_access_token', error_description: 'unsafe provider text',
+        });
+
+        await runWithOAuthScreen(async (tree) => {
+            const [failure] = tree.root.findAllByProps({ testID: 'oauth-external-failure' });
+            expect(failure).toBeDefined();
+            expect(failure.findAllByType(StepMark).map((mark) => mark.props.iconName)).toContain('github-logo');
+            const result = JSON.stringify(tree.toJSON());
+            expect(result).not.toContain(t('errors.operationFailed'));
+            expect(result).not.toContain('unsafe provider text');
+            expect(result).toContain(t('settingsAccount.accountServiceOAuth.errors.provider.body'));
+            expect(replaceSpy).not.toHaveBeenCalled();
+            await pressTestInstanceAsync(tree.root.findAllByProps({ testID: 'unauth-shell-back-chevron' })[0]);
+            const home = resolveUniqueServerProfileByUrl(oauthDefaultHome.serverUrl);
+            if (!home) throw new Error('Expected the originating Home profile');
+            expect(replaceSpy).toHaveBeenCalledWith({
+                pathname: '/server',
+                params: { recoveryProfile: home.id, recoveryReturnTo: '/setup/wizard' },
+            });
+        });
+    });
+
     it('rejects legacy pending auth without an exact Home URL after focus changes', async () => {
         replaceSpy.mockReset();
         clearPendingExternalAuthMock.mockClear();
@@ -491,13 +522,16 @@ describe('oauth/[provider] return (keyless)', () => {
         const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'unexpected' }), { status: 500 }));
         setRuntimeFetch(fetchMock as unknown as typeof fetch);
 
-        await runWithOAuthScreen(async () => {
+        await runWithOAuthScreen(async (tree) => {
             await flushOAuthEffects();
             expect(fetchMock).not.toHaveBeenCalled();
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(modal.alert).toHaveBeenCalledWith(t('common.error'), t('errors.oauthStateMismatch'));
+            expect(modal.alert).not.toHaveBeenCalled();
             await expect(TokenStorage.getCredentials()).resolves.toEqual(null);
             await expect(TokenStorage.getPendingExternalAuth()).resolves.toBeNull();
+            expect(tree.root.findAllByProps({ testID: 'oauth-external-failure-title' })
+                .some((node) => node.props.children === t('settingsAccount.accountServiceOAuth.errors.invalid.title'))).toBe(true);
+            await pressTestInstanceAsync(tree.root.findAllByProps({ testID: 'unauth-shell-back-chevron' })[0]);
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
     });
@@ -617,13 +651,6 @@ describe('oauth/[provider] return (keyless)', () => {
         return fetchMock;
     }
 
-    function findTeamFailureAction(tree: Parameters<Parameters<typeof runWithOAuthScreen>[0]>[0], testID: string) {
-        const [node] = tree.root.findAll((candidate) =>
-            candidate.props.testID === testID && typeof candidate.props.action === 'function');
-        if (!node) throw new Error(`Expected ${testID} to render`);
-        return node;
-    }
-
     it('commits an existing-member Team sign-in that carries no invitation continuation', async () => {
         recordTeamInvitationPostAuthContinuationMock.mockClear();
         clearPendingExternalAuthMock.mockClear();
@@ -676,11 +703,13 @@ describe('oauth/[provider] return (keyless)', () => {
         localSearchParamsMock.mockReturnValue(teamCallbackParams());
         installTeamFinalizeAnswer({ error: 'invalid-pending' }, 400);
 
-        await runWithOAuthScreen(async () => {
+        await runWithOAuthScreen(async (tree) => {
             await flushOAuthEffects();
             await expect(TokenStorage.getCredentials()).resolves.toEqual(null);
             expect(clearPendingExternalAuthMock).toHaveBeenCalled();
-            expect(modal.alert).toHaveBeenCalledWith(t('common.error'), t('errors.oauthStateMismatch'));
+            expect(modal.alert).not.toHaveBeenCalled();
+            expect(replaceSpy).not.toHaveBeenCalled();
+            await pressTestInstanceAsync(tree.root.findAllByProps({ testID: 'unauth-shell-back-chevron' })[0]);
             expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=srv_server-a');
         });
     });
@@ -720,12 +749,13 @@ describe('oauth/[provider] return (keyless)', () => {
                 node.props.testID === 'oauth-team-failure-title' && node.props.children === title,
             ).length).toBeGreaterThan(0);
 
-            const primary = findTeamFailureAction(tree, 'oauth-team-failure-action');
-            await act(async () => { await primary.props.action(); });
+            const pressAction = (testID: string) => pressTestInstanceAsync(tree.root.findAll((node) =>
+                node.props.testID === testID && typeof node.props.onPress === 'function',
+            ).at(-1), testID);
+            await pressAction('oauth-team-failure-action');
             expect(replaceSpy).toHaveBeenCalledWith('/teams/team-1/sign-in?target=srv_server-a');
 
-            const secondary = findTeamFailureAction(tree, 'oauth-team-failure-secondary-action');
-            await act(async () => { await secondary.props.action(); });
+            await pressAction('oauth-team-failure-secondary-action');
             expect(replaceSpy).toHaveBeenCalledWith('/');
         });
     });

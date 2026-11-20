@@ -1,4 +1,5 @@
 import type { AccountDirectoryErrorCodeV1 } from '@happier-dev/protocol/auth/accountDirectory';
+import type { AuthEntryProviderPresentationV1 } from '@happier-dev/protocol/auth/entry';
 import type { OpenedAccountDirectoryHomeEntryV1 as AccountDirectoryHomeEntryV1 } from '@happier-dev/protocol/auth/openedAccountDirectoryHome';
 import {
     findAccountServiceDirectoryAdoptionFailure,
@@ -99,6 +100,7 @@ export type AccountPostAuthInput = Readonly<{
     /** Non-secret binding to the Account credential that created this continuation. */
     credentialTokenDigest: string;
     intent: AccountContinuationIntent;
+    signInProvider?: Readonly<{ id: string; presentation?: AuthEntryProviderPresentationV1 }>;
     signal?: AbortSignal;
 }>;
 

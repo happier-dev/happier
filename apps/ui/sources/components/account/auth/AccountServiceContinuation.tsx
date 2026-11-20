@@ -8,6 +8,7 @@ import { PairingLinkEntryForm } from '@/components/account/restore/PairingLinkEn
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { inspectHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
 import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfaces/SurfaceStateCard';
+import { oauthProviderIconName } from '@/components/account/auth/homeAuthenticationActionPresentation';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepTransitionFrame, resolveStepTransitionDirection, type StepTransitionDirection } from '@/components/ui/motion/StepTransitionFrame';
@@ -360,6 +361,9 @@ export function AccountServiceContinuation(props: Readonly<{
             : [backAction];
         content = <View><SurfaceStateCard testID={`account-service-continuation-${props.result.kind}`}
             kind={failure ? 'error' : successful ? 'success' : 'warning'}
+            iconName={explicitTargetNotLinked && props.input.signInProvider
+                ? oauthProviderIconName(props.input.signInProvider.id, props.input.signInProvider.presentation)
+                : undefined}
             title={props.result.kind === 'approval_required' ? t('settingsAccount.accountServiceOAuth.stages.waitingApproval')
                 : props.result.kind === 'account_connected'
                     ? t('settingsAccount.accountServiceSignedInTo', { accountService: serviceDisplayName })

@@ -26,8 +26,6 @@ import {
 import { createAccountServiceReturn } from '@/auth/accountDirectory/accountDirectoryNavigation';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { authChallenge } from '@/auth/flows/challenge';
-import { createAuthenticationFailure } from '@/auth/flows/authenticationFailure';
-import { authenticationErrorMessage } from '@/auth/flows/authenticationErrorMessage';
 import {
     createServerFetchAtEndpoint,
     serverFetch,
@@ -52,6 +50,7 @@ import { trackAccountCreated, trackAccountRestored } from '@/track';
 import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFrame';
 import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { oauthProviderIconName } from '@/components/account/auth/homeAuthenticationActionPresentation';
+import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { admitInternalRouteHref, admitOpaqueInternalReturnPath, normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
@@ -89,7 +88,9 @@ import {
 } from '@/components/teams/entry/teamAuthenticationFailure';
 import {
     classifyAccountServiceOAuthCallbackFailure,
-    describeAccountServiceFailure,
+    classifyOAuthProviderRejection,
+    describeHomeOAuthFinalizeFailure,
+    describeOAuthSignInFailure,
     type AccountServiceFailureCode,
 } from '@/components/account/auth/accountServiceFailurePresentation';
 import { TeamInvitationPostAuthContinuationV1Schema } from '@happier-dev/protocol/teams';
@@ -105,6 +106,12 @@ type AccountDirectoryCallbackState = Readonly<{ providerName: string; endpointUr
     | Readonly<{ kind: 'progress'; stage: AccountDirectoryCallbackStage }>
     | Readonly<{ kind: 'error'; failure: AccountServiceFailureCode }>
 );
+type ExternalSignInFailure = Readonly<{
+    presentation: ReturnType<typeof describeOAuthSignInFailure>;
+    iconName: IconName;
+    restart: Href;
+    retry?: HomeOAuthRetry;
+}>;
 
 const ACCOUNT_ENCRYPTION_FIRST_KEY_PURPOSE =
     'account_encryption_first_key';
@@ -180,19 +187,15 @@ function mapFinalizeErrorToMessage(code: string): string {
     }
 }
 
-export function sanitizeExternalOAuthCallbackError(code: string, connectingProviderName?: string): string {
-    switch (code) {
-        case 'access_denied':
-            return t('errors.oauthCancelled');
-        case 'oauth_not_configured':
-            return connectingProviderName
-                ? t('friends.providerGate.notConfigured', { provider: connectingProviderName })
-                : t('settingsAccount.accountServiceOAuth.errors.provider.body');
-        case 'invalid_state':
-            return t('errors.oauthStateMismatch');
-        default:
-            return t('errors.operationFailed');
-    }
+const invalidSignIn = { source: 'oauth_callback', code: 'invalid_request' } as const;
+
+function publishCancelledSignIn(iconName: IconName) {
+    publishPresentationNotice({
+        key: 'oauth-return',
+        severity: 'info',
+        message: t('errors.oauthCancelled'),
+        leading: <Icon name={iconName} size={ICON_SIZE.sm} />,
+    });
 }
 
 function trackSuccessfulOAuthAuth(params: {
@@ -301,7 +304,7 @@ function OAuthProviderReturnBody() {
         code: TeamAuthenticationFailureCode;
         returnTo: string;
     }> | null>(null);
-    const [externalFailure, setExternalFailure] = React.useState<Readonly<{ reason: string; restart: Href; retry?: HomeOAuthRetry }> | null>(null);
+    const [externalFailure, setExternalFailure] = React.useState<ExternalSignInFailure | null>(null);
     const [homeOAuthRetry, setHomeOAuthRetry] = React.useState<HomeOAuthRetry | null>(null);
     const accountDirectoryAttemptRef = React.useRef<null | Readonly<{
         controller: AbortController;
@@ -404,6 +407,7 @@ function OAuthProviderReturnBody() {
             // A Team-scoped attempt fails back to the exact Home-qualified Team
             // page it started from; only an ordinary Home attempt falls to the root.
             const failureReturnTo = ctx.teamContinuation ? ctx.returnTo : '/';
+            const iconName = oauthProviderIconName(ctx.providerId, ctx.presentation);
             const clearTeamContinuationCustody = async () => {
                 await TokenStorage.clearPendingExternalAuth(continuationPending ? {
                     removeExact: continuationPending,
@@ -416,7 +420,7 @@ function OAuthProviderReturnBody() {
                 if (params.mode === 'plain' && !ctx.proof) {
                     await clearTeamContinuationCustody();
                     pendingAuthContextRef.current = null;
-                    setExternalFailure({ reason: t('errors.oauthInitializationFailed'), restart: admitInternalRouteHref(failureReturnTo) });
+                    setExternalFailure({ presentation: describeOAuthSignInFailure(invalidSignIn), iconName, restart: admitInternalRouteHref(failureReturnTo) });
                     return;
                 }
 
@@ -448,7 +452,7 @@ function OAuthProviderReturnBody() {
                                 run: guardOrdinaryAuthIngress,
                             });
                         } else {
-                            setExternalFailure({ reason: t('errors.oauthInitializationFailed'), restart: admitInternalRouteHref(failureReturnTo) });
+                            setExternalFailure({ presentation: describeOAuthSignInFailure(invalidSignIn), iconName, restart: admitInternalRouteHref(failureReturnTo) });
                         }
                         return;
                     }
@@ -646,10 +650,7 @@ function OAuthProviderReturnBody() {
                     return;
                 }
 
-                const failure = createAuthenticationFailure(response.status, json);
-                const reason = failure.code
-                    ? authenticationErrorMessage(failure, ctx.serverUrl) ?? mapFinalizeErrorToMessage(err)
-                    : mapFinalizeErrorToMessage(err);
+                const presentation = describeHomeOAuthFinalizeFailure(err, response.status, ctx.serverUrl);
                 await clearTeamContinuationCustody();
                 pendingAuthContextRef.current = null;
                 const home = !ctx.teamContinuation && !ctx.accountContinuation && ctx.intent !== 'signup' && ctx.serverId
@@ -658,7 +659,7 @@ function OAuthProviderReturnBody() {
                 const restart = home
                     ? buildHomeRecoveryHref({ profileRef: home.id, returnTo: admitOpaqueInternalReturnPath(ctx.returnTo) ?? '/' })
                     : admitInternalRouteHref(failureReturnTo);
-                setExternalFailure({ reason, restart, ...(home ? { retry: {
+                setExternalFailure({ presentation, iconName, restart, ...(home ? { retry: {
                     profileRef: home.id, providerId: ctx.providerId, mode: ctx.mode,
                     returnTo: admitOpaqueInternalReturnPath(ctx.returnTo) ?? '/',
                 } } : {}) });
@@ -795,11 +796,6 @@ function OAuthProviderReturnBody() {
             if (disposed || controller.signal.aborted) return;
             router.replace(admitInternalRouteHref(path));
         };
-        const showSignInFailure = (reason: string, restart: string) => {
-            if (disposed || controller.signal.aborted) return;
-            setExternalFailure({ reason, restart: admitInternalRouteHref(restart) });
-        };
-
         fireAndForget((async () => {
             if (resolvedPurpose === GITHUB_APP_MANIFEST_SETUP_PURPOSE) {
                 const pendingSetup = consumePendingGitHubAppManifestSetup();
@@ -1002,14 +998,15 @@ function OAuthProviderReturnBody() {
                                 })
                                 .catch(() => false);
                         }
-                        if (error === 'access_denied') {
-                            publishPresentationNotice({ key: 'oauth-return', severity: 'info', message: sanitizeExternalOAuthCallbackError(error) });
+                        const failure = classifyOAuthProviderRejection(error);
+                        if (failure === 'cancelled') {
+                            publishCancelledSignIn(oauthProviderIconName(providerId));
                             safeReplace(admitInternalRouteHref(pendingDirectoryAuth?.accountEntryReturnTo ?? directoryReturnTo));
                             return;
                         }
                         safeSetDirectoryJourney({
                             kind: 'error',
-                            failure: { source: 'oauth_callback', code: 'provider_failed' },
+                            failure,
                             providerName,
                             endpointUrl: directoryEndpoint ?? resolvedEndpointUrl ?? '',
                         });
@@ -1187,11 +1184,20 @@ function OAuthProviderReturnBody() {
                 : await TokenStorage.getPendingExternalConnect();
             const boundConnect = pendingConnect?.provider === providerId ? pendingConnect : null;
             const connectReturnTo = normalizeInternalReturnPath(boundConnect?.returnTo) ?? '/settings/account';
-            const startCustody = flow === 'auth' ? pendingAuthStateForFlow?.value ?? null : pendingConnect;
-            const provider = getAuthProvider(
-                providerId,
-                startCustody?.provider === providerId ? startCustody.presentation : undefined,
-            );
+            const startCustody = flow === 'auth'
+                ? pendingAuthStateForFlow?.serverMismatch ? null : pendingAuthStateForFlow?.value
+                : boundConnect;
+            const boundPresentation = startCustody?.provider === providerId ? startCustody.presentation : undefined;
+            const provider = getAuthProvider(providerId, boundPresentation);
+            const iconName = oauthProviderIconName(providerId, boundPresentation);
+            const showInvalidSignIn = (restart: string) => {
+                if (disposed || controller.signal.aborted) return;
+                setExternalFailure({
+                    presentation: describeOAuthSignInFailure(invalidSignIn),
+                    iconName,
+                    restart: admitInternalRouteHref(restart),
+                });
+            };
             if (!provider) {
                 if (isFirstKeyReturn || isPasswordEnrollmentReturn) {
                     if (isPasswordEnrollmentReturn) {
@@ -1206,11 +1212,13 @@ function OAuthProviderReturnBody() {
             }
 
             if (error) {
-                const message = sanitizeExternalOAuthCallbackError(error,
-                    flow !== 'auth' ? provider.displayName ?? providerId : undefined);
-                if (error === 'access_denied') {
-                    publishPresentationNotice({ key: 'oauth-return', severity: 'info', message });
+                const failure = classifyOAuthProviderRejection(error);
+                if (failure === 'cancelled') {
+                    publishCancelledSignIn(iconName);
                 } else if (flow !== 'auth') {
+                    const message = error === 'oauth_not_configured'
+                        ? t('friends.providerGate.notConfigured', { provider: provider.displayName ?? providerId })
+                        : error === 'invalid_state' ? t('errors.oauthStateMismatch') : t('errors.operationFailed');
                     await Modal.alert(t('common.error'), message);
                 }
                 let passwordEnrollmentReturnTo = '/settings/account/security';
@@ -1251,7 +1259,7 @@ function OAuthProviderReturnBody() {
                                 const retry = { profileRef: home.id, providerId, mode: pendingAuth.mode,
                                     returnTo: admitOpaqueInternalReturnPath(pendingAuth.returnTo) ?? '/' };
                                 authenticationReturnTo = buildHomeRecoveryHref(retry);
-                                if (error !== 'access_denied') homeRetry = retry;
+                                if (failure !== 'cancelled') homeRetry = retry;
                             }
                         }
                         await TokenStorage.clearPendingExternalAuth({
@@ -1271,8 +1279,8 @@ function OAuthProviderReturnBody() {
                                 ? admitInternalRouteHref(connectReturnTo)
                                 : '/settings/account';
                 if (disposed || controller.signal.aborted) return;
-                if (error === 'access_denied' || flow !== 'auth') router.replace(restart);
-                else setExternalFailure({ reason: message, restart, retry: homeRetry });
+                if (failure === 'cancelled' || flow !== 'auth') router.replace(restart);
+                else setExternalFailure({ presentation: describeOAuthSignInFailure(failure), iconName, restart, retry: homeRetry });
                 return;
             }
 
@@ -1423,7 +1431,7 @@ function OAuthProviderReturnBody() {
                             })
                             : '/';
                         await TokenStorage.clearPendingExternalAuth();
-                        showSignInFailure(t('errors.oauthStateMismatch'), mismatchRecoveryPath);
+                        showInvalidSignIn(mismatchRecoveryPath);
                         return;
                     }
                     // In dev (React strict-mode) or certain hydration paths, this screen can mount more than once.
@@ -1434,7 +1442,7 @@ function OAuthProviderReturnBody() {
                         safeReplace('/');
                         return;
                     }
-                    showSignInFailure(t('errors.oauthInitializationFailed'), '/');
+                    showInvalidSignIn('/');
                     return;
                 }
                 // The continuation stores the Home's *portable* identity. That is
@@ -1516,7 +1524,7 @@ function OAuthProviderReturnBody() {
                                 serverUrl: state.serverUrl, serverId: state.serverId, removeExact: state,
                             });
                             pendingAuthContextRef.current = null;
-                            showSignInFailure(t('errors.oauthInitializationFailed'), state.teamContinuation ? returnTo : '/');
+                            showInvalidSignIn(state.teamContinuation ? returnTo : '/');
                             return;
                         }
                         if (resolvedStoragePolicy === 'plaintext_only') {
@@ -1753,7 +1761,7 @@ function OAuthProviderReturnBody() {
         }
         accountDirectoryAttemptRef.current = null;
         accountDirectoryCredentialCommitStartedRef.current = false;
-        router.replace(admitInternalRouteHref(attempt?.returnTo ?? '/settings/account'));
+        router.replace(admitInternalRouteHref(attempt?.pending?.accountEntryReturnTo ?? attempt?.returnTo ?? '/settings/account'));
     }, [resolvedEndpointIdentity, resolvedEndpointUrl, router]);
 
     const recoverAccountDirectoryJourney = React.useCallback(async () => {
@@ -1906,7 +1914,7 @@ function OAuthProviderReturnBody() {
             && visibleAccountDirectoryJourney.stage === 'signing_in'
             && !accountDirectoryCredentialCommitStartedRef.current;
         const directoryFailure = visibleAccountDirectoryJourney.kind === 'error'
-            ? describeAccountServiceFailure(visibleAccountDirectoryJourney.failure)
+            ? describeOAuthSignInFailure(visibleAccountDirectoryJourney.failure)
             : null;
         if (directoryFailure) {
             // A failed sign-in is the step's own answer (lab direction A): the provider's mark, what happened, and
@@ -1918,10 +1926,15 @@ function OAuthProviderReturnBody() {
                     mark={<StepMark iconName={oauthProviderIconName(resolvedProviderId)} />}
                     title={directoryFailure.title}
                     subtitle={directoryFailure.body}
+                    onBack={() => { void cancelAccountDirectoryJourney(); }}
+                    backDisabled={busy}
                     primary={{
-                        label: t('settingsAccount.accountServiceOAuth.actions.startAgain'),
+                        testID: 'oauth-account-directory-recover',
+                        label: directoryFailure.action.label,
                         disabled: busy,
-                        onPress: recoverAccountDirectoryJourney,
+                        onPress: directoryFailure.action.kind === 'restart'
+                            ? recoverAccountDirectoryJourney
+                            : () => { void cancelAccountDirectoryJourney(); },
                     }}
                 >
                     {null}
@@ -1958,10 +1971,15 @@ function OAuthProviderReturnBody() {
 
     if (externalFailure) return (
         <AuthRouteStepFrame testID="oauth-external-failure" status
-            mark={<StepMark iconName={oauthProviderIconName(resolvedProviderId)} />}
-            title={t('settingsAccount.accountServiceOAuth.errors.provider.title')} subtitle={externalFailure.reason}
-            primary={{ testID: 'oauth-external-start-again', label: t('settingsAccount.accountServiceOAuth.actions.startAgain'),
-                onPress: () => externalFailure.retry ? setHomeOAuthRetry(externalFailure.retry) : router.replace(externalFailure.restart) }}>
+            mark={<StepMark iconName={externalFailure.iconName} />}
+            title={externalFailure.presentation.title} subtitle={externalFailure.presentation.body}
+            onBack={() => router.replace(externalFailure.restart)}
+            primary={{ testID: 'oauth-external-start-again', label: externalFailure.presentation.action.label,
+                onPress: () => {
+                    if (externalFailure.presentation.action.kind === 'restart' && externalFailure.retry) {
+                        setHomeOAuthRetry(externalFailure.retry);
+                    } else router.replace(externalFailure.restart);
+                } }}>
             {null}
         </AuthRouteStepFrame>
     );

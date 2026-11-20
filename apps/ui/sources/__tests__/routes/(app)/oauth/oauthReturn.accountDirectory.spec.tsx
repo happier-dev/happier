@@ -11,6 +11,9 @@ import { AccountDirectorySession } from '@/sync/domains/accountDirectory/account
 import { completeAccountServicePostAuth, type AccountPostAuthResult } from '@/sync/ops/accountDirectory/completeAccountServicePostAuth';
 import { cancelPendingDirectoryHomeEnrollment, getPendingDirectoryHomeEnrollment } from '@/sync/ops/accountDirectory/enrollDirectoryHome';
 import { ENROLLMENT_POLL_IDLE_DELAY_MS } from '@/auth/enrollment/enrollmentPollingBackoff';
+import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
+import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { t } from '@/text';
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
@@ -46,7 +49,7 @@ describe('Account Directory callback route contraction', () => {
             entryIntent: { kind: 'enter', target: { kind: 'automatic' } }, returnTo: '/setup/wizard',
         });
     });
-    afterEach(async () => { await screen?.unmount(); screen = undefined; restore(); });
+    afterEach(async () => { await screen?.unmount(); screen = undefined; retirePresentationNotice(); restore(); });
 
     it('returns to recorded invocation after restricted commit without running Home continuation', async () => {
         screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthReturn /></AuthProvider>);
@@ -74,16 +77,42 @@ describe('Account Directory callback route contraction', () => {
         expect(fixture.state.calls.map(({ path }) => path)).toEqual(['/v1/features', '/v1/auth/external/github/finalize-keyless']);
     });
 
-    it('renders the Home-named refusal it classified instead of one generic failure', async () => {
-        fixture.state.exchangeStatus = 403;
-        fixture.state.exchangeError = 'account-disabled';
+    it.each([
+        { status: 403, code: 'account-disabled', copy: 'accountDisabled', action: 'common.done' },
+        { status: 410, code: 'request-expired', copy: 'expired', action: 'settingsAccount.accountServiceOAuth.actions.startAgain' },
+        { status: 503, code: 'service-unavailable', copy: 'unavailable', action: 'common.retry' },
+    ] as const)('renders $code with its own recovery and Back', async ({ status, code, copy, action }) => {
+        fixture.state.exchangeStatus = status;
+        fixture.state.exchangeError = code;
 
         screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthReturn /></AuthProvider>);
 
         await vi.waitFor(() => expect(screen!.findByTestId('oauth-account-directory-failure')).toBeTruthy());
-        expect(screen.getTextContent()).toContain('This account is disabled');
+        expect(screen.getTextContent()).toContain(t(`settingsAccount.accountServiceOAuth.errors.${copy}.title`));
+        expect(screen.getTextContent()).toContain(t(`settingsAccount.accountServiceOAuth.errors.${copy}.body`));
+        expect(screen.getTextContent()).toContain(t(action));
         expect(screen.getTextContent()).not.toContain('Operation failed');
+        expect(screen.findByTestId('oauth-account-directory-failure')?.findAllByType(StepMark)
+            .some((mark) => mark.props.iconName === 'github-logo')).toBe(true);
         expect(navigation.replace).not.toHaveBeenCalled();
+        expect(screen.findByTestId('unauth-shell-back-chevron')).toBeTruthy();
+        await screen.pressByTestIdAsync(code === 'account-disabled' ? 'oauth-account-directory-recover' : 'unauth-shell-back-chevron');
+        expect(navigation.replace).toHaveBeenCalledWith('/setup/wizard');
+        expect(fixture.state.calls.filter(({ path }) => path.includes('/finalize-keyless'))).toHaveLength(1);
+    });
+
+    it('returns from a cancelled provider with a quiet notice and its mark', async () => {
+        navigation.params.error = 'access_denied';
+        screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthReturn /></AuthProvider>);
+
+        await vi.waitFor(() => expect(navigation.replace).toHaveBeenCalledWith('/setup/wizard'));
+        expect(screen.findByTestId('oauth-account-directory-failure')).toBeNull();
+        expect(readPresentationNotice()).toMatchObject({
+            severity: 'info',
+            message: t('errors.oauthCancelled'),
+            leading: expect.objectContaining({ props: expect.objectContaining({ name: 'github-logo' }) }),
+        });
+        expect(fixture.state.calls).toEqual([]);
     });
 
     it('rejects callback identity tampering without issuing a restricted credential', async () => {

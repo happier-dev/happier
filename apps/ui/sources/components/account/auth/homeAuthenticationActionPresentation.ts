@@ -1,4 +1,7 @@
 import type { HomeAuthenticationExecution } from '@/auth/capabilities/authMethodCapabilities';
+import { getAuthProvider } from '@/auth/providers/registry';
+import type { AuthEntryProviderPresentationV1 } from '@happier-dev/protocol/auth/entry';
+import { asIconName } from '@/components/ui/icons/asIconName';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
@@ -63,6 +66,14 @@ export function describeHomeAuthenticationAction(input: Readonly<{
 }
 
 /** An OAuth provider's mark wherever a sign-in way or its return names it: its own logo when one ships, else sign-in. */
-export function oauthProviderIconName(providerId: string): IconName {
-    return providerId === 'github' ? 'github-logo' : 'sign-in';
+export function oauthProviderIconName(
+    providerId: string,
+    presentation?: Pick<AuthEntryProviderPresentationV1, 'iconHint' | 'providerKind'>,
+): IconName {
+    const registeredId = presentation?.providerKind === 'github_app_identity' || presentation?.iconHint === 'github'
+        ? 'github'
+        : providerId;
+    return asIconName(getAuthProvider(registeredId)?.badgeIconName)
+        ?? asIconName(presentation?.iconHint)
+        ?? 'sign-in';
 }
