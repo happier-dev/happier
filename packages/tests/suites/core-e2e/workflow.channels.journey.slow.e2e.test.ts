@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { WebSocket } from 'ws';
 import { connectUiPersonActionClient, readUiChannelProviderProjection } from '@happier-tests/ui-action-client';
 import { CONVERSATION_CORE_PLUGIN_ID_V1, CONVERSATION_MANAGEMENT_ACTION_IDS_V1,
@@ -20,8 +20,10 @@ import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'fin-channels' });
 const prompt = `Return the Channels journey result ${randomUUID()}.`;
+// Discord's Gateway MESSAGE_CONTENT wire bit, as observed by the simulated peer.
+const discordMessageContentIntent = 1 << 15;
 const slackSockets = new Set<WebSocket>();
-const discordSockets = new Set<WebSocket>();
+const discordContentSockets = new Set<WebSocket>();
 const slackEnvelopeAcks = new Set<string>();
 let fixture: FinJourneyFixture | undefined;
 let boundary: Awaited<ReturnType<typeof startChannelTransportBoundary>> | undefined;
@@ -30,10 +32,9 @@ beforeAll(async () => {
   boundary = await startChannelTransportBoundary({ testDir: run.testDir('transport'),
     connected(socket, request) {
       const slack = request.headers.host === 'socket.slack.com';
-      const sockets = slack ? slackSockets : discordSockets;
-      sockets.add(socket);
-      socket.once('close', () => sockets.delete(socket));
       if (slack) {
+        slackSockets.add(socket);
+        socket.once('close', () => slackSockets.delete(socket));
         socket.on('message', bytes => {
           const frame = JSON.parse(String(bytes));
           if (typeof frame.envelope_id === 'string') slackEnvelopeAcks.add(frame.envelope_id);
@@ -42,13 +43,17 @@ beforeAll(async () => {
       }
       else {
         socket.send(JSON.stringify({ op: 10, d: { heartbeat_interval: 45_000 } }));
+        socket.once('close', () => discordContentSockets.delete(socket));
         socket.on('message', bytes => {
           const frame = JSON.parse(String(bytes));
           if (frame.op === 1) socket.send(JSON.stringify({ op: 11, d: null }));
-          if (frame.op === 2) socket.send(JSON.stringify({ op: 0, t: 'READY', s: 1, d: {
-            v: 10, user: { id: '9000', bot: true, username: 'journey-bot' }, guilds: [{ id: '2000', unavailable: false }],
-            session_id: 'fin-channel-session', resume_gateway_url: 'wss://gateway.discord.gg', application: { id: '8000', flags: 262144 },
-          } }));
+          if (frame.op === 2) {
+            socket.send(JSON.stringify({ op: 0, t: 'READY', s: 1, d: {
+              v: 10, user: { id: '9000', bot: true, username: 'journey-bot' }, guilds: [{ id: '2000', unavailable: false }],
+              session_id: 'fin-channel-session', resume_gateway_url: 'wss://gateway.discord.gg', application: { id: '8000', flags: 262144 },
+            } }));
+            if ((frame.d.intents & discordMessageContentIntent) !== 0) discordContentSockets.add(socket);
+          }
         });
       }
     },
@@ -99,8 +104,9 @@ const providers: ReadonlyArray<{ name: string; pluginId: string; serviceId: stri
 for (const provider of providers) {
   describe(provider.name, () => {
     let prepared: Awaited<ReturnType<typeof prepareProvider>>;
-    beforeAll(async () => { prepared = await prepareProvider(provider); });
-    afterAll(async () => { await prepared?.ui.close(); });
+    // The global per-test reset clears the Person client's persisted Home and credentials.
+    beforeEach(async () => { prepared = await prepareProvider(provider); });
+    afterEach(async () => { await prepared?.ui.close(); });
     it(`J11 ${provider.name} binding delivers a Workflow text result`, () => exerciseProvider(provider, prepared));
   });
 }
@@ -190,8 +196,9 @@ async function exerciseProvider(provider: typeof providers[number], prepared: Aw
       inputMode: 'allAllowedMessages', enabled: true }));
   expect(binding.kind).toBe('created');
   const slack = provider.serviceId === 'slack-bot';
-  const sockets = slack ? slackSockets : discordSockets;
-  await waitFor(() => [...sockets].some(socket => socket.readyState === 1), { context: 'Saved connection has a real provider socket' });
+  const sockets = slack ? slackSockets : discordContentSockets;
+  await waitFor(() => [...sockets].some(socket => socket.readyState === 1),
+    { context: slack ? 'Slack socket is open' : 'Discord Gateway is ready with Message Content intent' });
   const socket = [...sockets].find(socket => socket.readyState === 1)!;
   const envelopeId = randomUUID();
   const sourceMessageId = slack ? (Date.now() / 1000).toFixed(3) : '3001';
