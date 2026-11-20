@@ -2759,9 +2759,11 @@ Account updates preserve credential authority.
 
 Natural reads of a retained, settled `expired_resource` acquire again through the
 existing Resource entry loader. Concurrent reads join a pending replacement.
-After expiry, replacement remains pending until fresh admission or refusal
-settles it. Dependent reads wait for that result. Permanent refusals remain
-settled without automatic retry or consumer fallback.
+The store makes one automatic replacement attempt while the Resource remains
+demanded. If that replacement retires before it establishes a watch and admits
+a baseline, the store settles the expiry. A later Refresh starts a fresh read
+and reopens the watch when there is live demand. Dependent reads wait for a
+pending replacement. Permanent refusals remain settled.
 
 The observer's `PluginActionReadInvalidation` is callable for ordinary refresh
 and exposes `invalidate.retire()` for loss of the authority behind an admitted

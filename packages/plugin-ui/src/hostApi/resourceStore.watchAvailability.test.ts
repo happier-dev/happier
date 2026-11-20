@@ -340,6 +340,52 @@ describe('plugin UI Resource watch availability', () => {
     }
   });
 
+  it('settles a replacement that retires during first open and reacquires on Refresh', async () => {
+    vi.useFakeTimers();
+    const listeners: ((event: ResourceSubscriptionEvent) => void)[] = [];
+    const releases: (() => void)[] = [];
+    const watchResource = vi.fn(async (_resource: unknown, listener: (event: ResourceSubscriptionEvent) => void) => {
+      listeners.push(listener);
+      if (listeners.length < 3) await new Promise<void>(resolve => releases.push(resolve));
+      return { admittedDigest: refreshedValue.digest, dispose() {} };
+    });
+    const readResource = vi.fn(async (_resource: unknown, options?: { signal?: AbortSignal }) => {
+      // A first-open snapshot is still on the wire when either admission retires.
+      if (listeners.length < 3) {
+        await new Promise<void>(resolve => options?.signal?.addEventListener('abort', () => resolve(), { once: true }));
+        return onlineValue;
+      }
+      return refreshedValue;
+    });
+    const store = createPluginUiResourceStore({ client: { readResource, watchResource } });
+    const entry = store.getEntry('review-summary');
+    const release = entry.subscribe(() => {}, true);
+    const retired = (subscriptionId: string): ResourceSubscriptionEvent => ({ version: 1, subscriptionId,
+      kind: 'error', code: 'expired_resource', diagnostics: ['plugin_read_authority_retired'] });
+    try {
+      listeners[0]!(retired('initial'));
+      expect(entry.getSnapshot()).toMatchObject({ pending: 'initial', subscription: 'establishing' });
+      listeners[1]!(retired('replacement'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(entry.getSnapshot()).toMatchObject({
+        pending: 'idle', subscription: 'ended', error: { code: 'expired_resource' },
+      });
+      expect(entry.getSnapshot().value).toBeUndefined();
+      expect(watchResource).toHaveBeenCalledTimes(2);
+
+      const refreshed = await entry.refresh({ supersede: true });
+      expect(refreshed).toMatchObject({ value: refreshedValue, pending: 'idle', subscription: 'live' });
+      expect(refreshed.error).toBeUndefined();
+      expect(watchResource).toHaveBeenCalledTimes(3);
+    } finally {
+      release();
+      store.dispose();
+      for (const finish of releases) finish();
+      vi.useRealTimers();
+    }
+  });
+
   it('replaces an established expired watch and delivers replacement data to the same consumer', async () => {
     vi.useFakeTimers();
     let current = onlineValue;

@@ -7,7 +7,7 @@ export function settleResourceWatchTermination(input: Readonly<{
   event: Exclude<ResourceSubscriptionEvent, { kind: 'invalidated' | 'pages' }>;
   snapshot: PluginUiResourceSnapshot;
   established: boolean;
-  demanded: boolean;
+  canReplace: boolean;
   stop(): void;
   publish(snapshot: PluginUiResourceSnapshot): void;
   fail(error: PluginUiResourceError): void;
@@ -30,7 +30,7 @@ export function settleResourceWatchTermination(input: Readonly<{
     ...(event.diagnostics.length > 0 ? { diagnostics: Object.freeze([...event.diagnostics]) } : {}),
     message: event.diagnostics.join(', ') || 'Plugin UI resource watch ended.',
   });
-  if (event.code === 'expired_resource' && input.demanded
+  if (event.code === 'expired_resource' && input.canReplace
     && (input.established || event.diagnostics.includes('plugin_read_authority_retired'))) {
     // A producer can withdraw read authority before the host acknowledges the
     // watch. Readmission uses the same path as withdrawal of a live watch.

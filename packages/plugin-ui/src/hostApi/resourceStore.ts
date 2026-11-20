@@ -781,7 +781,7 @@ export function createPluginUiResourceStore(input: Readonly<{
     }, delayMs);
   }
 
-  function receiveWatchEvent(entry: MutableEntry, event: PluginUiResourceClientEvent): void {
+  function receiveWatchEvent(entry: MutableEntry, event: PluginUiResourceClientEvent, replacing: boolean): void {
     if (!isEntryCurrent(entry)) return;
     if (event.kind === 'watch-refused') {
       stopWatch(entry, false);
@@ -837,12 +837,17 @@ export function createPluginUiResourceStore(input: Readonly<{
       event,
       snapshot: entry.snapshot,
       established: entry.watch !== null,
-      demanded: entry.liveSubscriberCount > 0,
+      // An unadmitted replacement cannot restart the same recovery. A
+      // replacement that delivered a baseline and went live can retire later.
+      canReplace: entry.liveSubscriberCount > 0
+        && (!replacing || (entry.watch !== null && entry.snapshot.value !== undefined)),
       stop: () => stopWatch(entry, false),
       publish: snapshot => publish(entry, snapshot),
       fail: error => publishResourceFailure(entry, error, 'ended'),
       replace: error => publishResourceFailure(entry, error, 'ended', 'initial', () => {
-        startWatch(entry);
+        for (const resolve of entry.queuedRefreshWaiters) entry.refreshWaiters.add(resolve);
+        entry.queuedRefreshWaiters.clear();
+        startWatch(entry, { replacing: true });
         requestRead(entry, 'initial');
       }),
     });
@@ -861,11 +866,11 @@ export function createPluginUiResourceStore(input: Readonly<{
       return;
     }
     entry.watchRecovery = input.client.onWatchRecovery?.(() => {
-      startWatch(entry, code);
+      startWatch(entry, { recoveredCode: code });
     }) ?? null;
   }
 
-  function startWatch(entry: MutableEntry, recoveredCode?: string): void {
+  function startWatch(entry: MutableEntry, recovery?: Readonly<{ recoveredCode?: string; replacing?: boolean }>): void {
     if (
       !isEntryCurrent(entry)
       || entry.liveSubscriberCount === 0
@@ -889,7 +894,7 @@ export function createPluginUiResourceStore(input: Readonly<{
       entry.resource,
       (event) => {
         if (controller.signal.aborted || entry.watchController !== controller) return;
-        receiveWatchEvent(entry, event);
+        receiveWatchEvent(entry, event, recovery?.replacing === true);
       },
       { signal: controller.signal },
     ).then(
@@ -921,7 +926,7 @@ export function createPluginUiResourceStore(input: Readonly<{
           if (entry.snapshot.pending === 'refresh') publish(entry, { ...entry.snapshot, pending: 'idle' });
           settleRefreshWaiters(entry);
         } else if (!snapshotAlreadyMatchesAdmission
-          && (entry.snapshot.error?.retryable !== false || entry.snapshot.error.code === recoveredCode)) {
+          && (entry.snapshot.error?.retryable !== false || entry.snapshot.error.code === recovery?.recoveredCode)) {
           requestRead(
             entry,
             entry.snapshot.value === undefined ? 'initial' : 'refresh',
@@ -1083,8 +1088,11 @@ export function createPluginUiResourceStore(input: Readonly<{
               return;
             }
             if (options?.supersede) supersedeRead(entry!);
-            if (entry!.snapshot.subscription === 'reconnecting') startWatch(entry!);
+            const { subscription, error } = entry!.snapshot;
             (entry!.reading ? entry!.queuedRefreshWaiters : entry!.refreshWaiters).add(resolve);
+            if (subscription === 'reconnecting' || (subscription === 'ended' && error?.code === 'expired_resource')) {
+              startWatch(entry!);
+            }
             requestRead(entry!, entry!.snapshot.value === undefined ? 'initial' : 'refresh');
           });
         },
