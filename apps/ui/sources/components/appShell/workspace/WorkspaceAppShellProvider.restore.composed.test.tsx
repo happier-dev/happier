@@ -22,7 +22,7 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 
 vi.stubGlobal('matchMedia', (media: string) => ({
     media,
-    matches: media === '(prefers-reduced-motion: reduce)',
+    matches: false,
     addEventListener: () => {},
     removeEventListener: () => {},
 }));
@@ -103,6 +103,7 @@ it('admits the first Account workspace after real cold Sync restore reaches data
     try {
         expect(storage.getState().isDataReady).toBe(false);
         expect(screen.root.findAllByType('AdmittedWorkspace')).toHaveLength(0);
+        await vi.waitFor(() => expect(screen.root.findAllByType('canvas').length).toBeGreaterThan(0));
         await act(async () => {
             settings.resolve();
             await restoration;

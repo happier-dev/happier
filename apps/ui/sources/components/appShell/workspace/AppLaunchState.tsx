@@ -37,11 +37,11 @@ function StillPlanet({ theme, testID }: LaunchPlanetProps) {
 }
 
 function LivePlanet({ theme, testID }: LaunchPlanetProps) {
-  const [surface, setSurface] = React.useState<typeof import('@/components/atmosphere/glyph/GlyphSurface').GlyphSurface | null>(null);
+  const [surface, setSurface] = React.useState<typeof import('@/components/atmosphere/glyph/GlyphSurface.web').GlyphSurface | null>(null);
   const [ready, setReady] = React.useState(false);
   React.useEffect(() => {
     let mounted = true;
-    void import('@/components/atmosphere/glyph/GlyphSurface').then(({ GlyphSurface }) => {
+    void import('@/components/atmosphere/glyph/GlyphSurface.web').then(({ GlyphSurface }) => {
       if (mounted) setSurface(() => GlyphSurface);
     }, () => {});
     return () => { mounted = false; };

@@ -125,6 +125,8 @@ export const glyphFieldTrailLifeS: number;
 export const glyphFieldRippleLifeS: number;
 export function glyphFieldPhase(seconds: number): number;
 export const glyphDotRadii: readonly number[];
+/** Height of the small traveller digit relative to a regular digit's cell. */
+export const glyphSmallDigitHeight: number;
 /** The light ramp's glyphs, dimmest first; atlas tiles from `glyphRampFirstTile`. */
 export const glyphRampChars: string;
 export const glyphRampFirstTile: number;

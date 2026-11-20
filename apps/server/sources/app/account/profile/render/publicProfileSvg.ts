@@ -1,6 +1,6 @@
 import type { PublicProfileReadResultV1 } from '@happier-dev/protocol/account/publicProfilePublication';
 import { createPlanetStatusCell } from '@happier-dev/brand/planet';
-import { glyphFrame, planetGlyphLayer, type GlyphFrame, glyphLatticeRadius, glyphLatticeTile, glyphRampChars, glyphRampFirstTile } from '@happier-dev/brand/glyph-scene';
+import { glyphFrame, planetGlyphLayer, type GlyphFrame, glyphLatticeRadius, glyphLatticeTile, glyphRampChars, glyphRampFirstTile, glyphSmallDigitHeight } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import * as privacyKit from 'privacy-kit';
 import { loadSharp } from '@/storage/blob/sharpRuntime';
@@ -151,12 +151,17 @@ export async function renderPublicProfilePlanetSceneSvg(frame: GlyphFrame,
     if (!sprites.glyph.length) return disc;
     const font = await readPublicProfilePlanetFont();
     const fontSize = Math.round(grid.cell[1] * 0.94);
-    // Digits (regular and small cells share one face here), then the planet's light ramp and digits, by Brand's tile vocabulary.
-    const characters = `0123456789${glyphRampChars}0123456789`;
+    const digits = '0123456789';
     const planetFontSize = Math.round(grid.cell[1] * 0.72);
-    const atlas = await Promise.all(Array.from(characters, (text, index) => sharp({ text: {
-        text, font: `IBM Plex Mono ${index < 10 ? fontSize : planetFontSize}`, fontfile: font.path, rgba: true,
+    const rasterize = (characters: string, size: number) => Promise.all(Array.from(characters, text => sharp({ text: {
+        text, font: `IBM Plex Mono ${size}`, fontfile: font.path, rgba: true,
     } }).raw().toBuffer({ resolveWithObject: true })));
+    const [regular, ramp] = await Promise.all([
+        rasterize(digits, fontSize),
+        rasterize(glyphRampChars + digits, planetFontSize),
+    ]);
+    let small: Awaited<ReturnType<typeof rasterize>> | undefined;
+    const smallFontSize = Math.round(grid.cell[1] * 0.94 * glyphSmallDigitHeight);
     // The planet's lattice dot, drawn as coverage at its radius.
     const radius = glyphLatticeRadius * frame.width / pane.width, side = Math.ceil(radius * 2 + 2);
     const dot = { data: Buffer.alloc(side * side), info: { width: side, height: side, channels: 1 } };
@@ -166,7 +171,10 @@ export async function renderPublicProfilePlanetSceneSvg(frame: GlyphFrame,
     const rgba = Buffer.alloc(frame.width * frame.height * 4);
     for (let index = 0; index < sprites.glyph.length; index++) {
         const tile = sprites.glyph[index];
-        const { data, info } = tile === glyphLatticeTile ? dot : atlas[tile >= glyphRampFirstTile ? 10 + tile - glyphRampFirstTile : tile % 10];
+        const { data, info } = tile === glyphLatticeTile ? dot
+            : tile >= glyphRampFirstTile ? ramp[tile - glyphRampFirstTile]
+            : tile >= 10 && tile < 20 ? (small ??= await rasterize(digits, smallFontSize))[tile - 10]
+            : regular[tile % 10];
         const left = sprites.at[index * 2] - Math.round(info.width / 2);
         const top = sprites.at[index * 2 + 1] - Math.round(info.height / 2);
         const ink = index * 4;

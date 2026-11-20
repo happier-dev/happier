@@ -8,7 +8,7 @@ import { loadSharp } from '@/storage/blob/sharpRuntime';
 import { createPublicProfileHero, renderPublicProfileHeroImage, type PublicProfileHeroOptions } from './publicProfileHero';
 import { renderPublicProfileBackdrop } from './publicProfileBackdrop';
 import { renderPublicProfilePlanetSceneSvg } from './publicProfileSvg';
-import { glyphFrame, planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { glyphFrame, planetGlyphLayer, travellerGlyphLayer } from '@happier-dev/brand/glyph-scene';
 import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 import { resolveHappierPublicProfilePlanetBand } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { readStoredPublicProfileAppearance } from '../publicProfileStorage';
@@ -159,6 +159,28 @@ describe('cold public-profile hero pixels', () => {
         view.appearance.atmosphere = { source: 'none' };
         expect(createPublicProfileHero(view)).toBeUndefined();
         expect(await renderPublicProfileHeroImage(view, { palette }, { theme: 'light', viewport: 'wide', density: 1 })).toBeUndefined();
+    });
+
+    it('keeps small floating digits at their own size in a static frame', async () => {
+        const sharp = await loadSharp();
+        const pane = { width: 64, height: 64 };
+        const particles = new Float32Array([32, 32, 32, 32, 0, 0, 0, 0]);
+        const inkRows = async (small: boolean) => {
+            const layer = travellerGlyphLayer({ particles, small, ink: 'sunrise' });
+            const frame = glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: 1, theme: 'dark', layers: [layer] });
+            const paint = await renderPublicProfilePlanetSceneSvg(frame, pane);
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64">${paint}</svg>`;
+            const { data, info } = await sharp(Buffer.from(svg)).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+            let rows = 0;
+            for (let y = 0; y < info.height; y++) {
+                const row = data.subarray(y * info.width * 4, (y + 1) * info.width * 4);
+                if (row.some((value, at) => at % 4 === 3 && value > 0)) rows++;
+            }
+            return rows;
+        };
+        const [regular, small] = await Promise.all([inkRows(false), inkRows(true)]);
+        expect(small).toBeGreaterThan(0);
+        expect(small).toBeLessThan(regular);
     });
 
     it('uses the selected Horizon Look at the shared horizon and retains only frozen credit', async () => {

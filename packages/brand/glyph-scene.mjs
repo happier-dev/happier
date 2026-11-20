@@ -99,6 +99,7 @@ function planetPresentation(layer, time) {
 // The intensity's `dim` is the whole planet's opacity. A phone keeps a sparse share of cells, each nudged and dimmed.
 export const glyphRampChars = '.\u00b7:-=+*%#@';
 export const glyphRampFirstTile = 21 + glyphDotRadii.length;
+export const glyphSmallDigitHeight = 0.625;
 /** The planet's own digits, set at the ramp's size: tiles after the ramp. */
 export const glyphPlanetDigitFirstTile = glyphRampFirstTile + glyphRampChars.length;
 /** The planet's dot lattice under its glyphs: one dot tile after the planet digits, radius in css px. */

@@ -1,6 +1,6 @@
 import { AlphaType, BlendMode, ClipOp, ColorType, FilterMode, MipmapMode, Skia, TileMode, createPicture } from '@shopify/react-native-skia';
 import type { SkCanvas, SkColor, SkImage, SkRSXform, SkRect } from '@shopify/react-native-skia';
-import type { GlyphFrame, GlyphGrid } from '@happier-dev/brand/glyph-scene';
+import { glyphSmallDigitHeight, type GlyphFrame, type GlyphGrid } from '@happier-dev/brand/glyph-scene';
 
 import { glyphAtlas } from './glyphAtlas.native';
 import { glyphAtlasChars, glyphAtlasColumns, glyphPlanetChars, glyphRampHeight, packGlyphAtlas } from './glyphAtlasLayout';
@@ -16,7 +16,7 @@ export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
     const [w, h] = grid.cell;
     const [regular, small, ramp] = await Promise.all([
         glyphAtlas({ w: w / dpr, h: h / dpr, chars: glyphAtlasChars }, dpr),
-        glyphAtlas({ w: w * 0.75 / dpr, h: h * 0.625 / dpr, chars: glyphAtlasChars }, dpr),
+        glyphAtlas({ w: w * 0.75 / dpr, h: h * glyphSmallDigitHeight / dpr, chars: glyphAtlasChars }, dpr),
         glyphAtlas({ w: w / dpr, h: h * glyphRampHeight / dpr, chars: glyphPlanetChars }, dpr),
     ]);
     const pixels = packGlyphAtlas(grid, regular, small, ramp, dpr);
