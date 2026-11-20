@@ -27,8 +27,6 @@ import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/compone
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Popover } from '@/components/ui/popover';
-import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -59,7 +57,7 @@ import { listOpenPluginApprovalArtifactsForMachine } from '@/sync/domains/artifa
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { InstalledPluginActionId, PluginQuickInstallReview, PluginRoutineOperationSettlement, PluginSettingsScreenState } from './model/usePluginSettingsScreenState';
+import type { InstalledPluginActionId, PluginRoutineOperationSettlement, PluginSettingsScreenState } from './model/usePluginSettingsScreenState';
 import {
     catalogReviewStatusLabel,
     projectBrowseSections,
@@ -1188,7 +1186,7 @@ export function DiscoverListingsSection(props: Readonly<{
     isPluginActionInFlight: (pluginId: string) => boolean;
     /** The last install's outcome; a card whose install failed or could not be confirmed says so in place. */
     settlement?: PluginRoutineOperationSettlement | null;
-    prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
+    installFromBrowse: PluginSettingsScreenState['installFromBrowse'];
     onLoadMore: () => void;
     onNavigateToPlugin: (pluginId: string) => void;
     onOpenListing: (entry: PluginMarketplaceCatalogEntry) => void;
@@ -1301,7 +1299,7 @@ type DiscoverListingActionInputs = Readonly<{
     installDisabledReason?: string | null;
     loading: boolean;
     isPluginActionInFlight: (pluginId: string) => boolean;
-    prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
+    installFromBrowse: PluginSettingsScreenState['installFromBrowse'];
     onNavigateToPlugin: (pluginId: string) => void;
 }>;
 
@@ -1314,103 +1312,39 @@ function discoverListingControl(entry: PluginMarketplaceCatalogEntry, props: Dis
         disabled={!props.canRunActions || props.isPluginActionInFlight(entry.id) || props.loading}
         pending={props.isPluginActionInFlight(entry.id)}
         disabledReason={props.installDisabledReason ?? undefined}
-        prepareQuickInstall={props.prepareQuickInstall}
+        installFromBrowse={props.installFromBrowse}
     />;
 }
 
 /**
- * Browse’s plus opens the compact Quick install confirmation anchored to it (lab ideas-1118-platform round 4, "Quick
- * install"; a sheet on a phone): the plugin, who made it and where it is listed, one line of what it adds and where it
- * goes, then Cancel or Install & Trust. The person has not seen the listing here, so this press is the consent; the
- * listing's own Install & Trust needs no second step.
+ * Browse's "+": "Install on <machine>". Pressing it is the consent, as Install & Trust on the listing is (owner
+ * 2026-11-19, UI refinements 11-20), so it installs at once; while the install runs the "+" is busy, and its outcome
+ * reads on the card (`reason`) through the same settlement as the listing.
  */
-function DiscoverQuickInstall({ entry, machineName, disabled, pending, disabledReason, prepareQuickInstall }: Readonly<{
+function DiscoverQuickInstall({ entry, machineName, disabled, pending, disabledReason, installFromBrowse }: Readonly<{
     entry: PluginMarketplaceCatalogEntry;
     machineName?: string | null;
     disabled: boolean;
     /** This plugin's install is in flight: the "+" shows it is working. */
     pending: boolean;
     disabledReason?: string;
-    prepareQuickInstall: PluginSettingsScreenState['prepareQuickInstall'];
+    installFromBrowse: PluginSettingsScreenState['installFromBrowse'];
 }>) {
-    const [review, setReview] = React.useState<PluginQuickInstallReview | null>(null);
-    const open = review !== null;
-    const anchorRef = React.useRef<View>(null);
     const testID = `settings.plugins.marketplace.action.install.${entry.sourceId}.${entry.id}`;
-    const installLabel = t('settingsPlugins.installAndTrust');
-    const plusLabel = machineName ? t('settingsPlugins.surfaces.quickInstallLabel', { machine: machineName }) : installLabel;
-    const close = React.useCallback(() => setReview(null), []);
-    const contents = pluginListingAdds(entry.contributions).map((add) => add.title);
-    const uses = [
-        contents.join(', '),
-        machineName ? t('settingsPlugins.surfaces.listingInstallsOn', { machine: machineName }) : null,
-    ].filter(Boolean).join('. ');
+    const label = machineName ? t('settingsPlugins.surfaces.quickInstallLabel', { machine: machineName }) : t('settingsPlugins.installAndTrust');
     return (
-        <>
-            <View ref={anchorRef} collapsable={false}>
-                <IconButton
-                    testID={testID}
-                    iconName="plus"
-                    variant="plain"
-                    // Named for what it does and where: "Install on <machine>" (UI refinements 11-20).
-                    tooltip={plusLabel}
-                    disabledReason={disabledReason}
-                    busy={pending}
-                    accessibilityLabel={buildActionRowAccessibilityLabel([plusLabel, entry.title, entry.sourceTitle]) ?? plusLabel}
-                    accessibilityHint={t('settingsPlugins.discover.installSubtitle', { source: entry.sourceTitle })}
-                    disabled={disabled}
-                    expanded={open}
-                    hasPopup="dialog"
-                    onPress={() => setReview(open ? null : prepareQuickInstall({ pluginId: entry.id, sourceId: entry.sourceId }))}
-                />
-            </View>
-            {open ? (
-                <Popover
-                    open
-                    anchorRef={anchorRef}
-                    boundaryRef={null}
-                    placement="auto-vertical"
-                    phonePresentation="sheet"
-                    sheetHeader="none"
-                    accessibilityLabel={installLabel}
-                    edgePadding={{ horizontal: 12, vertical: 12 }}
-                    portal={{ web: { target: 'body' }, native: true, matchAnchorWidth: false }}
-                    maxWidthCap={360}
-                    onRequestClose={close}
-                >
-                    {({ maxHeight, maxWidth }) => (
-                        <FloatingOverlay maxHeight={maxHeight} surfaceChrome="theme" containerStyle={{ width: Math.min(maxWidth, 360) }}>
-                            <View testID={`${testID}.quickInstall`} style={sectionStylesheet.quickInstall}>
-                                <View style={sectionStylesheet.quickInstallHeader}>
-                                    <PluginMark title={entry.title} pluginId={entry.id} size="row" />
-                                    <View style={sectionStylesheet.quickInstallTitles}>
-                                        <Text variant="body" emphasis="semiBold">
-                                            {machineName
-                                                ? t('settingsPlugins.surfaces.quickInstallTitle', { name: entry.title, machine: machineName })
-                                                : t('settingsPlugins.surfaces.quickInstallTitleNoMachine', { name: entry.title })}
-                                        </Text>
-                                        <Text variant="meta" style={sectionStylesheet.quickInstallMeta}>
-                                            {[entry.publisher.displayName, entry.sourceTitle].filter(Boolean).join(' · ')}
-                                        </Text>
-                                    </View>
-                                </View>
-                                {uses ? <Text variant="body" style={sectionStylesheet.quickInstallMeta}>{uses}</Text> : null}
-                                <View style={sectionStylesheet.quickInstallFooter}>
-                                    <RoundButton testID={`${testID}.cancel`} size="small" display="secondary"
-                                        title={t('common.cancel')} onPress={close} />
-                                    <RoundButton testID={`${testID}.confirm`} size="small" title={installLabel}
-                                        disabled={disabled} onPress={() => {
-                                            if (disabled || !review) return;
-                                            close();
-                                            review.confirm();
-                                        }} />
-                                </View>
-                            </View>
-                        </FloatingOverlay>
-                    )}
-                </Popover>
-            ) : null}
-        </>
+        <IconButton
+            testID={testID}
+            iconName="plus"
+            variant="plain"
+            tooltip={label}
+            disabledReason={disabledReason}
+            busy={pending}
+            accessibilityLabel={buildActionRowAccessibilityLabel([label, entry.title, entry.sourceTitle]) ?? label}
+            accessibilityHint={t('settingsPlugins.discover.installSubtitle', { source: entry.sourceTitle })}
+            disabled={disabled}
+            onPress={() => installFromBrowse({ pluginId: entry.id, sourceId: entry.sourceId })}
+        />
     );
 }
 
@@ -1512,11 +1446,6 @@ const sectionStylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.tertiary,
     },
-    quickInstall: { padding: theme.space.s16, gap: theme.space.s12 },
-    quickInstallHeader: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s10 },
-    quickInstallTitles: { flex: 1, minWidth: 0, gap: theme.space.s2 },
-    quickInstallMeta: { color: theme.colors.text.secondary },
-    quickInstallFooter: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center', gap: theme.space.s8 },
     loadMore: {
         width: '100%',
         alignSelf: 'center',

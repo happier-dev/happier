@@ -8,9 +8,6 @@ import type { InstalledPluginEntry } from './model/pluginMarketplaceModel';
 
 installSettingsViewCommonModuleMocks();
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
-// The Quick install confirmation is a floating overlay; the testkit draws it inline.
-vi.mock('@/components/ui/popover', async (importOriginal) =>
-    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
 const entry: PluginMarketplaceCatalogEntry = {
     id: 'acme.plugin', sourceId: 'community', sourceKind: 'community-npm', sourceTitle: 'Community',
@@ -45,7 +42,7 @@ describe('DiscoverListingsSection', () => {
         const onAction = vi.fn();
         const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
             canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
-            prepareQuickInstall={(listing) => ({ confirm: () => onAction(listing) })} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={onOpenListing} />);
+            installFromBrowse={onAction} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={onOpenListing} />);
         await screen.pressByTestIdAsync('settings.plugins.marketplace.entry.community.acme.plugin');
         expect(onOpenListing).toHaveBeenCalledWith(entry);
         expect(onAction).not.toHaveBeenCalled();
@@ -60,7 +57,7 @@ describe('DiscoverListingsSection', () => {
         // Browse always renders inside the Plugins page, where sections carry their actions.
         const screen = await renderMeasured(<ListPresentationProvider value="page"><DiscoverListingsSection entries={entries} loading={false} loadingMore={false}
             canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
-            prepareQuickInstall={() => null} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} /></ListPresentationProvider>);
+            installFromBrowse={() => {}} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} /></ListPresentationProvider>);
         const cards = () => entries.filter((e) => screen.findByTestId(`settings.plugins.marketplace.entry.curated.${e.id}`) !== null).map((e) => e.id);
         expect(cards()).toEqual(['a.one', 'a.two', 'a.three', 'a.four']);
         // The compact Code section counts all four it holds, not the three cards on screen.
@@ -75,7 +72,7 @@ describe('DiscoverListingsSection', () => {
         const action = vi.fn();
         const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
             canLoadMore={false} installedPluginById={new Map([[entry.id, installed]])} canRunActions={false}
-            isPluginActionInFlight={() => false} prepareQuickInstall={(listing) => ({ confirm: () => action(listing) })} onLoadMore={() => {}} onNavigateToPlugin={() => {}}
+            isPluginActionInFlight={() => false} installFromBrowse={action} onLoadMore={() => {}} onNavigateToPlugin={() => {}}
             onOpenListing={openListing} />);
         expect(screen.getTextContent()).toContain(entry.description);
         // Installed is the card's status and it has no install action: the trust decision was already made.
@@ -92,44 +89,26 @@ describe('DiscoverListingsSection', () => {
         const screen = await renderMeasured(<DiscoverListingsSection
             entries={[entry, { ...entry, id: 'withdrawn.plugin', installable: false, warning: 'withdrawn', reviewStatus: 'withdrawn' }]}
             loading={false} loadingMore={false} canLoadMore={false} installedPluginById={new Map()} canRunActions
-            isPluginActionInFlight={() => false} prepareQuickInstall={(listing) => ({ confirm: () => action(listing) })} onLoadMore={() => {}} onNavigateToPlugin={() => {}}
+            isPluginActionInFlight={() => false} installFromBrowse={action} onLoadMore={() => {}} onNavigateToPlugin={() => {}}
             onOpenListing={() => {}} />);
         expect(screen.findByTestId('settings.plugins.marketplace.reviewStatus.community.withdrawn.plugin')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.action.install.community.withdrawn.plugin')).toBeNull();
         expect(screen.getTextContent()).toContain('Community');
-        const quickInstall = 'settings.plugins.marketplace.action.install.community.acme.plugin';
-        await screen.pressByTestIdAsync(quickInstall);
-        expect(action).not.toHaveBeenCalled();
-        const confirm = `${quickInstall}.confirm`;
-        await vi.waitFor(() => expect(screen.findByTestId(confirm)).not.toBeNull());
-        await screen.pressByTestIdAsync(`${quickInstall}.cancel`);
-        expect(screen.findByTestId(confirm)).toBeNull();
-        expect(action).not.toHaveBeenCalled();
-        await screen.pressByTestIdAsync(quickInstall);
-        await vi.waitFor(() => expect(screen.findByTestId(confirm)).not.toBeNull());
-        await screen.pressByTestIdAsync(confirm);
-        await vi.waitFor(() => expect(action).toHaveBeenCalledExactlyOnceWith({
-            pluginId: entry.id, sourceId: entry.sourceId,
-        }));
+        // "+" is "Install on <machine>": the press is the consent, so it installs at once (owner 2026-11-19).
+        await screen.pressByTestIdAsync('settings.plugins.marketplace.action.install.community.acme.plugin');
+        expect(action).toHaveBeenCalledExactlyOnceWith({ pluginId: entry.id, sourceId: entry.sourceId });
     });
     it('lists the same listings as rows, with the same open and install targets', async () => {
         const onOpenListing = vi.fn();
         const onAction = vi.fn();
         const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} presentation="list" loading={false}
             loadingMore={false} canLoadMore={false} installedPluginById={new Map()} canRunActions
-            isPluginActionInFlight={() => false} prepareQuickInstall={(listing) => ({ confirm: () => onAction(listing) })} onLoadMore={() => {}} onNavigateToPlugin={() => {}}
+            isPluginActionInFlight={() => false} installFromBrowse={onAction} onLoadMore={() => {}} onNavigateToPlugin={() => {}}
             onOpenListing={onOpenListing} />);
         await screen.pressByTestIdAsync('settings.plugins.marketplace.entry.community.acme.plugin');
         expect(onOpenListing).toHaveBeenCalledWith(entry);
-        const quickInstall = 'settings.plugins.marketplace.action.install.community.acme.plugin';
-        await screen.pressByTestIdAsync(quickInstall);
-        expect(onAction).not.toHaveBeenCalled();
-        const confirm = `${quickInstall}.confirm`;
-        await vi.waitFor(() => expect(screen.findByTestId(confirm)).not.toBeNull());
-        await screen.pressByTestIdAsync(confirm);
-        await vi.waitFor(() => expect(onAction).toHaveBeenCalledExactlyOnceWith({
-            pluginId: entry.id, sourceId: entry.sourceId,
-        }));
+        await screen.pressByTestIdAsync('settings.plugins.marketplace.action.install.community.acme.plugin');
+        expect(onAction).toHaveBeenCalledExactlyOnceWith({ pluginId: entry.id, sourceId: entry.sourceId });
     });
 
     it('does not snap back to a stale "All" when the results change and change back', async () => {
@@ -142,7 +121,7 @@ describe('DiscoverListingsSection', () => {
         const render = (entries: readonly PluginMarketplaceCatalogEntry[]) => (
             <ListPresentationProvider value="page"><DiscoverListingsSection entries={entries} loading={false} loadingMore={false}
                 canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
-                prepareQuickInstall={() => null} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} /></ListPresentationProvider>
+                installFromBrowse={() => {}} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} /></ListPresentationProvider>
         );
         const screen = await renderMeasured(render(curatedResults));
         await screen.pressByTestIdAsync('settings.plugins.marketplace.discover:group:category:agents:action');
@@ -159,7 +138,7 @@ describe('DiscoverListingsSection', () => {
         const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
             canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
             settlement={{ scope: 'discover', message: 'unknown', outcome: 'unknown', pluginId: entry.id }}
-            prepareQuickInstall={() => null} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} />);
+            installFromBrowse={() => {}} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} />);
         expect(screen.findByTestId('settings.plugins.marketplace.installOutcome.community.acme.plugin')).not.toBeNull();
     });
 });

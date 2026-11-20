@@ -18,7 +18,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemGroupColumn, ItemGroupColumns } from '@/components/ui/lists/ItemGroupColumns';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
-import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
+import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -79,9 +79,12 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     // The crumbs lead back within the host this listing is shown in (Settings or the app page).
     const host = usePluginsSurfaceHost();
     const styles = stylesheet;
-    const maxWidthStyle = useLayoutMaxWidthStyle();
     const { state } = props;
     const pane = props.presentation === 'pane';
+    // Its own page is a wide page (an action column beside the published facts). The crumbs, the header and the
+    // columns all stand on that one column, so the title block starts on the crumbs' and the sheets' edge.
+    const pageMaxWidth = useLayoutMaxWidth('wide');
+    const maxWidthStyle = React.useMemo(() => ({ maxWidth: pageMaxWidth }), [pageMaxWidth]);
     const noTarget = state.administrationTargetSelection.state.kind === 'unselected';
     // A machine that is chosen but cannot answer (offline, projection failed) is explained, with
     // its recovery, instead of an endless loading row. "Refreshing" is transient and stays loading.
@@ -163,7 +166,7 @@ export const PluginListingView = React.memo(function PluginListingView(props: Re
     ) : null;
 
     return (
-        <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.listing">
+        <ItemList style={{ paddingTop: 0 }} testID="settings.plugins.listing" {...(pane ? {} : { pageColumn: 'wide' as const })}>
             {pane ? null : <HappierBreadcrumb style={[styles.crumbs, maxWidthStyle]} accessibilityRole="toolbar"
                 separator={<Icon name="caret-right" size={12} color={styles.crumbSeparator.color} />}
                 colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.hover }}
@@ -295,8 +298,9 @@ function ListingInstall(props: Readonly<{
         <>
         {props.target ? (
             <ItemGroup>
+                {/* The machine name is never cut: on a row too narrow for both, the value moves beneath its label. */}
                 <Item testID="settings.plugins.listing.installOn" title={t('settingsPlugins.surfaces.installOnTitle')}
-                    rightElement={props.target} showChevron={false} mode="info" />
+                    rightElement={props.target} accessoryLayout="adaptive" showChevron={false} mode="info" />
             </ItemGroup>
         ) : null}
         <View style={styles.install}>

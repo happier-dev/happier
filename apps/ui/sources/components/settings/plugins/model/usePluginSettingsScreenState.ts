@@ -94,7 +94,6 @@ export type InstalledPluginActionId =
 
 function pluginActionKey(scopeKey: string, pluginId: string): string { return JSON.stringify([scopeKey, pluginId]); }
 
-export type PluginQuickInstallReview = Readonly<{ confirm: () => void }>;
 
 export type PluginRoutineOperationSettlement = Readonly<{
     scope: 'installed' | 'discover' | 'pending' | 'development';
@@ -235,7 +234,11 @@ export type PluginSettingsScreenState = Readonly<{
             : readonly []
         : readonly [];
     runCatalogAction: (params: PluginMarketplaceActionRequest) => void;
-    prepareQuickInstall: (listing: Readonly<{ pluginId: string; sourceId: string }>) => PluginQuickInstallReview | null;
+    /**
+     * Browse's "+" ("Install on <machine>"): the press is the consent, as Install & Trust on the listing is (owner
+     * 2026-11-19), so it installs this exact catalog release at once; its outcome settles inline on the card.
+     */
+    installFromBrowse: (listing: Readonly<{ pluginId: string; sourceId: string }>) => void;
     runDevelopmentCreate: (params: Readonly<{
         targetDir: string;
         displayName: string;
@@ -621,7 +624,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                             if (!actionInput) return { supported: true as const, response: {
                                 ok: false as const, error: { code: 'install_unavailable', message: t('common.unavailable') },
                             } };
-                            // Listing Install and the quick review's Install both consent to this exact release and Machine.
+                            // Listing Install & Trust and Browse's "+" both consent to this exact release and Machine.
                             // Installed updates leave scope review to the receiver.
                             const execution = await installedExecution.execute('plugins.install', actionInput,
                                 params.method === 'install' ? { confirmed: true } : undefined);
@@ -733,17 +736,11 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         })();
     }, [administrationTargetSelection, daemonAdministrationAvailable, catalog.resolveInstallEntry, executionTarget, installedExecution.execute, captureMutationPublication, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, reportUnknownMutation, refreshPluginTruth, resolveCurrentExecutionTarget, selectedMachineScopeKey]);
 
-    const prepareQuickInstall = React.useCallback((listing: Readonly<{ pluginId: string; sourceId: string }>): PluginQuickInstallReview | null => {
-        if (!canRunDiscoverActions) return null;
+    const installFromBrowse = React.useCallback((listing: Readonly<{ pluginId: string; sourceId: string }>) => {
+        if (!canRunDiscoverActions) return;
         const entry = catalog.resolveInstallEntry(listing);
-        if (!entry) return null;
-        const isCurrent = captureMutationPublication();
-        return {
-            confirm: () => {
-                if (isCurrent()) runCatalogAction({ method: 'install', ...listing }, entry);
-            },
-        };
-    }, [canRunDiscoverActions, captureMutationPublication, catalog.resolveInstallEntry, runCatalogAction]);
+        if (entry) runCatalogAction({ method: 'install', ...listing }, entry);
+    }, [canRunDiscoverActions, catalog.resolveInstallEntry, runCatalogAction]);
 
     const runInstalledPluginAction = React.useCallback((
         action: InstalledPluginActionId,
@@ -1063,7 +1060,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         installedPluginsRead,
         registryDiagnostics,
         runCatalogAction,
-        prepareQuickInstall,
+        installFromBrowse,
         runDevelopmentCreate,
         resolveDevelopmentEditTarget,
         runDevelopmentSourceInstall,

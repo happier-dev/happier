@@ -966,7 +966,10 @@ function CollectionGrid<Item>(props: CollectionCardsProps<Item>): ReactElement {
                 {/* The same group label a list draws (its name, its count, what its cards share), not a heading of
                     its own: Cards and Table read one grouping (Workflows acceptance fix 7). */}
                 <View style={shrinkStyle}>
-                  <HappierListSection title={group.title} count={group.count ?? section.items.length} titleRole="micro"
+                  {/* A page-sized grid's shelf heads a page section: the page's section title in primary ink (UI refinements
+                      11-20, Store fix 8); a grid inside a pane or card keeps the dense group label. */}
+                  <HappierListSection title={group.title} count={group.count ?? section.items.length}
+                    titleRole={props.pageScroll === true ? 'section' : 'micro'}
                     {...(group.description === undefined ? {} : { description: group.description })} />
                 </View>
                 <CollectionGroupActionButton
