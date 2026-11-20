@@ -184,6 +184,14 @@ describe('Collection sharing database contract', () => {
             const envelopes = () => db.pluginCollectionKeyEnvelope.findMany({ where: { rowDbId: row.id }, orderBy: { recipientAccountId: 'asc' } });
             const before = await envelopes();
             expect(before.map(row => row.recipientAccountId).sort()).toEqual(ownerWrap ? [owner.id, groupGuest.id, directGuest.id].sort() : []);
+            await revokeCollectionGrant(owner.id, { ...address, principal: { kind: 'team', teamId: team.id } });
+            await expect(read(directGuest)).resolves.toMatchObject({ access: 'view' });
+            await expect(Promise.all([
+                listSharedCollectionResources(directGuest.id, scoped),
+                inTx(tx => countTeamSharedCollectionsInTx(tx, { actorAccountId: directGuest.id, sharedWithTeamId: team.id })),
+            ])).resolves.toEqual([{ resources: [], nextCursor: null }, { ok: true, collections: [] }]);
+            await expect(listSharedCollectionResources(groupGuest.id, scoped)).resolves.toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'group' }] });
+            await expect(listSharedCollectionResources(owner.id, scoped)).resolves.toMatchObject({ resources: [{ rowId: address.rowId, sharedWithTeamScope: 'group' }] });
             for (const { principal } of explicit) await setCollectionGrant(owner.id, { ...address, principal,
                 accessLevel: 'edit', expectedRevision: revision }, authentication);
             for (const { actor } of explicit) {
