@@ -11,6 +11,7 @@ export type ExecutionRunProfileCapability = Readonly<{
   available: boolean;
   unavailableCode?: string;
   optionsSchema?: PluginExecutionRunProfileContributionV2['optionsSchema'];
+  optionsInputHints?: PluginExecutionRunProfileContributionV2['optionsInputHints'];
   defaults: Readonly<{ retention: string; runClass: string; io: string }>;
 }>;
 
@@ -65,6 +66,7 @@ export function extractExecutionRunProfilesFromMachineCapabilitiesState(state: u
     const intent = typeof raw.intent === 'string' ? raw.intent.trim() : '';
     const sourceCustody = PluginSourceCustodyV1Schema.safeParse(raw.sourceCustody);
     const optionsSchema = PluginExecutionRunProfileContributionV2Schema.shape.optionsSchema.safeParse(raw.optionsSchema);
+    const optionsInputHints = PluginExecutionRunProfileContributionV2Schema.shape.optionsInputHints.safeParse(raw.optionsInputHints);
     const compatibleAgentIds = Array.isArray(raw.compatibleAgents)
       ? raw.compatibleAgents.map((agentId) => typeof agentId === 'string' ? agentId.trim() : '').filter(Boolean)
       : [];
@@ -74,6 +76,7 @@ export function extractExecutionRunProfilesFromMachineCapabilitiesState(state: u
       || !intent
       || !sourceCustody.success
       || !optionsSchema.success
+      || !optionsInputHints.success
       || compatibleAgentIds.length === 0
       || !defaults
       || typeof defaults.retention !== 'string'
@@ -88,6 +91,7 @@ export function extractExecutionRunProfilesFromMachineCapabilitiesState(state: u
       sourceCustody: sourceCustody.data,
       available: raw.available === true,
       ...(optionsSchema.data ? { optionsSchema: optionsSchema.data } : {}),
+      ...(optionsInputHints.data ? { optionsInputHints: optionsInputHints.data } : {}),
       ...(typeof raw.unavailableCode === 'string' && raw.unavailableCode.trim()
         ? { unavailableCode: raw.unavailableCode.trim() }
         : {}),

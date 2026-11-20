@@ -60,6 +60,12 @@ describe('executionRunsCapability', () => {
       { manifest: createPluginManifestV2Fixture({ id: 'acme.execution-runs', contributes: {
         agents: [agent('acme-review')],
         executionRunProfiles: [{ id: 'review-profile', intent: 'review', title: 'Acme review', promptAsset: 'review-prompt',
+          optionsSchema: { type: 'object', additionalProperties: false, properties: {
+            effort: { type: 'string', enum: ['fast', 'deep'] },
+            executablePath: { type: 'string', title: 'Executable path' },
+          } },
+          optionsInputHints: { fields: [{ path: 'effort', title: 'Effort', widget: 'select',
+            options: [{ value: 'fast', label: 'Fast' }, { value: 'deep', label: 'Deep' }] }] },
           compatibleAgents: ['acme-review'], defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'requestResponse' } }],
         resources: [{ id: 'review-prompt-resource', kind: 'prompt', path: './review.md', contentType: 'text/markdown' }],
         promptAssets: [{ id: 'review-prompt', kind: 'systemPrompt', resource: 'review-prompt-resource', target: { kind: 'agent', agent: 'acme-review' } }],
@@ -412,7 +418,7 @@ describe('executionRunsCapability', () => {
     const profiles = res.executionRunProfiles.filter(profile => profile.id === 'acme.execution-runs/review-profile');
     const generation = runtimeFixture?.committed.generations.get('acme.execution-runs');
     if (!generation) throw new Error('Expected admitted external profile generation');
-    expect(profiles).toEqual([
+    expect(JSON.parse(JSON.stringify(profiles))).toEqual([
       {
         id: 'acme.execution-runs/review-profile',
         intent: 'review',
@@ -423,6 +429,12 @@ describe('executionRunsCapability', () => {
           kind: 'managed', immutableGenerationId: generation.immutableGenerationId, installSource: 'localPath',
         },
         available: true,
+        optionsSchema: { type: 'object', additionalProperties: false, properties: {
+          effort: { type: 'string', enum: ['fast', 'deep'] },
+          executablePath: { type: 'string', title: 'Executable path' },
+        } },
+        optionsInputHints: { fields: [{ path: 'effort', title: 'Effort', widget: 'select',
+          options: [{ value: 'fast', label: 'Fast' }, { value: 'deep', label: 'Deep' }] }] },
         defaults: {
           retention: 'ephemeral',
           runClass: 'bounded',

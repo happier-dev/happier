@@ -5,6 +5,7 @@ import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { ExecutionRunIntentSchema } from '../../execution/runs/runPrimitives.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
+import { createInputHintsSchemasWithStaticOptionsOnly, InputOptionValueSchema } from '../../inputs/inputFields.js';
 import {
   PluginAvailabilityDescriptorV2Schema,
   PluginContributionReferenceV2Schema,
@@ -25,6 +26,11 @@ export const PluginExecutionRunProfileActionReferenceV2Schema = lazyZodSchema(()
 ]));
 export type PluginExecutionRunProfileActionReferenceV2 = z.infer<typeof PluginExecutionRunProfileActionReferenceV2Schema>;
 
+const ProfileOptionsInputHintsSchema = createInputHintsSchemasWithStaticOptionsOnly(
+  PluginLocalizedStringV2Schema,
+  InputOptionValueSchema,
+).hintsSchema;
+
 export const PluginExecutionRunProfileContributionV2Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
   intent: ExecutionRunIntentSchema,
@@ -42,6 +48,8 @@ export const PluginExecutionRunProfileContributionV2Schema = lazyZodSchema(() =>
     (schema) => schema.type === 'object' && isRecursivelyClosedPluginJsonSchemaV2(schema),
     'Execution-run options must declare a recursively closed object schema',
   ))),
+  /** Only these declared option paths are public form controls; other schema properties stay unrendered. */
+  optionsInputHints: z.optional(ProfileOptionsInputHintsSchema),
   availability: z.optional(PluginAvailabilityDescriptorV2Schema),
   metadata: z.optional(z.record(z.string(), PluginJsonValueV2Schema)),
 }));

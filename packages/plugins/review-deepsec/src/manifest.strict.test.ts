@@ -2,8 +2,21 @@ import { ingestPluginManifestV2 } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { DEEPSEC_THINKING_LEVELS } from './agent/reviews/command.js';
 
 describe('DeepSec strict plugin manifest', () => {
+  it('declares only reasoning effort as a public profile option', () => {
+    const ingestion = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    expect(ingestion.ok, JSON.stringify(ingestion)).toBe(true);
+    for (const profile of PLUGIN_MANIFEST.contributes.executionRunProfiles) {
+      expect(profile.optionsInputHints?.fields).toEqual([{
+        path: 'thinkingLevel', title: 'Reasoning effort', widget: 'select',
+        options: DEEPSEC_THINKING_LEVELS.map(value => ({ value, label: value })),
+      }]);
+      expect(profile.optionsSchema?.properties?.thinkingLevel?.enum).toEqual([...DEEPSEC_THINKING_LEVELS]);
+    }
+  });
+
   it('owns both execution-run profiles and discloses its finite environment dependency', () => {
     const ingestion = ingestPluginManifestV2(PLUGIN_MANIFEST);
     expect(ingestion.ok, JSON.stringify(ingestion)).toBe(true);

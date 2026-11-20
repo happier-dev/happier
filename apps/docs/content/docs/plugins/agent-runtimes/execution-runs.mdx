@@ -230,6 +230,66 @@ leaf or an execution-run completion declaration. Use the canonical
 These are current 0.3 development contracts, not release or loaded-runtime
 certification.
 
+## Review profile options and evidence
+
+In 0.3 development source, an `executionRunProfiles` declaration can provide
+`optionsSchema`. Put this inside the profile passed to `definePlugin`:
+
+```ts
+optionsSchema: {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    effort: {
+      type: 'string',
+      enum: ['fast', 'deep'],
+      description: 'How thoroughly this engine inspects the selected subject.',
+    },
+  },
+},
+```
+
+Declare closed objects throughout the schema. The selected profile validates
+`intentInput.engines[agentId]` once before loading its prompt or starting work.
+Omitted options are validated as an empty object; declare `required` fields when
+the engine cannot run without them. Invalid options return
+`execution_run_profile_options_invalid`; a profile without a schema rejects
+nonempty options with `execution_run_profile_options_unsupported`. The plugin
+owns option names and descriptions.
+
+Add `optionsInputHints` beside `optionsSchema` to offer specific options in the
+Review launcher's engine controls:
+
+```ts
+optionsInputHints: {
+  fields: [{
+    path: 'effort',
+    title: 'Inspection depth',
+    widget: 'select',
+    options: [
+      { value: 'fast', label: 'Fast' },
+      { value: 'deep', label: 'Deep' },
+    ],
+  }],
+},
+```
+
+This uses the shared static input-hint grammar, including localized titles and
+choice labels. Only declared fields become controls; other schema properties
+remain available to the engine without appearing in the form. Keep internal
+configuration out of this declaration. The launcher writes the selected value
+to that engine reviewer's `options`; `optionsSchema` remains the validation
+contract.
+
+Findings can carry `extensions` keyed by your complete plugin ID, for example
+`{ 'com.example.runs': { evidence: ['slice-1'] } }`. Values must be strict JSON;
+unknown namespaces remain opaque content. Keep suggested fixes in the
+ordinary `suggestion` and `patch` fields. Extensions never decide finding state
+or authorize an operation. Existing findings can omit them.
+
+These additions require matching development host and SDK readers. They do not
+change the runtime ABI or promise support from earlier strict manifest readers.
+
 ## Review contextual presentation
 
 In matching 0.3 development hosts, contribute a `reviewFinding` view to present

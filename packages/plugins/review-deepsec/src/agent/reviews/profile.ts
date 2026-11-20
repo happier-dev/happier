@@ -19,6 +19,10 @@ export function createDeepSecReviewExecutionProfile(kind: DeepSecReviewProfileKi
     defaults: { retention: 'ephemeral' as const, runClass: 'bounded' as const, io: 'streaming' as const },
     compatibleAgents: ['deepsec'],
     metadata: { reviewCostConsentOption: 'confirmedCostWarning', reviewInstructionsInput: 'unsupported' },
+    optionsInputHints: { fields: [{
+      path: 'thinkingLevel', title: 'Reasoning effort', widget: 'select' as const,
+      options: DEEPSEC_THINKING_LEVELS.map(value => ({ value, label: value })),
+    }] },
     optionsSchema: {
       type: 'object' as const,
       additionalProperties: false as const,

@@ -17,7 +17,7 @@ const ADMISSIBLE = { who: ['newAgent', 'engine', 'session', 'bot', 'person'], ma
 
 type Props = Readonly<{
     input: Record<string, unknown>;
-    onChange: (input: Record<string, unknown>) => void;
+    onChange: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
     source: ContextualStartSource;
     choices: readonly ExecutionRunLauncherBackendChoice[];
     transcriptAvailable: boolean;
@@ -41,7 +41,7 @@ export function ReviewStartBody(props: Props) {
     const steps = readReviewLauncherSteps(props.input);
     const selections = React.useMemo(() => steps.flatMap(step => step.reviewers), [steps]);
     const labels = useExecutableParticipantLabels(selections, props.source.where?.accountLifetime?.scope.serverId ?? null);
-    const update = (next: typeof steps) => props.onChange({ ...props.input, steps: next, reviewers: next[0]?.reviewers ?? [] });
+    const update = (next: typeof steps) => props.onChange(previous => ({ ...previous, steps: next, reviewers: next[0]?.reviewers ?? [] }));
     const costs: ReviewStartOptionsProps['costs'] = steps.flatMap((step, stepIndex) => step.reviewers.flatMap((reviewer, reviewerIndex) => {
         if (reviewer.kind !== 'engine') return [];
         const choice = props.choices.find(choice => (choice.reviewEngineId ?? choice.backendId) === reviewer.engineId);
@@ -50,7 +50,7 @@ export function ReviewStartBody(props: Props) {
         if (!consent) return [];
         return [{ id: `${stepIndex}:${reviewerIndex}`, engine: choice.title, title: consent.title,
             description: consent.description, accepted: reviewer.options?.[consent.optionKey] === true,
-            onAcceptedChange: (accepted: boolean) => props.onChange(updateReviewLauncherStepInput(props.input, stepIndex, current => ({
+            onAcceptedChange: (accepted: boolean) => props.onChange(previous => updateReviewLauncherStepInput(previous, stepIndex, current => ({
                 ...current, reviewers: readReviewLauncherReviewers(current).map((value, index) => index === reviewerIndex && value.kind === 'engine'
                     ? { ...value, options: { ...value.options, [consent.optionKey]: accepted } } : value),
             }))) }];
@@ -68,9 +68,9 @@ export function ReviewStartBody(props: Props) {
             renderWho={stepIndex => <StepWho {...props} stepIndex={stepIndex} steps={steps} onStepsChange={update} />} />
         {props.children}
         <ReviewStartOptions then={props.input.then === 'fix' ? 'fix' : 'report'}
-            onThenChange={then => props.onChange({ ...props.input, then })}
+            onThenChange={then => props.onChange(previous => ({ ...previous, then }))}
             walkthrough={props.walkthrough}
-            onWalkthroughChange={walkthrough => props.onChange({ ...props.input, outputs: walkthrough ? ['walkthrough'] : [] })}
+            onWalkthroughChange={walkthrough => props.onChange(previous => ({ ...previous, outputs: walkthrough ? ['walkthrough'] : [] }))}
             narrator={props.narrator} credentials={props.credentials} costs={costs} disabled={props.disabled}
             onSaveAsWorkflow={props.onSaveAsWorkflow} />
     </View>;
@@ -117,7 +117,7 @@ function StepWho(props: Props & Readonly<{ stepIndex: number; steps: ReturnType<
     const { steps: _steps, ...shared } = props.input;
     const input = { ...shared, reviewers: step.reviewers };
     const setInput: React.Dispatch<React.SetStateAction<Record<string, unknown>>> = update =>
-        props.onChange(updateReviewLauncherStepInput(props.input, props.stepIndex, update));
+        props.onChange(previous => updateReviewLauncherStepInput(previous, props.stepIndex, update));
     const controls = props.stepControls?.(input, setInput, props.stepIndex) ?? { details: props.stepIndex === 0 ? props.details : undefined,
         whoAccessory: props.stepIndex === 0 ? props.whoAccessory : undefined };
     const accountLifetime = props.source.where?.accountLifetime;
@@ -136,7 +136,7 @@ function ParticipantStepWho(props: Props & Readonly<{
     const reviewers = readReviewLauncherSteps(props.input)[0]!.reviewers;
     const selected = reviewers.filter((reviewer): reviewer is ExecutableParticipantSelectionV1 =>
         reviewer.kind === 'session' || reviewer.kind === 'model');
-    const replace = (next: typeof reviewers) => props.onChange({ ...props.input, reviewers: next });
+    const replace = (next: typeof reviewers) => props.onChange(previous => ({ ...previous, reviewers: next }));
     const onChoose = (selection: ExecutableParticipantSelectionV1) => {
         const has = (reviewer: typeof reviewers[number]) => reviewer === selection || (reviewer.kind === 'session'
             && selection.kind === 'session' && reviewer.session.serverId === selection.session.serverId

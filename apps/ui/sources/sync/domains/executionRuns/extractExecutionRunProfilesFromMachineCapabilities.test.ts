@@ -14,6 +14,8 @@ describe('extractExecutionRunProfilesFromMachineCapabilitiesState', () => {
                 gate: { type: 'string', enum: ['critical', 'major', 'minor', 'trivial', 'info'], default: 'major' },
             },
         } satisfies PluginJsonSchemaV2;
+        const optionsInputHints = { fields: [{ path: 'gate', title: 'Severity', widget: 'select',
+            options: [{ value: 'major', label: 'Major' }] }] } as const;
         const profiles = extractExecutionRunProfilesFromMachineCapabilitiesState({
             snapshot: { response: { results: { 'tool.executionRuns': { ok: true, data: {
                 executionRunProfiles: [{
@@ -25,6 +27,7 @@ describe('extractExecutionRunProfilesFromMachineCapabilitiesState', () => {
                     available: true,
                     defaults: { retention: 'resumable', runClass: 'bounded', io: 'streaming' },
                     optionsSchema,
+                    optionsInputHints,
                 }],
             } } } } },
         });
@@ -33,7 +36,7 @@ describe('extractExecutionRunProfilesFromMachineCapabilitiesState', () => {
             intent: 'review',
             profiles,
             backendChoices: [{ backendId: 'coderabbit', disabled: false }],
-        })).toEqual([expect.objectContaining({ optionsSchema, compatibleAgentId: 'coderabbit', disabled: false })]);
+        })).toEqual([expect.objectContaining({ optionsSchema, optionsInputHints, compatibleAgentId: 'coderabbit', disabled: false })]);
     });
 
     it('accepts only qualified profiles with canonical source custody', () => {

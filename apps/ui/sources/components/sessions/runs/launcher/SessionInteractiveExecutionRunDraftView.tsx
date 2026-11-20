@@ -65,7 +65,7 @@ import { artifactViewRoute } from '@/components/artifacts/artifactViewRoute';
 import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { readReviewLauncherEngineIds, readReviewLauncherReviewers, readReviewLauncherSteps, selectReviewLauncherEngines, selectReviewLauncherRetryReviewers, reviewLauncherEngineConfiguration, updateReviewLauncherEngineConfiguration } from './reviewLauncherSelection';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
-import { ExecutionRunLauncherOptions } from './ExecutionRunLauncherOptions';
+import { ExecutionRunLauncherOptions, ExecutionRunProfileOptionFields } from './ExecutionRunLauncherOptions';
 import {
     resolveExecutionRunLaunchTitle,
     resolveExecutionRunLauncherActionId,
@@ -1251,10 +1251,17 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
             });
             const profileId = choice.reviewInventoryItem?.profileId;
             const profile = parseQualifiedPluginContributionKey(profileId);
+            const profileChoice = options.profileChoices.find(candidate => candidate.id === profileId);
             const renderDetail = () => <><ExecutionRunAgentModelPicker choice={choice}
                 sessionId={props.sessionId} serverId={serverId} machineId={machineId} actionInput={engineInput}
                 selected={parsed.success ? parsed.data : null} inheritedTeamCredentialModel={null}
                 selectBackend={() => undefined} setActionInput={setEngineInput} />
+                {profileChoice ? <ExecutionRunProfileOptionFields profile={profileChoice}
+                    options={reviewer.options ?? EMPTY_REVIEW_ENGINE_OPTIONS} editable={editable}
+                    onPatch={patch => setEngineInput(previous => ({ ...previous, options: {
+                        ...readReviewLauncherReviewers(previous).find(candidate => candidate.kind === 'engine')!.options,
+                        ...patch,
+                    } }))} /> : null}
                 {profile && profileId && serverId ? <ReviewEngineOptionsPluginContent pluginId={profile.pluginId}
                     engineId={reviewer.engineId} profileId={profileId} options={reviewer.options ?? EMPTY_REVIEW_ENGINE_OPTIONS}
                     serverId={serverId} /> : null}</>;

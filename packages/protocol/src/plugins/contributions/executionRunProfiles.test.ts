@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { resolveEffectiveInputFields } from '../../inputs/inputFieldRuntime.js';
 
 import {
   PluginExecutionRunProfileActionReferenceV2Schema,
@@ -52,6 +53,37 @@ describe('PluginExecutionRunProfileContributionV2Schema', () => {
     };
     expect(PluginExecutionRunProfileContributionV2Schema.parse({ ...profile, optionsSchema }))
       .toEqual({ ...profile, optionsSchema });
+  });
+
+  it('retains only explicitly declared public option controls through serialization', () => {
+    const declaration = {
+      ...profile,
+      optionsSchema: {
+        type: 'object', additionalProperties: false,
+        properties: {
+          effort: { type: 'string', enum: ['fast', 'deep'] },
+          executablePath: { type: 'string', title: 'Executable path' },
+        },
+      },
+      optionsInputHints: { fields: [{
+        path: 'effort', title: { key: 'review.effort', fallback: 'Effort' }, widget: 'select',
+        options: [{ value: 'fast', label: 'Fast' }, { value: 'deep', label: 'Deep' }],
+      }] },
+    };
+    const parsed = PluginExecutionRunProfileContributionV2Schema.parse(JSON.parse(JSON.stringify(declaration)));
+    expect(parsed.optionsInputHints).toEqual(declaration.optionsInputHints);
+    expect(resolveEffectiveInputFields({ inputHints: parsed.optionsInputHints }, {}).map(field => field.path))
+      .toEqual(['effort']);
+  });
+
+  it.each([
+    { optionsSourceId: 'host.options' },
+    { connectedAccountOptions: true },
+  ])('rejects host option producers in profile presentation: %j', source => {
+    expect(PluginExecutionRunProfileContributionV2Schema.safeParse({
+      ...profile,
+      optionsInputHints: { fields: [{ path: 'effort', title: 'Effort', widget: 'select', ...source }] },
+    }).success).toBe(false);
   });
 
   it.each([

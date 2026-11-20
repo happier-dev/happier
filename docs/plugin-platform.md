@@ -14206,6 +14206,39 @@ new presenter is introduced. Caller-authored
 HTML's existing restricted method ceiling is unchanged.
 
 
+### Review profile options and finding extensions (0.3 development)
+
+The existing `executionRunProfiles` descriptor accepts optional `optionsSchema`,
+using the canonical portable JSON Schema dialect with recursively closed objects.
+`definePlugin` exposes and projects the descriptor directly. The selected profile's
+admission in `intentRegistry.ts` validates `intentInput.engines[agentId]` once
+through the canonical JSON Schema compiler before prompt loading or scope work.
+Omission means an empty options object; undeclared nonempty options are explicitly
+unsupported. Plugins own option names and descriptions; hosts have no vendor-key list.
+
+An optional `optionsInputHints` declaration exposes a public subset of those
+options using the existing static, localized input-field grammar. Hosts resolve
+only its declared fields through the shared input-field owner; they do not derive
+controls from every property in `optionsSchema`. The schema still validates all
+submitted options, including values supplied outside the form. A selected
+engine's controls update that reviewer's `options` through the ordinary roster
+writer. For example, DeepSec declares `thinkingLevel` as a select whose choices
+come from its native effort enum; executable and cost configuration remain
+undeclared.
+
+`ReviewFinding.extensions` is optional plugin-ID-keyed JSON content, normalized
+by the strict JSON owner at the finding boundary. The existing strict review
+normalizer and `review_findings.v2` preserve it alongside suggestion and patch;
+unknown namespaces remain opaque and have no decision or authority semantics.
+Existing findings need no migration to remain readable. Persisted ReviewComment
+content remains owned by the comment format, rather than a server-readable index.
+
+This is an unreleased development manifest addition requiring matching Protocol,
+SDK and host readers. It adds no runtime ABI epoch or mixed-development adapter.
+The [plugin execution-run guide](../apps/docs/content/docs/plugins/agent-runtimes/execution-runs.mdx)
+shows the authoring shape.
+
+
 ### Review contextual plugin presentation (0.3 development)
 
 The opened Review owner supplies read-only `mount.review` context to existing

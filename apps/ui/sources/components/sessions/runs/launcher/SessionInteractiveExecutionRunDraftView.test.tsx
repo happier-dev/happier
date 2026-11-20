@@ -84,6 +84,7 @@ import { MachineSelector } from '@/components/sessions/new/components/MachineSel
 import { PathSelectionList } from '@/components/ui/pathPicker/PathSelectionList';
 import { SessionParticipantComposer } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
+import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
 import { askSelectionQuote, type AskSelectionTargetContext } from '@/components/ui/code/selection/askSelectionTarget';
@@ -203,6 +204,7 @@ let reviewCostEngineId = 'claude';
 let uninstalledAgentId: string | null = null;
 let omittedMachineAgentId: string | null = null;
 let reviewProfileIds: Readonly<Record<string, string>> = {};
+let executionRunProfiles: readonly unknown[] = [];
 let protocolSupported = true;
 let detachedScopeSupported = true;
 let admissionFailure = false;
@@ -427,6 +429,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         uninstalledAgentId = null;
         omittedMachineAgentId = null;
         reviewProfileIds = {};
+        executionRunProfiles = [];
         backends = { claude: { available: true, intents: ['delegate', 'review', 'plan'] }, codex: { available: true, intents: ['delegate', 'review', 'plan'] } };
         startResults = [];
         reviewRouterPush.mockClear();
@@ -500,6 +503,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
                 results: { ...reviewAgentReadiness(), 'tool.executionRuns': { ok: true, checkedAt: Date.now(), data: {
                     available: runProtocol.available, backends, protocolVersion: runProtocol.version,
                     features: runProtocol.features,
+                    executionRunProfiles,
                 } } },
             };
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_START
@@ -740,6 +744,82 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         expect(emittedStarts).toEqual([]);
         expect(emittedWorkflowStarts).toEqual([]);
         expect(home.requests.slice(requestsBeforeSave).filter(request => request.method !== 'GET')).toEqual([]);
+    });
+
+    it('edits only declared profile options of the opened reviewer while retaining the mixed roster and consent', async () => {
+        backends.deepsec = { available: true, intents: ['review'] };
+        reviewProfileIds = { deepsec: 'happier.review.deepsec/review' };
+        executionRunProfiles = [{ id: reviewProfileIds.deepsec, intent: 'review', title: 'DeepSec Review',
+            compatibleAgents: ['deepsec'], sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'archive' }, available: true,
+            defaults: { retention: 'resumable', runClass: 'bounded', io: 'streaming' },
+            optionsSchema: { type: 'object', additionalProperties: false, properties: {
+                thinkingLevel: { type: 'string', enum: ['low', 'high'] },
+                executablePath: { type: 'string', title: 'Internal executable' },
+                confirmedCostWarning: { type: 'boolean', title: 'Internal cost flag' },
+            } },
+            optionsInputHints: { fields: [{ path: 'thinkingLevel', title: 'Reasoning effort', widget: 'select',
+                options: [{ value: 'low', label: 'Low' }, { value: 'high', label: 'High' }] }] },
+        }];
+        const reviewers = [
+            { kind: 'engine', engineId: 'deepsec', options: { thinkingLevel: 'low', executablePath: '/kept', confirmedCostWarning: true } },
+            { kind: 'engine', engineId: 'claude', options: { thinkingLevel: 'low', selectedFeature: 'storage' } },
+        ];
+        await mount({ intent: 'review', initialActionInput: { reviewers } });
+        const engine = agentRows().find(option => option.testID === 'contextual-start-agent:deepsec');
+        if (!engine) throw new Error('Expected the chosen DeepSec engine');
+        await screen.pressByTestIdAsync(`contextual-start-change:${engine.id}`);
+        await waitFor(() => expect(screen.getTextContent()).toContain('Reasoning effort'));
+        expect(screen.getTextContent()).not.toContain('Internal executable');
+        expect(screen.getTextContent()).not.toContain('Internal cost flag');
+        const high = screen.root.findAll(node => typeof node.type === 'string'
+            && node.props.role === 'radio' && node.props.accessibilityLabel === 'High'
+            && typeof node.props.onPress === 'function')[0];
+        if (!high) throw new Error('Expected the declared High effort choice');
+        await act(async () => high.props.onPress());
+        const draftKey = composer().launcherDraftKey;
+        if (!draftKey) throw new Error('Expected the retained Review draft');
+        await waitFor(() => expect(getSessionDraftDocumentField(getSessionDraftSnapshot(
+            { serverId, accountId: 'account_1' }, { kind: 'session', sessionId: 'session_1' })?.document ?? null,
+            executionRunLauncherDraftFieldPath(draftKey, 'selection'))?.value).toMatchObject({ actionInput: { reviewers: [
+                { ...reviewers[0], options: { ...reviewers[0]!.options, thinkingLevel: 'high' } }, reviewers[1],
+            ] } }));
+        expect(emittedStarts).toEqual([]);
+    });
+
+    it('retains sequential option patches from the same opened profile detail', async () => {
+        reviewProfileIds = { claude: 'fixture.claude/review' };
+        executionRunProfiles = [{ id: reviewProfileIds.claude, intent: 'review', title: 'Review',
+            compatibleAgents: ['claude'], sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-1', installSource: 'archive' },
+            available: true, defaults: { retention: 'resumable', runClass: 'bounded', io: 'streaming' },
+            optionsSchema: { type: 'object', additionalProperties: false, properties: {
+                effort: { type: 'string' }, focus: { type: 'string' },
+            } },
+            optionsInputHints: { fields: [
+                { path: 'effort', title: 'Effort', widget: 'text' },
+                { path: 'focus', title: 'Focus', widget: 'text' },
+            ] },
+        }];
+        const reviewers = [
+            { kind: 'engine', engineId: 'claude', options: { effort: 'low', focus: 'correctness' } },
+            { kind: 'engine', engineId: 'codex', options: { effort: 'unchanged' } },
+        ];
+        await mount({ intent: 'review', initialActionInput: { reviewers } });
+        const engine = agentRows().find(option => option.testID === 'contextual-start-agent:claude');
+        if (!engine) throw new Error('Expected the selected reviewer');
+        await screen.pressByTestIdAsync(`contextual-start-change:${engine.id}`);
+        await waitFor(() => expect(screen.getTextContent()).toContain('Effort'));
+        const fields = screen.findAllByType(ActionInputFields).find(node => node.props.fields.some(
+            (field: { path: string }) => field.path === 'effort'));
+        if (!fields) throw new Error('Expected the opened profile fields');
+        const patch = fields.props.onPatch;
+        await act(async () => { patch({ effort: 'high' }); patch({ focus: 'security' }); });
+        const draftKey = composer().launcherDraftKey;
+        if (!draftKey) throw new Error('Expected the retained Review draft');
+        await waitFor(() => expect(getSessionDraftDocumentField(getSessionDraftSnapshot(
+            { serverId, accountId: 'account_1' }, { kind: 'session', sessionId: 'session_1' })?.document ?? null,
+            executionRunLauncherDraftFieldPath(draftKey, 'selection'))?.value).toMatchObject({ actionInput: { reviewers: [
+                { ...reviewers[0], options: { effort: 'high', focus: 'security' } }, reviewers[1],
+            ] } }));
     });
 
     it('activates contributed options only for the opened selected review engine', async () => {

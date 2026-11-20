@@ -14,6 +14,33 @@ import { t } from '@/text';
 import { ExecutionRunProfilePicker } from './ExecutionRunProfilePicker';
 import type { ExecutionRunLauncherProfileChoice } from './resolveExecutionRunLauncherProfileChoices';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { normalizeInputHintsText } from '@happier-dev/protocol/inputs/inputFields';
+import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
+import type { ExecutionRunProfileCapability } from '@/sync/domains/executionRuns/extractExecutionRunsBackendsFromMachineCapabilities';
+
+const resolveProfileFieldOptions = buildSessionActionFieldOptionsResolver({});
+
+/** Profile declarations name their public controls; the validation schema can also contain private options. */
+export function ExecutionRunProfileOptionFields(props: Readonly<{
+    profile: ExecutionRunProfileCapability;
+    options: Record<string, unknown>;
+    editable: boolean;
+    onPatch: (patch: Record<string, unknown>) => void;
+}>) {
+    const localize = useProjectedPluginLocalizedTextResolver();
+    const hints = React.useMemo(() => {
+        const identity = parseQualifiedPluginContributionKey(props.profile.id);
+        return identity && props.profile.optionsInputHints
+            ? normalizeInputHintsText(props.profile.optionsInputHints, value => localize(identity.pluginId, value))
+            : undefined;
+    }, [localize, props.profile.id, props.profile.optionsInputHints]);
+    const fields = React.useMemo(() => resolveEffectiveInputFields({ inputHints: hints }, props.options), [hints, props.options]);
+    return <ActionInputFields fields={fields} input={props.options} editable={props.editable}
+        resolveFieldOptions={resolveProfileFieldOptions} onPatch={props.onPatch} />;
+}
 
 const alwaysCustomFieldPaths = new Set([
     'backendTargetKeys',
