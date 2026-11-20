@@ -1558,6 +1558,7 @@ export function createDaemonControlApp({
               actionCaller: { kind: 'host' },
               ...(request.requiredDangerLevel ? { requiredContributedActionDangerLevel: request.requiredDangerLevel } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+              ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
             },
           );
           if (!execution.ok) {

@@ -185,6 +185,31 @@ describe('createDaemonControlApp external Action ingress', () => {
       expect(narrowed.json()).toMatchObject({ ok: false, errorCode: 'present_user_required' });
     } finally { await app.close(); }
   });
+  it('preserves the admitted request ID when a Session tool reaches the daemon-owned contributed Action', async () => {
+    const actionRequestId = 'native-session-contributed-action';
+    const execute: ExternalActionExecutor['execute'] = async (_actionId, _input, context) => ({
+      ok: true, result: { actionRequestId: context?.actionRequestId ?? null },
+    });
+    const app = createApp({
+      currentServerId: 'server-local',
+      verifyPat: vi.fn(),
+      executor: { execute },
+      resolveTarget: vi.fn(),
+    }, { enablePluginActionRoute: true });
+
+    try {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/plugins/actions/execute',
+        headers: { 'x-happier-daemon-token': 'private-control-token' },
+        payload: { actionId: 'action.invoke', input: { action: { pluginId: 'acme.client', localId: 'apply' } },
+          surface: 'agent', actionRequestId },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({ matched: true, result: { ok: true, result: { actionRequestId } } });
+    } finally { await app.close(); }
+  });
+
   it('fails closed when a daemon-owned meta Action produces a non-JSON result', async () => {
     const execute = vi.fn<ExternalActionExecutor['execute']>(
       async () => ({ ok: true as const, result: 1n }),
