@@ -15,9 +15,9 @@ tracked=()
 for f in "${files[@]}"; do [ -n "$f" ] && [ -e "$f" ] && git cat-file -e "HEAD:$f" 2>/dev/null && tracked+=("$f"); done
 if [ ${#tracked[@]} -gt 0 ]; then
   for f in "${tracked[@]}"; do
-    echo "commit-partial: refused whole-file entry for tracked file $f ($(git diff -U0 HEAD -- "$f" | grep -c '^@@') working-tree hunk(s), possibly other lanes' edits)."
+    echo "commit-partial: refused whole-file entry for tracked file $f ($(git --no-optional-locks -c diff.autoRefreshIndex=false diff -U0 HEAD -- "$f" | grep -c '^@@') working-tree hunk(s), possibly other lanes' edits)."
   done
-  echo "Commit tracked files by patch with only your hunks, e.g. git diff HEAD -- <file> > mine.patch, delete the hunks that are not yours, and pass mine.patch after the list. Whole-file entries are for new files and deletions."
+  echo "Commit tracked files by patch with only your hunks, e.g. git --no-optional-locks -c diff.autoRefreshIndex=false diff HEAD -- <file> > mine.patch, delete the hunks that are not yours, and pass mine.patch after the list. Whole-file entries are for new files and deletions."
   exit 1
 fi
 for p in "${patches[@]}"; do

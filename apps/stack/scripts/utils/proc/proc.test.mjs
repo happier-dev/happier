@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter, once } from 'node:events';
 import { WriteStream } from 'node:fs';
-import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -35,6 +35,25 @@ for (const [name, invoke] of [
     await invoke();
   });
 }
+
+test('captured Git status leaves the index stat cache untouched', async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), 'happier-proc-git-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const git = (...args) => runCapture('git', args, { cwd });
+  await git('init', '-q');
+  const tracked = join(cwd, 'tracked.txt');
+  await writeFile(tracked, 'tracked');
+  await git('add', 'tracked.txt');
+  const index = join(cwd, '.git', 'index');
+  const originalIndex = await readFile(index);
+  await utimes(tracked, 946684800, 946684800);
+  const result = await runCaptureResult('git', ['status', '--porcelain'], {
+    cwd, env: { ...process.env, GIT_OPTIONAL_LOCKS: '1' }, timeoutMs: 10_000,
+  });
+  assert.equal(result.exitCode, 0, result.err);
+  assert.equal(result.out, 'A  tracked.txt\n');
+  assert.ok((await readFile(index)).equals(originalIndex));
+});
 
 test('foreground commands preserve their controlling terminal', { skip: process.platform === 'win32' }, async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'happier-proc-tty-'));

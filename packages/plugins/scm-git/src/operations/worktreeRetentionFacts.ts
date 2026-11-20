@@ -109,7 +109,7 @@ export async function readGitRetentionFacts(path: string, repositoryPath: string
         // Missing/prunable dependents still appear in confirmation; they have no readable working files.
         try { await lstat(worktree.path); }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue; return undefined; }
-        const status = await command(worktree.path, ['--no-optional-locks', 'status', '--porcelain', '-z', '--untracked-files=all']);
+        const status = await command(worktree.path, ['status', '--porcelain', '-z', '--untracked-files=all']);
         if (!status.success) return undefined;
         statuses.push(worktree.path, status.stdout);
         for (const change of parseGitStatusPorcelainShortZ(status.stdout)) {

@@ -106,6 +106,15 @@ export type ScmCommandInput = {
 /** Host-private process port; the existing Exec owner decides identity and custody. */
 export type ScmCommandRunner = (input: ScmCommandInput) => Promise<ScmExecResult>;
 
+function isGitExecutable(bin: string): boolean {
+    return path.basename(bin).toLowerCase().replace(/\.exe$/, '') === 'git';
+}
+
+/** Git skips optional writes such as status stat refresh and keeps locks required by the command. */
+function scmProcessArgs({ bin, args }: ScmCommandInput): string[] {
+    return isGitExecutable(bin) ? ['--no-optional-locks', ...args] : args;
+}
+
 const scmCommandRunner = new AsyncLocalStorage<Readonly<{ runner: ScmCommandRunner; requester: boolean }>>();
 
 /** A component default; it never replaces the runner the admitted requester selected. */
@@ -187,7 +196,7 @@ export function createScmCommandRunnerFromExecService(exec: ExecService): ScmCom
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
             if (input.stdoutFilePath) descriptor = openSync(input.stdoutFilePath, 'wx', 0o600);
-            const child = await exec.spawn({ executable: tool.executable, args: input.args, cwd: input.cwd,
+            const child = await exec.spawn({ executable: tool.executable, args: scmProcessArgs(input), cwd: input.cwd,
                 env: Object.fromEntries(Object.entries(input.env ?? {}).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
                 maxStdoutBytes: 0, maxStderrBytes: 0,
             }, { signal: cancellation.signal });
@@ -317,7 +326,7 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
  * directory. Appends to any inherited environment config rather than replacing it.
  */
 function withEmptySafeDirectory(input: ScmCommandInput): ScmCommandInput {
-    if (path.basename(input.bin).replace(/\.exe$/i, '') !== 'git') return input;
+    if (!isGitExecutable(input.bin)) return input;
     const environment = { ...sessionProcessEnvironment(), ...input.env };
     const config = appendGitConfigEnvironment(environment, [['safe.directory', '']]);
     // A malformed count is left for Git to report, as before.
@@ -370,7 +379,7 @@ function runResolvedScmCommand(input: ScmCommandInput, source: ReturnType<typeof
         let child: WorkspaceChildProcess;
         try {
             if (input.stdoutFilePath) stdoutDescriptor = openSync(input.stdoutFilePath, 'wx', 0o600);
-            child = source.spawn({ command: resolvedBinPath, args: input.args, cwd: input.cwd,
+            child = source.spawn({ command: resolvedBinPath, args: scmProcessArgs(input), cwd: input.cwd,
                 // The target inherits its own environment; only this operation's overlays cross.
                 env: source.kind === 'target' ? input.env : execEnv,
                 ...(stdoutDescriptor !== undefined ? { stdoutFd: stdoutDescriptor } : {}) });

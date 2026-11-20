@@ -1,6 +1,6 @@
 import { fork, spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { constants } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
@@ -15,6 +15,11 @@ const plannedExitMarker = Symbol('happier.stack.plannedExit');
 const foregroundCommandResult = Symbol('happier.stack.foregroundCommandResult');
 const DEFAULT_TEE_MAX_BYTES = DEFAULT_BOUNDED_LOG_MAX_BYTES;
 
+// Suppress optional Git writes such as the status stat refresh.
+export function gitProcessArgs(args) {
+  return ['--no-optional-locks', ...args];
+}
+
 function resolveProcSpawnInvocation(cmd, args, env, shellOverride) {
   if (shellOverride === true) {
     return {
@@ -23,7 +28,11 @@ function resolveProcSpawnInvocation(cmd, args, env, shellOverride) {
       spawnOptions: { windowsHide: true, shell: true },
     };
   }
-  const invocation = resolveCommandInvocation({ command: cmd, args, env });
+  const invocation = resolveCommandInvocation({
+    command: cmd,
+    args: basename(String(cmd ?? '').trim()).toLowerCase().replace(/\.exe$/, '') === 'git' ? gitProcessArgs(args) : args,
+    env,
+  });
   return {
     command: invocation.command,
     args: invocation.args,

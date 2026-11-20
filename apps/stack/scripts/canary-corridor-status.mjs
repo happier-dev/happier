@@ -3,6 +3,8 @@
 // Session-Agent authoring canary corridor without mutating anything.
 import { execFileSync } from 'node:child_process';
 
+import { gitProcessArgs } from './utils/proc/proc.mjs';
+
 const repoRoot = new URL('../../..', `file://${process.cwd()}/`).pathname;
 
 const paths = [
@@ -13,7 +15,7 @@ const paths = [
 ];
 
 function git(args) {
-  return execFileSync('git', ['-C', repoRoot, ...args], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+  return execFileSync('git', gitProcessArgs(['-C', repoRoot, ...args]), { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
 }
 
 const head = git(['rev-parse', '--short', 'HEAD']).trim();

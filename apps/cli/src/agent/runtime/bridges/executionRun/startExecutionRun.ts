@@ -489,7 +489,7 @@ async function startAdmittedExecutionRunInWorkspace(
         const diff = supplied.diff === undefined ? await runScmCommand({
           bin: 'git',
           cwd,
-          args: ['--no-optional-locks', 'diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--'],
+          args: ['diff', '--no-ext-diff', '--no-textconv', 'HEAD', '--'],
         }) : null;
         secondOpinionInput = {
           ...intentInput,

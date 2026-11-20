@@ -26,12 +26,12 @@ export async function readWorktreeChangeFingerprint(cwd: string): Promise<Worktr
         const [status, modified, untracked] = await Promise.all([
             runScmCommand({
                 bin: 'git', cwd: repoRoot,
-                args: ['--no-optional-locks', 'status', '--porcelain=v2', '-z', '--branch',
+                args: ['status', '--porcelain=v2', '-z', '--branch',
                     '--untracked-files=all', '--no-renames', '--ignore-submodules=none'],
             }),
             runScmCommand({
                 bin: 'git', cwd: repoRoot,
-                args: ['--no-optional-locks', 'diff', '--name-only', '-z', '--no-ext-diff',
+                args: ['diff', '--name-only', '-z', '--no-ext-diff',
                     '--no-textconv', '--ignore-submodules=none'],
             }),
             runScmCommand({

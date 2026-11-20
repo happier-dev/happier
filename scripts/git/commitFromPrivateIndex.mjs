@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { once } from 'node:events';
 
 function gitAt(cwd, env) {
-  return (...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  return (...args) => execFileSync('git', ['--no-optional-locks', ...args], { cwd, env, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 // Git owns index.lock. Retry its atomic update only when that lock is occupied;

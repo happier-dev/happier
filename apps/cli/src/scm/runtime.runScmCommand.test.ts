@@ -1,6 +1,6 @@
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -27,6 +27,27 @@ const runner = mode === 'direct' ? undefined : createHostScmCommandRunner({
 });
 const runScmCommand: typeof runCanonicalScmCommand = input => runWithScmCommandRunner(runner, () => runCanonicalScmCommand(input));
 const probeScmExecutableAvailable: typeof probeCanonicalScmExecutableAvailable = input => runWithScmCommandRunner(runner, () => probeCanonicalScmExecutableAvailable(input));
+
+    it('reports status without writing the optional index refresh', async () => {
+        const cwd = mkdtempSync(join(tmpdir(), 'happier-scm-optional-locks-'));
+        try {
+            initRepo(cwd);
+            const index = join(cwd, '.git', 'index');
+            const originalIndex = readFileSync(index);
+            // Make Git recheck the content of a tracked file whose stat data changed.
+            utimesSync(join(cwd, 'a.txt'), 946684800, 946684800);
+            writeFileSync(join(cwd, 'new.txt'), 'new\n');
+
+            const status = await runScmCommand({ bin: 'git', cwd, args: ['status', '--porcelain'],
+                env: { GIT_OPTIONAL_LOCKS: '1' } });
+            expect(status).toMatchObject({ success: true, stdout: '?? new.txt\n' });
+            expect(readFileSync(index).equals(originalIndex)).toBe(true);
+
+            const add = await runScmCommand({ bin: 'git', cwd, args: ['add', '--', 'new.txt'] });
+            expect(add.success, add.stderr).toBe(true);
+            expect(execFileSync('git', ['ls-files', '--', 'new.txt'], { cwd, encoding: 'utf8' })).toBe('new.txt\n');
+        } finally { rmSync(cwd, { recursive: true, force: true }); }
+    });
 
 describe('runScmCommand output limits', () => {
     it('pushes with the invoking hosted Session global Git configuration', async () => {
