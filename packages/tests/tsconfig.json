@@ -18,6 +18,7 @@
       "@happier-tests/ui-terminal-enrollment": ["./../../apps/ui/sources/dev/testkit/terminalEnrollmentIntegrationTestkit.d.mts"],
       "@happier-tests/ui-machine-carrier": ["./../../apps/ui/sources/dev/testkit/machineCarrierHttpIntegrationTestkit.d.mts"],
       "@happier-tests/ui-scm-refine-admission": ["./../../apps/ui/sources/dev/testkit/scmRefineAdmissionIntegrationTestkit.d.mts"],
+      "@happier-tests/ui-triage-attachment-lifecycle": ["./../../apps/ui/sources/dev/testkit/triageAttachmentLifecycleTestkit.d.mts"],
       "@happier-tests/server-machine-carrier-grant": ["./../../apps/server/sources/app/api/testkit/machineCarrierGrantIntegrationTestkit.d.mts"],
       // This program reaches CLI source through `@/*`; resolve its public SDK imports
       // through the same current source owner as direct test imports.

@@ -133,6 +133,9 @@ const appSourceAliasesPlugin: Plugin = {
     if (id === '@happier-tests/ui-scm-refine-admission') {
       return uiSource('dev/testkit/scmRefineAdmissionIntegrationTestkit.ts');
     }
+    if (id === '@happier-tests/ui-triage-attachment-lifecycle') {
+      return uiSource('dev/testkit/triageAttachmentLifecycleTestkit.ts');
+    }
     if (id === '@happier-tests/server-machine-carrier-grant') {
       return resolve(serverSourcesRoot, 'app/api/testkit/machineCarrierGrantIntegrationTestkit.ts');
     }
