@@ -251,7 +251,7 @@ function withTaskFactsWitness(fragment: PluginJsonSchema): PluginJsonSchema {
             // them from this finite sub-envelope rather than invent maxima.
             Object.entries(fragment.properties)
                 .filter(([key]) => key !== 'labels' && key !== 'labelColors' && key !== 'retained')
-                .map(([key, child]) => [key,
+                .map(([key, child]): [string, PluginJsonSchema] => [key,
                 ['configuredSources', 'lanes', 'continuations'].includes(key) && child.type === 'array'
                     ? { ...withTaskFactsWitness(child), maxItems: MAX_TRIAGE_LIST_SOURCE_BATCH_V1 }
                     : key === 'scope' ? { const: {
@@ -397,7 +397,9 @@ describe('aggregate Action value shapes', () => {
             if (typeof value !== 'string') throw new Error('a continuation token must be a string');
             return value;
         };
-        const laneTokenCount = parsed.window.continuations.length;
+        const continuations = parsed.window.continuations;
+        if (continuations === undefined) throw new Error('the maximal list witness lost its continuation set');
+        const laneTokenCount = continuations.length;
         expect(laneTokenCount).toBe(MAX_TRIAGE_LIST_SOURCE_BATCH_V1);
         const encodedBytesPerTokenByte = encodedJsonBytes(tokenAt(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1 + 1))
             - encodedJsonBytes(tokenAt(MAX_TRIAGE_PAGING_TOKEN_UTF8_BYTES_V1));
@@ -413,7 +415,7 @@ describe('aggregate Action value shapes', () => {
         // Preserve the measured schema witness, including additive-read probe
         // fields the successful typed reader may legitimately discard.
         const oversized = { ...maximal, window: { ...maximal.window,
-            continuations: parsed.window.continuations.map(lane => {
+            continuations: continuations.map(lane => {
                 if (lane.continuation === undefined) throw new Error('the maximal witness lost a lane frontier');
                 return { ...lane, continuation: { ...lane.continuation, token: widenedToken } };
             }),
@@ -436,10 +438,12 @@ describe('aggregate Action value shapes', () => {
     it('validates every finite declared Action maximum through its real schema and the host JSON gate', () => {
         // The manifest supplies new Actions automatically; the explicitly
         // classified schemas retain the source-role and owner-bound checks.
+        const actions = PLUGIN_MANIFEST.contributes.actions;
+        if (actions === undefined || actions.length === 0) throw new Error('the Triage manifest declares no Actions');
         const schemas = new Map<string, Readonly<{ label: string; schema: PluginJsonSchema; parse?: (value: unknown) => unknown }>>([
-            ...PLUGIN_MANIFEST.contributes.actions.flatMap(action =>
-                ([['input', action.inputSchema], ['result', action.resultSchema]] as const).map(([side, schema]) =>
-                    [JSON.stringify(schema), { label: `${action.id}:${side}`, schema }] as const)),
+            ...actions.flatMap(action =>
+                ([['input', action.inputSchema], ['result', action.resultSchema]] as const).flatMap(([side, schema]) =>
+                    schema == null ? [] : [[JSON.stringify(schema), { label: `${action.id}:${side}`, schema }] as const])),
             ...Object.entries<MeasurableSchemaV1>({ ...structurallyBoundedSchemas, ...ownerBoundedSchemas,
                 ...structurallyUnboundedSchemas,
                 ...Object.fromEntries(Object.entries(TriageSourcesContributionProtocolV1.operations).flatMap(([role, operation]) => [
