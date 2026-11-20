@@ -76,7 +76,7 @@ const databaseActionDeclarations = {
         ...targetWrite, title: 'Apply database changes', placementBindings: ['primary'], approvalScope: 'environment',
         operation: databaseOperation,
         approvalInputCustody: 'live_only',
-        confirmation: { title: 'Apply these database changes?' },
+        confirmation: { title: 'Apply these database changes?', mountedReview: 'exact_input' },
         secretInputPaths: ['changes.[].key.[].value.value', 'changes.[].original.[].value.value', 'changes.[].values.[].value.cell.value'],
     },
     [database.DATABASE_ACCESS_READ_ACTION_ID_V1]: { ...read, title: 'Read database access' },

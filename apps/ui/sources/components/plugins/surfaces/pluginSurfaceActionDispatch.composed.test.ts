@@ -10,9 +10,8 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { ActionSettlementV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import { projectAutomationSubjectStructuralV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
-import { DATABASE_PLUGIN_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, databaseActionLocalIdV1,
+import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, databaseActionLocalIdV1,
     DatabaseTargetsForgetInputV1ProtocolSchema } from '@happier-dev/database-protocol';
-import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { DatabaseManualTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 
@@ -881,9 +880,9 @@ describe('mounted picker approval through the Account relay to the daemon', () =
     it.each([
         { name: 'executes the exact approved mutation once without another approval Artifact', change: 'none' },
         { name: 'executes the exact bundled approved mutation once', change: 'bundled' },
-        { name: 'confirms a contributed Action.Control', change: 'contributed-control' },
-        { name: 'runs mounted Database Apply with the exact in-place review and no second prompt', change: 'reviewed-control' },
-        { name: 'refuses mounted Database Apply when preparation changes the reviewed input', change: 'changed-control' },
+        { name: 'prompts for a contributed control whose Action does not declare a mounted review', change: 'contributed-control' },
+        { name: 'runs a contributed Action with its declared exact mounted review and no second prompt', change: 'reviewed-control' },
+        { name: 'refuses a declared mounted review when preparation changes the reviewed input', change: 'changed-control' },
         { name: 'COORD R2 confirms an explicitly Ask-gated Account Action through the runtime relay', change: 'ask-control' },
         { name: 'COORD R2 leaves a declined carried review editable without executing the Action', change: 'ask-cancel' },
         { name: 'retains the acquired declaration when the mounted Account row is cold', change: 'cold-declaration' },
@@ -908,12 +907,10 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const home = rpcHomes.get('server-client-action')!;
         const lifetime = clientAccountLifetime(home.id);
         const mountedReview = change === 'reviewed-control' || change === 'changed-control';
-        const pluginId = mountedReview ? DATABASE_PLUGIN_ID_V1 : 'acme.reviewed-picker';
-        const localId = mountedReview ? databaseActionLocalIdV1(DATABASE_EDITS_APPLY_ACTION_ID_V1) : 'assign';
-        const stagedInput = { operation: 'edits.apply', target: createDatabaseDescriptorV1Fixture().target,
-            relation: { schema: 'public', name: 'items' }, changes: [{ kind: 'delete', key: [{ column: 'id',
-                value: { type: 'integer', value: '1' } }] }] };
-        const input = mountedReview ? stagedInput : { issue: 'ISSUE-42', assignee: 'alice' };
+        const usesInlineReview = mountedReview || change === 'contributed-control';
+        const pluginId = 'acme.reviewed-picker';
+        const localId = 'assign';
+        const input = { issue: 'ISSUE-42', assignee: 'alice' };
         const carriedReview = change === 'ask-control' || change === 'ask-cancel';
         const isControl = change === 'contributed-control' || carriedReview || mountedReview;
         const previous = getStorage().getState();
@@ -923,12 +920,14 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         let receivedAuthority: unknown;
         const carriedRequests: { requestId: string; reviewDigest: string | undefined; result: unknown }[] = [];
         let boundaryFailure: unknown;
+        let dispatches = 0;
         const accountSource = change === 'bundled' || mountedReview
             ? { kind: 'bundled_first_party' as const, packagedRuntime: { kind: 'cli_version_root' as const, versionRootId: 'fixture-cli-root' } }
             : { kind: 'account_release' as const, pluginId, version: '1.2.3', archiveDigestSha256: `sha256:${'a'.repeat(64)}` };
         const runtimeOptions = { localId, surfaces: ['ui', 'plugin'] as const, placementBindings: ['detailsPanel'] as const,
             ...(mountedReview ? { approvalInputCustody: 'live_only' as const } : { executionTarget: 'account' as const }),
             pluginVersion: '1.2.3', sourceCustody: accountSource, onInput: (value: unknown) => expect(value).toEqual(input),
+            ...(mountedReview ? { confirmation: { title: 'Assign reviewer?', mountedReview: 'exact_input' as const } } : {}),
             ...(carriedReview ? { confirmationWhen: { presentUserUi: false } } : {}),
         };
         const runtime = createExternalActionRuntime('global', pluginId, () => { effects++; }, mountedReview ? () => ({
@@ -983,6 +982,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 const failure = ActionExecuteFailureSchema.safeParse(value);
                 return failure.success ? failure.data : null;
             }, execute: async (value, context) => {
+                dispatches++;
                 if (changedRuntime !== runtime) await published?.adopt(changedRuntime, change === 'source' ? `sha256:${'b'.repeat(64)}` : undefined);
                 receivedCaller = context.invocation.caller;
                 receivedAuthority = context.invocation.authority;
@@ -1081,7 +1081,7 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         const projection = activation?.projection ?? { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
             actionsById: { [qualifiedId]: action },
             installedPackagesById: { [pluginId]: PluginProjectionInstalledPackageV2Schema.parse({ id: pluginId,
-                displayName: 'Database Workbench', version: '1.2.3', enabled: true, source: { kind: 'localPath', locator: pluginId },
+                displayName: 'Reviewed picker', version: '1.2.3', enabled: true, source: { kind: 'localPath', locator: pluginId },
                 sourceCustody: accountSource, occurrenceId: daemonAction.occurrenceId, executionOrigin: callerOrigin }) },
         };
         if (activation) {
@@ -1133,21 +1133,20 @@ describe('mounted picker approval through the Account relay to the daemon', () =
         }
         function ContributedControl() {
             return React.createElement(Action.Control, { action: { pluginId, localId }, title: mountedReview ? 'Apply' : 'Assign reviewer',
-                ...(mountedReview ? { reviewedInput: change === 'changed-control'
-                    ? { ...stagedInput, relation: { ...stagedInput.relation, name: 'other_items' } } : stagedInput } : {}),
+                ...(usesInlineReview ? { reviewedInput: change === 'changed-control' ? { ...input, assignee: 'bob' } : input } : {}),
                 controller: { prepare: () => ({ input }), onSettled: execution => {
                     settledExecution = execution;
                     settledStatus = execution.ok ? 'success' : 'error';
                 } } });
         }
         const screen = await renderScreen(React.createElement(PluginUiProvider, { hostApi: facade.api, context: surface,
-            ...(mountedReview && controller.actionControls ? { presentationHost: createPluginUiPrivatePresentationHost(undefined, {
+            ...(usesInlineReview && controller.actionControls ? { presentationHost: createPluginUiPrivatePresentationHost(undefined, {
                 actionControls: controller.actionControls,
             }) } : {}),
         },
             React.createElement(isControl ? ContributedControl : AssignmentPicker)));
         try {
-            if (mountedReview) {
+            if (usesInlineReview) {
                 await vi.waitFor(() => expect(controller.actionControls?.getSnapshot()).toHaveLength(1));
                 const id = controller.actionControls!.getSnapshot()[0]!.id;
                 await screen.pressByTestIdAsync(`plugin-surface-action-control:${id}`);
@@ -1171,7 +1170,8 @@ describe('mounted picker approval through the Account relay to the daemon', () =
                 }
             });
             if (change === 'changed-control') {
-                expect(settledExecution).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+                expect(settledExecution).toMatchObject({ ok: false, errorCode: 'approval_stale', effectAttempted: false });
+                expect(dispatches).toBe(0);
                 expect({ confirmations, effects, secondArtifacts }).toEqual({ confirmations: 0, effects: 0, secondArtifacts: 0 });
                 return;
             }

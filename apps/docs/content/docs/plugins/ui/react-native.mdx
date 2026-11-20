@@ -473,6 +473,14 @@ operation status; pending acceptance is not completion. Do not automatically
 repeat a write when its acceptance is unknown. Replacing the controller does
 not transfer settlement from the controller that prepared the invocation.
 
+When your same-realm React Native surface shows the exact Action input for a
+person to review, set `confirmation.mountedReview` to `exact_input` on your
+plugin's Action declaration and pass the displayed input as `reviewedInput`
+to `Action.Control`. The host treats the press as confirmation after comparing
+the displayed input with the result of `prepare`. If the input changed,
+`onSettled` receives `approval_stale` before any dispatch. Keep the draft
+available so the person can review the updated input.
+
 For inline commits in matching unpublished 0.3 development SDK and host source,
 declare a `PluginUiActionBinding<Value>`. The host submits the Action when the
 person commits in the control. The binding prepares input and consumes the

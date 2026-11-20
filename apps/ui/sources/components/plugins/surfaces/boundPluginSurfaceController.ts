@@ -1044,6 +1044,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // its adapter or aborting an author-held signal.
     const readActionInputFacts = (): BoundPluginSurfaceFacts => input.facts.readActionInputFacts
         ? { ...input.facts, ...input.facts.readActionInputFacts() } : input.facts;
+    const resolveCurrentContributedAction: PluginSurfaceContributedActionDescriptorResolver =
+        identity => readActionInputFacts().resolveContributedAction?.(identity) ?? null;
     let machineBindingFacts = readActionInputFacts();
     let machineAuthorityKey = readMachineAuthorityKey(machineBindingFacts);
     let machineBindingsKey = readMachineBindingsKey(machineBindingFacts);
@@ -1216,7 +1218,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         return target && accountLifetime && !isOpenableContentViewer ? createPluginSurfaceDownloadOwner({
             machineId: target.machineId, serverId: target.serverId ?? accountLifetime.scope.serverId,
             lifetimeSignal: mountLifetime.signal,
-            resolveContributedAction: identity => readActionInputFacts().resolveContributedAction?.(identity) ?? null,
+            resolveContributedAction: resolveCurrentContributedAction,
             isCurrent: () => isInteractionCurrent() && isDaemonInteractionEnabled(false)
                 && authorityKey === readMachineAuthorityKey(readActionInputFacts()),
             executeAction: (request, options) => hostApi.handleRequest(request, options),
@@ -1340,6 +1342,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     const actionControls = callerBinding && homeFamilyScope && !isOpenableContentViewer
         ? createPluginSurfaceActionControls({
             pluginId: surfaceContext.pluginId, surfaceId: surfaceContext.surfaceId, hostAction,
+            resolveContributedAction: resolveCurrentContributedAction,
             ...(areServerAccountScopesEqual(homeFamilyScope, getActiveServerAccountScope()) ? { projectionScope: homeFamilyScope } : {}),
             signal: mountLifetime.signal, isCurrent: isInteractionCurrent,
             isActionAvailable: canManageActions,

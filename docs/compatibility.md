@@ -9937,6 +9937,14 @@ Protocol, SDK, Triage, daemon and UI readers load together under the unpublished
 development direct cut because earlier strict readers reject the addition.
 There is no migration, new wire epoch or mixed-development adapter.
 
+Unreleased 0.3 Action declarations and daemon projections accept the optional
+`confirmation.mountedReview` value `exact_input`. Omission keeps the ordinary
+confirmation path. The strict confirmation schema stays closed. Matching
+manifest readers, daemon and UI source load together under the development
+direct cut because earlier strict readers reject the field. The host still
+requires a physical press and verifies the exact operands before dispatch.
+This adds no migration, runtime ABI change or wire epoch.
+
 Unreleased 0.3 Workflow starter Actions include new catalog keys and an optional
 closed `eventSeed` using the existing Event authoring request. This result
 carries a requested Event identity and setup input. The Event editor still

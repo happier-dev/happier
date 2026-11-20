@@ -8166,12 +8166,14 @@ Contributed references enter the same canonical `action.invoke` owner. The origi
 Action execution envelope, including pending approval, operation custody and failure
 details, returns to that invocation's controller through `onSettled`.
 
-Database Workbench's staged changes review supplies its displayed transaction as
-`reviewedInput` to the same-realm `Action.Control`. The host scopes this binding to
-Database Workbench's Apply Action, captures the displayed input on the Apply press,
-and checks it against the fresh preparation. A match enters the canonical
-confirmed executor and carries that exact approval to the daemon. A mismatch
-settles as `approval_stale` before dispatch, with the edits still staged.
+A same-realm `Action.Control` can supply the displayed operands as `reviewedInput`
+for an Action from its own plugin whose declaration sets
+`confirmation.mountedReview` to `exact_input`. The host captures those operands
+on the person's press and compares them with the fresh preparation. A match
+enters the canonical confirmed executor and carries the exact approval to the
+daemon. A mismatch settles as `approval_stale` before dispatch. Database
+Workbench uses this contract for Apply, leaving the transaction staged when
+the preparation changes.
 
 Raw `executeAction`, `useExecutePluginAction` and `Action.Execute` retain
 `plugin` / `account_automation` authority. This capability adds no approval waiver:

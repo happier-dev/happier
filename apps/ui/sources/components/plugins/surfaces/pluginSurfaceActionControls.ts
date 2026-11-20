@@ -12,12 +12,10 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizePluginUiMountedContributedActionReferenceV1, type PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createPluginSurfaceHostApiError, type PluginSurfaceHostApiMethodHandler } from './createPluginSurfaceHostApi';
-import type { PluginSurfaceHostActionBinding } from './pluginSurfaceActionDispatch';
+import type { PluginSurfaceContributedActionDescriptorResolver, PluginSurfaceHostActionBinding } from './pluginSurfaceActionDispatch';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
@@ -91,6 +89,7 @@ export function createPluginSurfaceActionControls(input: Readonly<{
     pluginId: string;
     surfaceId: string;
     hostAction: PluginSurfaceHostActionBinding;
+    resolveContributedAction?: PluginSurfaceContributedActionDescriptorResolver;
     projectionScope?: ServerAccountScope;
     signal: AbortSignal;
     isCurrent(): boolean;
@@ -192,10 +191,9 @@ export function createPluginSurfaceActionControls(input: Readonly<{
             const context = { ...input.hostAction.context, signal, actionRequestId: requestId,
                 surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const },
                 bypassApprovals: false };
-            // Only the built-in Database Workbench review presents the exact
-            // staged transaction for this supported mounted confirmation.
-            const isReview = reviewedInput !== undefined && input.pluginId === DATABASE_PLUGIN_ID_V1 && contributed !== null
-                && formatQualifiedPluginActionId(contributed) === DATABASE_EDITS_APPLY_ACTION_ID_V1;
+            // An exact review belongs to the plugin that declares the Action and draws the control.
+            const isReview = reviewedInput !== undefined && contributed?.pluginId === input.pluginId
+                && input.resolveContributedAction?.(contributed)?.confirmation?.mountedReview === 'exact_input';
             if (isReview && !sameStrictJsonValue(reviewedInput, preparation.input)) {
                 return { ok: false, errorCode: 'approval_stale', error: 'approval_stale', effectAttempted: false };
             }

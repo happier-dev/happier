@@ -230,6 +230,8 @@ export const PluginActionConfirmationV2Schema = lazyZodSchema(() => z.strictObje
   body: z.optional(PluginActionConfirmationBodyV2Schema),
   confirmLabel: z.optional(PluginActionConfirmationTitleV2Schema),
   inputFields: z.optional(z.array(PluginActionConfirmationInputFieldV2Schema)),
+  /** The plugin's mounted control presents the exact input before the host press. */
+  mountedReview: z.optional(z.literal('exact_input')),
 }));
 export type PluginActionConfirmationV2 = z.infer<typeof PluginActionConfirmationV2Schema>;
 

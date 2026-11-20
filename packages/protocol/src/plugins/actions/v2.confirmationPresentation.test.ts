@@ -143,14 +143,16 @@ describe('PluginActionConfirmationV2Schema', () => {
     expect(PluginActionContributionV2Schema.safeParse({ ...action, unrecognizedAuthority: true }).success).toBe(false);
   });
 
-  it('accepts only bounded localized title and body presentation', () => {
+  it('accepts bounded localized presentation and an exact mounted review', () => {
     expect(PluginActionConfirmationV2Schema.parse({
       title: { key: 'automation.historyGapReset.title', fallback: 'Start a new baseline' },
       body: {
         key: 'automation.historyGapReset.body',
         fallback: 'Events in the history gap are not replayed.',
       },
+      mountedReview: 'exact_input',
     })).toMatchObject({
+      mountedReview: 'exact_input',
       title: { fallback: 'Start a new baseline' },
       body: { fallback: 'Events in the history gap are not replayed.' },
     });
