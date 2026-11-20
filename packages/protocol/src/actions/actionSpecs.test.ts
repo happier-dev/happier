@@ -22,6 +22,7 @@ import { ActionInputHintsSchema, ActionSpecSchema, PUBLIC_ACTION_IDS, PUBLIC_ACT
 import { HOME_GOVERNANCE_ACTION_IDS_V1 } from '../home/governance/actionsV1.js';
 import { TEAM_ACTION_IDS_V1 } from '../teams/actionsV1.js';
 import { SHARED_SAVED_SECRET_ACTION_IDS_V1 } from '../account/settings/savedSecretResourceActionsV1.js';
+import { isSharedSavedSecretClientReadActionIdV1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 import { MANAGED_IDENTITY_PROVIDER_ACTION_IDS_V1 } from '../identity/providers.js';
 import { WORKFLOW_ACTION_IDS_V1 } from '../workflows/actionsV1.js';
 import { ROLE_ACTION_IDS_V1 } from '../prompts/roles/roleActionIdsV1.js';
@@ -626,7 +627,8 @@ const RESULT_REQUIRED_DEFERRED_ACTION_IDS = [
   'session.rollback',
   'session.checkpoint_code_rollback',
   'workspace.sync.relationship.create',
-  ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter((id) => id !== 'secrets.shared.list' && id !== 'secrets.shared.reveal'),
+  ...SHARED_SAVED_SECRET_ACTION_IDS_V1.filter((id) => id !== 'secrets.shared.list' && id !== 'secrets.shared.reveal'
+    && !isSharedSavedSecretClientReadActionIdV1(id)),
 ];
 
 const RESULT_NONE_DEFERRED_ACTION_IDS = [

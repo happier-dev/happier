@@ -6,7 +6,7 @@ import { listAccountSettingsSavedSecretReferences, listSavedSecretPersonalImport
 import type { AccountSettingsHistorySavedSecretTransferV1 } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1, SavedSecretResourceContentV1Schema, prepareSavedSecretResourceRecipientEnvelopesV1, prepareSavedSecretResourceUpdateContentV1, type SavedSecretExternalSourceV1, type SavedSecretResourceSourceV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import { SavedSecretBackupRekeyRequiredV1Schema, type SavedSecretBackupRekeyRequiredV1, SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { SavedSecretBackupRekeyRequiredV1Schema, type SavedSecretBackupRekeyRequiredV1, SavedSecretResourceActionErrorCodeV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1, SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretMutationOutputV1Schema, SavedSecretResourceEnvelopeRepairOutputV1Schema, SharedSavedSecretPromoteOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { SavedSecretLegacyImportResult, SavedSecretVerifiedImportReference } from '@/sync/domains/settings/savedSecretTypes';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -36,6 +36,7 @@ import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/pr
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { readSafeFailureDetails, type ActionFailureContext } from '@/utils/errors/alertActionFailure';
+import { HappyError } from '@/utils/errors/errors';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { sealOwnerSavedSecretResourceEnvelope } from '@/sync/encryption/savedSecretOwnerEnvelope';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -105,6 +106,16 @@ export function projectSavedSecretResourceUpdateFailure(failure: HomeDomainFailu
         if (details.success) return { ok: false, reason: 'backup_rekey_required', details: details.data };
     }
     return projectSavedSecretResourceOperationFailure(failure);
+}
+
+function projectSavedSecretResourceUpdateError(error: unknown): Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>> {
+    if (error instanceof HappyError && error.code) {
+        return projectSavedSecretResourceUpdateFailure(homeDomainFailureFromActionFailure({
+            errorCode: error.code, details: { ...readSafeFailureDetails(error.details),
+                ...(error.status === undefined ? {} : { httpStatus: error.status }) },
+        }));
+    }
+    return { ok: false, reason: 'failed' };
 }
 
 export type SavedSecretPromotionResult =
@@ -211,7 +222,8 @@ export async function captureSavedSecretReferenceStateInContext(context: Profile
 
 export type SavedSecretResourceRecipientReadiness =
     | Readonly<{ ok: true; revision: number; recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[] }>
-    | Readonly<{ ok: false }>;
+    /** `code` is the census owner's answer (its code, else the Home failure kind), or `resource_changed` across pages. */
+    | Readonly<{ ok: false; code: string }>;
 
 /**
  * The owner's per-recipient view of one E2EE resource: who is authorized, whether
@@ -239,14 +251,16 @@ export async function readSavedSecretResourceRecipientReadiness(params: Readonly
             effect: 'read',
             input: request.body,
             schema: SavedSecretResourceEnvelopeCensusResponseV1Schema,
+            errorSchema: SavedSecretResourceActionErrorCodeV1Schema,
         });
+        if (!census.ok) return { ok: false, code: census.failure.code ?? census.failure.kind };
         // A page from another revision describes a different audience.
-        if (!census.ok || (revision !== null && census.value.revision !== revision)) return { ok: false };
+        if (revision !== null && census.value.revision !== revision) return { ok: false, code: 'resource_changed' };
         revision = census.value.revision;
         recipients.push(...census.value.recipients);
         cursor = census.value.nextCursor ?? undefined;
     } while (cursor);
-    return revision === null ? { ok: false } : { ok: true, revision, recipients };
+    return revision === null ? { ok: false, code: 'invalid' } : { ok: true, revision, recipients };
 }
 
 async function repairSavedSecretResourceEnvelopesBestEffort(params: Readonly<{
@@ -1797,7 +1811,7 @@ export async function updateSavedSecretResource(params: Readonly<{
             executeAdmittedMutation: params.executeAdmittedMutation ?? runTeamAction });
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
-        return { ok: false, reason: 'failed' };
+        return projectSavedSecretResourceUpdateError(error);
     } finally {
         context?.dispose();
     }
@@ -1833,7 +1847,7 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
             ...(params.expectedRevision === undefined ? {} : { expectedRevision: params.expectedRevision, requireManage: true }),
         });
         context.assertCurrent();
-        if (!catalog.ok) return { ok: false, reason: catalog.failure.kind === 'conflict' ? 'changed' : 'unavailable' };
+        if (!catalog.ok) return projectSavedSecretResourceUpdateFailure(catalog.failure);
         const resource = catalog.resources.find((candidate): candidate is HealthySavedSecretResourceMaterialV1 => (
             isHealthySavedSecretResourceMaterialV1(candidate)
             && candidate.resourceId === params.resourceId
@@ -1939,14 +1953,14 @@ export async function updateSavedSecretResourceInContext(context: ProfileAccount
             return { ok: true };
         } catch (error) {
             if (isTeamActionApprovalPendingError(error)) throw error;
-            return { ok: false, reason: 'failed' };
+            return projectSavedSecretResourceUpdateError(error);
         } finally {
             resourceDataKey?.fill(0);
             convertedResourceDataKey?.fill(0);
         }
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
-        return { ok: false, reason: 'failed' };
+        return projectSavedSecretResourceUpdateError(error);
     }
 }
 

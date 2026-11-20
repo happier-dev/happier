@@ -1,4 +1,4 @@
-import { SavedSecretDisclosureRecordResultV1Schema, SavedSecretDisclosureHistoryV1Schema, type SharedSavedSecretRevealInputV1,
+import { SavedSecretDisclosureRecordResultV1Schema, SavedSecretDisclosureHistoryV1Schema, SavedSecretResourceActionErrorCodeV1Schema, type SharedSavedSecretRevealInputV1,
     type SavedSecretDisclosureRecordV1Schema, type SavedSecretCopyRecordV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { readSavedSecretReferenceInContext } from '@/sync/api/account/apiSavedSecretCatalog';
@@ -16,7 +16,7 @@ export async function readSavedSecretDisclosureHistoryInContext(context: LazyAct
     signal?.throwIfAborted();
     const result = await requestHomeDomain({ scope: context, path: '/v1/account/saved-secrets/resources/activity/read',
         method: 'POST', effect: 'read', input, schema: SavedSecretDisclosureHistoryV1Schema,
-        requestAuthority: context, signal });
+        errorSchema: SavedSecretResourceActionErrorCodeV1Schema, requestAuthority: context, signal });
     context.assertCurrent();
     signal?.throwIfAborted();
     return result;

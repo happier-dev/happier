@@ -6,6 +6,7 @@ import {
   SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1,
   SHARED_SAVED_SECRET_ACTION_PATHS_V1,
 } from '../account/settings/savedSecretResourceActionsV1.js';
+import { isSharedSavedSecretHomeActionIdV1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 import { ActionIdSchema } from './actionIds.js';
 import { ENCRYPTED_DATA_KEY_ENVELOPE_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 import { getActionSpec, listActionSpecs, PublicActionIdSchema, SignedRootActionIdSchema } from './actionSpecs.js';
@@ -42,6 +43,38 @@ describe('Shared Saved Secret Action contracts', () => {
     expect(reveal?.outputSchema.safeParse({ status: 'hidden', historyEntryId: 'event' }).success).toBe(true);
     expect(reveal?.outputSchema.safeParse({ status: 'hidden', historyEntryId: 'event', value: 'secret-sentinel' }).success).toBe(false);
   });
+  it.each([
+    ['secrets.shared.disclosures.list', { resourceId: 'resource', cursor: 'cursor-1' }],
+    ['secrets.shared.recipients.list', { resourceId: 'resource' }],
+  ] as const)('offers %s to the app, Agent and MCP as a value-free answering-app read without default Ask', (id, input) => {
+    const spec = getActionSpec(id);
+    expect(spec).toMatchObject({ executionPlacement: 'client', safety: 'safe', sideEffectClass: 'read' });
+    expect(spec.surfaces).toMatchObject({ ui: true, agent: true, mcp: true, cli: false, rpc: false, voice: false });
+    expect(spec.serverTransport).toBeUndefined();
+    expect(spec.bindings?.mcpToolName).toBe(id.replaceAll('.', '_'));
+    expect(spec.inputSchema.parse(input)).toEqual(input);
+    expect(spec.inputSchema.safeParse({ ...input, value: 'secret-sentinel' }).success).toBe(false);
+    for (const surface of ['agent', 'mcp'] as const) {
+      expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input,
+        context: { surface, authority: 'account_automation' }, settings: normalizeActionsSettingsV1({ v: 1 }) }).required, surface).toBe(false);
+    }
+  });
+  it('keeps disclosure history and recipient readiness results free of values and key material', () => {
+    const history = getActionSpec('secrets.shared.disclosures.list').outputSchema;
+    const entry = { id: 'event', ref: 'happier:shared-secret:v1:resource', resourceRevision: 3, actorDisplayName: 'Ada',
+      deviceId: 'device', createdAt: '2026-11-20T00:00:00.000Z', actorIsSelf: false, outcome: 'displayed',
+      copyOutcome: null, copyRequestedAt: null };
+    expect(history.safeParse({ items: [entry], nextCursor: null }).success).toBe(true);
+    expect(history.safeParse({ items: [{ ...entry, value: 'secret-sentinel' }], nextCursor: null }).success).toBe(false);
+    const recipients = getActionSpec('secrets.shared.recipients.list').outputSchema;
+    const account = { kind: 'account', accountId: 'recipient', firstName: null, lastName: null, username: null, avatarUrl: null };
+    expect(recipients.safeParse({ resourceId: 'resource', revision: 3, recipients: [
+      { account, readiness: { status: 'available' }, envelopeStatus: 'prepared' },
+      { account: { ...account, accountId: 'plain' }, readiness: { status: 'unavailable', reason: 'plain_account' }, envelopeStatus: 'missing' },
+    ] }).success).toBe(true);
+    expect(recipients.safeParse({ resourceId: 'resource', revision: 3, recipients: [{ account,
+      readiness: { status: 'available', contentPublicKey: 'key', contentPublicKeyFingerprint: 'fingerprint' }, envelopeStatus: 'prepared' }] }).success).toBe(false);
+  });
   it('declares canonical approval behavior for the complete action family', () => {
     const expectedApprovalByActionId = {
       'secrets.shared.list': { result: 'required' },
@@ -52,6 +85,8 @@ describe('Shared Saved Secret Action contracts', () => {
       'secrets.shared.delete': { result: 'required', flow: 'deferred' },
       'secrets.shared.reveal': { result: 'optional', flow: 'deferred' },
       'secrets.shared.repair': { result: 'required', flow: 'deferred' },
+      'secrets.shared.disclosures.list': { result: 'required', flow: 'blocking' },
+      'secrets.shared.recipients.list': { result: 'required', flow: 'blocking' },
     } as const;
 
     expect(Object.keys(expectedApprovalByActionId)).toEqual(SHARED_SAVED_SECRET_ACTION_IDS_V1);
@@ -70,12 +105,14 @@ describe('Shared Saved Secret Action contracts', () => {
       'secrets.shared.delete',
       'secrets.shared.reveal',
       'secrets.shared.repair',
+      'secrets.shared.disclosures.list',
+      'secrets.shared.recipients.list',
     ]);
     for (const id of SHARED_SAVED_SECRET_ACTION_IDS_V1) {
       expect(ActionIdSchema.parse(id)).toBe(id);
       expect(listActionSpecs().filter((spec) => spec.id === id)).toHaveLength(1);
       const spec = getActionSpec(id);
-      if (id === 'secrets.shared.reveal' || id === 'secrets.shared.repair') {
+      if (!isSharedSavedSecretHomeActionIdV1(id)) {
         expect(spec.executionPlacement).toBe('client');
         expect(spec.serverTransport).toBeUndefined();
         continue;

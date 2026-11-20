@@ -8,6 +8,7 @@ import {
   SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1,
   SHARED_SAVED_SECRET_ACTION_PATHS_V1,
 } from '../../account/settings/savedSecretResourceActionsV1.js';
+import { isSharedSavedSecretClientReadActionIdV1 } from '../../account/settings/savedSecretResourceActionIdsV1.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
 import { homeDomainActionRow } from './homeDomainRow.js';
 
@@ -35,6 +36,21 @@ export const SHARED_SAVED_SECRET_ACTION_SPECS: readonly PreNormalizedActionSpec[
       // is shown only in the approving person's app and never returned.
       surfaces: { ui: true, cli: false, agent: true, mcp: true, rpc: false, voice: false },
       bindings: { mcpToolName: 'secrets_shared_reveal' },
+      inputSchema: SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[id],
+      inputHints: { fields: [] },
+    };
+    if (isSharedSavedSecretClientReadActionIdV1(id)) return {
+      id,
+      ...(id === 'secrets.shared.disclosures.list'
+        ? { title: 'Read Saved Secret disclosure history',
+          description: 'Page who revealed or copied an owned shared Saved Secret, when, and with what outcome; never values.' }
+        : { title: 'Check Saved Secret recipients',
+          description: 'List the recipients of an owned encrypted Saved Secret and whether each can hold, or already holds, its key envelope; never values or keys.' }),
+      // The answering app reads its own Home route as the person, the same reader its screen uses.
+      safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'client',
+      approval: { result: 'required', flow: 'blocking' }, placements: [],
+      surfaces: { ui: true, cli: false, agent: true, mcp: true, rpc: false, voice: false },
+      bindings: { mcpToolName: id.replaceAll('.', '_') },
       inputSchema: SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1[id], outputSchema: SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[id],
       inputHints: { fields: [] },
     };

@@ -3,7 +3,9 @@ import { z } from '../../zodRuntimePolicy.js';
 import { ManagedResourceDependencyV1Schema, ManagedResourceDispositionV1Schema } from '../../machines/managed/managedDependencyV1.js';
 
 import { AccountSettingsStoredContentEnvelopeSchema } from './accountSettingsStoredContentEnvelope.js';
-import { SavedSecretCatalogResultV1Schema, SavedSecretResourceRecipientEnvelopeV1Schema } from './savedSecretCatalogV1.js';
+import { SavedSecretCatalogAccountSummaryV1Schema, SavedSecretCatalogResultV1Schema, SavedSecretResourceRecipientEnvelopeV1Schema,
+  type SavedSecretResourceEnvelopeCensusRecipientV1 } from './savedSecretCatalogV1.js';
+import { AccountRecipientEnvelopeUnavailableReasonSchema } from '../encryptionMode.js';
 import { SavedSecretResourceStoredContentV1Schema } from './savedSecretResourceContentSchemaV1.js';
 import {
   ManagedMachinePresetRecipientsV1Schema,
@@ -294,6 +296,39 @@ export const SavedSecretDisclosureHistoryV1Schema = lazyZodSchema(() => z.strict
   })),
   nextCursor: z.nullable(z.string()),
 }));
+/** The owner's disclosure history page; the Home's activity reader keeps its own page size and cursor. */
+export const SharedSavedSecretDisclosuresListInputV1Schema = lazyZodSchema(() => z.strictObject({
+  resourceId: ResourceIdSchema,
+  cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(512))),
+}));
+export type SharedSavedSecretDisclosuresListInputV1 = z.infer<typeof SharedSavedSecretDisclosuresListInputV1Schema>;
+
+export const SharedSavedSecretRecipientsListInputV1Schema = lazyZodSchema(() => z.strictObject({ resourceId: ResourceIdSchema }));
+export type SharedSavedSecretRecipientsListInputV1 = z.infer<typeof SharedSavedSecretRecipientsListInputV1Schema>;
+/** The envelope census as the owner sees it, without recipient content keys or fingerprints. */
+export const SharedSavedSecretRecipientsListOutputV1Schema = lazyZodSchema(() => z.strictObject({
+  resourceId: ResourceIdSchema,
+  revision: z.number().check(z.int(), z.positive()),
+  recipients: z.array(z.strictObject({
+    account: SavedSecretCatalogAccountSummaryV1Schema,
+    readiness: z.discriminatedUnion('status', [
+      z.strictObject({ status: z.literal('available') }),
+      z.strictObject({ status: z.literal('unavailable'), reason: AccountRecipientEnvelopeUnavailableReasonSchema }),
+    ]),
+    envelopeStatus: z.enum(['prepared', 'missing', 'stale', 'invalid']),
+  })),
+}));
+export type SharedSavedSecretRecipientsListOutputV1 = z.infer<typeof SharedSavedSecretRecipientsListOutputV1Schema>;
+
+export function projectSharedSavedSecretRecipientsV1(census: Readonly<{ resourceId: string; revision: number;
+  recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[] }>): SharedSavedSecretRecipientsListOutputV1 {
+  return { resourceId: census.resourceId, revision: census.revision, recipients: census.recipients.map(recipient => ({
+    account: recipient.account,
+    readiness: recipient.readiness.status === 'available' ? { status: 'available' } : recipient.readiness,
+    envelopeStatus: recipient.envelopeStatus,
+  })) };
+}
+
 export const SharedSavedSecretListOutputV1Schema = lazyZodSchema(() => z.strictObject({
   resources: z.array(SavedSecretCatalogResultV1Schema),
   nextCursor: z.optional(z.nullable(ResourceIdSchema)),
@@ -512,14 +547,16 @@ export const SavedSecretBackupRekeyRequiredV1Schema = lazyZodSchema(() => z.stri
 }));
 export type SavedSecretBackupRekeyRequiredV1 = z.infer<typeof SavedSecretBackupRekeyRequiredV1Schema>;
 
+/** The resource routes' closed refusal codes; clients read `{ error }` through this to keep the Home's own code. */
+export const SavedSecretResourceActionErrorCodeV1Schema = lazyZodSchema(() => z.enum([
+  'invalid_resource', 'resource_not_found', 'forbidden', 'resource_changed',
+  'recipient_changed', 'recipient_key_unavailable', 'invalid_cursor',
+  'recipient_mode_unsupported', 'settings_conflict', 'settings_invalid', 'internal',
+  'references_conflict', 'references_invalid', 'resource_in_use', 'account_mode_mismatch',
+  'team_authentication_required', 'team_authentication_unavailable',
+]));
 export const SavedSecretResourceActionErrorV1Schema = lazyZodSchema(() => z.union([SavedSecretBackupRekeyRequiredV1Schema, z.strictObject({
-  error: z.enum([
-    'invalid_resource', 'resource_not_found', 'forbidden', 'resource_changed',
-    'recipient_changed', 'recipient_key_unavailable', 'invalid_cursor',
-    'recipient_mode_unsupported', 'settings_conflict', 'settings_invalid', 'internal',
-    'references_conflict', 'references_invalid', 'resource_in_use', 'account_mode_mismatch',
-    'team_authentication_required', 'team_authentication_unavailable',
-  ]),
+  error: SavedSecretResourceActionErrorCodeV1Schema,
 }), z.strictObject({
   error: z.literal('managed_resources_review_required'),
   resources: z.array(ManagedResourceDependencyV1Schema),
@@ -552,6 +589,8 @@ export const SHARED_SAVED_SECRET_ACTION_INPUT_SCHEMAS_V1 = {
   'secrets.shared.delete': SharedSavedSecretDeleteInputV1Schema,
   'secrets.shared.reveal': SharedSavedSecretRevealInputV1Schema,
   'secrets.shared.repair': SharedSavedSecretRepairInputV1Schema,
+  'secrets.shared.disclosures.list': SharedSavedSecretDisclosuresListInputV1Schema,
+  'secrets.shared.recipients.list': SharedSavedSecretRecipientsListInputV1Schema,
 } as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, z.ZodMiniType>>;
 
 export const SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
@@ -563,4 +602,6 @@ export const SHARED_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 = {
   'secrets.shared.delete': SharedSavedSecretDeleteOutputV1Schema,
   'secrets.shared.reveal': SharedSavedSecretRevealOutputV1Schema,
   'secrets.shared.repair': SharedSavedSecretRepairOutputV1Schema,
+  'secrets.shared.disclosures.list': SavedSecretDisclosureHistoryV1Schema,
+  'secrets.shared.recipients.list': SharedSavedSecretRecipientsListOutputV1Schema,
 } as const satisfies Readonly<Record<SharedSavedSecretActionIdV1, z.ZodMiniType>>;

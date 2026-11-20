@@ -3857,7 +3857,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.teamMembershipHistoryAction ?? capturedFamilyPorts?.teamMembershipHistoryAction
       ? { teamMembershipHistoryAction: opts?.teamMembershipHistoryAction ?? capturedFamilyPorts!.teamMembershipHistoryAction } : {}),
     ...(opts?.savedSecretRevealAction ? { savedSecretRevealAction: opts.savedSecretRevealAction } : {}),
-    ...(capturedFamilyPorts ? { savedSecretRepairAction: capturedFamilyPorts.savedSecretRepairAction } : {}),
+    ...(capturedFamilyPorts ? { savedSecretRepairAction: capturedFamilyPorts.savedSecretRepairAction,
+      savedSecretReadAction: capturedFamilyPorts.savedSecretReadAction } : {}),
     homeRuntimeTaskRpc: async ({ machineId, method, request, context }) => {
       if (!accountContext) throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
       accountContext.assertCurrent();
@@ -5446,6 +5447,7 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
   teamMembershipHistoryAction: NonNullable<ActionExecutorDeps['teamMembershipHistoryAction']>;
   savedSecretRepairAction: NonNullable<ActionExecutorDeps['savedSecretRepairAction']>;
+  savedSecretReadAction: NonNullable<ActionExecutorDeps['savedSecretReadAction']>;
 }> {
   const scope = { serverId: account.serverId, accountId: account.accountId };
   const isCurrent = (): boolean => {
@@ -5511,6 +5513,11 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
       const { repairApprovedSavedSecretResourceEnvelopesBestEffort } = await import('@/sync/ops/settings/savedSecretResourceOperations');
       const complete = await repairApprovedSavedSecretResourceEnvelopesBestEffort({ scope, ...input });
       return { resourceId: input.resourceId, revision: input.expectedRevision, status: complete ? 'complete' : 'incomplete' };
+    },
+    savedSecretReadAction: async ({ actionId, input, context }) => {
+      account.assertCurrent();
+      const { executeSavedSecretClientRead } = await import('@/sync/ops/settings/savedSecretClientReads');
+      return await executeSavedSecretClientRead(account, actionId, input, context.signal);
     },
     teamMembershipHistoryAction: async (args) => {
       account.assertCurrent();

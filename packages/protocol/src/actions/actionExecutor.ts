@@ -193,6 +193,7 @@ import { SessionCapabilitiesGetInputV1Schema, SessionCapabilitiesGetOutputV1Sche
 import { setSessionCapabilityV1 } from './executor/sessionCapabilities.js';
 import { REGISTRY_ACTION_IDS_V1, type RegistryActionIdV1 } from '../registries/registryActionsV1.js';
 import { PERSONAL_SAVED_SECRET_ACTION_IDS_V1, type PersonalSavedSecretActionIdV1 } from '../account/settings/personalSavedSecretActionsV1.js';
+import { isSharedSavedSecretClientReadActionIdV1 } from '../account/settings/savedSecretResourceActionIdsV1.js';
 import { ProjectContextUpdateInputV1Schema } from '../projects/projectContextV1.js';
 import { SessionPendingWithdrawInputV1Schema } from '../sessions/control/pendingWithdrawV1.js';
 import { SessionPendingMarkHandledInputV1Schema, SessionPendingDeliveryRecoveryInputV1Schema } from '../sessions/control/pendingDeliveryRecoveryV1.js';
@@ -5715,6 +5716,11 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (actionId === 'secrets.shared.repair') {
         if (!deps.savedSecretRepairAction) return clientActionUnavailable(actionId);
         const result = await deps.savedSecretRepairAction({ input: parsed.data as import('../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRepairInputV1, context: ctx });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      if (isSharedSavedSecretClientReadActionIdV1(actionId)) {
+        if (!deps.savedSecretReadAction) return clientActionUnavailable(actionId);
+        const result = await deps.savedSecretReadAction({ actionId, input: parsed.data, context: ctx });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (actionId === 'secrets.shared.reveal') {

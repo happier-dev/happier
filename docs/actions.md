@@ -10671,6 +10671,18 @@ same shared value row; the Allow is the only confirmation, and closing the sheet
 before the value opens settles `cancelled`. This is 0.3 development behavior, not
 a claim of released availability.
 
+In 0.3 development, the Saved Secret page's two value-free reads are also
+Actions for UI, Agent and MCP callers (not CLI, RPC or Voice):
+`secrets.shared.disclosures.list { resourceId, cursor? }` pages the disclosure
+history (who, when, which reference and revision, reveal and copy outcome) and
+`secrets.shared.recipients.list { resourceId }` returns the envelope census as
+recipient account, readiness or its unavailable reason, and envelope status,
+with content keys and fingerprints removed. Both are safe, client-placed reads
+with no default Ask: the answering app runs the same reader its screen mounts
+with its own Home request, so the Home's owner-only admission decides both, and
+a refusal arrives as its typed code. Neither returns a value, data key or
+envelope; preparing envelopes stays with `secrets.shared.repair`.
+
 In 0.3 development, `resolveApprovalExecutor` is the single replay-location owner,
 exported through the existing `approvals/approvalRequestV1` entry point. It reads
 the stored request and the Action's input-aware placement. Account and client

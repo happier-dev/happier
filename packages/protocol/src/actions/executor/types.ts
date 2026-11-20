@@ -3358,6 +3358,12 @@ export type ActionExecutorDeps = Readonly<{
     input: import('../../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRevealInputV1;
     context: ActionExecutorContext;
   }>) => Promise<unknown>;
+  /** The answering app's own value-free Saved Secret reads; the screen consumes the same readers. */
+  savedSecretReadAction?: (args: Readonly<{
+    actionId: import('../../account/settings/savedSecretResourceActionIdsV1.js').SharedSavedSecretClientReadActionIdV1;
+    input: unknown;
+    context: ActionExecutorContext;
+  }>) => Promise<unknown>;
   /** Client Account encryption custody; public results contain no envelopes or values. */
   savedSecretRepairAction?: (args: Readonly<{
     input: import('../../account/settings/savedSecretResourceActionsV1.js').SharedSavedSecretRepairInputV1;

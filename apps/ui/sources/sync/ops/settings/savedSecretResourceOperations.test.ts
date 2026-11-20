@@ -372,6 +372,9 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
                 historyContent = mutation.operation.content;
                 return Response.json(AccountSettingsV2HistoryMutationResponseSchema.parse({ status: 'applied' }));
             }
+            if (path === '/v1/account/saved-secrets/resources/activity/read' && init?.method === 'POST' && effect) {
+                return effect(path, JSON.parse(String(init.body)));
+            }
             if (init?.method === 'POST' && mutationPaths.has(path)) {
                 const body: unknown = JSON.parse(String(init.body));
                 writes.push({ path, body });
@@ -4006,6 +4009,58 @@ describe('Saved Secret operations through their real Account and Action owners',
             // Nothing owed: the owner's data key is never opened.
             expect(key).toEqual(new Uint8Array(32).fill(9));
         } else expect(key).toEqual(new Uint8Array(32));
+    });
+
+    // Agent parity (owner rule): the screen's value-free reads are Actions answered by the same readers.
+    it('answers Agent disclosure-history and recipient reads through the screen readers without values or keys', async () => {
+        const account = await openAccount('e2ee');
+        const recipientPublicKey = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(17)).publicKey;
+        const contentPublicKey = encodeBase64(recipientPublicKey, 'base64');
+        const fingerprint = computeContentPublicKeyFingerprint(recipientPublicKey);
+        const person = (accountId: string) => ({ kind: 'account', accountId, firstName: null, lastName: null, username: null, avatarUrl: null });
+        const entry = { id: 'event-1', ref: 'happier:shared-secret:v1:resource-a', resourceRevision: 4, actorDisplayName: 'Ada',
+            deviceId: 'device-1', createdAt: '2026-11-20T00:00:00.000Z', actorIsSelf: false, outcome: 'displayed',
+            copyOutcome: 'succeeded', copyRequestedAt: '2026-11-20T00:00:01.000Z' };
+        const historyBodies: unknown[] = [];
+        let refusal: string | null = null;
+        account.setEffect((path, body) => {
+            if (refusal) return Response.json({ error: refusal }, { status: 403 });
+            if (path.endsWith('/activity/read')) {
+                historyBodies.push(body);
+                return Response.json({ items: [entry], nextCursor: 'cursor-2' });
+            }
+            if (path.endsWith('/envelope-census')) return Response.json({ resourceId: 'resource-a', revision: 4, nextCursor: null, recipients: [
+                { account: person('ready-recipient'), readiness: { status: 'available', contentPublicKey, contentPublicKeyFingerprint: fingerprint },
+                    envelopeStatus: 'prepared' },
+                { account: person('plain-recipient'), readiness: { status: 'unavailable', reason: 'plain_account' }, envelopeStatus: 'missing' },
+            ] });
+            throw new Error(`Unexpected Saved Secret request ${path}`);
+        });
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const agent = { surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId,
+            runtimeAccountId: account.scope.accountId, actionCaller: { kind: 'host' } } as const;
+        const history = await executor.execute('secrets.shared.disclosures.list', { resourceId: 'resource-a', cursor: 'cursor-1' },
+            { ...agent, actionRequestId: 'history-1' });
+        expect(history).toEqual({ ok: true, result: { items: [entry], nextCursor: 'cursor-2' } });
+        // The Home's own activity reader keeps its cursor and page size.
+        expect(historyBodies).toEqual([{ resourceId: 'resource-a', cursor: 'cursor-1' }]);
+        const recipients = await executor.execute('secrets.shared.recipients.list', { resourceId: 'resource-a' },
+            { ...agent, actionRequestId: 'recipients-1' });
+        expect(recipients).toMatchObject({ ok: true, result: { resourceId: 'resource-a', revision: 4, recipients: [
+            { account: { accountId: 'ready-recipient' }, readiness: { status: 'available' }, envelopeStatus: 'prepared' },
+            { account: { accountId: 'plain-recipient' }, readiness: { status: 'unavailable', reason: 'plain_account' }, envelopeStatus: 'missing' },
+        ] } });
+        expect(JSON.stringify(recipients)).not.toContain(contentPublicKey);
+        expect(JSON.stringify(recipients)).not.toContain(fingerprint);
+        expect(account.censusReads).toHaveLength(1);
+        expect(account.writes).toEqual([]);
+        // The Home's owner-only refusal reaches the caller as its typed code.
+        refusal = 'forbidden';
+        expect(await executor.execute('secrets.shared.recipients.list', { resourceId: 'resource-a' }, { ...agent, actionRequestId: 'recipients-2' }))
+            .toMatchObject({ ok: false, errorCode: 'forbidden' });
+        expect(await executor.execute('secrets.shared.disclosures.list', { resourceId: 'resource-a' }, { ...agent, actionRequestId: 'history-2' }))
+            .toMatchObject({ ok: false, errorCode: 'forbidden' });
     });
 
     // Opening Saved Secrets used to read one census per owned E2EE resource. The sweep asks once for everything owed,
