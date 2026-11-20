@@ -14,7 +14,10 @@ import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalize
 import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
 import { readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageQuotaSourceSnapshot, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -1316,9 +1319,41 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
 
 type SessionWorkSourceResult = import('@happier-dev/protocol/usage/usageWorkSources').SessionWorkSourceResult;
 
+/** Only Machine availability is shared; each Session keeps its own request and authorization. */
+function createUsageWorkMachineReader(context: UsageQueryAccountContext, signal?: AbortSignal) {
+    const availability = new Map<string, Promise<boolean>>();
+    const scope = context.accountLifetime.scope;
+    const unavailable = new RpcError('Machine unavailable', 'target_unavailable');
+    return async (machineId: string, request: Parameters<typeof machineScmWorkEvidenceRead>[1]) => {
+        const previous = availability.get(machineId);
+        if (previous) {
+            if (!await previous) throw unavailable;
+            requireCurrent(context, signal);
+        } else {
+            const machine = resolveServerScopedMachine(getStorage().getState(), scope.serverId, machineId);
+            // An absent inventory row is unanswered, while the reachability owner
+            // still retains an explicit failed connection for this exact scope.
+            if (resolveMachineReachability(scope, machine ?? { id: machineId, active: false }) === 'unreachable') {
+                availability.set(machineId, Promise.resolve(false));
+                throw unavailable;
+            }
+        }
+        const reading = machineScmWorkEvidenceRead(machineId, request, { ...scope, signal });
+        const verdict = reading.then(() => true, error => {
+            // Only a positively classified Machine absence withdraws availability;
+            // Session refusals, missing methods and deadlines remain request-local.
+            const available = !isMachineRequestReachabilityFailureV1(error);
+            if (!available) availability.set(machineId, Promise.resolve(false));
+            return available;
+        });
+        if (!previous) availability.set(machineId, verdict);
+        return reading;
+    };
+}
+
 async function readSessionWorkEvidence(context: UsageQueryAccountContext, queries: readonly UsageQuery[],
     accounting: readonly UsageAccountingSourceSnapshot[], sessionReads: Map<string, Promise<SessionWorkSourceResult>>,
-    signal?: AbortSignal): Promise<readonly UsageWorkSourceSnapshot[]> {
+    readMachine: Parameters<typeof collectUsageWorkSources>[0]['readMachine'], signal?: AbortSignal): Promise<readonly UsageWorkSourceSnapshot[]> {
     return collectUsageWorkSources({ queries, accounting, sessionReads, assertCurrent: () => requireCurrent(context, signal),
         resolveSession: async sessionId => {
             const scope = context.accountLifetime.scope;
@@ -1326,7 +1361,7 @@ async function readSessionWorkEvidence(context: UsageQueryAccountContext, querie
             return target.ok ? { machineId: target.machineId, cwd: target.cwd }
                 : { errorCode: target.failure.actionErrorCode ?? target.failure.errorCode };
         },
-        readMachine: (machineId, request) => machineScmWorkEvidenceRead(machineId, request, { ...context.accountLifetime.scope, signal }),
+        readMachine,
     });
 }
 
@@ -1482,6 +1517,7 @@ export async function readUiUsageQueryBatch(
     let coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
     let work: readonly UsageWorkSourceSnapshot[] = queries.map(query => ({ query, status: query.includeAccounting && query.includeWorkEvidence ? 'pending' : 'not_loaded' }));
     const sessionWorkReads = new Map<string, Promise<SessionWorkSourceResult>>();
+    const readWorkMachine = createUsageWorkMachineReader(context, signal);
     const sessionInputReader = accountOwner.readSessionInput;
     // KV disclosure and Session evidence share this finite Account batch's identity.
     // It stays lazy: unchanged retained Session inputs need no currentness GET.
@@ -1609,7 +1645,7 @@ export async function readUiUsageQueryBatch(
             // are still shared across slices within this one Action admission.
             await accountingTasks.get(getUsageQueryKey(query));
             requireCurrent(context, signal);
-            const sources = await readSessionWorkEvidence(context, [query], [...accounting.values()], sessionWorkReads, signal);
+            const sources = await readSessionWorkEvidence(context, [query], [...accounting.values()], sessionWorkReads, readWorkMachine, signal);
             work = work.map((source, sourceIndex) => sourceIndex === index
                 ? { ...sources[0]!, ...(sources[0]!.status === 'error' ? {} : { asOfMs: accountingNowMs }) } : source);
             publish();

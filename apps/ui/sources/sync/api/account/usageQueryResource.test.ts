@@ -3272,7 +3272,8 @@ describe('usage query captured Resource adapter', () => {
   it('refreshes quota-free Work after an authenticated Machine reconnect', async () => {
     let daemonReachable = false;
     const captured = await context(request => {
-      if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: [workContribution] });
+      if (request.path === '/v2/usage/query') return Response.json({ ...value,
+        contributions: [workContribution, { ...workContribution, id: 'sibling-cost', sessionId: 'work-sibling' }] });
       return createPlainMachineReadHttpResponseFixture(request.path, {
         method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
       }, 'account-a', { active: daemonReachable, activeAt: daemonReachable ? Date.now() : 1, presenceProtocolVersion: 1 }) ?? undefined;
@@ -3280,20 +3281,22 @@ describe('usage query captured Resource adapter', () => {
     const scope = captured.accountLifetime.scope;
     const machine = createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } });
     await publishMachineInventoryForTest(scope, [machine]);
-    storage.getState().applySessions([createSessionFixture({ id: 'work-session', active: true, serverId: scope.serverId,
-      metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
+    storage.getState().applySessions(['work-session', 'work-sibling'].map(id => createSessionFixture({ id, active: true, serverId: scope.serverId,
+      metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' } })));
     const witness: UsageWorkEvidence = { sessionId: 'work-session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
       checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
       pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
         nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Merged',
         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } };
     scmTransport.mockImplementation(async request => {
-      // The real carrier, rather than a consumer presence preflight, reports
-      // an unreachable daemon. Its later recovery supplies these witnesses.
+      // Count the actual SocketRPC CALL boundary. Pushed offline presence
+      // should prevent this call; authenticated recovery supplies witnesses.
       if (!daemonReachable) throw createRpcCallError({
         error: 'Machine unavailable', errorCode: 'target_unavailable',
       });
-      return workBatch(request, { status: 'partial', evidence: [witness], branchEvidence: [] });
+      return ScmWorkEvidenceReadResponseSchema.parse({ sessions: request.payload.sessions.map(({ sessionId }: { sessionId: string }) => ({
+        sessionId, status: 'partial', evidence: [{ ...witness, sessionId }], branchEvidence: [],
+      })) });
     });
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
       includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, workProjection: 'summary', includeComparison: false });
@@ -3304,15 +3307,23 @@ describe('usage query captured Resource adapter', () => {
       await entry.refresh();
       await expect.poll(() => entry.getSnapshot().subscription === 'live' && entry.getSnapshot().pending === 'idle').toBe(true);
       expect(work()?.mergedPrCount ?? 0).toBe(0);
+      expect.soft(scmTransport, 'an answered offline Machine receives zero automatic Work RPCs').not.toHaveBeenCalled();
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources).toContainEqual(expect.objectContaining({
+        source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 2 },
+      }));
       const accountingReads = home!.requests.filter(request => request.path === '/v2/usage/query').length;
+      scmTransport.mockClear();
       daemonReachable = true;
-      publishMachineActivityForTest([storage.getState().machines[machine.id]!], { active: true, activeAt: Date.now() });
-      observeMachinePresenceForTest(scope, [machine.id]);
+      await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machine.id, accountId: 'account-a',
+        machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } })]);
       // Presence does not retire a failed request; the authenticated reconnect does.
       clearMachineRequestReachabilityForMachine(scope, machine.id);
       expect(entry.isAllowanceReadPending(), 'Machine recovery has no allowance consumer').toBe(false);
       await expect.poll(() => work()?.mergedPrCount).toBe(1);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(scmTransport, 'one recovered Machine carries both admitted Session selectors in one batch').toHaveBeenCalledTimes(1);
+      expect(scmTransport.mock.calls[0]?.[0].payload.sessions.map((session: { sessionId: string }) => session.sessionId).sort())
+        .toEqual(['work-session', 'work-sibling']);
       expect(home!.requests.filter(request => request.path === '/v2/usage/query'), 'Machine recovery keeps admitted accounting').toHaveLength(accountingReads);
       expect(home!.requests.filter(request => request.path.startsWith('/v4/connect/qualified/provider-account-usage/')),
         'Machine recovery acquires only consumed Work evidence').toHaveLength(0);
@@ -8969,6 +8980,105 @@ describe('usage query captured Resource adapter', () => {
 });
 
 describe('usage query Work composition', () => {
+  it('shares an unavailable Machine verdict across concurrent disjoint Work slices without reusing Session results', async () => {
+    const sessionIds = ['cold-work-a', 'cold-work-b', 'cold-work-c'];
+    const laterAccounting = createDeferred<void>();
+    let holdLaterAccounting = false;
+    const captured = await context(async request => {
+      if (request.path !== '/v2/usage/query') return undefined;
+      const input = UsageAnalyticsQueryRequestSchema.parse(request.body);
+      const agent = input.filters?.agentIds?.[0];
+      if (agent === 'third' && holdLaterAccounting) await laterAccounting.promise;
+      const id = agent === 'third' ? sessionIds[2]! : agent === 'second' ? sessionIds[1]! : sessionIds[0]!;
+      return Response.json({ ...value, contributions: [{ ...workContribution, id: `cost-${id}`, sessionId: id }] });
+    });
+    const scope = captured.accountLifetime.scope;
+    storage.getState().applySessions(sessionIds.map(id => createSessionFixture({ id, active: true, serverId: scope.serverId,
+      metadata: { machineId: 'cold-work-machine', path: '/repo', host: 'test', homeDir: '/home/test' } })));
+    // No answered inventory exists. Metadata still permits the first real
+    // Machine attempt; hold its network reply while both slices are admitted.
+    const refusal = createDeferred<ReturnType<typeof ScmWorkEvidenceReadResponseSchema.parse>>();
+    let unavailable = true;
+    scmTransport.mockImplementation(async request => unavailable ? refusal.promise : workBatch(request, { status: 'partial', evidence: [] }));
+    const first = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeQuota: false, includeQuotaHistory: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: true, includeComparison: false });
+    const second = normalizeUsageQuery({ ...first, agents: ['second'] });
+    const reading = readUiUsageQueryBatch(captured, { queries: [first, second] });
+    await expect.poll(() => scmTransport.mock.calls.length > 0).toBe(true);
+    await flushHookEffects({ cycles: 20 });
+    expect.soft(scmTransport, 'concurrent disjoint Session selectors share the first Machine availability answer').toHaveBeenCalledTimes(1);
+    refusal.reject(createRpcCallError({ error: 'Machine unavailable', errorCode: 'target_unavailable' }));
+    const result = await reading;
+    expect.soft(scmTransport, 'one unavailable Machine receives at most one SocketRPC CALL in the finite read').toHaveBeenCalledTimes(1);
+    for (const slice of result.results) expect(slice.sources).toContainEqual(expect.objectContaining({
+      source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 1 },
+    }));
+    // A known failed connection is authoritative even if its inventory row is absent.
+    await publishMachineInventoryForTest(scope, []);
+    scmTransport.mockClear();
+    await readUiUsageQueryBatch(captured, { queries: [first, second] });
+    expect.soft(scmTransport, 'a later finite read consumes canonical failure without another unavailable probe').not.toHaveBeenCalled();
+    unavailable = false;
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: 'cold-work-machine', accountId: 'account-a',
+      machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } })]);
+    clearMachineRequestReachabilityForMachine(scope, 'cold-work-machine');
+    scmTransport.mockClear();
+    const recovered = await readUiUsageQueryBatch(captured, { queries: [first, second] });
+    expect(scmTransport, 'reachable disjoint slices keep each Session-specific selector').toHaveBeenCalledTimes(2);
+    expect(scmTransport.mock.calls.map(([request]) => request.payload.sessions.map((session: { sessionId: string }) => session.sessionId)))
+      .toEqual(expect.arrayContaining([[sessionIds[0]], [sessionIds[1]]]));
+    for (const slice of recovered.results) expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'partial' }));
+    // A later positive Machine refusal withdraws the earlier successful
+    // verdict for slices whose accounting has not arrived yet.
+    let attempts = 0;
+    scmTransport.mockClear();
+    scmTransport.mockImplementation(async request => {
+      if (++attempts === 2) throw createRpcCallError({ error: 'Machine unavailable', errorCode: 'target_unavailable' });
+      return workBatch(request, { status: 'partial', evidence: [] });
+    });
+    holdLaterAccounting = true;
+    const third = normalizeUsageQuery({ ...first, agents: ['third'] });
+    const disappearing = readUiUsageQueryBatch(captured, { queries: [first, second, third] });
+    await expect.poll(() => scmTransport.mock.calls.length).toBe(2);
+    laterAccounting.resolve();
+    const departed = await disappearing;
+    expect(scmTransport, 'a later unavailable reply stops subsequent slices in the same finite read').toHaveBeenCalledTimes(2);
+    expect(departed.results.filter(slice => slice.sources.some(source => source.source === 'work' && source.status === 'unknown'))).toHaveLength(2);
+  });
+
+  it.each(['available', 'unresolved'] as const)('keeps unresolved Session Machine control distinct from failed Work evidence (%s)', async target => {
+    const captured = await context(request => {
+      if (request.path !== '/v2/usage/query') return undefined;
+      const input = UsageAnalyticsQueryRequestSchema.parse(request.body);
+      return Response.json({ ...value, contributions: [workContribution],
+        coverage: { status: 'complete', reasons: [], missingDimensions: [], ranked: [], sources: [],
+          range: { ...input.dateRange, complete: true } } });
+    });
+    storage.getState().applySessions([createSessionFixture({ id: workContribution.sessionId, active: true,
+      serverId: captured.accountLifetime.scope.serverId, metadata: {
+        ...(target === 'available' ? { machineId: 'work-machine' } : {}), path: '/repo', host: 'test', homeDir: '/home/test',
+      } })]);
+    if (target === 'available') await publishMachineInventoryForTest(captured.accountLifetime.scope,
+      [createHydratedPlainMachineFixture({ id: 'work-machine', accountId: 'account-a', machine: { activeAt: Date.now() } })]);
+    // Only the daemon acknowledgement is substituted; Resource, Session target,
+    // SCM failure normalization and shared Work collection remain real.
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [] }));
+    const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 600 },
+      includeSessionEvidence: false, includeWorkEvidence: true });
+    const result = await readUiUsageQueryBatch(captured, { queries: [query] });
+    expect(result.results[0]?.accounting?.totals.tokens.total).toBe(15);
+    const work = result.results[0]?.sources.find(source => source.source === 'work');
+    if (target === 'available') {
+      expect(work).toMatchObject({ source: 'work', status: 'partial' });
+      expect(work?.unreadSessions).toBeUndefined();
+      expect(scmTransport).toHaveBeenCalled();
+    } else {
+      expect(work).toMatchObject({ source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 1 } });
+      expect(work).not.toHaveProperty('errorCode');
+      expect(scmTransport).not.toHaveBeenCalled();
+    }
+  });
+
   it('exposes admitted SCM snapshots through the real accounting read without relabelling another query', async () => {
     const tokens = { input: 10, output: 5, total: 15, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
     const contribution = { id: 'cost', observedAtMs: 150, sessionId: 'session', turnId: 'turn', agentId: null,
@@ -9089,6 +9199,7 @@ describe('usage query Work composition', () => {
       await expect.poll(() => hostEntry.getSnapshot().pending).toBe('idle');
       expect(decodeUsageQueryResource(hostEntry.getSnapshot().value!).results[0]?.work?.allocations[0]?.reason).toBe('allocated');
       const beforeHostFlip = home!.requests.filter(request => request.path === '/v2/usage/query').length;
+      scmTransport.mockClear();
       // The next native read answers a changed partial inventory, so this
       // proves Machine invalidation reaches Work without re-reading accounting.
       scmTransport.mockImplementation(async request => workBatch(request, { status: 'partial', evidence: [] }));
@@ -9112,12 +9223,20 @@ describe('usage query Work composition', () => {
       await expect.poll(() => {
         const content = hostEntry.getSnapshot().value;
         return content && decodeUsageQueryResource(content).results[0]?.sources.find(source => source.source === 'work')?.status;
+      }).toBe('unknown');
+      await expect.poll(() => hostEntry.getSnapshot().pending).toBe('idle');
+      expect(scmTransport, 'a canonical failed connection stops automatic Work RPCs').not.toHaveBeenCalled();
+      clearMachineRequestReachabilityForMachine(scope, machine.id);
+      await expect.poll(() => {
+        const content = hostEntry.getSnapshot().value;
+        return content && decodeUsageQueryResource(content).results[0]?.sources.find(source => source.source === 'work')?.status;
       }).toBe('partial');
       await expect.poll(() => {
         const content = hostEntry.getSnapshot().value;
         return content && decodeUsageQueryResource(content).results[0]?.work?.allocations[0]?.reason;
       }).toBe('missing_evidence');
       await expect.poll(() => hostEntry.getSnapshot().pending).toBe('idle');
+      expect(scmTransport, 'canonical recovery reacquires this admitted Work consumer once').toHaveBeenCalledTimes(1);
       expect(home!.requests.filter(request => request.path === '/v2/usage/query').length,
         'Machine reachability changes Work evidence, not the Account accounting answer').toBe(beforeHostFlip);
     } finally { release(); recordMachineRequestSucceeded({ ...captured.accountLifetime.scope, machineId: machine.id }); }

@@ -58,9 +58,12 @@ describe('SCM RPC failure normalization', () => {
     });
 
     it('keeps explicit no-dispatch errors and failed queries as known failures', () => {
-        for (const rpcErrorCode of [RPC_ERROR_CODES.METHOD_NOT_FOUND, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE]) {
+        for (const rpcErrorCode of [RPC_ERROR_CODES.METHOD_NOT_FOUND, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE]) {
             const response = scmFallbackError({ rpcErrorCode }, { method: RPC_METHODS.SCM_REMOTE_PUSH, request: {} });
             expect(response.outcome?.kind).not.toBe('outcome_unknown');
+            if (rpcErrorCode === RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE) {
+                expect(response).toMatchObject({ errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: rpcErrorCode });
+            }
         }
         const query = scmFallbackError(new Error('timeout'), { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, request: {} });
         expect(query.errorCode).toBe('REPOSITORY_REFRESH_FAILED');

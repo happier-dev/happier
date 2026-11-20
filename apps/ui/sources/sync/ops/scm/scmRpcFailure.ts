@@ -119,7 +119,8 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
             return finish({ success: false, error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED });
         }
         if (isRpcSessionMachineControlUnavailableError(rpcError)) {
-            return finish({ success: false, error: RPC_ERROR_MESSAGES.SESSION_MACHINE_CONTROL_UNAVAILABLE, errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE });
+            return finish({ success: false, error: RPC_ERROR_MESSAGES.SESSION_MACHINE_CONTROL_UNAVAILABLE,
+                errorCode: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE, actionErrorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE });
         }
     }
     if (!isRead) {
