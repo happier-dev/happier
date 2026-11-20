@@ -193,7 +193,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         // A failed read keeps the offer with a reason and an explicit retry, never an empty disabled card.
         if (readiness.homeUnreachable) homeUnreachable = true;
         // The floor says the state in a word (lab m-add); the provider's own words, or why a check failed, are the hint.
-        const statusLabel = placement.requiresController ? '' : offline ? t('machine.offline') : needsApp ? t('managedMachines.add.status.needsApp')
+        const statusLabel = placement.requiresController ? '' : offline ? t('status.offline') : needsApp ? t('managedMachines.add.status.needsApp')
             : readiness.homeUnreachable ? t('managedMachines.add.status.needsSetup')
             : readiness.kind === 'needsAccount' ? t('managedMachines.add.status.noAccount')
             : readiness.kind === 'ready' ? t('managedMachines.add.status.ready')

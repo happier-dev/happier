@@ -1799,12 +1799,12 @@ describe('provisioner picker demand', () => {
       .find(card => card.title === 'Beta');
     await waitForHomeGovernance(() => expect(beta()?.status.label).not.toBe(t('managedMachines.add.status.checking')));
     const online = beta()!.status.label;
-    expect(online).not.toBe(t('machine.offline'));
+    expect(online).not.toBe(t('status.offline'));
     await act(async () => publishMachineActivityForTest([machine], { active: false, activeAt: 0 }));
     // F29: the open catalog follows the pushed presence at once; no "Ready · Choose" from the last check.
     await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.controller-offline')).not.toBeNull());
     expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
-    expect(beta()?.status.label).toBe(t('machine.offline'));
+    expect(beta()?.status.label).toBe(t('status.offline'));
     expect(beta()?.action.disabled).toBe(true);
     expect(cards().some(card => card.title === 'Alpha')).toBe(true);
     await act(async () => publishMachineActivityForTest([machine], { active: true, activeAt: Date.now() }));
