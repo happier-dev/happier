@@ -690,17 +690,23 @@ describe('createCliActionExecutorHarness', () => {
   it.each(['update', 'reconnect'] as const)('delivers an independently persisted PDF rejection to the Agent MCP caller on %s', async wake => {
     let request: ReturnType<typeof ApprovalRequestV2Schema.parse> | null = null;
     const lifetime = new AbortController();
+    const accountToken = `header.${Buffer.from(JSON.stringify({ sub: 'pdf-account', tokenEpoch: 0,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
     // Only Artifact persistence and Socket.IO are substituted. The native Action,
     // approval waiter, Account invalidation, tool bridge and MCP codec stay real.
-    const harness = createCliActionExecutorHarness({ token: 'session-token', credentials: { token: 'account-token', encryption: null }, sessionId: 'pdf-agent',
+    const harness = createCliActionExecutorHarness({ token: 'session-token', credentials: { token: accountToken, encryption: null }, sessionId: 'pdf-agent',
       serverId: 'pdf-home', serverHttpBaseUrl: 'https://pdf-home.test', mode: 'plain', ctx: null,
       getCurrentSessionMetadata: () => ({ machineId: 'pdf-machine' }),
     }, {
+      hostActionApprovalLifetime: { actionId: 'artifact.publish_from_file', surface: 'agent', signal: lifetime.signal },
       approvalsCreate: async args => { request = ApprovalRequestV2Schema.parse(args.request); return { artifactId: 'pdf-approval' }; },
       approvalsGet: async () => request,
       approvalsUpdate: async args => { request = ApprovalRequestV2Schema.parse(args.request); return { ok: true }; },
     });
-    const bridge = createActionToolExecutorBridge({ surface: 'agent', executor: harness.executor,
+    const bridge = createActionToolExecutorBridge({ surface: 'agent', executor: {
+      // This host retains the private file invocation for its containing operation.
+      execute: (actionId, input, context) => harness.executor.execute(actionId, input, { ...context, signal: lifetime.signal }),
+    },
       defaultSessionMachineId: 'pdf-machine' });
     const server = new McpServer({ name: 'pdf-approval', version: '1' });
     const client = new Client({ name: 'agent', version: '1' });
@@ -719,7 +725,7 @@ describe('createCliActionExecutorHarness', () => {
       await vi.waitFor(() => expect(request).toMatchObject({ status: 'open', createdBy: { surface: 'agent', sessionId: 'pdf-agent' } }));
       await vi.waitFor(() => expect(wire.sockets.some(socket => socket.connected)).toBe(true));
       expect(wire.io).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-        auth: expect.objectContaining({ clientType: 'user-scoped', token: 'account-token' }),
+        auth: expect.objectContaining({ clientType: 'user-scoped', token: accountToken }),
       }));
       // A different process writes the durable decision: do not use the local
       // harness update wrapper, which would hide a broken Account wake binding.
