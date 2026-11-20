@@ -18924,7 +18924,7 @@ settingsSession: {
             lineError: ({ line, message }: { line: number; message: string }) => `Línea ${line}: ${message}`,
             unknownKeys: "Algunos campos no se reconocen",
             unknownKeysBody: ({ keys }: { keys: string }) => `Happier ignora ${keys} y los conserva en el archivo.`,
-            target: { title: "Guardar cambios en", repository: "Este repositorio", repositoryBody: "Quien abra .happier/project.json los recibe", personal: "Solo para ti", personalBody: "Sobre el repositorio y la configuración compartida, nunca se comparte", personalUnavailable: "Este checkout aún no está en un proyecto", personalNote: "Solo para ti · nunca se comparte", personalFailed: "No se pudo abrir tu configuración personal" },
+            target: { title: "Guardar cambios en", repository: "Este repositorio", repositoryBody: "Quien abra .happier/project.json los recibe", personal: "Solo para ti", personalBody: "Sobre el repositorio y la configuración compartida", personalUnavailable: "Este checkout aún no está en un proyecto", personalNote: "Solo para ti · nunca se comparte", personalFailed: "No se pudo abrir tu configuración personal" },
             environment: { title: "Nombres de entorno", body: "Nombres que necesita esta configuración. Los valores se quedan en este equipo.", action: "Importar nombres de variables", empty: "Aún no hay nombres", none: "No hay .env.example en este checkout", secret: "Secreto", value: "Valor", failed: "No se pudo leer .env.example" },
             toolchain: "Herramientas",
             toolchainBody: "Cada agente, terminal, script y servicio de este proyecto usa estas herramientas. Detectadas leyendo archivos; nada se evalúa hasta que se aprueba la configuración.",

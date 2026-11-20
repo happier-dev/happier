@@ -73,7 +73,12 @@ type RetainedManifestDraft = Readonly<{
 const retainedManifestDrafts = new Map<string, RetainedManifestDraft>();
 const creationBytes = '{\n  "version": 1\n}\n';
 function bytesOf(definition: ProjectManifestEditorDefinition): string {
-  return definition.document?.bytes ?? '';
+  // A Project with no personal changes yet starts from the empty setup, which is already "saved".
+  return definition.document?.bytes ?? (definition.basis.kind === 'personal' ? creationBytes : '');
+}
+/** Only a repository file that doesn't exist yet is unsaved before any edit. */
+function startsUnsaved(definition: ProjectManifestEditorDefinition): boolean {
+  return definition.document === null && definition.basis.kind !== 'personal';
 }
 function sameBasis(
   a: ProjectManifestEditorBasis,
@@ -329,7 +334,7 @@ export function createProjectManifestEditorModel(
           draft: next,
           formEnabled: next.status === 'valid',
           mode: next.status === 'valid' ? snapshot.mode : 'raw',
-          dirty: definition.document === null,
+          dirty: startsUnsaved(definition),
           conflict: null,
           error: null,
         });
@@ -362,7 +367,7 @@ export function createProjectManifestEditorModel(
         draft: next,
         formEnabled: next.status === 'valid',
         mode: next.status === 'valid' ? snapshot.mode : 'raw',
-        dirty: current.document === null,
+        dirty: startsUnsaved(current),
         conflict: null,
         error: null,
       });

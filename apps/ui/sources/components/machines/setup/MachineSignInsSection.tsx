@@ -89,7 +89,9 @@ export function resolveMachineSignInConnectedChoice(
  */
 function readConnectedChoice(row: MachineCliSignInRow): string | null {
   const status = row.authentication;
-  if (!status || status.credentialSource === 'connectedAccount') return null;
+  // Only a CLI declaring a connected launch is chosen here; an Agent's connected account belongs to its own
+  // sign-in chooser on the Agents tab, so its row offers only this Machine's sign-in.
+  if (!row.connectedLaunch || !status || status.credentialSource === 'connectedAccount') return null;
   return status.connectedServices[0]?.serviceId ?? null;
 }
 

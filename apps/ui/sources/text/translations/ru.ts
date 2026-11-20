@@ -18877,7 +18877,7 @@ settingsSession: {
             lineError: ({ line, message }: { line: number; message: string }) => `Строка ${line}: ${message}`,
             unknownKeys: "Некоторые поля не распознаны",
             unknownKeysBody: ({ keys }: { keys: string }) => `Happier игнорирует ${keys} и сохраняет их в файле.`,
-            target: { title: "Сохранять изменения в", repository: "Этот репозиторий", repositoryBody: "Их получит каждый, кто откроет .happier/project.json", personal: "Только для вас", personalBody: "Поверх репозитория и общей настройки, никогда не передаётся", personalUnavailable: "Этот checkout ещё не входит в проект", personalNote: "Только для вас · не передаётся", personalFailed: "Не удалось открыть вашу личную настройку" },
+            target: { title: "Сохранять изменения в", repository: "Этот репозиторий", repositoryBody: "Их получит каждый, кто откроет .happier/project.json", personal: "Только для вас", personalBody: "Поверх репозитория и общей настройки", personalUnavailable: "Этот checkout ещё не входит в проект", personalNote: "Только для вас · не передаётся", personalFailed: "Не удалось открыть вашу личную настройку" },
             environment: { title: "Имена переменных окружения", body: "Имена, нужные этой настройке. Значения остаются на этом компьютере.", action: "Импортировать имена переменных", empty: "Пока нет имён", none: "В этом checkout нет .env.example", secret: "Секрет", value: "Значение", failed: "Не удалось прочитать .env.example" },
             toolchain: "Инструменты",
             toolchainBody: "Каждый агент, терминал, скрипт и сервис этого проекта использует эти инструменты. Они определены чтением файлов; ничего не вычисляется, пока настройка не одобрена.",

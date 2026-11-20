@@ -22,6 +22,10 @@ function row(
     id: 'happier.scm.forge.github/gh',
     title: 'GitHub CLI',
     kind: 'systemTool',
+    connectedLaunch: {
+      purpose: { consumer: { pluginId: 'happier.scm.forge.github', localId: 'gh' }, purpose: 'github.cli' },
+      service: { pluginId: 'happier.scm.forge.github', localId: 'github-account' },
+    },
     signIn: { phase: 'idle' } as MachineCliSignInRow['signIn'],
     authentication: {
       status: 'signedOut',
@@ -104,6 +108,17 @@ describe('Machine sign-ins (E U4)', () => {
       ),
     ).toBeNull();
     await using.unmount();
+  });
+});
+
+describe('Machine sign-ins: Agents keep their own connected-account chooser (live L10, 1120)', () => {
+  it('offers the connected account only on a CLI that declares a connected launch, never on Agent rows', async () => {
+    const agent: MachineCliSignInRow = { ...row(), id: 'codex', title: 'Codex', kind: 'agent', connectedLaunch: undefined };
+    const screen = await renderScreen(<MachineSignInsList serverId="home" machineId="devbox" machineName="devbox"
+      rows={[agent]} editable onSignIn={vi.fn()} onUseConnected={vi.fn()} />);
+    expect(screen.findByTestId('machine-setup-sign-in-connected:codex')).toBeNull();
+    expect(screen.findByTestId('machine-setup-sign-in-start:codex')).not.toBeNull();
+    await screen.unmount();
   });
 });
 

@@ -19030,7 +19030,7 @@ settingsSession: {
             lineError: ({ line, message }: { line: number; message: string }) => `Linha ${line}: ${message}`,
             unknownKeys: "Alguns campos não são reconhecidos",
             unknownKeysBody: ({ keys }: { keys: string }) => `O Happier ignora ${keys} e os mantém no arquivo.`,
-            target: { title: "Salvar alterações em", repository: "Este repositório", repositoryBody: "Quem abrir .happier/project.json as recebe", personal: "Só para você", personalBody: "Sobre o repositório e a configuração compartilhada, nunca compartilhado", personalUnavailable: "Este checkout ainda não está em um projeto", personalNote: "Só para você · nunca compartilhado", personalFailed: "Não foi possível abrir sua configuração pessoal" },
+            target: { title: "Salvar alterações em", repository: "Este repositório", repositoryBody: "Quem abrir .happier/project.json as recebe", personal: "Só para você", personalBody: "Sobre o repositório e a configuração compartilhada", personalUnavailable: "Este checkout ainda não está em um projeto", personalNote: "Só para você · nunca compartilhado", personalFailed: "Não foi possível abrir sua configuração pessoal" },
             environment: { title: "Nomes de ambiente", body: "Nomes que esta configuração precisa. Os valores ficam neste computador.", action: "Importar nomes de variáveis", empty: "Nenhum nome ainda", none: "Nenhum .env.example neste checkout", secret: "Segredo", value: "Valor", failed: "Não foi possível ler .env.example" },
             toolchain: "Ferramentas",
             toolchainBody: "Todo agente, terminal, script e serviço deste projeto usa estas ferramentas. Detectadas lendo arquivos; nada é avaliado até a configuração ser aprovada.",

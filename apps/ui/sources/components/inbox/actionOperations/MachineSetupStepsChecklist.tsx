@@ -47,7 +47,10 @@ export function MachineSetupStepsChecklist(props: Readonly<{
       return {
         ...item,
         // A failed step's line is its output opener (lab L7-failed "› Output"): why it stopped is said once, at the head.
-        ...(opener ? { subtitle: `${open ? '⌄' : '›'} ${t('projects.scripts.output.title')}` } : {}),
+        ...(opener ? { subtitle: props.attachment.kind === 'projectCommand' && typeof item.subtitle === 'string'
+          // A Project row keeps its command; the opener follows it on the same line.
+          ? `${item.subtitle} · ${open ? '⌄' : '›'} ${t('projects.scripts.output.title')}`
+          : `${open ? '⌄' : '›'} ${t('projects.scripts.output.title')}` } : {}),
         renderDetails: () => (
           <ProjectCommandOutputPane operation={operation} terminalId={output.terminalId} title={title} height={240} ownerStatesExit />
         ),

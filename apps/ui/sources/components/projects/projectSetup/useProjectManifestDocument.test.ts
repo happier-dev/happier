@@ -102,6 +102,16 @@ describe('Project manifest document target controller', () => {
     expect(writes[0]).toMatchObject({ expectedRevision: 9, intent: { kind: 'personal', setupOverrides: { scripts: { build: { source: { kind: 'command', command: 'personal draft' } } } } } });
   });
 
+  it('opens a Project with no personal changes yet as a clean, unsaved-free draft (live L6, 1120)', async () => {
+    const scopedWorkspace = { ...workspace, rootPath: '/no-personal-setup' };
+    const actions = client({}, { workspace: scopedWorkspace, accountId: 'alice' });
+    const hook = await renderHook(() => useProjectManifestDocument({ workspace: scopedWorkspace, accountId: 'alice',
+      client: actions, repositoryDefinition, personal: { projectRef, revision: 'absent', organization: {} } }));
+    await act(async () => { hook.getCurrent().selectTarget('personal'); });
+    expect(hook.getCurrent()).toMatchObject({ target: 'personal', loading: false, error: null });
+    expect(hook.getCurrent().model?.getSnapshot()).toMatchObject({ dirty: false, draft: { status: 'valid' } });
+  });
+
   it('preserves repository editing when the protected Personal detail is unavailable', async () => {
     const scopedWorkspace = { ...workspace, rootPath: '/unavailable' };
     const actions = client({ artifactAction: async () => ({ artifact: artifact(99) }) }, { workspace: scopedWorkspace, accountId: 'alice' });

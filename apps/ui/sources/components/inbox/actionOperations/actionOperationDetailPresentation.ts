@@ -501,16 +501,20 @@ export function projectProjectCommandStepChecklist(
     let progressObservationLabel: string | null = null;
     for (const step of steps) {
         const id = String(step.index);
-        const subtitle = step.state === 'failed' && step.exitCode !== undefined
+        // The row names its place ("Step 2") and says the reviewed command whole beneath it; a command as the
+        // title truncates in the detail's column (live L2, 1120).
+        const command = describeProjectCommandSource(step.source).reference;
+        const outcome = step.state === 'failed' && step.exitCode !== undefined
             ? t('localServices.actions.failure.exitCode', { code: String(step.exitCode) })
             : step.state === 'outcome_uncertain' ? t('inbox.actionOperations.status.outcomeUncertain')
-            : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : undefined;
+            : step.state === 'cancelled' ? t('inbox.actionOperations.status.cancelled') : null;
+        const subtitle = outcome ? `${command} · ${outcome}` : command;
         const unobserved = observation !== 'available' && (step.state === 'running' || step.state === 'pending');
         if (unobserved && step.state === 'running') {
             progressObservationLabel ??= describeActionOperationStatusLabel({ kind: 'host', value: observation });
         }
-        items.push({ id, title: describeProjectCommandSource(step.source).reference, satisfied: false, disabled: true,
-            ...(subtitle ? { subtitle } : {}), needsAttention: false,
+        items.push({ id, title: t('projects.scripts.setup.step', { n: step.index + 1 }), subtitle, satisfied: false, disabled: true,
+            needsAttention: false,
             output: step.terminalId ? { kind: 'open_output', serverId: attachment.serverId,
                 machineId: attachment.machineId, terminalId: step.terminalId } : null });
         executionById[id] = { status: unobserved ? 'idle' : PROJECT_STEP_STATUS[step.state], logs: NO_LOGS };
