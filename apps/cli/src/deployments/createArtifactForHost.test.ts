@@ -41,34 +41,62 @@ it('publishes an issued Link Artifact with create idempotency without replacing 
     expect(operations).toEqual(['POST /v1/artifacts']);
 });
 
-it('refreshes the issued pre-receipt candidate using its current head instead of recreating version one', async () => {
-    const artifactId = '238a6c63-d34f-87f9-bb73-84d87f17edbd';
-    const header = { kind: 'deployment.v1', title: 'Candidate' };
-    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
-    const artifacts = createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => 'plain' });
-    const writes: string[] = [];
-    // HTTP storage is the system boundary; candidate publication and the full
-    // Artifact codec/CAS writer remain real.
-    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: {
-        id: artifactId, ownerAccountId: 'owner', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
-        header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: '{}' }),
-        headerVersion: 4, bodyVersion: 7, seq: 1, createdAt: 1, updatedAt: 1,
-        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-    } });
-    vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
-        const path = new URL(String(url)).pathname;
-        writes.push(path);
-        if (path === '/v1/artifacts') return { status: 200, data: { id: artifactId, headerVersion: 1, bodyVersion: 1 } };
-        expect(raw).toMatchObject({ expectedHeaderVersion: 4, expectedBodyVersion: 7 });
-        return { status: 200, data: { success: true, headerVersion: 5, bodyVersion: 8 } };
+it.each(['current head', 'withdrawn mode', 'before-write abort', 'shared head', 'stale head'] as const)(
+    'updates the issued pre-receipt candidate with one head read (%s)', async scenario => {
+        const artifactId = '238a6c63-d34f-87f9-bb73-84d87f17edbd';
+        const header = { kind: 'deployment.v1', title: 'Candidate' };
+        const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        let mode: 'plain' | 'e2ee' = 'plain';
+        const controller = new AbortController();
+        const artifacts = createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => mode });
+        const writes: string[] = [];
+        let headReads = 0;
+        let beforeWrites = 0;
+        // HTTP storage is the system boundary; candidate publication and the full
+        // Artifact codec/CAS writer remain real.
+        vi.spyOn(axios, 'get').mockImplementation(async () => {
+            headReads++;
+            return { status: 200, data: {
+                id: artifactId, ownerAccountId: scenario === 'shared head' ? 'other-account' : 'owner',
+                access: scenario === 'shared head' ? 'edit' : 'owner', publicAudience: 'none', encryptionMode: 'plain',
+                header: encodePlainArtifactStoredContent(header), body: encodePlainArtifactStoredContent({ body: '{}' }),
+                headerVersion: 4, bodyVersion: 7, seq: 1, createdAt: 1, updatedAt: 1,
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            } };
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+            const path = new URL(String(url)).pathname;
+            writes.push(path);
+            if (path === '/v1/artifacts') return { status: 200, data: { id: artifactId, headerVersion: 1, bodyVersion: 1 } };
+            expect(raw).toMatchObject({ expectedHeaderVersion: 4, expectedBodyVersion: 7 });
+            if (scenario === 'stale head') return { status: 200, data: { success: false, error: 'version-mismatch',
+                currentHeaderVersion: 5, currentBodyVersion: 7 } };
+            expect(beforeWrites).toBe(1);
+            return { status: 200, data: { success: true, headerVersion: 5, bodyVersion: 8 } };
+        });
+        const result = runWithServerHttpBaseUrl('https://candidate.test', () => createDeploymentArtifactForHost({
+            artifacts, owner: { kind: 'account', accountId: 'owner' }, assertCurrent: async () => {},
+            content: { artifactId, header, body: '{"prepared":true}', signal: controller.signal, beforeWrite: () => {
+                beforeWrites++;
+                if (scenario === 'before-write abort') controller.abort();
+                if (scenario === 'withdrawn mode') mode = 'e2ee';
+            } },
+        }));
+        if (scenario === 'current head') {
+            await expect(result).resolves.toEqual({ artifactId, revision: { headerVersion: 5, bodyVersion: 8 } });
+        } else if (scenario === 'shared head') {
+            await expect(result).rejects.toMatchObject({ code: 'deployment_content_unavailable' });
+        } else if (scenario === 'before-write abort') {
+            await expect(result).rejects.toMatchObject({ name: 'AbortError' });
+        } else if (scenario === 'stale head') {
+            await expect(result).rejects.toMatchObject({ code: 'version_mismatch' });
+        } else {
+            await expect(result).rejects.toBeInstanceOf(Error);
+            expect(beforeWrites).toBe(1);
+        }
+        expect(writes).toEqual(scenario === 'current head' || scenario === 'stale head' ? [`/v1/artifacts/${artifactId}`] : []);
+        expect(headReads).toBe(1);
     });
-    const result = await runWithServerHttpBaseUrl('https://candidate.test', () => createDeploymentArtifactForHost({
-        artifacts, owner: { kind: 'account', accountId: 'owner' }, assertCurrent: async () => {},
-        content: { artifactId, header, body: '{"prepared":true}' },
-    }));
-    expect(result).toEqual({ artifactId, revision: { headerVersion: 5, bodyVersion: 8 } });
-    expect(writes).toEqual([`/v1/artifacts/${artifactId}`]);
-});
 
 it.each([{ creator: 'alice', retained: false }, { creator: 'bob', retained: false }, { creator: 'bob', retained: true }])('publishes an E2EE receipt for the server-admitted audience without reading the Environment grants ($creator, retained=$retained)', async ({ creator, retained }) => {
     const environmentId = '11111111-1111-4111-8111-111111111111';
@@ -137,7 +165,9 @@ it.each([{ creator: 'alice', retained: false }, { creator: 'bob', retained: fals
         if (path === `/v1/artifacts/${receiptId}`) {
             if (!receipt || typeof raw !== 'object' || !raw) throw new Error('Missing retained candidate');
             applyAudience();
-            const { expectedHeaderVersion, expectedBodyVersion, ...content } = ArtifactJsonUpdateHttpInputV1Schema.parse(raw);
+            const { updateOperationId, ...update } = raw as Record<string, unknown>;
+            expect(updateOperationId).toEqual(expect.any(String));
+            const { expectedHeaderVersion, expectedBodyVersion, ...content } = ArtifactJsonUpdateHttpInputV1Schema.parse(update);
             expect([expectedHeaderVersion, expectedBodyVersion]).toEqual([1, 1]);
             receipt = ArtifactHttpReadV1Schema.parse({ ...receipt, ...content, headerVersion: 2, bodyVersion: 2 });
             return { status: 200, data: { success: true, headerVersion: 2, bodyVersion: 2 } };

@@ -1126,7 +1126,7 @@ export function createAccountArtifactStore(params: Readonly<{
         associatedContentCommitment: (domain: string, components: readonly string[]): string => codec.mode === 'plain'
           ? computeCanonicalDomainSeparatedDigest(domain, [stored.id, ...components])
           : computeCanonicalDomainSeparatedKeyedDigest(codec.dataKey!, domain, [stored.id, ...components]),
-        update: (content: Pick<AccountArtifact, 'header'> & Readonly<{ body: ArtifactBodyV1 }>) => update({ ...content,
+        update: (content: Omit<UpdateInput, 'artifactId' | 'expectedRevision'>) => update({ ...content,
         artifactId: stored.id, expectedRevision: { headerVersion: stored.headerVersion, bodyVersion: stored.bodyVersion },
         ...(options?.signal ? { signal: options.signal } : {}),
         ...(options?.authorizationHeaders ? { authorizationHeaders: options.authorizationHeaders } : {}) }, stored) };

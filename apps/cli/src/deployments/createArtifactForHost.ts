@@ -6,7 +6,7 @@ type ArtifactStore = ReturnType<typeof createCredentialedAccountArtifactStore>;
 
 /** Private deployment content follows its owner and, for receipts, the Environment audience. */
 export async function createDeploymentArtifactForHost(input: Readonly<{
-    artifacts: Pick<ArtifactStore, 'create' | 'accessGrants' | 'readForUpdate' | 'update'>;
+    artifacts: Pick<ArtifactStore, 'create' | 'accessGrants' | 'readForUpdate'>;
     owner: DeploymentEnvironmentDetailV1['environment']['owner'];
     content: Parameters<ArtifactStore['create']>[0];
     /** Link jobs publish an immutable identity; native candidates may replace a head before receipt. */
@@ -20,15 +20,14 @@ export async function createDeploymentArtifactForHost(input: Readonly<{
         signal: input.content.signal, prepareRecipients: false, includeSharedAudience: false,
         authorizationHeaders: input.content.authorizationHeaders,
     }) : null;
-    const existing = resource?.artifact;
     let created: Awaited<ReturnType<ArtifactStore['create']>>;
-    if (existing) {
+    if (resource) {
+        const existing = resource.artifact;
         if (existing.header.kind !== input.content.header.kind || existing.access !== 'owner') {
             throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_content_unavailable', error: 'deployment_content_unavailable' });
         }
         await input.assertCurrent();
-        const updated = await input.artifacts.update({ ...input.content, artifactId: existing.artifactId,
-            expectedRevision: existing.revision });
+        const updated = await resource.update(input.content);
         if (!updated.ok) throw createActionExecuteFailureError({ ok: false, errorCode: updated.errorCode, error: updated.errorCode });
         created = { artifactId: existing.artifactId, revision: updated.revision };
     } else created = await input.artifacts.create(input.content);
