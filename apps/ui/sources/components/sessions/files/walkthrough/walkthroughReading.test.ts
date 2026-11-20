@@ -205,6 +205,18 @@ describe('buildWalkthroughReading', () => {
         expect(reading.stops[0]!.files[0]!.unifiedDiff).not.toContain('return key + 1;');
     });
 
+    it('places each caption on the exact captured hunk and keeps aligned captions in their stop order', () => {
+        const first = { changeRef: 'a1', side: 'after' as const, startLine: 22, endLine: 22, text: 'Adds one to the result.' };
+        const second = { changeRef: 'b0', side: 'after' as const, startLine: 1, endLine: 2, text: 'Introduces two exports.' };
+        const reading = buildWalkthroughReading(input({ walkthrough: { state: 'complete', value: {
+            ...WALKTHROUGH, stops: [WALKTHROUGH.stops[0]!, { ...WALKTHROUGH.stops[1]!, captions: [first, second] }],
+        } } }));
+        expect(reading.stops[0]!.captions).toEqual([]);
+        expect(reading.stops[1]!.captions).toEqual([
+            { ...first, path: 'src/a.ts', hunkIndex: 1 }, { ...second, path: 'src/b.ts', hunkIndex: 0 },
+        ]);
+    });
+
     it('keeps source, analysis and your marks as three separate counts', () => {
         const reviewed: ScmReviewedMarksRecord = applyScmReviewedMarkIntent(COMPARISON, null, ['a0'], true);
         const reading = buildWalkthroughReading(input({ reviewed }));

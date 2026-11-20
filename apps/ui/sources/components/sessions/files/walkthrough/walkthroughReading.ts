@@ -40,11 +40,16 @@ export type WalkthroughStopFile = Readonly<{
     unavailableReason: string | null;
 }>;
 
+export type WalkthroughLineCaption = Readonly<
+    NonNullable<ScmDiffSummaryWalkthrough['stops'][number]['captions']>[number] & { path: string; hunkIndex: number }
+>;
+
 export type WalkthroughStop = Readonly<{
     id: string;
     number: number;
     title: string;
     explanationMarkdown: string;
+    captions: readonly WalkthroughLineCaption[];
     suggestedQuestions?: ScmDiffSummaryWalkthrough['stops'][number]['suggestedQuestions'];
     /** Saved explanation blocks remain distinct from the narrator's prose. */
     reviewExplanations?: ScmDiffSummaryWalkthrough['stops'][number]['reviewExplanations'];
@@ -317,10 +322,16 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
                 unavailableReason,
             };
         });
+        const captions = (stop.captions ?? []).flatMap(caption => {
+            const entry = located.get(caption.changeRef);
+            return entry && entry.hunkIndex !== null && byPath.get(entry.file.path)?.includes(entry)
+                ? [{ ...caption, path: entry.file.path, hunkIndex: entry.hunkIndex }] : [];
+        });
         return {
             ...progress.stops[index]!,
             number,
             explanationMarkdown: stop.explanationMarkdown,
+            captions,
             suggestedQuestions: stop.suggestedQuestions,
             reviewExplanations: stop.reviewExplanations,
             importance: stop.importance ?? null,
