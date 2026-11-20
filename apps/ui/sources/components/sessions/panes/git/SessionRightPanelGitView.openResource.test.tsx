@@ -139,6 +139,33 @@ async function renderEntry(entry: 'header' | 'card' | 'created', available = tru
 }
 
 describe('Session Git opens resources through the host decision', () => {
+    it('keeps the PR section out of unrelated pane publications and still opens Details', async () => {
+        const { GitPullRequestSection } = await import('./pullRequest/GitPullRequestSection');
+        const { closeGitPullRequestForm, moveGitPullRequestForm } = await import('./pullRequest/gitPullRequestFormState');
+        const { createCommittedFiberRenderCounter, readTestRendererRoot } = await import('@/dev/testkit/performance/committedFiberCounts');
+        const counts = createCommittedFiberRenderCounter();
+        let readRoot: ReturnType<typeof readTestRendererRoot> | undefined;
+        moveGitPullRequestForm('s1', runtime.serverId, 'details');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <React.Profiler id="pr-section" onRender={() => { if (readRoot) counts.onCommitRoot(readRoot()); }}>
+                <GitPullRequestSection sessionId="s1" serverId={runtime.serverId} scopeId="session:s1" snapshot={snapshot} machineReachable />
+            </React.Profiler>
+        </runtime.Wrapper>);
+        try {
+            readRoot = readTestRendererRoot(screen.tree.root);
+            counts.start();
+            await act(async () => runtime.pane.setRightTab('unrelated'));
+            expect(runtime.pane.scopeState?.right.activeTabId).toBe('unrelated');
+            expect.soft(counts.read().rendersFor(GitPullRequestSection)).toBe(0);
+            counts.stop();
+            await screen.pressByTestIdAsync('git-pull-request-pointer-show');
+            expect(runtime.pane.scopeState?.details.tabs).toHaveLength(1);
+        } finally {
+            await screen.unmount();
+            closeGitPullRequestForm('s1', runtime.serverId);
+        }
+    });
+
     it.each(['header', 'card', 'created'] as const)('opens the exact PR as a pinned details tab from %s', async entry => {
         const screen = await renderEntry(entry);
         await screen.pressByTestIdAsync(entry === 'header' ? 'session-git-header-action:open-pr' : 'git-pull-request-card-open');

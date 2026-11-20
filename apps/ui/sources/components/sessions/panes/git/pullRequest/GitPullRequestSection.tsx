@@ -39,13 +39,12 @@ export const GitPullRequestSection = React.memo(function GitPullRequestSection(p
 }>) {
     const { theme } = useUnistyles();
     const sessionAddress = useSessionAddressForSessionId(props.sessionId, props.serverId);
-    const pane = useAppPaneScope(props.scopeId);
+    const { openDetailsTab } = useAppPaneScope(props.scopeId, () => null);
     const form = useGitPullRequestFormState(props.sessionId, props.serverId);
     const placementSetting = useSetting('scmPullRequestPlacement');
     const phone = useSurfaceStateSize() === 'phone';
     const [createdHint, setCreatedHint] = React.useState<GitPullRequestCreated | null>(null);
 
-    const openDetailsTab = pane.openDetailsTab;
     const openInDetails = React.useCallback(() => {
         openDetailsTab(createSessionScmPullRequestDetailsTab(), { intent: 'pinned' });
         moveGitPullRequestForm(props.sessionId, props.serverId, 'details');
