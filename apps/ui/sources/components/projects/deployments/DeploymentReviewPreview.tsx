@@ -11,7 +11,7 @@ import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { formatDeploymentLiveAddress, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 import { deploymentHealthFact } from './deploymentPresentation';
-import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentHealthRecord, useDeploymentReceipt } from './useDeploymentReads';
+import { useDeploymentEnvironmentDomains, useDeploymentEnvironmentHealthRecord, useReceiptRead } from './useDeploymentReads';
 import { useDeploymentPresentationDemand } from './useDeploymentPresentationDemand';
 import { useDeploymentAccountController } from './useDeploymentProject';
 
@@ -31,7 +31,7 @@ export const DeploymentReviewPreview = React.memo(function DeploymentReviewPrevi
   const detail = record.snapshot.value;
   const preview = detail?.environment.purpose === 'preview';
   const activeId = preview ? detail.runtimeTargetLink?.activeDeploymentId ?? null : null;
-  const serving = useDeploymentReceipt(props.controller, preview ? props.environmentId : null, activeId, props.demand);
+  const serving = useReceiptRead(props.controller, preview ? props.environmentId : null, activeId, props.demand);
   const domains = useDeploymentEnvironmentDomains(props.controller, preview ? props.environmentId : null, props.demand);
   if (!preview) return null;
   const active = serving.snapshot.value;

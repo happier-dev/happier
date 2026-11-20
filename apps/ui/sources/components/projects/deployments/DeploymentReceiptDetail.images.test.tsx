@@ -374,6 +374,40 @@ describe('Receipt → failed rollback (PAGE-ACCEPT-85 D11)', () => {
   });
 });
 
+describe('Environment Build Logs', () => {
+  it('opens and retries the exact Receipt with no Environment or history reads', async () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const receipt = createDeploymentReceiptDetailV1();
+    const reads = { environments: 0, environment: 0, history: 0, receipt: 0 };
+    let available = false;
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => { reads.environments++; return { ok: true, value: { items: [], nextCursor: null } }; },
+      readEnvironment: async () => { reads.environment++; return { ok: true, value: detail }; },
+      listHistory: async () => { reads.history++; return { ok: true, value: { ok: true, items: [], nextCursor: null } }; },
+      readReceipt: async () => {
+        reads.receipt++;
+        return available ? { ok: true, value: receipt }
+          : { ok: false, failure: { code: 'deployment_unavailable', retryable: true } };
+      },
+    } });
+    const screen = await renderScreen(<EnvironmentLogsCompanion open onClose={() => {}} services={[]} service={null}
+      serverId={scope.serverId} environmentId={detail.environment.id} machineId={null} machineName="Controller"
+      machineNames={{}} controller={controller} deploymentId={receipt.deployment.id}
+      demand={{ mounted: true, visible: true, focused: true }} readLogs={null} />);
+    try {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('environment-logs.error-action'), node => node !== null);
+      const coldReads = { ...reads };
+      available = true;
+      await screen.pressByTestIdAsync('environment-logs.error-action');
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('environment-logs.build'), node => node !== null);
+      expect({ coldReads, afterRetry: reads }).toEqual({
+        coldReads: { environments: 0, environment: 0, history: 0, receipt: 1 },
+        afterRetry: { environments: 0, environment: 0, history: 0, receipt: 2 },
+      });
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
 describe('Receipt → upload provenance', () => {
   it.each(['provider', 'controller'] as const)('shows the recorded source and actual %s build evidence', async location => {
     const base = createDeploymentReceiptDetailV1();

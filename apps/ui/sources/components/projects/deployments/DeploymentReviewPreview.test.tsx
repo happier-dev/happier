@@ -39,19 +39,20 @@ function previewController(input: Readonly<{ attachedDomain: boolean; health: 'u
     state: 'active' as const, contentArtifactId: 'content-preview-domain', contentHeaderVersion: 1, contentBodyVersion: 1,
     createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1 },
     title: 'pr-12.preview.example.test', content: { hostname: 'pr-12.preview.example.test', target: { service: 'app', containerPort: 3000 } } };
+  const reads = { environment: 0, receipt: 0, history: 0, domains: 0 };
   const transport: DeploymentReadTransportV1 = {
     listEnvironments: async () => ({ ok: true, value: { items: [{ environment: detail.environment, title: detail.content.name }], nextCursor: null } }),
-    readEnvironment: async () => ({ ok: true, value: detail }),
-    listHistory: async () => ({ ok: true, value: { ok: true, items: [serving.deployment], nextCursor: null } }),
-    readReceipt: async () => ({ ok: true, value: serving }),
-    listDomains: async () => ({ ok: true, value: { items: input.attachedDomain ? [domain] : [], nextCursor: null } }),
+    readEnvironment: async () => { reads.environment++; return { ok: true, value: detail }; },
+    listHistory: async () => { reads.history++; return { ok: true, value: { ok: true, items: [serving.deployment], nextCursor: null } }; },
+    readReceipt: async () => { reads.receipt++; return { ok: true, value: serving }; },
+    listDomains: async () => { reads.domains++; return { ok: true, value: { items: input.attachedDomain ? [domain] : [], nextCursor: null } }; },
   };
-  return { controller: createDeploymentReadControllerV1({ scope, transport }), environmentId: detail.environment.id };
+  return { controller: createDeploymentReadControllerV1({ scope, transport }), environmentId: detail.environment.id, reads };
 }
 
 describe('Review preview (deploy auto-mode U9)', () => {
   it("shows the build preview's address, which opens, and its health from the Environment's own owners", async () => {
-    const { controller, environmentId } = previewController({ attachedDomain: true, health: 'up' });
+    const { controller, environmentId, reads } = previewController({ attachedDomain: true, health: 'up' });
     const open = vi.fn();
     const screen = await renderScreen(<DeploymentReviewPreview controller={controller} environmentId={environmentId}
       demand={shown} onOpenAddress={open} />);
@@ -61,6 +62,7 @@ describe('Review preview (deploy auto-mode U9)', () => {
       expect(row(screen, 'project-deployments.review.preview.health')?.props.title).toBe(t('projects.deployments.healthUp'));
       await screen.pressByTestIdAsync('project-deployments.review.preview.address');
       expect(open).toHaveBeenCalledWith('https://pr-12.preview.example.test/');
+      expect(reads).toEqual({ environment: 1, receipt: 1, history: 0, domains: 1 });
     } finally { await screen.unmount(); controller.retire(); await standardCleanup(); }
   });
 

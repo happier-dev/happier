@@ -15,7 +15,7 @@ import { t } from '@/text';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
 import { DeploymentRuntimeLogs } from './DeploymentRuntimeLogs';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
-import { useDeploymentReceipt } from './useDeploymentReads';
+import { useReceiptRead } from './useDeploymentReads';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
 
 type EnvironmentLogsView = 'build' | 'runtime';
@@ -51,7 +51,7 @@ export function EnvironmentLogsCompanion(
     [props.service, runtimeAvailable]);
   const serviceName = chosen ?? props.service ?? props.services[0]?.name ?? null;
   const shown = runtimeAvailable ? view : 'build';
-  const receipt = useDeploymentReceipt(props.open && shown === 'build' ? props.controller : null,
+  const receipt = useReceiptRead(props.open && shown === 'build' ? props.controller : null,
     props.environmentId, props.deploymentId, props.demand);
   const value = receipt.snapshot.value;
   const tabs = React.useMemo(() => [

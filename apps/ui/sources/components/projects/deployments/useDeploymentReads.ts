@@ -269,7 +269,8 @@ export function useDeploymentHistory(controller: DeploymentReadControllerV1 | nu
         read.refresh, read.snapshot.value?.coverage) };
 }
 
-function useReceiptRead(controller: DeploymentReadControllerV1 | null, environmentId: string | null, deploymentId: string | null,
+/** Exact Receipt and its observation, without Environment or retained-history demand. */
+export function useReceiptRead(controller: DeploymentReadControllerV1 | null, environmentId: string | null, deploymentId: string | null,
     demand: DeploymentReadDemandV1) {
     const acquire = React.useMemo(() => controller && environmentId && deploymentId
         ? () => controller.acquireReceipt(environmentId, deploymentId, INACTIVE) : null,
