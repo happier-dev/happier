@@ -73,7 +73,7 @@ it('preserves admitted endpoint attestations in HTTP responses while redacting f
         let failure: unknown;
         try { await network.http.request({ url: `${endpoint}/failure`, redirect: 'error' }); }
         catch (error) { failure = error; }
-        expect(failure).toMatchObject({ code: 'plugin_fetch_adapter_unavailable', data: {
+        expect(failure).toMatchObject({ code: 'outcome_unknown', data: {
             failureCause: { phase: 'plugin.http.execute', errorClass: 'TypeError', errorCode: null, httpStatus: null },
         } });
         expect(JSON.stringify(failure)).not.toContain(token);
