@@ -200,7 +200,7 @@ const APPROVER_SCANNER_TRANSLATION_KEYS: Readonly<Partial<Record<
 function resolveScannerReplacement(
     source: Extract<HomeEnrollmentPresentationSource, { kind: 'scanner' }>,
 ): 'scan_new_code' | 'enter_new_link' {
-    const openedAsLink = source.inviteOrigin === 'link' || source.inviteOrigin === 'paste';
+    const openedAsLink = source.inviteOrigin === 'link';
     return openedAsLink && source.linkEntryAvailable === true ? 'enter_new_link' : 'scan_new_code';
 }
 

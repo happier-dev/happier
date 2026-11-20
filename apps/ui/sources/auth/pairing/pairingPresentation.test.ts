@@ -166,7 +166,7 @@ describe('resolveHomeEnrollmentPresentation', () => {
             kind: 'scanner',
             phase: 'requesting',
             result: 'already_requested',
-            inviteOrigin: 'paste',
+            inviteOrigin: 'link',
             linkEntryAvailable: true,
         }).recoveryAction).toBe('enter_new_link');
         expect(resolveHomeEnrollmentPresentation({
