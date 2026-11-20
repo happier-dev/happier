@@ -7854,13 +7854,10 @@ the existing decision owners, including requests surfaced in a brief.
 The person's spoken request is the confirmation; prompt guidance tells the agent
 to read back the request and follow that decision.
 Decisions are attributed to the Voice agent acting for the person. Turning the
-setting off requires a tap in the request UI. The captured Account's current
-preference is checked again when a prepared decision resumes and immediately
-before its decision write or Session response is issued. Revocation returns
-`present_user_required`; it does not undo an already-issued effect or receipt.
-Explicit cancellation of an approved but unclaimed request is still a new
-decision write and revalidates delegation; passive execution claims/results do
-not acquire that check.
+setting off requires a tap for the next decision, including on an ongoing call.
+The Action executor reads the captured Account's current preference at admission.
+A prepared decision retains its admission through execution. Explicit cancellation
+of an approved but unclaimed request is a new decision and uses the current preference.
 Current V2 approval decisions record the host-derived optional
 `decidedVia: 'voice'` for both approval and rejection, alongside the unchanged
 deciding Account and requester provenance. Absence in history is unknown, not
@@ -9054,9 +9051,9 @@ The Voice binding supplies its exact synthetic carrier address to the Session
 send owner, which refuses that address after target resolution, including selectors.
 An ordinary Session bound through native Session Voice remains a valid target.
 The existing spoken confirmation owner binds any required read-back to the exact operation.
-Native permission prompts and replies consume the Voice Run's admitted invocation
-authority and Account binding, just like tool Actions. A preference change takes
-effect at the next Run admission, rather than re-deciding that authority mid-Run.
+Native permission prompts and replies use the current Account preference within
+the Voice Run's signed authority. Turning off the preference during a call makes
+the next permission prompt ask the person to use the approval card.
 The shared Action catalog documents the approval-list tool alongside request
 reads and decisions. Settings discovery publishes page ids derived from the
 canonical setting declarations; omit `pageId` to find all displayed settings

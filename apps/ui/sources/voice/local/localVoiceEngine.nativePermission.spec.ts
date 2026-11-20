@@ -229,7 +229,7 @@ describe('native Voice permission input', () => {
   );
 
   it.each([
-    { label: 'Run admitted ON then preference OFF', enabled: true, preferenceAfterAdmission: false, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'Run admitted ON then preference OFF', enabled: true, preferenceAfterAdmission: false, answer: 'Yes.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'Run admitted OFF then preference ON', enabled: false, preferenceAfterAdmission: true, answer: 'Yes.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'RUN120 command preview with argument sharing off', enabled: true, answer: 'YES ALLOW THE COMMAND', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run120: true },
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
@@ -622,7 +622,9 @@ describe('native Voice permission input', () => {
         expect(lifecycle.getSnapshot().canCommitInput).not.toBe(true);
         finishReadout?.();
       }
-      if (!enabled) {
+      if (!enabled || preferenceAfterAdmission === false) {
+        const { t } = await import('@/text');
+        expect(expoSpeechSpeak.mock.calls[precedingSpeechCount]?.[0]).toContain(t('voice.readiness.permissionTapRequired'));
         await vi.waitFor(() => expect(lifecycle.getSnapshot()).toMatchObject({
           status: 'connected', mode: 'listening', canCommitInput: true,
         }));
@@ -633,7 +635,6 @@ describe('native Voice permission input', () => {
         expect(await executeVoiceConversationAction('ui.voice_global.turn_control', { expectedAttempt, control: 'commit_input' }, { navigate() {} }))
           .toMatchObject({ status: 'completed' });
         await expect(localVoiceSpeechTranscription.mock.results.at(-1)?.value).resolves.toBe(answer);
-        const { t } = await import('@/text');
         expect(expoSpeechSpeak.mock.calls.at(-1)?.[0]).toBe(t('voice.readiness.permissionTapRequired'));
         expect(lifecycle.getSnapshot()).toMatchObject({ mode: 'listening', canCommitInput: true });
         expect(sessionRpcWithServerScope.mock.calls.some(([request]) => request.method === RPC_METHODS.SESSION_PERMISSION_RESPOND)).toBe(false);

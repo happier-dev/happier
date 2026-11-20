@@ -1,5 +1,6 @@
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
+import { mayVoiceApproveBySpokenConsent } from './voiceActionApprovalAuthority';
 import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createUiPluginCollectionSharingActionDeps } from './pluginCollectionSharingActionDeps';
 import { requireActionSuccess } from './actionResult';
@@ -5194,8 +5195,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     // A fresh Voice Action can use the Run's signed authority only within the
     // Account's current Voice preference. Prepared Actions retain their decision.
     const authority = opts?.readAdmittedVoiceInvocation
-      ? credential === 'account' && credentialAuthority === 'present_user'
-        ? voiceInvocation?.authority ?? 'account_automation'
+      ? credential === 'account'
+        ? mayVoiceApproveBySpokenConsent(credentialAuthority === 'present_user', voiceInvocation?.authority)
+          ? 'present_user' : 'account_automation'
         : credentialAuthority
       : opts?.admittedClientActionId
       ? context?.authority ?? 'account_automation'

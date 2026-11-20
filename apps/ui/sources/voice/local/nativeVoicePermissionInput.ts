@@ -6,6 +6,7 @@ import { subscribeRegisteredStorageState } from '@/sync/domains/state/storageSta
 import { readStoredSessionMessagesForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
 import { listPendingSessionRequests, type SessionPendingRequest } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { mayVoiceApproveBySpokenConsent } from '@/sync/ops/actions/voiceActionApprovalAuthority';
 import { getSessionPermissionChoiceKind, resolveSessionPermissionChoices, selectSessionPermissionChoiceForDecision } from '@/sync/ops/sessionPermissionChoices';
 import { resolveSpokenPermissionDecision } from '@/sync/domains/permissions/resolveSpokenPermissionDecision';
 import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
@@ -45,7 +46,10 @@ export function createNativeVoicePermissionInput(params: Readonly<{
   const execute = createFrontDoorActionExecute(undefined, {
     readAdmittedVoiceInvocation: () => params.readVoiceAgentHandle()?.actionInvocation,
   });
-  const readCanApproveRequests = () => params.readVoiceAgentHandle()?.actionInvocation?.authority === 'present_user';
+  const readCanApproveRequests = () => mayVoiceApproveBySpokenConsent(
+    storage.getState().settings.voice.canApproveRequests,
+    params.readVoiceAgentHandle()?.actionInvocation?.authority,
+  );
   let disposed = false;
   let prompt: NativePermissionPrompt | null = null;
   let promptAtTurnStart: NativePermissionPrompt | null = null;
