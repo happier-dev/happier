@@ -6,7 +6,7 @@ import {
   type WorkflowResultField,
 } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
-import { formatWorkflowTriggerEventIdentityV1, type WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
+import type { WorkflowTriggerEventDeclarationV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { resolveAutomationEventFilterScalarLeafV1 } from '@happier-dev/protocol/automations/automationEventV1';
@@ -16,7 +16,7 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { t } from '@/text';
 
 import type { WorkflowConditionValueFacts } from '../presentation/workflowConditionRules';
-import { formatWorkflowFieldLabel, formatWorkflowReferenceScopeLabel, formatWorkflowResultFieldType, workflowResultFieldText } from '../presentation/workflowValuePresentation';
+import { formatWorkflowFieldLabel, formatWorkflowReferenceScopeLabel, formatWorkflowResultFieldType, formatWorkflowTriggerEventLabel, workflowResultFieldText } from '../presentation/workflowValuePresentation';
 
 export type WorkflowConditionValueOption = Readonly<{
   id: string;
@@ -226,7 +226,7 @@ export function listWorkflowConditionValueOptions(
       eventIds.add(id);
       const facts = eventFieldFacts(field.schema);
       events.push({ id, title: field.schema.title ?? field.path.map(part => formatWorkflowFieldLabel(part)).join(' · '),
-        category: formatWorkflowTriggerEventIdentityV1(declaration.event), group: t('workflows.tabs.events'),
+        category: formatWorkflowTriggerEventLabel(declaration.event), group: t('workflows.tabs.events'),
         reference, facts, typeLabel: typeLabelFor(facts) });
     }
   }

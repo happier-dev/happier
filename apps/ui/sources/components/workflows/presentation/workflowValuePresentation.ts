@@ -1,12 +1,12 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowActionValueReferenceV1 } from '@happier-dev/protocol/workflows/workflowLeafV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
-import type { WorkflowReferenceScope } from '@happier-dev/protocol/workflows/workflowReferenceV1';
-import { formatWorkflowTriggerEventIdentityV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
+import type { WorkflowReferenceScope, WorkflowTriggerEventIdentityV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { parsePermissionIntentAlias } from '@happier-dev/agents/permissions';
 import type { WorkflowResultField, WorkflowResultFieldType, WorkflowResultListItemType } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import { WorkflowLoopOutcomeV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { humanizeIdentifier } from '@/components/settings/home/governance/homeFeatureLabels';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { t } from '@/text';
 import { en } from '@/text/translations/en';
@@ -29,6 +29,11 @@ export function formatWorkflowReferenceScopeLabel(scope: WorkflowReferenceScope)
     if (scope.kind === 'outer') return t('workflows.input.scopeOuter', { levels: scope.levels });
     if (scope.kind === 'previous_iteration') return t('workflows.input.scopePreviousIteration');
     return t('workflows.input.scopeCurrent');
+}
+
+/** A trigger Event in words: its own name ("issue-transition" → "Issue transition"), never the plugin's raw id. */
+export function formatWorkflowTriggerEventLabel(event: WorkflowTriggerEventIdentityV1): string {
+    return 'kind' in event ? humanizeIdentifier(`${event.phase}Action`) : humanizeIdentifier(event.localId);
 }
 
 /**
@@ -59,7 +64,7 @@ export function formatWorkflowValueReference(draft: WorkflowValuePresentationCon
         case 'input':
             return withPath(t('workflows.input.workflowInput', { name: formatWorkflowFieldLabel(reference.name) }), reference.path);
         case 'trigger_event':
-            return withPath(formatWorkflowTriggerEventIdentityV1(reference.event), reference.path);
+            return withPath(formatWorkflowTriggerEventLabel(reference.event), reference.path);
         case 'result':
             // A field reads as its step and field ("Check the fix · Fixed", lab E1); the whole result keeps its noun.
             return reference.path.length === 0
