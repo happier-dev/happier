@@ -691,6 +691,20 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
           && Object.keys(fact).every(key => key === 'key' || key === 'lifecycle' || key === 'resultProvenance'
             || key === 'workspace' || key === 'sharedConversationInvocationRecordId'));
     if (preservesRootLifecycle) fact = { ...fact, lifecycle: current.lifecycle };
+    const updatesInteraction = fact.interaction !== undefined;
+    const observesDetachedExecution = fact.lifecycle === 'running' && fact.execution?.kind === 'detached_run';
+    if ((updatesInteraction || observesDetachedExecution)
+      && (current.lifecycle === 'admitting' || current.lifecycle === 'running' || current.lifecycle === 'waiting_for_approval')) {
+      // A detached execution can report acceptance or usage while its tool request is still open.
+      const interaction = updatesInteraction ? fact.interaction : persisted.progress.interaction;
+      const requests = interaction && typeof interaction === 'object' && !Array.isArray(interaction)
+        ? interaction.requests : undefined;
+      const hasOutstandingRequests = requests && typeof requests === 'object' && !Array.isArray(requests)
+        && Object.keys(requests).length > 0;
+      const lifecycle = hasOutstandingRequests ? 'waiting_for_approval'
+        : updatesInteraction && current.lifecycle === 'waiting_for_approval' ? 'running' : fact.lifecycle;
+      if (fact.lifecycle !== lifecycle) fact = { ...fact, lifecycle };
+    }
     const { key: _key, lifecycle: _lifecycle, review, ...ownedFact } = fact;
     const { reason: _reason, reasonMessage: _reasonMessage, reasonDetails: _reasonDetails, failureCause: _failureCause, runtimeIssueV1: _runtimeIssueV1, ...withoutInvalidResultReason } = ownedFact;
     const publishedResultWins = fact.lifecycle === 'waiting_for_review' && fact.reason === 'invalid_result_contract'
@@ -1008,19 +1022,6 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
             : {};
           const updated = updater(currentState);
           const nextInteraction = StrictJsonValueSchema.parse(updated);
-          const requests = updated.requests;
-          const hasOutstandingRequests = requests !== null
-            && typeof requests === 'object'
-            && !Array.isArray(requests)
-            && Object.keys(requests).length > 0;
-          const canEnterWaitingForApproval = current.index.lifecycle === 'admitting'
-            || current.index.lifecycle === 'running'
-            || current.index.lifecycle === 'waiting_for_approval';
-          const nextLifecycle = hasOutstandingRequests && canEnterWaitingForApproval
-            ? 'waiting_for_approval' as const
-            : current.index.lifecycle === 'waiting_for_approval'
-              ? 'running' as const
-              : current.index.lifecycle;
           const binding = {
             v: 1 as const,
             purpose: 'invocation_progress' as const,
@@ -1041,7 +1042,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
           }
           await this.commitFactNow({
             key,
-            lifecycle: nextLifecycle,
+            lifecycle: current.index.lifecycle,
             interaction: nextInteraction,
           });
         });

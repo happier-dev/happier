@@ -3432,7 +3432,7 @@ describe('production workflow coordinator', () => {
     await expect(store.readByLogicalInvocation(previousId)).rejects.toThrow('workflow_invocation_content_unavailable');
   });
 
-  it('persists an exact invocation permission request without replacing its result', async () => {
+  it('keeps an exact invocation permission pending across detached execution observations', async () => {
     const rootId = 'root-interaction';
     const rootIndex = {
       id: rootId, runId, sequence: '0', parentRecordId: null, memberOrdinal: '0', attempt: '0',
@@ -3480,6 +3480,12 @@ describe('production workflow coordinator', () => {
       lifecycle: 'waiting_for_approval',
     }));
 
+    const execution = { kind: 'detached_run', runId: 'native-run', localInputId: 'native-input', runtimeSelection: {} } satisfies WorkflowExecutionCorrespondenceV1;
+    await expect(store.commitFact({ key: rootKey, lifecycle: 'running', execution })).resolves.toMatchObject({
+      lifecycle: 'waiting_for_approval',
+      execution,
+    });
+
     const opened = openWorkflowProgressStoredEnvelopeV1({
       mode: 'plain', binding, envelope: parseWorkflowStoredContentEnvelopeV1(persistedEnvelope),
     });
@@ -3487,6 +3493,7 @@ describe('production workflow coordinator', () => {
       kind: 'available',
       content: {
         result: { changed: true },
+        execution,
         interaction: { requests: { 'permission-1': { tool: 'Write', arguments: toolInput } } },
       },
     });
