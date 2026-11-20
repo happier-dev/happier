@@ -214,7 +214,8 @@ it('TS.D.changedReferences receives a Source push and keeps accepted input until
   if (!openedResult.ok) throw new Error(openedResult.errorCode);
   const opened = OpenProjectResultV1Schema.parse(openedResult.result);
   if (opened.kind !== 'opened' || !opened.facts?.projectKey) throw new Error('Control omitted the admitted Project');
-  const projectRef = { serverId: ui.serverId, projectKey: opened.facts.projectKey };
+  const projectRef = { serverId: opened.workspace.serverId, projectKey: opened.facts.projectKey };
+  const organizationRevision = await memberAccount.readProjectOrganizationRevision(projectRef);
   const author = await fixture.createAccount('setup-author');
   const authorAccountId = readAccountIdFromToken(author.credentials.token);
   expect(authorAccountId).not.toBe(accountId);
@@ -257,15 +258,25 @@ it('TS.D.changedReferences receives a Source push and keeps accepted input until
   const original = await publish('printf original > accepted-version', created.source.revision);
   expect(await ui.execute('projects.sources.read', { serverId: ui.serverId, sourceId: original.id }, context))
     .toMatchObject({ ok: true, result: { ok: true, canManage: false, source: { id: original.id } } });
-  const accept = (expectedRevision: number | 'absent') => ui!.executeConfirmed('projects.setup.set', {
-    projectRef, workspace: opened.workspace, expectedRevision, intent: { kind: 'accept', sourceId: original.id },
-  }, context);
-  const accepted = await accept('absent');
-  expect(accepted).toMatchObject({ ok: true, result: { ok: true } });
-  if (!accepted.ok) throw new Error(accepted.errorCode);
-  const receipt = z.object({ revision: z.number(), row: z.object({ setupSelection: z.object({ digest: z.string() }) }) }).parse(accepted.result);
-  const observe = async (operationId: string) => {
-    const result = await ui!.execute('action.operations.get', { serverId: ui!.serverId, machineId, operationId }, context);
+  const accept = async (expectedRevision: number | 'absent') => {
+    const result = await ui!.executeConfirmed('projects.setup.set', {
+      projectRef, workspace: opened.workspace, expectedRevision, intent: { kind: 'accept', sourceId: original.id },
+    }, context);
+    if (!result.ok) throw new Error(`Accept setup Action refused (${result.errorCode})`);
+    const receipt = ProjectSetupSetOutputV1Schema.parse(result.result);
+    if (!receipt.ok) throw new Error(`Setup acceptance refused (${receipt.errorCode})`, { cause: receipt.failureCause });
+    return receipt;
+  };
+  const accepted = await accept(organizationRevision);
+  const acceptedDigest = accepted.row.setupSelection?.digest;
+  if (!acceptedDigest) throw new Error('Accepted setup omitted its effect digest');
+  expect(await ui.executeConfirmed('actions.policy.set', {
+    actionId: 'projects.prepare', audience: 'ui', mode: 'ask_first',
+  }, context)).toMatchObject({ ok: true, result: { mode: 'ask_first' } });
+  const observe = async (operationId: string, options?: { waitForTerminal?: true; refreshSetupReview?: true }) => {
+    const result = await ui!.execute('action.operations.get', {
+      serverId: ui!.serverId, machineId, operationId, ...options,
+    }, context);
     if (!result.ok) throw new Error(result.errorCode);
     const observed = ActionOperationGetV1ResponseSchema.parse(result.result);
     if (observed.kind !== 'found') throw new Error(`Operation unavailable (${observed.kind})`);
@@ -275,16 +286,24 @@ it('TS.D.changedReferences receives a Source push and keeps accepted input until
     const prepared = await ui!.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup' }, context);
     if (!prepared.ok) throw new Error(prepared.errorCode);
     const { operationId } = ProjectCommandActionOutputV1Schema.parse(prepared.result).operation;
-    let operation = await observe(operationId);
-    await waitFor(async () => { operation = await observe(operationId); return Boolean(operation.setupReview); });
-    if (!operation.setupReview) throw new Error('Setup did not offer the native review');
+    await waitFor(async () => {
+      const operation = await observe(operationId);
+      if (operation.state === 'succeeded' || operation.state === 'failed' || operation.state === 'cancelled') {
+        throw new Error(`Setup settled before native review (${operation.state}, ${operation.error?.errorCode ?? 'no error'})`);
+      }
+      return Boolean(operation.setupReview);
+    }, { context: 'changed Project setup review', failFast: true });
+    const operation = await observe(operationId, { refreshSetupReview: true });
+    if (!operation.setupReview) {
+      throw new Error(`Setup did not offer native review (${operation.state}${operation.error ? `: ${operation.error.errorCode}` : ''})`);
+    }
     return { operationId, digest: operation.setupReview.reviewedEffectDigest };
   };
   const apply = async (review: Awaited<ReturnType<typeof hold>>) => {
-    expect(await memberAccount.executeAsPerson('projects.prepare', { workspace: opened.workspace, phase: 'setup',
+    expect(await ui!.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
       heldOperationId: review.operationId, expectedEffectDigest: review.digest, consentScope: 'untilChanged' },
-    { presentUserConfirmation: { actionId: 'projects.prepare' } })).toMatchObject({ ok: true });
-    await waitFor(async () => (await observe(review.operationId)).state === 'succeeded');
+    context)).toMatchObject({ ok: true });
+    expect(await observe(review.operationId, { waitForTerminal: true })).toMatchObject({ state: 'succeeded' });
   };
   const initialReview = await hold();
   await apply(initialReview);
@@ -310,18 +329,19 @@ it('TS.D.changedReferences receives a Source push and keeps accepted input until
     { timeout: 10_000 });
   const retained = await ui.execute('projects.inspect', { workspace: opened.workspace, read: { kind: 'setup' } }, context);
   expect(retained).toMatchObject({ ok: true });
-  expect(JSON.stringify(retained)).toContain(receipt.row.setupSelection.digest);
+  expect(JSON.stringify(retained)).toContain(acceptedDigest);
   expect(JSON.stringify(retained)).not.toContain('printf updated');
   expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('original');
   // Only the person's explicit accept changes the attached input, and only
   // native consent runs it. A stale reviewed digest keeps the owner's reason.
-  expect(await accept(receipt.revision)).toMatchObject({ ok: true, result: { ok: true } });
+  expect(await accept(accepted.revision)).toMatchObject({ ok: true });
   const changedReview = await hold();
   expect(changedReview.digest).not.toBe(initialReview.digest);
-  expect(await memberAccount.executeAsPerson('projects.prepare', { workspace: opened.workspace, phase: 'setup',
+  expect(await ui.executeConfirmed('projects.prepare', { workspace: opened.workspace, phase: 'setup',
     heldOperationId: changedReview.operationId, expectedEffectDigest: initialReview.digest, consentScope: 'thisTime' },
-  { presentUserConfirmation: { actionId: 'projects.prepare' } })).toMatchObject({ ok: true });
-  expect((await observe(changedReview.operationId)).setupReview).toMatchObject({ code: 'project_setup_effect_changed' });
+  context)).toMatchObject({ ok: true });
+  await waitFor(async () => (await observe(changedReview.operationId)).setupReview?.code === 'project_setup_effect_changed',
+    { context: 'stale Project setup approval' });
   expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('original');
   await apply(changedReview);
   expect(await readFile(join(folder, 'accepted-version'), 'utf8')).toBe('updated');
