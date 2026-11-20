@@ -55,7 +55,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   & { reattachedFromDiskMarker?: true }
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'resolveCurrentMachineExecutionOriginContext' | 'resolveSessionSpawnDirectTargetTransport' | 'processEnv' | 'openTeamCredentialProviderBinding' | 'liveStreamCaptureRegistry' | 'onComputerRoutesReady' | 'admissionDrain' | 'isShuttingDown'>>
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
-      | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'externalSessionHostOperationOwner' | 'runtimeActionExecute'>>
+      | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'currentMachineHost' | 'externalSessionHostOperationOwner' | 'runtimeActionExecute'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods' | 'agentIsolationEnabled'>
     & { additionalPluginIds?: readonly string[]; requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean; retainIncompleteRequesterCustody?: boolean;
       /** Process-census boundary authors the runner before tracked authority is constructed. */
@@ -165,6 +165,7 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     releaseSessionOwnedNativeBindings: requesterOptions?.releaseSessionOwnedNativeBindings,
     onLocalServicesRoutesReady: requesterOptions?.onLocalServicesRoutesReady,
     resolveServerFeaturesSnapshot: requesterOptions?.resolveServerFeaturesSnapshot,
+    currentMachineHost: requesterOptions?.currentMachineHost,
     runtimeActionExecute: requesterOptions?.runtimeActionExecute,
     externalActionAccountId: requesterOptions?.externalActionAccountId ?? 'custodian', credentials: daemonCredentials, api: {} as never,
     deviceLocalSecretStorage,

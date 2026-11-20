@@ -148,8 +148,10 @@ export type DaemonExternalActionExecutorFactory = (credentials: Parameters<typeo
     }>, requesterAccountContext?: RequesterAccountActionContext, sessionStopEffect?: ActionExecutorDeps['sessionStop'], postAgentDiscussionMessage?: Parameters<typeof createCliActionExecutorFromCredentials>[0]['postAgentDiscussionMessage'], accountPluginActions?: Readonly<{ accountPluginActions: true }>) => DaemonExternalActionExecutor;
 
 export function createDaemonExternalActionExecution({
+  readGuestHomeHostIdentity,
   params, requiresPortableSessionSpawnServerIdentity, requesterAccountOperationContext, acquireDaemonPluginRuntimeRegistryLease, shutdownCancellationDomains, isSessionCallerCurrent, externalActionApprovalExecutionOriginCurrentness, externalActionIngressOwner, externalActionContributedApprovalReplay, observeContributedPluginExecution, relayDiscussionAgentPublication, externalActionInstallationIdentity, ownerRemainder, isRuntimePublicationQuiescing, pluginRuntimeController, connectedAccountRequestAuthRegistry, requireConnectedAccountRequestAuthHttpPort, localServicesActionFeatureGate, localServicesRuntimeActionRoutes, localServicesRuntime, externalActionContributedInvoker, externalActionContributedDefinitionLister, externalActionTranscriptFollowLeaseRegistry,
 }: Readonly<{
+  readGuestHomeHostIdentity?: Parameters<typeof createDaemonManagedMachineActionAdapter>[0]['readGuestHomeHostIdentity'];
   params: Readonly<{
 machineId: string;
 readDoctorResourceVitals?: () => Readonly<{ sample: MachineVitalsSampleV1 | null }>;
@@ -866,6 +868,7 @@ resolveServerFeaturesSnapshot?: () =>
         };
       };
       const nativeManagedMachineAdapter = createDaemonManagedMachineActionAdapter({
+          readGuestHomeHostIdentity,
           credentials,
           controllerCredentials: params.credentials,
           executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
