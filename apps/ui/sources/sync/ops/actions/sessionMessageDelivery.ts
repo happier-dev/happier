@@ -143,14 +143,14 @@ export function createSessionMessageDelivery(params: Readonly<{
       if (requiresTargetInputSchema) {
         try {
           advertisedInputSchema = await readSessionMessageInputSchema({ account, sessionId, hostOccurrence, machineId, context, signal });
-          account.assertCurrent();
-          throwIfAborted(signal);
-          if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
-            return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
-          }
         } catch {
           throwIfAborted(signal);
           account.assertCurrent();
+          return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+        }
+        account.assertCurrent();
+        throwIfAborted(signal);
+        if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
           return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
         }
       }

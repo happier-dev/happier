@@ -39,6 +39,7 @@ export type TriageEntrySessionNoticeV1 = Readonly<{
   tone: 'muted' | 'warning' | 'danger';
   labelKey: string;
   label: string;
+  failureCode?: string;
 }>;
 
 function notice(
@@ -180,6 +181,10 @@ export function describeTriageEntrySessionPhaseV1(
           }
           switch (result.result.status) {
             case 'rejected':
+              return Object.freeze({
+                ...notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.'),
+                failureCode: result.result.code,
+              });
             case 'failed':
             case 'cancelled':
               return notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.');

@@ -96,7 +96,7 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
             if (id === 'session.message.send') {
                 sends.push({ input: PLUGIN_ACTION_INPUT_SCHEMAS['session.message.send'].parse(input), options });
                 if (uncertainOnce && sends.length === 1) throw new Error('Reply lost at transport');
-                return rejected ? { status: 'rejected', code: 'session_input_cancelled' } : { status: 'accepted', localId: 'native-receipt' };
+                return rejected ? { status: 'rejected', code: 'session_input_target_update_required' } : { status: 'accepted', localId: 'native-receipt' };
             }
             unexpected.push(String(id));
             throw new Error(`Unexpected Action ${String(id)}`);
@@ -167,11 +167,12 @@ describe('entry existing Session handoff', () => {
         expect(f.unexpected).toEqual([]);
     });
 
-    it('keeps native refusal visible in the existing phase notice', async () => {
+    it('retains a configured Send refusal code for the host presenter', async () => {
         const f = fixture('send', true);
         const result = await f.controller.getSnapshot().startInSession(f.request, { serverId: 'home-b', sessionId: 'same-session' });
-        expect(result?.handoff).toMatchObject({ kind: 'sendResult', result: { status: 'rejected', code: 'session_input_cancelled' } });
-        expect(describeTriageEntrySessionPhaseV1(f.controller.getSnapshot().phase)?.tone).toBe('warning');
+        expect(result?.handoff).toMatchObject({ kind: 'sendResult', result: { status: 'rejected', code: 'session_input_target_update_required' } });
+        expect(describeTriageEntrySessionPhaseV1(f.controller.getSnapshot().phase))
+            .toMatchObject({ tone: 'warning', failureCode: 'session_input_target_update_required' });
     });
 
     it('echoes canonical recovery after an uncertain send instead of minting a second delivery', async () => {

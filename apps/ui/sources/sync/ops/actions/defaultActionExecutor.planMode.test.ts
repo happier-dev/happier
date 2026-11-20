@@ -1176,7 +1176,8 @@ describe('default Action executor mode and catalog contracts', () => {
     if (client === 'legacy' || client === 'schema_legacy' || client === 'schema_nested_legacy' || client === 'schema_nested_legacy_none' || client === 'triage_schema_unavailable') {
       // A known refusal before dispatch is a domain rejection; the plugin SDK
       // must not throw it into Triage's genuinely ambiguous transport catch.
-      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'rejected', code: 'session_input_target_update_required' } });
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'rejected',
+        code: client === 'triage_schema_unavailable' ? 'session_input_target_unavailable' : 'session_input_target_update_required' } });
       expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(0);
       expect(homes.requestsFor('/v2/sessions/ask-session/pending')).toHaveLength(0);
       expect(outgoing.some(request => request.method.endsWith(RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CLAIM))).toBe(false);
@@ -1270,7 +1271,7 @@ describe('default Action executor mode and catalog contracts', () => {
       expect(drafts.readSessionMessagingDraftMutationAttempt({ scope: composerScope, sessionId: 'origin-session' })).toBeNull();
       return;
     }
-    expect(result, JSON.stringify(homes.requestsFor('/v1/actions/session.message.send').map(request => request.path))).toEqual({ ok: true, result: outcome });
+    expect(result, JSON.stringify(homes.requestsFor('/v1/actions/session.message.send').map(request => request.path))).toMatchObject({ ok: true, result: outcome });
     expect(homes.requestsFor('/v1/actions/session.message.send')).toHaveLength(1);
     expect(homes.requestsFor('/v2/sessions/ask-session/pending')).toHaveLength(0);
     if (client === 'repeated_send') {

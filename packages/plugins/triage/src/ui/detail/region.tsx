@@ -80,7 +80,7 @@ import {
   type TriageEntryActionRequestV1,
   type TriageReviewPreparationV1,
 } from '../header/entryActionControls.js';
-import { describeTriageEntrySessionPhaseV1 } from '../header/sessionStartOutcome.js';
+import { describeTriageEntrySessionPhaseV1, type TriageEntrySessionNoticeV1 } from '../header/sessionStartOutcome.js';
 import {
   useTriageEntrySessionStart,
   type TriageEntrySessionStartRequestV1,
@@ -298,6 +298,13 @@ export type TriageDetailPinActionV1 = Readonly<{
  * render. Keeping the hooks inside this boundary is load-bearing: a keyed JSX
  * wrapper around hooks owned by the parent would remount no state at all.
  */
+function renderEntrySessionNotice(notice: TriageEntrySessionNoticeV1 | null, text: ReturnType<typeof usePluginTranslation>) {
+  if (notice === null) return null;
+  return notice.failureCode === undefined
+    ? <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
+    : <ActionFailureDetails code={notice.failureCode} message={text(notice.labelKey, notice.label)} />;
+}
+
 function TriageEntryScopedActionRegion(props: Readonly<{
   target: TriageActionTargetV1;
   actions: TriageMountedActionsV1;
@@ -594,10 +601,8 @@ function TriageEntryScopedActionRegion(props: Readonly<{
           onFinished={retireReviewChooser}
         />
       )}
-      {notice === null ? null : (
-        <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
-      )}
-      {retainedNotice === null ? null : <Status tone={retainedNotice.tone} labelKey={retainedNotice.labelKey} label={retainedNotice.label} />}
+      {renderEntrySessionNotice(notice, text)}
+      {renderEntrySessionNotice(retainedNotice, text)}
       {sessionFailure === undefined ? null : (
         <PullRequestFailureDetails codes={sessionFailure.codes} requestId={sessionFailure.requestId} />
       )}
