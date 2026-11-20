@@ -4,7 +4,7 @@ import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal,
+import { projectMachineProvisionerActionFailure,
   defineMachineProvisionerReconciliationSchemas,
   defineMachineProvisionerSchemas,
   computeSshHostKeyFingerprint,
@@ -30,6 +30,7 @@ import {
   BoatNativeError,
   boatSetupMessage,
   isBoatAdmissionRefusalCode,
+  projectBoatMachineRefusalCode,
   type BoatAcquireOperationV1,
   type BoatLaunchV1,
 } from './machine/schemas.js';
@@ -211,12 +212,11 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
       async run(_input, context) {
         try { return boatCheckPresentation(await runtime(context).check()); }
         catch (error) { return projectMachineProvisionerActionFailure(error, () => {
-          const code = error instanceof BoatNativeError
-            ? readMachineProvisionerCredentialRefusal(error.httpStatus) ?? error.code
-            : 'provider_unavailable';
-          const message = boatSetupMessage(code);
+          const nativeCode = error instanceof BoatNativeError ? error.code : 'provider_unavailable';
+          const code = error instanceof BoatNativeError ? projectBoatMachineRefusalCode(error) : nativeCode;
+          const message = boatSetupMessage(nativeCode);
           return { ...boatCheckPresentation({ available: false, code,
-            ...(message ? { status: { key: `machineBoat.errors.${code}`, fallback: message } } : {}) }), ...failureCause(error) };
+            ...(message ? { status: { key: `machineBoat.errors.${nativeCode}`, fallback: message } } : {}) }), ...failureCause(error) };
         }); }
       },
     },
@@ -250,7 +250,7 @@ export function createBoatPlugin(resolveSshBootstrap?: typeof resolveMachineProv
         } catch (error) {
           // Submitted effects settle inside the native client; escaped native failures precede allocation.
           if (error instanceof BoatNativeError) return { kind: 'rejected' as const,
-            code: readMachineProvisionerCredentialRefusal(error.httpStatus) ?? error.code, ...failureCause(error) };
+            code: projectBoatMachineRefusalCode(error), ...failureCause(error) };
           return { kind: 'unknown' as const, recovery: { reference: input.managedId, reason: 'provider_unavailable' }, ...failureCause(error) };
         }
       },

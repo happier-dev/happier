@@ -123,7 +123,12 @@ export function createCloudClient(context: CloudContext) {
     }
   }
   async function acquire(launch: Launch, managedId: string): Promise<Reconciled> {
-    await authorize(); // Credential refusal precedes any creation effect.
+    try {
+      await authorize();
+    } catch (error) {
+      if (error instanceof CloudError && error.code === 'credential_unavailable') return { kind: 'rejected', code: error.code };
+      throw error;
+    }
     const operation = { managedId, launch };
     try {
       const response = 'snapshotName' in launch

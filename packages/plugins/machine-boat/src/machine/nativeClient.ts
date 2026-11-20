@@ -1,4 +1,4 @@
-import { projectMachineProvisionerActionFailure, readMachineProvisionerCredentialRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { projectMachineProvisionerActionFailure } from '@happier-dev/plugin-sdk/machine-provisioners';
 import * as mini from 'zod/mini';
 import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
@@ -10,6 +10,7 @@ import {
   BoatResourceV1Schema,
   isBoatAdmissionRefusalCode,
   parseBoatValue,
+  projectBoatMachineRefusalCode,
   type BoatAcquireOperationV1,
   type BoatDeleteOperationV1,
   type BoatLaunchV1,
@@ -192,11 +193,8 @@ export function createBoatNativeClient(options: BoatNativeClientOptions = {}) {
       } catch (error) {
         const cause = error instanceof BoatNativeError && error.nativeCause ? { nativeCause: error.nativeCause } : {};
         if (error instanceof BoatNativeError) {
-          if (error.code !== 'native_authorization_failed' && error.code !== 'native_request_failed' && isBoatAdmissionRefusalCode(error.code)) {
-            return { kind: 'refused', code: error.code, ...cause };
-          }
-          const credential = readMachineProvisionerCredentialRefusal(error.httpStatus);
-          if (credential || isBoatAdmissionRefusalCode(error.code)) return { kind: 'refused', code: credential ?? error.code, ...cause };
+          const code = projectBoatMachineRefusalCode(error);
+          if (code === 'credential_unavailable' || isBoatAdmissionRefusalCode(code)) return { kind: 'refused', code, ...cause };
         }
         // A lost or undecodable reply cannot disprove the submitted effect.
         return { kind: 'pending', operation, ...cause };

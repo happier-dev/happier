@@ -225,11 +225,12 @@ describe('Boat documented contract gaps', () => {
   });
 
   it.each(['api_key_action_forbidden', 'api_key_sandbox_forbidden', 'api_key_expired'])(
-    'preserves typed %s with actionable safe text through connect and check', async code => {
+    'offers Connect for %s and preserves the account diagnostic and safe check text', async code => {
       const { host, http } = await fixture({ permission: code });
       try {
         const result = MachineProvisionerCheckResultV1Schema.parse(await host.invokeAction('check', {}));
-        expect(result).toMatchObject({ available: false, code: `native_${code}`, status: { fallback: expect.stringMatching(/key/i) } });
+        expect(result).toMatchObject({ available: false, code: 'credential_unavailable',
+          status: { key: `machineBoat.errors.native_${code}`, fallback: expect.stringMatching(/key/i) } });
         const context = { signal: new AbortController().signal, configuration: { values: {} }, credentials: { get: async () => 'fixture-key' },
           services: { http } } as unknown as ConnectedAccountReadContext;
         expect(await connectedAccountRuntime.status(context)).toMatchObject({ diagnostic: { code: `native_${code}`, message: expect.stringMatching(/key/i) } });
@@ -248,7 +249,7 @@ describe('Boat documented contract gaps', () => {
       try {
         if (role === 'acquire') {
           expect(ROLE_SCHEMAS.acquireResult.parse(await host.invokeAction(role, input)))
-            .toEqual({ kind: 'rejected', code: 'native_api_key_action_forbidden', nativeCause: { httpStatusClass: '4xx' } });
+            .toEqual({ kind: 'rejected', code: 'credential_unavailable', nativeCause: { httpStatusClass: '4xx' } });
         } else if (['options', 'bootstrap'].includes(role)) {
           await expect(host.invokeAction(role, input)).rejects.toMatchObject({ code: 'native_api_key_action_forbidden', message: expect.stringContaining('permission') });
         } else if (role === 'inspect') {

@@ -1,5 +1,5 @@
 import * as mini from 'zod/mini';
-import type { MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { readMachineProvisionerCredentialRefusal, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import {
   defineProtocolLiteral,
   defineProtocolObject,
@@ -64,6 +64,13 @@ export class BoatNativeError extends Error {
     super(boatSetupMessage(code) ?? code);
     this.name = 'BoatNativeError';
   }
+}
+
+export function projectBoatMachineRefusalCode(error: BoatNativeError): string {
+  const credential = readMachineProvisionerCredentialRefusal(error.httpStatus);
+  if (credential && (error.code.startsWith('native_api_key_') || error.code === 'native_authorization_failed'
+    || error.code === 'native_request_failed' || error.code === 'native_response_invalid')) return credential;
+  return error.code;
 }
 
 const admissionRefusalCodes: readonly string[] = [
