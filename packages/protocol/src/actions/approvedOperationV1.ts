@@ -4,7 +4,7 @@ import { StrictJsonValueSchema, sameStrictJsonValue } from '../json/strictJsonVa
 import { preservedBoundedNfcString } from '../strings/preservedBoundedNfcString.js';
 import { defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { WorkflowAuthoredResultReferenceSchema } from '../workflows/workflowReferenceV1.js';
-import { WorkflowActionFieldBindingV1Schema } from '../workflows/workflowLeafV1.js';
+import { WorkflowActionFieldBindingV1Schema, WorkflowActionLeafV1Schema } from '../workflows/workflowLeafV1.js';
 import { listWorkflowActionFieldReferencesV1 } from '../workflows/workflowActionTextV1.js';
 import { DeploymentDeployIntentInputV1Schema, DeploymentDeploySemanticInputV1Schema,
   type DeploymentDeployIntentInputV1, type DeploymentDeploySemanticInputV1 } from '../deployments/deploymentDeployIntentV1.js';
@@ -26,7 +26,10 @@ export const WorkflowApprovedOperationStepV1Schema = lazyZodSchema(() => z.stric
   input: z.record(z.string(), StrictJsonValueSchema),
   binding: z.optional(z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('deployment_sha') }),
-    z.strictObject({ kind: z.literal('producer_result'), references: z.record(z.string().check(z.minLength(1)), WorkflowAuthoredResultReferenceSchema) }),
+    z.strictObject({ kind: z.literal('producer_result'),
+      references: z.record(z.string().check(z.minLength(1)), WorkflowAuthoredResultReferenceSchema),
+      scheduleStep: z.optional(WorkflowActionLeafV1Schema),
+    }),
     z.strictObject({ kind: z.literal('trigger_event'), references: z.record(z.string().check(z.minLength(1)),
       WorkflowActionFieldBindingV1Schema.check(z.refine(binding => binding.kind !== 'text'
         && listWorkflowActionFieldReferencesV1(binding).some(reference => reference.kind === 'trigger_event')

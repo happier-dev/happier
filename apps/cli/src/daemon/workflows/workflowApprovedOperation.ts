@@ -5,6 +5,7 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { z } from 'zod/mini';
+import { AutomationScheduleTriggerInputSchema } from '@happier-dev/protocol/automations/automationApiV3';
 export { prepareWorkflowApprovedOperationSnapshot } from '@happier-dev/protocol/actions/executor/workflowRunActions';
 import { bindWorkflowApprovedOperationSteps, matchesApprovedOperationStepV1,
   projectWorkflowTriggerConsentSteps } from '@happier-dev/protocol/actions/executor/workflowRunActions';
@@ -136,10 +137,11 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         const actionLeaf = structure.leaf;
         const producerResult = operation.steps.some(step => step.actionId === actionId && step.binding?.kind === 'producer_result');
         const occurrence = savedTrigger && producerResult ? readDeploymentBackupOccurrenceV1(structure.definition, actionLeaf) : null;
-        if (savedTrigger && producerResult && !occurrence) return null;
         if (savedTrigger && !sameStrictJsonValue(operation.steps, projectWorkflowTriggerConsentSteps({
           definition: accepted.definition, children: accepted.frozenChildren, materializedLeaves: accepted.materializedLeaves,
           deployment: operation.steps.some(step => step.binding?.kind === 'deployment_sha'),
+          ...(accepted.source.kind === 'automation' && accepted.source.definitionId !== undefined
+            ? { workflowRef: accepted.source.definitionId } : {}),
         }))) return null;
         const slots = new Map<string, Promise<Row | undefined>>();
         const producer = createWorkflowProducerBinding({ runId, frame: structure.frame, store: {
@@ -188,6 +190,13 @@ export function createWorkflowApprovedOperationReader(params: Readonly<{
         }
         for (const step of operation.steps) {
           if (step.actionId !== actionId || !step.binding || step.binding.kind === 'deployment_sha') continue;
+          if (step.binding.kind === 'producer_result') {
+            if (step.binding.scheduleStep) {
+              const trigger = AutomationScheduleTriggerInputSchema.safeParse(actual.data.trigger);
+              if (!savedTrigger || structure.sourceKey !== '$root' || !sameStrictJsonValue(step.binding.scheduleStep, actionLeaf)
+                || !trigger.success || !trigger.data.enabled || trigger.data.schedule.kind !== 'once') continue;
+            } else if (savedTrigger && !occurrence) continue;
+          }
           if (!Object.entries(step.binding.references).every(([field, reference]) =>
             sameStrictJsonValue(actionLeaf.input[field], reference))) continue;
           const runtime = { inputs: structure.inputs, triggerEventValues: accepted.triggerEventValues,

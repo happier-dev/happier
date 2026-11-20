@@ -625,7 +625,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     return z.record(z.string(), StrictJsonValueSchema).parse(projectNativeJsonValueForTransport(input));
   };
   const prepareActionConsent = async (input: Readonly<{
-    context: WorkflowTriggerContextV1; definition: WorkflowDefinitionV1; project: WorkflowProjectTargetV1;
+    context: WorkflowTriggerContextV1; definition: WorkflowDefinitionV1; project: WorkflowProjectTargetV1; target: TriggerTargetV1;
     triggerId: string; enabled: boolean; mode?: 'automatic' | 'ask'; initialDeployment?: boolean;
     parent: Readonly<{ actionId: 'workflow.trigger.add' | 'workflow.trigger.update'; input: WorkflowApprovedOperationV1['parent']['input'] }>;
     caller?: Caller;
@@ -642,6 +642,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     const { steps, materializedLeaves } = await readWorkflowTriggerActionConsent({
       definition: input.definition, context: input.context, project: input.project,
       triggerId: input.triggerId, resolveWorkflow: resolveDefinition,
+      ...(input.target.kind === 'workflow' ? { workflowRef: input.target.ref } : {}),
       materializer: await deps.resolveMaterializer?.(input.project, input.caller),
     });
     let mode: 'automatic' | 'ask' | undefined = input.mode;
@@ -1267,7 +1268,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         if (scope?.onComplete !== undefined) mergedContext.onComplete = scope.onComplete;
         const admittedSource = await assertWrite(target, mergedContext, targetProject, caller, scope?.sessionId, false, false, scope,
           undefined, [{ triggerId, trigger: input.trigger }]);
-        await prepareActionConsent({ context: mergedContext, definition: admittedSource.definition, project: targetProject, triggerId,
+        await prepareActionConsent({ context: mergedContext, definition: admittedSource.definition, project: targetProject, target, triggerId,
           enabled: input.trigger.enabled, mode: input.actionApproval,
           initialDeployment: input.trigger.kind === 'pluginEvent' && input.deployment !== undefined,
           parent: { actionId: 'workflow.trigger.add', input: approvalInput(input) }, caller });
@@ -1340,7 +1341,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         }
       }
       const automationId = deps.newId('automation');
-      await prepareActionConsent({ context, definition: admittedSource.definition, project: targetProject, triggerId, enabled: input.trigger.enabled,
+      await prepareActionConsent({ context, definition: admittedSource.definition, project: targetProject, target, triggerId, enabled: input.trigger.enabled,
         mode: input.actionApproval, initialDeployment: input.trigger.kind === 'pluginEvent' && input.deployment !== undefined,
         parent: { actionId: 'workflow.trigger.add', input: approvalInput(input) }, caller });
       const prepared = await prepareTriggerProjection({ target, context }, scope?.sessionId, admittedSource);
@@ -1480,7 +1481,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ];
       if (target.kind === 'inline' && context.visibleTeamId !== undefined) refuseInput('inline_trigger_team_not_allowed');
       const admittedSource = await assertWrite(target, context, targetProject, caller, scope?.sessionId, false, false, scope, triggerEvents, triggerWrites);
-      if (input.triggerId !== undefined) await prepareActionConsent({ context, definition: admittedSource.definition, project: targetProject,
+      if (input.triggerId !== undefined) await prepareActionConsent({ context, definition: admittedSource.definition, project: targetProject, target,
         triggerId: input.triggerId, enabled: setEnabled && (enabled ?? row.triggers.find(item => item.id === input.triggerId)?.enabled ?? false),
         initialDeployment: deployment != null && !current.context.deploymentTriggers?.some(item => item.triggerId === input.triggerId)
           && (trigger?.kind ?? row.triggers.find(item => item.id === input.triggerId)?.kind) === 'pluginEvent',

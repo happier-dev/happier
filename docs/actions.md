@@ -10370,7 +10370,12 @@ accepted Run. The receiver reopens that selected enabled trigger before using
 the existing exact Action/input comparison. A changed command or Action,
 withdrawn consent, or stricter current Ask policy follows ordinary approval.
 Choosing `ask` or disabling the trigger removes its saved consent. This writes
-no Action preference and introduces no grant table. Action-event checks can retain
+no Action preference and introduces no grant table. A saved Workflow can
+authorize its declared native `workflow.trigger.add` step to add an enabled
+once schedule to itself. The step pins the Workflow and project, and an
+earlier step in the same accepted Run supplies the schedule. A different
+step or Workflow, an edited declaration, or a recurring result needs ordinary
+approval. Action-event checks can retain
 structured `trigger_event` bindings for JSON stdin and declared environment values.
 The saved operation pins the field structure, literal values and command operands;
 the private Run reader resolves the variable fields from that accepted Run's Event

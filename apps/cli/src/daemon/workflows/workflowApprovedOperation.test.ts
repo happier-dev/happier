@@ -37,9 +37,11 @@ import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/librar
 import { createActionExecutorBoundaryFixture } from '../../../../../packages/tests/src/testkit/actionExecutorBoundary';
 import { createScheduledMachineUpdatesRolloutWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/machineUpdatesV1';
 import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSetup';
-import { materializeWorkflowTriggerActionDefinition, projectWorkflowTriggerConsentSteps } from '@happier-dev/protocol/actions/executor/workflowTriggerConsent';
+import { materializeWorkflowTriggerActionDefinition, projectWorkflowTriggerConsentSteps, readWorkflowTriggerActionConsent } from '@happier-dev/protocol/actions/executor/workflowTriggerConsent';
 import { sealWorkflowTriggerEventValuesV1 } from '@happier-dev/protocol/workflows/workflowTriggerEventReferenceV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
 
 const runId = '52bd37c4-99c6-41cf-90a5-3a1be2b1e031';
 const invocationId = 'exact-child';
@@ -292,6 +294,107 @@ describe('Workflow approved operation private custody', () => {
       expect(storage.operations()).not.toContain('invocations.list');
     }
   });
+  it.each(['covered', 'other-workflow', 'recurring', 'edited-step', 'other-step'] as const)(
+    'uses Automatic consent only for the saved native once-schedule declaration (%s)', async scenario => {
+      const actionId = WORKFLOW_TRIGGER_ADD_ACTION_ID;
+      const workflow = 'bd7ee83d-32c2-4eb1-9d35-efcf5212ef98';
+      const project = { machineId: 'host', directory: '/repo' };
+      const triggerId = 'deploy-observer';
+      const automationId = 'deployment-regression-check';
+      const parentTrigger = { kind: 'schedule', enabled: true,
+        schedule: { kind: 'interval', everyMs: 60_000, scheduleExpr: null, timezone: null } } as const;
+      const once = { kind: 'schedule', enabled: true,
+        schedule: { kind: 'once', scheduledAt: Date.UTC(2099, 0, 1) } } as const;
+      const schedule = { kind: 'action', id: 'schedule', actionId, input: {
+        workflow: { kind: 'literal', value: workflow }, project: { kind: 'literal', value: project },
+        trigger: { kind: 'result', producer: { blockId: 'receipt', scope: { kind: 'current' } }, path: ['trigger'] },
+      } };
+      const original = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [
+        { kind: 'action', id: 'receipt', actionId: 'workflow.starters.list', input: {} }, schedule,
+      ] });
+      const definition = WorkflowDefinitionV1Schema.parse({ ...original, blocks: [
+        original.blocks[0], { ...schedule, ...(scenario === 'edited-step' ? { name: 'Edited schedule' } : {}),
+          ...(scenario === 'other-step' ? { id: 'replacement' } : {}),
+          ...(scenario === 'other-workflow' ? { input: { ...schedule.input,
+            workflow: { kind: 'literal', value: 'b897bf71-5d73-4649-935e-a0cbd6b22f04' } } } : {}) },
+      ] });
+      const unavailable = async (): Promise<never> => { throw new Error('Unexpected Automation mutation or inventory'); };
+      const context = { workspace: { directory: project.directory }, executionTarget: { kind: 'session' as const } };
+      const saved = await readWorkflowTriggerActionConsent({ definition: original, context, project, triggerId,
+        workflowRef: workflow, resolveWorkflow: unavailable });
+      const operation = await prepareWorkflowApprovedOperation({ parent: { actionId,
+        input: { workflow, project, trigger: parentTrigger, actionApproval: 'automatic' } },
+        ...saved, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+          runtimeAccountId: accountId, serverId: 'home', actionRequestId: 'arm-f16' },
+        nativeAccount: { accountId, serverId: 'home', isCurrent: async () => true } });
+      const row = AutomationDefinitionDetailSchema.parse({ id: automationId, workflowDefinitionId: workflow,
+        name: 'Check deployment regressions', description: null, enabled: true, targetType: null, existingSessionId: null,
+        templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1,
+        assignments: [{ machineId: 'host', enabled: true, priority: 0, updatedAt: 1 }],
+        triggers: [{ ...parentTrigger, id: triggerId, revision: 0, createdAt: 1, updatedAt: 1,
+          nextRunAt: 2, triggerDefinitionEnvelope: null }],
+        executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, workflow: { t: 'plain', v: {
+          ...context, actionApprovals: [{ triggerId, operation }],
+        } } },
+      });
+      const triggers = createAccountWorkflowTriggerActions({ automations: { get: async () => row,
+        list: unavailable, listDetails: unavailable, create: unavailable, reconcile: unavailable, delete: unavailable },
+        resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+        resolveWorkflow: unavailable, randomBytes: size => new Uint8Array(size), newId: () => 'unused' });
+      const cause = AutomationRunCauseSchema.parse({ kind: 'trigger', triggerKind: 'schedule', triggerId, triggerRevision: 0,
+        occurrenceKey: deriveAutomationOccurrenceKeyV1({ triggerId, evidence: { v: 1, kind: 'schedule', scheduledFor: 1 } }),
+        occurredAt: 1, evidence: { scheduledFor: 1 } });
+      const { materialized } = await materializeWorkflowTriggerActionDefinition({ definition, inputs: {}, project, resolveWorkflow: unavailable });
+      if (!materialized.ok) throw new Error(materialized.error.code);
+      const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...snapshot(), definition, authoredDefinition: definition,
+        source: { kind: 'automation', automationId, definitionId: workflow, revision: { headerVersion: 1, bodyVersion: 1 }, savedBy: null },
+        materializedLeaves: materialized.materializedLeaves, approvedOperation: operation });
+      const storage = createWorkflowRunStorageTestkit({ runId, accountId, machineId: 'host', state: 'running',
+        origin: { kind: 'automation', automationId, cause }, keyCensus: createPlainWorkflowRunKeyCensusFixture({ runId, accountId }),
+        acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+          mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: accepted })) });
+      const seal = (id: string, sequence: string, parentRecordId: string | null, memberOrdinal: string,
+        progress: Parameters<typeof sealWorkflowProgressStoredEnvelopeV1>[0]['progress']) =>
+        serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'invocation_progress', accountId, runId, recordId: id, sequence, parentRecordId, memberOrdinal, attempt: '0' },
+          progress }));
+      await storage.execute({ operation: 'initialize', runId, expectedRevision: 0, checkpointEnvelope: '{}', rootInvocation: {
+        id: 'root', contentEnvelope: seal('root', '0', null, '0', { kind: 'happier.workflow-progress.v1', blockKind: 'root',
+          invocationPath: { blockId: '$root', scope: [] }, attempt: '0', logicalInvocationRecordId: 'root' }) } });
+      const produced = scenario === 'recurring' ? parentTrigger : once;
+      const stepProgress = { kind: 'happier.workflow-progress.v1', blockKind: 'action',
+        invocationPath: { blockId: definition.blocks[1]!.id, scope: [] }, attempt: '0', logicalInvocationRecordId: invocationId } satisfies Parameters<typeof seal>[4];
+      await storage.execute({ operation: 'invocations.admit', runId, expectedRevision: 1, parentAttempt: 0, checkpointEnvelope: '{}', invocations: [
+        { id: 'producer', sequence: '1', parentRecordId: 'root', memberOrdinal: '0', lifecycle: 'completed',
+          contentEnvelope: seal('producer', '1', 'root', '0', { kind: 'happier.workflow-progress.v1', blockKind: 'action',
+            invocationPath: { blockId: 'receipt', scope: [] }, attempt: '0', logicalInvocationRecordId: 'producer', result: { trigger: produced } }) },
+        { id: invocationId, sequence: '2', parentRecordId: 'root', memberOrdinal: '1',
+          contentEnvelope: seal(invocationId, '2', 'root', '1', stepProgress) },
+      ] });
+      const reader = createWorkflowApprovedOperationReader({ storage, resolveEncryption: async () => ({ witness: { mode: 'plain' } }),
+        readSavedTriggerConsent: input => triggers.readSavedConsent(input, input.context) });
+      const input = { workflow: scenario === 'other-workflow' ? 'b897bf71-5d73-4649-935e-a0cbd6b22f04' : workflow, project, trigger: produced };
+      const caller: ActionExecutorContext = { actionRequestId, runtimeAccountId: accountId, executionRunWorkflowRunId: runId,
+        actionCaller: { kind: 'workflowRun', runId, authorization: accepted.authorization } };
+      const approvalContext = { surface: 'agent', authority: 'account_automation' } as const;
+      for (const phase of ['prepare', 'dispatch'] as const) {
+        if (phase === 'dispatch') await storage.execute({ operation: 'invocations.fact', runId, invocationId,
+          invocationAttempt: '0', expectedContentRevision: '0', expectedLifecycle: 'pending', lifecycle: 'admitting',
+          contentEnvelope: seal(invocationId, '2', 'root', '1', { ...stepProgress,
+            execution: { kind: 'action', actionId, actionRequestId, localInputId: 'f16-step', input } }) });
+        const proof = await reader({ runId, actionId, input, context: caller, phase });
+        expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), input,
+          context: approvalContext, approvedOperation: proof }).required).toBe(scenario !== 'covered');
+        if (scenario === 'covered') {
+          expect(proof?.steps).toEqual([{ actionId, input }]);
+          const settings = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['agent'] } } });
+          expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId), input,
+            context: approvalContext, settings, approvedOperation: proof }).required).toBe(true);
+        }
+      }
+      expect(storage.operations()).not.toContain('invocations.list');
+    });
+
   it('continues an exact reviewed child with demanded work and holds a changed child', async () => {
     const h = await fixture(false);
     const actionId = 'prompt_doc.create' as const;

@@ -309,6 +309,13 @@ Accepted V2 operations and deployment receipts retain the admitted Workflow
 origin separately from the approver, so terminal admission applies the ordinary
 ancestor loop rule. The V1 operation projection omits that provenance field.
 
+Saved Automatic consent for a Run-produced once schedule adds an optional
+closed `scheduleStep` declaration to the private `producer_result` binding.
+Existing operations retain their existing shape. Earlier strict development
+readers reject the added declaration, so the save and Run readers need the
+matching development Protocol. The existing private Automation and accepted Run
+envelopes carry the declaration with no storage migration.
+
 ## Pull-request author association (unreleased 0.3)
 
 The closed SCM lifecycle payload carries `authorAssociation` as `internal`,

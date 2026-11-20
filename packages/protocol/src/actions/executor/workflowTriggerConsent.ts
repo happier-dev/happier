@@ -1,11 +1,11 @@
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import type { WorkflowDefinitionV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowTriggerContextV1 } from '../../automations/automationWorkflowRecipeV2.js';
-import type { WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
+import { WorkflowProjectTargetV1Schema, type WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
 import { materializeWorkflowDefinitionAuthorityV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from '../../workflows/materializeWorkflowAcceptedSnapshotV1.js';
 import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPreparationV1.js';
 import type { WorkflowMaterializedLeafV1, WorkflowResolvedInputsV1 } from '../../workflows/workflowDefinitionV1.js';
-import { formatWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
+import { formatWorkflowDefinitionRefV1, parseWorkflowDefinitionRefV1 } from '../../workflows/workflowDefinitionRefV1.js';
 import { WorkflowApprovedOperationStepV1Schema } from '../approvedOperationV1.js';
 import { AutomationStoredWorkflowDefinitionV2Schema, type AutomationStoredWorkflowDefinitionV2ReadSchema } from '../../automations/automationWorkflowRecipeV2.js';
 import type { z } from '../../zodRuntimePolicy.js';
@@ -13,12 +13,14 @@ import { readDeploymentBackupOccurrenceV1 } from '../../workflows/builtins/backu
 import { walkWorkflowBlocks } from '../../workflows/workflowDefinitionEditV1.js';
 import { DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { listWorkflowActionFieldReferencesV1 } from '../../workflows/workflowActionTextV1.js';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '../workflowTriggerActionIds.js';
 
 type WorkflowTriggerConsentDefinition = Readonly<{
   definition: WorkflowDefinitionV1;
   context: WorkflowTriggerContextV1;
   project: WorkflowProjectTargetV1;
   triggerId: string;
+  workflowRef?: string;
   resolveWorkflow(ref: string): Promise<WorkflowDefinitionV1>;
   materializer?: Pick<MaterializeWorkflowAcceptedSnapshotV1Input, 'effects' | 'roleSelection'>;
 }>;
@@ -145,7 +147,8 @@ export async function readWorkflowTriggerActionConsent(input: WorkflowTriggerCon
     } } } : {}) });
   if (!materialized.ok) throw Object.assign(new Error(materialized.error.code), { code: materialized.error.code });
   const materializedLeaves = materialized.materializedLeaves;
-  return { steps: projectWorkflowTriggerConsentSteps({ definition, children: program.children, materializedLeaves, deployment }),
+  return { steps: projectWorkflowTriggerConsentSteps({ definition, children: program.children, materializedLeaves, deployment,
+    ...(input.workflowRef === undefined ? {} : { workflowRef: input.workflowRef }) }),
     materializedLeaves };
 }
 
@@ -155,6 +158,7 @@ export function projectWorkflowTriggerConsentSteps(input: Readonly<{
   children: Readonly<Record<string, WorkflowDefinitionV1>>;
   materializedLeaves: readonly WorkflowMaterializedLeafV1[];
   deployment: boolean;
+  workflowRef?: string;
 }>): WorkflowApprovedOperationV1['steps'] {
   return projectWorkflowTriggerConsentActionSteps(input).map(row => row.step);
 }
@@ -172,6 +176,18 @@ ReadonlyArray<Readonly<{ ref: Readonly<{ sourceKey: string; blockId: string }>; 
     const occurrence = source && authored?.kind === 'action' ? readDeploymentBackupOccurrenceV1(source.definition, authored) : null;
     const ref = { sourceKey: leaf.sourceKey, blockId: leaf.blockId };
     if (authored?.kind === 'action') {
+      if (input.workflowRef !== undefined && leaf.actionId === WORKFLOW_TRIGGER_ADD_ACTION_ID
+        && authored.input.trigger?.kind === 'result') {
+        // Automatic can bind only the instant supplied by this Run. The
+        // concrete schedule shape is checked when that producer settles.
+        const { trigger: _trigger, ...fixed } = leaf.actionInput;
+        const producer = source?.blocks.get(authored.input.trigger.producer.blockId);
+        if (leaf.sourceKey !== '$root' || authored.actionId !== leaf.actionId || producer?.kind !== 'action'
+          || parseWorkflowDefinitionRefV1(input.workflowRef)?.kind !== 'artifact' || fixed.workflow !== input.workflowRef
+          || !WorkflowProjectTargetV1Schema.safeParse(fixed.project).success || Object.keys(fixed).length !== 2) return [];
+        return [{ ref, step: { actionId: leaf.actionId, input: fixed,
+          binding: { kind: 'producer_result' as const, references: { trigger: authored.input.trigger }, scheduleStep: authored } } }];
+      }
       const references = Object.fromEntries(Object.entries(authored.input).filter(([, binding]) =>
         listWorkflowActionFieldReferencesV1(binding).some(reference => reference.kind === 'trigger_event')));
       if (Object.keys(references).length > 0) {
