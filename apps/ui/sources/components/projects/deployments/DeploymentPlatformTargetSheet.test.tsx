@@ -700,3 +700,36 @@ it('keeps loading until the Account\'s plugin availability first arrives, and ne
     context.dispose();
   }
 });
+
+it.each([
+  { target: 'vercel', load: () => import('../../../../../../packages/plugins/deploy-vercel/src/manifest') },
+  { target: 'cloudflare-pages', load: () => import('../../../../../../packages/plugins/deploy-cloudflare/src/manifest') },
+])('renders the $target Create environment as its typed Production option without a Machine', async ({ target, load }) => {
+  const { manifest } = await load();
+  const { drawPlatformFields, readDeploymentPlatformTargets } = await import('./platformTargetLink');
+  const { useInputFieldOptions } = await import('@/components/sessions/actions/useInputFieldOptions');
+  const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
+  const { resolveEffectiveActionInputFields } = await import('@happier-dev/protocol/actions/actionInputHintsRuntime');
+  const { seedInputByFieldHints } = await import('@happier-dev/protocol/inputs/inputFieldRuntime');
+  const release = PluginPortableReleaseManifestV1Schema.parse(manifest);
+  const create = readDeploymentPlatformTargets([{ manifest: release }]).find(entry => entry.targetKind === target)?.create;
+  if (!create) throw new Error('Expected the provider Create Action');
+  const action = { inputHints: { fields: [...create.fields] } };
+  const input = seedInputByFieldHints(action, {});
+  const fields = resolveEffectiveActionInputFields(action, input).filter(field =>
+    field.path === 'providerEnvironment' || field.path.startsWith('providerEnvironment.'));
+  const requests = fields.map(field => ({ field, actionId: create.inspectActionId, draftInput: input }));
+  const observedOptions = vi.fn<(states: ReturnType<typeof useInputFieldOptions>['snapshot']) => void>();
+  function ProductionField() {
+    const options = useInputFieldOptions({ requests, enabled: true });
+    const drawn = drawPlatformFields(fields, input, options.state, () => false);
+    observedOptions(options.snapshot);
+    return <ActionInputFields fields={drawn.fields} input={input} editable busy={false}
+      resolveFieldOptions={options.resolveOptions} onPatch={() => {}} />;
+  }
+  const screen = await renderScreen(<ProductionField />);
+  expect(observedOptions).toHaveBeenLastCalledWith([]);
+  expect(screen.getTextContent()).toContain('Production');
+  expect(fields[0]?.options?.map(option => option.value)).toEqual(['production']);
+  expect(input.providerEnvironment).toEqual({ kind: 'production' });
+});

@@ -41,8 +41,8 @@ export const projectCreateAction: AccountAction = {
       options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] },
     { path: 'productionBranch', title: 'Production branch', widget: 'text',
       visibleWhen: { op: 'eq', path: 'sourceMethod', value: 'gitIntegration' } },
-    { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true,
-      defaultValue: { kind: 'production' } },
+    { path: 'providerEnvironment.kind', title: 'Environment', widget: 'select', required: true,
+      defaultValue: 'production', options: [{ value: 'production', label: 'Production' }] },
   ] },
   async run(value, context) {
     const input = value as unknown as CreateInput;

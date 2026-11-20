@@ -73,7 +73,8 @@ export const pagesCreate: AccountAction = { ...common, title: 'Create a Cloudfla
     { path: 'productionBranch', title: 'Production branch', widget: 'text', required: true },
     { path: 'sourceMethod', title: 'Source method', widget: 'select', required: true, defaultValue: 'upload',
       options: [{ value: 'upload', label: 'Upload' }, { value: 'gitIntegration', label: 'Git integration' }] },
-    { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true, defaultValue: { kind: 'production' } },
+    { path: 'providerEnvironment.kind', title: 'Environment', widget: 'select', required: true,
+      defaultValue: 'production', options: [{ value: 'production', label: 'Production' }] },
   ] },
   run: (value, context) => create(value as unknown as CreateInput, context, 'pages'),
 };
