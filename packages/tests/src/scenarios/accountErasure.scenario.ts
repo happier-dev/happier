@@ -87,6 +87,10 @@ export async function runAccountErasureJourney(fixture: TeamSetupFFixture, datab
       const account = await fixture.createAccount(`erasure-${ingress}`);
       const accountId = readAccountIdFromToken(account.auth.token);
       if (!accountId) throw new Error('Erasure fixture token omitted its Account ID');
+      const readWithOriginalBearer = () => fetch(`${server.baseUrl}/v1/account/settings`, {
+        headers: { Authorization: `Bearer ${account.auth.token}` },
+      });
+      expect((await readWithOriginalBearer()).status, 'The original bearer must work before erasure').toBe(200);
       const machine = await fixture.enrollDaemon(account);
       await fixture.assertKnownGoodMachineControl(account, machine);
       expect(await account.execute('machines.command.run', { command: 'echo erasure-control' }, {
@@ -112,6 +116,7 @@ export async function runAccountErasureJourney(fixture: TeamSetupFFixture, datab
       }
       expect(await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true, tokenEpoch: true } }))
         .toEqual(before);
+      expect((await readWithOriginalBearer()).status, 'A refusal before retirement must preserve the original bearer').toBe(200);
       console.info(`[account-erasure-journey] ${ingress} pending-upload refusal preserved active credentials`);
       await fixture.assertKnownGoodMachineControl(account, machine);
       expect(await inTx(tx => settleAccountPrivateFileUploadInTx(tx, { accountId, file: { path }, writingReuseKey,
@@ -130,17 +135,16 @@ export async function runAccountErasureJourney(fixture: TeamSetupFFixture, datab
       const retired = await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { status: true, tokenEpoch: true } });
       expect(retired.status).toBe('disabled');
       expect(retired.tokenEpoch).toBeGreaterThan(before.tokenEpoch);
-      const staleAccess = await fetch(`${fixture.server.baseUrl}/v1/account/settings`, {
-        headers: { Authorization: `Bearer ${account.auth.token}` },
-      });
-      expect(staleAccess.status, 'Retirement must revoke the original Account bearer').toBe(401);
+      expect((await readWithOriginalBearer()).status, 'A retained, disabled Account must reject the original bearer').toBe(401);
       console.info(`[account-erasure-journey] ${ingress} partial erasure retired credentials`);
       await rmdir(physicalPath);
       await writeFile(physicalPath, new Uint8Array([1, 2, 3]));
       expect(await removeByAdministrator(accountId), 'Home owner finishes physical erasure after fixing storage')
         .toMatchObject({ ok: true, result: { status: 'deleted' } });
       expect(await db.account.findUnique({ where: { id: accountId } })).toBeNull();
+      expect((await readWithOriginalBearer()).status, 'Completed erasure must still reject the original bearer').toBe(401);
       await expect(stat(physicalPath), 'Completed erasure must remove the captured private bytes').rejects.toMatchObject({ code: 'ENOENT' });
+      console.info(`[account-erasure-journey] ${ingress} completed erasure preserved bearer withdrawal`);
     }
 
     expect(await db.account.findUniqueOrThrow({ where: { id: administratorId }, select: { status: true } }))
