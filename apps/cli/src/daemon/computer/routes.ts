@@ -31,6 +31,10 @@ export type ComputerRoutes = Readonly<{
     Readonly<{ ok: true; source: MachineLiveStreamRegisteredCaptureSource; homeServerIdentityId: string }>
     | Readonly<{ ok: false; reasonCode: string }>>;
   closeSession(sessionId: string): Promise<void>;
+  /** Machine access loss: a withdrawn person's selections stop holding this Machine's displays. */
+  releaseRequesterSelections(input: Readonly<{ requesterAccountId: string; remainingRole?: 'use' }>): Promise<Readonly<{ kind: 'settled' }>>;
+  /** Non-custodians holding a selection here, for the Home's reconnect access-loss census. */
+  readRequesterAccountIds(): readonly string[];
   dispose(): Promise<void>;
 }>;
 
@@ -107,9 +111,8 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
           ...capture } : {}) },
       ...(source ? { selectedTarget: source.target, sourceId: source.sourceId, access: source.access } : {}) };
   };
-  const closeSession = async (sessionId?: string) => {
-    await Promise.all(input.registry.list().filter(entry => entry.computer && (!sessionId
-      || entry.computer.sourceIdentity.kind === 'session' && entry.computer.sourceIdentity.sessionId === sessionId)).map(async entry => {
+  const closeSources = async (matches: (source: import('./source').ComputerCaptureSource) => boolean) => {
+    await Promise.all(input.registry.list().filter(entry => entry.computer && matches(entry.computer)).map(async entry => {
       await closeSource(entry.computer!);
       // Source close proves process retirement; prior input remains historically unknown.
       if (input.registry.list().some(current => current.computer === entry.computer)) {
@@ -117,6 +120,8 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       }
     }));
   };
+  const closeSession = (sessionId?: string) => closeSources(source => !sessionId
+    || source.sourceIdentity.kind === 'session' && source.sourceIdentity.sessionId === sessionId);
   return {
     recordingStorage: recording.service,
     async admitSourceViewing(request, context) {
@@ -284,7 +289,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         if (selected(provider)) return failure('computer_target_selection_changed');
         if (conflictingSelection(sourceIdentity, provider, target)) return failure('computer_target_in_use');
         const source = createComputerCaptureSource({ sourceIdentity, target, title, appName, access, executablePath, provider,
-          environment: connection.environment, desktopKey, previousInputControl: existing?.inputControl,
+          environment: connection.environment, desktopKey, holder: scope.holder, previousInputControl: existing?.inputControl,
           ...(scope.kind === 'personal' ? { createDriver: () => createDriver(connection) } : {}) });
         const sourceId = source.sourceId;
         input.registry.register({ sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
@@ -365,6 +370,15 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
       }
     },
     closeSession,
+    async releaseRequesterSelections({ requesterAccountId, remainingRole }) {
+      // A held selection is open-ended access to this Machine's display, so it
+      // closes on loss like a terminal. Use keeps only what Use itself admits.
+      await closeSources(source => source.holder?.accountId === requesterAccountId
+        && (remainingRole !== 'use' || source.holder.role === 'manage'));
+      return { kind: 'settled' };
+    },
+    readRequesterAccountIds: () => [...new Set(input.registry.list()
+      .flatMap(entry => entry.computer?.holder ? [entry.computer.holder.accountId] : []))],
     async dispose() {
       try { await closeSession(); }
       finally {

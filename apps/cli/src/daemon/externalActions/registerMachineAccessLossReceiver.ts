@@ -35,6 +35,9 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
   readRequesterMachineResourceAccountIds?: () => readonly string[];
   resolveInstallationId: () => string | null;
   cleanupRequesterMachineTerminals?: CleanupRequesterMachineTerminals;
+  /** Computer selections hold this Machine's display open-endedly, like a terminal;
+   * they end with the access that admitted them (full loss or Manage narrowed to Use). */
+  releaseRequesterComputerSelections?: CleanupRequesterMachineTerminals;
   /** Same P11 owner for admitted retirement and retained-binding reconciliation. */
   memberOperations?: AgentIsolationMemberOperations;
   /** Open-ended host resources close on access loss, before member retirement
@@ -97,11 +100,15 @@ export function registerMachineAccessLossReceiver(rpc: RpcHandlerRegistrar, opti
       });
       // Open-ended interactive work closes on loss. Admitted finite work stays
       // with its incumbent owner and is awaited by the same member operation.
-      const terminalOutcome = options.cleanupRequesterMachineTerminals
-        ? await options.cleanupRequesterMachineTerminals(input)
-        : { kind: 'settled' as const };
+      const settled = { kind: 'settled' as const };
+      const [terminalOutcome, selectionOutcome] = await Promise.all([
+        options.cleanupRequesterMachineTerminals ? options.cleanupRequesterMachineTerminals(input) : settled,
+        options.releaseRequesterComputerSelections ? options.releaseRequesterComputerSelections(input) : settled,
+      ]);
       const terminal = MachineAccessLossCustodyResponseV1Schema.safeParse(terminalOutcome);
-      if (!terminal.success || terminal.data.kind !== 'settled' || !stillCurrent()) return { kind: 'incomplete' as const };
+      const selections = MachineAccessLossCustodyResponseV1Schema.safeParse(selectionOutcome);
+      if (!terminal.success || terminal.data.kind !== 'settled' || !selections.success || selections.data.kind !== 'settled'
+        || !stillCurrent()) return { kind: 'incomplete' as const };
       // Use retains Project/Session execution and its member identity. Only the
       // Machine terminal owner consumes this narrower withdrawal.
       if (request.data.remainingRole === 'use') return terminal.data;

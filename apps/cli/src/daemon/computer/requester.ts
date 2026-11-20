@@ -16,8 +16,10 @@ export type ComputerRequesterHost = Readonly<{
   agentIsolation?: HostAgentIsolationLaunchContext;
   prepareNativeOperation: ApiMachineClient['prepareNativeOperation'];
 }>;
-export type ComputerRequesterScope = Readonly<{ kind: 'owner' }> | Readonly<{
-  kind: 'personal'; key: string;
+/** The non-custodian person, and the Machine role, a selection admitted here relies on. */
+export type ComputerSelectionHolder = Readonly<{ accountId: string; role: 'manage' | 'use' }>;
+export type ComputerRequesterScope = Readonly<{ kind: 'owner'; holder?: ComputerSelectionHolder }> | Readonly<{
+  kind: 'personal'; key: string; holder: ComputerSelectionHolder;
   homeServerIdentityId: string;
   identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
   placement: ReturnType<typeof resolveHostRequesterAgentPlacementForHost>;
@@ -43,7 +45,8 @@ export async function resolveComputerRequesterScope(input: Readonly<{
   const unrestricted = directlyUnrestricted || (!context.machineAdmission && isUnrestricted(admission));
   if (unrestricted) {
     if (context.ownDesktopOnly) throw new PluginError({ code: 'access_denied', message: 'access_denied' });
-    return { kind: 'owner' };
+    return admission && admission.actorAccountId !== admission.custodianAccountId
+      ? { kind: 'owner', holder: { accountId: admission.actorAccountId, role: 'manage' } } : { kind: 'owner' };
   }
   if (admission && admission.role !== 'use') throw new PluginError({ code: 'access_denied', message: 'access_denied' });
   const requesterBearing = !!(admission || sessionRequester || context.ownDesktopOnly || context.sessionActionOrigin
@@ -68,10 +71,13 @@ export async function resolveComputerRequesterScope(input: Readonly<{
   if (identity.kind === 'unknown') return unavailable(identity.reason);
   if (identity.kind === 'owner_person' || !identity.separationRequired) {
     if (context.ownDesktopOnly) throw new PluginError({ code: 'access_denied', message: 'access_denied' });
-    return { kind: 'owner' };
+    const accountId = identity.requester.accountId;
+    // owner_person is the custodian or an admitted Manage grantee.
+    return accountId === host.custodianAccountId ? { kind: 'owner' }
+      : { kind: 'owner', holder: { accountId, role: identity.kind === 'owner_person' ? 'manage' : 'use' } };
   }
   if ((input.platform ?? process.platform) !== 'linux') throw new ComputerDriverError('computer_display_unavailable');
-  return { kind: 'personal', identity, homeServerIdentityId,
+  return { kind: 'personal', identity, homeServerIdentityId, holder: { accountId: identity.requester.accountId, role: 'use' },
     key: deriveAgentIsolationMemberIdentity({ requester: identity.requester, homeServerIdentityId }).digest,
     placement: resolveHostRequesterAgentPlacementForHost({ identity, snapshot: host.agentIsolation?.read(), platform: input.platform }),
   };

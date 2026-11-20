@@ -9353,7 +9353,12 @@ export async function startDaemonSessionControlRuntime(
     const machineAccessLossReceiver: Parameters<ApiMachineClient['registerMachineAccessLossReceiver']>[0] = {
       serverId: params.serverId,
       readLiveWorkInventory: params.readLiveWorkInventory,
-      readRequesterMachineResourceAccountIds: params.readRequesterServiceForwardAccountIds,
+      readRequesterMachineResourceAccountIds: () => [
+        ...params.readRequesterServiceForwardAccountIds?.() ?? [],
+        ...devicesRole()?.computerRoutes()?.readRequesterAccountIds() ?? [],
+      ],
+      releaseRequesterComputerSelections: async input =>
+        await devicesRole()?.computerRoutes()?.releaseRequesterSelections(input) ?? { kind: 'settled' },
       cleanupRequesterMachineResources: async ({ requesterAccountId }) => {
         await Promise.all([
           pluginRuntimeController.retireHostResourceWatches(requesterAccountId),

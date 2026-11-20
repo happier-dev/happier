@@ -16,8 +16,10 @@ function context(accountId: string, role: 'use' | 'manage' = 'use'): ComputerAct
 
 describe('Computer requester desktop admission', () => {
   it('preserves owner and Manage display authority while personal ingress cannot borrow it', async () => {
-    for (const caller of [context('owner'), context('guest', 'manage')]) {
-      expect(await resolveComputerRequesterScope({ machineId: 'machine', host, context: caller })).toEqual({ kind: 'owner' });
+    // A Manage grantee's owner-display selection records whose access it relies on.
+    for (const [caller, scope] of [[context('owner'), { kind: 'owner' }],
+      [context('guest', 'manage'), { kind: 'owner', holder: { accountId: 'guest', role: 'manage' } }]] as const) {
+      expect(await resolveComputerRequesterScope({ machineId: 'machine', host, context: caller })).toEqual(scope);
       await expect(resolveComputerRequesterScope({ machineId: 'machine', host,
         context: { ...caller, ownDesktopOnly: true } })).rejects.toMatchObject({ code: 'access_denied' });
     }
@@ -27,7 +29,7 @@ describe('Computer requester desktop admission', () => {
     for (const caller of [context('owner'), context('guest', 'manage')]) {
       expect(await resolveComputerRequesterScope({ machineId: 'machine', context: caller,
         host: { ...host, readSessionRequester: async () => { throw new Error('Unrelated Session birth'); } } }))
-        .toEqual({ kind: 'owner' });
+        .toMatchObject({ kind: 'owner' });
     }
   });
 

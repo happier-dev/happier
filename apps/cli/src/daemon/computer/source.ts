@@ -8,6 +8,7 @@ import { ComputerDriverError, createManagedComputerDriver, type ComputerDriverIn
 import { createSurfaceInputControl, type SurfaceInputControl } from '../surfaces/inputControl';
 import { createSimulatorFrameProducerCaptureAdapter } from '../devices/simulator/capture/adapter';
 import type { MachineLiveStreamCaptureAdapter } from '../peer/mediation/stream/captureAdapter';
+import type { ComputerSelectionHolder } from './requester';
 
 export const computerTargetKey = computerTargetKeyV1;
 
@@ -43,6 +44,8 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
   environment?: Readonly<Record<string, string>>;
   /** Private desktop scope retained by the Computer route owner. */
   desktopKey?: string;
+  /** Non-custodian whose Machine access admitted this selection; it ends with that access. */
+  holder?: ComputerSelectionHolder;
   createDriver?: () => ReturnType<typeof createManagedComputerDriver>;
   previousInputControl?: SurfaceInputControl;
 }>) {
@@ -249,7 +252,7 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
       } };
     },
   };
-  return { inputControl: control, sourceIdentity, desktopKey: input.desktopKey, target: input.target, sourceId, get provider() { return provider; }, adapter, access,
+  return { inputControl: control, sourceIdentity, desktopKey: input.desktopKey, holder: input.holder, target: input.target, sourceId, get provider() { return provider; }, adapter, access,
     isClosed: () => closed,
     get title() { return title; },
     get appName() { return appName; },
