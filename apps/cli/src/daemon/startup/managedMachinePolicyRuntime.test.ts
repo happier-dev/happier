@@ -18,6 +18,16 @@ import { ApiMachineClient, type ManagedMachinePolicyInvalidation } from '@/api/a
 
 afterEach(() => vi.restoreAllMocks());
 describe('daemon managed policy census transport', () => {
+    it('does not read the census for a currentness-only notification when no work is held', async () => {
+        const readCensus = vi.fn(async () => ({ machines: [], targets: [] }));
+        const runtime = createDaemonManagedMachinePolicyRuntime({ readCensus,
+            executePolicy: async () => { throw new Error('No policy work expected'); } });
+        try {
+            await runtime.notifyChanged();
+            await runtime.notifyChanged(true);
+            expect(readCensus).toHaveBeenCalledTimes(1);
+        } finally { await runtime.stop(); }
+    });
     it('reads only changed managed rows or enrolled guests in one selected census and retains sibling lifetimes', async () => {
         const signing = nacl.sign.keyPair();
         const controller = { machineId: 'controller', installationId: 'installation' };

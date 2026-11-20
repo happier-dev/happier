@@ -272,7 +272,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         if (stopped) return;
         if (currentnessOnly && active.size === 0) return;
         changed = true;
-        if (!managedIds?.length) censusInvalidations = null;
+        if (currentnessOnly || !managedIds?.length) censusInvalidations = null;
         else for (const id of managedIds) censusInvalidations?.add(id);
         if (!currentnessOnly) {
             schedulingRequested = true;
@@ -319,7 +319,9 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         }));
     }
     return {
-        notifyChanged,
+        notifyChanged(currentnessOnly = false, managedIds?: readonly string[]) {
+            return notifyChanged({ currentnessOnly, managedIds });
+        },
         async stop() {
             stopped = true;
             for (const unsubscribe of subscriptions.splice(0)) unsubscribe();
