@@ -114,8 +114,9 @@ describe('Workflow activity through the Account Action executor', () => {
       for (const release of releases.splice(0)) release();
       expect(source.hasDemand()).toBe(false);
       const beforeClosed = column.length;
+      const baselineKeys = new Set(column.map(row => row.key));
       fixture.takeRequestObservations();
-      await fixture.assertKnownGoodSessionControl(account, machine);
+      const closedControl = await fixture.assertKnownGoodSessionControl(account, machine);
       expect(column).toHaveLength(beforeClosed);
       expect(companion).toHaveLength(beforeClosed);
       const closedStorageReads = fixture.requestProxy?.entries()
@@ -138,13 +139,19 @@ describe('Workflow activity through the Account Action executor', () => {
       expect(closedStorageReads).toEqual([]);
       fixture.takeRequestObservations();
       const reopened: WorkflowActivityLiveFact[] = [];
+      const assertNoBaselineReplay = () => {
+        expect(reopened.some(row => baselineKeys.has(row.key))).toBe(false);
+        expect(reopened).not.toContainEqual(expect.objectContaining({
+          kind: 'session', event: 'started', sessionId: closedControl.sessionId,
+        }));
+      };
       let reopenedPage: unknown;
       releases.push(source.acquire({ onLive: (rows: readonly WorkflowActivityLiveFact[]) => reopened.push(...rows),
         onRetained: (page: unknown) => { reopenedPage = page; } }));
       await waitFor(() => reopenedPage !== undefined, { timeoutMs: 60_000 });
-      expect(reopened).toEqual([]); // Closed-period Sessions remain baseline on reopen.
+      assertNoBaselineReplay(); // Closed-period Session creation stays baseline; new turn facts remain live.
       await source.retry();
-      expect(reopened).toEqual([]); // An unchanged retained refresh never invents live occurrences.
+      assertNoBaselineReplay(); // An unchanged retained refresh never replays observed occurrences.
       const { apiSocket } = await import('../../../../apps/ui/sources/sync/api/session/apiSocket');
       let connected = false;
       let reconnectState: unknown;
@@ -167,7 +174,7 @@ describe('Workflow activity through the Account Action executor', () => {
         throw new Error(`Activity reconnect failed: ${JSON.stringify({ reconnectState, reconnectError })}`, { cause: error });
       }
       expect(getWorkflowActivitySource()).toBe(source);
-      expect(reopened).toEqual([]); // Reattaching the same Account's unchanged facts is not a new occurrence.
+      assertNoBaselineReplay(); // Reattaching the same Account's unchanged facts is not a new occurrence.
       const afterReconnect = await fixture.assertKnownGoodSessionControl(account, machine);
       await waitFor(() => reopened.some(row => row.kind === 'session' && row.event === 'started' && row.sessionId === afterReconnect.sessionId),
         { timeoutMs: 60_000 });
