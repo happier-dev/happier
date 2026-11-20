@@ -163,7 +163,8 @@ export function resolveSessionProjectKeyV1<T extends WorkspaceRefV1>(
 
 export type SessionProjectCheckoutTargetV1 =
   | Readonly<{ serverId: string; id: string }>
-  | Readonly<{ serverId: string; machineId: string; rootPath: string }>;
+  | Readonly<{ serverId: string; machineId: string; rootPath: string }>
+  | WorkspaceAddressV2;
 
 /**
  * `resolveWorkspaceRefV1` for many lookups over one census: each ref is normalized once and a
@@ -189,8 +190,8 @@ export function createWorkspaceRefResolverV1<T extends WorkspaceRefV1>(
     }
   }
   return (target) => {
-    const candidates = 'id' in target
-      ? byId.get(JSON.stringify([home(target.serverId.trim()), target.id.trim()])) ?? []
+    const candidates = 'workspaceId' in target || 'id' in target
+      ? byId.get(JSON.stringify([home(target.serverId.trim()), ('workspaceId' in target ? target.workspaceId : target.id).trim()])) ?? []
       : context.rootsEqual ? refs ?? []
         : byRoot.get(JSON.stringify([home(target.serverId.trim()), target.machineId.trim(), normalizeRoot(target.rootPath)])) ?? [];
     return resolveWorkspaceRefV1(candidates, target, context);

@@ -1,6 +1,19 @@
 import { expect, it } from 'vitest';
 
-import { createProjectAnchorOfKeyV1 } from './workspaceRefResolutionV1.js';
+import { createProjectAnchorOfKeyV1, createWorkspaceRefResolverV1, workspaceAddressFromRefV2 } from './workspaceRefResolutionV1.js';
+import type { WorkspaceRefV1 } from './workspaceRefV1.js';
+
+it('resolves managed addresses from the existing checkout-id bucket without scanning the census', () => {
+  const managed: WorkspaceRefV1 = { v: 2, kind: 'managed', id: 'guest', serverId: 'home', managedId: 'native',
+    controller: { machineId: 'controller', installationId: 'installed' }, rootPath: '/repo', createdAtMs: 1 };
+  const controller: WorkspaceRefV1 = { id: 'local', serverId: 'home', machineId: 'controller', rootPath: '/repo', createdAtMs: 1 };
+  const refs = [controller, ...Array.from({ length: 100 }, (_, index) => ({ ...controller, id: `other-${index}`, rootPath: `/other-${index}` })), managed];
+  let comparisons = 0;
+  const resolve = createWorkspaceRefResolverV1(refs, { normalizeRootPath: path => { comparisons += 1; return path; } });
+  comparisons = 0;
+  expect(resolve(workspaceAddressFromRefV2(managed))).toEqual({ kind: 'resolved', ref: managed });
+  expect(comparisons).toBe(2);
+});
 
 it('normalizes each distinct Home identifier once for a Project-anchor census', () => {
   const normalizations = new Map<string, number>();
