@@ -30,12 +30,16 @@ export function createReactNativeSkiaMock() {
 export function createReactNativeSkiaGlyphMock(observe: {
     onImage?: (info: { width: number; height: number }, bytes: Uint8Array) => void;
     onPicture?: () => void;
+    onTransform?: () => void;
+    onAtlas?: (sources: readonly { x: number }[], transforms: readonly { x: number; y: number }[], colours: readonly Float32Array[]) => void;
 } = {}) {
     const boundary = createReactNativeSkiaMock();
     const dispose = () => undefined;
     const canvas = {
         save() {}, saveLayer() {}, restore() {}, scale() {}, clipPath() {},
-        drawAtlas() {}, drawImageRectOptions() {}, drawRect() {}, drawCircle() {},
+        drawAtlas(_atlas: unknown, sources: readonly { x: number }[], transforms: readonly { x: number; y: number }[],
+            _paint: unknown, _blend: number, colours: readonly Float32Array[]) { observe.onAtlas?.(sources, transforms, colours); },
+        drawImageRectOptions() {}, drawRect() {}, drawCircle() {},
     };
     return {
         ...boundary,
@@ -50,7 +54,11 @@ export function createReactNativeSkiaGlyphMock(observe: {
             Color: (value: string) => value,
             Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {}, setColor() {}, setAlphaf() {} }),
             Path: { Make: () => ({ dispose, reset() {}, addCircle() {} }) },
-            RSXform: () => ({ dispose, set() {} }),
+            XYWHRect: (x: number, y: number, width: number, height: number) => ({ x, y, width, height }),
+            RSXform: () => {
+                observe.onTransform?.();
+                return { dispose, x: 0, y: 0, set(_scale: number, _rotation: number, x: number, y: number) { this.x = x; this.y = y; } };
+            },
         },
         createPicture: (draw: (value: typeof canvas) => void) => {
             draw(canvas);

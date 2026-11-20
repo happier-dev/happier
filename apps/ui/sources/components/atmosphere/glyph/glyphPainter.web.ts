@@ -1,4 +1,4 @@
-import { glyphDotRadii, type GlyphFrame, type GlyphGrid } from '@happier-dev/brand/glyph-scene';
+import type { GlyphFrame, GlyphGrid } from '@happier-dev/brand/glyph-scene';
 
 import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 
@@ -259,72 +259,111 @@ export function createWebGlyphPainter(canvas: HTMLCanvasElement, onLost: () => v
     };
 }
 
-export function paintWebStill(canvas: HTMLCanvasElement, frame: GlyphFrame, atlas: Atlas) {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.clearRect(0, 0, frame.width, frame.height);
-    const scratch = document.createElement('canvas');
-    const context = scratch.getContext('2d');
-    if (!context) return;
-    const { body, field, sprites, grid } = frame;
-    const [w, h] = grid.cell;
-    if (field) {
-        const { mask, maskExtent } = field;
-        const dots = field.sprites;
-        for (let i = 0; i < dots.glyph.length; i++) {
-            const x = dots.at[i * 2], y = dots.at[i * 2 + 1];
-            const column = Math.min(mask.width - 1, Math.floor(x * mask.width / maskExtent[0]));
-            const row = Math.min(mask.height - 1, Math.floor(y * mask.height / maskExtent[1]));
-            ctx.fillStyle = `rgba(${dots.rgba[i * 4]}, ${dots.rgba[i * 4 + 1]}, ${dots.rgba[i * 4 + 2]}, ${mask.rgba[(row * mask.width + column) * 4 + 3] / 255})`;
-            ctx.beginPath();
-            ctx.arc(x, y, glyphDotRadii[dots.glyph[i] - 21] * h / 16, 0, Math.PI * 2);
-            ctx.fill();
+function rasterStillSprites(image: ImageData, frame: GlyphFrame, atlas: Atlas, sprites: GlyphFrame['sprites']) {
+    const { data, width, height } = image;
+    const [w, h] = frame.grid.cell;
+    for (let i = 0; i < sprites.glyph.length; i++) {
+        const left = Math.floor(sprites.at[i * 2] - w / 2);
+        const top = Math.floor(sprites.at[i * 2 + 1] - h / 2);
+        const firstX = Math.max(0, -left);
+        const lastX = Math.min(w, width - left);
+        const lastY = Math.min(h, height - top);
+        const tileX = sprites.glyph[i] * w;
+        const r = sprites.rgba[i * 4];
+        const g = sprites.rgba[i * 4 + 1];
+        const b = sprites.rgba[i * 4 + 2];
+        const opacity = sprites.rgba[i * 4 + 3] / 255;
+        for (let y = Math.max(0, -top); y < lastY; y++) {
+            let source = (y * atlas.width + tileX + firstX) * 4 + 3;
+            let pixel = ((top + y) * width + left + firstX) * 4;
+            for (let x = firstX; x < lastX; x++, source += 4, pixel += 4) {
+                const alpha = atlas.pixels[source] * opacity;
+                if (alpha === 0) continue;
+                const kept = data[pixel + 3] * (1 - alpha / 255);
+                const combined = alpha + kept;
+                data[pixel] = (r * alpha + data[pixel] * kept) / combined;
+                data[pixel + 1] = (g * alpha + data[pixel + 1] * kept) / combined;
+                data[pixel + 2] = (b * alpha + data[pixel + 2] * kept) / combined;
+                data[pixel + 3] = combined;
+            }
         }
     }
-    if (body) {
-        const bodyCanvas = document.createElement('canvas');
-        bodyCanvas.width = frame.width;
-        bodyCanvas.height = frame.height;
-        const bodyContext = bodyCanvas.getContext('2d');
+}
+
+function paintStillBody(composite: CanvasRenderingContext2D, scratch: CanvasRenderingContext2D,
+    frame: GlyphFrame, body: NonNullable<GlyphFrame['body']>) {
+    const canvas = composite.canvas.ownerDocument.createElement('canvas');
+    canvas.width = frame.width;
+    canvas.height = frame.height;
+    try {
+        const bodyContext = canvas.getContext('2d');
         if (!bodyContext) return;
-        scratch.width = body.cols;
-        scratch.height = body.rows;
-        context.putImageData(new ImageData(new Uint8ClampedArray(body.rgba), body.cols, body.rows), 0, 0);
+        scratch.canvas.width = body.cols;
+        scratch.canvas.height = body.rows;
+        scratch.putImageData(new ImageData(new Uint8ClampedArray(body.rgba), body.cols, body.rows), 0, 0);
         bodyContext.save();
         bodyContext.beginPath();
         bodyContext.arc(body.disc.cx, body.disc.cy, body.disc.R, 0, Math.PI * 2);
         bodyContext.clip();
-        bodyContext.drawImage(scratch, 0, 0, body.cols * grid.cell[0], body.rows * grid.cell[1]);
+        bodyContext.drawImage(scratch.canvas, 0, 0, body.cols * frame.grid.cell[0], body.rows * frame.grid.cell[1]);
         bodyContext.restore();
         if (body.fadeMask) {
             const mask = body.fadeMask;
-            scratch.width = mask.width;
-            scratch.height = mask.height;
-            context.putImageData(new ImageData(new Uint8ClampedArray(mask.rgba), mask.width, mask.height), 0, 0);
+            scratch.canvas.width = mask.width;
+            scratch.canvas.height = mask.height;
+            scratch.putImageData(new ImageData(new Uint8ClampedArray(mask.rgba), mask.width, mask.height), 0, 0);
             bodyContext.globalCompositeOperation = 'destination-in';
-            bodyContext.fillStyle = bodyContext.createPattern(scratch, 'repeat-x') ?? '#fff';
+            bodyContext.fillStyle = bodyContext.createPattern(scratch.canvas, 'repeat-x') ?? '#fff';
             bodyContext.fillRect(0, 0, frame.width, frame.height);
         }
-        ctx.drawImage(bodyCanvas, 0, 0);
-        releaseCanvasBackingStore(bodyCanvas);
+        composite.drawImage(canvas, 0, 0);
+    } finally {
+        releaseCanvasBackingStore(canvas);
     }
+}
 
-    scratch.width = w;
-    scratch.height = h;
-    const tile = context.createImageData(w, h);
-    for (let i = 0; i < sprites.glyph.length; i++) {
-        for (let y = 0; y < h; y++) {
-            for (let x = 0; x < w; x++) {
-                const pixel = (y * w + x) * 4;
-                const source = (y * atlas.width + sprites.glyph[i] * w + x) * 4;
-                tile.data[pixel] = sprites.rgba[i * 4];
-                tile.data[pixel + 1] = sprites.rgba[i * 4 + 1];
-                tile.data[pixel + 2] = sprites.rgba[i * 4 + 2];
-                tile.data[pixel + 3] = atlas.pixels[source + 3] * sprites.rgba[i * 4 + 3] / 255;
+export function paintWebStill(canvas: HTMLCanvasElement, frame: GlyphFrame, atlas: Atlas) {
+    const target = canvas.getContext('2d');
+    const { width, height, body, field, sprites } = frame;
+    if (!target || width <= 0 || height <= 0) return;
+    const composed = canvas.ownerDocument.createElement('canvas');
+    const scratchCanvas = canvas.ownerDocument.createElement('canvas');
+    composed.width = width;
+    composed.height = height;
+    try {
+        const composite = composed.getContext('2d');
+        const scratch = scratchCanvas.getContext('2d');
+        if (!composite || !scratch) return;
+        const image = field || sprites.glyph.length ? composite.createImageData(width, height) : null;
+        // Compose the field, body and foreground in painter order, then transfer the finished frame once.
+        if (field && image) {
+            rasterStillSprites(image, frame, atlas, field.sprites);
+            composite.putImageData(image, 0, 0);
+            const { mask, maskExtent } = field;
+            scratchCanvas.width = mask.width;
+            scratchCanvas.height = mask.height;
+            scratch.putImageData(new ImageData(new Uint8ClampedArray(mask.rgba), mask.width, mask.height), 0, 0);
+            composite.globalCompositeOperation = 'destination-in';
+            composite.drawImage(scratchCanvas, 0, 0, ...maskExtent);
+            composite.globalCompositeOperation = 'source-over';
+        }
+        if (body) paintStillBody(composite, scratch, frame, body);
+        if (sprites.glyph.length && image) {
+            if (field) image.data.fill(0);
+            rasterStillSprites(image, frame, atlas, sprites);
+            if (field || body) {
+                scratchCanvas.width = width;
+                scratchCanvas.height = height;
+                scratch.putImageData(image, 0, 0);
+                composite.drawImage(scratchCanvas, 0, 0);
+            } else {
+                composite.putImageData(image, 0, 0);
             }
         }
-        context.putImageData(tile, 0, 0);
-        ctx.drawImage(scratch, sprites.at[i * 2] - w / 2, sprites.at[i * 2 + 1] - h / 2);
+        target.clearRect(0, 0, width, height);
+        target.drawImage(composed, 0, 0);
+    } finally {
+        releaseCanvasBackingStore(scratchCanvas);
+        releaseCanvasBackingStore(composed);
     }
-    releaseCanvasBackingStore(scratch);
 }

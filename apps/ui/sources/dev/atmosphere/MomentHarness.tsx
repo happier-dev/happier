@@ -1,6 +1,11 @@
 import { createRoot } from 'react-dom/client';
-import { FURTHER_PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet-moments';
-import { paintPairingQrMomentRequest } from '@/components/auth/pairing/PairingQrMoment.web';
+import { createPairingGlyphSampler, FURTHER_PLANET_MOMENT_TIMINGS, pairingGlyphCell } from '@happier-dev/brand/planet-moments';
+import { glyphFrame } from '@happier-dev/brand/glyph-scene';
+import { readPairingQrMomentMark } from '@/components/auth/pairing/PairingQrMoment.web';
+import { createPairingQrMomentFrames } from '@/components/auth/pairing/pairingQrMomentFrame';
+import type { PairingQrMomentCanvasProps } from '@/components/auth/pairing/pairingQrMoment.types';
+import { paintMomentCommands, prepareMomentCanvas } from '@/components/atmosphere/momentPaint.web';
+import { releaseCanvasBackingStore } from '@/components/ui/media/canvasBackingStore';
 import type { QrMomentFrameRequest } from '@/components/auth/pairing/pairingQrMomentTimeline';
 import { registerWebThemePreferenceChoreography, runThemePreferenceChange } from '@/components/settings/appearance/themePreferenceTransition';
 import { themeHorizonTransition } from '@/components/settings/appearance/themeHorizonTransition.web';
@@ -10,6 +15,40 @@ const { QR, SCAN, PAIR } = FURTHER_PLANET_MOMENT_TIMINGS;
 const mount = document.getElementById('product');
 if (!mount) throw new Error('Missing harness mount');
 createRoot(mount);
+
+const defaultFrames = createPairingQrMomentFrames();
+const defaultGlyphs = createPairingGlyphSampler();
+
+/** This fixed-frame capture uses the canonical Still painter so the QR probe can read pixels. */
+async function paintPairingQrMomentRequest(
+  canvas: HTMLCanvasElement,
+  request: QrMomentFrameRequest,
+  props: PairingQrMomentCanvasProps,
+  dpr: number,
+  build = defaultFrames,
+) {
+  const { size } = props;
+  const context = prepareMomentCanvas(canvas, size, size, dpr);
+  if (!context) return;
+  const env = { w: size, h: size, dpr, mark: readPairingQrMomentMark() };
+  const view = { w: size, h: size };
+  const frame = defaultGlyphs(build(request, props, dpr), view, dpr);
+  paintMomentCommands(context, frame.behind, env);
+  if (frame.planet) {
+    const { warmWebGlyphAtlas, paintWebStill } = await import('@/components/atmosphere/glyph/glyphPainter.web');
+    const sampled = glyphFrame({ view, dpr, theme: props.theme, layers: [frame.planet.layer], cell: pairingGlyphCell });
+    const atlas = await warmWebGlyphAtlas(sampled.grid, dpr);
+    const still = document.createElement('canvas');
+    still.width = sampled.width; still.height = sampled.height;
+    paintWebStill(still, sampled, atlas);
+    context.save();
+    context.globalAlpha = frame.planet.opacity;
+    context.drawImage(still, 0, 0, size, size);
+    context.restore();
+    releaseCanvasBackingStore(still);
+  }
+  paintMomentCommands(context, frame.ahead, env);
+}
 
 async function frameCanvas(request: QrMomentFrameRequest, theme: 'light' | 'dark', size: number, machines: readonly string[]) {
     const canvas = document.createElement('canvas');

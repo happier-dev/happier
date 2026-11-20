@@ -69,6 +69,25 @@ it('holds an elapsed glyph scene while it waits and resumes its existing timelin
     await screen.unmount();
 });
 
+it('uses the admitted sequence time and samples once when the painter chooses Still', async () => {
+    const samples: number[] = [];
+    const paint = (seconds: number) => samples.push(seconds);
+    const motion = {
+        kind: 'sequence',
+        readTimeS: (now: number) => 1 + now / 1000,
+        continues: (seconds: number) => seconds < 1.05,
+    } as const;
+    function Clock({ ready }: { ready: 'ready' | 'still' }) { useGlyphClock(motion, ready, paint); return null; }
+    const screen = await renderScreen(<Clock ready="still" />);
+    expect(samples).toEqual([1]);
+    expect(vi.getTimerCount()).toBe(0);
+    await screen.update(<Clock ready="ready" />);
+    await act(async () => { vi.advanceTimersByTime(128); });
+    expect(samples.at(-1)).toBeGreaterThanOrEqual(1.05);
+    expect(vi.getTimerCount()).toBe(0);
+    await screen.unmount();
+});
+
 it('holds digit time outside the planet viewport while the backdrop continues', async () => {
     let shown: 'all' | 'backdrop' | 'hidden' = 'all';
     const listeners = new Set<() => void>();

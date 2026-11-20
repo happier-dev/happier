@@ -20,16 +20,18 @@ export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
         glyphAtlas({ w: w / dpr, h: h * glyphRampHeight / dpr, chars: glyphPlanetChars }, dpr),
     ]);
     const pixels = packGlyphAtlas(grid, regular, small, ramp, dpr);
-    const atlas = makeImage(pixels.width, pixels.height, pixels.pixels);
-    if (!atlas) throw new Error('Could not create the glyph atlas');
+    const atlasImage = makeImage(pixels.width, pixels.height, pixels.pixels);
+    if (!atlasImage) throw new Error('Could not create the glyph atlas');
+    const atlas = atlasImage;
     const glyphRects = Array.from({ length: glyphAtlasColumns }, (_, index) => Skia.XYWHRect(index * w, 0, w, h));
     const source: SkRect[] = [], destination: SkRSXform[] = [], colours: SkColor[] = [];
-    const transforms: SkRSXform[] = [], ink: SkColor[] = [];
+    const transforms = [Skia.RSXform(1, 0, 0, 0)];
+    const ink: SkColor[] = [new Float32Array(4)];
     const paint = Skia.Paint();
     paint.setAntiAlias(true);
     const path = Skia.Path.Make();
     let previousBody: GlyphFrame['body'];
-    let previousMask: NonNullable<GlyphFrame['body']>['fadeMask'];
+    let previousMask: NonNullable<GlyphFrame['body']>['fadeMask'] = null;
     let bodyImage: SkImage | null = null, fadeImage: SkImage | null = null;
     const maskPaint = Skia.Paint();
     maskPaint.setBlendMode(BlendMode.DstIn);
@@ -37,17 +39,34 @@ export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
     fieldPaint.setBlendMode(BlendMode.DstIn);
     let fieldImage: SkImage | null = null;
     let previousField: GlyphFrame['field'] = null, previousFieldRevision = -1;
-    function fillAtlasBatch(sprites: GlyphFrame['sprites']) {
-        for (let i = 0; i < sprites.glyph.length; i++) {
-            const transform = transforms[i] ?? (transforms[i] = Skia.RSXform(1, 0, 0, 0));
-            transform.set(1, 0, sprites.at[i * 2] - w / 2, sprites.at[i * 2 + 1] - h / 2);
-            const colour = ink[i] ?? (ink[i] = new Float32Array(4));
-            for (let channel = 0; channel < 4; channel++) colour[channel] = sprites.rgba[i * 4 + channel] / 255;
-            destination[i] = transform;
-            colours[i] = colour;
-            source[i] = glyphRects[sprites.glyph[i]];
+    function reserveSpriteBatch(width: number, height: number) {
+        const cols = Math.ceil(Math.round(width * dpr) / w);
+        const rows = Math.ceil(Math.round(height * dpr) / h);
+        const slots = cols * rows;
+        for (let i = transforms.length; i < slots; i++) {
+            transforms.push(Skia.RSXform(1, 0, 0, 0));
+            ink.push(new Float32Array(4));
         }
-        source.length = destination.length = colours.length = sprites.glyph.length;
+    }
+    function drawSprites(canvas: SkCanvas, sprites: GlyphFrame['sprites']) {
+        // Skia takes equal-length JS arrays and copies their entries synchronously. Refill
+        // the layout-sized batch in order when several layers share the same cells.
+        const slots = transforms.length;
+        for (let start = 0; start < sprites.glyph.length; start += slots) {
+            const length = Math.min(slots, sprites.glyph.length - start);
+            for (let slot = 0; slot < length; slot++) {
+                const i = start + slot;
+                const transform = transforms[slot];
+                transform.set(1, 0, sprites.at[i * 2] - w / 2, sprites.at[i * 2 + 1] - h / 2);
+                const colour = ink[slot];
+                for (let channel = 0; channel < 4; channel++) colour[channel] = sprites.rgba[i * 4 + channel] / 255;
+                destination[slot] = transform;
+                colours[slot] = colour;
+                source[slot] = glyphRects[sprites.glyph[i]];
+            }
+            source.length = destination.length = colours.length = length;
+            canvas.drawAtlas(atlas, source, destination, paint, BlendMode.Modulate, colours);
+        }
     }
     function draw(canvas: SkCanvas, frame: GlyphFrame) {
         const { body, field, sprites } = frame;
@@ -62,13 +81,14 @@ export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
             bodyImage = body ? makeImage(body.cols, body.rows, body.rgba) : null;
             previousBody = body;
         }
-        if (body?.fadeMask !== previousMask) {
+        const fadeMask = body?.fadeMask ?? null;
+        if (fadeMask !== previousMask) {
             fadeImage?.dispose();
-            fadeImage = body?.fadeMask ? makeImage(body.fadeMask.width, body.fadeMask.height, body.fadeMask.rgba) : null;
+            fadeImage = fadeMask ? makeImage(fadeMask.width, fadeMask.height, fadeMask.rgba) : null;
             const shader = fadeImage?.makeShaderOptions(TileMode.Repeat, TileMode.Clamp, FilterMode.Nearest, MipmapMode.None);
             maskPaint.setShader(shader ?? null);
             shader?.dispose();
-            previousMask = body?.fadeMask;
+            previousMask = fadeMask;
         }
         const bounds = Skia.XYWHRect(0, 0, frame.width, frame.height);
         canvas.save();
@@ -77,8 +97,7 @@ export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
             if (field && fieldImage) {
                 const { mask, maskExtent } = field;
                 canvas.saveLayer();
-                fillAtlasBatch(field.sprites);
-                canvas.drawAtlas(atlas, source, destination, paint, BlendMode.Modulate, colours);
+                drawSprites(canvas, field.sprites);
                 canvas.drawImageRectOptions(fieldImage, Skia.XYWHRect(0, 0, mask.width, mask.height),
                     Skia.XYWHRect(0, 0, ...maskExtent), FilterMode.Linear, MipmapMode.None, fieldPaint);
                 canvas.restore();
@@ -97,15 +116,13 @@ export async function createNativeGlyphPainter(grid: GlyphGrid, dpr: number) {
                     canvas.restore();
                 }
             }
-            if (sprites.glyph.length) {
-                fillAtlasBatch(sprites);
-                canvas.drawAtlas(atlas, source, destination, paint, BlendMode.Modulate, colours);
-            }
+            drawSprites(canvas, sprites);
         } finally {
             canvas.restore();
         }
     }
     return {
+        reserveSpriteBatch,
         draw,
         paint(frame: GlyphFrame) {
             return createPicture(canvas => draw(canvas, frame), { width: frame.width / dpr, height: frame.height / dpr });

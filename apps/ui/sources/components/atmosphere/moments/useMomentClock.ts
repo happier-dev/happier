@@ -56,6 +56,7 @@ export function useGlyphClock(
             const presented = readHostActivelyViewed() && presentation.get();
             const inViewport = viewport?.get();
             const visible = presented && inViewport !== 'hidden';
+            if (!visible && motion?.kind === 'sequence') motion.onSuspended?.();
             if (!readiness) { hiddenWarm.current = null; return; }
             if (!presented && warmWhenHidden) {
                 if (hiddenWarm.current !== readiness) {
@@ -68,6 +69,19 @@ export function useGlyphClock(
 
             if (!motion) {
                 if (visible) { draw(0); digitsAtRest(0); }
+                return;
+            }
+            if (motion.kind === 'sequence') {
+                if (!visible) return;
+                const readTime = motion.readTimeS ?? ((now: number) => now / 1000);
+                const sample = (now: number) => {
+                    const seconds = readTime(now);
+                    draw(seconds, now);
+                    return motion.continues(seconds);
+                };
+                const now = performance.now();
+                if (readiness === 'still') draw(readTime(now), now);
+                else if (sample(now)) animate(sample);
                 return;
             }
             if (motion.kind === 'elapsed') {

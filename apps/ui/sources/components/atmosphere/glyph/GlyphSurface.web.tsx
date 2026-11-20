@@ -19,12 +19,12 @@ type Prepared = {
 export type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphMotion } from './glyphSurfaceTypes';
 
 export const GlyphSurface = React.memo(function GlyphSurface({
-    width, height, scene, motion = null, theme: themeOverride, cell, style, testID, onReady, onPaint, drawAtRef, warmWhenHidden, viewport, digitCadence,
+    width, height, scene, motion = null, theme: themeOverride, cell, pixelRatio, style, testID, onReady, onPaint, onWebPaint, drawAtRef, warmWhenHidden, viewport, digitCadence,
 }: GlyphSurfaceProps) {
     const { theme: appTheme } = useUnistyles();
     const theme = themeOverride ?? (appTheme.dark ? 'dark' : 'light');
     const reduced = useReducedMotionPreference();
-    const dpr = typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1;
+    const dpr = pixelRatio ?? (typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
     const pixelWidth = Math.round(width * dpr), pixelHeight = Math.round(height * dpr);
     const cellW = cell?.[0] ?? 8, cellH = cell?.[1] ?? 16;
     const webgl = React.useRef<HTMLCanvasElement>(null);
@@ -49,10 +49,10 @@ export const GlyphSurface = React.memo(function GlyphSurface({
             if (disposed) return;
             painter = backend.createWebGlyphPainter(canvas, () => {
                 canvas.dataset.glyphContextLost = String(painter?.lost ?? 0);
-                setReady('still');
+                if (prepared.current) setReady('still');
             }, (restored) => {
                 canvas.dataset.glyphLinked = String(restored);
-                setReady(restored ? 'ready' : 'still');
+                if (prepared.current) setReady(restored ? 'ready' : 'still');
             });
             const grid = { cell: [Math.round(cellW * dpr), Math.round(cellH * dpr)] as const, cols: 0, rows: 0, origin: [0, 0] as const };
             const atlas = await backend.warmWebGlyphAtlas(grid, dpr);
@@ -61,6 +61,11 @@ export const GlyphSurface = React.memo(function GlyphSurface({
             canvas.dataset.glyphLinked = String(painter.ready);
             prepared.current = { backend, painter, atlas };
             setReady(painter.ready ? 'ready' : 'still');
+        }).catch(() => {
+            if (disposed) return;
+            canvas.dataset.glyphRenderer = painter?.renderer ?? 'unavailable';
+            canvas.dataset.glyphLinked = String(painter?.ready ?? false);
+            setReady('still');
         });
         return () => {
             disposed = true;
@@ -77,24 +82,28 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         const state = prepared.current;
         const canvas = webgl.current;
         const staticCanvas = still.current;
-        if (!state || !canvas || !staticCanvas || pixelWidth <= 0 || pixelHeight <= 0) return;
-        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined, digitSeconds) : scene;
+        if (!canvas || !staticCanvas || pixelWidth <= 0 || pixelHeight <= 0) return;
         const start = performance.now();
-        const frame = sample({ view: { w: width, h: height }, dpr, theme, layers, cell: [cellW, cellH] }, { time: seconds });
-        const target = state.painter.ready ? canvas : staticCanvas;
-        if (target.width !== pixelWidth) target.width = pixelWidth;
-        if (target.height !== pixelHeight) target.height = pixelHeight;
-        if (state.painter.ready) state.painter.paint(frame, state.atlas);
-        else state.backend.paintWebStill(target, frame, state.atlas);
+        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined, digitSeconds) : scene;
+        let target: HTMLCanvasElement | null = null;
+        if (state) {
+            const frame = sample({ view: { w: width, h: height }, dpr, theme, layers, cell: [cellW, cellH] }, { time: seconds });
+            target = state.painter.ready ? canvas : staticCanvas;
+            if (target.width !== pixelWidth) target.width = pixelWidth;
+            if (target.height !== pixelHeight) target.height = pixelHeight;
+            if (state.painter.ready) state.painter.paint(frame, state.atlas);
+            else state.backend.paintWebStill(target, frame, state.atlas);
+        }
         canvas.style.visibility = target === canvas ? 'visible' : 'hidden';
         staticCanvas.style.visibility = target === staticCanvas ? 'visible' : 'hidden';
+        onWebPaint?.(target);
         if (readiness && paintedStatus.current !== readiness) {
             paintedStatus.current = readiness;
-            canvas.dataset.glyphFirstDrawMs = String(performance.now() - start);
+            if (target) canvas.dataset.glyphFirstDrawMs = String(performance.now() - start);
             onReadyRef.current?.(readiness);
         }
         onPaint?.();
-    }, [cellH, cellW, dpr, height, onPaint, pixelHeight, pixelWidth, readiness, sample, scene, theme, width]);
+    }, [cellH, cellW, dpr, height, onPaint, onWebPaint, pixelHeight, pixelWidth, readiness, sample, scene, theme, width]);
     React.useImperativeHandle(drawAtRef, () => readiness ? paint : (() => {}), [paint, readiness]);
     useGlyphClock(motion, readiness, paint, warmWhenHidden, viewport, digitCadence);
 
