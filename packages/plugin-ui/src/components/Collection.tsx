@@ -277,6 +277,8 @@ export type CollectionAnatomy<Item> = Readonly<{
    * cards never draw it.
    */
   listFact?: (item: Item) => ReactNode;
+  /** An optional third line beneath the list byline, in ordinary list rows. */
+  listDetail?: (item: Item) => string | null;
   signal?: (item: Item) => ReactNode;
   agent?: (item: Item) => ReactNode;
   /** Tabular age ("18m"). */
@@ -878,20 +880,21 @@ const catalogDirectoryRowTrailingStyle: HappierPortableStyle = { ...catalogDirec
 const NO_CELLS: readonly never[] = Object.freeze([]);
 const CollectionStageContext = createContext<CollectionStage<unknown> | null>(null);
 
-function useRowMetrics(described: boolean, catalog: boolean, singleLine: boolean): RowMetrics {
+function useRowMetrics(described: boolean, catalog: boolean, singleLine: boolean, hasListDetail: boolean): RowMetrics {
   const theme = useHappierUiTheme();
   const typography = useOptionalHappierUiTypography();
   const { textScale } = useHappierUiAccessibility();
-  return useMemo(() => resolveRowMetrics(described, catalog, singleLine, theme, typography, textScale), [catalog, described, singleLine, textScale, theme, typography]);
+  return useMemo(() => resolveRowMetrics(described, catalog, singleLine, theme, typography, textScale, hasListDetail),
+    [catalog, described, hasListDetail, singleLine, textScale, theme, typography]);
 }
 
 /**
- * A list row with nothing to say beneath its title: no `byline`, `where`, `reason` or `description`. It is one line
+ * A list row with nothing to say beneath its title. It is one line
  * (title, `titleSuffix`, `titleMeta`, age) on the dense row step, never a two-line row with an empty second line.
  */
 function isSingleLineListAnatomy<Item>(anatomy: CollectionAnatomy<Item>): boolean {
   return anatomy.byline === undefined && anatomy.where === undefined && anatomy.reason === undefined
-    && anatomy.listFact === undefined && anatomy.description === undefined;
+    && anatomy.listFact === undefined && anatomy.description === undefined && anatomy.listDetail === undefined;
 }
 
 function resolveRowMetrics(
@@ -901,6 +904,7 @@ function resolveRowMetrics(
   theme: HappierUiTheme,
   typography: HappierUiTypography | null,
   textScale: number,
+  hasListDetail = false,
 ): RowMetrics {
   // The host's row anatomy: the row title role over the row meta role (`label` / `body`).
   const title = readCollectionLineHeight('label', theme, typography, textScale);
@@ -918,7 +922,7 @@ function resolveRowMetrics(
       : singleLine
         // The dense one-line row (lab `rw` C): the tight item floor it draws on, growing only with the reader's text.
         ? Math.max(HAPPIER_ITEM_DENSITY_ROW_HEIGHT.tight, title + 2 * LIST_SINGLE_LINE_PADDING_Y + 2)
-        : title + LIST_LINE_GAP + description + meta + 2 * TABLE.paddingY + 2,
+        : title + LIST_LINE_GAP + description + meta + (hasListDetail ? meta + LIST_LINE_GAP : 0) + 2 * TABLE.paddingY + 2,
     groupHeader: label + 18,
     titleRole: 'label',
   };
@@ -1541,6 +1545,7 @@ function ListCells<Item>(props: Readonly<{
   rowRole: HappierCollectionRowRole;
   height: number;
   secondLine: Readonly<{ value: HappierCollectionMotionValue; tracks: HappierCollectionMotionTracks }>;
+  listDetail: string | null;
   AnimatedView: ReturnType<typeof useMotionDriver>['AnimatedView'];
   /** The resting phone list: a title may take a second line and the row grows to it (no travel to plan). */
   wrapTitle: boolean;
@@ -1776,6 +1781,11 @@ function ListCells<Item>(props: Readonly<{
             </>
           )}
         </AnimatedView>}
+        {props.listDetail ? (
+          <AnimatedView value={props.secondLine.value} tracks={props.secondLine.tracks} style={lineStyle} {...(layer === null ? {} : { pointerEvents: layer.leaf })}>
+            <SlotContent value={props.listDetail} tone="muted" textStyle={secondLine} />
+          </AnimatedView>
+        ) : null}
         {props.beneath === null ? null : <View pointerEvents={layer?.control} style={beneathStyle}>{props.beneath}</View>}
       </View>
       {metaOnRow ? <View pointerEvents={layer?.leaf} style={rowMetaColumnStyle}>{metaCell}</View> : null}
@@ -1867,7 +1877,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
   const actions = stage.useRowActions?.(item) ?? NO_ROW_ACTIONS;
   const title = anatomy.title(item);
   const catalog = stage.rowRole === 'catalogRow';
-  const description = catalog ? anatomy.description?.(item) : null;
+  const listDetail = geometry === 'list' && !catalog ? anatomy.listDetail?.(item) ?? null : null;
+  const description = catalog ? anatomy.description?.(item) : listDetail;
   const suppliedLabel = anatomy.accessibilityLabel(item);
   const accessibilityLabel = description && !suppliedLabel.includes(description)
     ? `${suppliedLabel}, ${description}` : suppliedLabel;
@@ -1963,6 +1974,7 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
         rowRole={stage.rowRole}
         height={height}
         secondLine={{ value: progress, tracks: travel === null ? NO_TRACKS : HAPPIER_COLLECTION_TRANSITION_TRACKS.secondLine }}
+        listDetail={listDetail}
         AnimatedView={AnimatedView}
         wrapTitle={stage.wrapTitles}
         ruledInsetPx={stage.ruledInsetPx}
@@ -2254,7 +2266,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   const platform = useOptionalHappierUiPlatform();
   const driver = useMotionDriver();
   const rowRole = resolveHappierCollectionRowRole({ rowRole: anatomy.rowRole, hasDescription: anatomy.description !== undefined });
-  const metrics = useRowMetrics(anatomy.description !== undefined, rowRole === 'catalogRow', isSingleLineListAnatomy(anatomy));
+  const metrics = useRowMetrics(anatomy.description !== undefined, rowRole === 'catalogRow',
+    isSingleLineListAnatomy(anatomy), anatomy.listDetail !== undefined);
   const presentation = props.presentation ?? 'table';
   const detail = props.detail ?? 'auto';
   // A page-sized collection scrolls its header, items and footer with the containing page.

@@ -61,7 +61,7 @@ type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unkn
 >>;
 type _AuthorCollectionAnatomyKeysAreCurated = Assert<IsEqual<keyof CollectionAnatomy<unknown>,
   | 'card' | 'rowRole' | 'kindLabel' | 'destination' | 'wrapItem' | 'glyph' | 'loadingGlyph' | 'glyphBadge' | 'title' | 'titleIdentifier' | 'titleSuffix' | 'titleControls' | 'leadingControl' | 'needsYou' | 'where' | 'byline' | 'bylineLead'
-  | 'titlePending' | 'reason' | 'listFact' | 'signal'
+  | 'titlePending' | 'reason' | 'listFact' | 'listDetail' | 'signal'
   | 'agent' | 'age' | 'titleMeta' | 'titleMetaAlign'
   | 'fields' | 'peek' | 'preview' | 'previewAspectRatio' | 'description' | 'action' | 'accessibilityLabel' | 'accessibilityHint'
   | 'testID' | 'titleMinWidth' | 'columnsOverflow' | 'columnTitles' | 'titleSubtitle'

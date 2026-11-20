@@ -943,6 +943,10 @@ These are unreleased 0.3 development contracts. Focused producer and Inbox owner
 
 ## Contributor rules
 
+Ordinary Collection list rows can draw `listDetail` below the byline.
+Three-line Workflow rows use it for details such as the step count. Run rows
+use it for details such as who started the Run and how long it took.
+
 In unreleased 0.3 development source, `resolveHappierCollectionRowRole` selects
 `catalogRow` for described collection anatomy and preserves explicit `item` or
 `menu` choices. The Collection chooses once for described/missing-description

@@ -193,7 +193,7 @@ export function WorkflowRunsPage(props: Readonly<{
         // A list row (a phone, a narrow page) reads the Run Lines and Row details (B1 list review 2): Lines 2 adds the
         // subject; Lines 3 adds who started it and how long it took on their own line. The table names them Columns.
         byline: lines === 1 ? undefined : (row) => [row.subject, readPluginDetail(row, 'context')].filter(Boolean).join(' · ') || null,
-        description: lines === 3 ? (row) => [
+        listDetail: lines === 3 ? (row) => [
           runDetails.startedBy ? row.startedBy : null,
           runDetails.took ? readWorkflowRunTook(row) : null,
         ].filter(Boolean).join(' · ') || null : undefined,

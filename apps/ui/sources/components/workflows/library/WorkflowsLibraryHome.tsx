@@ -492,7 +492,7 @@ function useLibraryAnatomy(
             return [trigger, extension].filter(Boolean).join(' · ') || null;
         },
         // Lines 3 (scene 8 "Lines × details"): the row's opt-in details on their own line.
-        description: lines === 3 && !table ? (row) => {
+        listDetail: lines === 3 && !table ? (row) => {
             const { start, end } = readWorkflowLineThree(row, readFacts(row), rowDetails, Date.now());
             return [start, end].filter(Boolean).join(' · ') || null;
         } : undefined,

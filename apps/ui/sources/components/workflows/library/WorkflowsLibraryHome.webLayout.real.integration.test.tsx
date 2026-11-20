@@ -98,6 +98,34 @@ afterEach(async () => {
 });
 
 describe('Workflows home, as a browser lays it out', () => {
+    it('puts the trigger before the optional step count in a three-line phone row', async () => {
+        const { t } = await import('@/text');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        storage.setState(state => ({ settings: {
+            ...state.settings,
+            collectionDisplayPreferencesV1: { workflow: { lines: 3, details: { trigger: true, steps: true } } },
+        } }));
+        host = document.createElement('div');
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => {
+            root!.render(<View style={{ width: 390 }}><InjectedAuthProvider credentials={boundary!.credentials}>
+                <UniversalSearchRuntimeProvider value={searchRuntime}><WorkflowsLibraryHome /></UniversalSearchRuntimeProvider>
+            </InjectedAuthProvider></View>);
+        });
+        await measureWebLayout(host, { viewport: { width: 390, height: 3200 }, settle: replay => act(replay) });
+        const row = await vi.waitFor(() => {
+            const found = host!.querySelector('[data-testid="workflows-home:row:saved"]');
+            expect(found).not.toBeNull();
+            return found!;
+        });
+        const text = row.textContent ?? '';
+        const trigger = text.indexOf(t('automations.list.noAutomaticTriggers'));
+        const steps = text.indexOf(t('workflows.examples.stepCount', { count: 1 }));
+        expect(trigger).toBeGreaterThanOrEqual(0);
+        expect(steps).toBeGreaterThan(trigger);
+    });
+
     it.each([1440, 390])('starts every section title on the one page edge at %i px (DESIGN-9 N38)', async (width) => {
         const { t } = await import('@/text');
         host = document.createElement('div');
