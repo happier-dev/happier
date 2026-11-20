@@ -128,6 +128,17 @@ export async function deleteSavedSecretResource(params: Readonly<{
                     return { ok: true };
                 }
                 const failure = savedSecretDeleteFailure(outcome.failure);
+                if (failure.reason === 'outcome_unknown') {
+                    // A lost reply can follow a committed delete. Only a successful
+                    // metadata read proving absence can settle the original write.
+                    const catalog = await readSavedSecretCatalogMetadataInContext(context);
+                    if (catalog.ok && !catalog.resources.some(entry => 'ref' in entry
+                        ? entry.ref === resourceRef : entry.repair?.resourceId === params.resourceId)) {
+                        await applySavedSecretCatalogDeletion(params.scope, params.resourceId, expectedRevision,
+                            context.accountLifetime.isCurrent());
+                        return { ok: true };
+                    }
+                }
                 if (failure.reason === 'managed_resources_review_required') context.assertCurrent();
                 return failure;
             };

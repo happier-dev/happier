@@ -3007,6 +3007,31 @@ describe('Saved Secret operations through their real Account and Action owners',
             expect(getSavedSecretCatalogSnapshot(account.scope)?.materializedSecrets).toEqual([]);
         } finally { release(); }
     });
+    it.each([true, false])('reconciles an unacknowledged private Saved Secret deletion (removed: %s)', async removed => {
+        const account = await openAccount();
+        const resourceId = 'private-key';
+        const path = SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.delete'];
+        account.materialRow(resourceId, 'plain', { t: 'plain', v: { v: 1, name: 'Temporary key', kind: 'token', value: 'dummy' } });
+        const release = observeSavedSecretCatalog(account.scope);
+        try {
+            await refreshSavedSecretCatalog(account.scope);
+            expect(getSavedSecretCatalogSnapshot(account.scope)?.data).toHaveLength(1);
+            account.setEffect(() => {
+                if (removed) account.resources.delete(resourceId);
+                throw new TypeError('Lost deletion response');
+            });
+            const result = await deleteSavedSecretResource({ scope: account.scope, resourceId,
+                expectedRevision: 3, expectedSettingsVersion: 7, confirmedByPresentUser: true });
+            expect(account.writes.filter(write => write.path === path)).toHaveLength(1);
+            if (removed) {
+                expect(result).toEqual({ ok: true });
+                expect(getSavedSecretCatalogSnapshot(account.scope)?.data).toEqual([]);
+            } else {
+                expect(result).toMatchObject({ ok: false, reason: 'outcome_unknown' });
+                expect(getSavedSecretCatalogSnapshot(account.scope)?.data).toHaveLength(1);
+            }
+        } finally { release(); }
+    });
     it('rejects a delayed committed update receipt after deletion when the displayed inventory never contained its revision', async () => {
         const account = await openAccount();
         await vi.waitFor(() => expect(storage.getState().settingsVersion).toBe(7));
