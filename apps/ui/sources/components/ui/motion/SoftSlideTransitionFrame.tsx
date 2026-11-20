@@ -56,6 +56,7 @@ export type SoftSlideTransitionFrameProps = Readonly<{
     contentStyle?: StyleProp<ViewStyle>;
     direction: StepTransitionDirection;
     reducedMotion: boolean;
+    reducedMotionDurationMs?: number;
     style?: StyleProp<ViewStyle>;
     testID?: string;
     transitionKey: string | number;
@@ -134,21 +135,20 @@ function exitOffset(direction: StepTransitionDirection, translatePx: number): nu
 }
 
 function cssTransitionStyle(
-    phase: 'enter' | 'exit',
-    reducedMotion: boolean,
+    durationMs: number,
     roleTokens: SlideTransitionRoleTokens,
 ): StyleProp<ViewStyle> {
     return {
         transitionDelay: '0ms',
-        transitionDuration: `${reducedMotion
-            ? roleTokens.reducedMotionDurationMs
-            : phase === 'enter'
-                ? roleTokens.timed.durationMs.enter
-                : roleTokens.timed.durationMs.exit}ms`,
+        transitionDuration: `${durationMs}ms`,
         transitionProperty: 'opacity, transform, filter',
         transitionTimingFunction: roleTokens.timed.easingCss,
         willChange: 'opacity, transform, filter',
     } as unknown as StyleProp<ViewStyle>;
+}
+
+function timedDurationMs(props: SoftSlideTransitionFrameProps, role: SlideTransitionRoleTokens, phase: 'enter' | 'exit') {
+    return props.reducedMotion ? props.reducedMotionDurationMs ?? role.reducedMotionDurationMs : role.timed.durationMs[phase];
 }
 
 export function SoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
@@ -162,6 +162,8 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
     const styles = stylesheet;
     const roleTokens = slideTransitionTokens[props.preset ?? 'signature'];
     const transitionTokens = roleTokens.timed;
+    const enterMs = timedDurationMs(props, roleTokens, 'enter');
+    const exitMs = timedDurationMs(props, roleTokens, 'exit');
     const lastKeyRef = React.useRef(props.transitionKey);
     const { layers, completeExit } = useSoftSlideLayers(props);
     const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -215,8 +217,8 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             timeoutRef.current = null;
             completeExit(props.transitionKey);
             setPhase('idle');
-        }, props.reducedMotion ? roleTokens.reducedMotionDurationMs : transitionTokens.durationMs.enter);
-    }, [completeExit, props.direction, props.reducedMotion, props.transitionKey, roleTokens]);
+        }, enterMs);
+    }, [completeExit, enterMs, props.transitionKey]);
 
     const currentOffset = !props.reducedMotion && phase === 'prepare'
         ? enterOffset(props.direction, transitionTokens.translatePx)
@@ -241,7 +243,7 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                     importantForAccessibility="no-hide-descendants"
                     style={[
                         styles.exitLayer,
-                        cssTransitionStyle('exit', props.reducedMotion, roleTokens),
+                        cssTransitionStyle(exitMs, roleTokens),
                         {
                             opacity: exitOpacity,
                             filter: `blur(${exitBlur}px)`,
@@ -258,7 +260,7 @@ function WebSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
                 style={[
                     styles.currentLayer,
                     props.contentStyle,
-                    cssTransitionStyle('enter', props.reducedMotion, roleTokens),
+                    cssTransitionStyle(enterMs, roleTokens),
                     {
                         opacity: currentOpacity,
                         filter: `blur(${currentBlur}px)`,
@@ -300,6 +302,8 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
     const styles = stylesheet;
     const roleTokens = slideTransitionTokens[props.preset ?? 'signature'];
     const transitionTokens = roleTokens.timed;
+    const enterMs = timedDurationMs(props, roleTokens, 'enter');
+    const exitMs = timedDurationMs(props, roleTokens, 'exit');
     const enterProgress = React.useRef(new Animated.Value(1)).current;
     const exitProgress = React.useRef(new Animated.Value(0)).current;
     const lastKeyRef = React.useRef(props.transitionKey);
@@ -336,13 +340,13 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
         Animated.parallel([
             Animated.timing(enterProgress, {
                 toValue: 1,
-                duration: props.reducedMotion ? roleTokens.reducedMotionDurationMs : transitionTokens.durationMs.enter,
+                duration: enterMs,
                 easing: transitionTokens.easing,
                 useNativeDriver: USE_NATIVE_DRIVER,
             }),
             Animated.timing(exitProgress, {
                 toValue: 1,
-                duration: props.reducedMotion ? roleTokens.reducedMotionDurationMs : transitionTokens.durationMs.exit,
+                duration: exitMs,
                 easing: transitionTokens.easingExit,
                 useNativeDriver: USE_NATIVE_DRIVER,
             }),
@@ -353,15 +357,15 @@ function NativeSoftSlideTransitionFrame(props: SoftSlideTransitionFrameProps) {
             if (transitionRun === transitionRunRef.current) {
                 completeExit(props.transitionKey);
             }
-        }, props.reducedMotion ? roleTokens.reducedMotionDurationMs : transitionTokens.durationMs.enter);
+        }, enterMs);
     }, [
         enterProgress,
         exitProgress,
         completeExit,
-        props.direction,
-        props.reducedMotion,
+        enterMs,
+        exitMs,
         props.transitionKey,
-        roleTokens,
+        transitionTokens,
     ]);
 
     const enterTranslateX = enterProgress.interpolate({

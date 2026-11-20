@@ -18,7 +18,6 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     backTestID?: string;
     retainContent?: boolean;
     warmOnMount?: boolean;
-    notice?: boolean;
     shareFocalWithParent?: boolean;
     style?: StyleProp<ViewStyle>;
 }>>;
@@ -50,13 +49,12 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && root.current instanceof HTMLElement) return root.current;
         return null;
     }, []);
-    const { layerKey, backTestID, compact = false, notice = false, warmOnMount = !notice } = props;
+    const { layerKey, backTestID, compact = false, warmOnMount = true } = props;
     const layer = React.useMemo<StepMotionLayerHandle>(() => ({
         key: layerKey,
         backTestID,
         compact,
         warmOnMount,
-        notice,
         webElement,
         nativeElement: () => root.current,
         focal(returnTo) {
@@ -104,7 +102,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             animation.start(({ finished }) => { if (finished) onSettled(); });
             return () => { animation.stop(); fadeOpacity.setValue(1); };
         },
-    }), [layerKey, backTestID, compact, fadeOpacity, focals, notice, warmOnMount, webElement]);
+    }), [layerKey, backTestID, compact, fadeOpacity, focals, warmOnMount, webElement]);
     React.useLayoutEffect(() => stage?.attach(layer), [stage, layer]);
     React.useLayoutEffect(() => { stage?.commit(layer); }, [stage, layer, props.stepKey]);
     const onTouchStart = React.useCallback((event: GestureResponderEvent) => {

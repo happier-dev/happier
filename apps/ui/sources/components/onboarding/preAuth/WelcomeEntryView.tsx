@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { StepTransitionFrame } from '@/components/ui/motion/StepTransitionFrame';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -40,7 +40,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
             disabled={!interaction} onPress={interaction ? () => interaction.onAction(index) : noAction} />
     );
     const renderNotice = (notice: WelcomeEntryViewModel['notices'][number]) => (
-        <WelcomeNotice key={notice.testID} notice={notice} onRetry={interaction?.onRetry} />
+        <WelcomeNotice key={notice.slot} notice={notice} onRetry={interaction?.onRetry} />
     );
     return (
         <View testID="welcome-decision-panel" style={[styles.root, compact ? styles.rootCompact : null]}
@@ -101,7 +101,7 @@ function WelcomeNotice({ notice, onRetry }: Readonly<{
     const { retry } = notice;
     return (
         <HappierBodyEdgeContext.Provider value>
-            <StepMotionLayer layerKey="welcome-notice" stepKey={notice.testID} notice>
+            <StepTransitionFrame transitionKey={notice.testID} direction="replace" notice>
                 <SurfaceStateCard
                     testID={notice.testID}
                     size="line"
@@ -113,7 +113,7 @@ function WelcomeNotice({ notice, onRetry }: Readonly<{
                     actionGlyph="retry"
                     action={retry ? { ...retry, disabled: !onRetry, onPress: onRetry ? () => onRetry(retry.testID) : noAction } : undefined}
                 />
-            </StepMotionLayer>
+            </StepTransitionFrame>
         </HappierBodyEdgeContext.Provider>
     );
 }

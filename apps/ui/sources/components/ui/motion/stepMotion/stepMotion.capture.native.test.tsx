@@ -86,7 +86,7 @@ it.each([false, true])('selects the native presentation in layout order (capture
     }));
     const fadeIn = vi.fn(() => () => {});
     const layer = (): StepMotionLayerHandle => ({
-        key: 'workflow', compact: false, warmOnMount: true, notice: false,
+        key: 'workflow', compact: false, warmOnMount: true,
         webElement: () => null, nativeElement: () => nativeView, focal: () => null,
         focus() {}, paintOpacity: () => () => {}, fadeIn,
     });

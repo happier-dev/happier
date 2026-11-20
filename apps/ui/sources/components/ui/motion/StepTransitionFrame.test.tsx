@@ -23,6 +23,24 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 describe('StepTransitionFrame', () => {
+    it('cross-fades a same-screen notice in 200 ms with only the incoming state exposed', async () => {
+        const { StepTransitionFrame } = await import('./StepTransitionFrame');
+        const render = (phase: string) => (
+            <StepTransitionFrame transitionKey={phase} direction="replace" notice testID="notice-frame">
+                <View testID={`notice-${phase}`} />
+            </StepTransitionFrame>
+        );
+        const screen = await renderScreen(render('loading'));
+        await screen.update(render('unavailable'));
+
+        const incoming = screen.findByTestId('notice-frame-current-layer');
+        const outgoing = screen.findByTestId('notice-frame-exit-layer');
+        expect(screen.findByTestId('notice-unavailable')).not.toBeNull();
+        expect(outgoing?.props['aria-hidden']).toBe(true);
+        expect(flattenStyle(incoming?.props.style)).toMatchObject({ transitionDuration: '200ms', transform: [{ translateX: 0 }] });
+        expect(flattenStyle(outgoing?.props.style)).toMatchObject({ transitionDuration: '200ms', transform: [{ translateX: 0 }] });
+    });
+
     it('keeps the outgoing step mounted while the incoming step enters on the routine role', async () => {
         const { StepTransitionFrame } = await import('./StepTransitionFrame');
         const screen = await renderScreen(

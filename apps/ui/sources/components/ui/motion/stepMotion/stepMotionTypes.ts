@@ -42,7 +42,6 @@ export type StepMotionLayerHandle = Readonly<{
     backTestID?: string;
     compact: boolean;
     warmOnMount: boolean;
-    notice: boolean;
     webElement: () => HTMLElement | null;
     nativeElement: () => View | null;
     focal: (returnTo?: string) => FocusReturnTarget;

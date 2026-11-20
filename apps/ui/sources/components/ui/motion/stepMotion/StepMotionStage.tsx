@@ -369,7 +369,7 @@ function createStepMotionStage(
             committedSteps.add(layer);
             commitOrder++;
             if (pending?.destination !== layer.key) {
-                if ((layer.notice || (alreadyCommitted && layer.warmOnMount)) && !pending) {
+                if (alreadyCommitted && layer.warmOnMount && !pending) {
                     settle();
                     showIncoming(layer);
                 }

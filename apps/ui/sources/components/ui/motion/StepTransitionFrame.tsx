@@ -8,6 +8,7 @@ import {
     type StepTransitionDirection,
 } from './resolveStepTransitionDirection';
 import { SoftSlideTransitionFrame, type SoftSlideTransitionFrameProps } from './SoftSlideTransitionFrame';
+import { motionTokens } from './motionTokens';
 
 export type { StepTransitionDirection };
 
@@ -15,6 +16,8 @@ export type StepTransitionFrameProps = Readonly<{
     transitionKey: string | number;
     children: React.ReactNode;
     direction?: StepTransitionDirection;
+    /** A same-screen status change clears and enters on the first-run notice timing. */
+    notice?: boolean;
     style?: StyleProp<ViewStyle>;
     contentStyle?: StyleProp<ViewStyle>;
     /** Override the reduced-motion preference (test/escape hatch). */
@@ -26,13 +29,14 @@ export type StepTransitionFrameProps = Readonly<{
 
 export function StepTransitionFrame(props: StepTransitionFrameProps) {
     const detectedReducedMotion = useReducedMotionPreference();
-    const reducedMotion = props.reducedMotion ?? detectedReducedMotion;
+    const reducedMotion = props.notice === true || (props.reducedMotion ?? detectedReducedMotion);
 
     return (
         <SoftSlideTransitionFrame
             contentStyle={props.contentStyle}
             direction={props.direction ?? 'replace'}
             reducedMotion={reducedMotion}
+            reducedMotionDurationMs={props.notice ? motionTokens.stepMotion.noticeCrossFadeMs : undefined}
             preset="routine"
             style={props.style}
             testID={props.testID}

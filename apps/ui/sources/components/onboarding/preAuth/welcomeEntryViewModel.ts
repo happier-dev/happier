@@ -17,6 +17,7 @@ type Action = Readonly<{
 }>;
 
 type Notice = Readonly<{
+    slot: 'home' | 'service' | 'recovery';
     testID: string;
     kind: 'loading' | 'unavailable' | 'warning';
     title: string;
@@ -138,10 +139,11 @@ export function projectWelcomeEntryViewModel(
     });
     const notices: Notice[] = [];
     if (status === 'loading') {
-        notices.push({ testID: 'welcome-auth-loading', kind: 'loading', title: t('common.loading') });
+        notices.push({ slot: 'home', testID: 'welcome-auth-loading', kind: 'loading', title: t('common.loading') });
     } else if (status === 'unavailable' || status === 'incompatible') {
         const incompatible = status === 'incompatible';
         notices.push({
+            slot: 'home',
             testID: 'welcome-auth-blocked', kind: 'unavailable',
             title: t(incompatible ? 'welcome.serverIncompatibleTitle' : 'welcome.serverUnavailableTitle'),
             reason: t(incompatible ? 'welcome.serverIncompatibleBody' : 'welcome.serverUnavailableBody', { serverUrl: home }),
@@ -151,6 +153,7 @@ export function projectWelcomeEntryViewModel(
     const notice = model.notice;
     if (notice?.kind === 'service_loading') {
         if (status !== 'loading') notices.push({
+            slot: 'service',
             testID: 'welcome-account-service-loading', kind: 'loading',
             title: `${t('common.loading')}${notice.serviceName ? ` · ${notice.serviceName}` : ''}`,
         });
@@ -158,6 +161,7 @@ export function projectWelcomeEntryViewModel(
         const unavailable = notice.kind === 'service_unavailable';
         const methodless = notice.kind === 'service_methodless';
         notices.push({
+            slot: 'service',
             testID: 'welcome-account-service-recovery', kind: 'unavailable',
             title: unavailable
                 ? `${t('welcome.signInServiceUnavailableTitle')}${notice.serviceName ? ` · ${notice.serviceName}` : ''}`
@@ -183,6 +187,7 @@ export function projectWelcomeEntryViewModel(
         quietWays,
         notices,
         closingNotice: status && options.authEntryUnavailable ? {
+            slot: 'recovery',
             testID: 'welcome-auth-entry-degraded', kind: 'warning', title: t('welcome.signInOptionsPartialTitle'),
             retry: retry('welcome-auth-entry-degraded-retry'),
         } : undefined,
