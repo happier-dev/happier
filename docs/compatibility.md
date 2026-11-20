@@ -9992,6 +9992,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+The unreleased managed-policy census accepts an optional nonempty set of
+managed IDs on its existing closed request. Omission and the single-ID request
+keep their existing meanings. Batches cannot carry a requester or request
+native credential bindings. An updated daemon needs the matching Home for
+multi-ID invalidations. Earlier strict development readers refuse the new
+field. The 0.2 frontier at `24731ff73c` has no managed-policy census. The
+response, installation proof and stored formats keep their existing shapes.
+
 Unreleased 0.3 `connectedServices.accounts.revoke` may include
 `savedSecretCleanupReason: 'unreadable_references'` on an incomplete Saved Secret
 cleanup receipt. The keyholding UI host reports this after preserving the secret

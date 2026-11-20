@@ -61,10 +61,10 @@ it('consumes a committed managed-row invalidation for its controller without wak
         return { status: 200, data: { machines: [], targets: [] } };
     });
     const runtime = createDaemonManagedMachinePolicyRuntime({ apiMachine: client,
-        readCensus: (signal, managedId) => readManagedMachinePolicyCensus({ homeId: 'home',
+        readCensus: (signal, managedIds) => readManagedMachinePolicyCensus({ homeId: 'home',
             controller: { machineId: controller.id, installationId: controller.installationId! },
             custodianAccountId: account.id, privateKey: signing.secretKey,
-            token: 'fixture-token', serverUrl: 'https://policy.example', signal, managedId }),
+            token: 'fixture-token', serverUrl: 'https://policy.example', signal, managedIds }),
         executePolicy: async () => { throw new Error('No policy work'); } });
     const sync = (current = client) => (current as unknown as {
         syncChangesOnConnect(options: { reason: 'live' }): Promise<void>;

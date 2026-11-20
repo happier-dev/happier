@@ -33,6 +33,7 @@ import { completeSessionTeamCredentialNativeDeliveryInTx, submitSessionTeamCrede
 import { ManagedControllerCredentialDeliveryReportV1Schema, ManagedControllerCredentialDeliveryReportOutputV1Schema,
     ManagedCredentialDeliveryResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { isManagedPresentUser, resolveSignedManagedAccountExecutorInTx } from './managedRequestAuthority';
 import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { readServerGuestCliIdentity } from '@/app/runtime/serverRelease';
@@ -239,8 +240,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             return skipManagedMachineSetup({ actorAccountId: request.userId, input: request.body });
         }));
     app.post('/v1/machines/managed/controller/policies', { preHandler: app.authenticate, schema: { body: ManagedPolicyCensusInputV1Schema, response: { 200: ManagedPolicyCensusOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
-        const { homeId, controller, proof, managedId, target } = request.body;
-        const targets = managedId ? [] : (await readManagedWakeTargets({ actorAccountId: request.userId,
+        const { homeId, controller, proof, managedId, managedIds, target } = request.body;
+        const selectedIds = managedId ? [managedId] : managedIds && [...new Set(managedIds)];
+        const targets = selectedIds ? [] : (await readManagedWakeTargets({ actorAccountId: request.userId,
             request: { homeId, controller } })).targets;
         const census = await inReadSnapshot(async tx => {
             await requireManagedControllerInTx(tx, { homeId, controller, custodianAccountId: request.userId });
@@ -249,19 +251,24 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             if (!current.installationPublicKey || !verifyMachineInstallationProof({ payload: { version: 1, machineId: controller.machineId,
                 installationId: controller.installationId, accountId: request.userId, managedPolicyCensus: { homeId } }, proof,
                 publicKey: current.installationPublicKey })) throw new ManagedMachineError('permission_denied');
-            const accountManagedIds = managedId
-                ? await resolveSignedManagedAccountExecutorInTx(tx, current, { custodianAccountId: request.userId }) ? [managedId] : []
-                : targets.filter(target => !target.controller).map(target => target.managedId);
-            const rows = await tx.managedMachine.findMany({ where: { homeId, custodianAccountId: request.userId,
+            const accountAccess = selectedIds
+                ? await resolveSignedManagedAccountExecutorInTx(tx, current, { custodianAccountId: request.userId })
+                    ? { controllerMachineId: null } : undefined
+                : { controllerMachineId: null, id: { in: targets.filter(target => !target.controller).map(target => target.managedId) } };
+            const readRows = (ids?: readonly string[]) => tx.managedMachine.findMany({ where: { homeId, custodianAccountId: request.userId,
                 // Exact observers need the terminal allocation fact to end a placed Session.
                 // Only the fleet census selects outstanding reconciliation work.
-                ...(managedId ? { id: managedId } : { archivedAt: null,
+                ...(ids ? { id: { in: [...ids] } } : { archivedAt: null,
                     OR: [{ allocation: 'bound', creationState: 'active' },
                         { allocation: { in: ['bound', 'may-exist'] }, creationState: 'canceled', desired: 'delete', desiredWhen: 'now' }] }),
                 AND: [{ OR: [{ controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId },
-                    { controllerMachineId: null, id: { in: accountManagedIds } },
+                    ...(accountAccess ? [accountAccess] : []),
                     { controllerMachineId: null, enrolledMachineId: controller.machineId,
                         retention: jsonPathEquals(['effect'], 'stop') }] }] } });
+            // Reserve the Home, custody, controller, JSON filter and pagination binds.
+            const rows = selectedIds
+                ? (await Promise.all(portableQueryChunks({ values: selectedIds, bindingsPerValue: 1, fixedBindings: 10 }).map(readRows))).flat()
+                : await readRows();
             const retentionContinuations = rows.flatMap(row => {
                 const admitted = readManagedAdmissionState(row.admittedInput);
                 return admitted.currentAdmission?.kind === 'policy'
@@ -285,8 +292,9 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         });
         // Exact scheduling reads need the same accepted origins as reconnect.
         // Discover them only for a row admitted by the signed census above.
-        return { ...census, targets: managedId && !target && census.machines.length > 0
-            ? (await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller }, managedId })).targets
+        return { ...census, targets: selectedIds && !target && census.machines.length > 0
+            ? (await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller },
+                managedIds: census.machines.map(machine => machine.id) })).targets
             : targets };
     }));
     app.post('/v1/machines/managed/controller/prepare-policy', { preHandler: app.authenticate, schema: { body: ManagedPolicyAdmissionInputV1Schema, response: { 200: ManagedPolicyAdmissionOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {

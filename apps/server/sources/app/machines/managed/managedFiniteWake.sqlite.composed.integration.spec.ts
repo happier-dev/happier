@@ -464,7 +464,7 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } finally { emitted.mockRestore(); restoreEnv(env); }
     });
 
-    it.each([false, true])('reads one current resource without fleet wake discovery (controller-free: %s)', async controllerFree => {
+    it.each([false, true])('reads selected current resources without fleet wake discovery (controller-free: %s)', async controllerFree => {
         const test = await setup();
         const controller = { machineId: test.controller.id, installationId: test.controller.installationId! };
         const ids = [test.row.id];
@@ -489,6 +489,22 @@ describe('finite managed wake original Action authority (real storage)', () => {
             expect(exact.value.json().targets).toEqual([]);
             expect(exact.queries.filter(query => query.model === 'managedMachine' && query.method === 'findMany')
                 .reduce((sum, query) => sum + query.rows, 0)).toBeLessThanOrEqual(2);
+            const foreign = await setup();
+            const readBatch = (extra = {}) => app.inject({ method: 'POST',
+                url: '/v1/machines/managed/controller/policies', headers: { 'x-test-user-id': test.account.id },
+                payload: { homeId, controller, managedIds: [test.row.id, ids[1], foreign.row.id, 'missing-managed-row'],
+                    proof: createManagedPolicyCensusProofV1({ homeId, controller, custodianAccountId: test.account.id,
+                        privateKey: test.controllerKeys.secretKey }), ...extra } });
+            const batch = await measure('selected-managed-currentness', readBatch);
+            expect(batch.value.statusCode, batch.value.body).toBe(200);
+            expect(batch.value.json().machines.map((machine: { id: string }) => machine.id).sort()).toEqual([test.row.id, ids[1]].sort());
+            expect(batch.value.json().targets).toEqual([]);
+            expect(batch.queries.filter(query => query.model === 'managedMachine' && query.method === 'findMany')
+                .map(query => query.rows)).toEqual([2, 2]);
+            for (const extra of [{ managedId: test.row.id }, { target: { requesterAccountId: test.account.id } },
+                { includeNativeCredentialBindings: true }, { managedIds: [] }]) {
+                expect((await readBatch(extra)).statusCode).toBe(400);
+            }
             if (!controllerFree) {
                 const fleet = await measure('scheduler-managed-census', () => read());
                 expect(fleet.value.statusCode, fleet.value.body).toBe(200);

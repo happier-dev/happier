@@ -370,18 +370,22 @@ export async function readPendingManagedWakeTargetInTx(tx: Tx, sessionId: string
 
 /** Reconnect reads existing activation/assignment custody, not a second queue or copied Session content. */
 export async function readManagedWakeTargets(input: Readonly<{
-    actorAccountId: string; request: ManagedWakeTargetsReadRequestV1; managedId?: string;
+    actorAccountId: string; request: ManagedWakeTargetsReadRequestV1; managedIds?: readonly string[];
 }>) {
     const request = ManagedWakeTargetsReadRequestV1Schema.parse(input.request);
     return inTx(async tx => {
         await requireManagedControllerInTx(tx, { ...request, custodianAccountId: input.actorAccountId });
-        const managedRows = await tx.managedMachine.findMany({ where: { homeId: request.homeId,
-            ...(input.managedId ? { id: input.managedId } : {}),
+        const readRows = (ids?: readonly string[]) => tx.managedMachine.findMany({ where: { homeId: request.homeId,
+            ...(ids ? { id: { in: [...ids] } } : {}),
             OR: [{ controllerMachineId: request.controller.machineId, controllerInstallationId: request.controller.installationId },
                 { controllerMachineId: null }],
             custodianAccountId: input.actorAccountId, enrolledMachineId: { not: null }, archivedAt: null,
             creationState: 'active', allocation: 'bound', wakeOnAcceptedMessage: true },
             include: { enrolledMachine: { select: { active: true, lastActiveAt: true } } } });
+        // Reserve the Home, controller, custody, policy predicates and pagination binds.
+        const managedRows = input.managedIds
+            ? (await Promise.all(portableQueryChunks({ values: input.managedIds, bindingsPerValue: 1, fixedBindings: 10 }).map(readRows))).flat()
+            : await readRows();
         const candidateIds = new Set(managedRows.flatMap(row => {
             const projected = projectManagedMachine(row);
             return row.enrolledMachineId && (projected.submittedNativeEffect

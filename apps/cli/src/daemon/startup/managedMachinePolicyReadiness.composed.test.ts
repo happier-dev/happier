@@ -253,9 +253,10 @@ it.each(['unreachable', 'target-unavailable', 'method-unavailable', 'transport-u
     });
     vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
         if (String(url).endsWith('/controller/policies')) {
-            const { managedId } = ManagedPolicyCensusInputV1Schema.parse(body);
-            return { status: 200, data: { machines: managedId
-                ? censusMachines.filter(machine => machine.id === managedId) : censusMachines, targets: [] } };
+            const { managedId, managedIds } = ManagedPolicyCensusInputV1Schema.parse(body);
+            const selectedIds = managedId ? [managedId] : managedIds;
+            return { status: 200, data: { machines: selectedIds
+                ? censusMachines.filter(machine => selectedIds.includes(machine.id)) : censusMachines, targets: [] } };
         }
         if (String(url).endsWith('/controller/prepare-policy')) {
             const request = ManagedPolicyAdmissionInputV1Schema.parse(body);
@@ -297,8 +298,8 @@ it.each(['unreachable', 'target-unavailable', 'method-unavailable', 'transport-u
         executeManagedPolicyAction: unavailable });
     const runtime = createDaemonManagedMachinePolicyRuntime({ apiMachine: client,
         loadMachine: (id, signal) => runWithServerHttpBaseUrl(serverUrl, () => api.getMachine(id, { signal })),
-        readCensus: (signal, managedId) => readManagedMachinePolicyCensus({ homeId: 'srv_home', controller: machine.controller,
-            custodianAccountId: 'owner', privateKey: signing.secretKey, token, serverUrl, signal, managedId }),
+        readCensus: (signal, managedIds) => readManagedMachinePolicyCensus({ homeId: 'srv_home', controller: machine.controller,
+            custodianAccountId: 'owner', privateKey: signing.secretKey, token, serverUrl, signal, managedIds }),
         executePolicy: adapter.executePolicy, onUnavailable: error => { failures.push(error); } });
     const list = async () => ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({})).items;
     const drain = () => new Promise<void>(resolve => setImmediate(resolve));

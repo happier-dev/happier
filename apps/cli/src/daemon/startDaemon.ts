@@ -1854,18 +1854,20 @@ export async function startDaemon(
         custodianAccountId: externalActionAccountId, privateKey: installation.privateKey,
         token: credentials.token, serverUrl: readManagedPolicyServerHttpBaseUrl() };
     };
-    const readCurrentManagedMachinePolicies = async (signal?: AbortSignal, managedId?: string, target?: ManagedTargetRequesterV1) => {
+    const readCurrentManagedMachinePolicies = async (signal?: AbortSignal, selection?: Readonly<{
+      managedId?: string; managedIds?: readonly string[]; target?: ManagedTargetRequesterV1;
+    }>) => {
       const origin = await resolveCurrentMachineExecutionOriginContext(signal);
       const controller = readCurrentManagedPolicyController();
       if (!controller || !origin || origin.serverIdentityId !== controller.homeId || origin.machineId !== controller.controller.machineId) {
         throw Object.assign(new Error('controller_unavailable'), { code: 'controller_unavailable' });
       }
-      return await readManagedMachinePolicyCensus({ ...controller, signal, managedId, target });
+      return await readManagedMachinePolicyCensus({ ...controller, signal, ...selection });
     };
     const readCurrentManagedMachinePolicy = async (managedId: string, signal?: AbortSignal) =>
-      (await readCurrentManagedMachinePolicies(signal, managedId)).machines[0] ?? null;
+      (await readCurrentManagedMachinePolicies(signal, { managedId })).machines[0] ?? null;
     const readCurrentManagedMachineTarget = async (managedId: string, target: ManagedTargetRequesterV1, signal: AbortSignal) => {
-      const { machines: [machine], targetAdmitted } = await readCurrentManagedMachinePolicies(signal, managedId, target);
+      const { machines: [machine], targetAdmitted } = await readCurrentManagedMachinePolicies(signal, { managedId, target });
       return machine && targetAdmitted !== undefined ? { machine, admitted: targetAdmitted } : null;
     };
     const browserRuntimeActionExecute = api.createBrowserRuntimeActionExecutor({
@@ -4749,7 +4751,8 @@ export async function startDaemon(
               isAvailable: () => readCurrentManagedPolicyController() !== null,
               loadMachine: (id, signal) => runWithServerHttpBaseUrl(readManagedPolicyServerHttpBaseUrl(),
                 () => api.getMachine(id, { signal })),
-              readCensus: readCurrentManagedMachinePolicies,
+              readCensus: (signal, managedIds) => readCurrentManagedMachinePolicies(signal,
+                managedIds?.length === 1 ? { managedId: managedIds[0] } : { managedIds }),
               executePolicy: managedMachinePolicyAdapter.executePolicy,
               onUnavailable: error => logger.debug('[DAEMON RUN] Managed policy execution unavailable', error),
               reconcileObservation: managedMachinePolicyAdapter.reconcileObservation,

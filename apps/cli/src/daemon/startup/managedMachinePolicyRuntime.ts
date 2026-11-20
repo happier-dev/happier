@@ -22,13 +22,14 @@ type PolicySchedulingFacts = Pick<ManagedMachineV1,
 export async function readManagedMachinePolicyCensus(input: Readonly<{
     homeId: string; controller: ManagedControllerV1; custodianAccountId: string;
     privateKey: string | Uint8Array; token: string; serverUrl: string; signal?: AbortSignal;
-    managedId?: string; nativeCredentialManagedId?: string; target?: ManagedTargetRequesterV1;
+    managedId?: string; managedIds?: readonly string[]; nativeCredentialManagedId?: string; target?: ManagedTargetRequesterV1;
 }>): Promise<ManagedMachinePolicyCensus> {
     input.signal?.throwIfAborted();
     const managedId = input.nativeCredentialManagedId ?? input.managedId;
     const body = ManagedPolicyCensusInputV1Schema.parse({ homeId: input.homeId, controller: input.controller,
         proof: createManagedPolicyCensusProofV1(input),
         ...(managedId ? { managedId } : {}),
+        ...(input.managedIds ? { managedIds: input.managedIds } : {}),
         ...(input.target ? { target: input.target } : {}),
         ...(input.nativeCredentialManagedId ? { includeNativeCredentialBindings: true } : {}) });
     const response = await axios.post<unknown>(`${input.serverUrl}/v1/machines/managed/controller/policies`, body,
@@ -53,7 +54,7 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
     isAvailable?: () => boolean;
     /** The incumbent authenticated Machine reader opens published registration readiness. */
     loadMachine?: (machineId: string, signal: AbortSignal) => Promise<Machine | null>;
-    readCensus(signal: AbortSignal, managedId?: string): Promise<ManagedMachinePolicyCensus>;
+    readCensus(signal: AbortSignal, managedIds?: readonly string[]): Promise<ManagedMachinePolicyCensus>;
     executePolicy: ReturnType<typeof createDaemonManagedMachineActionAdapter>['executePolicy'];
     reconcileObservation?: ReturnType<typeof createDaemonManagedMachineActionAdapter>['reconcileObservation'];
     reconcileNativeCredentials?: (machine: ManagedMachineV1, signal: AbortSignal) => Promise<void>;
@@ -245,18 +246,9 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
                         for (const [id, entry] of active) abortPolicy(id, entry.cancel, 'controller_unavailable');
                         continue;
                     }
-                    if (managedIds === null) {
-                        const census = await params.readCensus(lifetime.signal);
-                        lifetime.signal.throwIfAborted();
-                        await reconcile(census, scheduleNew, nativeManagedIds, null, refreshObservations);
-                    } else {
-                        const censuses = await Promise.all([...managedIds].map(id => params.readCensus(lifetime.signal, id)));
-                        lifetime.signal.throwIfAborted();
-                        await reconcile({ machines: censuses.flatMap(census => census.machines),
-                            targets: censuses.flatMap(census => census.targets),
-                            retentionContinuations: censuses.flatMap(census => census.retentionContinuations ?? []),
-                        }, scheduleNew, nativeManagedIds, managedIds, refreshObservations);
-                    }
+                    const census = await params.readCensus(lifetime.signal, managedIds ? [...managedIds] : undefined);
+                    lifetime.signal.throwIfAborted();
+                    await reconcile(census, scheduleNew, nativeManagedIds, managedIds, refreshObservations);
                 } catch (error) {
                     // A failed read does not withdraw an admitted origin.
                     // Keep its held Ask/native owner; a successful census or

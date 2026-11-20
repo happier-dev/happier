@@ -18,7 +18,7 @@ import { ApiMachineClient, type ManagedMachinePolicyInvalidation } from '@/api/a
 
 afterEach(() => vi.restoreAllMocks());
 describe('daemon managed policy census transport', () => {
-    it('reads one invalidated row among 128 Machines while retaining sibling lifetimes and withdrawing a missing row', async () => {
+    it('reads changed managed rows in one selected census while retaining sibling lifetimes and withdrawing a missing row', async () => {
         const signing = nacl.sign.keyPair();
         const controller = { machineId: 'controller', installationId: 'installation' };
         const machineCount = 128;
@@ -32,8 +32,9 @@ describe('daemon managed policy census transport', () => {
         }));
         const returnedRows: number[] = [];
         vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
-            const { managedId } = ManagedPolicyCensusInputV1Schema.parse(body);
-            const selected = managedId ? machines.filter(machine => machine.id === managedId) : machines;
+            const { managedId, managedIds } = ManagedPolicyCensusInputV1Schema.parse(body);
+            const selectedIds = managedId ? [managedId] : managedIds;
+            const selected = selectedIds ? machines.filter(machine => selectedIds.includes(machine.id)) : machines;
             returnedRows.push(selected.length);
             return { status: 200, data: { machines: selected, targets: [] } };
         });
@@ -44,8 +45,8 @@ describe('daemon managed policy census transport', () => {
         };
         const executions: Array<{ id: string; signal: AbortSignal | undefined }> = [];
         const runtime = createDaemonManagedMachinePolicyRuntime({ apiMachine,
-            readCensus: (signal, managedId?: string) => readManagedMachinePolicyCensus({ homeId: 'home', controller,
-                custodianAccountId: 'owner', privateKey: signing.secretKey, token: 'token', serverUrl: 'https://policy.example', signal, managedId }),
+            readCensus: (signal, managedIds) => readManagedMachinePolicyCensus({ homeId: 'home', controller,
+                custodianAccountId: 'owner', privateKey: signing.secretKey, token: 'token', serverUrl: 'https://policy.example', signal, managedIds }),
             executePolicy: async input => {
                 executions.push({ id: input.machine.id, signal: input.signal });
                 await new Promise<void>(resolve => input.signal?.addEventListener('abort', () => resolve(), { once: true }));
@@ -80,6 +81,15 @@ describe('daemon managed policy census transport', () => {
             await invalidate({ kind: 'currentness' });
             expect(returnedRows).toEqual([machineCount, 1, 0, machineCount - 1, machineCount - 1, machineCount - 1]);
             expect(executions).toHaveLength(machineCount + 1);
+            machines[0] = ManagedMachineV1Schema.parse({ ...machines[0], retention: { kind: 'deadline', at: 7_200_000, effect: 'stop' } });
+            machines = machines.filter(machine => machine.id !== 'managed-2');
+            const readsBeforeBatch = returnedRows.length;
+            await invalidate({ kind: 'managed', managedIds: ['managed-1', 'managed-2'] });
+            expect(returnedRows.slice(readsBeforeBatch)).toEqual([1]);
+            expect(executions.at(-1)?.id).toBe('managed-1');
+            expect(executions[1]?.signal?.aborted).toBe(true);
+            expect(executions[2]?.signal?.aborted).toBe(true);
+            expect(executions.slice(3, machineCount).every(entry => entry.signal?.aborted === false)).toBe(true);
         } finally { await runtime.stop(); await apiMachine.shutdown(); }
     });
     it('executes the Home wake candidate despite a retained running native observation without private guest reads', async () => {

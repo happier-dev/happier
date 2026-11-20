@@ -45,8 +45,10 @@ export type ManagedTargetRequesterV1 = z.infer<typeof ManagedTargetRequesterV1Sc
 export const ManagedPolicyCensusInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: z.string().check(z.minLength(1)), controller: ManagedControllerV1Schema, proof: MachineInstallationProofV1Schema,
   managedId: z.optional(z.string().check(z.minLength(1))), includeNativeCredentialBindings: z.optional(z.literal(true)),
+  managedIds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))),
   target: z.optional(ManagedTargetRequesterV1Schema),
-}).check(z.refine(input => !input.target || input.managedId !== undefined)));
+}).check(z.refine(input => (!input.target || input.managedId !== undefined)
+  && (!input.managedIds || !(input.managedId || input.target || input.includeNativeCredentialBindings)))));
 export const ManagedPolicyCensusOutputV1Schema = lazyZodSchema(() => z.strictObject({
   machines: z.array(ManagedMachineV1Schema), targets: z.array(ManagedWakeTargetV1Schema),
   targetAdmitted: z.optional(z.boolean()),
