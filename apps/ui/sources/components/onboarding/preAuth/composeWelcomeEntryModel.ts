@@ -53,6 +53,8 @@ export type WelcomeEntryModel = Readonly<{
     }>;
     /** Only notices about the effective Home target belong in this entry. */
     showHomeStatus: boolean;
+    /** The first catalog is still loading: the primary door keeps its place until the ways in are known. */
+    primaryDoorPending?: boolean;
     targetContext?: Readonly<{ label: string }>;
     actions: readonly Readonly<{
         id: string;
@@ -72,6 +74,8 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
         | Readonly<{ kind: 'selected_service'; label: string }>
         | Readonly<{ kind: 'explicit_home' | 'selected_home'; home: HomeTargetInput; label: string }>;
     homeMethods: readonly WelcomeAuthenticationMethod[];
+    /** No Home or service catalog has settled on this welcome yet; `homeMethods` is empty until one does. */
+    catalogFirstLoad?: boolean;
     /** Decision from the exact Home observation, including the client's pairing policy. */
     homePairingAvailable?: boolean;
     /** The host and port of an explicitly selected custom Home. */
@@ -241,6 +245,11 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         ...(newHereService ? [methodAction(newHereService, 'new_here')] : []),
     ];
 
+    // Until a first catalog settles, a first-time welcome shows the form it settles into in the common case (the
+    // primary door's place, then "I already use Happier") instead of the dead-end doors for a Home with no ways in.
+    const catalogPending = !isRestore && firstTime && input.context.kind === 'home' && input.placement?.hasHome !== false
+        && input.catalogFirstLoad === true && input.homeMethods.length === 0;
+
     if (isRestore) {
         const directWays = homeDirect.filter((row) => row.execution.kind !== 'key_entry');
         const provider = (row: WelcomeAuthenticationMethod) => row.execution.kind === 'oauth' ? row.execution.providerId : null;
@@ -257,6 +266,8 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         if (input.allowedNavigation.selectService) actions.push({ kind: 'choose_sign_in_service' });
         if (input.allowedNavigation.openTerminalLink) actions.push({ kind: 'open_terminal_link' });
         if (primaryProvision) actions.push({ kind: 'authenticate', request: primaryProvision, labelRole: 'new_account' });
+    } else if (catalogPending) {
+        if (input.allowedNavigation.scanOrPasteHome) actions.push(pairingLogin);
     } else if (oneTapProvision && homeLogin) {
         actions.push(methodAction(oneTapProvision, 'new_here'), homeLogin);
     } else if (firstTime) {
@@ -374,12 +385,13 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
             icon: 'qr-code',
         },
         showHomeStatus: !isRestore && showHomeStatus,
+        ...(catalogPending ? { primaryDoorPending: true } : {}),
         ...(input.target.kind === 'none'
             ? input.serviceCatalogState.kind === 'ready' ? { targetContext: { label: input.serviceCatalogState.name } } : {}
             : { targetContext: { label: input.target.label } }),
         actions: unique.map((action, index) => ({
             id: actionIdentity(action),
-            emphasis: isRestore ? 'tertiary' : index === 0 ? 'primary' : emphasisOf(action, hasAuthentication),
+            emphasis: isRestore ? 'tertiary' : index === 0 && !catalogPending ? 'primary' : emphasisOf(action, hasAuthentication),
             action,
         })),
         ...(!isRestore && notice ? { notice } : {}),

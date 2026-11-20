@@ -20,6 +20,7 @@ export type StepBuild = Readonly<{
     choreography: 'opening' | 'home';
     epoch?: number;
     leadSeconds?: number;
+    interactive?: boolean;
 }>;
 
 export type StepBuildResult = 'settled' | 'skipped';

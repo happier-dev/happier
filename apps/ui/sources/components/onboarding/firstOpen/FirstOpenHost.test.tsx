@@ -9,11 +9,13 @@ import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persisten
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { onboardingAuthHistoryState, onboardingHistoryState, readOpeningSeenAt } from '@/sync/domains/state/onboardingUiState';
 
-import { FirstOpenHost, useFirstOpenContentLayout } from './FirstOpenHost';
+import { FirstOpenHost } from './FirstOpenHost';
+import { FirstOpenContentLayout } from './FirstOpenWelcomeModelContext';
 import { resolveFirstOpen } from './resolveFirstOpen';
+import { createFirstOpenLayoutRecorder } from './useFirstOpenBoot';
 
 function Destination({ onPress }: { onPress: () => void }) {
-    const onLayout = useFirstOpenContentLayout();
+    const onLayout = React.useContext(FirstOpenContentLayout);
     return <View onLayout={onLayout} testID="first-open.fixture-layout">
         <Pressable onPress={onPress} testID="first-open.fixture-action" />
     </View>;
@@ -37,7 +39,7 @@ describe('FirstOpenHost', () => {
         const press = vi.fn();
         const decision = resolveFirstOpen(freshWelcome);
         if (decision !== 'reduced') throw new Error(`Expected the Still first open, got ${decision}`);
-        const screen = await renderScreen(<FirstOpenHost opening={{ decision }}><Destination onPress={press} /></FirstOpenHost>);
+        const screen = await renderScreen(<FirstOpenHost opening={{ decision, recordLayout: createFirstOpenLayoutRecorder() }}><Destination onPress={press} /></FirstOpenHost>);
         const destination = screen.findByTestId('first-open.fixture-layout');
         const onLayout = destination?.props.onLayout;
         if (!onLayout) throw new Error('The destination must be mounted before its layout');

@@ -143,6 +143,12 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 : accountServiceEntry?.status === 'unsupported'
                     ? { kind: 'unsupported' as const, hintName: serviceName ?? undefined }
                     : { kind: 'not_offered' as const };
+    // Only the first load holds the primary door's place; a retry keeps the form it last settled into.
+    const catalogSettled = React.useRef(false);
+    const catalogLoading = (homeTarget != null && options.serverAvailability === 'loading')
+        || accountServiceEntry?.status === 'loading';
+    if (!catalogLoading) catalogSettled.current = true;
+    const catalogFirstLoad = catalogLoading && !catalogSettled.current;
     const heldRestoreView = React.useRef<WelcomeEntryViewModel | null>(null);
     const approving = props.restoreWays === true && props.restoreApprovalVisible === true;
     const frozenView = approving ? heldRestoreView.current : null;
@@ -155,6 +161,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     ? { kind: 'selected_service', label: serviceName ?? formatAccountServiceHost(accountServiceEntry.endpoint.url) }
                     : { kind: 'none' },
         homeMethods,
+        catalogFirstLoad,
         homePairingAvailable: options.homePairingAvailable,
         selectedHomeAddress: customHomeUrl ? new URL(customHomeUrl).host : undefined,
         ...(homeTarget && homeMethods.length > 0 && accountServiceEntry

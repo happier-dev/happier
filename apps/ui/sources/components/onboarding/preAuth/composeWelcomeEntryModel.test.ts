@@ -95,6 +95,26 @@ describe('composeWelcomeEntryModel', () => {
         expect(model.notice).toEqual({ kind: 'service_loading', serviceName: 'Happier', hasUsableHomeMethods: true });
     });
 
+    it('holds the primary door and shows the settled login while the first catalog loads', () => {
+        const homeLoading = composeWelcomeEntryModel({
+            ...ownHome, target: { kind: 'none' }, homeMethods: [], catalogFirstLoad: true,
+            allowedNavigation: { ...ownHome.allowedNavigation, selectService: true },
+        });
+        const serviceLoading = composeWelcomeEntryModel({
+            ...ownHome, target: { kind: 'none' }, homeMethods: [], catalogFirstLoad: true,
+            allowedNavigation: { ...ownHome.allowedNavigation, selectService: true },
+            serviceCatalogState: { kind: 'loading', hintName: 'Happier' },
+        });
+        for (const model of [homeLoading, serviceLoading]) {
+            expect(model.primaryDoorPending).toBe(true);
+            expect(model.actions).toEqual([{ id: expect.any(String), emphasis: 'secondary',
+                action: { kind: 'scan_or_paste_home', labelRole: 'login' } }]);
+        }
+        // A retry after the first settle keeps the settled form.
+        expect(composeWelcomeEntryModel({ ...ownHome, homeMethods: [], catalogFirstLoad: false }).primaryDoorPending).toBeUndefined();
+        expect(composeWelcomeEntryModel({ ...ownHome, catalogFirstLoad: true }).primaryDoorPending).toBeUndefined();
+    });
+
     describe('first-run hierarchy', () => {
         const serviceAuthority = {
             endpointUrl: 'https://accounts.example.test',

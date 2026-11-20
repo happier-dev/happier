@@ -20,7 +20,7 @@ type Action = Readonly<{
 }>;
 
 type Notice = Readonly<{
-    slot: 'home' | 'service' | 'recovery' | 'home_change';
+    slot: 'signup' | 'home' | 'service' | 'recovery' | 'home_change';
     testID: string;
     kind: 'loading' | 'unavailable' | 'warning';
     title: string;
@@ -30,10 +30,15 @@ type Notice = Readonly<{
 }>;
 
 /** Display-only payload shared by live Welcome and the opening window. */
+/** The facts about the Home a welcome is for: the focused Home's entry options, or one exact Home's catalog. */
+export type WelcomeHomeFacts = Pick<AuthEntryOptions, 'homeLabel' | 'serverAvailability' | 'showAuthActions'
+    | 'authenticationActions' | 'isPersonalHome' | 'retentionDisclosure' | 'authEntryUnavailable'>;
+
 export type WelcomeEntryViewModel = Readonly<{
+    /** The one quiet line naming the Home this welcome belongs to, above its heading (a Home reached by address). */
+    context?: Readonly<{ label: string }>;
     /** `compact`: the phone's own two lines where they differ (direction A greets a phone with the welcome question). */
     heading?: Readonly<{ title: string; subtitle: string; intro?: string; compact?: Readonly<{ title: string; subtitle: string }> }>;
-    signupNotice?: string;
     /** The quiet line under the doors on a greeting (direction A): what Happier is, in three facts. */
     trust?: string;
     retention?: RelayRetentionDisclosureModel;
@@ -41,6 +46,8 @@ export type WelcomeEntryViewModel = Readonly<{
         | Readonly<{ kind: 'invalid' }>;
     quietWaysTitle?: string;
     doors: readonly Readonly<{ index: number; display: Action }>[];
+    /** The primary door's place is held while the first catalog loads (the doors below it stay where they settle). */
+    primaryDoorPending?: boolean;
     quietWays: readonly Readonly<{ index: number; display: Action }>[];
     notices: readonly Notice[];
     closingNotice?: Notice;
@@ -137,7 +144,9 @@ export function projectWelcomeEntryViewModel(
         showGreeting: boolean;
         terminalWaiting: boolean;
         returningGreeting: { title: string; subtitle: string };
-        options: AuthEntryOptions;
+        options: WelcomeHomeFacts;
+        /** This welcome is one exact Home's own (reached by address), not the focused Home's greeting. */
+        place?: Readonly<{ label: string }>;
         hasHome: boolean;
         serviceName: string | null;
         canRetryService: boolean;
@@ -160,6 +169,12 @@ export function projectWelcomeEntryViewModel(
         if (display) (row.emphasis === 'tertiary' ? quietWays : doors).push({ index, display });
     });
     const notices: Notice[] = [];
+    const signupClosed = (status === 'ready' || status === 'legacy') && options.showAuthActions
+        && options.authenticationActions && !options.authenticationActions.some(({ action }) => action.id === 'provision');
+    if (signupClosed) {
+        notices.push({ slot: 'signup', testID: 'welcome-signup-disabled', kind: 'unavailable',
+            title: t(options.isPersonalHome ? 'personalHome.auth.signupClosed' : 'errors.signupDisabled') });
+    }
     if (model.homeChangeLocked && input.policy?.kind !== 'invalid'
         && !(input.policy?.kind === 'managed' && input.policy.field === 'home')) {
         notices.push({ slot: 'home_change', testID: 'welcome-home-change-unavailable', kind: 'unavailable',
@@ -206,10 +221,11 @@ export function projectWelcomeEntryViewModel(
                     : undefined,
         });
     }
-    const signupClosed = (status === 'ready' || status === 'legacy') && options.showAuthActions
-        && options.authenticationActions && !options.authenticationActions.some(({ action }) => action.id === 'provision');
     return {
-        heading: !input.showGreeting ? undefined : input.terminalWaiting
+        ...(input.place ? { context: { label: input.place.label } } : {}),
+        heading: !input.showGreeting ? undefined : input.place
+            ? { title: t('homesJourneys.signInToHomeTitle'), subtitle: t('homesJourneys.signInToHomeLead') }
+            : input.terminalWaiting
             ? { title: t('welcome.terminalContinuationTitle'), subtitle: t('welcome.terminalContinuationSubtitle') }
             : returning ? input.returningGreeting
                 // Direction A (owner 2026-11-19): the product's own line leads the first welcome; the door below says
@@ -221,9 +237,9 @@ export function projectWelcomeEntryViewModel(
         retention: retention?.kind === 'summary' ? { kind: 'summary', summary: retention.summary }
             : retention ? { kind: 'unreadable' } : undefined,
         policy: input.policy,
-        signupNotice: signupClosed ? t(options.isPersonalHome ? 'personalHome.auth.signupClosed' : 'errors.signupDisabled') : undefined,
         quietWaysTitle: model.showWaysHeading ? t('homesJourneys.alreadyUseTitle') : undefined,
         doors,
+        ...(model.primaryDoorPending ? { primaryDoorPending: true } : {}),
         quietWays,
         notices,
         closingNotice: status && options.authEntryUnavailable ? {

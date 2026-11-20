@@ -1,6 +1,10 @@
 import { createContext, useContext, useLayoutEffect, useRef } from 'react';
+import type { LayoutChangeEvent } from 'react-native';
 
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
+
+/** Kept with the other channels so the ordinary shell does not import the opening host. */
+export const FirstOpenContentLayout = createContext<((event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined) | null>(null);
 
 /** The opening host supplies this channel only while it has a replica to update. */
 export const FirstOpenWelcomeModelContext = createContext<((model: WelcomeEntryViewModel) => void) | null>(null);

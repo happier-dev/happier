@@ -23,7 +23,7 @@ import { HorizontalSafeAreaRoot } from '@/components/navigation/safeArea/Horizon
 import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { WindowFoldMetricsProvider } from '@/utils/platform/useWindowFoldMetrics';
 import sodium from '@/encryption/libsodium.lib';
-import { View, Platform } from 'react-native';
+import { View, Platform, type LayoutChangeEvent } from 'react-native';
 import { AppPaneModalProvider } from '@/components/appShell/providers/AppPaneModalProvider';
 import { ModalProvider } from '@/modal/ModalProvider';
 import { CurrentUiContextProvider } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -98,7 +98,7 @@ import { readBrowserAppWindowRecord, resolveDesktopAppWindowBootCredentials, run
 import { ThemePreferenceTransitionHost } from '@/components/settings/appearance/ThemePreferenceTransitionHost';
 import { DesktopMainContentDragSurface } from '@/components/navigation/desktopWindowChrome/DesktopMainContentDragSurface';
 import { useDesktopMainWindowContentReady } from '@/desktop/window/useDesktopMainWindowContentReady';
-import { FirstOpenHost, useFirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenHost';
+import { FirstOpenContentLayout } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { resolveFirstOpen } from '@/components/onboarding/firstOpen/resolveFirstOpen';
 import { useFirstOpenBoot } from '@/components/onboarding/firstOpen/useFirstOpenBoot';
 import { readWebRuntimeFirstOpenCandidate } from '@/sync/runtime/webRuntimeConfig';
@@ -756,11 +756,19 @@ function AppBoot() {
     const isTerminalConnectRoute = isTerminalConnectWebPathname(pathname);
     const firstOpenSegments = React.useRef(segments);
     firstOpenSegments.current = segments;
-    const { opening, admitOpening } = useFirstOpenBoot();
+    const { opening, Host: OpeningHost, admitOpening } = useFirstOpenBoot();
+    const recordStillLayout = React.useCallback((event: LayoutChangeEvent) => {
+        opening?.recordLayout(event);
+        return undefined;
+    }, [opening]);
     const renderFirstOpen = (content: React.ReactNode, launch?: React.ReactNode) => (
         <>
             {launch}
-            {opening ? <FirstOpenHost opening={opening} bootPending={launch !== undefined}>{content}</FirstOpenHost> : content}
+            {opening && OpeningHost ? (
+                <OpeningHost opening={opening} bootPending={launch !== undefined}>{content}</OpeningHost>
+            ) : opening ? (
+                <FirstOpenContentLayout.Provider value={recordStillLayout}>{content}</FirstOpenContentLayout.Provider>
+            ) : content}
         </>
     );
 
@@ -770,7 +778,7 @@ function AppBoot() {
 
     React.useEffect(() => {
         let cancelled = false;
-        let releaseOpening: (() => void) | undefined;
+        let openingBoot: ReturnType<typeof admitOpening>;
         const runBoot = nativeSecondaryWindow ? runDesktopAppWindowBootSequence : runAppBootSequence;
         void runBoot({
             context: isDesktopOverlayWindow ? 'presenter' : 'app',
@@ -800,7 +808,7 @@ function AppBoot() {
                     accountRestored,
                     desktopCandidate: candidate,
                 });
-                releaseOpening = admitOpening(decision);
+                openingBoot = admitOpening(decision);
                 if (candidate) {
                     void invokeDesktopHost('desktop_first_open_decide', { play: decision }).catch(() => {
                         // Native still shows main as soon as it has usable content.
@@ -808,6 +816,7 @@ function AppBoot() {
                 }
             },
             onReady: (state) => {
+                openingBoot?.ready();
                 if (!cancelled) setInitState(state);
             },
         }).catch((error: unknown) => {
@@ -817,7 +826,7 @@ function AppBoot() {
         });
         return () => {
             cancelled = true;
-            releaseOpening?.();
+            openingBoot?.release();
         };
     }, [admitOpening, isDesktopOverlayWindow, primaryRealm]);
 
@@ -970,7 +979,7 @@ function RootShellChromeFrame(props: React.PropsWithChildren<Readonly<{
     isTerminalConnectRoute: boolean;
 }>>) {
     const onContentLayout = useDesktopMainWindowContentReady();
-    const onFirstOpenContent = useFirstOpenContentLayout();
+    const onFirstOpenContent = React.useContext(FirstOpenContentLayout);
     const onLayout = React.useCallback((event: Parameters<typeof onContentLayout>[0]) => {
         const welcome = onFirstOpenContent?.(event);
         onContentLayout(event, welcome);

@@ -25,7 +25,6 @@ function renderPanel(variant: 'desktop' | 'mobile') {
             variant={variant}
             isWelcomeStep
             transitionKey="welcome"
-            transitionDirection="replace"
         >
             <WelcomeDecisionPanel
                 authEntryOptions={baseOptions}

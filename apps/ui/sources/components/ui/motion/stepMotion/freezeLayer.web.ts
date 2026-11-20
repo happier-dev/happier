@@ -1,6 +1,7 @@
 import { captureElementFlightRect } from '../rectFlight';
 import { findWebStepAnchor } from './capturePressedElement.web';
 import { paintQrInk, paintStepInk } from './paintStepInk.web';
+import { copyRegion, mountPaintCopy } from './stepPaintCopy';
 import type { StepAnchor, StepFreeze, StepGrid, StepMotionLayerHandle, StepWebLeaf } from './stepMotionTypes';
 
 const paintedContent = 'h1, h2, h3, [role="heading"], [role="button"], [role="link"], a, button, input, textarea, img, svg';
@@ -72,34 +73,6 @@ export function readWebFocalInk(focal: HTMLElement, rect: StepAnchor['rect']) {
     }
 }
 
-function freezeRegion(root: HTMLElement, rect: StepFreeze['rect']) {
-    const clone = root.cloneNode(true) as HTMLElement;
-    Object.assign(clone.style, {
-        position: 'fixed',
-        pointerEvents: 'none',
-        margin: '0',
-        inset: 'auto',
-        left: `${rect.x}px`,
-        top: `${rect.y}px`,
-        width: `${rect.width}px`,
-        height: `${rect.height}px`,
-    });
-    return clone;
-}
-
-function mountPaintCopy(regions: readonly HTMLElement[]) {
-    const capture = document.createElement('div');
-    Object.assign(capture.style, { position: 'fixed', inset: '0', pointerEvents: 'none', zIndex: '1000' });
-    capture.inert = true;
-    capture.setAttribute('aria-hidden', 'true');
-    capture.append(...regions);
-    for (const element of capture.querySelectorAll('[id], [data-testid], [autofocus], a[href], [name]')) {
-        for (const key of ['id', 'data-testid', 'autofocus', 'href', 'name']) element.removeAttribute(key);
-    }
-    document.body.append(capture);
-    return () => capture.remove();
-}
-
 export function freezeStepLayer(
     layer: StepMotionLayerHandle,
     grid: StepGrid,
@@ -111,14 +84,12 @@ export function freezeStepLayer(
     const rect = captureElementFlightRect(root);
     if (rect.width <= 0 || rect.height <= 0) return null;
     const { elements, leaves, ink } = readStepLeaves(root, grid);
-    // The copy is paint-only. Removing IDs also keeps the real destination the single owner of
-    // IDs referenced by labels, focus return, form submission and the app test harness.
-    const clone = freezeRegion(root, rect);
+    const clone = copyRegion(root, rect);
     const chrome = layer.webChrome?.() ?? [];
-    const webChrome = chrome.map(region => freezeRegion(region, captureElementFlightRect(region)));
+    const webChrome = chrome.map(region => copyRegion(region, captureElementFlightRect(region)));
     for (const { element, rect } of pressedChrome) {
         if (!chrome.some(region => region === element || region.dataset.testid === element.dataset.testid)) {
-            webChrome.push(freezeRegion(element, rect));
+            webChrome.push(copyRegion(element, rect));
         }
     }
     const testID = anchor?.testID;

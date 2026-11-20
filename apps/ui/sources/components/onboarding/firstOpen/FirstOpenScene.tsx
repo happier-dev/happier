@@ -5,6 +5,7 @@ import type { GlyphRect } from '@happier-dev/brand/glyph-scene';
 
 import { GlyphSurface, type GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/GlyphSurface';
 import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
+import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { playBuild, skipStepMotion, useOpeningBuildGlyphs } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useIsTablet } from '@/utils/platform/responsive';
 
@@ -56,8 +57,11 @@ export function FirstOpenScene(props: Readonly<{
         warmWhenHidden warmup={props.warmup} style={StyleSheet.absoluteFillObject} testID="first-open.scene" />;
 }
 
-export function buildFirstOpenDestination(epoch: number) {
-    return playBuild({ layer: 'workflow', choreography: 'opening', epoch, leadSeconds: openingClimbSeconds });
+export function buildFirstOpenDestination(epoch: number, options?: Readonly<{ interactive: boolean }>) {
+    return playBuild({
+        layer: FIRST_RUN_WORKFLOW_LAYER, choreography: 'opening', epoch,
+        leadSeconds: openingClimbSeconds, interactive: options?.interactive,
+    });
 }
 
 export { skipStepMotion as skipFirstOpenDestination };

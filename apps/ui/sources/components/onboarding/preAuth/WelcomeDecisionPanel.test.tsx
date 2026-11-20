@@ -918,6 +918,36 @@ describe('WelcomeDecisionPanel', () => {
         expect(screen.findAllByTestId('welcome-account-service-loading')).toHaveLength(0);
     });
 
+    it('keeps only available ways in while the first catalog is loading', async () => {
+        const { screenPromise } = renderPanel({ requestedHomeTarget: undefined, serverAvailability: 'loading' }, {
+            effectiveSignInService: { kind: 'no_target_default', endpoint: 'https://api.happier.dev' },
+            endpoint: { url: 'https://api.happier.dev', source: 'default' },
+            status: 'loading',
+            discovery: null,
+            transport: {},
+            retry: vi.fn(),
+        });
+        const screen = await screenPromise;
+
+        expect(screen.findByTestId('welcome-account-service-loading')).toBeTruthy();
+        expect(screen.findByTestId('welcome-account-service-choose')).toBeNull();
+        expect(screen.findByTestId('welcome-primary-start')).toBeNull();
+        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-primary-door-pending')).toBeTruthy();
+    });
+
+    it('holds the primary door in place while the Home catalog loads instead of showing a dead-end door', async () => {
+        const { screenPromise } = renderPanel({ serverAvailability: 'loading', showAuthActions: false, authenticationActions: [] });
+        const screen = await screenPromise;
+
+        expect(screen.findByTestId('welcome-auth-loading')).toBeTruthy();
+        expect(screen.findByTestId('welcome-primary-door-pending')).toBeTruthy();
+        expect(screen.findByTestId('welcome-account-service-choose')).toBeNull();
+        expect(screen.findByTestId('welcome-use-different-home')).toBeNull();
+        expect(screen.findByTestId('welcome-primary-start')).toBeNull();
+        expect(screen.getTextContent()).toContain(t('welcome.welcomeSecondaryButton'));
+    });
+
     it('keeps Home authentication usable when the optional service is unsupported', async () => {
         const retry = vi.fn();
         const { callbacks, screenPromise } = renderPanel({}, {

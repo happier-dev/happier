@@ -134,12 +134,15 @@ it('commits the new step immediately, ignores the previous pointer release, and 
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     const previousMatchMedia = window.matchMedia;
     window.matchMedia = vi.fn(() => Object.assign(new EventTarget(), { matches: true, media: '(prefers-reduced-motion: reduce)' }));
+    setReducedMotionPreferenceOverride(true);
     const previousAnimate = HTMLElement.prototype.animate;
     const cancel = vi.fn();
     const animate = vi.fn(function (this: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions) {
         return { element: this, frames, timing, onfinish: null, cancel };
     });
     Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
+    // jsdom lays nothing out; the departing step needs a box to be painted over the next one.
+    const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 400, 300));
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
@@ -189,7 +192,14 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         expect(body?.element.contains(find('next'))).toBe(true);
         expect(body?.frames[1]?.opacity).toBe(0);
         expect(body?.frames.at(-1)?.opacity).toBe(1);
-        expect(document.querySelector('[inert]')).toBeNull();
+        // The fallback crosses the two steps: the departing step stays painted and fades while the next one rises.
+        const paintCopies = () => [...document.querySelectorAll<HTMLElement>('body > [aria-hidden="true"]')].filter(node => node.inert);
+        const copy = paintCopies()[0];
+        expect(copy?.textContent).toContain('Approve');
+        const leave = animate.mock.results.map(result => result.value).find(effect => copy?.contains(effect.element));
+        expect(leave?.frames.at(0)).toMatchObject({ opacity: 1 });
+        expect(leave?.frames.at(-1)).toMatchObject({ opacity: 0 });
+        expect(leave?.timing.duration).toBe(entrance?.timing.duration);
         click(find('next'), 2);
         expect(destinationClick).not.toHaveBeenCalled();
         expect(motionEnd).not.toHaveBeenCalled();
@@ -204,7 +214,8 @@ it('commits the new step immediately, ignores the previous pointer release, and 
 
         pointerDown(find('next'), 3);
         click(find('next'), 3);
-        expect(cancel).toHaveBeenCalledTimes(2);
+        expect(cancel).toHaveBeenCalledTimes(3);
+        expect(paintCopies()).toEqual([]);
         expect(destinationClick).toHaveBeenCalledOnce();
         expect(motionEnd).toHaveBeenCalledExactlyOnceWith('skipped');
         await act(async () => container.querySelector('button')!.click());
@@ -213,6 +224,8 @@ it('commits the new step immediately, ignores the previous pointer release, and 
         await act(async () => root.unmount());
         container.remove();
         window.matchMedia = previousMatchMedia;
+        setReducedMotionPreferenceOverride(null);
+        bounds.mockRestore();
         Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: previousAnimate });
         vi.unstubAllGlobals();
     }

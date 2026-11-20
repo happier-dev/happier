@@ -1,10 +1,11 @@
 import { HAPPIER_BALANCED_TEXT_WRAP, HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { StepTransitionFrame } from '@/components/ui/motion/StepTransitionFrame';
+import { StepMotionLayer, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -12,6 +13,7 @@ import { STEP_DOOR_WIDTH_PX, StepOrDivider } from '@/components/onboarding/unaut
 import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
 import { useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
 import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
 import { t } from '@/text';
 
 import { WelcomeActionCard, WelcomeWayButton } from './WelcomeActionCard';
@@ -75,53 +77,54 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     const loadingInRetentionSlot = Boolean(model.trust);
     const quietLoading = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind === 'loading') : [];
     const slotNotices = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind !== 'loading') : model.notices;
-    const [noticeSlotHeight, setNoticeSlotHeight] = React.useState(0);
-    const onNoticeSlotLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const height = Math.ceil(event.nativeEvent.layout.height);
-        setNoticeSlotHeight((current) => (height > current ? height : current));
-    }, []);
-    const renderNotice = (notice: WelcomeEntryViewModel['notices'][number]) => (
-        <WelcomeNotice key={notice.slot} notice={notice} onAction={interaction?.onNoticeAction} />
-    );
+    const noticeAction = interaction?.onNoticeAction;
+    // The notices stand above the doors without taking layout from them: the doors never move when a notice arrives,
+    // is replaced or leaves, and the lines above lift by the notices' height instead (lab: the column grows upward).
+    // Without lines above to lift (the restore ways under Approve), notices stay in flow.
+    const anchoredNotices = model.heading != null || model.doors.length > 0;
+    const [noticeLift, setNoticeLift] = React.useState(0);
+    const lift = anchoredNotices ? noticeLift : 0;
     return (
         <View testID="welcome-decision-panel" style={[styles.root, compact ? styles.rootCompact : null]}
             pointerEvents={interaction ? 'auto' : 'none'} accessibilityElementsHidden={!interaction}
             aria-hidden={!interaction}
             importantForAccessibility={interaction ? 'auto' : 'no-hide-descendants'}>
-            {model.heading ? <View style={styles.headingBlock}>
-                <Text accessibilityRole="header" style={[styles.title, compact ? styles.headlineCompact : null]}>
-                    {compact && model.heading.compact ? model.heading.compact.title : model.heading.title}
-                </Text>
-                <Text accessibilityRole="header" style={[styles.subtitleTitle, compact ? styles.headlineCompact : null]}>
-                    {compact && model.heading.compact ? model.heading.compact.subtitle : model.heading.subtitle}
-                </Text>
-                {model.heading.intro ? (
-                    <Text testID="welcome-intro" style={[styles.intro, compact ? styles.introCompact : null]}>
-                        {model.heading.intro}
+            {model.heading || model.policy ? <View style={[styles.aboveDoors, compact ? styles.aboveDoorsCompact : null,
+                lift > 0 ? { transform: [{ translateY: -lift }] } : null]}>
+                {model.heading ? <View style={styles.headingBlock}>
+                    {model.context ? <View style={styles.context}>
+                        <HomeContextLine testID="welcome-home-context" label={model.context.label} />
+                    </View> : null}
+                    <Text accessibilityRole="header" style={[styles.title, compact ? styles.headlineCompact : null]}>
+                        {compact && model.heading.compact ? model.heading.compact.title : model.heading.title}
                     </Text>
-                ) : null}
+                    <Text accessibilityRole="header" style={[styles.subtitleTitle, compact ? styles.headlineCompact : null]}>
+                        {compact && model.heading.compact ? model.heading.compact.subtitle : model.heading.subtitle}
+                    </Text>
+                    {model.heading.intro ? (
+                        <Text testID="welcome-intro" style={[styles.intro, compact ? styles.introCompact : null]}>
+                            {model.heading.intro}
+                        </Text>
+                    ) : null}
+                </View> : null}
+                {model.policy?.kind === 'managed' ? <OrganizationPolicyManagedLine display={model.policy.display}
+                    testID={`organization-policy-${model.policy.field}`} supportUrl={interaction?.policySupportUrl} /> :
+                    model.policy?.kind === 'invalid' ? <OrganizationPolicyInvalidHelp interactive={Boolean(interaction)} /> : null}
             </View> : null}
-            {model.policy?.kind === 'managed' ? <OrganizationPolicyManagedLine display={model.policy.display}
-                testID={`organization-policy-${model.policy.field}`} supportUrl={interaction?.policySupportUrl} /> :
-                model.policy?.kind === 'invalid' ? <OrganizationPolicyInvalidHelp interactive={Boolean(interaction)} /> : null}
-            {model.signupNotice ? (
-                <View style={styles.signupDisabledNotice}>
-                    <SurfaceStateCard testID="welcome-signup-disabled" size="line" lineLayout="notice" kind="unavailable"
-                        title={model.signupNotice} accessibilitySemantics="status" />
-                </View>
-            ) : null}
             <WelcomeActionList admission={interaction?.admission ?? inertAdmission}>
                 <View style={styles.actionStack}>
-                    {/* The notices' slot keeps the tallest height it has held, so a notice that settles or arrives later
-                        never moves the doors (plan 03 "Door-width notice"). */}
-                    {slotNotices.length > 0 || noticeSlotHeight > 0 ? (
-                        <View testID="welcome-notice-slot" style={[styles.noticeSlot, { minHeight: noticeSlotHeight }]}
-                            onLayout={onNoticeSlotLayout}>
-                            {slotNotices.map(renderNotice)}
-                        </View>
+                    {!anchoredNotices && slotNotices.length > 0 ? (
+                        <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction} />
                     ) : null}
                     <View style={styles.ways}>
-                        <View style={styles.doors}>{model.doors.map(renderAction)}</View>
+                        {anchoredNotices ? (
+                            <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction}
+                                onHeight={setNoticeLift} />
+                        ) : null}
+                        <View testID="welcome-doors" style={styles.doors}>
+                            {model.primaryDoorPending ? <PendingPrimaryDoor /> : null}
+                            {model.doors.map(renderAction)}
+                        </View>
                         {hasWays ? (
                             // The ways row (owner 2026-11-19): a centred "or", then round marks without captions.
                             <View testID="welcome-quiet-ways" style={styles.quietWays}>
@@ -137,7 +140,9 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                         <View style={styles.trust}>
                             <Text testID="welcome-trust" style={styles.trustText}>{model.trust}</Text>
                             <View style={styles.retention}>
-                                {quietLoading.length > 0 ? quietLoading.map(renderNotice) : model.retention && !retentionInCorner ? (
+                                {quietLoading.length > 0 ? (
+                                    <WelcomeNotices layer="welcome-loading" notices={quietLoading} onAction={noticeAction} />
+                                ) : model.retention && !retentionInCorner ? (
                                     <RelayRetentionDisclosure testID="welcome-retention"
                                         disclosure={{ ...model.retention, retry: interaction?.onRetryRetention }} />
                                 ) : null}
@@ -150,12 +155,66 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                                 onPress={interaction?.onSelfHosting ?? noAction} />
                         </View>
                     ) : null}
-                    {model.closingNotice ? renderNotice(model.closingNotice) : null}
+                    {model.closingNotice ? (
+                        <WelcomeNotices layer="welcome-closing-notice" notices={[model.closingNotice]} onAction={noticeAction} />
+                    ) : null}
                 </View>
             </WelcomeActionList>
         </View>
     );
 });
+
+/** Holds the primary door's box, unseen, so the doors below it never move when the catalog settles. */
+function PendingPrimaryDoor() {
+    return (
+        <View testID="welcome-primary-door-pending" style={stylesheet.pendingDoor} pointerEvents="none"
+            aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+            <WelcomeActionCard actionId="welcome-primary-door-pending" testID="welcome-primary-door-pending-card"
+                title={t('welcome.welcomePrimaryButton')} subtitle={t('welcome.welcomePrimarySubtitle')} primary disabled
+                onPress={noAction} />
+        </View>
+    );
+}
+
+function WelcomeNotices({ layer, notices, onAction, onHeight }: Readonly<{
+    layer: string;
+    notices: WelcomeEntryViewModel['notices'];
+    onAction?: (testID: string) => void;
+    /** Anchors the notices above the doors and reports the height the lines above give way by. */
+    onHeight?: (height: number) => void;
+}>) {
+    const firstRun = useFirstRunWorkflowMotion();
+    const animate = firstRun && onAction != null;
+    const key = JSON.stringify(notices);
+    const [shown, setShown] = React.useState(() => ({ key, notices }));
+    React.useLayoutEffect(() => {
+        if (!animate || shown.key === key) return;
+        runStepMove({ layer, kind: 'notice', commit: () => setShown({ key, notices }) });
+    }, [animate, key, layer, notices, shown.key]);
+    const visible = animate ? shown.notices : notices;
+    const box = React.useRef<View>(null);
+    const empty = visible.length === 0;
+    const report = React.useCallback((height: number) => onHeight?.(empty ? 0 : Math.ceil(height)), [empty, onHeight]);
+    React.useLayoutEffect(() => {
+        // Web measures before paint, so the lines above never overlap a newly arrived notice for a frame.
+        const node = box.current as unknown as { getBoundingClientRect?: () => { height: number } } | null;
+        if (Platform.OS === 'web' && node?.getBoundingClientRect) report(node.getBoundingClientRect().height);
+    }, [report, shown.key, key]);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => report(event.nativeEvent.layout.height), [report]);
+    const layerElement = (
+        <StepMotionLayer layerKey={layer} stepKey={animate ? shown.key : undefined} active={animate}
+            warmOnMount={false} retainContent style={stylesheet.noticeLines}>
+            {visible.map(notice => <WelcomeNotice key={notice.slot} notice={notice} onAction={onAction} />)}
+        </StepMotionLayer>
+    );
+    if (!onHeight) return layerElement;
+    return (
+        <View ref={box} testID="welcome-notice-slot" onLayout={onLayout}
+            style={[stylesheet.noticeAnchor, empty ? null : stylesheet.noticeAnchorFilled]}>
+            {layerElement}
+        </View>
+    );
+}
 
 function WelcomeNotice({ notice, onAction }: Readonly<{
     notice: WelcomeEntryViewModel['notices'][number];
@@ -164,22 +223,20 @@ function WelcomeNotice({ notice, onAction }: Readonly<{
     const { action } = notice;
     return (
         <HappierBodyEdgeContext.Provider value>
-            <StepTransitionFrame transitionKey={notice.testID} direction="replace" notice>
-                <SurfaceStateCard
-                    testID={notice.testID}
-                    size="line"
-                    lineLayout="notice"
-                    kind={notice.kind}
-                    title={notice.title}
-                    reason={notice.reason}
-                    accessibilitySemantics="status"
-                    actionGlyph={action?.glyph}
-                    action={action ? {
-                        testID: action.testID, label: action.label, disabled: !onAction,
-                        onPress: onAction ? () => onAction(action.testID) : noAction,
-                    } : undefined}
-                />
-            </StepTransitionFrame>
+            <SurfaceStateCard
+                testID={notice.testID}
+                size="line"
+                lineLayout="notice"
+                kind={notice.kind}
+                title={notice.title}
+                reason={notice.reason}
+                accessibilitySemantics="status"
+                actionGlyph={action?.glyph}
+                action={action ? {
+                    testID: action.testID, label: action.label, disabled: !onAction,
+                    onPress: onAction ? () => onAction(action.testID) : noAction,
+                } : undefined}
+            />
         </HappierBodyEdgeContext.Provider>
     );
 }
@@ -197,6 +254,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     rootCompact: {
         gap: theme.space.s16,
+    },
+    context: {
+        marginBottom: theme.space.s12,
     },
     headingBlock: {
         alignItems: 'center',
@@ -232,10 +292,30 @@ const stylesheet = StyleSheet.create((theme) => ({
         maxWidth: STEP_DOOR_WIDTH_PX,
         alignSelf: 'center',
     },
-    noticeSlot: {
-        width: '100%',
+    // The heading block and any policy line, lifted together when a notice stands above the doors.
+    aboveDoors: {
+        alignSelf: 'stretch',
+        alignItems: 'center',
+        gap: theme.space.s24,
+    },
+    aboveDoorsCompact: {
+        gap: theme.space.s16,
+    },
+    // Out of the doors' layout: it stands on the doors' top edge and grows upward.
+    noticeAnchor: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: '100%',
+    },
+    noticeAnchorFilled: {
+        paddingBottom: theme.space.s12,
+    },
+    noticeLines: {
         gap: theme.space.s12,
-        justifyContent: 'flex-end',
+    },
+    pendingDoor: {
+        opacity: 0,
     },
     ways: {
         width: '100%',
@@ -298,11 +378,5 @@ const stylesheet = StyleSheet.create((theme) => ({
         // The gap above plus two body lines.
         minHeight: 56,
         paddingTop: theme.space.s16,
-    },
-    // At the doors' width, like every welcome notice.
-    signupDisabledNotice: {
-        width: '100%',
-        maxWidth: STEP_DOOR_WIDTH_PX,
-        alignSelf: 'center',
     },
 }));

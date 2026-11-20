@@ -1,5 +1,6 @@
 import { expect, test, type Page, type Request } from '@playwright/test';
 
+import { ensureQaUiUrlHasHmrDisabled, resolveQaUiUrl } from '../../../../scripts/qa/resolveQaUiUrl.mjs';
 import { resolveTestDbProvider, startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -18,14 +19,31 @@ test.use({
     ...secretBearingBrowserCapturePolicy,
     storageState: { cookies: [], origins: [] },
     viewport: { width: 1440, height: 900 },
+    launchOptions: { args: ['--enable-unsafe-swiftshader'] },
 });
 test.describe.configure({ timeout: 120_000 });
 
 let server: StartedServer | undefined;
 let ui: StartedUiWeb | undefined;
 let uiBaseUrl: string;
+const liveStack = Boolean(process.env.HAPPIER_QA_STACK_RUNTIME_JSON_PATH);
 
 test.beforeAll(async () => {
+    if (liveStack) {
+        uiBaseUrl = ensureQaUiUrlHasHmrDisabled(resolveQaUiUrl());
+        const serverUrl = new URL(uiBaseUrl).searchParams.get('server');
+        if (!serverUrl) throw new Error('First-open QA requires a running Expo web and Home server');
+        const response = await fetch(new URL('/v1/features', serverUrl));
+        const features = await response.json();
+        const advertised = features.capabilities?.server;
+        if (advertised?.canonicalServerUrl) {
+            const url = new URL(uiBaseUrl);
+            url.searchParams.set('server', advertised.canonicalServerUrl);
+            uiBaseUrl = url.href;
+        }
+        console.log('First-open Home', response.status, advertised?.webappUrl);
+        return;
+    }
     test.setTimeout(resolveUiWebBeforeAllTimeoutMs(uiEnv));
     server = await startServerLight({
         testDir,
@@ -53,7 +71,18 @@ test.afterAll(async () => {
 });
 
 async function openApp(page: Page, path = '/') {
-    await gotoCommittedWithRetries(page, new URL(path, uiBaseUrl).href);
+    const url = new URL(path, uiBaseUrl);
+    if (liveStack) {
+        for (const [key, value] of new URL(uiBaseUrl).searchParams) {
+            if (!url.searchParams.has(key)) url.searchParams.set(key, value);
+        }
+        page.on('response', response => {
+            if (new URL(response.url()).pathname.endsWith('/index.ts.bundle')) {
+                console.log('First-open bundle', response.status(), response.url());
+            }
+        });
+    }
+    await gotoCommittedWithRetries(page, url.href);
 }
 
 async function expectHome(page: Page) {
@@ -136,6 +165,20 @@ test('firstOpen.02.F2 and firstOpen.02.F3 remember a first open across a second 
     await expect(welcome).toBeVisible({ timeout: 60_000 });
     expect(await readOpeningMarker(page)).toBe(firstOpenedAt);
     expect(await sceneMounted()).toBe(false);
+    if (liveStack) {
+        // Metro can register an async factory before any caller evaluates it.
+        const openingModules = await page.evaluate(() => {
+            const metro = (globalThis as typeof globalThis & {
+                __r?: { getModules?: () => Map<number, { verboseName?: string; isInitialized?: boolean }> };
+            }).__r;
+            const modules = metro?.getModules?.();
+            if (!modules?.size) throw new Error('The repo-dev Metro module registry is unavailable');
+            return Array.from(modules.values())
+                .filter(module => module.isInitialized && /\/firstOpen\/FirstOpen(?:Host|Scene)\.tsx$/.test(module.verboseName ?? ''))
+                .map(module => module.verboseName);
+        });
+        expect(openingModules).toEqual([]);
+    }
 });
 
 test('firstOpen.02.F5 opens a usable welcome in the Still form with system reduced motion', async ({ page }) => {
@@ -164,6 +207,41 @@ test('firstOpen.02.F4 skips a playing opening with Escape and lands focus in wel
     await expect(welcome.getByTestId('welcome-primary-start')).toBeVisible();
     await expect(welcome.getByRole('heading').first()).toBeFocused();
     await expect.poll(() => page.evaluate(() => performance.getEntriesByName('first_open:destination-handoff').length)).toBe(1);
+});
+
+test('firstOpen.04.F6 samples the opening aperture on the live Welcome stage', async ({ page }) => {
+    test.skip(!liveStack, 'The stage probe uses the repo-dev Metro registry');
+    await openApp(page);
+    const login = page.getByTestId('welcome-scan-existing-home');
+    await expect(login).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('first-open.scene')).toHaveCount(0, { timeout: 15_000 });
+    await page.evaluate(() => {
+        const metro = (globalThis as typeof globalThis & {
+            __r?: { getModules?: () => Map<number, {
+                verboseName?: string;
+                publicModule?: { exports?: { playBuild?: (config: object) => Promise<unknown> } };
+            }> };
+        }).__r;
+        const modules = metro?.getModules?.();
+        const stage = Array.from(modules?.values() ?? []).find(module => module.verboseName?.endsWith('/StepMotionStage.tsx'));
+        const build = stage?.publicModule?.exports?.playBuild;
+        if (!build) throw new Error('The real workflow stage is unavailable');
+        void build({ layer: 'workflow', choreography: 'opening', interactive: true });
+    });
+    const result = await page.waitForFunction(() => {
+        const welcome = document.querySelector('[data-testid="welcome-decision-panel"]');
+        const login = welcome?.querySelector('[data-testid="welcome-scan-existing-home"]');
+        if (!welcome || !login) return false;
+        const effects = welcome.getAnimations({ subtree: true });
+        const opacity = Number(getComputedStyle(login).opacity);
+        if (effects.length === 0 || opacity <= 0 || opacity >= 1) return false;
+        login.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 1 }));
+        const keptBuilding = effects.every(effect => effect.playState === 'running');
+        login.dispatchEvent(new PointerEvent('click', { bubbles: true, cancelable: true, detail: 1, pointerId: 1 }));
+        return { keptBuilding };
+    });
+    expect(await result.jsonValue()).toEqual({ keptBuilding: true });
+    await expect(page.getByTestId('restore-requester-qr').or(page.getByTestId('restore-sign-in-ways')).first()).toBeVisible();
 });
 
 test('firstOpen.F1.newHere | firstOpen.03.F1 provisions one Account and reaches Home in one tap', async ({ page }) => {
@@ -441,51 +519,169 @@ test('firstOpen.02.F6 | firstOpen.03.F12 | firstOpen.F12.inviteOutcomes remember
     await expect(page.getByTestId('welcome-decision-panel')).toBeVisible();
 });
 
-test('firstOpen.F15.notices keeps Login available during a Home outage and retries discovery once', async ({ page }) => {
-    let homeAvailable = false;
+test('firstOpen.F15.notices keeps Login fixed through notice arrival, replacement and retry', async ({ page }) => {
+    let response: 'outage' | 'incompatible' | 'available' = 'outage';
+    let releaseDiscovery = () => {};
+    let discoveryPending = new Promise<void>(resolve => { releaseDiscovery = resolve; });
     const discovery = /^https?:\/\/[^/]+\/v1\/(features|auth\/entry)(\?.*)?$/;
     await page.route(discovery, async route => {
-        if (homeAvailable) await route.continue();
-        else await route.abort('connectionrefused');
+        await discoveryPending;
+        if (response === 'outage') await route.abort('connectionrefused');
+        else if (response === 'incompatible' && route.request().method() === 'GET') {
+            await route.fulfill({ json: { features: null }, headers: { 'access-control-allow-origin': '*' } });
+        } else await route.continue();
     });
     const features = countRequests(page, '/v1/features', 'GET');
     const entry = countRequests(page, '/v1/auth/entry', 'POST');
     try {
+        await page.emulateMedia({ reducedMotion: 'reduce' });
         await openApp(page);
         const welcome = page.getByTestId('welcome-decision-panel').and(page.locator(':not([aria-hidden="true"])'));
         const notice = welcome.getByTestId('welcome-auth-blocked');
         const login = welcome.getByTestId('welcome-scan-existing-home');
+        await expect(login).toBeVisible({ timeout: 60_000 });
+        // While the Home's ways in load, the welcome holds the primary door's place and offers no dead-end door.
+        const pendingDoor = welcome.getByTestId('welcome-primary-door-pending');
+        await expect(pendingDoor).toHaveCount(1);
+        await expect(welcome.getByTestId('welcome-account-service-choose')).toHaveCount(0);
+        releaseDiscovery();
+        // An unreachable Home settles into its own ways (a truthful change of form); from here the notice changes alone.
         await expect(notice).toBeVisible({ timeout: 60_000 });
-        await expect(login).toBeVisible();
+        await login.focus();
+        const door = await login.boundingBox();
 
         const before = { features: features.value(), entry: entry.value() };
-        homeAvailable = true;
-        await welcome.getByTestId('welcome-auth-blocked-retry').press('Enter');
+        const firstNotice = await notice.innerText();
+        const firstNoticeBox = await notice.boundingBox();
+        expect(firstNoticeBox).not.toBeNull();
+        const retry = welcome.getByTestId('welcome-auth-blocked-retry');
+        response = 'incompatible';
+        discoveryPending = new Promise<void>(resolve => { releaseDiscovery = resolve; });
+        await retry.press('Enter');
+        await login.focus();
+        // Give the replacement the space a longer translation needs, regardless of the runner fonts.
+        await page.addStyleTag({ content: `[data-testid="welcome-auth-blocked"] { min-height: ${(firstNoticeBox?.height ?? 0) + 48}px; }` });
+        releaseDiscovery();
+        await expect.poll(() => notice.innerText()).not.toBe(firstNotice);
+        expect((await notice.boundingBox())?.height).toBeGreaterThan(firstNoticeBox?.height ?? 0);
+        await expect(login).toBeFocused();
+        expect(await login.boundingBox()).toEqual(door);
+        expect(features.value() - before.features).toBe(1);
+        expect(entry.value() - before.entry).toBe(1);
+
+        response = 'available';
+        await retry.press('Enter');
         await expect(welcome.getByTestId('welcome-primary-start')).toBeVisible();
         await expect(notice).toBeHidden();
         await expect(login).toBeVisible();
-        expect(features.value() - before.features).toBe(1);
-        expect(entry.value() - before.entry).toBe(1);
+        expect(features.value() - before.features).toBe(2);
+        expect(entry.value() - before.entry).toBe(2);
     } finally {
+        releaseDiscovery();
         features.stop();
         entry.stop();
     }
 });
+
+// Samples every painted frame of a Welcome step move: the departing heading (live or its paint copy) and the
+// arriving step's heading. A string keeps the transpiler's helper names out of the page.
+const welcomeMoveSampler = `(() => {
+    const frames = [];
+    const opacity = (element) => {
+        if (!element || !element.getBoundingClientRect().width) return 0;
+        let value = 1;
+        for (let node = element; node; node = node.parentElement) {
+            const style = getComputedStyle(node);
+            if (style.visibility === 'hidden') return 0;
+            value *= Number(style.opacity);
+        }
+        return value;
+    };
+    const state = { frame: 0, frames };
+    const tick = (at) => {
+        const live = document.querySelector('[data-testid="welcome-decision-panel"] [role="heading"]');
+        const copy = document.querySelector('body > [inert][aria-hidden="true"] [role="heading"]');
+        const incoming = Array.from(document.querySelectorAll('[role="heading"]'))
+            .find(element => !element.closest('[data-testid="welcome-decision-panel"]') && !element.closest('body > [inert]'));
+        frames.push({ at, outgoing: Math.max(opacity(live), opacity(copy)), incoming: opacity(incoming ?? null) });
+        state.frame = requestAnimationFrame(tick);
+    };
+    state.frame = requestAnimationFrame(tick);
+    return state;
+})()`;
+
+async function sampleWelcomeMove(page: Page) {
+    const probe = await page.evaluateHandle(welcomeMoveSampler);
+    return async () => {
+        const frames = await probe.evaluate((state: { frame: number; frames: Array<{ at: number; outgoing: number; incoming: number }> }) => {
+            cancelAnimationFrame(state.frame);
+            return state.frames;
+        });
+        await probe.dispose();
+        expect(frames.some(frame => frame.outgoing > 0)).toBe(true);
+        expect(frames.some(frame => frame.incoming > 0)).toBe(true);
+        // One continuous move: no painted frame shows neither step.
+        expect(frames.filter(frame => frame.outgoing === 0 && frame.incoming === 0)).toEqual([]);
+    };
+}
 
 test('firstOpen.04.F1 and firstOpen.04.F2 keep a double-click on the Approve step and return focus on Back', async ({ page }) => {
     await openApp(page);
     await waitForWelcomeMethods(page);
     const login = page.getByTestId('welcome-scan-existing-home');
     await expect(login).toBeVisible({ timeout: 60_000 });
-    await login.dblclick();
-    const qr = page.getByTestId('restore-requester-qr');
-    await expect(qr).toBeVisible();
-    const destination = qr.or(page.getByTestId('onboarding-wizard-bare-title'));
-    const focused = page.locator(':focus').and(destination);
-    await expect(focused, 'the incoming Approve heading or QR receives focus').toHaveCount(1);
-    await page.getByTestId('unauth-shell-back-chevron').click();
-    await expect(login).toBeFocused();
-    await expect(qr).toBeHidden();
+    const qrRequest = '**/v2/auth/account/request';
+    let releaseRegistration = () => {};
+    const registrationPending = new Promise<void>(resolve => { releaseRegistration = resolve; });
+    const starts = countRequests(page, '/v2/auth/account/request', 'POST');
+    await page.route(qrRequest, async route => {
+        await registrationPending;
+        await route.continue();
+    });
+    const captures = await page.evaluateHandle(() => {
+        const count = { freezes: 0 };
+        const observer = new MutationObserver(records => {
+            for (const record of records) {
+                for (const node of record.addedNodes) {
+                    if (node instanceof HTMLElement && node.inert && node.getAttribute('aria-hidden') === 'true') {
+                        count.freezes++;
+                    }
+                }
+            }
+        });
+        observer.observe(document.body, { childList: true });
+        return { count, observer };
+    });
+    const checkContinuity = await sampleWelcomeMove(page);
+    try {
+        await login.dblclick();
+        const pendingQr = page.getByTestId('restore-requester-qr-pending');
+        const qr = page.getByTestId('restore-requester-qr');
+        await expect(pendingQr).toBeVisible();
+        await expect(qr).toBeHidden();
+        const destination = pendingQr.or(page.getByTestId('onboarding-wizard-bare-title'));
+        await expect(page.locator(':focus').and(destination)).toHaveCount(1);
+        await expect.poll(starts.value).toBe(1);
+        releaseRegistration();
+        await expect(qr).toBeFocused();
+        expect(starts.value()).toBe(1);
+        expect(await captures.evaluate(probe => probe.count.freezes)).toBe(1);
+        await checkContinuity();
+        // Settled: no retained paint copy.
+        await expect(page.locator('body > [inert][aria-hidden="true"]')).toHaveCount(0);
+
+        await page.getByTestId('unauth-shell-back-chevron').click();
+        await expect(login).toBeFocused();
+        await expect(qr).toBeHidden();
+        await expect(page.getByTestId('step-motion-glyphs')).toHaveCount(0);
+        await expect(page.locator('body > [inert][aria-hidden="true"]')).toHaveCount(0);
+    } finally {
+        await captures.evaluate(probe => probe.observer.disconnect());
+        await captures.dispose();
+        releaseRegistration();
+        starts.stop();
+        await page.unroute(qrRequest);
+    }
 });
 
 test('firstOpen.04.F7 keeps Back usable and returns focus under the system reduced-motion preference', async ({ page }) => {
@@ -493,9 +689,11 @@ test('firstOpen.04.F7 keeps Back usable and returns focus under the system reduc
     await openApp(page);
     await waitForWelcomeMethods(page);
     const login = page.getByTestId('welcome-scan-existing-home');
+    const checkContinuity = await sampleWelcomeMove(page);
     await login.press('Enter');
     const qr = page.getByTestId('restore-requester-qr');
     await expect(qr.or(page.getByTestId('restore-sign-in-ways')).first()).toBeVisible();
+    await checkContinuity();
     await page.getByTestId('unauth-shell-back-chevron').click();
     await expect(login).toBeVisible();
 

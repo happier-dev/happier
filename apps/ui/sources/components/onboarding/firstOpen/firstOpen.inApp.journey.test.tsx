@@ -7,16 +7,16 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { expect, it, vi } from 'vitest';
 
 import { runAppBootSequence } from '@/boot/runAppBootSequence';
-import { WelcomeEntryView } from '@/components/onboarding/preAuth/WelcomeEntryView';
-import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell/UnauthenticatedRouteShell';
+import { WelcomeDecisionPanel } from '@/components/onboarding/preAuth/WelcomeDecisionPanel';
 import { UnauthenticatedSplitShell } from '@/components/onboarding/unauthShell/UnauthenticatedSplitShell';
 import { StepMotionStage, useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { onboardingAuthHistoryState, onboardingHistoryState, readOpeningSeenAt } from '@/sync/domains/state/onboardingUiState';
 
-import { FirstOpenHost, useFirstOpenContentLayout } from './FirstOpenHost';
+import { FirstOpenContentLayout } from './FirstOpenWelcomeModelContext';
 import { installFirstOpenWebGraphics } from './firstOpenWebGraphics.fixture';
+import { openingClimbSeconds } from './openingTimeline';
 import { resolveFirstOpen } from './resolveFirstOpen';
 import { useFirstOpenBoot } from './useFirstOpenBoot';
 
@@ -29,10 +29,12 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 it.each([
-    { name: 'Welcome', segments: ['(app)', 'index'], width: 1440, canPaint: true },
-    { name: 'Team sign-in', segments: ['(app)', 'teams', '[teamId]', 'sign-in'], width: 390, canPaint: true },
-    { name: 'Welcome', segments: ['(app)', 'index'], width: 390, canPaint: false },
-])('first layout builds $name only when the boot renderer can paint ($canPaint)', async ({ name, segments, width, canPaint }) => {
+    { width: 1440, canPaint: true, input: 'built' },
+    { width: 390, canPaint: true, input: 'unbuilt' },
+    { width: 390, canPaint: true, input: 'Escape' },
+    { width: 390, canPaint: false, input: 'Still' },
+])('first Welcome layout accepts $input input (renderer ready: $canPaint)', async ({ width, canPaint, input }) => {
+    const segments = ['(app)', 'index'];
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     replacePersistentUiStateForTest(onboardingHistoryState, {});
@@ -48,27 +50,27 @@ it.each([
     const originalAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
     Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: animate });
     const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
-        .mockReturnValue(new DOMRect(0, 0, width, 844));
+        .mockImplementation(function (this: HTMLElement) {
+            if (this.dataset.testid === 'welcome-scan-existing-home') return new DOMRect(40, 660, 290, 50);
+            if (this.dataset.testid === 'welcome-create-personal-home') return new DOMRect(40, 220, 290, 50);
+            return new DOMRect(0, 0, width, 844);
+        });
+    const clock = vi.spyOn(performance, 'now');
     let commitLayout = () => { throw new Error('The destination has not mounted'); };
     let readBuildReady = () => false;
     function Destination() {
-        const layout = useFirstOpenContentLayout();
+        const layout = React.useContext(FirstOpenContentLayout);
         const stage = useStepMotionStage();
         commitLayout = () => { layout?.({ nativeEvent: { layout: frame } } as Parameters<NonNullable<typeof layout>>[0]); };
         readBuildReady = () => stage?.isBuildReady() ?? false;
-        return name === 'Welcome' ? <UnauthenticatedSplitShell stepId="welcome" isWelcomeStep>
-            <WelcomeEntryView model={{
-                heading: { title: 'Welcome', subtitle: 'Set up Happier' },
-                doors: [{ index: 0, display: { title: 'Continue', testID: 'first-open-next', primary: true } }],
-                quietWays: [], notices: [],
-            }} compact={false} interaction={{
-                admission: { pendingActionId: null, run: async (_id, invoke) => { await invoke(); } },
-                getActionId: () => 'first-open-next',
-                onAction, onNoticeAction() {}, onSelfHosting() {},
-            }} />
-        </UnauthenticatedSplitShell> : <UnauthenticatedRouteShell stepId="team-sign-in" testID="team-sign-in-shell">
-            <h1>{name}</h1><button data-testid="first-open-next" onClick={onAction}>Continue</button>
-        </UnauthenticatedRouteShell>;
+        return <UnauthenticatedSplitShell stepId="welcome" isWelcomeStep>
+            <WelcomeDecisionPanel
+                authEntryOptions={{ serverAvailability: 'ready', authEntryUnavailable: false, serverUrlForCopy: '', homePairingAvailable: true,
+                    showAuthActions: true, retryServerCheck() {} }}
+                canScanQr canCreatePersonalHome onCreatePersonalHome={onAction}
+                onOpenRestore={onAction} onOpenSecretKeyLogin={() => {}} onChangeRelay={() => {}}
+            />
+        </UnauthenticatedSplitShell>;
     }
     const fontsLoaded = vi.spyOn(document.fonts, 'load');
     let releaseFonts: (() => void) | undefined;
@@ -79,18 +81,18 @@ it.each([
     let completeTranslations: () => void = () => {};
     const translations = new Promise<void>(resolve => { completeTranslations = resolve; });
     let onAuthResolved = (_accountRestored: boolean): void => {};
-    let releaseOpening: (() => void) | undefined;
+    let openingBoot: ReturnType<ReturnType<typeof useFirstOpenBoot>['admitOpening']>;
     let mountOpening = () => {};
     let readyApp = () => {};
     let boot: Promise<void> | undefined;
     function BootFixture() {
         const [mount, setMount] = React.useState(false);
         const [ready, setReady] = React.useState(false);
-        const { opening, admitOpening } = useFirstOpenBoot();
-        onAuthResolved = accountRestored => { releaseOpening = admitOpening(resolveFirstOpen({ accountRestored, segments })); };
+        const { opening, Host, admitOpening } = useFirstOpenBoot();
+        onAuthResolved = accountRestored => { openingBoot = admitOpening(resolveFirstOpen({ accountRestored, segments })); };
         mountOpening = () => setMount(true);
         readyApp = () => setReady(true);
-        return mount && opening ? <FirstOpenHost opening={opening}>{ready ? <Destination /> : null}</FirstOpenHost> : null;
+        return mount && opening && Host ? <Host opening={opening}>{ready ? <Destination /> : null}</Host> : null;
     }
     try {
         await act(async () => root.render(
@@ -99,6 +101,8 @@ it.each([
             </SafeAreaProvider>,
         ));
         const scene = () => box.querySelector('[data-testid="first-open.scene"]');
+        const welcome = () => box.querySelector('[data-testid="welcome-decision-panel"]');
+        const login = () => box.querySelector<HTMLElement>('[data-testid="welcome-scan-existing-home"]')!;
         await act(async () => {
             boot = runAppBootSequence({
                 loadFonts: async () => {},
@@ -109,7 +113,7 @@ it.each([
                 prepareTranslations: () => translations,
                 restoreSync: null,
                 onAuthResolved,
-                onReady: readyApp,
+                onReady: () => { openingBoot?.ready(); readyApp(); },
             });
         });
         // The boot dependencies can still be pending and the React host has yet to mount.
@@ -117,8 +121,9 @@ it.each([
             await act(async () => {});
             expect(fontsLoaded).toHaveBeenCalled();
         }, { timeout: 3000 });
-        expect(box.textContent).not.toContain(name);
+        expect(welcome()).toBeNull();
         await act(async () => mountOpening());
+        await act(async () => { await vi.dynamicImportSettled(); });
         if (canPaint) {
             await vi.waitFor(async () => {
                 await act(async () => {});
@@ -129,16 +134,18 @@ it.each([
             completeTranslations();
             await boot;
         });
-        expect(box.textContent).toContain(name);
+        expect(welcome()).toBeTruthy();
+        expect(login()).toBeTruthy();
         expect(readOpeningSeenAt()).toBeNull();
         if (canPaint) expect(readBuildReady()).toBe(true);
         animate.mockClear();
+        clock.mockReturnValue(1000);
         await act(async () => commitLayout());
         expect(readOpeningSeenAt()).toEqual(expect.any(Number));
         if (!canPaint) {
             expect(scene()).toBeNull();
             expect(animate).not.toHaveBeenCalled();
-            await act(async () => box.querySelector<HTMLElement>('[data-testid="first-open-next"]')!.click());
+            await act(async () => login().click());
             expect(onAction).toHaveBeenCalledOnce();
             await act(async () => releaseFonts?.());
             expect(scene()).toBeNull();
@@ -151,28 +158,39 @@ it.each([
             .filter(canvas => canvas.style.visibility === 'visible');
         // The build gives the destination's real leaves compositor keyframes.
         expect(animate).toHaveBeenCalled();
-        expect(box.querySelector('[data-testid="first-open-next"]')?.closest('[inert]')).toBeNull();
+        expect(login().closest('[inert]')).toBeNull();
+        clock.mockReturnValue(1000 + openingClimbSeconds * 1000 + 680);
+        if (input === 'Escape') {
+            await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); });
+            expect(document.activeElement).toBe(box.querySelector('[role="heading"],h1,h2'));
+            expect(scene()).toBeNull();
+            return;
+        }
+        const control = input === 'built' ? login() : box.querySelector<HTMLElement>('[data-testid="welcome-create-personal-home"]')!;
+        expect(control).toBeTruthy();
         await act(async () => {
-            const next = box.querySelector<HTMLElement>('[data-testid="first-open-next"]')!;
-            if (name === 'Welcome') {
-                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
-                expect(document.activeElement).toBe(box.querySelector('[role="heading"],h1,h2'));
-            } else next.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-            next.click();
+            control.dispatchEvent(Object.assign(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }), { pointerId: 1 }));
+            control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }));
         });
-        expect(scene()).toBeNull();
+        if (input === 'built') {
+            expect(onAction).toHaveBeenCalledOnce();
+            expect(scene()).toBeTruthy();
+        } else {
+            expect(onAction).not.toHaveBeenCalled();
+            expect(scene()).toBeNull();
+        }
         expect(visibleCanvases).toEqual([openingCanvas]);
-        expect(onAction).toHaveBeenCalledOnce();
         expect(resolveFirstOpen({ accountRestored: false, segments })).toBe('none');
     } finally {
         await act(async () => {
             releaseFonts?.();
             completeTranslations();
             await boot;
-            releaseOpening?.();
+            openingBoot?.release();
             root.unmount();
         });
         fontsLoaded.mockRestore();
+        clock.mockRestore();
         box.remove();
         bounds.mockRestore();
         if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);

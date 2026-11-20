@@ -1,26 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, AppState, Platform, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
 import { useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
-import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
 import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 import { readHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
-import { FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch, FirstOpenWelcomeModelContext } from './FirstOpenWelcomeModelContext';
+import { FirstOpenContentLayout, FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch, FirstOpenWelcomeModelContext } from './FirstOpenWelcomeModelContext';
 import { resolveInAppFirstFrame } from './inAppFirstFrame';
 import type { FirstOpenAdmission } from './useFirstOpenBoot';
 
 type Phase = 'preparing' | 'still' | 'settled' | { epoch: number };
-const FirstOpenContentLayout = createContext<((event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined) | null>(null);
 type OverlayHost =
     | { kind: 'overlay'; epoch: number }
     | { kind: 'settled'; outcome: 'completed' | 'fallback' | 'interrupted' };
-
-export function useFirstOpenContentLayout() {
-    return useContext(FirstOpenContentLayout);
-}
 
 /** Presents the prepared decoration if available at the destination's first usable layout. */
 export function FirstOpenHost({ opening, children, bootPending = false }: Readonly<{
@@ -28,11 +22,10 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     children: ReactNode;
     bootPending?: boolean;
 }>) {
-    const { decision } = opening;
+    const { decision, recordLayout } = opening;
     const scene = decision === 'in-app' ? opening.scene : null;
     const release = decision === 'in-app' ? opening.release : undefined;
     const stage = useStepMotionStage();
-    const seen = useRef(false);
     const activePlay = useRef(false);
     const readiness = useRef<GlyphSurfaceReadiness | null>(null);
     const [phase, setPhase] = useState<Phase>('preparing');
@@ -114,10 +107,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     }, [fadeToRest, publishWelcome, settle, waitingForReplica]);
 
     const onFirstLayout = useCallback((event: LayoutChangeEvent) => {
-        const { width, height } = event.nativeEvent.layout;
-        if (seen.current || width <= 0 || height <= 0) return;
-        seen.current = true;
-        recordOpeningSeen(Date.now());
+        if (!recordLayout(event)) return;
         if (decision === 'overlay-eligible') {
             transmitted.current = welcome.current;
             settle();
@@ -129,7 +119,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             const epoch = performance.now();
             activePlay.current = true;
             setPhase({ epoch });
-            void scene.buildFirstOpenDestination(epoch).then(outcome => {
+            void scene.buildFirstOpenDestination(epoch, { interactive: true }).then(outcome => {
                 if (!activePlay.current) return;
                 activePlay.current = false;
                 if (outcome === 'settled') settle();
@@ -138,7 +128,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             return;
         }
         fadeToRest();
-    }, [decision, fadeToRest, scene, settle, skip, stage]);
+    }, [decision, fadeToRest, recordLayout, scene, settle, skip, stage]);
 
     useEffect(() => {
         if (phase !== 'still') return;
@@ -159,23 +149,19 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             event.preventDefault();
             skip({ focusDestination: true });
         };
-        const pointer = () => skip();
         const visibility = () => { if (document.hidden) interrupt(); };
         document.addEventListener('keydown', key, true);
-        document.addEventListener('pointerdown', pointer, true);
         document.addEventListener('visibilitychange', visibility);
         return () => {
             document.removeEventListener('keydown', key, true);
-            document.removeEventListener('pointerdown', pointer, true);
             document.removeEventListener('visibilitychange', visibility);
         };
     }, [interrupt, playing, scene, skip]);
 
-    const skipTouch = playing && Platform.OS !== 'web' ? () => skip() : undefined;
     const Scene = scene?.FirstOpenScene;
     return (
         <View style={bootPending ? [StyleSheet.absoluteFillObject, { opacity: 0 }] : { flex: 1, position: 'relative' }}
-            pointerEvents={bootPending ? 'none' : undefined} onTouchStart={skipTouch}>
+            pointerEvents={bootPending ? 'none' : undefined}>
             <Animated.View style={{ flex: 1, opacity }}>
                 <FirstOpenContentLayout.Provider value={phase === 'preparing' ? onFirstLayout : null}>
                     <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replicaClosed ? null : replica}>

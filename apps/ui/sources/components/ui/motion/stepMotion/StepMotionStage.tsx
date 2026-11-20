@@ -14,6 +14,7 @@ import { findInteractiveWebStepTarget, findPressedWebControl, readWebStepAnchor 
 import type { StepGrammar } from './stepMotionChoreography';
 import type { StepAnimation, StepFocalInk } from './stepMotionScene';
 import { stepMotionTiming } from './stepMotionTiming';
+import { copyStepLayer } from './stepPaintCopy';
 import type { StepAnchor, StepBuild, StepBuildResult, StepFreeze, StepGrid, StepMotionLayerHandle, StepMove, StepWebLeaf } from './stepMotionTypes';
 
 type AnimatedGrammar = Exclude<StepGrammar, 'fade'>;
@@ -42,6 +43,10 @@ type StagePaint = Readonly<{
     finish: () => void;
 }>;
 type OpeningBuildGlyphs = Pick<StagePaint, 'animation' | 'duration' | 'scene' | 'finish'>;
+type OpeningInput = Readonly<{
+    web: (control: HTMLElement | null) => boolean;
+    native: (event: GestureResponderEvent) => boolean;
+}>;
 type HomeGlyphArrival = Readonly<{
     settleEpoch: number;
     building: boolean;
@@ -88,14 +93,14 @@ function createStepMotionStage(
 ) {
     const layers = new Set<StepMotionLayerHandle>();
     const anchors = new Map<string, Array<StepAnchor | undefined>>();
-    const pointerCommits = new Map<number, number>();
+    const pointerCommits = new Map<number, number | null>();
     const handledNativeTouches = new WeakSet<GestureResponderEvent['nativeEvent']>();
     const committedSteps = new WeakSet<StepMotionLayerHandle>();
     const laidOutLayers = new WeakSet<StepMotionLayerHandle>();
     let pressed: StepAnchor | null = null;
     let pressedChrome: { layer: string; regions: readonly StepWebLeaf[] } | undefined;
     let pending: PendingMove | null = null;
-    let active: { layer: string; animation?: StepAnimation; endpoints?: StepEndpoints; stop: () => void } | null = null;
+    let active: { layer: string; animation?: StepAnimation; endpoints?: StepEndpoints; openingInput?: OpeningInput; stop: () => void } | null = null;
     let commitOrder = 0;
     let glyphReady = false;
     let buildPrepared = false;
@@ -146,14 +151,21 @@ function createStepMotionStage(
         destination?.focus();
     }
 
-    function showIncoming(layer: StepMotionLayerHandle, rise: boolean, complete?: (outcome: StepBuildResult) => void) {
+    /** The cross-fade: the next step rises in while a web copy of the departing one fades over it. */
+    function showIncoming(layer: StepMotionLayerHandle, rise: boolean, complete?: (outcome: StepBuildResult) => void,
+        outgoing?: StepFreeze) {
+        const leaving = outgoing?.clone ? outgoing : undefined;
+        if (!leaving) outgoing?.release();
         let cancel: (() => void) | undefined;
         let settled = false;
+        const leaves: Animation[] = [];
         const finish = (outcome: StepBuildResult) => {
             if (settled) return;
             settled = true;
             if (active?.stop === skip) active = null;
             cancel?.();
+            for (const leave of leaves) leave.cancel();
+            leaving?.release();
             requestRenderer(false);
             complete?.(outcome);
             syncPresentation();
@@ -162,6 +174,10 @@ function createStepMotionStage(
         active = { layer: layer.key, stop: skip };
         syncPresentation();
         cancel = layer.fadeIn(() => finish('settled'), rise);
+        for (const region of leaving ? [leaving.clone!, ...leaving.webChrome ?? []] : []) {
+            leaves.push(region.animate([{ opacity: 1 }, { opacity: 0 }],
+                { duration: stepMotionTiming.noticeCrossFadeMs, easing: 'ease-out', fill: 'both' }));
+        }
     }
 
     function showAnimated(input: {
@@ -173,14 +189,14 @@ function createStepMotionStage(
         returnTo?: StepAnchor;
         endpoints?: StepEndpoints;
         complete?: (outcome: StepBuildResult) => void;
+        interactiveOpening?: boolean;
     }) {
         const { layer, animation, grid, freeze, source, returnTo, complete } = input;
         const incoming = layerRect(layer);
         const duration = presentation?.stepAnimationDuration(animation);
         if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration ||
             (animation.grammar !== 'opening' && !glyphReady)) {
-            freeze?.release();
-            showIncoming(layer, true, complete);
+            showIncoming(layer, true, complete, freeze);
             return;
         }
         const { createStepMotionScene, leavingEdge, radialDistance, readStepLeaves, readStepProgress, readWebFocalInk,
@@ -230,6 +246,9 @@ function createStepMotionStage(
             return effect;
         };
         const building = animation.grammar === 'home' || animation.grammar === 'opening';
+        const revealPositions = input.interactiveOpening && web ? new WeakMap<HTMLElement, number>() : null;
+        const openingFront = () => visualAt('opening', readStepProgress(animation, (performance.now() - animation.epoch) / 1000)).arriveFront;
+        const revealed = (front: number, at: number) => front === 1 || front > at;
         const paintIncomingWeb = (element: HTMLElement, region: StepAnchor['rect'], leafNodes: readonly StepWebLeaf[],
             focal?: HTMLElement, live = false) => {
             const origin = !building && sourceRect
@@ -249,6 +268,7 @@ function createStepMotionStage(
                     const midpoint = rect.y + rect.height / 2;
                     const distance = origin ? radialDistance(rect.x + rect.width / 2, midpoint, origin) : region.y + region.height - midpoint;
                     const at = Math.min(1, Math.max(0, distance / radius));
+                    if (live) revealPositions?.set(leaf, at);
                     animate(leaf, frames.map(frame => ({
                         opacity: frame.arriveFront === 1 ? 1 : Math.max(0, Math.min(1, (frame.arriveFront - at) * 8)),
                     })));
@@ -352,7 +372,28 @@ function createStepMotionStage(
             complete?.(outcome);
         };
         const skip = () => finish('skipped');
-        active = { layer: layer.key, animation, endpoints, stop: skip };
+        const openingInput: OpeningInput | undefined = input.interactiveOpening ? {
+            web(control) {
+                if (!control || !web?.contains(control) || !revealPositions) return false;
+                const front = openingFront();
+                // Pressable contents can share their painted ancestor's keyframes.
+                for (let node: HTMLElement | null = control; node && node !== web; node = node.parentElement) {
+                    const at = revealPositions.get(node);
+                    if (at !== undefined) return revealed(front, at);
+                }
+                return false;
+            },
+            native(event) {
+                const view = layer.nativeElement();
+                if (!view) return false;
+                const { pageX, pageY } = event.nativeEvent;
+                if (pageX < incoming.x || pageX > incoming.x + incoming.width
+                    || pageY < incoming.y || pageY > incoming.y + incoming.height) return false;
+                const { testID, rect } = readNativeStepAnchor(event, view);
+                return testID !== undefined && revealed(openingFront(), (incoming.y + incoming.height - rect.y - rect.height / 2) / incoming.height);
+            },
+        } : undefined;
+        active = { layer: layer.key, animation, endpoints, openingInput, stop: skip };
         syncPresentation();
         if (homeArrival) publishHomeArrival(homeArrival);
         publish({ animation, duration, freeze, freezeOpacity, scene, releaseFreeze, finish: () => finish('settled') });
@@ -364,8 +405,7 @@ function createStepMotionStage(
         pending = null;
         move.cancelled = true;
         if (move.grammar === 'fade' || !move.freeze) {
-            move.freeze?.release();
-            showIncoming(layer, move.kind !== 'notice', move.complete);
+            showIncoming(layer, move.kind !== 'notice', move.complete, move.freeze);
             return;
         }
         const back = move.kind === 'back';
@@ -399,10 +439,10 @@ function createStepMotionStage(
         return testID !== undefined && Array.from(layers).some(layer => layer.backTestID === testID);
     }
 
-    function webInput(target: EventTarget | null) {
+    function webInput(target: EventTarget | null, settleExisting = true) {
         const control = findPressedWebControl(target);
         if (isBackControl(control?.dataset.testid)) return;
-        settle();
+        if (settleExisting) settle();
         const layer = layerFor(target);
         const element = layer?.webElement();
         const chrome = layer?.webChrome?.();
@@ -425,8 +465,15 @@ function createStepMotionStage(
         }
         if (typeof document === 'undefined') return unwatchHost;
         const pointer = (event: PointerEvent) => {
+            const opening = active?.openingInput;
+            if (opening && !opening.web(findInteractiveWebStepTarget(event.target))) {
+                pointerCommits.set(event.pointerId, null);
+                event.preventDefault();
+                skip(true);
+                return;
+            }
             pointerCommits.set(event.pointerId, commitOrder);
-            webInput(event.target);
+            webInput(event.target, !opening);
         };
         const cancelPointer = (event: PointerEvent) => {
             pointerCommits.delete(event.pointerId);
@@ -445,12 +492,12 @@ function createStepMotionStage(
             const pointerID = 'pointerId' in event && typeof event.pointerId === 'number' ? event.pointerId : 1;
             const beganAt = pointerCommits.get(pointerID);
             pointerCommits.delete(pointerID);
-            if (beganAt === undefined || beganAt === commitOrder || !layerFor(event.target)) return;
+            if (beganAt !== null && (beganAt === undefined || beganAt === commitOrder || !layerFor(event.target))) return;
             event.preventDefault();
             event.stopImmediatePropagation();
         };
         const key = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') return;
+            if (event.key === 'Escape' || (event.key === 'Tab' && active?.openingInput)) return;
             if (event.key === 'Enter' || event.key === ' ') webInput(document.activeElement);
             else { settle(); pressed = null; }
         };
@@ -513,6 +560,13 @@ function createStepMotionStage(
             laidOutLayers.add(layer);
             if (layers.has(layer) && pending?.layoutReady) enter(layer);
         },
+        claimNativeOpeningTouch(event: GestureResponderEvent) {
+            const opening = active?.openingInput;
+            if (!opening || opening.native(event)) return false;
+            handledNativeTouches.add(event.nativeEvent);
+            skip(true);
+            return true;
+        },
         nativeTouch(event: GestureResponderEvent, layer?: View) {
             if (!layer && !pending && !active) return;
             // The closest layer handles the press first, before it bubbles to app chrome.
@@ -520,7 +574,7 @@ function createStepMotionStage(
             handledNativeTouches.add(event.nativeEvent);
             const anchor = readNativeStepAnchor(event, layer ?? event.currentTarget);
             if (isBackControl(anchor.testID)) return;
-            settle();
+            if (!active?.openingInput) settle();
             pressed = layer ? anchor : null;
         },
         nativeTyping() {
@@ -551,6 +605,12 @@ function createStepMotionStage(
         },
         isBuildReady: () => buildPrepared ? presentation !== null : glyphReady,
         run<T>(move: StepMove<T>): T {
+            // New notice content joins an already-moving destination through its paint observer.
+            if (move.kind === 'notice' && (pending || (active && active.layer !== move.layer))) {
+                const result = move.commit();
+                move.onSettled?.('skipped');
+                return result;
+            }
             const previous = active?.animation;
             const reverse = move.kind === 'back' && previous?.to === 1 && active?.layer === move.layer
                 && (previous.grammar === 'morph' || previous.grammar === 'fold') && active.endpoints && presentation
@@ -605,6 +665,9 @@ function createStepMotionStage(
                         else next.freeze = result ?? undefined;
                     });
                 } else next.freeze = freeze ?? undefined;
+            } else if (grammar === 'fade' && move.kind !== 'notice' && Platform.OS === 'web') {
+                // Without the renderer the move still never shows an empty column between the two steps.
+                next.freeze = copyStepLayer(outgoing) ?? undefined;
             }
             try {
                 return move.commit();
@@ -627,6 +690,7 @@ function createStepMotionStage(
                 const grammar: AnimatedGrammar = build.choreography;
                 showAnimated({
                     layer, grid: gridForWindow(), complete: resolve,
+                    interactiveOpening: grammar === 'opening' && build.interactive,
                     animation: {
                         grammar, from: 0, to: 1,
                         secondsPerProgress: grammar === 'opening' ? stepMotionTiming.openingS : stepMotionTiming.homeS,
@@ -686,7 +750,8 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
     }) : null, [paints]);
     const opening = paints?.animation.grammar === 'opening' ? paints : null;
     return <StageContext.Provider value={stage}>
-        <View style={{ flex: 1 }} onTouchStart={Platform.OS === 'web' ? undefined : stage.nativeTouch}>
+        <View style={{ flex: 1 }} onTouchStart={Platform.OS === 'web' ? undefined : stage.nativeTouch}
+            onStartShouldSetResponderCapture={Platform.OS !== 'web' && opening ? stage.claimNativeOpeningTouch : undefined}>
             <OpeningBuildGlyphsContext.Provider value={opening}>
                 <HomeGlyphArrivalContext.Provider value={homeArrival}>{children}</HomeGlyphArrivalContext.Provider>
             </OpeningBuildGlyphsContext.Provider>
