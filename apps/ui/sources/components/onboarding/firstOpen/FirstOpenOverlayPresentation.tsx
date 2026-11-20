@@ -7,7 +7,7 @@ import { visualAt } from '@/components/ui/motion/stepMotion/stepMotionChoreograp
 import { stepMotionTiming } from '@/components/ui/motion/stepMotion/stepMotionTiming';
 import type { StepBuildResult } from '@/components/ui/motion/stepMotion/stepMotionTypes';
 
-import { FirstOpenWelcomeEpoch } from './FirstOpenWelcomeModelContext';
+import { FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch } from './FirstOpenWelcomeModelContext';
 import { buildFirstOpenDestination, type FirstOpenPlacement } from './FirstOpenScene';
 import { openingClimbSeconds } from './openingTimeline';
 
@@ -59,9 +59,11 @@ export const FirstOpenOverlayReplica: ComponentType<Readonly<{
             maskSize: `100% ${height + fadeBand}px`, maskRepeat: 'no-repeat', maskPosition: `0 -${fadeBand}px`,
         }}>
             <FirstOpenWelcomeEpoch.Provider value={epoch}>
-                <UnauthenticatedSplitShell frameWidth={width} stepId="welcome" isWelcomeStep>
-                    <WelcomeEntryView model={welcome} compact={compact} />
-                </UnauthenticatedSplitShell>
+                <FirstOpenOwnsWelcomePaint.Provider value>
+                    <UnauthenticatedSplitShell frameWidth={width} stepId="welcome" isWelcomeStep>
+                        <WelcomeEntryView model={welcome} compact={compact} />
+                    </UnauthenticatedSplitShell>
+                </FirstOpenOwnsWelcomePaint.Provider>
             </FirstOpenWelcomeEpoch.Provider>
         </div>
     );

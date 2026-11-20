@@ -8,7 +8,7 @@ import { recordOpeningSeen } from '@/sync/domains/state/onboardingUiState';
 import { invokeDesktopHost, isDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 import { readHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
-import { FirstOpenWelcomeEpoch, FirstOpenWelcomeModelContext } from './FirstOpenWelcomeModelContext';
+import { FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch, FirstOpenWelcomeModelContext } from './FirstOpenWelcomeModelContext';
 import { resolveInAppFirstFrame } from './inAppFirstFrame';
 import type { FirstOpenDecision } from './resolveFirstOpen';
 
@@ -47,6 +47,8 @@ export function FirstOpenHost({ decision, children }: Readonly<{
     }, []);
     const waitingForReplica = decision === 'overlay-eligible' && !replicaClosed;
     const playing = typeof phase === 'object';
+    const wasPresenting = useRef(false);
+    const presenting = playing || (replica !== null && !replicaClosed);
     const readBuildReady = usePrepareStepBuild(decision === 'in-app' && phase !== 'still' && phase !== 'settled');
     const settle = useCallback(() => setPhase('settled'), []);
     const fadeToRest = useCallback(() => {
@@ -69,6 +71,11 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         readiness.current = result;
         if (result === 'still') skip();
     }, [skip]);
+
+    useLayoutEffect(() => {
+        if (wasPresenting.current && !presenting) performance.mark?.('first_open:destination-handoff');
+        wasPresenting.current = presenting;
+    }, [presenting]);
 
     useLayoutEffect(() => {
         if (!waitingForReplica) return;
@@ -175,10 +182,12 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         <View style={{ flex: 1, position: 'relative' }} onTouchStart={skipTouch}>
             <Animated.View style={{ flex: 1, opacity }}>
                 <FirstOpenContentLayout.Provider value={phase === 'preparing' ? onFirstLayout : null}>
-                    <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replica}>
-                        <FirstOpenWelcomeModelContext.Provider value={waitingForReplica ? publishWelcome : null}>
-                            {children}
-                        </FirstOpenWelcomeModelContext.Provider>
+                    <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replicaClosed ? null : replica}>
+                        <FirstOpenOwnsWelcomePaint.Provider value={playing}>
+                            <FirstOpenWelcomeModelContext.Provider value={waitingForReplica ? publishWelcome : null}>
+                                {children}
+                            </FirstOpenWelcomeModelContext.Provider>
+                        </FirstOpenOwnsWelcomePaint.Provider>
                     </FirstOpenWelcomeEpoch.Provider>
                 </FirstOpenContentLayout.Provider>
             </Animated.View>
