@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
@@ -8,6 +9,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { renderAccountScreen } from '@/dev/testkit/render/renderAccountScreen';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { advanceConnectedAccountDescriptorProjectionState, createConnectedAccountDescriptorProjectionLoadingState } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
 import { installConnectedAccountDescriptorProjection, retireConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useDeploymentDomainIngressFields, type DomainIngressInspection } from './DeploymentDomainIngressFields';
@@ -45,7 +47,11 @@ it.each([false, true])('offers first Connect with no saved account (DNS records 
   }
 });
 
-it.each([false, true])('selects a sole eligible Cloudflare account and reads its zones (second eligible: %s)', async secondEligible => {
+it.each([
+  { census: 'ready', secondEligible: false },
+  { census: 'ready', secondEligible: true },
+  { census: 'partial failure', secondEligible: false },
+])('selects a sole eligible Cloudflare account after its inventory settles ($census census, second eligible: $secondEligible)', async ({ census, secondEligible }) => {
   const accountId = 'domain-owner';
   const serverId = await homes.addHome({ name: 'Domain Home', serverUrl: 'https://domain-selection.test',
     accountId, currentAccount: true });
@@ -64,9 +70,12 @@ it.each([false, true])('selects a sole eligible Cloudflare account and reads its
     provenance: 'first_party', sourceKind: 'bundled',
     availability: { state: 'available', reason: 'ready' }, diagnostics: [],
   });
-  installConnectedAccountDescriptorProjection({
-    scopeKey: serverId, status: 'ready', descriptors: [entry], conflicts: [], errorReason: null,
-  }, account.accountLifetime);
+  const projection = advanceConnectedAccountDescriptorProjectionState(
+    createConnectedAccountDescriptorProjectionLoadingState(serverId),
+    census === 'ready' ? { kind: 'ready', descriptors: [entry], conflicts: [] }
+      : { kind: 'error', reason: 'partial_machine_failure' },
+  );
+  installConnectedAccountDescriptorProjection(projection, account.accountLifetime);
   const profileAccount = (id: string, eligible: boolean) => ({
     ref: { service, accountId: id },
     status: eligible ? 'connected' : 'needs_reauth',
@@ -78,9 +87,7 @@ it.each([false, true])('selects a sole eligible Cloudflare account and reads its
     displayName: id,
     scopes: [],
   });
-  storage.setState({ profileScope: account.accountLifetime.scope,
-    profile: AccountProfileSchema.parse({ id: accountId,
-      connectedAccountsV4: [profileAccount('work', true), profileAccount('spare', secondEligible)] }) });
+  storage.setState({ profileScope: account.accountLifetime.scope, profile: AccountProfileSchema.parse({ id: '' }) });
   const hostname = 'app.example.test';
   const inspect = vi.fn<DomainIngressInspection>(async () => ({ ok: true, value: { kind: 'ready', zones: [] } }));
   function Form() {
@@ -89,6 +96,12 @@ it.each([false, true])('selects a sole eligible Cloudflare account and reads its
   }
   const screen = await renderAccountScreen(<Form />);
   try {
+    expect(inspect).not.toHaveBeenCalled();
+    await act(async () => {
+      storage.setState({ profileScope: account.accountLifetime.scope,
+        profile: AccountProfileSchema.parse({ id: accountId,
+          connectedAccountsV4: [profileAccount('work', true), profileAccount('spare', secondEligible)] }) });
+    });
     if (secondEligible) {
       expect(inspect).not.toHaveBeenCalled();
     } else {

@@ -309,8 +309,10 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
   const { onSelectSingleEligible } = props;
   const selectionMade = React.useRef(false);
   const hasSelection = props.value !== null || Boolean(props.teamResourceValue);
+  // The same exact-service eligibility drives both paths. An unrelated Machine's
+  // descriptor read can be incomplete while this Account's connection is usable.
   const canPreselect = Boolean(onSelectSingleEligible) && !props.disabled && !hasSelection
-    && registry.status === 'ready' && (props.teamResourcesOnly || effectiveAccountTransport !== 'indeterminate');
+    && (props.teamResourcesOnly || effectiveAccountTransport !== 'indeterminate');
   const preselectionProfile = usePurposeTargetProfile(canPreselect ? effectiveAccountTransport : undefined,
     props.accountsOnly, props.teamResourcesOnly);
   React.useEffect(() => {
