@@ -38,6 +38,7 @@ export type AppBootSequence = Readonly<{
      * which first paint never waits for.
      */
     restoreSync: ((credentials: AuthCredentials) => Promise<unknown>) | null;
+    onAuthResolved?: (accountRestored: boolean) => void;
     onReady: (state: AppBootReadyState) => void;
     onPhase?: (phase: AppBootPhase) => void;
 }>;
@@ -110,7 +111,10 @@ export async function runAppBootSequence(sequence: AppBootSequence): Promise<voi
                 // A rejected read is a definitive answer for this boot.
                 return { credentials: null };
             },
-        );
+        ).then(outcome => {
+            sequence.onAuthResolved?.(outcome.credentials !== null);
+            return outcome;
+        });
     if (sequence.context !== 'presenter') {
         void start(sequence.prepareWarmCache).then(
             () => {},

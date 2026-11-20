@@ -30,6 +30,35 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('runAppBootSequence', () => {
+    it('publishes the resolved Account outcome even while unrelated startup storage is pending', async () => {
+        const drafts = createDeferred<void>();
+        const translations = createDeferred<void>();
+        const events: string[] = [];
+        const run = runAppBootSequence({
+            loadFonts: async () => {},
+            sodiumReady: Promise.resolve(),
+            resolveCredentials: async () => null,
+            prepareWarmCache: async () => {},
+            prepareSessionDrafts: () => drafts.promise,
+            prepareTranslations: () => { events.push('translations'); return translations.promise; },
+            restoreSync: null,
+            onAuthResolved: (signedIn: boolean) => { events.push(signedIn ? 'restored' : 'signed-out'); },
+            onReady: () => { events.push('paint'); },
+        });
+        try {
+            await flushMicrotasks();
+            expect(events).toEqual(['signed-out']);
+            drafts.resolve();
+            await flushMicrotasks();
+            expect(events).toEqual(['signed-out', 'translations']);
+        } finally {
+            drafts.resolve();
+            translations.resolve();
+            await run;
+        }
+        expect(events).toEqual(['signed-out', 'translations', 'paint']);
+    });
+
     it('boots a desktop presenter without entering a held Home credential transaction', async () => {
         const credentials = createDeferred<AuthCredentials | null>();
         const drafts = createDeferred<void>();
