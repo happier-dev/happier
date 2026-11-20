@@ -18964,6 +18964,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `referenceCensus` (json, required): Reference Census
 - `managedResourceDispositions` (json): Managed Resource Dispositions
 
+## `secrets.shared.disclosures.list`
+
+**Read Saved Secret disclosure history** — Page who revealed or copied an owned shared Saved Secret, when, and with what outcome; never values.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `resourceId` (text, required): Resource Id
+- `cursor` (text): Cursor
+- `clientId` (text): Client Id
+
 ## `secrets.shared.grants.set`
 
 **Update shared Saved Secret access** — Replace the complete Account, Team, and Group audience of a shared Saved Secret.
@@ -19029,6 +19045,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `remoteHostMutation` (json): Remote Host Mutation
 - `notificationChannelMutation` (json): Notification Channel Mutation
 - `connectedAccountCredentialMutation` (json): Connected Account Credential Mutation
+
+## `secrets.shared.recipients.list`
+
+**Check Saved Secret recipients** — List the recipients of an owned encrypted Saved Secret and whether each can hold, or already holds, its key envelope; never values or keys.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `resourceId` (text, required): Resource Id
+- `clientId` (text): Client Id
 
 ## `secrets.shared.repair`
 

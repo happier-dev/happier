@@ -2215,6 +2215,17 @@ export type SavedSecretSharingActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "secrets.shared.disclosures.list": {
+        resourceId: string;
+        cursor?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "secrets.shared.recipients.list": {
+        resourceId: string;
+    } & {
+        clientId?: string | undefined;
+    };
 };
 export type SavedSecretSharingActionResultById = {
     readonly "secrets.shared.list": {
@@ -2385,5 +2396,42 @@ export type SavedSecretSharingActionResultById = {
         resourceId: string;
         revision: number;
         status: 'complete' | 'incomplete';
+    };
+    readonly "secrets.shared.disclosures.list": {
+        items: {
+            id: string;
+            ref: string;
+            resourceRevision: number;
+            actorDisplayName: null | string;
+            deviceId: string;
+            createdAt: string;
+            outcome: 'cancelled' | 'displayed' | 'failed' | 'outcome_unknown' | 'refused' | 'requested';
+            copyOutcome: 'outcome_unknown' | 'refused' | 'requested' | 'succeeded' | null;
+            copyRequestedAt: null | string;
+            actorIsSelf?: boolean | undefined;
+        }[];
+        nextCursor: null | string;
+    };
+    readonly "secrets.shared.recipients.list": {
+        resourceId: string;
+        revision: number;
+        recipients: {
+            account: {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+                kind: 'account';
+                accountId: string;
+            };
+            readiness: {
+                status: 'available';
+            } | {
+                status: 'unavailable';
+                reason: 'encryption_inconsistent' | 'encryption_setup_required' | 'plain_account';
+            };
+            envelopeStatus: 'invalid' | 'missing' | 'prepared' | 'stale';
+        }[];
     };
 };
