@@ -1,7 +1,8 @@
 import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
 import { readDeploymentTargetReferenceRolesV1 } from '@happier-dev/protocol/plugins/contributions/v2';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { DeploymentTargetContributionV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargets';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
@@ -148,8 +149,36 @@ export function createDeploymentTargetCatalogV1(targets: readonly DeploymentTarg
 }
 
 
+type ConnectedAccountManifest = Parameters<typeof resolvePluginActionConnectedAccountUseRequestsV2>[0];
+
+/** An Action's declared `credentialRef` purpose and the connected service its HostAccess scope names. */
+export function readPluginActionCredentialPurposeV1(manifest: ConnectedAccountManifest, localId: string) {
+    const action = manifest.contributes.actions.find(entry => entry.id === localId);
+    const purpose = action?.connectedAccountPurposeBindings?.find(entry => entry.path === 'credentialRef')?.purpose;
+    if (!purpose) return null;
+    const request = resolvePluginActionConnectedAccountUseRequestsV2(manifest, localId)?.find(entry => entry.request.id === purpose);
+    const reference = request?.request.scope.serviceRefs[0];
+    return reference ? { purpose, service: qualifyPluginContributionReferenceV1(reference, manifest.id) } : null;
+}
+
+/** The connected service a contributed runtime target needs: its inspect Action's credential service. */
+function readDeploymentTargetConnectedServiceV1(target: DeploymentTargetV1, manifests: readonly Readonly<{ manifest: ConnectedAccountManifest }>[]) {
+    if (target.source.kind !== 'plugin' || target.role !== 'runtime') return null;
+    const { pluginId, localId } = target.source.contribution;
+    const manifest = manifests.find(entry => entry.manifest.id === pluginId)?.manifest;
+    const declaration = manifest?.contributes.deploymentTargets?.find(entry => entry.id === localId);
+    const inspect = declaration?.role === 'runtime' ? declaration.actions.inspect : undefined;
+    return manifest && typeof inspect === 'string' ? readPluginActionCredentialPurposeV1(manifest, inspect)?.service ?? null : null;
+}
+
+/** A catalog target with the connected service it needs; the catalog Action turns that into the Account's availability. */
+export type DeploymentSuggestionTargetPortRowV1 = DeploySuggestionCatalogV1['targets'][number]
+    & Readonly<{ connectedService?: Readonly<{ pluginId: string; localId: string }> }>;
+
 /** Both hosts consume the normalized catalog; no suggestion-specific target list is maintained. */
-export function projectDeploymentSuggestionTargetsV1(targets: readonly DeploymentTargetV1[]): Pick<DeploySuggestionCatalogV1, 'targets' | 'stores'> {
+export function projectDeploymentSuggestionTargetsV1(targets: readonly DeploymentTargetV1[],
+    manifests: readonly Readonly<{ manifest: ConnectedAccountManifest }>[] = [],
+): Readonly<{ targets: DeploymentSuggestionTargetPortRowV1[]; stores: DeploySuggestionCatalogV1['stores'] }> {
     return {
         targets: targets.flatMap(target => target.role === 'runtime' ? [{
             id: target.source.kind === 'host' ? target.source.id
@@ -157,13 +186,21 @@ export function projectDeploymentSuggestionTargetsV1(targets: readonly Deploymen
             title: resolvePluginLocalizedStringV2Text(target.title),
             targetClass: target.source.kind === 'host' ? 'ownServer' as const : 'platform' as const,
             availability: 'available' as const,
+            ...(() => {
+                const service = readDeploymentTargetConnectedServiceV1(target, manifests);
+                return service ? { connectedService: service } : {};
+            })(),
             ...(target.accepts === undefined ? {} : { accepts: target.accepts }),
             ...(target.needs === undefined ? {} : { needs: target.needs }),
             ...(target.sources === undefined ? {} : { sources: target.sources }),
             ...(target.plans === undefined ? {} : { plans: target.plans }),
         }] : []),
-        // An engine association does not identify a selected saved store.
-        // Linked-store discovery remains with the selected-target owner.
-        stores: [],
+        // A store is a managed database the person can create on a data target that declares its engine. A saved
+        // store's own identity stays with the selected-target owner; the recommendation names the target and engine.
+        stores: targets.flatMap(target => target.role === 'data' && target.source.kind === 'plugin' && target.dataV1?.database ? [{
+            id: buildQualifiedPluginContributionKey(target.source.contribution),
+            engine: target.dataV1.database.engineId,
+            title: resolvePluginLocalizedStringV2Text(target.title),
+        }] : []),
     };
 }

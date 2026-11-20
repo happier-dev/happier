@@ -24,8 +24,19 @@ import { TransientQuestionFields, useTransientQuestionAnswers, type TransientQue
 
 import { NewAppDeploySummary } from '../NewAppDeploySteps';
 import { DeploySuggestionCardTiles, type NewAppAutoCard } from './DeploySuggestionCards';
+import { DeploySuggestionRunnerSetting } from '@/components/settings/deployments/DeploySuggestionRunnerSetting';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 export type { NewAppAutoCard, NewAppAutoFact } from './DeploySuggestionCards';
+
+/** Another runner for the next Try again: Settings' own control, writing the same setting (F-RUNNERPICK). */
+function FailedRunnerChoice(props: Readonly<{ serverId: string; machineId: string }>) {
+  const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+  const execution = useMountedActionExecution(binding?.scope);
+  return <DeploySuggestionRunnerSetting serverId={props.serverId} machineId={props.machineId} execution={execution}
+    testIDPrefix="newApp.auto.runner" />;
+}
 
 /** A Machine that can't run the suggestion right now, in its owner's words, with that reason's next step. */
 export type NewAppAutoMachine = Readonly<{
@@ -69,7 +80,11 @@ export type NewAppAutoView =
   /** The agent answered, but nothing fit; `code` holds the check's typed reasons for each dropped part, for Details. */
   | Readonly<{ kind: 'nothing'; code: string | null }>
   /** The suggestion owner's typed failure code, kept for the Details disclosure, and why, in words. */
-  | Readonly<{ kind: 'failed'; code: string; reason: string }>;
+  | Readonly<{
+      kind: 'failed'; code: string; reason: string;
+      /** Where the failed Run ran, for choosing another runner there; null when no runner was reached. */
+      runner: Readonly<{ serverId: string; machineId: string }> | null;
+    }>;
 
 export function NewAppAutoStep(
   props: Readonly<{
@@ -115,6 +130,7 @@ export function NewAppAutoStep(
   if (view.kind === 'failed') {
     // A failure keeps the owner's typed code behind Details (DESIGN.md "Error and recovery copy").
     return (
+      <View>
       <SurfaceStateCard
         testID="newApp.auto.failed"
         kind="error"
@@ -124,6 +140,8 @@ export function NewAppAutoStep(
         action={{ label: t('newApp.auto.tryAgain'), onPress: props.onTryAgain, testID: 'newApp.auto.tryAgain' }}
         secondaryAction={{ label: t('newApp.auto.chooseStarter'), onPress: props.onChooseStarter, testID: 'newApp.auto.chooseStarter' }}
       />
+      {view.runner ? <FailedRunnerChoice serverId={view.runner.serverId} machineId={view.runner.machineId} /> : null}
+      </View>
     );
   }
 

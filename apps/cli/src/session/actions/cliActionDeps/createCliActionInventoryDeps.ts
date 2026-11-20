@@ -608,7 +608,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     deploymentSuggestionTargets: async () => {
       const { listDeploymentTargetsV1, projectDeploymentSuggestionTargetsV1 } = await import('@happier-dev/deployments');
-      return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1(readCurrentContributionRegistry().deploymentTargets));
+      const registry = readCurrentContributionRegistry();
+      return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1(registry.deploymentTargets), registry.activationTargets);
     },
     deploymentSuggestionForges: async (context) => {
       const [{ acquireAuthoritativePluginRuntimeRegistryLease }, { listPublishCapableForgesV1 }] = await Promise.all([

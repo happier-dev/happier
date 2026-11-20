@@ -31,6 +31,8 @@ export type NewAppAutoCard = Readonly<{
   facts: readonly NewAppAutoFact[];
   /** The platform's declared plans with their dated source (U3); never the person's plan, which only Review reads (A2). */
   plans: DeclaredTargetPlans | null;
+  /** The platform's name when the Account has no working connection to it yet (catalog `needs_connection`). */
+  connect: string | null;
 }>;
 
 /** A target's plans as its plugin declared them to this Account, with the platform's name. */
@@ -72,13 +74,15 @@ export function presentDeploySuggestionCard(
       : source.kind === 'catalogApp'
         ? catalog.apps.find((item) => item.id === source.appId)?.title
         : undefined;
-  const target = catalog.targets.find(
+  const targetRow = catalog.targets.find(
     (item) => item.id === recommendation.targetId,
-  )?.title;
+  );
+  const target = targetRow?.title;
   const data = recommendation.data;
+  const store = data.kind === 'store' ? catalog.stores.find((item) => item.id === data.storeId) : undefined;
   const dataTitle =
     data.kind === 'store'
-      ? data.engine
+      ? [store?.title, data.engine].filter(Boolean).join(' · ')
       : data.kind === 'catalogApp'
         ? catalog.apps.find((item) => item.id === data.appId)?.title
         : undefined;
@@ -101,6 +105,7 @@ export function presentDeploySuggestionCard(
     recommended: index === 0,
     facts,
     plans: declaredPlans(recommendation.targetId),
+    connect: targetRow?.availability === 'needs_connection' ? targetRow.title : null,
   };
 }
 
@@ -202,6 +207,7 @@ function cardFactsLabel(card: NewAppAutoCard): string {
   const target = card.facts.find((fact) => fact.key === 'runsOn');
   return [
     target ? `${t(FACT_LABEL_KEY.runsOn)} ${target.value}` : null,
+    card.connect ? t('projects.deployments.platformLink.connectTitle', { platform: card.connect }) : null,
     ...(card.plans?.plans.map(declaredPlanLine) ?? []),
   ].filter(Boolean).join(', ');
 }
@@ -214,7 +220,7 @@ function CardFacts(
   props: Readonly<{ card: NewAppAutoCard; phone: boolean; testID: string }>,
 ) {
   const { theme } = useUnistyles();
-  const { facts, plans } = props.card;
+  const { facts, plans, connect } = props.card;
   return (
     <View style={styles.facts}>
       {facts.map((fact) => (
@@ -234,6 +240,12 @@ function CardFacts(
           </View>
         </FieldLayout>
       ))}
+      {connect ? (
+        // The connect step itself is on Where it runs; the card says it is needed before choosing it.
+        <Text testID={`${props.testID}:connect`} variant="body" style={{ color: theme.colors.text.secondary }}>
+          {t('projects.deployments.platformLink.connectTitle', { platform: connect })}
+        </Text>
+      ) : null}
       {plans ? (
         <View testID={`${props.testID}:plans`}>
           <DeploymentTargetPlans plans={plans.plans} platform={plans.platform} columns={!props.phone}

@@ -48,7 +48,17 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
         descriptors('targets', deps.deploymentSuggestionTargets),
         descriptors('forges', deps.deploymentSuggestionForges),
     ]);
-    if (targetRead) { catalog.targets = targetRead.targets; catalog.stores = targetRead.stores; }
+    const accountRows = accounts === null ? null : CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.list']
+        .parse(accounts).accounts;
+    if (targetRead) {
+        // A target that needs a connected service is offerable either way: without a working account it needs a connection
+        // (never `unavailable`, which hides it); when the Account read failed nothing is known about it.
+        catalog.targets = targetRead.targets.map(({ connectedService, ...target }) => !connectedService ? target : { ...target,
+            availability: accountRows === null ? 'unknown'
+                : accountRows.some(row => row.health !== 'error' && row.account.ref.service.pluginId === connectedService.pluginId
+                    && row.account.ref.service.localId === connectedService.localId) ? 'available' : 'needs_connection' });
+        catalog.stores = targetRead.stores;
+    }
     if (forgeRead) catalog.forges = forgeRead;
     // A registry cursor belongs to its source. Keep the owner's paging rather than rereading other sources.
     async function completePages(kind: 'starter' | 'app', pages: RegistryListPageV1[]) {
@@ -70,8 +80,7 @@ export async function readDeploySuggestionCatalogV1(context: ActionExecutorConte
         title: item.title, sourceId: item.sourceId, itemId: item.itemId, ...(item.starterDeploy ? { deploy: item.starterDeploy } : {}) }));
     catalog.apps = items(appPages, 'apps').map(item => ({ id: JSON.stringify([item.sourceId, item.itemId]),
         title: item.title, sourceId: item.sourceId, itemId: item.itemId }));
-    if (accounts !== null) catalog.connectedAccounts = CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.list']
-        .parse(accounts).accounts.map(row => ({ account: row.account.ref, health: row.health }));
+    if (accountRows !== null) catalog.connectedAccounts = accountRows.map(row => ({ account: row.account.ref, health: row.health }));
     if (machines !== null) catalog.machines = await Promise.all(machineRows.parse(machines).items.map(async machine => {
         const online = machine.presence ? machine.presence === 'online' : machine.active === true;
         let readiness: DeploySuggestionCatalogV1['machines'][number]['readiness'] = 'unknown';

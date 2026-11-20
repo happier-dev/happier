@@ -114,3 +114,36 @@ describe('a suggestion card’s accessible name (deploy auto-mode QA: title + ta
     }
   });
 });
+
+describe('a suggestion card’s data (PLAN Facts: stores are managed database targets)', () => {
+  it('names a managed store by the target the person will create it on, not only its engine', () => {
+    const withStore = DeploySuggestionCatalogV1Schema.parse({ ...catalog,
+      stores: [{ id: 'happier.deployment.neon/database', engine: 'postgresql', title: 'Neon' }] });
+    const card = presentDeploySuggestionCard({ ...site, targetId: 'own',
+      data: { kind: 'store', storeId: 'happier.deployment.neon/database', engine: 'postgresql' } }, withStore, 0, null, () => null);
+    expect(card.facts.find((fact) => fact.key === 'data')?.value).toBe('Neon · postgresql');
+  });
+});
+
+describe('a suggestion card on a platform the Account has not connected (PLAN connection state)', () => {
+  it('says to connect the platform, and says nothing once it is connected', () => {
+    const unconnected = DeploySuggestionCatalogV1Schema.parse({ ...catalog,
+      targets: catalog.targets.map((target) => target.id === 'pages' ? { ...target, availability: 'needs_connection' } : target) });
+    expect(presentDeploySuggestionCard(site, unconnected, 0, null, () => null).connect).toBe('Cloudflare Pages');
+    expect(presentDeploySuggestionCard(site, catalog, 0, null, () => null).connect).toBeNull();
+  });
+  it('draws the connect line on the card and in its accessible name', async () => {
+    const unconnected = DeploySuggestionCatalogV1Schema.parse({ ...catalog,
+      targets: catalog.targets.map((target) => target.id === 'pages' ? { ...target, availability: 'needs_connection' } : target) });
+    const screen = await renderScreen(
+      <DeploySuggestionCardTiles cards={[presentDeploySuggestionCard(site, unconnected, 0, null, () => null)]}
+        value="suggestion-0" onChange={() => {}} phone={false} testIdPrefix="card" />,
+    );
+    try {
+      expect(screen.findByTestId('card:suggestion-0')?.props.accessibilityLabel).toContain('Connect Cloudflare Pages');
+      expect(screen.findByTestId('card:suggestion-0:connect')).toBeTruthy();
+    } finally {
+      await screen.unmount();
+    }
+  });
+});

@@ -74,6 +74,15 @@ it('scopes the Compose and own-server input to an Own server target; a platform 
     expect(platform).not.toContain('installationId');
     expect(platform.split(DEPLOY_BUILD_PREVIEW_RULES_V1)).toHaveLength(2);
 });
+it('tells the build Session a platform the person has not connected needs a connect step first (PLAN connection state)', () => {
+    const unconnected = renderDeployPlanBriefV1('Bakery', recommendation, undefined,
+        { targetClass: 'platform', title: 'Vercel', availability: 'needs_connection' });
+    expect(unconnected).toContain('Vercel');
+    expect(unconnected).toContain('connectedServices.authentication.beginConnect');
+    const connected = renderDeployPlanBriefV1('Bakery', recommendation, undefined,
+        { targetClass: 'platform', title: 'Vercel', availability: 'available' });
+    expect(connected).not.toContain('connectedServices.authentication.beginConnect');
+});
 it('the run contract and the check agree on which single-choice bounds only restate it (REVIEW-DELTA4 F2)', () => {
     const contract = { kind: 'json' as const, schema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(DeploySuggestionV1Schema, { target: 'draft-7' })) };
     const [first] = liveQuestions.questions;

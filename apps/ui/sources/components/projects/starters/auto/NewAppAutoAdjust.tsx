@@ -61,7 +61,7 @@ export function NewAppAutoAdjust(
       { id: 'none', title: t('newApp.auto.dataNone') },
       ...catalog.stores.map((store) => ({
         id: `store:${store.id}`,
-        title: store.engine,
+        title: [store.title, store.engine].filter(Boolean).join(' · '),
       })),
     ],
     [catalog.stores],

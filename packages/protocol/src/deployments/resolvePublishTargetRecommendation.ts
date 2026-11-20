@@ -6,7 +6,7 @@ type Target = NonNullable<DeploymentTargetRecommendationV1['target']>;
 export type PublishTargetRecommendationInput = Readonly<{
     deploy?: DeployShapeV1;
     definition: Readonly<{ kind: 'repository'; compose?: unknown }> | Readonly<{ kind: 'stored' }> | Readonly<{ from: unknown }> | null;
-    targets: readonly (Target & Readonly<{ availability: 'available' | 'unavailable' | 'unknown';
+    targets: readonly (Target & Readonly<{ availability: 'available' | 'needs_connection' | 'unavailable' | 'unknown';
         accepts?: Readonly<DeploymentTargetContributionV1['accepts']>;
         needs?: Readonly<DeploymentTargetContributionV1['needs']>;
         sources?: Readonly<DeploymentTargetContributionV1['sources']>;

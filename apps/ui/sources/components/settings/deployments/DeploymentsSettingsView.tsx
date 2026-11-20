@@ -24,10 +24,7 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { t } from '@/text';
 import { DEPLOYMENTS_SETTINGS } from './deploymentsSettings';
-import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
-import { LlmTaskRunnerPicker } from '@/components/settings/llmTasks/LlmTaskRunnerPicker';
-import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
-import { useSettingMutable } from '@/sync/domains/state/storage';
+import { DeploySuggestionRunnerSetting } from './DeploySuggestionRunnerSetting';
 
 export function DeploymentsSettingsView() {
     const params = useLocalSearchParams<{ serverId?: string | string[] }>();
@@ -87,33 +84,11 @@ function DeploymentDefaultsEditor({ binding, serverId, homeLabel }: Readonly<{
                 onChange: next => { void save(next); } })}
         </SettingAnchor> : <SurfaceStateCard kind={defaults.error ? 'error' : 'loading'} title={t('projects.deployments.creationDefaults')}
             {...(defaults.error ? { action: { label: t('common.retry'), onPress: defaults.retry } } : {})} />}
-        {serverId ? <DeploySuggestionAgentSetting serverId={serverId} disabled={!execution.ready}
-            onChange={(value) => { void (async () => {
-                try {
-                    const result = await execution.execute('settings.set', { anchor: DEPLOYMENTS_SETTINGS.settings.suggestionAgent.anchor, value });
-                    if (!result.ok) presentSettingWriteFailure(result);
-                } catch (error) { presentSettingWriteFailure(error); }
-            })(); }} /> : null}
+        {serverId ? <SettingAnchor setting={DEPLOYMENTS_SETTINGS.settings.suggestionAgent}>
+            <DeploySuggestionRunnerSetting serverId={serverId} execution={execution} testIDPrefix="settings.deployments.suggestionAgent" />
+        </SettingAnchor> : null}
         <ItemGroup><Item testID="deployment-defaults.notifications" title={t('projects.deployments.defaultsEditor.alertChannels')}
             icon={<Icon name="bell" size={18} color={theme.colors.text.secondary} />}
             onPress={() => router.push(SETTINGS_ROUTES.notifications)} /></ItemGroup>
     </ItemList>;
-}
-
-/** Describe your app runs on the background-task runner this picks (the same picker commit messages use). */
-function DeploySuggestionAgentSetting(props: Readonly<{
-    serverId: string;
-    disabled: boolean;
-    onChange: (next: LlmTaskRunnerChoiceV1) => void;
-}>) {
-    const [choice] = useSettingMutable('deploySuggestionRunnerV1');
-    const machineId = useThisComputerMachineId();
-    return <SettingAnchor setting={DEPLOYMENTS_SETTINGS.settings.suggestionAgent}>
-        <ItemGroup title={t('projects.deployments.autoSectionTitle')}>
-            <LlmTaskRunnerPicker task="deploy_suggestion" value={choice} machineId={machineId} serverId={props.serverId}
-                engineFieldTitle={t('projects.deployments.autoAgentTitle')} disabled={props.disabled}
-                testIDPrefix="settings.deployments.suggestionAgent"
-                onChange={props.onChange} />
-        </ItemGroup>
-    </SettingAnchor>;
 }

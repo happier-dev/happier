@@ -9,13 +9,11 @@ import {
   type DeploymentTargetLinkProviderContentV1,
 } from '@happier-dev/protocol/plugins/contributions/v2';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
-import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
-import { projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { DeploymentTargetLinkCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploySuggestionCatalogV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
-import { listDeploymentTargetsFromManifestsV1 } from '@happier-dev/deployments';
+import { listDeploymentTargetsFromManifestsV1, readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 
 import { readDeploymentRefusal, type DeploymentRefusalReason } from './deploymentActionOutcome';
@@ -58,16 +56,6 @@ export type DeploymentPlatformTarget = Readonly<{
 }>;
 
 type Declaration = Readonly<{ manifest: PluginPortableReleaseManifestV1 }>;
-/** The Action's declared purpose and canonical HostAccess scope own its credential chooser. */
-export function readPluginActionCredentialPurpose(manifest: PluginPortableReleaseManifestV1, localId: string) {
-  const action = manifest.contributes.actions?.find(entry => entry.id === localId);
-  const purpose = action?.connectedAccountPurposeBindings?.find(entry => entry.path === 'credentialRef')?.purpose;
-  if (!purpose) return null;
-  const requests = resolvePluginActionConnectedAccountUseRequestsV2(manifest, localId);
-  const scope = requests ? projectConnectedAccountHostAccessScopes(manifest.id, requests).find(entry => entry.purpose === purpose) : undefined;
-  const service = scope?.serviceRefs[0];
-  return service ? { purpose, service: { pluginId: service.pluginId, localId: service.localId } } : null;
-}
 type UnknownRecord = Record<string, unknown>;
 const record = (value: unknown): value is UnknownRecord =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -128,12 +116,12 @@ export function readDeploymentPlatformTargets(
         (entry) => record(entry) && entry.id === inspect,
       );
       if (!record(action)) return [];
-      const credential = readPluginActionCredentialPurpose(manifest, inspect);
+      const credential = readPluginActionCredentialPurposeV1(manifest, inspect);
       if (!credential) return [];
       const { purpose, service } = credential;
       const createId = record(target.actions) ? target.actions.create : undefined;
       const createAction = text(createId) ? actions.find(entry => record(entry) && entry.id === createId) : undefined;
-      const createCredential = text(createId) && createAction ? readPluginActionCredentialPurpose(manifest, createId) : null;
+      const createCredential = text(createId) && createAction ? readPluginActionCredentialPurposeV1(manifest, createId) : null;
       const create = text(createId) && record(createAction) && createCredential ? {
         localId: createId,
         actionId: formatQualifiedPluginActionId({ pluginId: manifest.id, localId: createId }),

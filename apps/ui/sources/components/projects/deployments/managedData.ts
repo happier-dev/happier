@@ -6,7 +6,8 @@ import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { readPluginActionCredentialPurpose, readTeardownConsequence, type DeploymentPlatformTarget } from './platformTargetLink';
+import { readPluginActionCredentialPurposeV1 } from '@happier-dev/deployments';
+import { readTeardownConsequence, type DeploymentPlatformTarget } from './platformTargetLink';
 
 const roleInputSchemas = new Map(Object.entries(DeploymentTargetRoleInputProtocolSchemasV1));
 
@@ -20,7 +21,7 @@ export function managedDataTargets(declarations: readonly Readonly<{ manifest: P
       if (!action) return [];
       const hints = normalizePluginActionInputHintsV2(action.inputHints, action.inputSchema);
       const protocolFields = roleInputSchemas.get(binding.role)?.jsonSchema.properties ?? {};
-      return [{ ...binding, declaration: action, credential: readPluginActionCredentialPurpose(manifest, action.id), title: resolvePluginLocalizedStringV2Text(action.title),
+      return [{ ...binding, declaration: action, credential: readPluginActionCredentialPurposeV1(manifest, action.id), title: resolvePluginLocalizedStringV2Text(action.title),
         actionId: formatQualifiedPluginActionId({ pluginId: manifest.id, localId: action.id }),
         inputHints: { ...hints, fields: (hints?.fields ?? []).filter(field => {
           const root = field.path.split('.')[0]!;

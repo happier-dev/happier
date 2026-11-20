@@ -198,7 +198,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
                 .ensureCurrentAccountExecutionDeclarations({ family: 'deploymentTargets' });
             account.assertCurrent();
             if (read.kind !== 'available') throw Object.assign(new Error(read.code), { code: read.code });
-            return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(read.declarations));
+            return projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(read.declarations), read.declarations);
         },
         deploymentSuggestionForges: async context => {
             const execution = completeActionResult(await createUiAccountAction({ account })({

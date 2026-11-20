@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { OWN_SERVER_DEPLOYMENT_TARGET_V1, OWN_SERVER_DEPLOYMENT_TARGET_SOURCE_V1, projectDeploymentSuggestionTargetsV1, selectDeploymentTargetTeardownAvailableV1, selectDeploymentTargetRemovalChoicesV1 } from './deploymentTargetCatalog.js';
 import { listDeploymentTargetsV1 } from './deploymentTargetCatalog.js';
+import { checkDeploySuggestionV1 } from '@happier-dev/protocol/deployments/suggestions/deploySuggestionsV1';
 
 it('preserves a contributed database engine while qualifying only executable references', () => {
     const closed = { type: 'object' as const, properties: {}, additionalProperties: false };
@@ -33,6 +34,28 @@ it('carries a platform target\u2019s declared plans into the suggestion catalog 
     }]));
     expect(catalog.targets.find(target => target.id === 'com.example.host/pages')?.plans).toEqual(plans);
     expect(catalog.targets.find(target => target.id === 'own-server')).not.toHaveProperty('plans');
+});
+
+it('offers each managed database target as a store choice the suggestion check admits (deploy auto-mode, PLAN Facts)', () => {
+    const closed = { type: 'object' as const, properties: {}, additionalProperties: false };
+    const catalog = projectDeploymentSuggestionTargetsV1(listDeploymentTargetsV1([{
+        pluginId: 'com.example.data', identity: { pluginId: 'com.example.data', localId: 'database' },
+        definition: { id: 'database', role: 'data', title: 'Managed Postgres', icon: 'server-outline', targetKind: 'example',
+            targetSchema: closed, linkSchema: closed, dataV1: { database: { engineId: 'postgresql' } } },
+    }, {
+        pluginId: 'com.example.files', identity: { pluginId: 'com.example.files', localId: 'bucket' },
+        definition: { id: 'bucket', role: 'data', title: 'Files', icon: 'server-outline', targetKind: 'example',
+            targetSchema: closed, linkSchema: closed },
+    }]));
+    // A data target that declares no database engine is not a store a recommendation can name.
+    expect(catalog.stores).toEqual([{ id: 'com.example.data/database', engine: 'postgresql', title: 'Managed Postgres' }]);
+    const recommendation = { source: { kind: 'scratch' }, targetId: 'own-server', whatToBuild: 'Invoices with a database',
+        stack: { framework: 'node', output: 'server' }, data: { kind: 'store', storeId: 'com.example.data/database', engine: 'postgresql' },
+        variables: [] };
+    const checked = checkDeploySuggestionV1({ recommendations: [recommendation] }, { starters: [], apps: [], machines: [],
+        forges: [{ providerKind: 'github', title: 'GitHub' }], ...catalog });
+    expect(checked.dropped).toEqual([]);
+    expect(checked.recommendations).toEqual([recommendation]);
 });
 
 it('defaults linked and legacy resources to unlink and offers provider delete only when declared', () => {

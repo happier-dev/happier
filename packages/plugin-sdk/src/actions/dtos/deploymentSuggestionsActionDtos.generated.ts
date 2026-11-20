@@ -40,7 +40,7 @@ export type DeploymentSuggestionsActionResultById = {
             id: string;
             title: string;
             targetClass: 'ownServer' | 'platform';
-            availability: 'available' | 'unavailable' | 'unknown';
+            availability: 'available' | 'needs_connection' | 'unavailable' | 'unknown';
             plans?: undefined | {
                 id: string;
                 title: string;
@@ -83,6 +83,7 @@ export type DeploymentSuggestionsActionResultById = {
         stores: {
             id: string;
             engine: string;
+            title?: string | undefined;
         }[];
         forges: {
             providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
@@ -202,7 +203,7 @@ export type DeploymentSuggestionsActionResultById = {
                 id: string;
                 title: string;
                 targetClass: 'ownServer' | 'platform';
-                availability: 'available' | 'unavailable' | 'unknown';
+                availability: 'available' | 'needs_connection' | 'unavailable' | 'unknown';
                 plans?: undefined | {
                     id: string;
                     title: string;
@@ -245,6 +246,7 @@ export type DeploymentSuggestionsActionResultById = {
             stores: {
                 id: string;
                 engine: string;
+                title?: string | undefined;
             }[];
             forges: {
                 providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';

@@ -251,7 +251,8 @@ export function useNewAppAutoSuggestions(
       };
     }
     if (outcome.kind === 'questions') return { kind: 'questions', questions: outcome.questions.questions, skippable: false };
-    if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code, reason: failedReason(outcome) };
+    if (outcome.kind === 'failed') return { kind: 'failed', code: outcome.code, reason: failedReason(outcome, phase.runner),
+      runner: phase.runner && params.serverId ? { serverId: params.serverId, machineId: phase.runner.machineId } : null };
     // Why the check dropped each part of the answer, by its typed reason, for Details.
     const reasons = [...new Set([...outcome.dropped, ...outcome.droppedQuestions].map((row) => row.reason))];
     return { kind: 'nothing', code: reasons.length ? reasons.join(', ') : null };
@@ -398,10 +399,11 @@ function presentMachine(
 
 /**
  * Why the suggestion failed, said for where it failed: a Run's cause in the run card's words (a usage limit is the
- * limit), anything earlier as Happier not reaching an agent.
+ * limit, with its reset when the usage owner has one) after the Machine and Agent it ran on, anything earlier as
+ * Happier not reaching an agent.
  */
-function failedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed' }>): string {
+function failedReason(outcome: Extract<DeploySuggestionOutcome, { kind: 'failed' }>, runner: Runner | null): string {
     if (outcome.stage === 'setup') return t('newApp.auto.failedSetupBody');
     const run = presentExecutionRunFailureSummary(outcome.runError ?? { code: outcome.code });
-    return [run.summary, run.reset].filter(Boolean).join(' · ');
+    return [runner ? runsOnLine(runner) : null, run.summary, run.reset].filter(Boolean).join(' · ');
 }

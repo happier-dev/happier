@@ -115,6 +115,30 @@ describe('platform target link model', () => {
       id: target.key, title: target.title, accepts: target.accepts, needs: target.needs,
     })));
   });
+  it('marks a platform the Account has no working connection for as needing one, never as unavailable (PLAN connection state)', async () => {
+    const declarations = [{ manifest }];
+    const connected = (health: 'healthy' | 'error') => ({ account: { ref: { service, accountId: 'owner' }, status: 'connected',
+      authenticationModeId: 'manual', revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+      configurationReady: true, configurationRevision: null, scopes: [] }, health });
+    const availability = async (accounts: unknown) => {
+      const read = await createActionExecutor({
+        registryActionExecute: async () => ({ pages: [] }),
+        machinesList: async () => ({ items: [] }),
+        connectedServiceAction: async () => {
+          if (accounts === 'refused') throw Object.assign(new Error('offline'), { code: 'server_unreachable' });
+          return { accounts, pools: [], healthBasis: 'credentials', source: { completeness: 'complete', observedAtMs: 1 } };
+        },
+        deploymentSuggestionTargets: async () => projectDeploymentSuggestionTargetsV1(listDeploymentTargetsFromManifestsV1(declarations), declarations),
+      }).execute('deployments.suggestions.catalog', {}, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: 'home' });
+      if (!read.ok) throw new Error(read.errorCode);
+      return Object.fromEntries(DeploySuggestionCatalogV1Schema.parse(read.result).targets.map(target => [target.id, target.availability]));
+    };
+    expect(await availability([])).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'needs_connection' });
+    expect(await availability([connected('error')])).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'needs_connection' });
+    expect(await availability([connected('healthy')])).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'available' });
+    // An Account read that failed says nothing about the connection.
+    expect(await availability('refused')).toEqual({ 'own-server': 'available', 'happier.deploy.vercel/runtime': 'unknown' });
+  });
   it('offers teardown only when the runtime target declares it', () => {
     const runtime = manifest.contributes.deploymentTargets![0]!;
     if (runtime.role !== 'runtime') throw new Error('Expected the runtime target descriptor');

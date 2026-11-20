@@ -92,7 +92,18 @@ Auto mode has one catalog owner and one validation owner shared by the Deploy an
 app dialog and the `happier:deploy` Session skill. The
 `deployments.suggestions.catalog` Action composes the current starter and catalog
 app listings, deployment target facts, Stores, Machines and their readiness,
-connected-account metadata, and forge descriptors. Each source remains owned by
+connected-account metadata, and forge descriptors. A Store is a managed database
+data target that declares its engine (`dataV1.database.engineId`, for example Neon
+and Supabase for PostgreSQL), offered by its target id, engine and title; a
+suggestion's `data: {kind: 'store'}` names that target, and the build Session
+creates the database through the target's own data Actions. A platform target's
+availability comes from the connected service its inspect Action's `credentialRef`
+purpose declares (`readPluginActionCredentialPurposeV1` in `@happier-dev/deployments`,
+used by both hosts' catalog ports): `available` when the Account has a working
+connected account for that service, `needs_connection` when it has none (the card
+says "Connect <platform>" and the build brief adds the connect step), and `unknown`
+when the connected-account read failed. A target that needs a connection stays
+offerable. Each source remains owned by
 its existing registry, Machine, target, connected-account, or SCM plugin owner.
 The catalog is a snapshot held by the caller for the suggestion round.
 

@@ -1585,9 +1585,15 @@ export type ActionExecutorDeps = Readonly<{
     input: unknown; context: ActionExecutorContext }>) => Promise<unknown>;
   registryActionExecute?: (args: Readonly<{actionId:import('../../registries/registryActionsV1.js').RegistryActionIdV1;
     input:unknown;context:ActionExecutorContext}>) => Promise<unknown>;
-  /** Admitted target descriptors projected through the same catalog used by Where it runs. */
-  deploymentSuggestionTargets?: (context: ActionExecutorContext) => Promise<Pick<
-    import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1, 'targets' | 'stores'>>;
+  /**
+   * Admitted target descriptors projected through the same catalog used by Where it runs, each with the connected
+   * service its declaration needs; the catalog Action sets availability from the Account's connected accounts.
+   */
+  deploymentSuggestionTargets?: (context: ActionExecutorContext) => Promise<Readonly<{
+    targets: readonly (import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1['targets'][number]
+      & Readonly<{ connectedService?: Readonly<{ pluginId: string; localId: string }> }>)[];
+    stores: import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1['stores'];
+  }>>;
   /** Publish-capable forges from the admitted SCM hosting-provider registry. */
   deploymentSuggestionForges?: (context: ActionExecutorContext) => Promise<
     import('../../deployments/suggestions/deploySuggestionsV1.js').DeploySuggestionCatalogV1['forges']>;

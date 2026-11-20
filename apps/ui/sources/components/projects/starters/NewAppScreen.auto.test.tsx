@@ -559,8 +559,11 @@ async function failedSuggestionReason(name: string, overrides: Ports) {
     const failed = () => screen.findAllByType(SurfaceStateCard).find((node) => node.props.testID === 'newApp.auto.failed');
     await waitForHomeGovernance(() => expect(failed()).toBeTruthy());
     const { reason, diagnosticCode } = failed()!.props as { reason: string; diagnosticCode: string };
+    const { LlmTaskRunnerPicker } = await import('@/components/settings/llmTasks/LlmTaskRunnerPicker');
+    // The runner control the failed card offers: Settings' own picker, for the same task.
+    const runnerPicker = screen.findAllByType(LlmTaskRunnerPicker).some((node) => node.props.task === 'deploy_suggestion');
     await screen.unmount();
-    return { reason, diagnosticCode };
+    return { reason, diagnosticCode, runnerPicker };
   } finally {
     await standardCleanup();
     await fixture.dispose();
@@ -582,6 +585,21 @@ it('a run that hit a usage limit says the limit, as a run card does, never that 
   const { t } = await import('@/text');
   expect(diagnosticCode).toBe('usage_limit');
   expect(reason).toContain(t('session.usageLimitRecovery.banner.title'));
+});
+
+it('a run that hit a usage limit names the Machine it ran on and offers choosing another runner (F-RUNNERPICK)', async () => {
+  const run = terminal(undefined).run;
+  const { reason, runnerPicker } = await failedSuggestionReason('auto-usage-limit-runner', {
+    executionRunWait: async () => ({ ok: true, status: 'failed', result: { run: { ...run, status: 'failed', error: {
+      code: 'usage_limit', message: 'Usage limit reached.',
+      runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+        occurredAt: 1, agentId: 'claude', sanitizedPreview: 'Usage limit reached',
+        usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null, quotaScope: 'account', recoverability: 'wait', planType: null,
+          limitCategory: 'usage_limit' } },
+    } } } }),
+  });
+  expect(reason).toContain('devbox');
+  expect(runnerPicker).toBe(true);
 });
 
 it('when every suggestion is dropped it says it couldn’t suggest, and Try again runs once more (journey-deploy F3)', async () => {
