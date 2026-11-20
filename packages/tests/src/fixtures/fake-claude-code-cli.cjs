@@ -118,6 +118,8 @@ async function waitForRuntimeContinuityReleaseFile() {
 function resolveClaudeConfigDir() {
   const explicit = String(process.env.CLAUDE_CONFIG_DIR || '').trim();
   if (explicit) return explicit;
+  const happierOverride = String(process.env.HAPPIER_CLAUDE_CONFIG_DIR || '').trim();
+  if (happierOverride) return happierOverride;
   return path.join(os.homedir(), '.claude');
 }
 

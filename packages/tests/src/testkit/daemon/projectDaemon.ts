@@ -296,7 +296,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
           ...(options.cliLaunchSpec ? { cliLaunchSpec: options.cliLaunchSpec } : {}), env: {
           ...process.env, ...enrollmentEnv, CI: '1', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: actionServerApiUrl,
           HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',
-          CLAUDE_CONFIG_DIR: claudeConfigDir, HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
+          HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
           HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', NODE_OPTIONS: sourceOptions,
           HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1', ...params.daemonEnv, ...options.env,
         } });
