@@ -23,7 +23,7 @@ describe('Usage model price editor projection', () => {
             tokens: { ...tokens, total: null } }];
         const rich = { ...slice, accounting: { ...slice.accounting!, contributions: rows } };
         const compact = { ...rich, accounting: projectUsageAnalyticsSummary(rich.accounting,
-            usageQueryToAnalyticsRequest(query), catalog) };
+            usageQueryToAnalyticsRequest(query)) };
         expect(buildUsagePriceEditorModel(rich, {}, catalog).rows[0]?.unpricedTokens).toBe(30);
         expect(buildUsagePriceEditorModel(compact, {}, catalog).rows[0]?.unpricedTokens).toBe(30);
     });
