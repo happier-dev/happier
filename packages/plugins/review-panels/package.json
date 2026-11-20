@@ -22,6 +22,7 @@
     "resources",
     "THIRD_PARTY_NOTICES.md",
     ".happier-plugin",
+    ".happier-plugin-build",
     "package.json"
   ],
   "scripts": {
