@@ -436,7 +436,7 @@ test('releases the lock and reruns only entry graphs whose inputs changed since 
   assert.equal(f.git('show', `HEAD:${packet}`), 'export const value = 2;\n');
 });
 
-test('finishes a second CAS loss without preparing an entry graph under the commit lock', { skip: !hasFlock }, t => {
+test('after two CAS losses rechecks only the affected entry graph under the commit lock', { skip: !hasFlock }, t => {
   const { f, base, winner, packet } = treeGraphReplayFixture(t, { uiGraph: true });
   const additionalWinners = [];
   for (const value of [3, 4]) {
@@ -449,7 +449,7 @@ test('finishes a second CAS loss without preparing an entry graph under the comm
 
   const { result, treeGateLocks, flock, lock } = runWithCommitLockContender(f, winner, packet, { observeTreeGate: true, additionalWinners });
   assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:0', 'cli:0']);
+  assert.deepEqual(treeGateLocks, ['cli:0', 'ui:0', 'cli:0', 'cli:0', 'cli:1']);
   assert.equal(f.git('rev-parse', 'HEAD^').trim(), additionalWinners.at(-1));
   assert.equal(spawnSync(flock, ['-n', lock, 'true']).status, 0);
 });

@@ -199,7 +199,7 @@ function childCpuMs() {
  * Returns `{ findings, preexisting, results, selected, timings }` (`findings` are the failures the packet adds); throws when the check cannot judge (extraction,
  * derivation or harness failure), which callers report as unavailable, never as a refusal.
  */
-export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, prior, priorBase, cheapOnly = false }) {
+export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo, root = defaultRoot(), env = process.env, signal, graphIds, prior, priorBase, cheapOnly = false, finalEntryRecheck = false }) {
   const started = performance.now();
   const cpuBefore = process.cpuUsage();
   const childBefore = childCpuMs();
@@ -214,13 +214,14 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
   };
   const empty = { findings: [], preexisting: [], results: [] };
   if (!selected.length) return finish(empty);
-  if (cheapOnly) return finish({ ...empty, needsFull: true });
-  const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings });
+  if (cheapOnly && !finalEntryRecheck) return finish({ ...empty, needsFull: true });
+  const waitForDependencies = !cheapOnly;
+  const candidate = await loadTreeGraphs({ repo, tree, ids: selected, installDir, root, env, signal, timings, waitForDependencies });
   // Like every other gate check, only failures the packet adds refuse it: the failing graphs load again from the
   // base tree (paid only when the candidate fails), and a failure the base already has is reported, not blamed.
   const failing = [...new Set(candidate.failures.map(failure => failure.graph))];
   const baseFindings = failing.length
-    ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {} })).failures.map(failure => failure.finding))
+    ? new Set((await loadTreeGraphs({ repo, tree: base, ids: failing, installDir, root, env, signal, timings: {}, waitForDependencies })).failures.map(failure => failure.finding))
     : new Set();
   const findings = candidate.failures.map(failure => failure.finding);
   return finish({ findings: findings.filter(finding => !baseFindings.has(finding)), preexisting: findings.filter(finding => baseFindings.has(finding)),
@@ -228,7 +229,7 @@ export async function commitTreeEntryLoads({ repo, base, tree, installDir = repo
 }
 
 /** One tree: extract, derive its generated inputs, mount the installation, load the graphs. */
-async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings }) {
+async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings, waitForDependencies }) {
   const git = gitAt(repo);
   const trees = env.P03_COMMIT_TREE_WORK_DIR || join(root, 'trees');
   await mkdir(trees, { recursive: true });
@@ -244,7 +245,7 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
     signal?.throwIfAborted();
     at = mark('extractMs', at);
     // The shared installation stays published while the tree consumes it.
-    const results = await withDependencyConsumption({ installDir, env, signal }, async () => {
+    const results = await withDependencyConsumption({ installDir, env, signal, wait: waitForDependencies }, async () => {
       const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(workspace => relative(dir, workspace.root)).filter(Boolean);
       const mount = () => mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs, capturedOnly: true });
       await mount();

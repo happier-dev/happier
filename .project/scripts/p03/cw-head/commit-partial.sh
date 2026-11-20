@@ -238,11 +238,12 @@ requeue_after_full_gate() {
 }
 final_prepared=0
 locked_recheck() {
-  local rc=0 t0=$SECONDS prior=$gated
+  local rc=0 t0=$SECONDS prior=$gated final_entry_recheck=
   while :; do
     replay_onto_now
     if [ "$cas_losses" -ge 2 ]; then
       echo "two CAS losses; final scoped recheck under the commit lock"
+      final_entry_recheck=1
     fi
     if both_sides_deps; then
       prior=
@@ -250,7 +251,7 @@ locked_recheck() {
       echo "both sides edited a package manifest or the lockfile"
     else
       rc=0
-      P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$prior \
+      P03_SCAN_CHEAP_ONLY=1 P03_GATE_PRIOR=$prior P03_GATE_FINAL_ENTRY_RECHECK=$final_entry_recheck \
         rungate "$GATE" "$now" "$commit" || rc=$?
     fi
     case $rc in

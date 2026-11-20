@@ -83,7 +83,7 @@ export async function runCommitGate(options) {
   }
 }
 
-async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, env = process.env, cacheDir, label = 'commit-gate' }) {
+async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = false, finalEntryRecheck = false, env = process.env, cacheDir, label = 'commit-gate' }) {
   const notes = [];
   const typecheckMode = commitTypecheckGateMode(env);
   const treeMode = commitTreeGateMode(env);
@@ -153,7 +153,7 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   }
 
   if (treeMode === 'block') {
-    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly }));
+    const loads = await judge('tree entry loads', () => commitTreeEntryLoads({ repo, base, tree, prior, priorBase, env, cheapOnly, finalEntryRecheck }));
     if (loads.needsFull) return { verdict: 'needs-full', check: 'tree entry loads', findings: [], notes };
     if (loads.findings.length) return refused('entry loads of the commit\'s own tree', loads.findings);
   } else if (treeMode === 'report' && !prior && !cheapOnly) {
@@ -226,7 +226,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
   });
   let recheckedAfterRelease = false;
   const check = async (cheapOnly) => {
-    const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, priorBase: accepted?.base, cheapOnly, label });
+    const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree, priorBase: accepted?.base, cheapOnly, finalEntryRecheck: cheapOnly && losses >= 2, label });
     for (const note of gate.notes) console.error(`commit gate: ${note}`);
     if (gate.verdict === 'pass') {
       commit = createCommit(packet);
@@ -296,7 +296,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     const repo = execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
     if (!option('base') || !option('tree')) throw Object.assign(new Error('usage: commitGate.mjs --base=<rev> --tree=<tree-ish> [--prior=<tree-ish>] [--cheap-only]'), { unavailable: true });
     const result = await runCommitGate({ repo, base: option('base'), tree: option('tree'), prior: option('prior') || undefined,
-      cheapOnly: args.includes('--cheap-only'), label: option('label') ?? 'commit-gate' });
+      cheapOnly: args.includes('--cheap-only'), finalEntryRecheck: process.env.P03_GATE_FINAL_ENTRY_RECHECK === '1', label: option('label') ?? 'commit-gate' });
     for (const note of result.notes) console.log(`commit gate: ${note}`);
     if (result.verdict === 'refused') {
       console.log(formatCommitGateRefusal(result));

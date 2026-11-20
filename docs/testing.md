@@ -147,6 +147,12 @@ The SDK's separate Action/cancellation/cleanup scenario still runs in its existi
 validator suite. Existing package import-order, semantic and performance tests remain necessary for
 their narrower contracts.
 
+The exact-tree commit gate selects entry graphs from the packet's workspace
+dependency closure. It retains a prior verdict across HEAD changes outside
+those inputs. After two replay losses, the gate can run the affected entry
+graphs locally under the final commit lock before moving the ref. Dependency
+refresh and uncached worker comparisons remain outside that lock.
+
 ### Primary workload standby preparation (0.3 development)
 
 `host.mjs` owns `hstack dev-vm primary status` and

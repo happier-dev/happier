@@ -23,7 +23,7 @@ def case(kind):
     (d/'msg').write_text('test: packet A\n')
     idx = str(d/'private-b'); envb = dict(env, GIT_INDEX_FILE=idx)
     subprocess.check_call([REAL_GIT, 'read-tree', base], cwd=d, env=envb)
-    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','cas-churn','cas-stale','cas-worker-down','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
+    target = 'b.txt' if kind in ('disjoint','newfile','cheapmiss','cas-loss','cas-final-entry','cas-churn','cas-stale','cas-worker-down','requeue','retention') else 'package.json' if kind == 'manifest' else 'a.txt'
     content = initial.replace('line 20\n', 'packet B\n') if kind != 'conflict' else initial.replace('line 2\n', 'conflict B\n')
     blob = subprocess.check_output([REAL_GIT, 'hash-object', '-w', '--stdin'], input=content, cwd=d, text=True).strip()
     subprocess.check_call([REAL_GIT, 'update-index', '--cacheinfo', f'100644,{blob},{target}'], cwd=d, env=envb)
@@ -35,12 +35,12 @@ def case(kind):
     bindir = d/'bin'; bindir.mkdir()
     shim = bindir/'git'
     shim.write_text(f'''#!/bin/bash
-if [[ '{kind}' = cas-loss || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved' ]; then
+if [[ '{kind}' = cas-loss || '{kind}' = cas-final-entry || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
  '{REAL_GIT}' update-ref refs/heads/main '{b}' '{base}' || exit 99
  # A must retain its gated snapshot, even when its working files change.
  echo 'later worktree edit' > '{d}/c.txt'
-elif [[ '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved-twice' ]; then
+elif [[ '{kind}' = cas-final-entry || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ "$1" = update-ref ] && [ ! -e '{d}/moved-twice' ]; then
  touch '{d}/moved-twice'
  '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
 fi
@@ -75,7 +75,7 @@ if [ '{kind}' = signal ]; then
  exec sleep 120
 fi
 l=unlocked; flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" true || l=locked
-if [[ '{kind}' != cas-loss && '{kind}' != cas-churn && '{kind}' != cas-stale && '{kind}' != cas-worker-down && '{kind}' != incomplete ]] && [ ! -e '{d}/moved' ]; then
+if [[ '{kind}' != cas-loss && '{kind}' != cas-final-entry && '{kind}' != cas-churn && '{kind}' != cas-stale && '{kind}' != cas-worker-down && '{kind}' != incomplete ]] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
  flock -x "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{b}' '{base}' || exit 99
  echo 'later worktree edit' > '{d}/c.txt'
@@ -86,8 +86,12 @@ if [ '{kind}' = requeue ] && [ -e '{d}/.missed' ] && [ -z "${{P03_SCAN_CHEAP_ONL
  flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{later}' '{b}' || exit 99
 fi
 [ '{kind}' != incomplete ] || exit 11
-if [[ '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ -e '{d}/moved-twice' ]; then
+if [[ '{kind}' = cas-final-entry || '{kind}' = cas-churn || '{kind}' = cas-stale || '{kind}' = cas-worker-down ]] && [ -e '{d}/moved-twice' ]; then
  if [ -n "${{P03_SCAN_CHEAP_ONLY:-}}" ]; then
+   if [ '{kind}' = cas-final-entry ] && [ "${{P03_GATE_FINAL_ENTRY_RECHECK:-}}" = 1 ]; then
+     [ "$l" = locked ] || exit 99
+     exit 0
+   fi
    exit 3
  fi
  [ "$l" = unlocked ] || {{ echo 'worker preparation is holding the commit lock'; exit 99; }}
@@ -144,7 +148,7 @@ sleep 0.2
         assert ('replay conflict' if kind == 'conflict' else 'candidate refused') in run.stdout.lower(), run.stdout
     else:
         assert run.returncode == 0, run.stdout
-        assert git('rev-parse','HEAD^') == (later if kind in ('requeue', 'cas-churn') else b)
+        assert git('rev-parse','HEAD^') == (later if kind in ('requeue', 'cas-final-entry', 'cas-churn') else b)
         if kind in ('retention', 'requeue'):
             head_tree = git('rev-parse', 'HEAD^{tree}')
             payloads = sorted(p.name for p in cache.rglob('*') if p.is_file() and not p.name.endswith('.lock') and not p.name.endswith('.slot'))
@@ -162,6 +166,7 @@ sleep 0.2
             'manifest': [pk + '||unlocked'],
             'cheapmiss': fallback,
             'cas-loss': [cheap],
+            'cas-final-entry': [cheap, cheap],
             'cas-churn': [cheap, cheap, pk + '|fast|unlocked'],
             'requeue': fallback + [cheap],
         }
@@ -169,8 +174,8 @@ sleep 0.2
         assert not (d/'fasts').exists(), 'unnecessary fast gate'
         if kind in ('manifest', 'cheapmiss', 'requeue'):
             assert 'resumed the frozen packet' in run.stdout, run.stdout
-        if kind in ('cas-loss', 'cas-churn'):
-            if kind == 'cas-churn':
+        if kind in ('cas-loss', 'cas-final-entry', 'cas-churn'):
+            if kind in ('cas-final-entry', 'cas-churn'):
                 assert 'final scoped recheck under the commit lock' in run.stdout, run.stdout
             assert 'CAS lost to a commit outside the wrapper' in run.stdout, run.stdout
         assert git('reflog', '-1', '--format=%gs', 'refs/heads/main').startswith('commit-partial: pid '), 'reflog does not name the wrapper'
@@ -181,4 +186,4 @@ sleep 0.2
                                  text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             assert dry.returncode == 0 and 'DRY candidate' in dry.stdout, dry.stdout
             assert not list(cache.glob('packet.*')), 'dry packet retained its private files'
-for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','cas-churn','cas-stale','cas-worker-down','incomplete','requeue','signal','retention']: case(kind)
+for kind in sys.argv[1:] or ['disjoint','intersect','conflict','refused','newfile','manifest','cheapmiss','cas-loss','cas-final-entry','cas-churn','cas-stale','cas-worker-down','incomplete','requeue','signal','retention']: case(kind)
