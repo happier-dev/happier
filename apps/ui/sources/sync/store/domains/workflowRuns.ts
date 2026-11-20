@@ -1,6 +1,7 @@
 import { WORKFLOW_ATTENTION_INVOCATION_LIFECYCLES_V1, mergeWorkflowNotificationConditionV1, type WorkflowRunInvocationIndexV1, type WorkflowRunSummaryV1, type WorkflowNotificationConditionV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
-import type { WorkflowRunPrivateMetadataV1, WorkflowRunGetResultV1, WorkflowInvocationGetResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
+import type { WorkflowRunPrivateMetadataV1, WorkflowRunGetResultV1, WorkflowInvocationGetResultV1, WorkflowRunReadStateSetRequestV1Schema, WorkflowRunReadStateSetResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { sameStrictJsonValue, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { z } from 'zod';
 
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 
@@ -94,6 +95,11 @@ export type WorkflowRunsDomain = {
      * discoverable by identity whether or not a list containing it is loaded.
      */
     upsertWorkflowRuns: (runs: readonly WorkflowRunRow[], scope?: ServerAccountScope | null) => void;
+    applyWorkflowRunFailureSeenReceipt: (
+        scope: ServerAccountScope,
+        request: z.infer<typeof WorkflowRunReadStateSetRequestV1Schema>,
+        receipt: z.infer<typeof WorkflowRunReadStateSetResultV1Schema>,
+    ) => void;
     removeWorkflowRun: (runId: string, scope?: ServerAccountScope | null) => void;
     /**
      * Restate one loaded window's membership after a row-level change: the entered rows' bodies
@@ -890,6 +896,22 @@ export function resolveAutomationRunProjections(
     return rows;
 }
 
+function mergeWorkflowRunWindowMembership(
+    previous: WorkflowRunListWindow,
+    runIds: readonly string[],
+    sourceArtifactIdsByRunId?: Readonly<Record<string, string>>,
+): WorkflowRunListWindow {
+    const kept = new Set(runIds);
+    const sources = Object.fromEntries(Object.entries({ ...previous.sourceArtifactIdsByRunId, ...sourceArtifactIdsByRunId })
+        .filter(([id]) => kept.has(id)));
+    return { ...previous,
+        runIds: sameStrictJsonValue(previous.runIds, runIds) ? previous.runIds : [...runIds],
+        ...(previous.sourceArtifactIdsByRunId || Object.keys(sources).length > 0 ? {
+            sourceArtifactIdsByRunId: previous.sourceArtifactIdsByRunId && sameStrictJsonValue(previous.sourceArtifactIdsByRunId, sources)
+                ? previous.sourceArtifactIdsByRunId : sources,
+        } : {}) };
+}
+
 export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
     set,
     get,
@@ -920,20 +942,33 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 if (workflowRunsById === state.workflowRunsById && workflowRunInvocationsByRunId === state.workflowRunInvocationsByRunId) return state;
                 return { ...state, workflowRunsById, workflowRunInvocationsByRunId };
             }),
+        applyWorkflowRunFailureSeenReceipt: (scope, request, receipt) =>
+            set(state => {
+                const { runId, attentionSeenFailureAt } = receipt;
+                if (runId !== request.runId || attentionSeenFailureAt !== request.failedAt) return state;
+                const key = workflowRunStoreKey(runId, scope);
+                const row = state.workflowRunsById[key];
+                const summary = row?.summary;
+                // Custody can advance independently of the acknowledged failure.
+                if (!summary || summary.ownerAccountId !== scope.accountId || summary.state !== 'failed'
+                    || summary.finishedAt !== request.failedAt || summary.revision < request.revision) return state;
+                const workflowRunsById = mergeWorkflowRunBodies(state.workflowRunsById, [{ ...row, summary: {
+                    ...summary, attentionSeenFailureAt, failureUnseen: false, attentionRequired: summary.invocationAttentionRequired,
+                } }], scope);
+                const windowId = workflowRunListWindowStoreKey('attention', scope);
+                const window = state.workflowRunListWindows[windowId];
+                if (!summary.invocationAttentionRequired && window?.runIds.includes(runId)) {
+                    const updated = mergeWorkflowRunWindowMembership(window, window.runIds.filter(id => id !== runId));
+                    return { ...state, workflowRunsById, workflowRunListWindows: { ...state.workflowRunListWindows, [windowId]: updated } };
+                }
+                return workflowRunsById === state.workflowRunsById ? state : { ...state, workflowRunsById };
+            }),
         applyWorkflowRunListMembershipPatch: ({ scope = getActiveServerAccountScope(), windowId, runIds, entered, sourceArtifactIdsByRunId }) =>
             set((state) => {
                 const previous = state.workflowRunListWindows[windowId];
                 if (!previous) return state;
                 const workflowRunsById = mergeWorkflowRunBodies(state.workflowRunsById, entered, scope);
-                const kept = new Set(runIds);
-                const sources = Object.fromEntries(Object.entries({ ...previous.sourceArtifactIdsByRunId, ...sourceArtifactIdsByRunId })
-                    .filter(([id]) => kept.has(id)));
-                const window: WorkflowRunListWindow = { ...previous,
-                    runIds: sameStrictJsonValue(previous.runIds, runIds) ? previous.runIds : [...runIds],
-                    ...(previous.sourceArtifactIdsByRunId || Object.keys(sources).length > 0 ? {
-                        sourceArtifactIdsByRunId: previous.sourceArtifactIdsByRunId && sameStrictJsonValue(previous.sourceArtifactIdsByRunId, sources)
-                            ? previous.sourceArtifactIdsByRunId : sources,
-                    } : {}) };
+                const window = mergeWorkflowRunWindowMembership(previous, runIds, sourceArtifactIdsByRunId);
                 const unchangedWindow = sameStrictJsonValue(previous, window);
                 const workflowRunInvocationsByRunId = reconcileRunInvocationObservations(state.workflowRunInvocationsByRunId,
                     entered.flatMap((row) => workflowRunsById[workflowRunStoreKey(row.id, scope)] ?? []), scope);

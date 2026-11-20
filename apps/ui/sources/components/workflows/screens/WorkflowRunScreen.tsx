@@ -929,12 +929,11 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
         const abort = new AbortController();
         const retirement = accountLifetime.onRetire(() => abort.abort());
         let current = true;
-        void workflowRunDetailActions.markFailureSeen({ runId: seenRunId, revision: seenRevision, failedAt: seenFailedAt }, abort.signal)
-            .then(async () => {
+        const request = { runId: seenRunId, revision: seenRevision, failedAt: seenFailedAt };
+        void workflowRunDetailActions.markFailureSeen(request, abort.signal)
+            .then(receipt => {
                 if (current && accountLifetime.isCurrent() && isContentIdentityCurrent(contentIdentity)) {
-                    // Only a fresh canonical summary clears the notice; the acknowledgement
-                    // response never fabricates local lifecycle or hold facts.
-                    await refreshWorkflowRunById(seenRunId, { accountLifetime, signal: abort.signal });
+                    getStorage().getState().applyWorkflowRunFailureSeenReceipt(accountLifetime.scope, request, receipt);
                 }
             }).catch(error => {
                 if (current && !abort.signal.aborted && accountLifetime.isCurrent() && isContentIdentityCurrent(contentIdentity)) {

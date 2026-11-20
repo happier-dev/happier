@@ -41,7 +41,7 @@ import { freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/ac
 import { type RoleArtifactV1} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { ModalProvider } from '@/modal';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { workflowRunRowFromSummary, workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { workflowRunListWindowStoreKey, workflowRunRowFromSummary, workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -1303,6 +1303,27 @@ describe('WorkflowRunScreen', () => {
             } else expect(detailActions.markFailureSeen).not.toHaveBeenCalled();
         } finally { await screen.unmount(); }
     });
+    it.each([false, true])('applies the failure receipt without a summary request (invocation attention: %s)', async invocationAttentionRequired => {
+        const failedAt = '2026-10-23T10:00:00.000Z';
+        const run = createWorkflowRunSummaryFixture({
+            state: 'failed', finishedAt: failedAt, ownerAccountId: 'account-a',
+            failureUnseen: true, attentionRequired: true, invocationAttentionRequired,
+        });
+        const scope = storeState.state.profileScope!;
+        const windowId = workflowRunListWindowStoreKey('attention', scope);
+        getStorage().getState().applyWorkflowRunListPage({ scope, windowId, runs: [run], nextCursor: null, mode: 'replace' });
+        detailActions.markFailureSeen.mockResolvedValue({ runId: run.id, attentionSeenFailureAt: failedAt });
+        const screen = await renderRunScreen({ run });
+        await vi.waitFor(() => expect(getStorage().getState().workflowRunsById[workflowRunStoreKey(run.id)]?.summary).toMatchObject({
+            attentionSeenFailureAt: failedAt, failureUnseen: false,
+            attentionRequired: invocationAttentionRequired, invocationAttentionRequired,
+        }));
+        expect(detailActions.markFailureSeen).toHaveBeenCalledTimes(1);
+        expect(detailActions.listRuns).not.toHaveBeenCalled();
+        expect(getStorage().getState().workflowRunListWindows[windowId]?.runIds).toEqual(invocationAttentionRequired ? [run.id] : []);
+        await screen.unmount();
+    });
+
     it('settles an addressed Run read silently when navigation retires its Home binding', async () => {
         routeState.serverId = servedHomeId;
         let readSignal: AbortSignal | undefined;
