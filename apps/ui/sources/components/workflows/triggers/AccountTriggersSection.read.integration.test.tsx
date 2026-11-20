@@ -68,6 +68,45 @@ afterEach(async () => {
 });
 
 describe('Account trigger HTTP read failure and recovery', () => {
+    it('carries the compact scheduled Builder’s selected machine and its default folder into the editor', async () => {
+        await loadSyncSingletonForTests();
+        const account = await restoreServerAccountForTest({
+            serverUrl: `https://schedule-placement-${crypto.randomUUID()}.test`, accountId: 'schedule-placement',
+            request: homeRequest(async () => json({ automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 })),
+        });
+        disposals.push(() => account.dispose());
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { WorkflowSentenceBuilder } = await import('../sentence/WorkflowSentenceBuilder');
+        const { readWorkflowDefinitionDraftSeed } = await import('@/sync/domains/workflows/workflowDefinitionDraftSeed');
+        const { router } = await import('expo-router');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (lifetime === null) throw new Error('Expected the Builder Account lifetime');
+        const machine = createMachineFixture({ id: 'schedule-machine', activeAt: Date.now() });
+        await publishMachineInventoryForTest(lifetime.scope, [machine]);
+        const restorePopoverGlobals = withPopoverWebGlobals();
+        disposals.unshift(async () => restorePopoverGlobals());
+        const screen = await renderScreen(<WorkflowSentenceBuilder anchorRef={React.createRef<View>()}
+            intent={{ name: 'Scheduled workflow', trigger: { kind: 'schedule', enabled: true,
+                schedule: { kind: 'cron', scheduleExpr: '30 2 * * *', everyMs: null, timezone: 'Europe/Amsterdam' } } }}
+            accountLifetime={lifetime} onRequestClose={() => {}} />, {
+            createNodeMock: element => element.type === 'View' ? {
+                addEventListener() {},
+                removeEventListener() {},
+                measureInWindow: callback => callback(0, 0, 300, 40),
+            } satisfies Pick<View, 'measureInWindow'> & Pick<EventTarget, 'addEventListener' | 'removeEventListener'> : null,
+        });
+        disposals.push(() => screen.unmount());
+        await screen.pressByTestIdAsync('workflow-builder-sentence-machine');
+        await screen.pressByTestIdAsync(`workflow-builder-sentence-machine-option:${machine.id}`);
+        await screen.pressByTestIdAsync('workflow-builder-open-editor');
+        const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+        if (typeof entry !== 'object' || entry === null || !('params' in entry)) throw new Error('Expected the editor handoff');
+        const seed = readWorkflowDefinitionDraftSeed(String(entry.params?.definitionDraftSeedId), lifetime.scope);
+        expect(seed?.project).toEqual({ machineId: machine.id, directory: '~' });
+    });
+
     it('keeps a conditional Builder editable through its branch selections and full-editor handoff', async () => {
         await loadSyncSingletonForTests();
         const account = await restoreServerAccountForTest({

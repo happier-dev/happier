@@ -15,9 +15,11 @@ import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover/Popover';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { useMachineListForServer, useServerScopedMachine } from '@/sync/domains/state/storage';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { readWorkflowBlockShape } from '@/sync/domains/workflows/workflowAuthoring';
+import { isWorkflowProjectTarget, type WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -210,10 +212,14 @@ function WorkflowSentenceBuilderBody(
       <View style={styles.nameField}>{nameField}</View>
     </View>
   );
+  const changeProject = useEventCallback((target: WorkflowAuthoringTarget) => {
+    if (isWorkflowProjectTarget(target)) sentence.changeProject(target);
+  });
   const place = {
     target: project,
     machineName,
     ...(machines === undefined ? {} : { machines }),
+    onChange: changeProject,
     accountLifetime: lifetime,
   } satisfies NonNullable<React.ComponentProps<typeof WorkflowInspector>['place']>;
   return (
