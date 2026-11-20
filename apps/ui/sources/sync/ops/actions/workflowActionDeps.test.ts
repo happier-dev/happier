@@ -68,10 +68,11 @@ import {
 } from '@happier-dev/protocol/automations/automationTriggerDefinition';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
-import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
+import { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createPlainMachineRowFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { isMachineReachable } from '@/sync/domains/machines/reachability/machineReachability';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
@@ -2261,21 +2262,64 @@ describe('UI Workflow Action front door', () => {
         } finally { h.account.dispose(); }
     });
 
+    it.each(['retry', 'recover'] as const)('places retained Run %s on its recorded Machine instead of another reachable Account relay', async (operation) => {
+        const h = await createHarness();
+        const previousState = storage.getState();
+        try {
+            await upsertAndActivateServer({ serverUrl: h.home.serverUrl, scope: 'device' });
+            const machines = ['relay-a', 'machine-a'].map(id => createMachineFixture({ id, active: true, activeAt: Date.now(),
+                createdAt: id === 'relay-a' ? 2 : 1,
+                access: createPlainMachineRowFixture({ id, accountId }).access }));
+            await publishMachineInventoryForTest(h.account, machines);
+            const { resolveUiAccountActionFallbackMachineId } = await import('./accountActionDeps');
+            expect(resolveUiAccountActionFallbackMachineId(h.account)).toBe('relay-a');
+            const invocationId = '9e2f9bf7-58db-4fab-8f32-1b11b7bb6be5';
+            const run = createWorkflowRunSummaryFixture({ id: runId, machineId: 'machine-a', state: 'running', revision: 6 });
+            h.transport.mockImplementation(async request => request.machineId !== run.machineId
+                ? { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' }
+                : operation === 'retry'
+                    ? { run, invocation: createWorkflowInvocationIndexFixture({ id: invocationId, runId, lifecycle: 'pending', attempt: '1' }), disposition: 'accepted' }
+                    : { run, intent: 'resumed' });
+            const execute = (machineId?: string) => {
+                const context = machineId ? { ...h.context, externalActionTarget: { kind: 'machine' as const, machineId } } : h.context;
+                return operation === 'retry'
+                ? h.execute('workflow.run.invocations.retry', { runId, expectedRevision: 5,
+                    invocation: { recordId: invocationId }, causalInvocationIds: [invocationId],
+                    conversation: 'fresh_agent', input: { kind: 'original' } }, context)
+                : h.execute('workflow.run.resume', { mode: 'recover', runId, expectedRevision: 5,
+                    invocations: [{ kind: 'reattach', invocation: { recordId: invocationId } }] }, context);
+            };
+            await expect(execute('machine-a')).resolves.toMatchObject({ ok: true });
+            await expect(execute('relay-a')).resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+            h.transport.mockClear();
+            const result = await execute();
+            expect(result).toMatchObject({ ok: true, result: { run: { id: runId, machineId: 'machine-a', state: 'running' } } });
+            expect(h.transport.mock.calls[0]?.[0]).toMatchObject({ machineId: 'machine-a', target: { kind: 'machine', machineId: 'machine-a' } });
+            expect(h.operations.filter(entry => entry.operation === 'get')).toHaveLength(1);
+        } finally {
+            storage.setState(previousState, true);
+            h.account.dispose();
+        }
+    });
+
     it('uses an online relay when the first visible Machine is inactive', async () => {
         const h = await createHarness();
+        const previousState = storage.getState();
         try {
             await upsertAndActivateServer({ serverUrl: h.home.serverUrl, scope: 'device' });
             const machines = [
-                createMachineFixture({ id: 'stale', active: false, activeAt: 1, createdAt: 2 }),
-                createMachineFixture({ id: 'online', active: true, activeAt: Date.now(), createdAt: 1 }),
+                createMachineFixture({ id: 'stale', active: false, activeAt: 1, createdAt: 2,
+                    access: createPlainMachineRowFixture({ id: 'stale', accountId }).access }),
+                createMachineFixture({ id: 'online', active: true, activeAt: Date.now(), createdAt: 1,
+                    access: createPlainMachineRowFixture({ id: 'online', accountId }).access }),
             ];
-            storage.setState({ machineListByServerId: { [h.home.id]: machines } });
-            await h.createUiWorkflowAction({ account: h.account, transport: h.transport })({
+            await publishMachineInventoryForTest(h.account, machines);
+            await expect(h.createUiWorkflowAction({ account: h.account, transport: h.transport })({
                 actionId: 'workflow.run.start', input: WorkflowRunStartRequestV1Schema.parse({ runId, source: { kind: 'inline', definition } }), context: h.context,
-            });
+            })).resolves.toMatchObject({ admission: 'created' });
             expect(h.transport.mock.calls[0]?.[0].machineId).toBe('online');
         } finally {
-            storage.setState({ machineListByServerId: {} });
+            storage.setState(previousState, true);
             h.account.dispose();
         }
     });

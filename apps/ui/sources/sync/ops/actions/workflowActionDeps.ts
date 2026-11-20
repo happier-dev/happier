@@ -33,7 +33,7 @@ import {
 } from '@happier-dev/channels-protocol/v1';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isWorkflowHostAdmittedChildActionIdV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
-import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, WORKFLOW_RUN_RESUME_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -298,6 +298,13 @@ export function createUiWorkflowAction(params: Readonly<{
         return resolved;
     };
     const runStorage = createWorkflowRunAccountStorage(account);
+    const readRunSummary = async (runId: string, signal?: AbortSignal) => {
+        const stored = await runStorage.execute({ operation: 'get', runId }, signal ? { signal } : undefined);
+        const run = WorkflowRunSummaryV1Schema.safeParse(stored && typeof stored === 'object' && 'run' in stored ? stored.run : undefined);
+        if (!run.success || run.data.id !== runId) targetUnavailable();
+        account.assertCurrent();
+        return run.data;
+    };
     const runs = createWorkflowAccountRunActionOwner({
         definitions,
         storage: {
@@ -440,12 +447,8 @@ export function createUiWorkflowAction(params: Readonly<{
             if (source.kind === 'workflow_run') {
                 // The existing Account storage read authorizes the exact Run;
                 // no private opening or lifecycle fact is invented by this adapter.
-                const result = await runStorage.execute({ operation: 'get', runId: source.runId },
-                    caller?.signal ? { signal: caller.signal } : undefined);
-                const run = WorkflowRunSummaryV1Schema.safeParse(result && typeof result === 'object' && 'run' in result ? result.run : undefined);
-                if (!run.success || run.data.id !== source.runId) targetUnavailable();
-                account.assertCurrent();
-                return { terminal: isTerminalAutomationRunStateV3(run.data.state) };
+                const run = await readRunSummary(source.runId, caller?.signal);
+                return { terminal: isTerminalAutomationRunStateV3(run.state) };
             } else {
                 const result = await executeRelay({ actionId: 'execution.run.get', input: { runId: source.runId },
                     context: { ...caller, surface: caller?.surface ?? 'ui', serverId: account.serverId, runtimeAccountId: account.accountId,
@@ -474,14 +477,15 @@ export function createUiWorkflowAction(params: Readonly<{
     const executeAccount = createWorkflowActionExecutor({ definitions, runs, triggers, isWorkflowFeatureEnabled });
     const unavailable = { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' } as const;
     const ordinaryAccountCredential = account.credentialAuthorityKind === 'account' || account.credentialAuthorityKind === 'terminal';
-    const usesAccountOwner = (args: WorkflowActionExecuteArgs) => {
+    const resolveExecutionPlacement = (args: WorkflowActionExecuteArgs) => {
         const restrictedResource = args.context.externalActionTarget && args.context.externalActionTarget.kind !== 'machine';
+        const recoveryRunId = args.actionId === WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1
+            || (args.actionId === WORKFLOW_RUN_RESUME_ACTION_ID_V1 && args.input.mode === 'recover') ? args.input.runId : undefined;
         const machineOrHostOperation = args.actionId === WORKFLOW_RUN_START_ACTION_ID_V1
-            || args.actionId === 'workflow.run.invocations.retry'
-            || (args.actionId === 'workflow.run.resume' && args.input.mode === 'recover')
+            || recoveryRunId !== undefined
             || (args.actionId === 'workflow.trigger.run_now' && isWorkflowTriggerAgentCallerV1(args.context))
             || (isWorkflowHostAdmittedChildActionIdV1(args.actionId) && args.context.authority !== 'present_user');
-        return ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation;
+        return { accountOperation: ordinaryAccountCredential && !restrictedResource && !machineOrHostOperation, recoveryRunId };
     };
     const execute: WorkflowActionExecute = async (rawArgs) => {
         try { account.assertCurrent(); } catch { return unavailable; }
@@ -498,18 +502,25 @@ export function createUiWorkflowAction(params: Readonly<{
         // and materializer.
         let result: unknown;
         try {
-            const accountOperation = usesAccountOwner(args);
+            const { accountOperation, recoveryRunId } = resolveExecutionPlacement(args);
             // Account reads are admitted by the Workflow executor; ordinary Machine operations
             // consume the same UI policy before relaying. Scoped credentials keep host admission.
             if (ordinaryAccountCredential && !accountOperation && !await isWorkflowFeatureEnabled()) return unavailable;
+            let relayArgs = args;
+            if (ordinaryAccountCredential && args.context.externalActionTarget === undefined && recoveryRunId !== undefined) {
+                // Recovery belongs to the retained Run's Machine. A reachable Account
+                // relay is not a resource target and can fail the Run's target binding.
+                const run = await readRunSummary(recoveryRunId, args.signal ?? args.context.signal);
+                relayArgs = { ...args, context: { ...args.context,
+                    externalActionTarget: { kind: 'machine', machineId: run.machineId } } };
+            }
             result = await (accountOperation
-                ? executeAccount(args) : executeRelay(args));
+                ? executeAccount(args) : executeRelay(relayArgs));
             if (ordinaryAccountCredential && !restrictedResource && args.actionId === 'workflow.run.invocations.get') {
                 const opened = WorkflowInvocationGetResultV1Schema.safeParse(result);
                 const retry = opened.success ? opened.data.invocation.recoveryAvailability?.retry : undefined;
                 if (opened.success && retry && !(retry.kind === 'unavailable' && retry.reason === 'run_not_interrupted')) {
-                    const stored = await runStorage.execute({ operation: 'get', runId: args.input.runId },
-                        args.signal ? { signal: args.signal } : undefined).catch(error => {
+                    const run = await readRunSummary(args.input.runId, args.signal ?? args.context.signal).catch(error => {
                         account.assertCurrent();
                         if ((args.signal ?? args.context.signal)?.aborted
                             || (error instanceof AutomationApiError && (error.status === 401 || error.status === 403))) throw error;
@@ -517,17 +528,16 @@ export function createUiWorkflowAction(params: Readonly<{
                         // Keep the opened Account history when that optional read is unavailable.
                         return undefined;
                     });
-                    const run = WorkflowRunSummaryV1Schema.safeParse(stored && typeof stored === 'object' && 'run' in stored ? stored.run : undefined);
                     const target = args.context.externalActionTarget;
-                    if (run.success && run.data.id === args.input.runId && run.data.state === 'interrupted'
-                        && (!target || (target.kind === 'machine' && target.machineId === run.data.machineId))) {
+                    if (run?.state === 'interrupted'
+                        && (!target || (target.kind === 'machine' && target.machineId === run.machineId))) {
                         // The Machine's existing Run owner observes exact native input/conversation
                         // facts. Its transport reads the exact captured-Home Machine and authorizes
                         // access; a cold or stale presentation inventory cannot decide availability.
                         // A native refusal keeps the already-authorized Account history readable.
                         try {
                             const observed = await executeRelay({ ...args, context: { ...args.context,
-                                externalActionTarget: { kind: 'machine', machineId: run.data.machineId } } });
+                                externalActionTarget: { kind: 'machine', machineId: run.machineId } } });
                             if (!ActionExecuteFailureSchema.safeParse(observed).success) result = observed;
                         } catch (error) {
                             account.assertCurrent();
@@ -608,7 +618,7 @@ export function createUiWorkflowAction(params: Readonly<{
             if (!areServerProfileIdentifiersEquivalent(rawArgs.context.serverId, account.serverId)
                 || rawArgs.context.runtimeAccountId !== account.accountId) return unavailable;
             // Relayed work is prepared by its receiving executor, which owns that invocation's row.
-            if (!usesAccountOwner(rawArgs)) return null;
+            if (!resolveExecutionPlacement(rawArgs).accountOperation) return null;
             return executeAccount.prepareTriggerMutation({ ...rawArgs,
                 context: { ...rawArgs.context, serverId: account.serverId } });
         },

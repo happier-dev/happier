@@ -237,6 +237,8 @@ import { PUBLIC_PROFILE_ACTION_IDS_V1 } from '../account/publicProfileActionIds.
 import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '../automations/occurrenceActionIds.js';
 
 export const WORKFLOW_RUN_START_ACTION_ID_V1 = 'workflow.run.start';
+export const WORKFLOW_RUN_RESUME_ACTION_ID_V1 = 'workflow.run.resume';
+export const WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1 = 'workflow.run.invocations.retry';
 export const EXTERNAL_SESSION_STATUS_GET_ACTION_ID = 'sessions.external.status.get';
 export const EXTERNAL_SESSION_TAKEOVER_START_ACTION_ID = 'sessions.external.takeover.start';
 export const EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET_ACTION_ID = 'sessions.external.backgroundFollow.set';
@@ -251,8 +253,8 @@ export const WORKFLOW_ACTION_IDS_V1 = [
   WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1,
   WORKFLOW_VALIDATE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
   'workflow.run.read_state.set',
-  'workflow.run.pause', 'workflow.run.resume', 'workflow.run.cancel', 'workflow.run.invocations.list',
-  'workflow.run.invocations.get', 'workflow.run.invocations.retry', 'workflow.run.delete',
+  'workflow.run.pause', WORKFLOW_RUN_RESUME_ACTION_ID_V1, 'workflow.run.cancel', 'workflow.run.invocations.list',
+  'workflow.run.invocations.get', WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, 'workflow.run.delete',
   'workflow.run.invocations.publish_draft', 'workflow.run.invocations.complete_review',
   'workflow.definition.list', 'workflow.definition.get', 'workflow.definition.create',
   'workflow.definition.update', 'workflow.definition.edit', 'workflow.definition.delete',
