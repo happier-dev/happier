@@ -25,6 +25,7 @@ import type { StoredCredentials } from '@/persistence';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions';
 import { DEPLOYMENT_ACTION_IDS_V1, isDeploymentApprovalMetadataPreparationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { DeploymentReceiptResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -88,6 +89,8 @@ it.each([
     const receipt = { ok: true as const, environmentId: 'environment', revision: 1,
         deploymentId: 'receipt', deploymentRevision: 2, state };
     const http = vi.spyOn(axios, 'request');
+    const validateHomeReceipt = vi.spyOn(DeploymentReceiptResultV1Schema, 'safeParse');
+    const reparseReceipt = vi.spyOn(DeploymentReceiptResultV1Schema, 'parse');
     for (const beforeDispatch of [true, false]) {
         http.mockResolvedValue({ status: 200, data: { ...receipt, state: beforeDispatch ? state : 'queued' } });
         const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
@@ -99,6 +102,7 @@ it.each([
         expect(result).toMatchObject({ ok: false, errorCode, details: { ...receipt,
             requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) } });
     }
+    expect(validateHomeReceipt.mock.calls.length + reparseReceipt.mock.calls.length).toBe(2);
 });
 
 it('settles a rolled-back deployment request with its missing fact, recovery and transaction cause', async () => {
@@ -231,6 +235,32 @@ it('identifies a rejected Home read field without retaining its value', async ()
         issues: expect.arrayContaining([expect.objectContaining({ code: 'invalid_type', path: ['environment', 'revision'], expected: 'number' })]),
     } } });
     expect(JSON.stringify(result)).not.toContain('never-record-rejected-value');
+});
+
+it('keeps an invalid mutation response ambiguous after Home receives it', async () => {
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 200,
+        data: { ok: true, environmentId: 'environment', deploymentId: 'unvalidated-receipt' } });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({}), dispatchReceipt: async () => { throw new Error('Invalid receipt must not dispatch'); } });
+    await expect(deps.deploymentAction!('deployments.deploy', { serverId: 'home', environmentId: 'environment',
+        targetLinkId: 'runtime', expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'request',
+        contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 },
+    { operationAcceptance: { operationId: 'operation', accept() {} } }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+});
+
+it('discards a valid Home read when its Account changes during transport', async () => {
+    const { environment, targetLinks } = createDeploymentEnvironmentDetailV1();
+    let current = true;
+    vi.spyOn(axios, 'request').mockImplementation(async () => {
+        current = false;
+        return { status: 200, data: { ok: true, environment, targetLinks: targetLinks.map(row => row.targetLink) } };
+    });
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test',
+        admitAccount: async () => current ? null : { ok: false, errorCode: 'action_account_scope_changed', error: 'account changed' },
+        resolveRequestHeaders: () => ({}), dispatchReceipt: async () => { throw new Error('Read cannot dispatch'); } });
+    await expect(deps.deploymentAction!('deployments.environments.get', { serverId: 'home', environmentId: environment.id }, {}))
+        .resolves.toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
 });
 
 it.each(['response', 'rejection'] as const)('classifies HTTP 431 %s as a transport refusal before parsing deployment output', async kind => {

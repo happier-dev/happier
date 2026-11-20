@@ -10,7 +10,7 @@ import { projectDeploymentException } from './deploymentFailure';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import { DeploymentTeardownInputV1Schema, type DeploymentTeardownInputV1 } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
 import { DeploymentPromoteInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
@@ -445,10 +445,8 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     const result = await request(actionId, input, context, actionId, creationReview);
     if ('errorCode' in result || !('ok' in result) || !result.ok
       || (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback' && actionId !== 'deployments.promote' && actionId !== 'deployments.teardown')) return result;
-    if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && ('detached' in result || 'nothingDeployed' in result)) return result;
-    const receipt = DeploymentReceiptResultV1Schema.parse(result);
-    if (!receipt.ok) return receipt;
-    if (!('deploymentId' in receipt)) return receipt;
+    if (!('deploymentRevision' in result)) return result;
+    const receipt = result;
     context.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: input.serverId,
       environmentId: receipt.environmentId, deploymentId: receipt.deploymentId } });
     if (receipt.state === 'succeeded' || receipt.state === 'running_unverified') return receipt;

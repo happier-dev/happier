@@ -1,6 +1,7 @@
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { describe, expect, it } from 'vitest';
+import { DeploymentTargetRoleInputSchemasV1 } from '@happier-dev/protocol/plugins/contributions/v2';
+import { describe, expect, it, vi } from 'vitest';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
 import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRoleAdmission.testkit';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
@@ -78,7 +79,13 @@ describe('deployment role host admission', () => {
                 return { ok: true, result: normalizeStrictJsonValue({ role: admitted.role }) };
             } });
         const before = fixture.state.reads;
-        await expect(port.invoke({ action, role, input })).resolves.toMatchObject({ ok: true, result: { role } });
+        const parse = vi.spyOn(DeploymentTargetRoleInputSchemasV1[role]._zod, 'run');
+        try {
+            await expect(port.invoke({ action, role, input })).resolves.toMatchObject({ ok: true, result: { role } });
+            expect(parse).toHaveBeenCalledTimes(1);
+        } finally {
+            parse.mockRestore();
+        }
         expect(fixture.state.reads).toBe(before);
     });
 

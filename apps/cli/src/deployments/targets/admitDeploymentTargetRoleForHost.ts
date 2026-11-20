@@ -204,12 +204,12 @@ export async function admitDeploymentTargetRoleForHost<Detail extends Deployment
     const variablesRole = matched.every(entry => entry.binding.role === 'variables.sync') ? 'variables.sync'
         : matched.every(entry => entry.binding.role === 'variables.read') ? 'variables.read' : null;
     const variablesParent = variablesRole === 'variables.sync' ? 'deployments.bindings.set' : 'deployments.observation.get';
-    if (!preparation && variablesRole && parent?.actionId === variablesParent
+    if (!preparation && variablesRole && parent?.actionId === variablesParent && 'owned' in input
         && parent.input.serverId === input.serverId && parent.input.environmentId === input.environmentId
         && (variablesRole === 'variables.sync' ? parent.input.expectedRevision === input.expectedRevision
             : parent.input.targetLinkId === input.targetLinkId && parent.input.variables === true)
         && admittedReviewedChild) {
-        return { input: DeploymentTargetRoleInputSchemasV1[variablesRole].parse(input), role: variablesRole };
+        return { input, role: variablesRole };
     }
     if (!preparation && variablesRole === 'variables.sync') return refuse('action_forbidden');
     const parentOperation = admittedParent && deploymentOperationForRootActionV1(admittedParent.actionId);
