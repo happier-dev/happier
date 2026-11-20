@@ -27,7 +27,6 @@ export const GithubRepositorySourceConfigV1Schema = defineProtocolObject({
   name: defineProtocolString({ minLength: 1, maxLength: 256 }),
   nameWithOwner: defineProtocolString({ minLength: 3, maxLength: 512 }),
 }, { policy: 'closed' });
-export const GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubRepositorySourceConfigV1Schema.jsonSchema;
 function defineGithubRepositorySourceConfig<T>(credentialRef: ProtocolComposableSchema<T>) {
   return defineProtocolObject({ v: defineProtocolLiteral(1), credentialRef, repository: GithubRepositorySourceConfigV1Schema }, { policy: 'closed' });
 }
@@ -35,7 +34,6 @@ function defineGithubRepositorySourceConfig<T>(credentialRef: ProtocolComposable
 /** Preview publication has the same personal credential contract as its Triage binding. */
 export const GithubPreviewPublicationSourceConfigV1Schema = defineGithubRepositorySourceConfig(QualifiedConnectedAccountRefSchema);
 export const GithubAutomationRepositorySourceConfigV1Schema = defineGithubRepositorySourceConfig(ConnectedAccountActionFormSelectionV1Schema);
-export const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubAutomationRepositorySourceConfigV1Schema.jsonSchema;
 /** Known media locations for cooperative network disclosure, not a redirect allowlist. */
 export const GITHUB_PRIVATE_MEDIA_HOST_SUFFIXES_V1 = Object.freeze([
   'actions.githubusercontent.com', 'blob.core.windows.net', 'release-assets.githubusercontent.com',

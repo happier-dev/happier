@@ -194,7 +194,7 @@ export { PluginUiActionOperationHostReadResultV1ProtocolSchema } from './project
 export type { PluginUiActionOperationHostReadResultV1 } from './projectExecution.js';
 export type { ActionOperationGetV1Response, ProjectSetupConsentRequiredV1 } from './projectExecution.js';
 /** Portable byte encoding; Protocol remains the single implementation owner. */
-export { encodeBase64, decodeBase64 } from './encoding.js';
+export { encodeBase64, decodeBase64, readPaddedBase64DecodedLength } from './encoding.js';
 export { projectNativeJsonValueForTransport, isStrictPluginJsonValue } from './strictJsonValue.js';
 /** Fresh exact Artifact reads for feature handoffs; stored operands are not grants. */
 export { ProtocolArtifactGetOutputV1Schema } from './artifact.js';

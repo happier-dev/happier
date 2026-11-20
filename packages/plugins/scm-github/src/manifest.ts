@@ -1,7 +1,7 @@
 import { GITHUB_HOSTING_OPERATION_ACTIONS_V1 } from './actions/hosting.js';
 import { GITHUB_HOSTING_OPERATION_ACTION_IDS_V1 } from './actions/hostingActionIds.js';
 import type { DefinedPlugin, DefinedPluginActionContracts } from '@happier-dev/plugin-sdk';
-import { GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA, GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA } from './observations/githubProviderContracts.js';
+import { GithubRepositorySourceConfigV1Schema, GithubAutomationRepositorySourceConfigV1Schema } from './observations/githubProviderContracts.js';
 import type { DefinedContributionPointProtocolMap } from '@happier-dev/plugin-sdk/contributions';
 import { githubAccountCredentialRuntime } from './auth/credentialMaterialization.js';
 import { activate as activateGithubAccountRuntime } from './accountRuntime.js';
@@ -351,6 +351,8 @@ const GITHUB_REPOSITORY_SETUP_INPUT_HINTS = {
 } satisfies ActionInputHints;
 
 const GITHUB_CREDENTIAL_SELECTION_SCHEMA = connectedAccountActionFormSelectionV1JsonSchema();
+const GITHUB_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubRepositorySourceConfigV1Schema.jsonSchema;
+const GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA = GithubAutomationRepositorySourceConfigV1Schema.jsonSchema;
 
 const GITHUB_DEPLOYMENT_SOURCE_CONFIG_SCHEMA = {
   ...GITHUB_AUTOMATION_REPOSITORY_SOURCE_CONFIG_SCHEMA,

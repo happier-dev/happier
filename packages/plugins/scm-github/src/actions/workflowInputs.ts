@@ -1,6 +1,5 @@
-import { readPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import type { ScmHostingRepositoryIdentityV1 } from '@happier-dev/plugin-sdk/scm';
-import { decodeBase64 } from '@happier-dev/plugin-sdk/protocol';
+import { decodeBase64, readPaddedBase64DecodedLength } from '@happier-dev/plugin-sdk/protocol';
 import { parseGithubWorkflowDefinitionV1, type GithubWorkflowDefinitionV1 } from './workflowDefinition.js';
 import type { GithubApiClientV1 } from '../observations/githubApiClient.js';
 import { githubRecord } from './mapping.js';
