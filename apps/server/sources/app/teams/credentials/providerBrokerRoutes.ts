@@ -301,6 +301,7 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             }
             const watcherAdmission = {
                 actorAccountId: request.userId,
+                authentication: readSessionAccessAuthenticationFromRequest(request),
                 publisherInstallationId: publisher.installationId, serverIdentityId: await getOrCreateServerIdentityId(process.env),
                 nowMs: Date.now(), grantId: crypto.randomUUID(),
                 signingKey: { keyId: signing.keyId, secretKey: signing.secretKey }, signal: eligibilityAbort.signal,
@@ -313,7 +314,6 @@ export function registerTeamCredentialProviderBrokerRoutes(app: Fastify, persona
             }
             const result = await openTeamCredentialWatcherBroker({
                 ...watcherAdmission, request: openRequest, readCurrentPresence,
-                authentication: readSessionAccessAuthenticationFromRequest(request),
                 readPoolSourceEligibility: createTeamCredentialPoolSourceEligibilityReader(app.forwardRpcForUser),
             });
             return reply.send(admitResponse(ProviderBrokerWatcherOpenResponseV1Schema, result));

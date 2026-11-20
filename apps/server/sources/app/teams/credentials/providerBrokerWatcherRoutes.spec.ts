@@ -27,7 +27,7 @@ import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInst
 import { PROVIDER_BROKER_ROUTE_GRANT_TTL_MS } from './providerBrokerAdmission';
 import { registerTeamCredentialProviderBrokerRoutes } from './providerBrokerRoutes';
 
-it('refreshes the same signed watcher only while its assigned Event trigger remains active', async () => {
+it('refreshes a recently expired watcher only while its Event trigger and Team entitlement are current', async () => {
     const harness = await createLightSqliteHarness({ tempDirPrefix: 'watcher-broker-open-', initAuth: false });
     const app = createAuthenticatedTestApp();
     const signingVars = { ...peerMediationGrantSigningEnv(), HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' };
@@ -161,12 +161,13 @@ it('refreshes the same signed watcher only while its assigned Event trigger rema
             .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         expect((await open({ ...body, caller: { ...body.caller, contributionLocalId: 'wrong-service' } })).json())
             .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
-        const expired = signProviderBrokerRouteGrantV1({
+        const previousAuthority = (elapsedTtls: number) => signProviderBrokerRouteGrantV1({
             signingKey: { keyId: signing.keyId, secretKey: signing.secretKey },
             payload: { ...result.authority.payload,
-                issuedAt: result.authority.payload.issuedAt - 2 * PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
-                expiresAt: result.authority.payload.expiresAt - 2 * PROVIDER_BROKER_ROUTE_GRANT_TTL_MS },
+                issuedAt: result.authority.payload.issuedAt - elapsedTtls * PROVIDER_BROKER_ROUTE_GRANT_TTL_MS,
+                expiresAt: result.authority.payload.expiresAt - elapsedTtls * PROVIDER_BROKER_ROUTE_GRANT_TTL_MS },
         });
+        const expired = previousAuthority(1.5);
         const refresh = { ...body, activation, refreshAuthority: expired };
         expect((await open({ ...refresh, resourceId: 'different-resource' })).json())
             .toEqual({ ok: false, reasonCode: 'resource_forbidden' });
@@ -189,6 +190,30 @@ it('refreshes the same signed watcher only while its assigned Event trigger rema
         expect(verifyProviderBrokerRouteGrantSignatureV1({
             authority: refreshResponse.authority, signingCapability: signing.capability, nowMs: Date.now(),
         })).toBe(true);
+        const expectRefreshRefused = async (reason: string, payload = refresh) => {
+            const response = await open(payload);
+            expect.soft({ status: response.statusCode, body: response.json() }, reason)
+                .toEqual({ status: 200, body: { ok: false, reasonCode: 'resource_forbidden' } });
+        };
+        await expectRefreshRefused('previous grant expired more than one TTL ago', { ...refresh, refreshAuthority: previousAuthority(3) });
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { revision: { increment: 1 } } });
+        await expectRefreshRefused('resource revision changed');
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { revision: resource.revision } });
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { memberGrants: { deleteMany: {} } } });
+        await expectRefreshRefused('resource grant withdrawn while membership remains');
+        expect((await open(body)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: {
+            memberGrants: { create: { teamMembershipId: requesterMembership.id, deliveryMode: 'brokered' } },
+        } });
+        expect((await open(refresh)).json()).toMatchObject({ ok: true });
+        await db.teamMembership.delete({ where: { id: requesterMembership.id } });
+        await expectRefreshRefused('Team membership removed while the watcher remains active');
+        await db.teamMembership.create({ data: {
+            id: requesterMembership.id, teamId: team.id, accountId: requester.id, role: 'member',
+        } });
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: {
+            memberGrants: { create: { teamMembershipId: requesterMembership.id, deliveryMode: 'brokered' } },
+        } });
         await inTx(tx => disableAutomationInTx(tx, { accountId: requester.id, automationId: automation.id }));
         expect((await open(refresh)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         expect((await open({ ...body, activation })).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
@@ -197,8 +222,6 @@ it('refreshes the same signed watcher only while its assigned Event trigger rema
         expect((await open(body)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         await db.pluginMachineMaterialization.update({ where: { machineId_materializationId: { machineId: initiatorMachineId, materializationId } },
             data: { enabled: true } });
-        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { memberGrants: { deleteMany: {} } } });
-        expect((await open(body)).json()).toEqual({ ok: false, reasonCode: 'resource_forbidden' });
         expect(verifies()).toBe(true);
     } finally {
         env.restore();

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolvePluginActionConnectedAccountUseRequestsV2 } from '@happier-dev/protocol/plugins/manifest/v2';
 import {
     GITHUB_BROKER_WATCHER_V1,
@@ -31,13 +32,13 @@ import { PROVIDER_BROKER_ROUTE_GRANT_TTL_MS, type TeamCredentialProviderBrokerOp
 import { admitTeamCredentialOperationBindingInTx } from './sessionBinding';
 
 type WatcherAdmissionInput = Pick<TeamCredentialProviderBrokerOpenInput,
-    'actorAccountId' | 'nowMs' | 'grantId' | 'signingKey'> & Readonly<{
+    'actorAccountId' | 'authentication' | 'nowMs' | 'grantId' | 'signingKey'> & Readonly<{
     publisherInstallationId: string;
     serverIdentityId: string;
     signal: AbortSignal;
 }>;
 type WatcherOpenInput = WatcherAdmissionInput & Pick<TeamCredentialProviderBrokerOpenInput,
-    'authentication' | 'readCurrentPresence'> & Readonly<{
+    'readCurrentPresence'> & Readonly<{
     request: ProviderBrokerWatcherOpenRequestV1;
     readPoolSourceEligibility: TeamCredentialPoolSourceEligibilityReader;
 }>;
@@ -81,12 +82,13 @@ async function readCurrentWatcherActivationTx(
     return { caller, version: current.version };
 }
 
-/** Re-sign the admitted binding while its exact Event assignment remains active. */
+/** Renew the same binding while the Event assignment and brokered Team entitlement remain current. */
 export async function refreshTeamCredentialWatcherBroker(input: WatcherRefreshInput): Promise<ProviderBrokerWatcherRefreshResponseV1> {
-    const { request, actorAccountId, nowMs, signal, signingCapability } = input;
+    const { request, actorAccountId, authentication, nowMs, signal, signingCapability } = input;
     const previous = request.refreshAuthority;
     const payload = previous.payload;
-    if (payload.resourceId !== request.resourceId
+    if (nowMs - payload.expiresAt > PROVIDER_BROKER_ROUTE_GRANT_TTL_MS
+        || payload.resourceId !== request.resourceId
         || payload.initiator.accountId !== actorAccountId
         || payload.initiator.machineId !== request.initiatorMachineId
         || payload.consumer.occurrenceId !== request.caller.occurrenceId
@@ -94,13 +96,25 @@ export async function refreshTeamCredentialWatcherBroker(input: WatcherRefreshIn
         || !verifyProviderBrokerRouteGrantSignatureV1({ authority: previous, signingCapability, nowMs })) return forbidden;
 
     signal.throwIfAborted();
-    const current = await inTx(tx => readCurrentWatcherActivationTx(tx, input, request), {
-        isolationLevel: 'Serializable',
-    }).catch(error => {
-        if (error instanceof AutomationEventCurrentnessError) return null;
+    const canRenew = await inTx(async tx => {
+        if (!await readCurrentWatcherActivationTx(tx, input, request)) return false;
+        const admitted = await admitTeamCredentialOperationBindingInTx(tx, {
+            consumer: { kind: 'platform_operation', resourceId: request.resourceId },
+            accountId: actorAccountId,
+            slot: { kind: 'connected_service_purpose', purpose: payload.consumer.purpose },
+            deliveryMode: 'brokered',
+            authentication,
+            qualifiedAtAdmission: true,
+        });
+        return admitted.ok
+            && admitted.binding.teamId === payload.teamId
+            && admitted.binding.resourceRevision === payload.resourceRevision
+            && sameStrictJsonValue(admitted.sourceBinding, payload.source);
+    }, { isolationLevel: 'Serializable' }).catch(error => {
+        if (error instanceof AutomationEventCurrentnessError) return false;
         throw error;
     });
-    if (!current) return forbidden;
+    if (!canRenew) return forbidden;
     signal.throwIfAborted();
     return {
         ok: true,

@@ -84,8 +84,10 @@ checkpoint and publication ownership on its assigned Machine.
 Each finite GitHub read carries the grant over the existing carrier. At expiry,
 the next read asks Home to re-sign the same binding for another 15 minutes
 through the existing broker-open endpoint. Home verifies the previous grant
-and the current publisher, then checks that the exact Event trigger is still
-enabled and assigned. The daemon cancels reads when it retires the source.
+and the current publisher. Renewal requires the assigned Event trigger to remain
+active and the requester to retain brokered access to the same Team resource
+revision and credential source. A grant that expired more than one grant lifetime
+ago requires a fresh open. The daemon cancels reads when it retires the source.
 
 Earlier verifiers refuse the watcher scope. Older watcher opens can still
 receive a finite grant. Grants without the activation binding cannot refresh.
