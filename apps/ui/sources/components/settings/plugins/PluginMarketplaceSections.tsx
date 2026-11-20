@@ -1372,7 +1372,7 @@ function useDiscoverListingAnatomy(props: DiscoverListingActionInputs & Readonly
             : [entry.sourceTitle, ...pluginListingAdds(entry.contributions).map((add) => add.title)].filter(Boolean).join(' · ')),
         description: ({ entry }) => entry.description || null,
         // Healthy is quiet: only a withdrawal or "Installed" speaks; a withdrawal outranks "Installed".
-        reason: ({ entry }) => props.settlement?.pluginId === entry.id
+        reason: ({ entry }) => props.settlement?.pluginId === entry.id && props.settlement.sourceId === entry.sourceId
             && (props.settlement.outcome === 'failed' || props.settlement.outcome === 'unknown') && !installedPluginById.has(entry.id) ? (
             <Status
                 testID={`settings.plugins.marketplace.installOutcome.${entry.sourceId}.${entry.id}`}

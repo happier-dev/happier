@@ -104,8 +104,9 @@ export type PluginRoutineOperationSettlement = Readonly<{
      * success is the default. An install's failure or unknown outcome shows inline where Install was pressed.
      */
     outcome?: 'withdrawn' | 'failed' | 'unknown';
-    /** The plugin this settlement is about, so its card can say it too. */
+    /** The catalog listing this install outcome belongs to. */
     pluginId?: string;
+    sourceId?: string;
 }>;
 
 export type DevelopmentCreateSettlement =
@@ -549,6 +550,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                     ...(detail ? { detail } : {}),
                     outcome,
                     pluginId: params.pluginId,
+                    sourceId: exactInstallEntry?.sourceId,
                 });
                 const showMutationFailure = (outcome: string, reason: string | null) => {
                     if (params.method === 'install') {

@@ -134,11 +134,15 @@ describe('DiscoverListingsSection', () => {
         expect(screen.findByTestId('settings.plugins.marketplace.discover:group:category:agents:action')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.entry.curated.a.four')).toBeNull();
     });
-    it('says on the card when its install failed or could not be confirmed', async () => {
-        const screen = await renderMeasured(<DiscoverListingsSection entries={[entry]} loading={false} loadingMore={false}
+    it('shows an uncertain install only on the listing from the source that was selected', async () => {
+        const other = { ...entry, sourceId: 'other-source', sourceTitle: 'Other source' };
+        const settlement = { scope: 'discover', message: 'unknown', outcome: 'unknown', pluginId: entry.id, sourceId: entry.sourceId } as const;
+        const screen = await renderMeasured(<DiscoverListingsSection entries={[entry, other]} loading={false} loadingMore={false}
             canLoadMore={false} installedPluginById={new Map()} canRunActions isPluginActionInFlight={() => false}
-            settlement={{ scope: 'discover', message: 'unknown', outcome: 'unknown', pluginId: entry.id }}
+            settlement={settlement}
             installFromBrowse={() => {}} onLoadMore={() => {}} onNavigateToPlugin={() => {}} onOpenListing={() => {}} />);
+        expect(screen.findByTestId('settings.plugins.marketplace.entry.other-source.acme.plugin')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.installOutcome.community.acme.plugin')).not.toBeNull();
+        expect(screen.findByTestId('settings.plugins.marketplace.installOutcome.other-source.acme.plugin')).toBeNull();
     });
 });
