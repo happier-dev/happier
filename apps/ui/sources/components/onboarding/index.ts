@@ -7,8 +7,6 @@ export * from './state/wizardTypes';
 export * from './ui/WizardCardLayout';
 export * from './ui/WizardModalShell';
 export * from './ui/WizardStepDots';
-export * from './ui/WizardGuidedHandoff';
-export * from './ui/WizardTerminalHandoff';
 export * from './preAuth/PreAuthOnboardingWizardEntry';
 export * from './surfaces/OnboardingWizardSurface';
 export * from './steps/webDesktop/WebDesktopDownloadCta';

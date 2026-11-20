@@ -1,1 +1,0 @@
-export const HANDOFF_TEXT_MAX_WIDTH = 280;

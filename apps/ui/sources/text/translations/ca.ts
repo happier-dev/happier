@@ -14955,7 +14955,7 @@ settingsSession: {
     setupOnboarding: {
         progressQuietLabel: ({ current, total }: { current: number; total: number }) => `Pas ${current} de ${total}`,
         relayCloudSubtitle: 'Troba els Homes enllaçats i connecta-t’hi', relayOnThisComputerSubtitle: 'Crea un Home personal en aquesta màquina', relayOnYourComputerSubtitle: 'Crea un Home personal a la teva màquina', relayOnRemoteComputerSubtitle: 'Fes servir SSH per crear-lo en una màquina de confiança', remoteRelayHostInstallTitle: 'Crea un Home personal a la màquina remota',
-        webRelayHostHandoffTitle: 'Crea un Home personal a la teva màquina', webRelayHostHandoffBody: 'Fes servir l’app d’escriptori o executa l’ordre del CLI a la màquina que allotjarà el teu Home personal. Quan estigui a punt, connecta aquest dispositiu amb el seu procés d’aparellament.',
+        webRelayHostHandoffTitle: 'Crea un Home personal a la teva màquina', webRelayHostHandoffBody: "Un navegador no pot allotjar el teu Home. Executa una ordre a la màquina que l’allotjarà, o fes servir l’app d’escriptori per a una configuració guiada.",
         webDesktopOnlyPrimary: 'Tinc una adreça de Home', webDesktopOnlySetupRemotePrereqsSubtitle: 'Executa aquesta ordre interactiva per connectar-te al Home seleccionat abans de configurar una màquina remota per SSH.',
         webDesktopHandoffDesktopAppSubtitle: 'Baixa i obre Happier per crear un Home personal amb una configuració guiada.', webDesktopHandoffCliSubtitle: 'Executa una ordre a la màquina que allotjarà el teu Home personal.',
         webDesktopOnlyRelayInstallTitle: 'Crea un Home personal amb el CLI', webDesktopOnlyRelayInstallSubtitle: 'Executa-ho de manera interactiva a la màquina de confiança que allotjarà el teu Home.', webDesktopOnlyRelayStatusTitle: 'Connecta’t al teu Home', webDesktopOnlyRelayStatusSubtitle: 'Fes servir les instruccions d’aparellament que es mostren després de crear-lo per connectar aquest dispositiu.',
@@ -15008,7 +15008,7 @@ settingsSession: {
         webDesktopOnlyCliTitle: 'Instal·la la CLI en aquesta màquina',
         webDesktopOnlyCliSubtitle: 'Executa-ho una vegada en un terminal (no cal Node).',
         handoffPlatformPosixLabel: 'macOS/Linux',
-        handoffPlatformMacosLabel: 'macOS',
+        handoffPlatformMacosLabel: 'macOS', handoffPlatformMacosLinuxLabel: 'macOS / Linux',
         handoffPlatformLinuxLabel: 'Linux',
         handoffPlatformWindowsLabel: 'Windows',
         webDesktopOnlySetupCommandTitle: 'Configura aquesta màquina amb la CLI',

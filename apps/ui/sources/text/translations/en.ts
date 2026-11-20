@@ -19323,12 +19323,12 @@ const enSetupOnboarding = {
   webDesktopOnlyDesktopAppTitle: 'Continue this setup in the desktop app',
   webDesktopOnlyDesktopAppSubtitle:
     'Download and open Happier to set up this machine with a guided flow.',
-  webDesktopOnlyDesktopAppButton: 'Download desktop app',
+  webDesktopOnlyDesktopAppButton: 'Download the desktop app',
   webDesktopOnlyCliTitle: 'Install the CLI on this machine',
   webDesktopOnlyCliSubtitle:
     'Run this once in a terminal (Node is not required).',
   handoffPlatformPosixLabel: 'macOS/Linux',
-  handoffPlatformMacosLabel: 'macOS',
+  handoffPlatformMacosLabel: 'macOS', handoffPlatformMacosLinuxLabel: 'macOS / Linux',
   handoffPlatformLinuxLabel: 'Linux',
   handoffPlatformWindowsLabel: 'Windows',
   webDesktopOnlySetupCommandTitle: 'Set up this machine using the CLI',
