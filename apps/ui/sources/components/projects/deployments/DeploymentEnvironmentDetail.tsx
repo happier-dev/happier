@@ -313,7 +313,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       () => [...new Set([...machineIds, ...(controllerMachineId ? [controllerMachineId] : []), ...(buildMachineId ? [buildMachineId] : [])])],
       [buildMachineId, controllerMachineId, machineIds],
     );
-    const machineNames = useMachineDisplayNamesById(namedMachineIds);
+    const machineNames = useMachineDisplayNamesById(namedMachineIds, { serverId: props.serverId });
     // A platform Environment's header names its platform (lab d4), as the rail row does.
     const platforms = useDeploymentPlatformTargets(runtime?.source.kind === 'plugin' && props.demand.mounted && props.demand.visible
       ? props.lifetime ?? null : null);
@@ -799,6 +799,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       />
     );
     const machineLabel = machineName(machineIds[0] ?? '');
+    const offlineMachine = offline ? knownMachine(machineIds[0]) : null;
     const receipts = history.result.items;
     const recentReceipts = receipts.filter((receipt) => receipt.id !== activeId).slice(0, RECENT_COUNT);
     const openServingReceipt = () => { if (activeReceipt) props.onOpenReceipt(activeReceipt.deployment.id); };
@@ -807,7 +808,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     const overview = tab === 'overview';
     const latest = overview ? history.result.items[0] ?? null : null;
     const attention = deploymentEnvironmentAttention({
-      machineOffline: offline,
+      machineOffline: offlineMachine !== null,
       noTarget: availability.kind === 'noTarget',
       controller: overview ? detail.controller ?? null : null,
       refused: outcome?.kind === 'refused',
@@ -846,7 +847,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             <AttentionBanner
               testID="project-deployments.environment.offline"
               tone="neutral"
-              title={t('projects.deployments.machineOffline', { machine: machineLabel })}
+              title={t('projects.deployments.machineOffline', { machine: offlineMachine! })}
             />
           );
         case 'noTarget':

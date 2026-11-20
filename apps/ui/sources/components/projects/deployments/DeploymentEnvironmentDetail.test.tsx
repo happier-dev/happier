@@ -3278,6 +3278,31 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     }
   });
 
+  it('waits for the runtime Machine name before announcing that it is offline', async () => {
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { t } = await import('@/text');
+    const { controller, detail } = controllerFor({});
+    const machineId = detail.targetLinks.find(row =>
+      row.targetLink.id === detail.environment.runtimeTargetLinkId)?.targetLink.machines[0];
+    if (!machineId) throw new Error('Expected a single runtime Machine');
+    const machine = createMachineFixture({ id: machineId, active: false, activeAt: 1 });
+    await publishMachineInventoryForTest(scope, [{ ...machine, metadata: null, availability: undefined }]);
+    const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={vi.fn()} review={noReview} onOpenReceipt={() => {}} />);
+    const notice = 'project-deployments.environment.offline';
+    try {
+      await waitForContent(screen, 'project-deployments.environment.serving');
+      expect(screen.findByTestId(notice)).toBeNull();
+      await act(async () => {
+        await publishMachineInventoryForTest(scope, [{ ...machine, metadata: { ...machine.metadata!, displayName: 'Build box' } }]);
+      });
+      await waitForContent(screen, notice);
+      expect(screen.getTextContent()).toContain(t('projects.deployments.machineOffline', { machine: 'Build box' }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
   it('keeps the Health fact when the serving version also has a health notice', async () => {
     const base = environmentDetailForHome();
     const servingId = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink.activeDeploymentId!;
