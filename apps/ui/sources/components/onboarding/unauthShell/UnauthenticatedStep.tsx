@@ -2,10 +2,14 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { HAPPIER_BALANCED_TEXT_WRAP } from '@happier-dev/plugin-ui/presentation';
+
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
+
+import { STEP_ROW_BUTTON_PX, StepRowBackButton, useStepRowBack } from './stepBack';
 
 export type UnauthenticatedStepProps = Readonly<{
   /** The step's page heading. Omit when the body owns its own heading (a form with sub-views). */
@@ -68,7 +72,24 @@ export function UnauthenticatedStep(props: UnauthenticatedStepProps) {
         ) : null}
         {body}
       </View>
-      {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+      {props.footer ? <UnauthenticatedStepFooter>{props.footer}</UnauthenticatedStepFooter> : null}
+    </View>
+  );
+}
+
+/**
+ * A step's actions, centred on the column (direction A). On a computer the step's Back stands to the left of its
+ * Continue and an equal space balances it on the right, so Continue stays on the column's axis.
+ */
+function UnauthenticatedStepFooter(props: Readonly<{ children: React.ReactNode }>) {
+  useUnistyles();
+  const styles = stylesheet;
+  const back = useStepRowBack();
+  return (
+    <View style={styles.footer}>
+      {back ? <StepRowBackButton onPress={back} /> : null}
+      <View style={styles.footerActions}>{props.children}</View>
+      {back ? <View style={styles.footerBalance} /> : null}
     </View>
   );
 }
@@ -92,6 +113,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   // box is the air between them, so the two read as one block (owner review 11-16).
   header: {
     width: '100%',
+    alignItems: 'center',
   },
   context: {
     marginBottom: theme.space.s8,
@@ -99,10 +121,17 @@ const stylesheet = StyleSheet.create((theme) => ({
   title: {
     ...Typography.variant('display'),
     color: theme.colors.text.primary,
+    textAlign: 'center',
+    ...HAPPIER_BALANCED_TEXT_WRAP,
   },
+  // Two short balanced lines under the title (lab direction A).
   subtitle: {
     ...Typography.variant('reading'),
     color: theme.colors.text.secondary,
+    textAlign: 'center',
+    maxWidth: 440,
+    marginTop: theme.space.s6,
+    ...HAPPIER_BALANCED_TEXT_WRAP,
   },
   body: {
     width: '100%',
@@ -110,7 +139,16 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   footer: {
     width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'flex-start',
-    gap: 14,
+    gap: theme.space.s12,
+  },
+  footerActions: {
+    alignItems: 'center',
+    gap: theme.space.s12,
+  },
+  footerBalance: {
+    width: STEP_ROW_BUTTON_PX,
   },
 }));

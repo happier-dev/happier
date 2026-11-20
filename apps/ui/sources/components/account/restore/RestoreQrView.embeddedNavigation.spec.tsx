@@ -233,13 +233,6 @@ describe('RestoreQrView known-target requester QR', () => {
         } finally { gate.resolve(); }
         await vi.waitFor(() => expect(boundary.replace).toHaveBeenCalledWith('/'));
     });
-    it('routes the embedded scanner action through its owner before any claim exists', async () => {
-        registered = false;
-        const onOpenScanQr = vi.fn();
-        const screen = await mount({ onOpenScanQr });
-        await screen.pressByTestIdAsync('restore-open-scan-qr');
-        expect(onOpenScanQr).toHaveBeenCalledOnce();
-    });
     it('does not register the waiting invite while the requester is hidden', async () => {
         Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
         await mount();
@@ -257,11 +250,11 @@ describe('RestoreQrView known-target requester QR', () => {
         await act(async () => screen.tree.unmount());
         expect(inFlight?.aborted).toBe(true);
     });
-    it('keeps pairing-link entry reachable from the requester QR surface', async () => {
+    it('opens the recovery key and pairing-link entry (with its camera) from the key on the ways row', async () => {
         registered = false;
         const onOpenPairingLinkEntry = vi.fn();
         const screen = await mount({ onOpenPairingLinkEntry });
-        await screen.pressByTestIdAsync('restore-enter-pairing-link');
+        await screen.pressByTestIdAsync('restore-open-manual');
         expect(onOpenPairingLinkEntry).toHaveBeenCalledOnce();
     });
     it('starts a fresh requester invite when the presentation requires a new QR', async () => {

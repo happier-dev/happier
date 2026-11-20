@@ -3280,6 +3280,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         openMachine: 'Obrir màquina',
         terminalUrlPlaceholder: 'happier://terminal?...',
         accountUrlPlaceholder: 'happier:///account?...',
+        approveFromDeviceTitle: "Aprova-ho des d’un dispositiu que facis servir",
+        approveFromDeviceSubtitle: "Obre Happier al telèfon o a un altre ordinador amb la sessió iniciada i escaneja aquest codi.",
         showRequesterQrInstructions: 'Mantén aquest codi QR en aquest dispositiu. En un dispositiu que ja estigui inscrit, obre Happier i escaneja’l per afegir aquest dispositiu.',
         externalAuthVerifiedTitle: ({ provider }: { provider: string }) => `${provider} verificat`,
         externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
@@ -14779,8 +14781,6 @@ settingsSession: {
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: 'Et donem la benvinguda.',
         welcomeQuestionSubtitle: 'És el teu primer cop aquí?',
-        welcomeQuestionBody: "Happier és el centre de control dels teus agents de codificació amb IA.",
-        welcomeQuestionBodyWithKey: "Happier és el centre de control dels teus agents de codificació amb IA. No cal correu electrònic. El teu compte és una clau privada, generada en aquest dispositiu.",
         terminalContinuationTitle: 'Connecta el teu terminal.',
         terminalContinuationSubtitle: 'Inicia la sessió per acabar.',
 
@@ -14811,7 +14811,7 @@ settingsSession: {
         emailCreateDescription: 'Crea un compte amb la teva adreça de correu.',
         emailConnectDescription: 'Afegeix-los al compte que ja fas servir.',
         useDifferentHomeSubtitle: ({ home }: { home: string }) => `En lloc de ${home}`,
-        welcomeSecondaryButton: "Inicia sessió — ja faig servir Happier",
+        welcomeSecondaryButton: "Ja faig servir Happier",
         welcomeSecondarySubtitle: "Escaneja un codi QR o introdueix la teva clau de recuperació",
         loginSubtitleKeyFirst: "Introdueix la teva clau de recuperació o enganxa un enllaç d’emparellament",
         loginSubtitleLinkFirst: "Enganxa un enllaç d’emparellament o introdueix la teva clau de recuperació",
@@ -14855,6 +14855,8 @@ settingsSession: {
 
         // Welcome step footer links
         welcomeFooterRelay: 'Autoallotjament?',
+        welcomeRunYourOwnHome: "Executa la teva pròpia Home",
+        welcomeTrustLine: "Xifrat d’extrem a extrem · Codi obert · Autoallotjable",
         welcomeFooterRelayAction: 'Fes servir el teu propi Relay',
         // Shown in place of welcomeFooterRelay when the active server is a
         // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -14865,6 +14867,8 @@ settingsSession: {
         welcomeFooterRelayEditAccessibility: 'Canvia el relay',
         welcomeFooterDocs: 'Necessites ajuda?',
         welcomeFooterDocsAction: 'Documentació',
+        welcomeFooterGithub: "GitHub",
+        welcomeFooterDiscord: "Discord",
         welcomeFooterGithubLabel: 'Repositori de GitHub',
         welcomeFooterDiscordLabel: 'Comunitat de Discord',
 

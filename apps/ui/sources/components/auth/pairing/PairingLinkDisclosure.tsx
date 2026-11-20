@@ -57,15 +57,19 @@ export const PairingLinkDisclosure = React.memo(function PairingLinkDisclosure(p
     testIDPrefix: string;
     link?: string;
     children?: React.ReactNode;
+    /** Opened from elsewhere (Approve's ways row): the body only, without its own Details header. */
+    open?: boolean;
 }>) {
     const styles = stylesheet;
-    const [expanded, setExpanded] = React.useState(false);
+    const [ownExpanded, setExpanded] = React.useState(false);
+    const controlled = props.open !== undefined;
+    const expanded = controlled ? props.open === true : ownExpanded;
     const writeClipboard = useClipboardWrite(undefined, { enabled: expanded });
     const copyFeedback = useHappierCopyFeedback();
 
     return (
         <View testID={`${props.testIDPrefix}-disclosure`} style={styles.disclosure}>
-            <HappierPressable
+            {controlled ? null : <HappierPressable
                 testID={`${props.testIDPrefix}-details`}
                 accessibilityRole="button"
                 expanded={expanded}
@@ -75,7 +79,7 @@ export const PairingLinkDisclosure = React.memo(function PairingLinkDisclosure(p
             >
                 <Text style={styles.headerTitle}>{t('common.details')}</Text>
                 <Text style={styles.headerSubtitle}>{t('connect.showPairingLink')}</Text>
-            </HappierPressable>
+            </HappierPressable>}
             {expanded ? <View testID={props.testIDPrefix} style={styles.body}>
                 <Text style={styles.warning}>{t('connect.pairingLinkSecurityWarning')}</Text>
                 {props.link ? (

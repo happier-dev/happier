@@ -7,7 +7,6 @@ import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateS
 import { WelcomeAtmosphere } from './WelcomeAtmosphere';
 import { WorkflowPanel, type WorkflowPanelPresentation } from './WorkflowPanel';
 import { useUnauthShellLayout } from './useUnauthShellLayout';
-import type { RelayRetentionDisclosureState } from './RelayRetentionDisclosure';
 
 export type UnauthenticatedWorkflowPresentation = WorkflowPanelPresentation;
 
@@ -34,9 +33,6 @@ export type UnauthenticatedSplitShellProps = Readonly<{
 
     /** Shows the compact mobile product mark without turning the step into welcome content. */
     showMobileWordmark?: boolean;
-
-    /** Compact server-owned retention disclosure shown above the welcome footer links. */
-    retentionDisclosure?: RelayRetentionDisclosureState | null;
 
     /**
      * Back navigation callback. If undefined, no back chevron is rendered.
@@ -77,7 +73,6 @@ export const UnauthenticatedSplitShell = React.memo(function UnauthenticatedSpli
                 variant={compact ? 'mobile' : 'desktop'}
                 isWelcomeStep={props.isWelcomeStep}
                 showMobileWordmark={props.showMobileWordmark}
-                retentionDisclosure={props.retentionDisclosure}
                 onBack={props.onBack}
                 transitionKey={props.stepId}
                 presentation={props.workflowPresentation ?? 'padded'}

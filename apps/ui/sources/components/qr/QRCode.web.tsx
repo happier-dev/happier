@@ -58,6 +58,16 @@ interface QRCodeProps {
     data: string;
     size?: number;
     errorCorrectionLevel?: 'low' | 'medium' | 'quartile' | 'high';
+    /**
+     * Leave a two-module margin inside `size` (default). A caller whose own paper already gives the code its quiet
+     * zone turns it off, so the modules fill the size instead of shrinking by a margin nobody sees.
+     */
+    quietZone?: boolean;
+    /**
+     * Pixels the code may spill past `size` on each side, into a quiet zone its paper draws around it, so a code a
+     * few pixels too wide for whole-pixel modules keeps the larger module instead of halving it.
+     */
+    bleed?: number;
     foregroundColor?: string;
     backgroundColor?: string;
 }
@@ -68,8 +78,11 @@ export const QRCode = React.memo((props: QRCodeProps) => {
         size = 200,
         errorCorrectionLevel = 'medium',
         foregroundColor = '#000000',
-        backgroundColor = '#FFFFFF'
+        backgroundColor = '#FFFFFF',
+        quietZone = true,
+        bleed = 0,
     } = props;
+    const margin = quietZone ? 4 : 0;
 
     // Generate QR matrix
     const qrMatrix = React.useMemo(() => {
@@ -80,7 +93,7 @@ export const QRCode = React.memo((props: QRCodeProps) => {
     // so edges stay sharp at any size (a 72 px store code smeared when modules were fractional and
     // overlapped their neighbours by a pixel to hide antialiasing seams).
     const pixelRatio = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    const moduleSize = Math.max(1, Math.floor((size * pixelRatio) / (qrMatrix.size + 4/* space around */))) / pixelRatio;
+    const moduleSize = Math.max(1, Math.floor(((size + 2 * bleed) * pixelRatio) / (qrMatrix.size + margin))) / pixelRatio;
     const origin = Math.round(((size - moduleSize * qrMatrix.size) / 2) * pixelRatio) / pixelRatio;
 
     // Generate modules with rounded corners
@@ -154,7 +167,7 @@ export const QRCode = React.memo((props: QRCodeProps) => {
                 width={size}
                 height={size}
                 viewBox={`0 0 ${size} ${size}`}
-                style={{ display: 'block', borderRadius: moduleSize }}
+                style={{ display: 'block', borderRadius: moduleSize, overflow: bleed > 0 ? 'visible' : undefined }}
             >
                 {/* Background */}
                 <rect

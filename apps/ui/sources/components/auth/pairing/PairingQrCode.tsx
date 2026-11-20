@@ -33,6 +33,10 @@ export const PairingQrCode = React.memo(function PairingQrCode(props: Readonly<{
                 data={props.link}
                 size={codeSize}
                 errorCorrectionLevel={marked ? 'quartile' : 'medium'}
+                // The paper's padding is the code's quiet zone, so the code fills the paper inside it and may take
+                // half of that padding when whole-pixel modules need it (at least six pixels of white stay around it).
+                quietZone={false}
+                bleed={PAPER_PADDING_PX / 2}
             />
             {marked ? (
                 <View pointerEvents="none" style={styles.markSlot}>

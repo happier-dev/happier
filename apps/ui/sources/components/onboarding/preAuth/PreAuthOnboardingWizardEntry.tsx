@@ -268,7 +268,6 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         <UnauthenticatedSplitShell
             stepId={controller.stepId}
             isWelcomeStep={controller.stepId === 'welcome'}
-            retentionDisclosure={authEntryOptions.retentionDisclosure}
             onBack={controller.onBack ?? undefined}
             footerAccessory={workflowFooterAccessory}
             testID={shellTestID}

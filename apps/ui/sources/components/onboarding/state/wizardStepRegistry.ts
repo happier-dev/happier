@@ -99,6 +99,8 @@ const wizardStepRegistryEntries = [
         id: 'auth_restore',
         titleKey: 'setupOnboarding.authRestoreTitle',
         subtitleKey: 'setupOnboarding.authRestoreSubtitle',
+        // Each way titles itself: Approve from a device you use, the recovery key, the camera.
+        bodyOwnsHeading: true,
         kind: 'recovery',
         surface: 'onboarding',
         // Another way in, not an optional step: Back is its way out.

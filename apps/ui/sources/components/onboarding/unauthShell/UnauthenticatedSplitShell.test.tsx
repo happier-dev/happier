@@ -217,15 +217,12 @@ describe('UnauthenticatedSplitShell', () => {
             <UnauthenticatedSplitShell
                 stepId="welcome"
                 isWelcomeStep
-                retentionDisclosure={{ kind: 'summary', summary: 'This relay cleans up subagent transcripts after 7 days.' }}
                 onBrandHeroGetStarted={() => {}}
             >
                 <FakeBody label="welcome" />
             </UnauthenticatedSplitShell>,
         );
         expect(screenWelcome.findByTestId('welcome-footer-links')).toBeTruthy();
-        expect(screenWelcome.findByTestId('welcome-footer-retention')).toBeTruthy();
-        expect(screenWelcome.getTextContent()).toContain('This relay cleans up subagent transcripts after 7 days.');
 
         const screenOther = await renderScreen(
             <UnauthenticatedSplitShell

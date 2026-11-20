@@ -3136,6 +3136,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         openMachine: 'Rechner öffnen',
         terminalUrlPlaceholder: 'happier://terminal?...',
         accountUrlPlaceholder: 'happier:///account?...',
+        approveFromDeviceTitle: "Mit einem deiner Geräte bestätigen",
+        approveFromDeviceSubtitle: "Öffne Happier auf deinem Telefon oder einem anderen angemeldeten Computer und scanne diesen Code.",
         showRequesterQrInstructions: 'Lass diesen QR-Code auf diesem Gerät geöffnet. Öffne Happier auf einem bereits registrierten Gerät und scanne ihn, um dieses Gerät hinzuzufügen.',
         legacyAccountQrUnavailable: 'Dieser ältere Konto-QR-Code kann nicht mehr sicher bestätigt werden. Öffne auf dem angemeldeten Home Einstellungen → Telefon hinzufügen und scanne stattdessen den QR-Code dieses Homes.',
         externalAuthVerifiedTitle: ({ provider }: { provider: string }) => `${provider} verifiziert`,
@@ -15832,8 +15834,6 @@ settingsSession: {
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: 'Willkommen.',
         welcomeQuestionSubtitle: 'Zum ersten Mal hier?',
-        welcomeQuestionBody: "Happier ist die Kommandozentrale für deine KI-Coding-Agents.",
-        welcomeQuestionBodyWithKey: "Happier ist die Kommandozentrale für deine KI-Coding-Agents. Keine E-Mail nötig. Dein Konto ist ein privater Schlüssel, erzeugt auf diesem Gerät.",
         terminalContinuationTitle: 'Verbinde dein Terminal.',
         terminalContinuationSubtitle: 'Melde dich an, um abzuschließen.',
 
@@ -15864,7 +15864,7 @@ settingsSession: {
         emailCreateDescription: 'Erstelle ein Konto mit deiner E-Mail-Adresse.',
         emailConnectDescription: 'Füge sie dem Konto hinzu, das du bereits nutzt.',
         useDifferentHomeSubtitle: ({ home }: { home: string }) => `Statt ${home}`,
-        welcomeSecondaryButton: "Anmelden – ich nutze Happier schon",
+        welcomeSecondaryButton: "Ich nutze Happier schon",
         welcomeSecondarySubtitle: "Scanne einen QR-Code oder gib deinen Wiederherstellungsschlüssel ein",
         loginSubtitleKeyFirst: "Gib deinen Wiederherstellungsschlüssel ein oder füge einen Kopplungslink ein",
         loginSubtitleLinkFirst: "Füge einen Kopplungslink ein oder gib deinen Wiederherstellungsschlüssel ein",
@@ -15908,6 +15908,8 @@ settingsSession: {
 
         // Welcome step footer links
         welcomeFooterRelay: 'Selbst gehostet?',
+        welcomeRunYourOwnHome: "Eigene Home betreiben",
+        welcomeTrustLine: "Ende-zu-Ende-verschlüsselt · Open Source · Selbst hostbar",
         welcomeFooterRelayAction: 'Eigenes Relay nutzen',
         // Shown in place of welcomeFooterRelay when the active server is a
         // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -15918,6 +15920,8 @@ settingsSession: {
         welcomeFooterRelayEditAccessibility: 'Relay wechseln',
         welcomeFooterDocs: 'Brauchst du Hilfe?',
         welcomeFooterDocsAction: 'Doku',
+        welcomeFooterGithub: "GitHub",
+        welcomeFooterDiscord: "Discord",
         welcomeFooterGithubLabel: 'GitHub-Repository',
         welcomeFooterDiscordLabel: 'Discord-Community',
 

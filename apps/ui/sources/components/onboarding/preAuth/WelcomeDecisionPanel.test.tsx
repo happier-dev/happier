@@ -215,6 +215,11 @@ function readyAccountServiceEntry(
     };
 }
 
+/** A door's promise: its subtitle line, or for a pill or a way on the ways row (no second line) its accessible hint. */
+function promiseOf(screen: { findByTestId: (id: string) => { props: Record<string, unknown> } | null | undefined }, testID: string): unknown {
+    return screen.findByTestId(`${testID}-subtitle`)?.props.children ?? screen.findByTestId(testID)?.props.accessibilityHint;
+}
+
 describe('WelcomeDecisionPanel', () => {
     it.each(['incompatible', 'unavailable'] as const)('names the selected Home in the %s status instead of its address', async (serverAvailability) => {
         const { screenPromise } = renderPanel({ serverAvailability });
@@ -565,7 +570,7 @@ describe('WelcomeDecisionPanel', () => {
         const { callbacks, screenPromise } = renderPanel({ homeTarget: undefined, requestedHomeTarget: undefined, homeLabel: undefined, serverUrlForCopy: '' },
             chosenAccountServiceEntry(readyAccountServiceEntry(['github'])));
         const screen = await screenPromise;
-        expect(screen.findByTestId('welcome-use-different-home-title')?.props.children).toBe('Connect to a Home directly');
+        expect(screen.findByTestId('welcome-use-different-home')?.props.accessibilityLabel).toBe('Connect to a Home directly');
 
         await screen.pressByTestIdAsync('welcome-use-different-home');
         expect(callbacks.onConnectHomeDirectly).toHaveBeenCalledTimes(1);
@@ -899,10 +904,12 @@ describe('WelcomeDecisionPanel', () => {
                 lastSignInMethodState.remove('method');
             }
         };
+        // Doors carry a title line; a way on the ways row is a round mark named by its tooltip.
         const titles = (screen: Awaited<ReturnType<typeof renderPanel>['screenPromise']>) => screen
-            .findAll((node) => typeof node.props.testID === 'string' && node.props.testID.endsWith('-title')
+            .findAll((node) => (typeof node.props.testID === 'string' && node.props.testID.endsWith('-title')
                 && typeof node.props.children === 'string')
-            .map((node) => node.props.children as string)
+                || (typeof node.props.tooltip === 'string' && node.props.tooltip === node.props.accessibilityLabel))
+            .map((node) => (typeof node.props.tooltip === 'string' ? node.props.tooltip : node.props.children) as string)
             .filter((title, index, all) => all.indexOf(title) === index);
 
         it('first time: the intro line, First time here and its Login peer, with no email needed for a generated key', async () => {
@@ -914,7 +921,7 @@ describe('WelcomeDecisionPanel', () => {
                 expect(titles(screen).slice(0, 2)).toEqual([t('welcome.welcomePrimaryButton'), t('welcome.welcomeSecondaryButton')]);
                 expect(screen.findByTestId('welcome-primary-start-subtitle')?.props.children).toBe(t('welcome.welcomePrimarySubtitle'));
                 // A computer's Login leads with the recovery key, so its door promises that first.
-                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.loginSubtitleKeyFirst'));
+                expect(promiseOf(screen, 'welcome-scan-existing-home')).toBe(t('welcome.loginSubtitleKeyFirst'));
                 // Login is the door for the key; "Already use Happier?" is its title now, not a label over rows.
                 expect(titles(screen)).not.toContain(t('welcome.continueWithKey'));
                 expect(text).not.toContain(t('homesJourneys.alreadyUseTitle'));
@@ -928,7 +935,7 @@ describe('WelcomeDecisionPanel', () => {
             const doorSubtitle = async () => {
                 const { screenPromise } = renderPanel({ authenticationActions: keyAndEmail }, undefined, cameraAvailable);
                 const screen = await screenPromise;
-                const subtitle = screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children;
+                const subtitle = promiseOf(screen, 'welcome-scan-existing-home');
                 await screen.unmount();
                 return subtitle;
             };
@@ -958,7 +965,6 @@ describe('WelcomeDecisionPanel', () => {
                 });
                 const screen = await screenPromise;
                 expect(screen.getTextContent()).toContain(t('welcome.brandSubTagline'));
-                expect(screen.getTextContent()).not.toContain(t('welcome.welcomeQuestionBodyWithKey'));
                 expect(screen.findByTestId('welcome-primary-start-subtitle')?.props.children)
                     .toBe(t('welcome.newHereHomeSubtitle', { home: 'Home A' }));
                 await screen.unmount();
@@ -972,8 +978,7 @@ describe('WelcomeDecisionPanel', () => {
                 const text = screen.getTextContent();
                 expect(titles(screen).slice(0, 2)).toEqual([t('welcome.welcomeReturningLoginButton'), t('welcome.welcomeReturningStartFreshButton')]);
                 expect(text).toContain(t('welcome.lastTimeEmail'));
-                expect(text).toContain(t('welcome.welcomeReturningStartFreshSubtitle'));
-                expect(text).not.toContain(t('welcome.welcomeQuestionBody'));
+                expect(promiseOf(screen, 'welcome-primary-start')).toBe(t('welcome.welcomeReturningStartFreshSubtitle'));
                 expect(titles(screen)).toContain(t('welcome.continueWithKey'));
                 await screen.pressByTestIdAsync('welcome-email-password-login');
                 expect(callbacks.onContinueWithHomeAuthentication).toHaveBeenCalledWith(expect.objectContaining({
@@ -1016,7 +1021,7 @@ describe('WelcomeDecisionPanel', () => {
                 const { callbacks, screenPromise } = renderPanel({ authenticationActions: keyAndEmail });
                 const screen = await screenPromise;
                 expect(screen.findByTestId('welcome-scan-existing-home-title')?.props.children).toBe(t('welcome.welcomeReturningLoginButton'));
-                expect(screen.findByTestId('welcome-scan-existing-home-subtitle')?.props.children).toBe(t('welcome.loginSubtitleKeyFirst'));
+                expect(promiseOf(screen, 'welcome-scan-existing-home')).toBe(t('welcome.loginSubtitleKeyFirst'));
                 await screen.pressByTestIdAsync('welcome-scan-existing-home');
                 expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
                 await screen.unmount();
@@ -1027,14 +1032,14 @@ describe('WelcomeDecisionPanel', () => {
             await withHistory({ returning: true }, async () => {
                 const { callbacks, screenPromise } = renderPanel({ requestedHomeTarget: undefined });
                 const screen = await screenPromise;
-                expect(screen.getTextContent()).toContain(t('welcome.welcomeFooterRelay'));
+                expect(screen.getTextContent()).toContain(t('welcome.welcomeRunYourOwnHome'));
                 expect(screen.findByTestId('welcome-use-different-home')).toBeFalsy();
                 await screen.pressByTestIdAsync('welcome-self-hosting');
                 expect(callbacks.onChangeRelay).toHaveBeenCalledTimes(1);
                 await screen.unmount();
 
                 const chosen = await renderPanel().screenPromise;
-                expect(chosen.getTextContent()).not.toContain(t('welcome.welcomeFooterRelay'));
+                expect(chosen.getTextContent()).not.toContain(t('welcome.welcomeRunYourOwnHome'));
                 expect(chosen.findByTestId('welcome-use-different-home')).toBeTruthy();
                 await chosen.unmount();
             });

@@ -435,9 +435,11 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                     initialView={params.restoreInitialView}
                     reverseTargetProfileId={params.restoreTargetProfileId}
                     onNavigationLockChange={params.onRestoreNavigationLockChange}
-                    renderAdditionalSignInWays={(onLeave) => <WelcomeDecisionPanel
+                    onOpenLostAccess={params.onOpenLostAccess}
+                    renderAdditionalSignInWays={(onLeave, leading) => <WelcomeDecisionPanel
                         showGreeting={false}
                         restoreWays
+                        waysLeading={leading}
                         onLeaveRestore={onLeave}
                         authEntryOptions={params.authEntryOptions}
                         accountServiceEntry={params.accountServiceEntry}

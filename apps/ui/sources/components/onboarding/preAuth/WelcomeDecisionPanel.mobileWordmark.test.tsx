@@ -48,9 +48,9 @@ describe('WelcomeDecisionPanel mobile wordmark', () => {
         expect(screen.findByTestId('brand-wordmark')).toBeTruthy();
     });
 
-    it('does not duplicate the wordmark inside the desktop workflow pane', async () => {
+    it('stands the one wordmark in the top-left corner of every computer step (direction A)', async () => {
         const screen = await renderPanel('desktop');
 
-        expect(screen.findAllByTestId('welcome-mobile-wordmark')).toHaveLength(0);
+        expect(screen.findAllByTestId('welcome-mobile-wordmark')).toHaveLength(1);
     });
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, useWindowDimensions } from 'react-native';
+import { Platform, View, useWindowDimensions, type ViewStyle } from 'react-native';
 
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
@@ -18,9 +18,14 @@ import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 
 import { resolveReverseQrTargetProfileId } from './loginWays';
 import { RestoreSignInWays } from './RestoreSignInWays';
+import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
+import { StepRowBack } from '@/components/onboarding/unauthShell/stepBack';
+import { t } from '@/text';
 
 type RestoreView = 'qr' | 'scanner' | 'paste';
 const RESTORE_WAY_LAYER = 'restore-way';
+/** Each way is its own step: its heading, then its body a section below (the step frame's rhythm). */
+const VIEW_STYLE: ViewStyle = { width: '100%', gap: 24 };
 
 export type RestoreIndexEmbeddedProps = Readonly<{
     entryIntent: HomeQrEntryIntent;
@@ -29,10 +34,11 @@ export type RestoreIndexEmbeddedProps = Readonly<{
     reverseTargetProfileId?: string | null;
     onBack: () => void;
     onOpenSecretKeyLogin?: () => void;
-    renderAdditionalSignInWays?: (onLeave?: () => void) => React.ReactNode;
+    renderAdditionalSignInWays?: (onLeave?: () => void, leading?: React.ReactNode) => React.ReactNode;
     initialPairingLink?: string | null;
     initialResult?: RestoreScanComputerQrViewProps['initialResult'];
     onNavigationLockChange?: (locked: boolean) => void;
+    onOpenLostAccess?: () => void;
     onInviteDirectionChange?: RestoreScanComputerQrViewProps['onInviteDirectionChange'];
 }>;
 
@@ -98,16 +104,20 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
 
     return <StepMotionLayer layerKey={RESTORE_WAY_LAYER} stepKey={activeView} shareFocalWithParent>
         {activeView === 'paste' ? (
-            <>
+            <View style={VIEW_STYLE}>
+                <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />
                 <RestoreSignInWays
                     onSubmitLink={submitPastedPairingLink}
                     onOpenScanner={openScanner}
                     onShowQr={openQr}
                     offerSecretKey={props.entryIntent === 'enter_home'}
+                    onLostAccess={props.onOpenLostAccess}
                 />
-                {props.renderAdditionalSignInWays?.()}
-            </>
+                {props.renderAdditionalSignInWays?.(undefined, <StepRowBack />)}
+            </View>
         ) : activeView === 'scanner' ? (
+            <View style={VIEW_STYLE}>
+            <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />
             <RestoreScanComputerQrView
                 entryIntent={props.entryIntent}
                 embedded
@@ -122,7 +132,10 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                 onNavigationLockChange={props.onNavigationLockChange}
                 onInviteDirectionChange={props.onInviteDirectionChange}
             />
+            </View>
         ) : (
+            <View style={VIEW_STYLE}>
+            <UnauthenticatedStepHeading title={t('connect.approveFromDeviceTitle')} subtitle={t('connect.approveFromDeviceSubtitle')} />
             <RestoreQrView
                 entryIntent={props.entryIntent}
                 targetProfileId={reverseTargetProfileId}
@@ -134,6 +147,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                 onOpenPairingLinkEntry={openPasteEntry}
                 onNavigationLockChange={props.onNavigationLockChange}
             />
+            </View>
         )}
     </StepMotionLayer>;
 });

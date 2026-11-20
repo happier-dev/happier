@@ -8,7 +8,12 @@ import { StepTransitionFrame } from '@/components/ui/motion/StepTransitionFrame'
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
-import { WELCOME_ACTION_TEXT_INSET, WelcomeActionCard } from './WelcomeActionCard';
+import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { RelayRetentionDisclosure, type RelayRetentionDisclosureState } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
+import { useShellCornerDoor } from '@/components/onboarding/unauthShell/shellCorner';
+import { t } from '@/text';
+
+import { WelcomeActionCard, WelcomeWayButton } from './WelcomeActionCard';
 import { WelcomeActionList, type WelcomeActionAdmission } from './WelcomeActionList';
 import type { WelcomeEntryViewModel } from './welcomeEntryViewModel';
 
@@ -20,6 +25,10 @@ export type WelcomeEntryViewInteraction = Readonly<{
     onRetry: (testID: string) => void;
     onSelfHosting: () => void;
     policyNotice?: React.ReactNode;
+    /** Marks the host puts first on the ways row (Approve: Back on a computer, then the recovery key). */
+    waysLeading?: React.ReactNode;
+    /** The Home's retention summary, under the trust line; it fades in later and never moves the doors. */
+    retention?: RelayRetentionDisclosureState | null;
 }>;
 
 /** The doors' column (lab direction A: 380 px), narrower than the headline above it. */
@@ -44,6 +53,17 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
         <WelcomeActionCard key={index} {...display} actionId={`welcome-action-${index}`}
             disabled={!interaction} onPress={interaction ? () => interaction.onAction(index) : noAction} />
     );
+    const renderWay = ({ index, display }: WelcomeEntryViewModel['quietWays'][number]) => (
+        <WelcomeWayButton key={index} testID={display.testID} actionId={`welcome-action-${index}`} title={display.title}
+            subtitle={display.subtitle} iconName={display.iconName} disabled={!interaction}
+            onPress={interaction ? () => interaction.onAction(index) : noAction} />
+    );
+    const waysLeading = interaction?.waysLeading;
+    // A computer's shell takes the self-hosting door to its top-right corner; a phone keeps it under the column.
+    const selfHostingInCorner = useShellCornerDoor(interaction && model.selfHosting ? {
+        testID: model.selfHosting.display.testID, label: model.selfHosting.display.title, onPress: interaction.onSelfHosting,
+    } : null);
+    const hasWays = model.quietWays.length > 0 || waysLeading != null;
     const renderNotice = (notice: WelcomeEntryViewModel['notices'][number]) => (
         <WelcomeNotice key={notice.slot} notice={notice} onRetry={interaction?.onRetry} />
     );
@@ -76,18 +96,31 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     {model.notices.map(renderNotice)}
                     <View style={styles.ways}>
                         <View style={styles.doors}>{model.doors.map(renderAction)}</View>
-                        {model.quietWays.length > 0 ? (
+                        {hasWays ? (
+                            // The ways row (owner 2026-11-19): a centred "or", then round marks without captions.
                             <View testID="welcome-quiet-ways" style={styles.quietWays}>
-                                {model.quietWaysTitle ? (
-                                    <Text accessibilityRole="header" style={styles.quietWaysTitle}>{model.quietWaysTitle}</Text>
-                                ) : null}
-                                {model.quietWays.map(renderAction)}
+                                <StepOrDivider label={t('common.or')} />
+                                <View role="group" aria-label={model.quietWaysTitle} style={styles.waysRow}>
+                                    {waysLeading}
+                                    {model.quietWays.map(renderWay)}
+                                </View>
                             </View>
                         ) : null}
                     </View>
-                    {model.selfHosting ? (
+                    {model.trust ? (
+                        <View style={styles.trust}>
+                            <Text testID="welcome-trust" style={styles.trustText}>{model.trust}</Text>
+                            {interaction ? (
+                                <View style={styles.retention}>
+                                    {interaction.retention ? (
+                                        <RelayRetentionDisclosure testID="welcome-retention" disclosure={interaction.retention} />
+                                    ) : null}
+                                </View>
+                            ) : null}
+                        </View>
+                    ) : null}
+                    {model.selfHosting && !selfHostingInCorner ? (
                         <View style={styles.selfHosting}>
-                            <Text style={styles.selfHostingLabel}>{model.selfHosting.label}</Text>
                             <WelcomeActionCard {...model.selfHosting.display} disabled={!interaction}
                                 onPress={interaction?.onSelfHosting ?? noAction} />
                         </View>
@@ -178,10 +211,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s12,
         width: '100%',
     },
-    // The cards' own text edge, so the quiet ways line up under the doors.
     quietWays: {
         marginTop: theme.space.s8,
-        gap: theme.space.s2,
+        gap: theme.space.s16,
+    },
+    // Lab Approve: 44 px wells 20 px apart on one line, centred under the "or" (a longer row reaches past the doors'
+    // width evenly on both sides rather than wrapping under itself).
+    waysRow: {
+        flexDirection: 'row',
+        alignSelf: 'center',
+        justifyContent: 'center',
+        gap: theme.space.s20,
     },
     intro: {
         ...Typography.variant('body'),
@@ -201,18 +241,24 @@ const stylesheet = StyleSheet.create((theme) => ({
         letterSpacing: -1.4,
     },
     selfHosting: {
-        paddingHorizontal: WELCOME_ACTION_TEXT_INSET,
         marginTop: theme.space.s8,
+        alignItems: 'center',
     },
-    selfHostingLabel: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
+    trust: {
+        marginTop: theme.space.s4,
+        alignItems: 'center',
     },
-    quietWaysTitle: {
-        ...Typography.variant('meta'),
+    trustText: {
+        ...Typography.variant('body'),
         color: theme.colors.text.secondary,
-        paddingHorizontal: WELCOME_ACTION_TEXT_INSET,
-        paddingBottom: theme.space.s4,
+        textAlign: 'center',
+    },
+    // Two lines are kept for the summary, so it arrives after the doors without moving them.
+    retention: {
+        width: '100%',
+        // The gap above plus two body lines.
+        minHeight: 56,
+        paddingTop: theme.space.s16,
     },
     statusText: {
         ...Typography.default(),

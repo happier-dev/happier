@@ -3255,6 +3255,8 @@ export const zhHans: TranslationStructure = {
     openMachine: "打开机器",
     terminalUrlPlaceholder: "happier://terminal?...",
     accountUrlPlaceholder: "happier:///account?...",
+    approveFromDeviceTitle: "在你使用的设备上批准",
+    approveFromDeviceSubtitle: "在手机或另一台已登录的电脑上打开 Happier，扫描此代码。",
     showRequesterQrInstructions: "在此设备上保留这个二维码。请在已注册的设备上打开 Happier 并扫描它，以添加此设备。",
     externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
       `${provider} 验证完成`,
@@ -15244,8 +15246,6 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "欢迎。",
     welcomeQuestionSubtitle: "第一次使用?",
-    welcomeQuestionBody: "Happier 是你的 AI 编码代理控制中心。",
-    welcomeQuestionBodyWithKey: "Happier 是你的 AI 编码代理控制中心。无需电子邮件。你的账户是一把在本设备上生成的私钥。",
     terminalContinuationTitle: '连接你的终端。',
     terminalContinuationSubtitle: '登录以完成。',
 
@@ -15276,7 +15276,7 @@ settingsSession: {
     emailCreateDescription: "用你的邮箱地址创建账户。",
     emailConnectDescription: "添加到你已有的账户。",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `当前：${home}`,
-    welcomeSecondaryButton: "登录 — 我已在使用 Happier",
+    welcomeSecondaryButton: "我已在使用 Happier",
     welcomeSecondarySubtitle: "扫描二维码，或输入你的恢复密钥",
     loginSubtitleKeyFirst: "输入你的恢复密钥，或粘贴配对链接",
     loginSubtitleLinkFirst: "粘贴配对链接，或输入你的恢复密钥",
@@ -15320,6 +15320,8 @@ settingsSession: {
 
     // Welcome step footer links
     welcomeFooterRelay: "自托管?",
+    welcomeRunYourOwnHome: "运行你自己的 Home",
+    welcomeTrustLine: "端到端加密 · 开源 · 可自托管",
     welcomeFooterRelayAction: "使用自己的 Relay",
     // Shown in place of welcomeFooterRelay when the active server is a
     // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -15330,6 +15332,8 @@ settingsSession: {
     welcomeFooterRelayEditAccessibility: "更改 Relay",
     welcomeFooterDocs: "需要帮助?",
     welcomeFooterDocsAction: "文档",
+    welcomeFooterGithub: "GitHub",
+    welcomeFooterDiscord: "Discord",
     welcomeFooterGithubLabel: "GitHub 仓库",
     welcomeFooterDiscordLabel: "Discord 社区",
 

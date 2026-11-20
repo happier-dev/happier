@@ -29,6 +29,8 @@ export function RestoreSignInWays(props: Readonly<{
     onShowQr?: () => void;
     /** Signing in with an Account's recovery key; absent when the step adds a Home instead. */
     offerSecretKey: boolean;
+    /** The way on when the key is lost (it moved here from Approve's text links, under the key it is about). */
+    onLostAccess?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const phone = useLoginLeadsWithLink();
@@ -62,7 +64,16 @@ export function RestoreSignInWays(props: Readonly<{
         </View>
     );
     const recoveryKey = props.offerSecretKey
-        ? <SecretKeyLoginForm key="key" embedded autoFocus={!linkFirst} />
+        ? (
+            <View key="key" style={styles.way}>
+                <SecretKeyLoginForm embedded autoFocus={!linkFirst} />
+                {props.onLostAccess ? (
+                    <View style={styles.quietAction}>
+                        <TextLinkButton testID="restore-open-lost-access" label={t('connect.lostAccessLink')} onPress={props.onLostAccess} />
+                    </View>
+                ) : null}
+            </View>
+        )
         : null;
     const or = recoveryKey ? <StepOrDivider key="or" label={t('common.or')} /> : null;
     // Keyed, so a window crossing the phone size reorders the ways without clearing what was typed.

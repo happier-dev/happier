@@ -50,7 +50,7 @@ describe('WelcomeFooterLinks', () => {
         const { WelcomeFooterLinks } = await import('./WelcomeFooterLinks');
         const screen = await renderScreen(<WelcomeFooterLinks variant="mobile" />);
 
-        await screen.pressByTestIdAsync('welcome-footer-github-action');
+        await screen.pressByTestIdAsync('welcome-footer-github-link');
 
         await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith('https://github.com/happier-dev/happier'));
         await vi.waitFor(() => expect(alertSpy).toHaveBeenCalledWith(
@@ -60,7 +60,7 @@ describe('WelcomeFooterLinks', () => {
         ));
 
         alertSpy.mockClear();
-        await screen.pressByTestIdAsync('welcome-footer-github-action');
+        await screen.pressByTestIdAsync('welcome-footer-github-link');
         expect(openUrl).toHaveBeenCalledTimes(2);
         expect(openUrl).toHaveBeenLastCalledWith('https://github.com/happier-dev/happier');
         expect(alertSpy).not.toHaveBeenCalled();

@@ -4,6 +4,8 @@ import { Platform, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { STEP_ROW_BUTTON_PX } from '@/components/onboarding/unauthShell/stepBack';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -29,8 +31,10 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
      * `row`: a quiet way in beneath the cards, on their text edge; its subtitle is the accessible hint.
      * `link`: a quiet text action. With a subtitle it is the way out under a primary card, read as one centred line:
      * the title, then its note after a dot.
+     * `pill`: the second door under the primary (direction A): its glyph and title on one rounded line, sized by its
+     * words; the subtitle is the accessible hint.
      */
-    presentation?: 'card' | 'button' | 'link' | 'row';
+    presentation?: 'card' | 'button' | 'link' | 'row' | 'pill';
     iconName?: IconName;
     /**
      * A provider's own connect colour, exactly as its Home projected it
@@ -75,7 +79,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const pending = !escape && admission.pendingActionId === actionId;
     const row = props.presentation === 'row';
     const web = Platform.OS === 'web';
-    const subtitleId = web && props.subtitle && !row ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
+    const subtitleId = web && props.subtitle && !row && props.presentation !== 'pill' ? `welcome-action-description-${encodeURIComponent(actionId)}` : undefined;
     const foreground = primary ? theme.colors.button.primary.tint : props.presentation === 'link' ? theme.colors.text.secondary : theme.colors.text.primary;
     const subtitleColor = primary ? theme.colors.button.primary.tint : theme.colors.text.secondary;
     const pressFeedback = usePressFeedback();
@@ -84,7 +88,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
     const accent = !row && accentColor && accentColor !== 'transparent' && isValidThemeProfileColorValue(accentColor)
         ? accentColor
         : null;
-    const button = props.presentation === 'button';
+    const pill = props.presentation === 'pill';
+    const button = props.presentation === 'button' || pill;
     const link = props.presentation === 'link';
     const linkLine = link && Boolean(props.subtitle);
 
@@ -120,8 +125,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
             onPress={escape ? () => props.onPress() : () => admission.run(actionId, props.onPress)}
             onPressIn={pressFeedback.onPressIn}
             onPressOut={pressFeedback.onPressOut}
-            // The ring belongs to the card frame inside the hit area.
-            style={HAPPIER_FOCUS_RING_DELEGATED_STYLE}
+            // The ring belongs to the card frame inside the hit area; a pill's hit area is its own width.
+            style={pill ? [HAPPIER_FOCUS_RING_DELEGATED_STYLE, stylesheet.pillHit] : HAPPIER_FOCUS_RING_DELEGATED_STYLE}
         >
             {({ hovered, focused }) => (
                 // The pressable is the hit area; the card chrome is the animated frame,
@@ -130,6 +135,7 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                     style={[
                         styles.card,
                         button ? styles.button : null,
+                        pill ? styles.pill : null,
                         link ? styles.link : null,
                         linkLine ? styles.linkLineFrame : null,
                         row ? styles.row : null,
@@ -139,6 +145,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                                 ? { backgroundColor: 'transparent', borderColor: 'transparent' }
                             : row
                                 ? { backgroundColor: hovered ? theme.colors.surface.pressed : 'transparent', borderColor: 'transparent' }
+                            : pill
+                                ? { backgroundColor: hovered ? theme.colors.surface.pressed : theme.colors.surface.base, borderColor: theme.colors.border.default }
                             : button
                                 ? { backgroundColor: hovered ? theme.colors.surface.pressed : theme.colors.surface.elevated, borderColor: 'transparent' }
                                 : { backgroundColor: hovered ? theme.colors.surface.elevated : theme.colors.surface.base, borderColor: theme.colors.border.default },
@@ -147,7 +155,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                     ]}
                 >
                     {button && pending ? <ActivitySpinner color={foreground} /> : button && props.iconName ? (
-                        <Icon testID={`${props.testID}-icon`} name={props.iconName} size={20} color={foreground} />
+                        <Icon testID={`${props.testID}-icon`} name={props.iconName} size={pill ? 16 : 20}
+                            color={pill ? theme.colors.text.secondary : foreground} />
                     ) : null}
                     {linkLine ? (
                         <Text testID={`${props.testID}-text`} style={[styles.linkLine, { color: theme.colors.text.secondary }]}>
@@ -156,8 +165,8 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                         </Text>
                     ) : (
                     <View testID={`${props.testID}-text`} style={button ? styles.buttonText : styles.textBlock}>
-                        <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : styles.title, { color: foreground }]}>{props.title}</Text>
-                        {props.subtitle && !row ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
+                        <Text testID={`${props.testID}-title`} style={[row ? styles.rowTitle : pill ? styles.pillTitle : styles.title, { color: foreground }]}>{props.title}</Text>
+                        {props.subtitle && !row && !pill ? <Text nativeID={subtitleId} testID={`${props.testID}-subtitle`} style={[styles.subtitle, { color: subtitleColor }]}>{props.subtitle}</Text> : null}
                     </View>
                     )}
                     {!button && pending ? <ActivitySpinner color={foreground} /> : !button && !link && props.iconName ? (
@@ -178,6 +187,37 @@ export const WelcomeActionCard = React.memo(function WelcomeActionCard(props: Re
                 </Animated.View>
             )}
         </HappierPressable>
+    );
+});
+
+/**
+ * One way in on the ways row (direction A, owner 2026-11-19): a round mark without a caption; its title is the
+ * tooltip on hover and focus and its accessible name, its subtitle the hint. Admitted like every welcome action.
+ */
+export const WelcomeWayButton = React.memo(function WelcomeWayButton(props: Readonly<{
+    testID: string;
+    actionId?: string;
+    title: string;
+    subtitle?: string;
+    iconName?: IconName;
+    disabled?: boolean;
+    onPress: () => Promise<void> | void;
+}>) {
+    const admission = React.useContext(WelcomeActionAdmissionContext);
+    const actionId = props.actionId ?? props.testID;
+    return (
+        <IconButton
+            testID={props.testID}
+            accessibilityLabel={props.title}
+            accessibilityHint={props.subtitle}
+            tooltip={props.title}
+            iconName={props.iconName ?? 'arrow-right'}
+            size={STEP_ROW_BUTTON_PX}
+            variant="outlined"
+            disabled={props.disabled || admission.pendingActionId !== null}
+            busy={admission.pendingActionId === actionId}
+            onPress={() => admission.run(actionId, props.onPress)}
+        />
     );
 });
 
@@ -203,6 +243,16 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: theme.borderRadius.md,
         paddingVertical: theme.space.s10,
     },
+    // Lab `.ar-cta2`: a 40 px rounded line on the page, its hairline the ink edge.
+    pill: {
+        alignSelf: 'center',
+        minHeight: 40,
+        borderRadius: 20,
+        paddingVertical: 0,
+        paddingHorizontal: theme.space.s16,
+    },
+    pillTitle: { ...Typography.variant('label') },
+    pillHit: { alignSelf: 'center' },
     link: { paddingHorizontal: 0, paddingVertical: theme.space.s8, borderWidth: 0 },
     linkLineFrame: { minHeight: 0, justifyContent: 'center' },
     linkLine: { ...Typography.variant('label'), flexShrink: 1, textAlign: 'center' },

@@ -31,6 +31,13 @@ interface QRCodeProps {
     data: string;
     size?: number;
     errorCorrectionLevel?: 'low' | 'medium' | 'quartile' | 'high';
+    /**
+     * Leave a two-module margin inside `size` (default). A caller whose own paper already gives the code its quiet
+     * zone turns it off, so the modules fill the size instead of shrinking by a margin nobody sees.
+     */
+    quietZone?: boolean;
+    /** Web snaps modules to whole pixels and may spill this far into its paper; native modules already fill `size`. */
+    bleed?: number;
     foregroundColor?: string;
     backgroundColor?: string;
 }
@@ -41,8 +48,10 @@ export const QRCode = React.memo((props: QRCodeProps) => {
         size = 200,
         errorCorrectionLevel = 'medium',
         foregroundColor = '#000000',
-        backgroundColor = '#FFFFFF'
+        backgroundColor = '#FFFFFF',
+        quietZone = true,
     } = props;
+    const margin = quietZone ? 4 : 0;
 
     // Generate QR matrix
     const qrMatrix = React.useMemo(() => {
@@ -50,7 +59,7 @@ export const QRCode = React.memo((props: QRCodeProps) => {
     }, [data, errorCorrectionLevel]);
 
     // Calculate module size
-    const moduleSize = size / (qrMatrix.size + 4/* space around */);
+    const moduleSize = size / (qrMatrix.size + margin);
 
     // Generate modules with rounded corners
     const modules = React.useMemo(() => {
@@ -124,7 +133,7 @@ export const QRCode = React.memo((props: QRCodeProps) => {
                 r={moduleSize * baseRadius * 3}
             />
 
-            <Group transform={[{ translateX: moduleSize * 2 }, { translateY: moduleSize * 2 }]}>
+            <Group transform={[{ translateX: moduleSize * margin / 2 }, { translateY: moduleSize * margin / 2 }]}>
                 {/* QR modules with rounded corners */}
                 {modules}
 

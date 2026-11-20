@@ -3493,6 +3493,8 @@ const enConnect = {
   openMachine: 'Open machine',
   terminalUrlPlaceholder: 'happier://terminal?...',
   accountUrlPlaceholder: 'happier:///account?...',
+  approveFromDeviceTitle: "Approve from a device you use",
+  approveFromDeviceSubtitle: "Open Happier on your phone or another signed-in computer and scan this code.",
   showRequesterQrInstructions:
     'Keep this QR code on this device. On an already-enrolled device, open Happier and scan it to add this device.',
   legacyAccountQrUnavailable:
@@ -18917,8 +18919,6 @@ const enWelcome = {
   // Unified onboarding redesign — welcome decision (right pane)
   welcomeQuestionTitle: 'Welcome.',
   welcomeQuestionSubtitle: 'First time here?',
-  welcomeQuestionBody: "Happier is the control room for your AI coding agents.",
-  welcomeQuestionBodyWithKey: "Happier is the control room for your AI coding agents. No email needed. Your account is a private key, generated on this device.",
   terminalContinuationTitle: 'Connect terminal.',
   terminalContinuationSubtitle: 'Sign in to finish.',
 
@@ -18957,7 +18957,7 @@ const enWelcome = {
   emailCreateDescription: 'Create an account with your email address.',
   emailConnectDescription: 'Add them to the account you already use.',
   useDifferentHomeSubtitle: ({ home }: { home: string }) => `Instead of ${home}`,
-  welcomeSecondaryButton: "Login — I already use Happier",
+  welcomeSecondaryButton: "I already use Happier",
   welcomeSecondarySubtitle: "Scan a QR code, or enter your recovery key",
   loginSubtitleKeyFirst: "Enter your recovery key, or paste a pairing link",
   loginSubtitleLinkFirst: "Paste a pairing link, or enter your recovery key",
@@ -19001,6 +19001,8 @@ const enWelcome = {
 
   // Welcome step footer links
   welcomeFooterRelay: 'Self-hosting?',
+  welcomeRunYourOwnHome: "Run your own Home",
+  welcomeTrustLine: "End-to-end encrypted · Open source · Self-hostable",
   welcomeFooterRelayAction: 'Use your own Relay',
   // Shown in place of welcomeFooterRelay when the active server is a
   // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -19011,6 +19013,8 @@ const enWelcome = {
   welcomeFooterRelayEditAccessibility: 'Change relay',
   welcomeFooterDocs: 'Need help?',
   welcomeFooterDocsAction: 'Docs',
+  welcomeFooterGithub: "GitHub",
+  welcomeFooterDiscord: "Discord",
   welcomeFooterGithubLabel: 'GitHub repository',
   welcomeFooterDiscordLabel: 'Discord community',
 

@@ -86,15 +86,12 @@ type BareOnboardingWorkflowContentProps = Readonly<{
 }>;
 
 const bareStylesheet = StyleSheet.create(() => ({
+    // Direction A: one centred Continue (lab 240 px), Back to its left on a computer (the step frame's footer).
     primaryButton: {
-        width: '100%',
-        maxWidth: 360,
+        width: 240,
     },
-    // The quiet text button's own horizontal padding is pulled back so its label shares the
-    // column's left edge with the Home chip and the fields above it.
     skipButton: {
         maxWidth: 360,
-        marginLeft: -16,
     },
 }));
 

@@ -7,186 +7,144 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { Icon } from '@/components/ui/icons/Icon';
+import type { IconName } from '@/components/ui/icons/Icon';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { usePressFeedback } from '@/components/ui/interactions/usePressFeedback';
 import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 
-import { RelayRetentionDisclosure, type RelayRetentionDisclosureState } from './RelayRetentionDisclosure';
 
 const DOCS_URL = 'https://docs.happier.dev';
 const GITHUB_URL = 'https://github.com/happier-dev/happier';
 const DISCORD_URL = 'https://discord.gg/W6Pb8KuHfg';
-/** The links sit 10px apart (`actionsRow*` gap); each hit area reaches half of it sideways. */
+/** The links sit about 10 px apart; each hit area reaches half of it sideways. */
 const LINK_HIT_REACH = { left: 5, right: 5 } as const;
-// The glyphs sit on the label's text edge (welcome-1115 r2); the reach keeps a 28 px target around the 16 px mark.
-const ICON_HIT_REACH = { left: 6, right: 6 } as const;
 
 export type WelcomeFooterLinksProps = Readonly<{
     variant: 'desktop' | 'mobile';
-    retentionDisclosure?: RelayRetentionDisclosureState | null;
     /** The pane's footer accessory (signed-out Updates): the help row's trailing control. */
     trailing?: React.ReactNode;
 }>;
 
+type FooterLink = Readonly<{ key: string; label: string; accessibilityLabel: string; icon: IconName; open: () => void }>;
+
 /**
- * Welcome-step-only footer rendered at the bottom of the workflow pane.
- * The sign-in/Home authority controls live in the Welcome decision panel. This footer is limited
- * to help/community links so a focused Home cannot appear to select the sign-in destination.
+ * Welcome-step-only footer (direction A, lab `final/shots/open-*-welcome-*`): on a computer a quiet line of links in
+ * the bottom-left corner with their marks as small round wells under it; on a phone one centred row under the
+ * column. Help and community only, so a focused Home never appears to select the sign-in destination.
  */
 export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: WelcomeFooterLinksProps) {
-    const { theme } = useUnistyles();
     const styles = stylesheet;
-
     const [, openDocs] = useOpenExternalUrl(DOCS_URL);
     const [, openGithub] = useOpenExternalUrl(GITHUB_URL);
     const [, openDiscord] = useOpenExternalUrl(DISCORD_URL);
-
-    const labelColor = { color: theme.colors.text.secondary };
-    const actionColor = { color: theme.colors.text.primary };
-    const githubFeedback = usePressFeedback({ glyph: true });
-    const discordFeedback = usePressFeedback({ glyph: true });
-    const docsFeedback = usePressFeedback({ glyph: true });
-    const iconColor = theme.colors.text.primary;
     const isMobile = props.variant === 'mobile';
-    const footerGroupStyle = isMobile ? styles.groupMobile : styles.groupDesktop;
-
+    const links: readonly FooterLink[] = [
+        { key: 'docs', label: t('welcome.welcomeFooterDocsAction'), accessibilityLabel: t('welcome.welcomeFooterDocsAction'), icon: 'book-open', open: openDocs },
+        { key: 'github', label: t('welcome.welcomeFooterGithub'), accessibilityLabel: t('welcome.welcomeFooterGithubLabel'), icon: 'github-logo', open: openGithub },
+        { key: 'discord', label: t('welcome.welcomeFooterDiscord'), accessibilityLabel: t('welcome.welcomeFooterDiscordLabel'), icon: 'discord-logo', open: openDiscord },
+    ];
+    const line = (
+        <View style={isMobile ? styles.lineMobile : styles.line} testID="welcome-footer-docs">
+            {links.map((link, index) => (
+                <React.Fragment key={link.key}>
+                    {index > 0 && !isMobile ? <Text style={styles.dot}>·</Text> : null}
+                    <FooterTextLink link={link} />
+                </React.Fragment>
+            ))}
+            {isMobile ? props.trailing : null}
+        </View>
+    );
     return (
-        <View
-            style={isMobile ? styles.containerMobile : styles.containerDesktop}
-            testID="welcome-footer-links"
-        >
-            {props.retentionDisclosure ? (
-                <RelayRetentionDisclosure
-                    testID="welcome-footer-retention"
-                    disclosure={props.retentionDisclosure}
-                />
-            ) : null}
-            <View style={isMobile ? styles.linksMobile : styles.linksDesktop}>
-                <View style={footerGroupStyle} testID="welcome-footer-docs">
-                    <Text style={[styles.label, labelColor]}>
-                        {t('welcome.welcomeFooterDocs')}
-                    </Text>
-                    <View style={isMobile ? styles.actionsRowCenter : styles.actionsRowStart}>
-                        <HappierPressable
-                            onPress={openGithub}
-                            accessibilityRole="link"
-                            accessibilityLabel={t('welcome.welcomeFooterGithubLabel')}
-                            testID="welcome-footer-github-action"
-                            onPressIn={githubFeedback.onPressIn}
-                            onPressOut={githubFeedback.onPressOut}
-                            hitReach={ICON_HIT_REACH}
-                            style={styles.iconButton}
-                        >
-                            <Animated.View style={githubFeedback.animatedStyle}>
-                                <Icon name="github-logo" size={16} color={iconColor} />
-                            </Animated.View>
-                        </HappierPressable>
-                        <HappierPressable
-                            onPress={openDiscord}
-                            accessibilityRole="link"
-                            accessibilityLabel={t('welcome.welcomeFooterDiscordLabel')}
-                            testID="welcome-footer-discord-action"
-                            onPressIn={discordFeedback.onPressIn}
-                            onPressOut={discordFeedback.onPressOut}
-                            hitReach={ICON_HIT_REACH}
-                            style={styles.iconButton}
-                        >
-                            <Animated.View style={discordFeedback.animatedStyle}>
-                                <Icon name="discord-logo" size={16} color={iconColor} />
-                            </Animated.View>
-                        </HappierPressable>
-                        <HappierPressable
-                            onPress={openDocs}
-                            accessibilityRole="link"
-                            accessibilityLabel={t('welcome.welcomeFooterDocsAction')}
-                            testID="welcome-footer-docs-action"
-                            onPressIn={docsFeedback.onPressIn}
-                            onPressOut={docsFeedback.onPressOut}
-                            hitReach={LINK_HIT_REACH}
-                            style={styles.textButton}
-                        >
-                            <Animated.View style={docsFeedback.animatedStyle}>
-                                <Text style={[styles.action, actionColor]}>{t('welcome.welcomeFooterDocsAction')}</Text>
-                            </Animated.View>
-                        </HappierPressable>
-                        {isMobile ? props.trailing : null}
+        <View style={isMobile ? styles.containerMobile : styles.containerDesktop} testID="welcome-footer-links">
+            {isMobile ? line : (
+                <View style={styles.rowDesktop}>
+                    <View style={styles.groupDesktop}>
+                        {line}
+                        <View style={styles.wells}>
+                            {links.map((link) => (
+                                <IconButton key={link.key} testID={`welcome-footer-${link.key}-action`}
+                                    accessibilityRole="link" accessibilityLabel={link.accessibilityLabel}
+                                    tooltip={link.accessibilityLabel} iconName={link.icon} size={32} variant="outlined"
+                                    onPress={link.open} />
+                            ))}
+                        </View>
                     </View>
+                    {props.trailing ? <View testID="welcome-footer-trailing" style={styles.trailingDesktop}>{props.trailing}</View> : null}
                 </View>
-                {/* Desktop: the far end of the row, level with the icons rather than the label above them. */}
-                {!isMobile && props.trailing ? <View testID="welcome-footer-trailing" style={styles.trailingDesktop}>{props.trailing}</View> : null}
-            </View>
+            )}
         </View>
     );
 });
 
-const stylesheet = StyleSheet.create(() => ({
+function FooterTextLink({ link }: Readonly<{ link: FooterLink }>) {
+    const { theme } = useUnistyles();
+    const feedback = usePressFeedback({ glyph: true });
+    return (
+        <HappierPressable
+            onPress={link.open}
+            accessibilityRole="link"
+            accessibilityLabel={link.accessibilityLabel}
+            testID={`welcome-footer-${link.key}-link`}
+            onPressIn={feedback.onPressIn}
+            onPressOut={feedback.onPressOut}
+            hitReach={LINK_HIT_REACH}
+            style={stylesheet.textButton}
+        >
+            <Animated.View style={feedback.animatedStyle}>
+                <Text style={[stylesheet.action, { color: theme.colors.text.primary }]}>{link.label}</Text>
+            </Animated.View>
+        </HappierPressable>
+    );
+}
+
+const stylesheet = StyleSheet.create((theme) => ({
     containerDesktop: {
         width: '100%',
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        paddingTop: 20,
-        paddingBottom: 28,
-        gap: 14,
+        paddingTop: theme.space.s20,
+        paddingBottom: theme.space.s24,
     },
     containerMobile: {
         width: '100%',
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        gap: 14,
-        paddingTop: 18,
+        alignItems: 'center',
+        paddingTop: theme.space.s24,
     },
-    linksDesktop: {
+    rowDesktop: {
         width: '100%',
         flexDirection: 'row',
-        alignItems: 'flex-start',
+        alignItems: 'flex-end',
         justifyContent: 'space-between',
-        gap: 24,
-    },
-    linksMobile: {
-        width: '100%',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 18,
     },
     groupDesktop: {
-        flexDirection: 'column',
         alignItems: 'flex-start',
-        gap: 4,
+        gap: theme.space.s8,
     },
-    groupMobile: {
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 4,
-    },
-    actionsRowStart: {
+    line: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 16,
+        gap: theme.space.s6,
     },
-    actionsRowCenter: {
+    lineMobile: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 16,
+        gap: theme.space.s16,
+    },
+    wells: {
+        flexDirection: 'row',
+        gap: theme.space.s8,
+    },
+    dot: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.tertiary,
     },
     trailingDesktop: {
         alignSelf: 'flex-end',
     },
-    label: {
-        ...Typography.variant('body'),
-    },
     action: {
         ...Typography.variant('body'),
-        textDecorationLine: 'underline',
-    },
-    iconButton: {
-        width: 16,
-        height: 28,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     textButton: {
-        paddingVertical: 4,
+        paddingVertical: theme.space.s4,
         alignItems: 'center',
         justifyContent: 'center',
     },

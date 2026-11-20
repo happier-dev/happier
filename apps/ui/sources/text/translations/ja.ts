@@ -3807,6 +3807,8 @@ export const ja: TranslationStructure = {
     openMachine: "マシンを開く",
     terminalUrlPlaceholder: "happier://terminal?...",
     accountUrlPlaceholder: "happier:///account?...",
+    approveFromDeviceTitle: "使っているデバイスで承認",
+    approveFromDeviceSubtitle: "スマートフォンやサインイン済みの別のコンピューターで Happier を開き、このコードをスキャンしてください。",
     showRequesterQrInstructions:
       "このデバイスにこのQRコードを表示したままにしてください。すでに登録済みのデバイスでHappierを開き、このコードをスキャンしてこのデバイスを追加してください。",
     externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
@@ -16020,8 +16022,6 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "ようこそ。",
     welcomeQuestionSubtitle: "初めてですか?",
-    welcomeQuestionBody: "Happier は AI コーディングエージェントのコントロールルームです。",
-    welcomeQuestionBodyWithKey: "Happier は AI コーディングエージェントのコントロールルームです。メールアドレスは不要。アカウントはこのデバイスで生成される秘密鍵です。",
     terminalContinuationTitle: 'ターミナルを接続しましょう。',
     terminalContinuationSubtitle: 'サインインして完了します。',
 
@@ -16052,7 +16052,7 @@ settingsSession: {
     emailCreateDescription: "メールアドレスでアカウントを作成します。",
     emailConnectDescription: "すでに使っているアカウントに追加します。",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `現在: ${home}`,
-    welcomeSecondaryButton: "ログイン — すでに Happier を使っています",
+    welcomeSecondaryButton: "すでに Happier を使っています",
     welcomeSecondarySubtitle: "QRコードをスキャンするか、リカバリーキーを入力してください",
     loginSubtitleKeyFirst: "リカバリーキーを入力するか、ペアリングリンクを貼り付けてください",
     loginSubtitleLinkFirst: "ペアリングリンクを貼り付けるか、リカバリーキーを入力してください",
@@ -16096,6 +16096,8 @@ settingsSession: {
 
     // Welcome step footer links
     welcomeFooterRelay: "セルフホスティング?",
+    welcomeRunYourOwnHome: "自分の Home を運用する",
+    welcomeTrustLine: "エンドツーエンド暗号化 · オープンソース · セルフホスト可能",
     welcomeFooterRelayAction: "自分の Relay を使う",
     // Shown in place of welcomeFooterRelay when the active server is a
     // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -16106,6 +16108,8 @@ settingsSession: {
     welcomeFooterRelayEditAccessibility: "Relay を変更",
     welcomeFooterDocs: "ヘルプが必要ですか?",
     welcomeFooterDocsAction: "ドキュメント",
+    welcomeFooterGithub: "GitHub",
+    welcomeFooterDiscord: "Discord",
     welcomeFooterGithubLabel: "GitHub リポジトリ",
     welcomeFooterDiscordLabel: "Discord コミュニティ",
 

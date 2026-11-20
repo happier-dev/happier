@@ -3176,6 +3176,8 @@ export const ru: TranslationStructure = {
     openMachine: "Открыть машину",
     terminalUrlPlaceholder: "happier://terminal?...",
     accountUrlPlaceholder: "happier:///account?...",
+    approveFromDeviceTitle: "Подтвердите на своём устройстве",
+    approveFromDeviceSubtitle: "Откройте Happier на телефоне или другом компьютере, где вы вошли, и отсканируйте этот код.",
     showRequesterQrInstructions:
       "Оставьте этот QR‑код на этом устройстве. На уже зарегистрированном устройстве откройте Happier и отсканируйте его, чтобы добавить это устройство.",
     externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
@@ -15565,8 +15567,6 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Добро пожаловать.",
     welcomeQuestionSubtitle: "Вы здесь впервые?",
-    welcomeQuestionBody: "Happier — это центр управления вашими ИИ-агентами для программирования.",
-    welcomeQuestionBodyWithKey: "Happier — это центр управления вашими ИИ-агентами для программирования. Email не нужен. Ваш аккаунт — это приватный ключ, сгенерированный на этом устройстве.",
     terminalContinuationTitle: 'Подключите терминал.',
     terminalContinuationSubtitle: 'Войдите, чтобы завершить.',
 
@@ -15597,7 +15597,7 @@ settingsSession: {
     emailCreateDescription: "Создайте аккаунт по адресу электронной почты.",
     emailConnectDescription: "Добавьте их к аккаунту, который у вас уже есть.",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `Вместо ${home}`,
-    welcomeSecondaryButton: "Войти — я уже пользуюсь Happier",
+    welcomeSecondaryButton: "Я уже пользуюсь Happier",
     welcomeSecondarySubtitle: "Отсканируйте QR-код или введите ключ восстановления",
     loginSubtitleKeyFirst: "Введите ключ восстановления или вставьте ссылку для связывания",
     loginSubtitleLinkFirst: "Вставьте ссылку для связывания или введите ключ восстановления",
@@ -15641,6 +15641,8 @@ settingsSession: {
 
     // Welcome step footer links
     welcomeFooterRelay: "Самостоятельный хостинг?",
+    welcomeRunYourOwnHome: "Запустить свою Home",
+    welcomeTrustLine: "Сквозное шифрование · Открытый код · Можно разместить у себя",
     welcomeFooterRelayAction: "Используйте свой Relay",
     // Shown in place of welcomeFooterRelay when the active server is a
     // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -15651,6 +15653,8 @@ settingsSession: {
     welcomeFooterRelayEditAccessibility: "Изменить relay",
     welcomeFooterDocs: "Нужна помощь?",
     welcomeFooterDocsAction: "Документация",
+    welcomeFooterGithub: "GitHub",
+    welcomeFooterDiscord: "Discord",
     welcomeFooterGithubLabel: "Репозиторий GitHub",
     welcomeFooterDiscordLabel: "Сообщество Discord",
 

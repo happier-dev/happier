@@ -13,6 +13,7 @@ async function renderScreen(element: React.ReactElement) {
 }
 
 import { QRCode } from './QRCode.web';
+import { createQRMatrix } from './qrMatrix';
 
 describe('QRCode.web', () => {
     it('keeps finder rings independent of a transparent background', async () => {
@@ -40,6 +41,44 @@ describe('QRCode.web', () => {
             && (String(node.props?.d).match(/M /g) ?? []).length === 2
         ));
         expect(ringPaths).toHaveLength(3);
+    });
+
+    it('fills its whole size when its paper already provides the quiet zone (a long pairing link stays readable)', async () => {
+        vi.stubGlobal('window', { devicePixelRatio: 1 });
+        try {
+            // A pairing-link-sized payload whose built-in four-module margin would cost a whole pixel per module.
+            const data = Array.from({ length: 40 }, (_, step) => `happier:///restore?invite=${'x'.repeat(100 + step * 10)}`)
+                .find((candidate) => {
+                    const modulesAcross = createQRMatrix(candidate, 'medium').size;
+                    return Math.floor(204 / (modulesAcross + 4)) < Math.floor(204 / modulesAcross);
+                })!;
+            const modulesAcross = createQRMatrix(data, 'medium').size;
+            const screen = await renderScreen(<QRCode data={data} size={204} quietZone={false} />);
+            const modules = screen.findAll((node) => (
+                node.type === 'rect' && node.props?.fill === '#000000' && node.props?.rx === undefined
+            ));
+            expect(modules[0].props.width).toBe(Math.floor(204 / modulesAcross));
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it('keeps the larger whole-pixel module by spilling into its paper when the code is a few pixels too wide', async () => {
+        vi.stubGlobal('window', { devicePixelRatio: 1 });
+        try {
+            const data = Array.from({ length: 200 }, (_, step) => `happier:///restore?invite=${'x'.repeat(100 + step * 5)}`)
+                .find((candidate) => {
+                    const modulesAcross = createQRMatrix(candidate, 'medium').size;
+                    return Math.floor(204 / modulesAcross) === 1 && Math.floor(216 / modulesAcross) === 2;
+                })!;
+            const screen = await renderScreen(<QRCode data={data} size={204} quietZone={false} bleed={6} />);
+            const modules = screen.findAll((node) => (
+                node.type === 'rect' && node.props?.fill === '#000000' && node.props?.rx === undefined
+            ));
+            expect(modules[0].props.width).toBe(2);
+        } finally {
+            vi.unstubAllGlobals();
+        }
     });
 
     it('draws every module on the device pixel grid, never spilling into its neighbours (a small code stays sharp)', async () => {

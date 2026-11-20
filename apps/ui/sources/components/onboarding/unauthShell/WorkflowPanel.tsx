@@ -13,7 +13,9 @@ import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBa
 import { BackChevron, UNAUTH_BACK_TEST_ID } from './BackChevron';
 import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
-import type { RelayRetentionDisclosureState } from './RelayRetentionDisclosure';
+import { StepBackContext } from './stepBack';
+import { ShellCornerContext } from './shellCorner';
+import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
 // Mobile welcome wordmark sits at the same coordinates as the brand hero's
 // wordmark (24px top + 24px left, plus the safe-area insets) so users see
@@ -38,7 +40,8 @@ const MOBILE_ROW_WORDMARK_CLEARANCE_PX = 24;
  */
 const WORKFLOW_CARD_WIDTH_HINT = 500;
 const WORKFLOW_MOBILE_TOP_PADDING = 28;
-const WORKFLOW_MOBILE_HORIZONTAL_PADDING = 24;
+/** The phone's side gutter (direction A: 16 px). */
+const WORKFLOW_MOBILE_HORIZONTAL_PADDING = 16;
 const WORKFLOW_MOBILE_BOTTOM_PADDING = 28;
 /**
  * The desktop horizontal padding that sits inside the pane's `maxWidth`. The
@@ -68,7 +71,6 @@ export type WorkflowPanelProps = Readonly<{
     isWelcomeStep: boolean;
     /** Shows the compact mobile product mark on focused public entry flows. */
     showMobileWordmark?: boolean;
-    retentionDisclosure?: RelayRetentionDisclosureState | null;
     onBack?: () => void;
     transitionKey: string;
     presentation?: WorkflowPanelPresentation;
@@ -112,6 +114,26 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // so the canvas-background card visibly sits at the wizard's card size and
     // the brand pane (flex: 1) expands to fill the remaining left-side space
     // on wider windows.
+    // A computer's Back stands in the step's own row (its Continue footer, Approve's ways) when the step draws one;
+    // the corner Back stays only for a step without such a row. A phone keeps the platform back in its corner.
+    const onBackRef = React.useRef(props.onBack);
+    onBackRef.current = props.onBack;
+    const [rowBackClaims, setRowBackClaims] = React.useState(0);
+    const hasBack = props.onBack != null;
+    const backSlot = React.useMemo(() => hasBack ? {
+        onBack: () => { onBackRef.current?.(); },
+        placement: isMobile ? 'platform' as const : 'row' as const,
+        claim: () => {
+            setRowBackClaims((count) => count + 1);
+            return () => setRowBackClaims((count) => count - 1);
+        },
+    } : null, [hasBack, isMobile]);
+    const cornerBack = isMobile || rowBackClaims === 0;
+    // The welcome's "Run your own Home" door, in the page's top-right corner on a computer (lab direction A).
+    const [cornerDoor, setCornerDoor] = React.useState<Readonly<{ testID: string; label: string; onPress: () => void }> | null>(null);
+    const cornerSlot = React.useMemo(() => isMobile ? null : (
+        door: Readonly<{ testID: string; label: string }> | null, onPress: () => void,
+    ) => setCornerDoor(door ? { ...door, onPress } : null), [isMobile]);
     const cardDimensions = useModalCardDimensions({ size: 'md', width: WORKFLOW_CARD_WIDTH_HINT });
     const layoutMaxWidth = useLayoutMaxWidth();
     // The pane is capped at exactly the wizard card width (~500px) including
@@ -129,7 +151,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // screens the spacer collapses and the column scrolls — content and
     // footer always remain reachable instead of overlapping.
     // The wordmark stands top-left on every welcome step and wherever a step asks for it (direction A).
-    const showMobileWordmark = props.isWelcomeStep || props.showMobileWordmark === true;
+    const showMobileWordmark = !isMobile || props.isWelcomeStep || props.showMobileWordmark === true;
     const wordmarkInBackRow = isMobile && showMobileWordmark && !props.isWelcomeStep;
     const contentPaddingStyle: ViewStyle = isMobile
         ? isFullBleed
@@ -191,7 +213,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     />
                 </View>
             ) : null}
-            {props.onBack && !isFullBleed ? (
+            {props.onBack && !isFullBleed && cornerBack ? (
                 <View
                     testID="unauth-shell-back-row"
                     style={[
@@ -211,6 +233,14 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                 </View>
             ) : null}
 
+            {cornerDoor ? (
+                <View testID="unauth-shell-corner" style={styles.cornerDoor} pointerEvents="box-none">
+                    <WelcomeActionCard testID={cornerDoor.testID} title={cornerDoor.label} presentation="pill"
+                        iconName="hard-drives" onPress={cornerDoor.onPress} />
+                </View>
+            ) : null}
+            <ShellCornerContext.Provider value={cornerSlot}>
+            <StepBackContext.Provider value={backSlot}>
             <ScrollView
                 testID="unauth-shell-workflow-scroll"
                 style={styles.scrollFill}
@@ -231,7 +261,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     //    backdrop. Footer sits just below.
                     isMobile ? (
                         <>
-                            <View style={styles.footerSpacer} />
+                            {/* As on a computer: the column stands above the planet, two parts of the free height above it. */}
+                            <View style={styles.welcomeLead} />
                             <View>
                                 <StepMotionLayer
                                     layerKey="workflow"
@@ -243,15 +274,19 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 >
                                     {props.children}
                                 </StepMotionLayer>
+                            </View>
+                            <View style={styles.welcomeTrail} />
+                            <View>
                                 <WelcomeFooterLinks
                                     variant="mobile"
-                                    retentionDisclosure={props.retentionDisclosure}
                                     trailing={props.footerAccessory}
                                 />
                             </View>
                         </>
                     ) : (
                         <>
+                            {/* The welcome's doors stand above the planet: two parts of the free height above, three below. */}
+                            <View style={styles.welcomeLead} />
                             <StepMotionLayer
                                 layerKey="workflow"
                                 backTestID={UNAUTH_BACK_TEST_ID}
@@ -262,10 +297,9 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             >
                                 {props.children}
                             </StepMotionLayer>
-                            <View style={styles.footerSpacer} />
+                            <View style={styles.welcomeTrail} />
                             <WelcomeFooterLinks
                                 variant="desktop"
-                                retentionDisclosure={props.retentionDisclosure}
                                 trailing={props.footerAccessory}
                             />
                         </>
@@ -306,6 +340,8 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     </>
                 )}
             </ScrollView>
+            </StepBackContext.Provider>
+            </ShellCornerContext.Provider>
         </View>
     );
 });
@@ -338,6 +374,14 @@ const stylesheet = StyleSheet.create(() => ({
         paddingBottom: 0,
         paddingLeft: 0,
     },
+    welcomeLead: {
+        flex: 2,
+        minHeight: 0,
+    },
+    welcomeTrail: {
+        flex: 3,
+        minHeight: 0,
+    },
     footerSpacer: {
         flex: 1,
         // Allow the spacer to collapse below its natural height on short
@@ -366,9 +410,16 @@ const stylesheet = StyleSheet.create(() => ({
         position: 'absolute',
         zIndex: 1,
     },
+    // Under the wordmark on the page's outer gutter (lab direction A), for a step without its own row.
     backRowDesktop: {
-        top: 12,
-        left: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER - 17,
+        top: 84,
+        left: DESKTOP_WORDMARK_INSET_PX - 8,
+    },
+    cornerDoor: {
+        position: 'absolute',
+        zIndex: 1,
+        top: DESKTOP_WORDMARK_INSET_PX - 2,
+        right: 32,
     },
     mobileWordmark: {
         position: 'absolute',

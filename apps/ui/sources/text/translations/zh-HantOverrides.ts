@@ -3743,6 +3743,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         generateNewQrCode: '建立新的 QR 碼',
         pairingQrExpired: '此 QR 碼已過期。請產生新的 QR 碼。',
         accountUrlPlaceholder: 'happier:///account?...',
+        approveFromDeviceTitle: "在你使用的裝置上核准",
+        approveFromDeviceSubtitle: "在手機或另一台已登入的電腦上開啟 Happier，掃描此代碼。",
         showRequesterQrInstructions: '請在此裝置上保留這個 QR 碼。請在已註冊的裝置上開啟 Happier 並掃描它，以加入此裝置。',
         externalAuthVerifiedTitle: ({ provider }: { provider: string }) => `${provider} 驗證完成`,
         externalAuthVerifiedBody: ({ provider }: { provider: string }) =>
@@ -12855,8 +12857,6 @@ settingsSession: {
         // Unified onboarding redesign — welcome decision (right pane)
         welcomeQuestionTitle: '歡迎。',
         welcomeQuestionSubtitle: '第一次使用?',
-        welcomeQuestionBody: "Happier 是你 AI 編碼代理的控制中心。",
-        welcomeQuestionBodyWithKey: "Happier 是你 AI 編碼代理的控制中心。無需電子郵件。你的帳戶是一把在本裝置上產生的私鑰。",
         terminalContinuationTitle: '連接你的終端機。',
         terminalContinuationSubtitle: '登入以完成。',
 
@@ -12887,7 +12887,7 @@ settingsSession: {
         emailCreateDescription: '用你的電子郵件地址建立帳戶。',
         emailConnectDescription: '新增到你已有的帳戶。',
         useDifferentHomeSubtitle: ({ home }: { home: string }) => `目前：${home}`,
-        welcomeSecondaryButton: "登入 — 我已在使用 Happier",
+        welcomeSecondaryButton: "我已在使用 Happier",
         welcomeSecondarySubtitle: "掃描 QR 碼，或輸入你的復原金鑰",
         loginSubtitleKeyFirst: "輸入你的復原金鑰，或貼上配對連結",
         loginSubtitleLinkFirst: "貼上配對連結，或輸入你的復原金鑰",
@@ -12931,6 +12931,8 @@ settingsSession: {
 
         // Welcome step footer links
         welcomeFooterRelay: '自架?',
+        welcomeRunYourOwnHome: "執行你自己的 Home",
+        welcomeTrustLine: "端對端加密 · 開源 · 可自行託管",
         welcomeFooterRelayAction: '使用自己的 Relay',
         // Shown in place of welcomeFooterRelay when the active server is a
         // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -12941,6 +12943,8 @@ settingsSession: {
         welcomeFooterRelayEditAccessibility: '變更 Relay',
         welcomeFooterDocs: '需要協助?',
         welcomeFooterDocsAction: '文件',
+        welcomeFooterGithub: "GitHub",
+        welcomeFooterDiscord: "Discord",
         welcomeFooterGithubLabel: 'GitHub 儲存庫',
         welcomeFooterDiscordLabel: 'Discord 社群',
 

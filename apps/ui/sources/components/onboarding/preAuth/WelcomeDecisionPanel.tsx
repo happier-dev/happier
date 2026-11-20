@@ -30,6 +30,8 @@ export type WelcomeDecisionPanelProps = Readonly<{
     /** The Approve step uses the same admitted catalog for its alternative ways in. */
     restoreWays?: boolean;
     onLeaveRestore?: () => void;
+    /** Marks Approve puts first on the ways row (Back on a computer, the recovery key). */
+    waysLeading?: React.ReactNode;
     /**
      * Advertised methods of the exact effective sign-in service. These remain additive to any
      * usable Home methods and never retarget the Home authority.
@@ -211,6 +213,8 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         onAction,
         onRetry,
         onSelfHosting: props.onChangeRelay,
+        waysLeading: props.waysLeading,
+        retention: props.restoreWays ? null : options.retentionDisclosure,
         policyNotice: props.restoreWays ? undefined : <>
             <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />
             <OrganizationPolicyInvalidNextStep />

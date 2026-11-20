@@ -11,7 +11,7 @@ type Action = Readonly<{
     title: string;
     subtitle?: string;
     primary?: boolean;
-    presentation?: 'row' | 'link';
+    presentation?: 'pill' | 'way' | 'link';
     iconName?: IconName;
     accentColor?: string | null;
 }>;
@@ -30,12 +30,14 @@ export type WelcomeEntryViewModel = Readonly<{
     /** `compact`: the phone's own two lines where they differ (direction A greets a phone with the welcome question). */
     heading?: Readonly<{ title: string; subtitle: string; intro?: string; compact?: Readonly<{ title: string; subtitle: string }> }>;
     signupNotice?: string;
+    /** The quiet line under the doors on a greeting (direction A): what Happier is, in three facts. */
+    trust?: string;
     quietWaysTitle?: string;
     doors: readonly Readonly<{ index: number; display: Action }>[];
     quietWays: readonly Readonly<{ index: number; display: Action }>[];
     notices: readonly Notice[];
     closingNotice?: Notice;
-    selfHosting?: Readonly<{ label: string; display: Action }>;
+    selfHosting?: Readonly<{ display: Action }>;
 }>;
 
 function lastTimeSubtitle(execution: WelcomeAuthenticationMethod['execution'], provider: string): string {
@@ -55,7 +57,8 @@ function describeAction(
     const action = row.action;
     const frame: Pick<Action, 'primary' | 'presentation'> = {
         primary: row.emphasis === 'primary',
-        presentation: row.emphasis === 'tertiary' ? 'row' : undefined,
+        // Direction A: the second door is a pill under the primary; every quieter way is a round mark in the ways row.
+        presentation: row.emphasis === 'secondary' ? 'pill' : row.emphasis === 'tertiary' ? 'way' : undefined,
     };
     switch (action.kind) {
         case 'scan_or_paste_home':
@@ -100,6 +103,8 @@ function describeAction(
                 subtitle = action.lastUsed ? lastTimeSubtitle(request.execution, provider) : presentation.title;
             } else if (newAccount) {
                 title = t('welcome.newAccount');
+                // The last way on Approve (owner 2026-11-19): a plus, not the key the account would be made with.
+                return { ...frame, testID, title, subtitle, iconName: 'plus' };
             } else if (newHere) {
                 title = t(returning ? 'welcome.welcomeReturningStartFreshButton' : 'welcome.welcomePrimaryButton');
                 subtitle = kind === 'generated_key'
@@ -185,6 +190,7 @@ export function projectWelcomeEntryViewModel(
                 : { title: t('welcome.brandTaglineLine1'), subtitle: t('welcome.brandTaglineLine2'),
                     intro: t('welcome.brandSubTagline'),
                     compact: { title: t('welcome.welcomeQuestionTitle'), subtitle: t('welcome.welcomeQuestionSubtitle') } },
+        trust: input.showGreeting && !input.terminalWaiting ? t('welcome.welcomeTrustLine') : undefined,
         signupNotice: signupClosed ? t(options.isPersonalHome ? 'personalHome.auth.signupClosed' : 'errors.signupDisabled') : undefined,
         quietWaysTitle: model.showWaysHeading ? t('homesJourneys.alreadyUseTitle') : undefined,
         doors,
@@ -196,8 +202,7 @@ export function projectWelcomeEntryViewModel(
             retry: retry('welcome-auth-entry-degraded-retry'),
         } : undefined,
         selfHosting: model.showSelfHostingFooter ? {
-            label: t('welcome.welcomeFooterRelay'),
-            display: { testID: 'welcome-self-hosting', title: t('welcome.welcomeFooterRelayAction'), presentation: 'link' },
+            display: { testID: 'welcome-self-hosting', title: t('welcome.welcomeRunYourOwnHome'), presentation: 'pill', iconName: 'hard-drives' },
         } : undefined,
     };
 }

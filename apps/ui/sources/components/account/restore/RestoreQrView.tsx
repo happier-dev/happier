@@ -29,6 +29,9 @@ import { useAuth } from '@/auth/context/AuthContext';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { EnrolledComputerSetup } from './EnrolledComputerSetup';
+import { IconButton } from '@/components/ui/buttons/IconButton';
+import { StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { STEP_ROW_BUTTON_PX, StepRowBackButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
 
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -93,30 +96,42 @@ const stylesheet = StyleSheet.create((theme) => ({
         marginBottom: theme.space.s16,
     },
     embeddedStatusCard: {
-        marginTop: theme.space.s16,
+        marginTop: 0,
         borderWidth: 0,
         paddingHorizontal: 0,
         paddingVertical: 0,
-        alignItems: 'flex-start',
+        alignItems: 'center',
         backgroundColor: 'transparent',
         gap: theme.space.s12,
     },
     embeddedQrBlockInner: {
-        alignItems: 'flex-start',
+        alignItems: 'center',
         paddingVertical: 0,
     },
     embeddedRequesterCode: {
-        alignItems: 'flex-start',
+        alignItems: 'center',
     },
+    // The Home the code is for, one quiet line over the code (direction A keeps the step's heading as its title).
     embeddedTargetName: {
         marginTop: 0,
-        textAlign: 'left',
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+        textAlign: 'center',
     },
     embeddedActions: {
         width: '100%',
         marginTop: theme.space.s24,
-        alignItems: 'flex-start',
+        alignItems: 'center',
         gap: theme.space.s16,
+    },
+    embeddedWays: {
+        width: '100%',
+        gap: theme.space.s16,
+    },
+    embeddedWaysRow: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        gap: theme.space.s20,
     },
     embeddedPrimary: {
         width: '100%',
@@ -186,7 +201,8 @@ export type RestoreQrViewProps = Readonly<{
     embedded?: boolean;
     onBack?: () => void;
     onOpenSecretKeyLogin?: () => void;
-    renderAdditionalSignInWays?: (onLeave: () => void) => React.ReactNode;
+    /** The welcome model's ways for this step; `leading` goes first on their row (Back, then the recovery key). */
+    renderAdditionalSignInWays?: (onLeave: () => void, leading?: React.ReactNode) => React.ReactNode;
     onOpenScanQr?: () => void;
     onOpenPairingLinkEntry?: () => void;
     onNavigationLockChange?: (locked: boolean) => void;
@@ -306,6 +322,8 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
         };
     }, []);
 
+    const rowBack = useStepRowBack();
+    const [pairingLinkShown, setPairingLinkShown] = React.useState(false);
     const pendingCode = embedded && props.entryIntent === 'enter_home' && pairing.phase === 'generating';
     const code = pairing.phase === 'ready' ? pairing : approvedCode;
     const visibleTargetLabel = presentation.contextualFacts !== 'none' ? targetLabel : null;
@@ -351,9 +369,12 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     </View>
                 ) : null}
 
-                <Text style={[styles.sectionLead, embedded ? styles.embeddedSectionLead : null]}>
-                    {t(pendingCode ? 'connect.showRequesterQrInstructions' : presentation.primaryTranslationKey)}
-                </Text>
+                {/* Embedded, the step's own heading says what to do with the code (Approve from a device you use). */}
+                {embedded && (pendingCode || pairing.phase === 'ready') ? null : (
+                    <Text style={[styles.sectionLead, embedded ? styles.embeddedSectionLead : null]}>
+                        {t(pendingCode ? 'connect.showRequesterQrInstructions' : presentation.primaryTranslationKey)}
+                    </Text>
+                )}
 
                 {/* On the step column an empty status block (no progress, Home or QR) draws nothing. */}
                 {embedded && !hasStatusContent ? null : <View
@@ -380,13 +401,13 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                             />
                         </View>
                     ) : null}
-                    {pairing.phase === 'ready' ? (
-                        <>
-                            <PairingLinkDisclosure
-                                testIDPrefix="restore-requester-link"
-                                link={pairing.link}
-                            />
-                        </>
+                    {pairing.phase === 'ready' && (!embedded || pairingLinkShown) ? (
+                        <PairingLinkDisclosure
+                            testIDPrefix="restore-requester-link"
+                            link={pairing.link}
+                            // Embedded, the link opens from its mark on the ways row (lab Approve has no Details block).
+                            open={embedded ? true : undefined}
+                        />
                     ) : null}
                 </View>}
 
@@ -400,20 +421,40 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                         {!props.targetProfileId ? (
                             <TextLinkButton testID="restore-choose-home" label={t('connect.addPhoneChooseHomeTitle')} onPress={() => router.push('/server')} />
                         ) : null}
-                        {reversePairing.canCancel ? (
-                            <TextLinkButton testID="restore-requester-cancel" label={t('common.cancel')} onPress={reversePairing.cancel} />
-                        ) : null}
-                        {canOpenScanner && props.onOpenScanQr ? (
-                            <TextLinkButton testID="restore-open-scan-qr" label={t('connect.scanQrCodeOnDevice')} onPress={props.onOpenScanQr} />
-                        ) : null}
-                        {props.onOpenPairingLinkEntry ? (
-                            <TextLinkButton testID="restore-enter-pairing-link" label={t('connect.pairingLinkPlaceholder')} onPress={props.onOpenPairingLinkEntry} />
-                        ) : null}
-                        <TextLinkButton testID="restore-open-manual" label={t('connect.restoreWithSecretKeyInstead')} onPress={openSecretKeyLogin} />
-                        {providerResetEnabled ? (
-                            <TextLinkButton testID="restore-open-lost-access" label={t('connect.lostAccessLink')} onPress={() => router.push('/restore/lost-access')} />
-                        ) : null}
-                        {props.renderAdditionalSignInWays?.(() => { void reversePairing.cancel(); })}
+                        {/* The ways row (owner 2026-11-19): Back on a computer, the recovery key (with a pairing link
+                            beside it), then the model's ways with "New account" last. Leaving cancels the code. */}
+                        {(() => {
+                            const leading = <>
+                                {rowBack ? <StepRowBackButton onPress={() => { void reversePairing.cancel(); rowBack(); }} /> : null}
+                                <IconButton
+                                    testID="restore-open-manual"
+                                    accessibilityLabel={t('connect.secretKeyInputLabel')}
+                                    tooltip={t('connect.secretKeyInputLabel')}
+                                    iconName="key"
+                                    size={STEP_ROW_BUTTON_PX}
+                                    variant="outlined"
+                                    onPress={props.onOpenPairingLinkEntry ?? openSecretKeyLogin}
+                                />
+                                {pairing.phase === 'ready' ? (
+                                    <IconButton
+                                        testID="restore-requester-link-details"
+                                        accessibilityLabel={t('connect.showPairingLink')}
+                                        tooltip={t('connect.showPairingLink')}
+                                        iconName="link"
+                                        size={STEP_ROW_BUTTON_PX}
+                                        variant="outlined"
+                                        expanded={pairingLinkShown}
+                                        onPress={() => setPairingLinkShown((shown) => !shown)}
+                                    />
+                                ) : null}
+                            </>;
+                            return props.renderAdditionalSignInWays
+                                ? props.renderAdditionalSignInWays(() => { void reversePairing.cancel(); }, leading)
+                                : <View style={styles.embeddedWays}>
+                                    <StepOrDivider label={t('common.or')} />
+                                    <View style={styles.embeddedWaysRow}>{leading}</View>
+                                </View>;
+                        })()}
                     </View>
                 ) : null}
                 {!claimOwnsNavigation && !embedded ? (

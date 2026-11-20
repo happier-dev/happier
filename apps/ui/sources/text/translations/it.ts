@@ -3643,6 +3643,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     openMachine: "Apri macchina",
     terminalUrlPlaceholder: "happier://terminal?...",
     accountUrlPlaceholder: "happier:///account?...",
+    approveFromDeviceTitle: "Approva da un dispositivo che usi",
+    approveFromDeviceSubtitle: "Apri Happier sul telefono o su un altro computer connesso e scansiona questo codice.",
     showRequesterQrInstructions:
       "Tieni questo codice QR su questo dispositivo. Su un dispositivo già registrato, apri Happier e scansionalo per aggiungere questo dispositivo.",
     externalAuthVerifiedTitle: ({ provider }: { provider: string }) =>
@@ -15956,8 +15958,6 @@ settingsSession: {
     // Unified onboarding redesign — welcome decision (right pane)
     welcomeQuestionTitle: "Benvenuto.",
     welcomeQuestionSubtitle: "È la prima volta qui?",
-    welcomeQuestionBody: "Happier è il centro di controllo dei tuoi agenti di codifica IA.",
-    welcomeQuestionBodyWithKey: "Happier è il centro di controllo dei tuoi agenti di codifica IA. Nessuna email richiesta. Il tuo account è una chiave privata, generata su questo dispositivo.",
     terminalContinuationTitle: 'Connetti il tuo terminale.',
     terminalContinuationSubtitle: 'Accedi per completare.',
 
@@ -15988,7 +15988,7 @@ settingsSession: {
     emailCreateDescription: "Crea un account con il tuo indirizzo email.",
     emailConnectDescription: "Aggiungili all’account che usi già.",
     useDifferentHomeSubtitle: ({ home }: { home: string }) => `Invece di ${home}`,
-    welcomeSecondaryButton: "Accedi — uso già Happier",
+    welcomeSecondaryButton: "Uso già Happier",
     welcomeSecondarySubtitle: "Scansiona un codice QR o inserisci la tua chiave di recupero",
     loginSubtitleKeyFirst: "Inserisci la tua chiave di recupero o incolla un link di associazione",
     loginSubtitleLinkFirst: "Incolla un link di associazione o inserisci la tua chiave di recupero",
@@ -16032,6 +16032,8 @@ settingsSession: {
 
     // Welcome step footer links
     welcomeFooterRelay: "Hosting autonomo?",
+    welcomeRunYourOwnHome: "Gestisci la tua Home",
+    welcomeTrustLine: "Crittografia end-to-end · Open source · Self-hosting",
     welcomeFooterRelayAction: "Usa il tuo Relay",
     // Shown in place of welcomeFooterRelay when the active server is a
     // custom (non-Happier-Cloud) relay. The action below the label is the
@@ -16042,6 +16044,8 @@ settingsSession: {
     welcomeFooterRelayEditAccessibility: "Cambia relay",
     welcomeFooterDocs: "Hai bisogno di aiuto?",
     welcomeFooterDocsAction: "Documentazione",
+    welcomeFooterGithub: "GitHub",
+    welcomeFooterDiscord: "Discord",
     welcomeFooterGithubLabel: "Repository GitHub",
     welcomeFooterDiscordLabel: "Community Discord",
 
