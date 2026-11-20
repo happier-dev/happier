@@ -6513,7 +6513,7 @@ describe('plugin-surface action branch selection', () => {
         let relayed = 0;
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'setup-machine',
-            actionId: 'action.invoke', tokenEpoch: 1, execute: async () => {
+            actionId: 'action.invoke', tokenEpoch: 0, execute: async () => {
                 relayed++;
                 return { v: 1, handoff: emptyHeadlessChoice };
             } });
@@ -6657,21 +6657,115 @@ describe('plugin-surface action branch selection', () => {
         }
     });
 
+    it.each(['parent', 'unadmitted', 'child'] as const)('keeps a cold Task Account read on its admitted shared Machine (%s binding)', async bindingOwner => {
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
+        const { createTriageReadTaskOriginErrorActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/taskOrigin');
+        const { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorInputV1Schema } = await import('../../../../../../packages/plugins/triage/src/actions/taskOriginProtocol');
+        const { createInMemoryAccountCollection } = await import('../../../../../../packages/plugins/triage/src/corpus/collections/inMemoryAccountCollection');
+        const { testkitEntryRef } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/observations.test-support');
+        const lifetime = clientAccountLifetime();
+        const previous = getStorage().getState();
+        const normalized = ingestPluginManifestV2(PLUGIN_MANIFEST);
+        if (!normalized.ok) throw new Error('Triage manifest must be admitted');
+        const manifest = normalized.manifest;
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
+            availabilityCursor: 1, materializations: [], snapshots: [], intentReads: [{ pluginId: manifest.id, response: {
+                availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                intent: { pluginId: manifest.id, desiredVersion: manifest.version, enabled: true,
+                    offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                release: { ref: { pluginId: manifest.id, version: manifest.version },
+                    archiveDigestSha256: `sha256:${'a'.repeat(64)}`, normalizedManifest: manifest,
+                    collectionContracts: [], uiSlots: [],
+                    packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+            } }] } });
+        const selected = readPluginAccountAvailability(lifetime.scope).readCurrentAccountExecution(manifest.id);
+        if (selected.kind !== 'available') throw new Error('Expected admitted Account Task surface');
+        const declaration = manifest.contributes.actions.find(action => action.id === TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1)!;
+        if (declaration.execution.target !== 'account') throw new Error('Expected Account Task Action');
+        let relayed = 0;
+        const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
+            serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'granted-task-controller',
+            ...(bindingOwner === 'child' ? {} : { custodian: { accountId: 'another-account', displayName: 'Machine owner' } }),
+            actionId: 'action.invoke', tokenEpoch: 0, execute: async (value, context) => {
+                relayed++;
+                const request = PluginUiExecuteActionRequestV1Schema.parse(value);
+                expect(request.action).toEqual({ pluginId: manifest.id, localId: declaration.id });
+                // Only the remote HTTP transport and durable collection storage are fixtures.
+                // The declared Task handler, collection binding and mark read remain real.
+                return createTriageReadTaskOriginErrorActionHandler()(TriageReadTaskOriginErrorInputV1Schema.parse(request.input), {
+                    signal: context.signal ?? new AbortController().signal, invokedAtMs: 1,
+                    services: { storage: { account: { collection: (definition: Parameters<typeof createInMemoryAccountCollection>[0]['definition']) => createInMemoryAccountCollection({
+                        definition, accountEncryptionMode: 'plain', material: null,
+                    }).collection } } },
+                } as unknown as import('../../../../../../packages/plugins/triage/src/actions/dataContext').TriageDataActionContext);
+            } });
+        const machine = createMachineFixture({ id: boundary.machine.id, activeAt: Date.now(), access: boundary.machine.access });
+        const parentMachineId = bindingOwner === 'child' ? 'other-parent-controller' : machine.id;
+        await publishMachineInventoryForTest(lifetime.scope, [machine,
+            ...(bindingOwner === 'child' ? [{ ...machine, id: parentMachineId }] : [])]);
+        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
+            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        const activation = createClientActionActivation({ pluginId: manifest.id, localId: declaration.id,
+            accountPlacement: true, accountLifetime: lifetime, occurrenceId: selected.custodyId,
+            accountManifest: { ...manifest, contributes: { actions: [declaration], resources: [] } },
+            inputSchema: declaration.inputSchema, outputSchema: declaration.resultSchema,
+            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
+                artifactId: declaration.execution.account.artifactId, executable: { exports: [declaration.execution.account.exportName] },
+                entry: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle`,
+                files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file, relativePath: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle` })) }),
+            accountHandler: () => { throw new Error('The browser must relay the finite Task read'); } });
+        accountBrowserRelay.enabled = true;
+        await activation.composition.unload();
+        try {
+            await activation.composition.reconcile([activation.activation]);
+            const facts = { ...surfaceContext(manifest.id), serverId: lifetime.scope.serverId,
+                occurrenceId: selected.custodyId,
+                accountExecutionOrigin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                accountLifetime: lifetime, interactionEnabled: true, pluginUiProjection: activation.projection,
+                resolveContributedAction: createPluginUiProjectedActionResolver(activation.projection.actionsById) };
+            const parent = createBoundPluginSurfaceController({ facts: { ...facts, machineId: parentMachineId,
+                daemonOccurrenceId: 'admitted-parent-occurrence', daemonInteractionEnabled: bindingOwner !== 'unadmitted' } });
+            const child = createBoundPluginSurfaceController({ facts: { ...facts,
+                surfaceId: 'cold-task-detail', parentLifetime: parent, daemonInteractionEnabled: bindingOwner === 'child',
+                ...(bindingOwner === 'child' ? { machineId: machine.id, daemonOccurrenceId: 'admitted-child-occurrence' } : {}) } });
+            onTestFinished(() => { child.dispose(); parent.dispose(); });
+            const outcome = await child.hostApi.handleRequest({ version: 1, requestId: 'cold-task-origin',
+                surface: child.surfaceContext, method: 'executeAction', payload: {
+                    action: { pluginId: manifest.id, localId: declaration.id }, input: { v: 1,
+                        entryRef: testkitEntryRef({ kindId: 'task', entryId: 'cold-task' }) },
+                } });
+            expect(outcome).toMatchObject(bindingOwner !== 'unadmitted' ? { v: 1, originError: null }
+                : { code: 'target_unavailable' });
+            expect(relayed).toBe(bindingOwner !== 'unadmitted' ? 1 : 0);
+        } finally {
+            accountBrowserRelay.enabled = false;
+            await activation.composition.unload(); lifetime.retire(); clearPluginAccountAvailabilityProjection();
+            getStorage().setState({ profileScope: previous.profileScope,
+                machineRecordsByServerId: previous.machineRecordsByServerId,
+                machineDisplayById: previous.machineDisplayById,
+                machinePresenceById: previous.machinePresenceById, machinePresenceByServerId: previous.machinePresenceByServerId,
+                machines: previous.machines, machineListByServerId: previous.machineListByServerId,
+                machineListStatusByServerId: previous.machineListStatusByServerId });
+        }
+    });
+
     it.each(['browser', 'native'] as const)('keeps an Environment Account read on its controller when another own Machine is first (%s)', async httpHost => {
         const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
         const lifetime = clientAccountLifetime();
         const previous = getStorage().getState();
         const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
             serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: 'environment-controller',
-            actionId: 'action.invoke', tokenEpoch: 1,
+            actionId: 'action.invoke', tokenEpoch: 0,
             execute: () => ({ availability: 'parsed', items: ['database'] }) });
         const machines = ['older-own-machine', boundary.machine.id].map(id => createMachineFixture({ id,
             createdAt: id === 'older-own-machine' ? 2 : 1,
             activeAt: Date.now(), access: boundary.machine.access }));
-        getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
-            machineListByServerId: { [lifetime.scope.serverId]: machines },
-            machineListStatusByServerId: { [lifetime.scope.serverId]: 'idle' } });
+        await publishMachineInventoryForTest(lifetime.scope, machines);
         // Only the controller answers the physical transport. A request to the
         // arbitrary first Machine fails at this boundary, as in the recorded page failure.
         network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)

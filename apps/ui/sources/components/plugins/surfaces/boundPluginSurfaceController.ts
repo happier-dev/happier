@@ -310,9 +310,9 @@ export type BoundPluginSurfaceFacts = Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     /**
      * An outer physical mount can lend its existing retirement observation to
-     * an embedded child. This carries no Account scope, renderer selection, or
-     * new lifecycle owner: the child only composes its own controller lifetime
-     * with the already-current parent mount.
+     * an embedded child, together with its already-admitted Machine binding
+     * when the child has none. This carries no new Account scope, renderer
+     * selection, admission, or lifecycle owner.
      */
     parentLifetime?: BoundPluginSurfaceMountLifetime | null;
     /** Live admission of a containing host document; this is not another mount lifetime. */
@@ -360,6 +360,7 @@ export type BoundPluginSurfaceFacts = Readonly<{
 export type BoundPluginSurfaceMountLifetime = Readonly<{
     isCurrent(): boolean;
     onRetire(cancel: () => void): Readonly<{ dispose(): void }>;
+    readAdmittedMachineBinding?: () => ReturnType<typeof resolveDaemonBinding>;
 }>;
 
 /**
@@ -448,6 +449,7 @@ export type BoundPluginSurfaceBinding = Readonly<{
 }>;
 
 export type BoundPluginSurfaceController = Readonly<{
+    readAdmittedMachineBinding?: BoundPluginSurfaceMountLifetime['readAdmittedMachineBinding'];
     /** Published Machine access narrows Actions while Resources stay readable. */
     actionsReadOnly?: boolean;
     /** The one exact surface context for this mount. */
@@ -609,7 +611,10 @@ function resolveDaemonBinding(facts: BoundPluginSurfaceFacts): Readonly<{
         ? facts.machineId
         : null;
     const occurrenceId = (facts.daemonOccurrenceId ?? (facts.accountExecutionOrigin ? undefined : facts.occurrenceId))?.trim();
-    if (!machineId || !occurrenceId) {
+    if (!machineId) {
+        return facts.parentLifetime?.readAdmittedMachineBinding?.() ?? null;
+    }
+    if (!occurrenceId) {
         return null;
     }
     return {
@@ -680,6 +685,7 @@ function readMachineAuthorityKey(facts: BoundPluginSurfaceFacts): string {
 
 function readMachineBindingsKey(facts: BoundPluginSurfaceFacts): string {
     return stableJsonStringify([readMachineAuthorityKey(facts),
+        !facts.machineId ? resolveDaemonBinding(facts) : null,
         facts.resourceCapability?.readable === true, facts.resourceCapability?.dynamic === true,
         serializeBoundPluginSurfaceResourceContext(facts.resourceContext)]);
 }
@@ -1059,8 +1065,17 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 ? { currentUiContext: input.facts.readCurrentUiContext }
                 : {}),
         };
-    const isDaemonInteractionEnabled = (recordUse = true) => (input.facts.isDaemonInteractionEnabled?.() ?? input.facts.daemonInteractionEnabled)
-        && binding?.isExecutionOriginCurrent?.({ recordUse }) !== false;
+    const isDaemonInteractionEnabled = (recordUse = true) => !machineBindingFacts.machineId
+        && machineBindingFacts.parentLifetime?.readAdmittedMachineBinding
+        ? machineBindingFacts.parentLifetime.readAdmittedMachineBinding() !== null
+        : (input.facts.isDaemonInteractionEnabled?.() ?? input.facts.daemonInteractionEnabled)
+            && binding?.isExecutionOriginCurrent?.({ recordUse }) !== false;
+    const readAdmittedMachineBinding = (): ReturnType<typeof resolveDaemonBinding> => {
+        if (!isInteractionCurrent()) return null;
+        return !machineBindingFacts.machineId && machineBindingFacts.parentLifetime?.readAdmittedMachineBinding
+            ? machineBindingFacts.parentLifetime.readAdmittedMachineBinding()
+            : isDaemonInteractionEnabled(false) ? daemon : null;
+    };
     // Home-family Actions and borrowed Resources share the exact same target scope.
     const homeFamilyScope = accountLifetime
         && (!input.facts.serverId || areServerProfileIdentifiersEquivalent(input.facts.serverId, accountLifetime.scope.serverId))
@@ -1149,7 +1164,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         ? createPluginDeclaredResourceStore({ accountLifetime, pluginId: input.facts.pluginId,
             machineId: daemon?.machineId ?? null, serverId: daemon?.serverId ?? accountLifetime.scope.serverId,
             ...(machineBindingFacts.machineId ? { actionExecutionTarget: { machineId: machineBindingFacts.machineId,
-                serverId: machineBindingFacts.serverId ?? accountLifetime.scope.serverId } } : {}),
+                serverId: machineBindingFacts.serverId ?? accountLifetime.scope.serverId } }
+                : daemon ? { actionExecutionTarget: daemon } : {}),
             expectedCallerOccurrenceId: daemon?.expectedOccurrenceId ?? input.facts.occurrenceId ?? '',
             createFallbackStore: createOrdinaryResourceStore,
             get resourceDeclarationsComplete() { return readCompleteResourceDeclarations() !== undefined; },
@@ -1169,7 +1185,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         // Admission is live, just like Resource transport and public readiness.
         // Initial projection delivery and later withdrawal must both reach the
         // existing facade without replacing the physical mount.
-        const admittedDaemon = isDaemonInteractionEnabled(false) ? daemon : null;
+        const admittedDaemon = readAdmittedMachineBinding();
         return input.facts.serverId || admittedDaemon ? {
             ...(input.facts.serverId ? { serverId: input.facts.serverId } : {}),
             ...(surfaceContext.sessionId ? { defaultSessionId: surfaceContext.sessionId } : {}),
@@ -1562,7 +1578,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         const resourceContext = machineBindingFacts.resourceContext;
         const executionTarget = machineBindingFacts.machineId ? {
             machineId: machineBindingFacts.machineId, serverId: machineBindingFacts.serverId ?? null,
-        } : null;
+        } : target;
         return Object.freeze({
             ...(executionTarget ? { executionTarget } : {}),
             admissionMethods: isOpenableContentViewer ? [] : PLUGIN_UI_HOST_METHODS_V1.filter(method => {
@@ -1757,6 +1773,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     let publishedResourceStore: PluginUiResourceStore | undefined;
     return Object.freeze({
         surfaceContext,
+        readAdmittedMachineBinding,
         get actionsReadOnly() { return !canManageActions(); },
         hostApi,
         get resourceStore() {
