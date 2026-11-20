@@ -57,5 +57,18 @@ describe('useTeamInvitationPreview', () => {
 
         await act(async () => { second.reject(new Error('offline')); });
         await waitForHomeGovernance(() => expect(hook.getCurrent()).toEqual({ kind: 'ready', preview, refreshFailure: { retryable: true } }));
+
+        const retiredRequest = createDeferred<Response>();
+        request.mockReset().mockImplementationOnce(() => retiredRequest.promise);
+        await hook.rerender({ target, token: 'b'.repeat(43), revision: 1 });
+        await waitForHomeGovernance(() => expect(request).toHaveBeenCalledTimes(1));
+        const signal = request.mock.calls[0]?.[1]?.signal as AbortSignal | undefined;
+        expect(signal).toBeDefined();
+        expect(signal?.aborted).toBe(false);
+        await hook.rerender({ target, token: null, revision: 1 });
+        expect(signal?.aborted).toBe(true);
+        expect(hook.getCurrent()).toEqual({ kind: 'idle' });
+        await act(async () => { retiredRequest.resolve(Response.json({ outcome: 'ok', preview })); });
+        expect(hook.getCurrent()).toEqual({ kind: 'idle' });
     });
 });

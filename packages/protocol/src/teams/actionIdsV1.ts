@@ -7,6 +7,7 @@ export const TEAM_CREATE_ACTION_ID_V1 = 'teams.create';
 export const TEAM_GROUP_CREATE_ACTION_ID_V1 = 'teams.groups.create';
 export const TEAM_GROUP_UPDATE_ACTION_ID_V1 = 'teams.groups.update';
 export const TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 = 'teams.sharedResources.summary';
+export const TEAM_INVITATION_PREVIEW_ACTION_ID_V1 = 'teams.invitations.preview';
 export function isTeamGroupUpdateActionIdV1(actionId: string): actionId is typeof TEAM_GROUP_UPDATE_ACTION_ID_V1 {
   return actionId === TEAM_GROUP_UPDATE_ACTION_ID_V1;
 }
@@ -61,7 +62,7 @@ export const TEAM_HOME_ACTION_IDS_V1 = [
   'teams.invitations.create',
   'teams.invitations.revoke',
   'teams.invitations.reissue',
-  'teams.invitations.preview',
+  TEAM_INVITATION_PREVIEW_ACTION_ID_V1,
   'teams.invitations.accept.prepareApproval',
   'teams.invitations.accept',
   ...TEAM_IDENTITY_ACTION_IDS_V1,

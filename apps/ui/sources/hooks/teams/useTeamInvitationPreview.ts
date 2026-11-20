@@ -1,14 +1,13 @@
 import * as React from 'react';
-import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions';
-import {
-    TeamInvitationPreviewResultV1Schema,
-    type TeamInvitationPreviewV1,
-    type TeamInvitationPreviewResultV1,
-} from '@happier-dev/protocol/teams';
+import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import type { TeamInvitationPreviewV1, TeamInvitationPreviewResultV1 } from '@happier-dev/protocol/teams';
+import { TEAM_INVITATION_PREVIEW_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { decodeBoundedJsonResponse } from '@/sync/api/capabilities/decodeBoundedJsonResponse';
+import { homeDomainActionFailureFromDomainFailure } from '@/sync/api/home/homeDomainActions';
+import { homeDomainFailureKindForHttpStatus } from '@/sync/api/home/homeServerActionTransport';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 
 /**
@@ -72,7 +71,7 @@ export function useTeamInvitationPreview(params: Readonly<{
             setState({ scopeKey: null, value: IDLE });
             return;
         }
-        let current = true;
+        const controller = new AbortController();
         setState((previous) => ({
             scopeKey,
             value: previous.scopeKey === scopeKey && previous.value.kind === 'ready'
@@ -94,32 +93,48 @@ export function useTeamInvitationPreview(params: Readonly<{
                     serverId: resolvedTarget.serverId,
                     credentials: null,
                 });
-                // Method, path and body come from the preview Action row — the
-                // single declaration of this intent's transport — exactly as the
-                // authenticated family port binds its requests. The join screen is
-                // pre-authentication, so it carries the bound request on the
-                // credential-free exact-Home fetch instead of an Account scope.
-                const boundRequest = bindHomeDomainActionHttpRequestV1('teams.invitations.preview', { v: 1, token });
-                const response = await request(boundRequest.path, {
-                    method: boundRequest.method,
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify(boundRequest.body),
-                }, { includeAuth: false, retry: 'none' });
-                if (!current) return;
-                // Route failure is not evidence of an old binary. The canonical
-                // exact-Home feature decision owns capability diagnostics.
-                if (!response.ok) {
-                    fail(response.status >= 500);
+                const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+                if (controller.signal.aborted) return;
+                // The bearer preview uses ordinary Action admission with a credential-free Home transport.
+                const executor = createActionExecutor({
+                    homeDomainAction: async ({ actionId, input, signal }) => {
+                        const bound = bindHomeDomainActionHttpRequestV1(actionId, input);
+                        return request(bound.path, {
+                            method: bound.method,
+                            headers: { 'content-type': 'application/json' },
+                            body: JSON.stringify(bound.body),
+                            signal,
+                        }, { includeAuth: false, retry: 'none' }, async (response) => {
+                            if (response.ok) return decodeBoundedJsonResponse(response, 64 * 1024);
+                            return homeDomainActionFailureFromDomainFailure(actionId, {
+                                kind: homeDomainFailureKindForHttpStatus(response.status),
+                                code: null,
+                                retryable: response.status >= 500,
+                                httpStatus: response.status,
+                            });
+                        });
+                    },
+                });
+                const execution = await executor.execute(TEAM_INVITATION_PREVIEW_ACTION_ID_V1, { v: 1, token }, {
+                    surface: 'ui',
+                    authority: 'present_user',
+                    actionCaller: { kind: 'host' },
+                    serverId: resolvedTarget.serverId,
+                    serverIdentityId: resolvedTarget.serverIdentityId,
+                    signal: controller.signal,
+                });
+                if (controller.signal.aborted) return;
+                if (!execution.ok) {
+                    const details = execution.details;
+                    const status = typeof details === 'object' && details !== null && 'httpStatus' in details
+                        ? details.httpStatus : undefined;
+                    fail(typeof status !== 'number' || status >= 500);
                     return;
                 }
-                const raw = await decodeBoundedJsonResponse(response, 64 * 1024);
-                const outcome = TeamInvitationPreviewResultV1Schema.safeParse(raw);
-                if (!outcome.success) {
-                    fail(true);
-                    return;
-                }
-                if (outcome.data.outcome === 'ok') {
-                    setState({ scopeKey, value: { kind: 'ready', preview: outcome.data.preview } });
+                // The Action executor has already validated this row's result schema.
+                const outcome = execution.result as TeamInvitationPreviewResultV1;
+                if (outcome.outcome === 'ok') {
+                    setState({ scopeKey, value: { kind: 'ready', preview: outcome.preview } });
                     return;
                 }
                 // `feature_unavailable` is a capable Home's operator choice, not
@@ -129,18 +144,18 @@ export function useTeamInvitationPreview(params: Readonly<{
                 // through instead of being folded into `unavailable`.
                 setState({
                     scopeKey,
-                    value: outcome.data.outcome === 'feature_unavailable'
+                    value: outcome.outcome === 'feature_unavailable'
                         ? { kind: 'feature_unavailable' }
-                        : { kind: 'unavailable', ...(outcome.data.reason ? { reason: outcome.data.reason } : {}) },
+                        : { kind: 'unavailable', ...(outcome.reason ? { reason: outcome.reason } : {}) },
                 });
             } catch {
                 // An approval-pending or transport throw is not a description of
                 // the invitation; the surface keeps its own retry.
-                if (current) fail(true);
+                if (!controller.signal.aborted) fail(true);
                 return;
             }
         })();
-        return () => { current = false; };
+        return () => controller.abort();
     }, [resolvedTarget, scopeKey, revision]);
 
     return state.scopeKey === scopeKey ? state.value : scopeKey ? LOADING : IDLE;
