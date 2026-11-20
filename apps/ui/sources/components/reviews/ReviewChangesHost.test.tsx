@@ -21,7 +21,17 @@ afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison in its captured host %s', async sessionId => {
     const comparisonId = 'c'.repeat(64);
-    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', sessionId,
+    const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
+    const { createSessionReadBatchFetchBoundary } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    let capturedSession: typeof fixture.session | null = null;
+    const sessions = createSessionMetadataHttpBoundary(() => capturedSession ? { [capturedSession.id]: capturedSession } : {});
+    fixture = await createSessionFilesViewFixture({ rootPath: '/repo', sessionId: sessionId ? 'walkthrough-control' : undefined,
+        // The captured Session exists at the Home, but has not been opened on this client.
+        request: createSessionReadBatchFetchBoundary(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            return sessionId && (path === `/v2/sessions/${sessionId}` || path === `/v1/sessions/${sessionId}/turns`)
+                ? sessions.handle(url, init) ?? undefined : undefined;
+        }),
         featureOverrides: { features: { execution: { runs: { enabled: true } } } },
         rpc: request => {
             if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return { protocolVersion: 1,
@@ -41,6 +51,7 @@ it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison
             };
             return undefined;
         } });
+    if (sessionId) capturedSession = { ...fixture.session, id: sessionId };
     const { ReviewChangesHost } = await import('./ReviewChangesHost');
     const { getScmDiffSummaryState } = await import('@/sync/ops/scmDiffSummary/generate');
     const capture = { target: { kind: 'machine', machineId: 'm1' }, input: {
@@ -58,11 +69,12 @@ it.each([undefined, 's1'])('starts a Walkthrough against the retained comparison
             comparison: controlProps.comparison, output: 'walkthrough' });
         return <ScmWalkthroughView {...controlProps} bound={bound} displayMachineId="m1" />;
     }
-    const control = await fixture.render(sessionId ? <SessionWalkthroughView {...controlProps} sessionId={sessionId} /> : <WorkspaceControl />);
+    const control = await fixture.render(sessionId ? <SessionWalkthroughView {...controlProps} sessionId={fixture.session.id} /> : <WorkspaceControl />);
     await vi.waitFor(() => expect(control.findByTestId('walkthrough-start')?.props.disabled, control.getTextContent()).toBe(false));
     await control.pressByTestIdAsync('walkthrough-start');
     await vi.waitFor(() => expect(fixture.requests.filter(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE)).toHaveLength(1));
     await control.unmount();
+    if (sessionId) expect(fixture.storage.getState().sessions[sessionId]).toBeUndefined();
     const screen = await fixture.render(<ReviewChangesHost reviewId="walkthrough-review" roundOrdinal={1}
         scope={{ serverId: fixture.scope.serverId, accountId: 'alice' }} capture={capture} comments={[]}
         view="walkthrough" onSelectView={() => {}} onOpenComment={() => {}} />);

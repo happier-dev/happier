@@ -7,6 +7,7 @@ import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1'
 import type { ReviewRoundComparisonCaptureV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useHydrateSession } from '@/hooks/session/useHydrateSessionForRoute';
 import { WorkspaceScmReviewBody, type ScmReviewComparisonChrome, type ScmReviewViewContext } from '@/components/projects/scm/WorkspaceScmReviewBody';
 import { CapturedComparisonFilesView } from '@/components/sessions/files/comparison/CapturedComparisonFilesView';
 import { resolveFilesComparisonLabel } from '@/components/sessions/files/comparison/filesComparison';
@@ -223,6 +224,7 @@ function ReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps) {
 }
 
 function SessionReviewChangesWalkthrough(props: ReviewChangesWalkthroughProps & Readonly<{ sessionId: string }>) {
+    useHydrateSession(props.sessionId, 'ReviewChangesWalkthrough', { serverId: props.serverId, hydrateMessages: false });
     const bound = useSessionScmDiffSummaryBinding({ sessionId: props.sessionId, serverId: props.serverId,
         comparison: props.comparison, output: 'walkthrough' });
     return <ReviewChangesWalkthroughView {...props} bound={bound} />;
