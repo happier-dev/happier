@@ -45,6 +45,8 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol';
 import * as processIdentity from '@/daemon/processIdentity';
 import { hashProcessCommand, writeSessionMarker } from '@/daemon/sessionRegistry';
+import { restoreMarkerSpawnOptions } from '@/daemon/reattach';
+import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '@/daemon/processSupervision/sessionRunnerRespawnDescriptor';
 import { createRunnerAgentSessionRuntimeSource } from '@/agent/runtime/session/process/runnerAgentSessionRuntimeSource';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry/registry';
 import { resolveRunnerMcpServers } from '@/mcp/runtime/resolveRunnerMcpServers';
@@ -551,6 +553,27 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
   h.tracked.spawnOptions = { ...h.tracked.spawnOptions, teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' },
     resourceId: 'resource', expectedResourceRevision: 2, teamId: 'team', deliveryMode: 'brokered' }],
     modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId: model.descriptor.id } } };
+  if (reattached) {
+    const timestamp = Date.now();
+    const respawn = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions({
+      ...h.tracked.spawnOptions,
+      directory: h.cwd,
+      agentTarget: { kind: 'agent', identity },
+      modelSelection: { v: 2, updatedAt: 1, ref: {
+        source: 'team_resource', resourceId: 'resource', teamId: 'team', expectedResourceRevision: 2,
+        deliveryMode: 'brokered', agentTargetKey, modelId: model.descriptor.id,
+      } },
+    });
+    if (!respawn) throw new Error('Missing Team runner descriptor');
+    const restored = restoreMarkerSpawnOptions({
+      marker: {
+        trackingKey: h.tracked.trackingKey, happySessionId: h.sessionId, pid: h.tracked.pid,
+        happyHomeDir: configuration.happyHomeDir, createdAt: timestamp, updatedAt: timestamp, respawn,
+      },
+    });
+    if (!restored?.spawnOptions) throw new Error('Missing restored Team runner options');
+    h.tracked.spawnOptions = restored.spawnOptions;
+  }
   if (freshNative && !await spawnPublicInstalledProjectAgentSession({ fixture: h, actor: freshActor, memberRole: freshRole, homeServerIdentityId: freshHome,
     teamCredentialBindings: h.tracked.spawnOptions.teamCredentialBindings, modelSelection: h.tracked.spawnOptions.modelSelection })) {
     expect(brokerOpens).toBe(0);

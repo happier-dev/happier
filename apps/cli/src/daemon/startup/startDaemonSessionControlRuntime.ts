@@ -12077,11 +12077,19 @@ export async function startDaemonSessionControlRuntime(
   // pinned to the resource revision it opened at. Absent: never opened here.
   const sessionBrokeredTeamEndpointCurrentness = new WeakMap<TrackedSession, 'current' | 'not_current'>();
   const readSessionBrokeredTeamEndpoint = (tracked: TrackedSession | null | undefined): RunnerSessionBrokeredTeamEndpoint => {
-    const binding = tracked?.spawnOptions?.teamCredentialBindings?.find((candidate) => candidate.slot.kind === 'provider_model');
-    if (!tracked || !binding || binding.resourceId === null || binding.deliveryMode !== 'brokered') return 'not_brokered';
+    const options = tracked?.spawnOptions;
+    if (!tracked || !options) return 'not_brokered';
+    const reattached = tracked.reattachedFromDiskMarker === true;
+    const binding = options.teamCredentialBindings?.find((candidate) => candidate.slot.kind === 'provider_model');
+    const selection = options.modelSelection;
+    // Markers retain the qualified model selection without the launch binding sidecar.
+    const brokered = binding
+      ? binding.resourceId !== null && binding.deliveryMode === 'brokered'
+      : reattached && selection?.v === 2 && selection.ref.source === 'team_resource' && selection.ref.deliveryMode === 'brokered';
+    if (!brokered) return 'not_brokered';
     // A runner retained across a daemon restart still holds its predecessor's endpoint.
     return sessionBrokeredTeamEndpointCurrentness.get(tracked)
-      ?? (tracked.reattachedFromDiskMarker === true ? 'not_current' : 'current');
+      ?? (reattached ? 'not_current' : 'current');
   };
   type ManagedRunBindingOpen = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'provider_managed.binding.open' }>;
   type ManagedRunBindingProof = Omit<ManagedRunBindingOpen, 'kind' | 'requestId'>;
