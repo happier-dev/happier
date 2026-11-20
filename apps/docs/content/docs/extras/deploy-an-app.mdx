@@ -138,9 +138,12 @@ on one Machine, choose the service and TCP port, then choose how another app
 will reach it.
 
 - **Happier network** creates a loopback publication for Machine forwarding over
-  Iroh. The Machines can be on separate networks.
+  Iroh. The Machines can be on separate networks. Docker chooses a free host
+  port when you deploy. Set **Published host port** under **Advanced** to use a
+  specific port.
 - A joined private network publishes on the selected network address. Both
-  Machines need access to that network.
+  Machines need access to that network. Enter a host port so Happier can open it
+  in the Machine's firewall before the service starts.
 
 Review and save the share, then deploy the source Environment. On the database
 page, use **Connect to an app** to choose the destination Environment and save

@@ -511,6 +511,8 @@ const deploymentSettingsTranslations = {
     privateSharingNetwork: "Частная сеть",
     privateSharingAddress: "Адрес хоста",
     privateSharingHostPort: "Публикуемый порт хоста",
+    privateSharingHostPortAutomatic: "Назначается при развёртывании",
+    privateSharingJoinedPortReason: "Для подключённой сети нужен порт хоста, чтобы Happier мог открыть его в брандмауэре машины до запуска сервиса.",
     privateSharingReview: "Проверить доступ",
     privateSharingNeeds: ({ field }) => `Заполните «${field}», чтобы проверить доступ.`,
     privateSharingReviewBody: "Следующее развёртывание привяжет этот адрес и порт. Другие приложения смогут использовать частный экспорт.",

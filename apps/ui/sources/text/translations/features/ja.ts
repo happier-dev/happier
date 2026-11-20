@@ -509,6 +509,8 @@ const deploymentSettingsTranslations = {
     privateSharingNetwork: "プライベートネットワーク",
     privateSharingAddress: "ホストアドレス",
     privateSharingHostPort: "公開するホストポート",
+    privateSharingHostPortAutomatic: "デプロイ時に割り当て",
+    privateSharingJoinedPortReason: "参加済みネットワークでは、サービスの起動前に Happier がマシンのファイアウォールで開くホストポートが必要です。",
     privateSharingReview: "共有を確認",
     privateSharingNeeds: ({ field }) => `共有を確認するには「${field}」を入力してください。`,
     privateSharingReviewBody: "次のデプロイでこのホストアドレスとポートにバインドします。その後、他のアプリでこのプライベートエクスポートを使えます。",

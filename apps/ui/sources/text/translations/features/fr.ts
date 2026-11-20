@@ -512,6 +512,8 @@ const deploymentSettingsTranslations = {
     privateSharingNetwork: "Réseau privé",
     privateSharingAddress: "Adresse de l’hôte",
     privateSharingHostPort: "Port publié de l’hôte",
+    privateSharingHostPortAutomatic: "Attribué au déploiement",
+    privateSharingJoinedPortReason: "Un réseau rejoint nécessite un port hôte pour que Happier puisse l’ouvrir dans le pare-feu de la machine avant le démarrage du service.",
     privateSharingReview: "Vérifier le partage",
     privateSharingNeeds: ({ field }) => `Renseignez « ${field} » pour vérifier le partage.`,
     privateSharingReviewBody: "Le prochain déploiement utilisera cette adresse et ce port. Les autres applications pourront utiliser cet export privé.",

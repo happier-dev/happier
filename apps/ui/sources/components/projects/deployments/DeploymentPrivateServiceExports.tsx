@@ -152,12 +152,15 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
   const change = useDeploymentChangePress({ request: artifactId => { onClose(); editing.review.request(artifactId); } }, () => {
     editing.onChanged(); onClose();
   });
-  const canReview = Boolean(service && key.trim() && scheme.trim() && containerPort && hostPort && (happier || hostAddress));
+  const explicitHostPort = hostPort.trim();
+  const automaticHostPort = happier ? t('projects.deployments.settingsSections.privateSharingHostPortAutomatic') : undefined;
+  const missingHostPort = !happier && !explicitHostPort;
+  const canReview = Boolean(service && key.trim() && scheme.trim() && containerPort && !missingHostPort && (happier || hostAddress));
   // Every field Review can still need sits under Advanced; the needs line says so instead of naming a hidden field.
   const missingField = canReview ? null : !key.trim() ? t('projects.deployments.settingsSections.privateSharingKey')
     : !containerPort ? t('projects.deployments.settingsSections.privateSharingPort')
     : !scheme.trim() ? t('projects.deployments.settingsSections.privateSharingScheme')
-    : !hostPort ? t('projects.deployments.settingsSections.privateSharingHostPort') : null;
+    : missingHostPort ? t('projects.deployments.settingsSections.privateSharingHostPort') : null;
   const reach = (): PrivateServiceExportReach | null => {
     if (happier) return { kind: 'happierNetwork' };
     if (!selectedNetwork?.networkIdentity || !hostAddress || !selectedNetwork.addresses.includes(hostAddress)) return null;
@@ -166,7 +169,8 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
   const review = () => {
     try { const selected = reach(); if (!selected) return;
       const patch = buildPrivateServiceExportPatch(props.detail.content, { key: key.trim(), service,
-        containerPort: Number(containerPort), scheme: scheme.trim(), hostPort: Number(hostPort), reach: selected });
+        containerPort: Number(containerPort), scheme: scheme.trim(), reach: selected,
+        ...(explicitHostPort ? { hostPort: Number(explicitHostPort) } : {}) });
       setInvalid(false); setReviewed({ patch, hostAddress: selected.kind === 'privateNetwork' ? selected.hostAddress : null,
         networkName: selected.kind === 'happierNetwork' ? t('projects.deployments.settingsSections.privateSharingHappierNetwork')
           : selectedNetwork?.displayName ?? selected.privateNetwork });
@@ -194,9 +198,10 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     accessibilityLabel={t('projects.deployments.settingsSections.privateSharingWho')} options={reachOptions}
     value={happier ? HAPPIER_NETWORK : selectedNetwork ? networkReachId(selectedNetwork) : null}
     onChange={next => { if (next) { setReachId(next); setAddress(null); } }} />;
-  const field = (name: 'key' | 'containerPort' | 'scheme' | 'hostPort', label: string, value: string, onChangeText: (value: string) => void) =>
+  const field = (name: 'key' | 'containerPort' | 'scheme' | 'hostPort', label: string, value: string,
+    onChangeText: (value: string) => void, placeholder?: string) =>
     <FieldItem label={label}><FieldTextInput testID={`${id}.${name}`} accessibilityLabel={label} value={value}
-      onChangeText={onChangeText} autoCapitalize="none"
+      onChangeText={onChangeText} autoCapitalize="none" placeholder={placeholder}
       {...(name === 'containerPort' || name === 'hostPort' ? { keyboardType: 'number-pad' as const } : {})} /></FieldItem>;
   return <ListPresentationProvider value="page" pageInsets="contained"><View style={deploymentSheetStyles.body}>
     {reviewed ? <ItemGroup title={t('projects.deployments.settingsSections.privateSharingReview')}
@@ -210,7 +215,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
       {reviewed.hostAddress === null ? null : <Item testID={`${id}.reviewAddress`}
         title={t('projects.deployments.settingsSections.privateSharingAddress')} detail={reviewed.hostAddress} mode="info" />}
       <Item testID={`${id}.reviewHostPort`} title={t('projects.deployments.settingsSections.privateSharingHostPort')}
-        detail={hostPort} mode="info" />
+        detail={explicitHostPort || automaticHostPort} mode="info" />
     </ItemGroup> : <>
       {services.length === 0 ? <SurfaceStateCard size="line" kind="unavailable"
           title={t('projects.deployments.settingsSections.privateSharingInvalid')} />
@@ -243,17 +248,20 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
           onPress={() => { onClose(); router.push(deploymentEnvironmentRoute({ serverId: props.detail.environment.serverId,
             projectSourceId: props.detail.environment.projectSourceId, environmentId: entry.environmentId, tab: 'variables' })); }} />)}
       </View> : null}
+      {happier ? null : <Text variant="meta" style={deploymentSheetStyles.lead}>
+        {t('projects.deployments.settingsSections.privateSharingJoinedPortReason')}
+      </Text>}
       <ExpandableItem testID={`${id}.advanced`} expanded={advanced} onExpandedChange={setAdvanced}
         header={state => <Item testID={`${id}.advanced.header`} {...state.headerProps}
           title={t('projects.deployments.domainIngressAdvanced')}
-          subtitle={[key.trim(), containerPort, scheme.trim(), hostPort].filter(Boolean).join(' · ') || undefined} />}>
+          subtitle={[key.trim(), containerPort, scheme.trim(), explicitHostPort || automaticHostPort].filter(Boolean).join(' · ') || undefined} />}>
         <View style={deploymentSheetStyles.fields}>
           {field('key', t('projects.deployments.settingsSections.privateSharingKey'), key, setKey)}
           {field('containerPort', t('projects.deployments.settingsSections.privateSharingPort'), containerPort, setContainerPort)}
           {inferredScheme === null ? field('scheme', t('projects.deployments.settingsSections.privateSharingScheme'),
             schemeOverride, setSchemeOverride) : <Item testID={`${id}.schemeFact`}
               title={t('projects.deployments.settingsSections.privateSharingScheme')} detail={inferredScheme} mode="info" />}
-          {field('hostPort', t('projects.deployments.settingsSections.privateSharingHostPort'), hostPort, setHostPort)}
+          {field('hostPort', t('projects.deployments.settingsSections.privateSharingHostPort'), hostPort, setHostPort, automaticHostPort)}
         </View>
       </ExpandableItem>
       {/* Review sharing says what it still needs instead of staying disabled without a reason (PAGE-ACCEPT-176 D29). */}

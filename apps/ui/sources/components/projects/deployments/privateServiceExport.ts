@@ -12,7 +12,7 @@ export type PrivateServiceExportReach =
   | Readonly<{ kind: 'privateNetwork'; privateNetwork: string; hostAddress: string }>;
 
 export type PrivateServiceExportSelection = Readonly<{
-  key: string; service: string; containerPort: number; scheme: string; hostPort: number; reach: PrivateServiceExportReach;
+  key: string; service: string; containerPort: number; scheme: string; hostPort?: number; reach: PrivateServiceExportReach;
 }>;
 
 type ServiceExport = NonNullable<NonNullable<DeploymentEnvironmentContentV1['ownServer']>['serviceExports']>[number];
@@ -108,7 +108,9 @@ function privateExport(entry: ServiceExport) {
 export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentContentV1, selection: PrivateServiceExportSelection) {
   const definition = content.definition;
   if (definition.kind !== 'stored') throw Object.assign(new Error('needs_repository'), { code: 'needs_repository' });
-  DeploymentServiceExportV1Schema.shape.containerPort.parse(selection.hostPort);
+  const { hostPort, reach } = selection;
+  if (hostPort === undefined && reach.kind === 'privateNetwork') return invalid();
+  if (hostPort !== undefined) DeploymentServiceExportV1Schema.shape.containerPort.parse(hostPort);
   const document = parseDocument(definition.document, { merge: true });
   if (document.errors.length || !listPrivateServiceExportServices(content).includes(selection.service)) return invalid();
   const service = document.getIn(['services', selection.service], true);
@@ -121,9 +123,12 @@ export function buildPrivateServiceExportPatch(content: DeploymentEnvironmentCon
     return port.protocol !== 'tcp' || port.target !== selection.containerPort;
   });
   // The Happier network reaches a loopback publication on this Machine; a joined network binds its own address.
-  const reach = selection.reach;
-  service.set('ports', [...retained, { target: selection.containerPort, published: String(selection.hostPort),
-    host_ip: reach.kind === 'happierNetwork' ? '127.0.0.1' : reach.hostAddress, protocol: 'tcp' }]);
+  service.set('ports', [...retained, {
+    target: selection.containerPort,
+    ...(hostPort === undefined ? {} : { published: String(hostPort) }),
+    host_ip: reach.kind === 'happierNetwork' ? '127.0.0.1' : reach.hostAddress,
+    protocol: 'tcp',
+  }]);
   const serviceExports = (content.ownServer?.serviceExports ?? []).filter(entry => entry.key !== selection.key).map(privateExport);
   const shared = { key: selection.key, service: selection.service, containerPort: selection.containerPort, scheme: selection.scheme };
   serviceExports.push(reach.kind === 'happierNetwork'

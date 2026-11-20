@@ -2483,6 +2483,15 @@ describe('Project deployments page', () => {
       await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.outcome`)).not.toBeNull());
       expect(screen.findByTestId(`${id}.hostPort`)).toBeNull();
       expect(screen.findByTestId(`${id}.scheme`)).toBeNull();
+      expect(screen.getTextContent()).not.toMatch(/open it in the Machine’s firewall/i);
+      await waitForHomeGovernance(() => {
+        expect(screen.findByTestId(`${id}.needs`), screen.getTextContent()).toBeNull();
+      });
+      await screen.pressByTestIdAsync(`${id}.review`);
+      expect(screen.findByTestId(`${id}.save`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.reviewAddress`)).toBeNull();
+      expect(updates).toHaveLength(0);
+      await screen.pressByTestIdAsync(`${id}.edit`);
       await screen.pressByTestIdAsync(`${id}.advanced.header`);
       // The port the stored Compose service declares fills Container port (PAGE-ACCEPT-176 D29).
       await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.containerPort`)?.props.value).toBe('5432'));
@@ -2490,13 +2499,11 @@ describe('Project deployments page', () => {
       const schemeFact = screen.findHostByTestId(`${id}.schemeFact`);
       expect(schemeFact?.findAll(node => typeof node.type === 'string' && node.props.children === 'postgres').length)
         .toBeGreaterThan(0);
-      // Review sharing says what it still needs instead of staying disabled without a reason (D29).
-      expect(screen.findByTestId(`${id}.needs`)).not.toBeNull();
+      expect(screen.findByTestId(`${id}.hostPort`)?.props.value).toBe('');
       expect(screen.findByTestId(`${id}.networkMissing`)).toBeNull();
       expect(screen.findByTestId(`${id}.reach:happierNetwork`)?.props.accessibilityState)
         .toMatchObject({ disabled: false, selected: true });
       expect(screen.findByTestId(`${id}.address`)).toBeNull();
-      await fill('15432');
       expect(screen.findByTestId(`${id}.needs`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.review`);
       expect(updates).toHaveLength(0);
@@ -2504,7 +2511,11 @@ describe('Project deployments page', () => {
       await saved(1);
       expect(updates[0]!.patch?.ownServer?.serviceExports).toEqual([{ key: 'postgres', service: 'postgres',
         containerPort: 5432, scheme: 'postgres', exposure: 'loopback', transport: { kind: 'iroh' } }]);
-      expect(document(0)).toContain('127.0.0.1');
+      const { parse } = await import('yaml');
+      expect(parse(document(0))).toMatchObject({ services: { postgres: {
+        ports: [{ target: 5432, host_ip: '127.0.0.1', protocol: 'tcp' }],
+      } } });
+      expect(document(0)).not.toContain('published:');
       await screen.pressByTestIdAsync(`${id}.add`);
       // A joined network arrives without replacing the default; it remains an explicit choice.
       await act(async () => { storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a',
@@ -2514,6 +2525,8 @@ describe('Project deployments page', () => {
       expect(screen.findByTestId(`${id}.address`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.reach:network:shop-net`);
       expect(screen.findByTestId(`${id}.address`)).not.toBeNull();
+      expect(screen.getTextContent()).toMatch(/open it in the Machine’s firewall before the service starts/i);
+      expect(screen.findByTestId(`${id}.hostPort`)).toBeNull();
       await fill('15432');
       await screen.pressByTestIdAsync(`${id}.review`);
       expect(updates).toHaveLength(1);
@@ -2524,6 +2537,7 @@ describe('Project deployments page', () => {
         containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'shop-net' }]);
       expect(updates[1]!.patch?.definition).toMatchObject({ from: 'compose' });
       expect(document(1)).toContain('100.80.0.12');
+      expect(document(1)).toMatch(/published: ['"]?15432/u);
       expect(deploy).not.toHaveBeenCalled();
     } finally { await screen.unmount(); controller.retire(); account.dispose(); }
   });

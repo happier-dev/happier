@@ -512,6 +512,8 @@ const deploymentSettingsTranslations = {
     privateSharingNetwork: "Xarxa privada",
     privateSharingAddress: "Adreça de l’amfitrió",
     privateSharingHostPort: "Port publicat de l’amfitrió",
+    privateSharingHostPortAutomatic: "Assignat en desplegar",
+    privateSharingJoinedPortReason: "Una xarxa connectada necessita un port de l’amfitrió perquè Happier pugui obrir-lo al tallafoc de la màquina abans que s’iniciï el servei.",
     privateSharingReview: "Revisar accés",
     privateSharingNeeds: ({ field }) => `Omple «${field}» per revisar l’accés.`,
     privateSharingReviewBody: "El pròxim desplegament farà servir aquesta adreça i port. Altres aplicacions podran utilitzar aquesta exportació privada.",

@@ -136,6 +136,8 @@ export type DeploymentSettingsTranslations = Readonly<{
   privateSharingNetwork: string;
   privateSharingAddress: string;
   privateSharingHostPort: string;
+  privateSharingHostPortAutomatic: string;
+  privateSharingJoinedPortReason: string;
   privateSharingReview: string;
   privateSharingNeeds: (params: { field: string }) => string;
   privateSharingReviewBody: string;
@@ -282,6 +284,8 @@ export const deploymentSettingsTranslations = {
     privateSharingNetwork: "Private network",
     privateSharingAddress: "Host address",
     privateSharingHostPort: "Published host port",
+    privateSharingHostPortAutomatic: "Assigned when deployed",
+    privateSharingJoinedPortReason: "A joined network needs a host port so Happier can open it in the Machine’s firewall before the service starts.",
     privateSharingReview: "Review sharing",
     privateSharingNeeds: ({ field }) => `Fill in “${field}” to review sharing.`,
     privateSharingReviewBody: "The next deployment binds this host address and port. Other apps can then use this private export.",

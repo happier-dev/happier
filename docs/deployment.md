@@ -2001,9 +2001,11 @@ platform validation remain separate from these source contracts.
 The unreleased 0.3 Environment Settings surface places Private sharing after
 Servers & build. The editor reviews the selected service, container port, route,
 and host port before calling that same update Action. Happier network publishes
-TCP on `127.0.0.1` and declares the Iroh export without requiring a private network
-observation. Choosing a joined network instead requires a current observed
-network and an address on that network.
+TCP on `127.0.0.1` and declares the Iroh export. When the host port is unset, Docker
+assigns it at deployment and Machine Services reports the bound endpoint to the
+Iroh service resolver. A joined network requires a current network observation,
+an address on that network, and a host port for the firewall permit installed
+before the service starts.
 
 The editor authors a stored definition for one native Machine. Connect opens
 Private sharing when the source needs an export and writes an `auto` reference

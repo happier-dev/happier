@@ -512,6 +512,8 @@ const deploymentSettingsTranslations = {
     privateSharingNetwork: "Rede privada",
     privateSharingAddress: "Endereço do anfitrião",
     privateSharingHostPort: "Porta publicada do anfitrião",
+    privateSharingHostPortAutomatic: "Atribuída na implantação",
+    privateSharingJoinedPortReason: "Uma rede à qual você ingressou precisa de uma porta do host para que o Happier possa abri-la no firewall da máquina antes de iniciar o serviço.",
     privateSharingReview: "Rever partilha",
     privateSharingNeeds: ({ field }) => `Preencha «${field}» para rever a partilha.`,
     privateSharingReviewBody: "A próxima implementação usará este endereço e porta. Outras aplicações poderão usar esta exportação privada.",

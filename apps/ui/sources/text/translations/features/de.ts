@@ -508,6 +508,8 @@ const deploymentSettingsTranslations = {
     privateSharingNetwork: "Privates Netzwerk",
     privateSharingAddress: "Hostadresse",
     privateSharingHostPort: "Veröffentlichter Hostport",
+    privateSharingHostPortAutomatic: "Wird beim Deployment zugewiesen",
+    privateSharingJoinedPortReason: "Ein verbundenes Netzwerk benötigt einen Host-Port, damit Happier ihn vor dem Start des Dienstes in der Firewall des Rechners öffnen kann.",
     privateSharingReview: "Freigabe prüfen",
     privateSharingNeeds: ({ field }) => `Fülle „${field}“ aus, um die Freigabe zu prüfen.`,
     privateSharingReviewBody: "Das nächste Deployment bindet diese Adresse und diesen Port. Andere Apps können dann den privaten Export nutzen.",

@@ -504,6 +504,8 @@ const deploymentSettingsTranslations = {
     privateSharingNetwork: "私有网络",
     privateSharingAddress: "主机地址",
     privateSharingHostPort: "发布的主机端口",
+    privateSharingHostPortAutomatic: "部署时分配",
+    privateSharingJoinedPortReason: "已加入的网络需要一个主机端口，以便 Happier 在服务启动前在机器防火墙中开放该端口。",
     privateSharingReview: "检查共享",
     privateSharingNeeds: ({ field }) => `填写“${field}”后即可检查共享。`,
     privateSharingReviewBody: "下次部署将绑定此主机地址和端口。其他应用随后可使用此私有导出。",
