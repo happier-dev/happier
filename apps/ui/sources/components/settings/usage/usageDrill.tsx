@@ -67,11 +67,11 @@ export function useUsageDrill(query: UsageQuery): UsageDrill {
       query.session !== null &&
       (typeof query.session === 'string' || query.session.length > 0);
     return {
-      available: () => !sessionScoped,
+      available: (field) => !sessionScoped && field !== 'environments',
       selected: (field, id) =>
-        (query[field] as readonly string[]).includes(id),
+        field !== 'environments' && query[field].includes(id),
       toggle: (field, id) => {
-        if (sessionScoped) return false;
+        if (sessionScoped || field === 'environments') return false;
         router.push(
           buildUsageSettingsRouteTarget({
             scope: { ...readUsageWidgetPageScope(query), [field]: [id] },
