@@ -16,7 +16,7 @@ import type { TriageActionV1 } from '../settings/actions.js';
 import { describeTriageEntrySessionPhaseV1 } from '../ui/header/sessionStartOutcome.js';
 import { startTriageEntrySession } from '../actions/entrySession.js';
 import { TriageStartEntrySessionInputV1Schema, TriageStartEntrySessionResultV1Schema, TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
-import { createTestkitActionInvoker, createTestkitEntrySessionLinkWriter, createTestkitSourceSessionRelations, spawnSuccess, testkitConfiguredInstance, TESTKIT_OBSERVED_REVISION, testkitTriageActionId as triageBoundaryActionId } from './testkit/entrySessionTestkit.test-support.js';
+import { createTestkitActionInvoker, createTestkitEntrySessionLinkWriter, createTestkitSourceSessionRelations, spawnSuccess, testkitConfiguredInstance, TESTKIT_OBSERVED_REVISION, TESTKIT_REVIEW_WORKFLOW_RECEIPT, testkitTriageActionId as triageBoundaryActionId } from './testkit/entrySessionTestkit.test-support.js';
 import { resolveTriageEntryForDispatch } from '../composer/resolveForDispatch.js';
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { runTriageConfiguredActionV1, runTriageConfiguredHandoffV1, type TriageConfiguredActionRunHostV1, type TriageConfiguredActionRunRequestV1 } from './configuredActionRun.js';
@@ -1846,7 +1846,7 @@ describe('configured action execution through the shared Session owner', () => {
         expect(result).toMatchObject({ status: 'cancelled', recovery: { state: { kind: 'single' } } });
     });
 
-    it.each([false, true, 'partial', 'disabled', 'disabledWhileChoosing', 'openFailure', 'continuationFailure'] as const)('does not report prepared formal Review as complete (explicit engines: %s)', async (hasChoices) => {
+    it.each([false, true, 'workflow', 'workflowWithWarning', 'partial', 'disabled', 'disabledWhileChoosing', 'openFailure', 'continuationFailure'] as const)('does not report prepared formal Review as complete (explicit engines: %s)', async (hasChoices) => {
         const reviewAction = { ...action, actionId: 'fix', appliesTo: ['pullRequest'], workspaceMode: 'pull_request',
             target: { kind: 'reviewStart', promptInvocationId: null, seededFallbackInstruction: 'Review this pull request.' },
         } as const satisfies TriageActionV1;
@@ -1855,7 +1855,7 @@ describe('configured action execution through the shared Session owner', () => {
         const disabledContinuation = hasChoices === 'disabled' || hasChoices === 'disabledWhileChoosing';
         const launchImmediately = hasChoices !== false && !disabledContinuation;
         const events: string[] = [];
-        const engineIds = hasChoices === 'partial' ? ['engine-a', 'engine-b'] : ['engine-a'];
+        const engineIds = hasChoices === 'partial' || hasChoices === 'workflow' ? ['engine-a', 'engine-b'] : ['engine-a'];
         const failedEngineIds = hasChoices === 'partial' ? ['engine-b'] : [];
         const instance = testkitConfiguredInstance();
         const review = { instance, entryRef: entry.entryRef, lastKnownLocator: testkitLocator(), observed: TESTKIT_OBSERVED_REVISION,
@@ -1894,6 +1894,9 @@ describe('configured action execution through the shared Session owner', () => {
                     if (hasChoices === 'continuationFailure') throw new PluginError({ code: 'review_transport_unavailable', details: { requestId: 'review-continue-17' } });
                     expect(input).toMatchObject({ sessionId: 'session-a', engineIds,
                         instructions: reviewAction.target.seededFallbackInstruction, review });
+                    if (hasChoices === 'workflow' || hasChoices === 'workflowWithWarning') return { v: 1, status: 'accepted',
+                        reviewResult: TESTKIT_REVIEW_WORKFLOW_RECEIPT, review: TESTKIT_REVIEW_WORKFLOW_RECEIPT.reviewRound,
+                        ...(hasChoices === 'workflowWithWarning' ? { failure: { codes: ['unavailable'], requestId: 'relation-write-17' } } : {}) };
                     return { v: 1, status: 'started', startedEngineIds: ['engine-a'], failedEngineIds };
                 }
                 if (id === 'session.open') {
@@ -1918,7 +1921,14 @@ describe('configured action execution through the shared Session owner', () => {
             return;
         }
         expect(events.includes('sessions/start-pull-request-review-v1')).toBe(launchImmediately);
-        if (launchImmediately) expect(result.reviewResult).toMatchObject({ startedEngineIds: ['engine-a'], failedEngineIds });
+        if (hasChoices === 'workflow' || hasChoices === 'workflowWithWarning') {
+            expect(result.reviewResult).toMatchObject({ v: 1, status: 'accepted',
+                reviewResult: TESTKIT_REVIEW_WORKFLOW_RECEIPT, review: TESTKIT_REVIEW_WORKFLOW_RECEIPT.reviewRound });
+            expect(events).toContain('session.open');
+            if (hasChoices === 'workflowWithWarning') expect(result).toMatchObject({
+                failure: { codes: ['unavailable'], requestId: 'relation-write-17' },
+            });
+        } else if (launchImmediately) expect(result.reviewResult).toMatchObject({ startedEngineIds: ['engine-a'], failedEngineIds });
         if (hasChoices === 'partial') expect(events).not.toContain('session.open');
         if (disabledContinuation) {
             if (hasChoices === 'disabled') {

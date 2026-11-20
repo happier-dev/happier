@@ -573,11 +573,12 @@ export async function runTriageConfiguredActionV1(
             ? 'reviewUnknown' : continuation.kind === 'cancelled' ? 'awaitingReview' : 'reviewRefused',
             ...(continuation.kind !== 'cancelled' && continuation.failure !== undefined ? { failure: continuation.failure } : {}) };
         const reviewResult = continuation.result;
-        if (reviewResult.status !== 'started') return { ...basis, status: 'reviewRefused', reviewResult };
-        if (reviewResult.failedEngineIds.length > 0) return { ...basis, status: 'reviewPartial', reviewResult };
+        if (reviewResult.status === 'refused') return { ...basis, status: 'reviewRefused', reviewResult };
+        if (reviewResult.status === 'started' && reviewResult.failedEngineIds.length > 0) return { ...basis, status: 'reviewPartial', reviewResult };
         const opened = await openLinkedSession({ execute: async (id, input, cancellation) => host.executeAction(id, input, cancellation),
             sessionId: pending.sessionId, signal: options?.signal });
         return { ...basis, status: 'reviewStarted', reviewResult, sessionOpen: opened.status,
+            ...(reviewResult.failure === undefined ? {} : { failure: reviewResult.failure }),
             ...(opened.status === 'failed' && opened.failure !== undefined ? { failure: opened.failure } : {}) };
     };
     if (request.resumeReview !== undefined) {
