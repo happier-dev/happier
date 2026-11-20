@@ -11,8 +11,9 @@ import { buildReviewStepsWorkflowV1 } from './builtins/reviewAndConverge.js';
 import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { ActionIdSchema } from '../actions/actionIds.js';
 
-it('previews each accepted Review participant without turning a Workflow repeat into leaf replays', async () => {
-  const review = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review this repository.', reviewers: [
+it.each([undefined, 'paid-profile'])('previews each accepted Review participant with its actual profile (%s)', async profileId => {
+  const review = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review this repository.',
+    ...(profileId ? { profileId, profileSourceCustody: { kind: 'development', registeredRootId: '/private/plugin-root' } } : {}), reviewers: [
     { kind: 'engine', engineId: 'pi', modelId: 'meta/muse-spark-1.3-contributor',
       sessionConfigOptionOverrides: { v: 1, updatedAt: 3, overrides: { reasoning_effort: { value: 'minimal', updatedAt: 3 } } } },
     { kind: 'session', session: { serverId: 'home', sessionId: 'existing-reviewer' } },
@@ -60,7 +61,8 @@ it('previews each accepted Review participant without turning a Workflow repeat 
   const prepared = prepareWorkflowRunStartV1({ definition: accepted.snapshot.authoredDefinition,
     acceptedContext: accepted.snapshot, replay });
   expect(prepared).toMatchObject({ reviewReviewers: [
-    { id: 'step-1-reviewer-1', reviewer: review.reviewers[0], continuity: 'fresh' },
+    { id: 'step-1-reviewer-1', reviewer: { ...review.reviewers[0], ...(profileId
+      ? { profileId, profileSourceCustody: review.profileSourceCustody } : {}) }, continuity: 'fresh' },
     { id: 'step-1-reviewer-2', reviewer: review.reviewers[1], continuity: 'continues' },
     { id: 'step-1-reviewer-3', reviewer: review.reviewers[2], continuity: 'fresh' },
     { id: 'step-1-reviewer-4', reviewer: review.reviewers[3], continuity: 'asked_again' },

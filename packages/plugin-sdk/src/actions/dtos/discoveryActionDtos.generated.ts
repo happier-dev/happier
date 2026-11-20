@@ -116,6 +116,7 @@ export type DiscoveryActionInputById = {
                             visibleWhenContextSlot?: string | undefined;
                             requiredWhen?: unknown;
                             disabledWhen?: unknown;
+                            optionsDraftDependencies?: readonly string[] | undefined;
                             optionsSourceId?: string | undefined;
                             connectedAccountOptions?: true | undefined;
                             resolvedEmptyConnectedAccountOptions?: true | undefined;
@@ -260,6 +261,7 @@ export type DiscoveryActionResultById = {
                     visibleWhenContextSlot?: string | undefined;
                     requiredWhen?: InputPredicate | undefined;
                     disabledWhen?: InputPredicate | undefined;
+                    optionsDraftDependencies?: readonly string[] | undefined;
                     optionsSourceId?: string | undefined;
                     connectedAccountOptions?: true | undefined;
                     resolvedEmptyConnectedAccountOptions?: true | undefined;
@@ -447,6 +449,7 @@ export type DiscoveryActionResultById = {
                     visibleWhenContextSlot?: string | undefined;
                     requiredWhen?: InputPredicate | undefined;
                     disabledWhen?: InputPredicate | undefined;
+                    optionsDraftDependencies?: readonly string[] | undefined;
                     optionsSourceId?: string | undefined;
                     connectedAccountOptions?: true | undefined;
                     resolvedEmptyConnectedAccountOptions?: true | undefined;

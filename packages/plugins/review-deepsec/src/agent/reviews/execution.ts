@@ -18,7 +18,6 @@ import { parseDeepSecCommentOutMarkdown } from './commentOut.js';
 import { isDeepSecReviewMode, isDeepSecThinkingLevel, type DeepSecReviewMode, type DeepSecThinkingLevel } from './command.js';
 import { DEEPSEC_AGENT_CLIS } from './profile.js';
 import { resolveDeepSecProfileMode } from './profileMode.js';
-import { DEFAULT_DEEPSEC_COST_WARNING_THRESHOLDS, type DeepSecCostWarningInput } from './costWarning.js';
 import { normalizeDeepSecFindings } from './findings.js';
 import {
   runDeepSecReview,
@@ -37,7 +36,6 @@ type NormalizedDeepSecStart = Readonly<{
   preferredExecutablePath?: string | null;
   agentCli?: DeepSecAgentCli | null;
   thinkingLevel?: DeepSecThinkingLevel;
-  cost?: Omit<DeepSecCostWarningInput, 'mode'>;
   projectId?: string;
   workspaceId?: string;
 }>;
@@ -58,10 +56,6 @@ function readString(value: unknown): string | undefined {
 
 function readBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
-}
-
-function readNumber(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function readAgentCli(value: unknown): DeepSecAgentCli | null {
@@ -92,16 +86,6 @@ function readMode(
   );
 }
 
-function readCost(
-  engineConfig: Record<string, unknown>,
-  intentRecord: Record<string, unknown>,
-): Omit<DeepSecCostWarningInput, 'mode'> | undefined {
-  const costRecord = readRecord(engineConfig.cost) ?? readRecord(intentRecord.cost);
-  if (!costRecord) return undefined;
-  return Object.fromEntries(Object.keys(DEFAULT_DEEPSEC_COST_WARNING_THRESHOLDS)
-    .map(key => [key, readNumber(costRecord[key])]));
-}
-
 function normalizeReviewStartInput(params: Readonly<{
   intentInput: unknown;
   fallbackInstructions: string;
@@ -127,7 +111,6 @@ function normalizeDeepSecStart(params: Readonly<{
   const scmScope = readScmReviewScope(reviewInput);
   const engineConfig = readDeepSecEngineConfig(reviewInput);
   const mode = readMode(engineConfig, reviewInput, params.profileId);
-  const cost = readCost(engineConfig, reviewInput);
   const thinkingLevel = engineConfig.thinkingLevel;
   if (thinkingLevel !== undefined && !isDeepSecThinkingLevel(thinkingLevel)) {
     throw new Error('The selected DeepSec thinking level is unsupported.');
@@ -146,7 +129,6 @@ function normalizeDeepSecStart(params: Readonly<{
       ?? null,
     agentCli: readAgentCli(engineConfig.agentCli) ?? readAgentCli(reviewInput.agentCli) ?? null,
     ...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
-    ...(cost ? { cost } : {}),
     ...(readString(reviewInput.projectId) ? { projectId: readString(reviewInput.projectId) } : {}),
     ...(readString(reviewInput.workspaceId) ? { workspaceId: readString(reviewInput.workspaceId) } : {}),
   };
@@ -486,7 +468,6 @@ function createRuntime(
         mode: startInput.mode,
         selectedFiles: selectedScope?.paths,
         confirmedCostWarning: startInput.confirmedCostWarning,
-        cost: startInput.cost,
         preferredExecutablePath: startInput.preferredExecutablePath,
         thinkingLevel: startInput.thinkingLevel,
         agentCli: agentCli === 'both' ? 'codex' : agentCli ?? undefined,

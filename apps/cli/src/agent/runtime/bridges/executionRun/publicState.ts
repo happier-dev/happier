@@ -31,6 +31,8 @@ export function projectExecutionRunPublicState(
     ...(run.originWorkflowRunId ? { originWorkflowRunId: run.originWorkflowRunId } : {}),
     backendTarget: run.backendTarget, ...(run.display ? { display: run.display } : {}),
     ...(run.launch?.launchOrigin ? { launchOrigin: run.launch.launchOrigin } : {}),
+    ...(run.profileId ? { profileId: run.profileId } : {}),
+    ...(run.profileSourceCustody ? { profileSourceCustody: run.profileSourceCustody } : {}),
     ...(requestedConfiguration ? { requestedConfiguration } : {}),
     ...(resolvedSelection ? { resolvedSelection } : {}),
     permissionMode: run.permissionMode, retentionPolicy: run.retentionPolicy, runClass: run.runClass, ioMode: run.ioMode,
@@ -52,7 +54,7 @@ function projectInputTurnWitness({ result: _result, error: _error, ...witness }:
 
 /** Clear Session socket frames use the Protocol owner's non-content error projection. */
 export function projectExecutionRunSessionUpdateState(run: ExecutionRunPublicState): ExecutionRunSessionUpdateState {
-  const { inputTurns, error, ...state } = run;
+  const { inputTurns, error, profileId: _profileId, profileSourceCustody: _profileSourceCustody, ...state } = run;
   return { ...state,
     ...(error ? { error: ExecutionRunSessionUpdateStateSchema.shape.error.parse(error) } : {}),
     ...(inputTurns ? { inputTurns: {

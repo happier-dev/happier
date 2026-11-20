@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ExecutionRunRetentionPolicySchema } from '../execution/runs/runPrimitives.js';
 import { MachineAgentExecutionStateV1Schema } from '../capabilities/machineAgentInventory.js';
+import type { ReviewStartInput, ReviewReviewerSelectionV1 } from './reviewStart.js';
 import { PluginSourceCustodyV1Schema } from '../plugins/runtime/sourceCustody.js';
 
 export const ReviewEngineCapabilitiesSchema = lazyZodSchema(() => z.strictObject({
@@ -74,4 +75,38 @@ export function resolveReviewNarratorPolicy(params: Readonly<{
     requiresSeparateNarrator: selected.length > 1 || (selected.length === 1 && !capable(selected[0]!)),
     defaultNarratorEngineId: selected.find(capable) ?? null,
   };
+}
+
+/** Refresh only the selected paid options; retained consent never admits another paid launch. */
+export function refreshReviewNewRoundCostConsentV1(input: ReviewStartInput,
+  selection: ReviewEngineInventory | ReviewEngineListItem, costConsent?: boolean): ReviewStartInput {
+  const engines = { ...input.engines };
+  const confirmed: Record<string, boolean> = {};
+  const refreshItem = (item: ReviewEngineListItem, reviewerEngineId?: string) => {
+    if (!item.costConsent) return;
+    const key = item.costConsent.optionKey;
+    confirmed[key] = costConsent === true;
+    for (const engineId of new Set([item.engineId, item.value, reviewerEngineId])) {
+      if (engineId && (engineId === reviewerEngineId || Object.hasOwn(engines, engineId))) {
+        engines[engineId] = { ...engines[engineId], [key]: costConsent === true };
+      }
+    }
+  };
+  // A native Run supplies its actual selected profile, independently of the retained roster.
+  if (!('items' in selection)) refreshItem(selection);
+  const refresh = (candidate: ReviewReviewerSelectionV1): ReviewReviewerSelectionV1 => {
+    if (candidate.kind !== 'engine') return candidate;
+    const profileId = candidate.profileId ?? input.profileId;
+    const items = 'items' in selection
+      ? profileId ? selection.selectionItems ?? selection.items : selection.items : [selection];
+    const item = items.find(item => (item.engineId === candidate.engineId || item.value === candidate.engineId)
+      && (!('items' in selection) || !profileId || item.profileId === profileId));
+    if (!item?.costConsent) return candidate;
+    refreshItem(item, candidate.engineId);
+    // Preserve the reviewer's admitted JSON intersection; a spread widens opaque native option fields.
+    return Object.assign({}, candidate, { options: { ...candidate.options, [item.costConsent.optionKey]: costConsent === true } });
+  };
+  const reviewers = input.reviewers.map(refresh);
+  const steps = input.steps?.map(step => ({ ...step, reviewers: step.reviewers.map(refresh) }));
+  return { ...input, ...confirmed, engines, reviewers, ...(steps ? { steps } : {}) };
 }

@@ -148,6 +148,7 @@ export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnio
     replay: z.optional(z.strictObject({ runId: WorkflowRunIdV1Schema,
       /** Explicit new-run continuation; the owner reads prior outcomes into the declared previousRoundContext input. */
       intent: z.optional(z.literal('another_round')),
+      costConsent: z.optional(z.boolean()),
       agentOverride: zMini.optional(WorkflowReplayAgentOverrideV1Schema) })),
   })).check(zMini.superRefine((source, context) => {
     if (source.visibleTeamId !== undefined && source.sourceArtifactId === undefined) {

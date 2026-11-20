@@ -85,7 +85,7 @@ export function createReviewRunCommentService(deps: Readonly<{
         const captured = reviewInput.comparisonId ? await readCapturedScmComparison({ cwd,
           comparisonId: reviewInput.comparisonId, ...(run.sessionId ? { sessionId: run.sessionId } : {}) }) : null;
         const source = ScmComparisonSourceSchema.safeParse(reviewInput.source ?? captured?.comparison.source);
-        return await prepareReviewRoundV1({ reviewInput, reviewRound,
+        const prepared = await prepareReviewRoundV1({ reviewInput, reviewRound,
           ...(captured ? { comparison: captured.comparison } : {}),
           ...(source.success ? { comparisonCapture: { cwd, source: source.data,
             ...(run.sessionId ? { sessionId: run.sessionId } : {}) } } : {}),
@@ -96,6 +96,7 @@ export function createReviewRunCommentService(deps: Readonly<{
             source: input.source!, // Round preparation always supplies the original selector for fresh capture.
             ...(run.sessionId ? { sessionId: run.sessionId } : {}) })).comparison,
         });
+        return { ...prepared, reviewInput };
       };
       return await runWithScmExecutionRunAccountScope(run, prepare);
     },

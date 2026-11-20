@@ -23,6 +23,7 @@ export type ReviewPrepareRoundInputV1 = z.infer<typeof ReviewPrepareRoundInputV1
 /** Actual admitted binding and captured evidence, shared by every leaf in this pass. */
 export const ReviewPreparedRoundV1Schema = lazyZodSchema(() => z.strictObject({
   reviewRound: ReviewRoundBindingV1Schema,
+  newRoundCostConsent: z.optional(z.nullable(z.boolean())),
   inlineThreshold: z.optional(ReviewFindingSeveritySchema),
   comparisonId: z.optional(z.string().check(z.minLength(1))),
   comparison: z.optional(ScmComparisonSchema),
@@ -70,12 +71,14 @@ export function resolveReviewRunContinuityV1(
 /** A fresh native retry is always an explicit choice after unavailable continuation. */
 export const ReviewNativeNewRoundInputV1Schema = lazyZodSchema(() => z.strictObject({
   fresh: z.optional(z.boolean()),
+  /** Fresh acknowledgement of the paid reviewers displayed for this launch. */
+  costConsent: z.optional(z.boolean()),
 }));
 
 /** Person-only records and explicit native routing share the existing Workflow replay Action. */
 export const ReviewNewRoundInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ reviewId: z.string().check(z.minLength(1)) }),
-  z.strictObject({ runId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ runId: z.string().check(z.minLength(1)), costConsent: z.optional(z.boolean()) }),
   z.strictObject({ runId: z.string().check(z.minLength(1)), sessionId: z.string().check(z.minLength(1)),
     ...ReviewNativeNewRoundInputV1Schema.shape }),
   z.strictObject({ runId: z.string().check(z.minLength(1)), target: z.strictObject({ kind: z.literal('detached') }),

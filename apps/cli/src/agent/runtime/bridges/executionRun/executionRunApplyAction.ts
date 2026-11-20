@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 
 import type { BackendTargetRefV1, SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { refreshReviewNewRoundCostConsentV1, type ReviewEngineListItem } from '@happier-dev/protocol/reviews/reviewEngines';
+import { readReviewProfileCostConsent } from '@/agent/executionRuns/profiles/review/costConsent';
 import { ReviewFollowUpInputSchema } from '@happier-dev/protocol/reviews/reviewFollowUp';
 import { ReviewNativeNewRoundInputV1Schema, resolveReviewRunContinuityV1 } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, isReviewRunStartActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
@@ -12,6 +15,8 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import {
   resolveExecutionRunIntentProfile,
   resolveExecutionRunIntentProfileFromCatalog,
+  resolveExecutionRunProfileContributionDescriptor,
+  resolveExecutionRunProfileSelectionForAgent,
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import { VoiceAgentError, type VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
@@ -115,13 +120,33 @@ export async function applyExecutionRunAction(args: Readonly<{
     };
 
     if (newRound?.success) {
+      let paidSelection: ReviewEngineListItem | undefined;
+      try {
+        const selected = args.profileCatalog ? resolveExecutionRunProfileSelectionForAgent(args.profileCatalog, {
+          intent: 'review', agentId: run.backendId, profileId: run.profileId, profileSourceCustody: run.profileSourceCustody,
+        }) : null;
+        const profile = selected && args.profileCatalog ? resolveExecutionRunProfileContributionDescriptor(args.profileCatalog, selected.profileId) : null;
+        const costConsent = readReviewProfileCostConsent(profile);
+        if (costConsent) paidSelection = {
+          engineId: run.backendId, value: buildBackendTargetKeyV2(readBackendTargetRefV2(run.backendTarget)),
+          label: profile?.title ?? run.backendId, enabled: true,
+          capabilities: { structuredNarration: false }, costConsent, ...(selected ? { profileId: selected.profileId } : {}),
+        };
+      } catch (error) {
+        return { ok: false, errorCode: readExecutionRunErrorCode(error) ?? 'invalid_input',
+          error: error instanceof Error ? error.message : 'Review round preparation failed' };
+      }
       if (!args.reviewComments) return { ok: false, errorCode: 'review_record_unavailable', error: 'Review records are unavailable' };
-      let prepared: Awaited<ReturnType<ReviewRunCommentService['prepareNewRound']>>;
-      try { prepared = await args.reviewComments.prepareNewRound(run); }
+      let preparedReview: Awaited<ReturnType<ReviewRunCommentService['prepareNewRound']>>;
+      try { preparedReview = await args.reviewComments.prepareNewRound(run); }
       catch (error) {
         return { ok: false, errorCode: readExecutionRunErrorCode(error) ?? 'action_failed',
           error: error instanceof Error ? error.message : 'Review round preparation failed' };
       }
+      const { reviewInput, ...prepared } = preparedReview;
+      const roundInput = paidSelection
+        ? refreshReviewNewRoundCostConsentV1(reviewInput, paidSelection, newRound.data.costConsent)
+        : run.intentInput && typeof run.intentInput === 'object' ? run.intentInput : {};
       const { start: retainedStart, ...selection } = resolveExecutionRunResumeBackendOptions({ run });
       const previousInput = run.intentInput && typeof run.intentInput === 'object' ? run.intentInput : {};
       const previousRoundContext = {
@@ -132,7 +157,7 @@ export async function applyExecutionRunAction(args: Readonly<{
         const started = await args.startRun({ ...retainedStart, ...selection, ...retainedStartContext,
           sessionId: run.sessionId, intent: 'review', backendTarget: run.backendTarget,
           instructions: run.instructions,
-          intentInput: { ...((run.intentInput && typeof run.intentInput === 'object') ? run.intentInput : {}),
+          intentInput: { ...roundInput,
             ...prepared, previousRoundContext, reviewRoundSettlement: 'execution' },
           ...(run.runtimeSettings?.accountSettings ? { accountSettings: run.runtimeSettings.accountSettings } : {}),
           ...(run.display ? { display: run.display } : {}),

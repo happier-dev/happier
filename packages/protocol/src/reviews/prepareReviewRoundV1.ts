@@ -4,6 +4,7 @@ import { RpcError } from '../rpc/errors.js';
 import type { ReviewArtifactV1, ReviewRecordPortV1, ReviewRoundComparisonCaptureV1, ReviewSourceKindV1 } from './reviewArtifactV1.js';
 import type { ReviewPrepareRoundInputV1, ReviewPreparedRoundV1 } from './reviewRoundActionsV1.js';
 import { reviewReviewerIdsForStartV1, reviewWorkingTreeAreaV1, type ReviewStartInput } from './reviewStart.js';
+import { readRecord } from '../inputs/inputRecords.js';
 
 /** An explicit comparison keeps its original selector; ordinary changes select their admitted area. */
 export function resolveReviewComparisonSourceV1(input: ReviewStartInput): ScmComparisonSource | undefined {
@@ -75,6 +76,7 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
     } } : {}),
     startedAt: deps.startedAt, newRound: true, signal: deps.signal,
   }) : input.reviewRound;
-  return { reviewRound, ...(comparison ? { comparisonId: comparison.id, comparison } : {}),
+  return { reviewRound, newRoundCostConsent: isNewRound ? readRecord(input.previousRoundContext).costConsent === true : null,
+    ...(comparison ? { comparisonId: comparison.id, comparison } : {}),
     ...(input.reviewInput.inlineThreshold === undefined ? {} : { inlineThreshold: input.reviewInput.inlineThreshold }) };
 }

@@ -68,6 +68,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
                 input: [prepared, ...previous] },
               permissionMode: literal('read_only'),
               reviewRound: round, reviewReviewerId: literal(reviewerId), reviewRoundSettlement: literal('workflow'),
+              newRoundCostConsent: result('prepare', ['newRoundCostConsent'], { kind: 'outer', levels: 1 }),
               ...(comparison || reviewInput.comparisonId
                 ? { comparisonId: result('prepare', ['comparisonId'], { kind: 'outer', levels: 1 }) } : {}),
             } }] }];

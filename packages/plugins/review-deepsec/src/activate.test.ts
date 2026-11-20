@@ -218,7 +218,7 @@ function createOpenRequest(params?: Readonly<{
             ...(params?.includeExplicitMode === false
               ? {}
               : { mode: params?.mode ?? 'current_diff' }),
-            ...(params?.confirmedCostWarning ? { confirmedCostWarning: true } : {}),
+            ...(params?.confirmedCostWarning !== false ? { confirmedCostWarning: true } : {}),
             ...(params?.engineSelectedFiles ? { selectedFiles: params.engineSelectedFiles } : {}),
           },
         },
@@ -329,7 +329,7 @@ describe('activate', () => {
     const original = createOpenRequest();
     const opened = await runtime.executionRuns?.open({ ...original, input: { ...original.input,
       structuredInput: { ...original.input.structuredInput as Record<string, unknown>,
-        engines: { deepsec: { mode: 'current_diff', ...(mode === 'codex' ? { agentCli: 'codex' } : {}) } } } } }, fixture.context);
+        engines: { deepsec: { mode: 'current_diff', confirmedCostWarning: true, ...(mode === 'codex' ? { agentCli: 'codex' } : {}) } } } } }, fixture.context);
     if (!opened) throw new Error('Expected DeepSec execution');
     const events = await watchToTerminal(opened);
     await opened.dispose();
@@ -428,7 +428,7 @@ describe('activate', () => {
         upstream: { protocol: 'openai-responses', normalizedUrl: 'https://provider.example.test/v1', credential: 'apiKey' },
         materialization: { v: 1, kind: 'spawnEnv' } },
       input: { ...original.input, structuredInput: { ...original.input.structuredInput as Record<string, unknown>,
-        engines: { deepsec: { mode: 'current_diff', agentCli: 'claude' } } } },
+        engines: { deepsec: { mode: 'current_diff', confirmedCostWarning: true, agentCli: 'claude' } } } },
     }, fixture.context);
     if (!opened) throw new Error('Expected DeepSec execution');
     const events = await watchToTerminal(opened);
@@ -600,8 +600,11 @@ describe('activate', () => {
     expect(readStructuredOutput(events)).toMatchObject({ reviewOutcome: 'complete', findings: [] });
   });
 
-  it('fails required confirmation without launching and lets the caller retry explicitly', async () => {
-    const profile = PLUGIN_MANIFEST.contributes?.executionRunProfiles?.find(profile => profile.id === 'repository-security-audit');
+  it.each([
+    { profileLocalId: 'review', commands: ['process'] },
+    { profileLocalId: 'repository-security-audit', commands: ['scan', 'process', 'export'] },
+  ])('requires fresh paid-start consent and allows an explicit retry ($profileLocalId)', async ({ profileLocalId, commands }) => {
+    const profile = PLUGIN_MANIFEST.contributes?.executionRunProfiles?.find(profile => profile.id === profileLocalId);
     const consentOption = profile?.metadata?.reviewCostConsentOption;
     expect(consentOption).toBe('confirmedCostWarning');
     if (typeof consentOption !== 'string') throw new Error('Expected per-start cost consent option');
@@ -609,8 +612,9 @@ describe('activate', () => {
     const { runtime } = await createNativeDeepSecRuntime();
     const opened = await runtime.executionRuns?.open(createOpenRequest({
       runId: 'run-confirmation-required',
-      profileLocalId: 'repository-security-audit',
+      profileLocalId,
       includeExplicitMode: false,
+      confirmedCostWarning: false,
     }), fixture.context);
     if (!opened) throw new Error('Expected native DeepSec execution run');
 
@@ -628,8 +632,9 @@ describe('activate', () => {
 
     const acceptedRequest = createOpenRequest({
       runId: 'run-confirmed-retry',
-      profileLocalId: 'repository-security-audit',
+      profileLocalId,
       includeExplicitMode: false,
+      confirmedCostWarning: false,
     });
     const retried = await runtime.executionRuns?.open({ ...acceptedRequest, input: { ...acceptedRequest.input,
       structuredInput: { ...acceptedRequest.input.structuredInput as Record<string, unknown>,
@@ -639,16 +644,16 @@ describe('activate', () => {
     const retryEvents = await watchToTerminal(retried);
     await retried.dispose();
     expect(retryEvents.at(-1)?.kind).toBe('run-complete');
-    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
+    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(commands);
 
     const next = await runtime.executionRuns?.open(createOpenRequest({ runId: 'run-next-unconfirmed',
-      profileLocalId: 'repository-security-audit', includeExplicitMode: false,
+      profileLocalId, includeExplicitMode: false, confirmedCostWarning: false,
     }), fixture.context);
     if (!next) throw new Error('Expected next DeepSec review');
     const nextEvents = await watchToTerminal(next);
     await next.dispose();
     expect(nextEvents.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic: { code: 'deepsec_confirmation_required' } });
-    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(['scan', 'process', 'export']);
+    expect(fixture.run.mock.calls.map(([request]) => request.args?.[0])).toEqual(commands);
   });
 
   it.each([false, true])('delivers repository audit partial findings to host normalization (findings present: %s)', async hasFindings => {
@@ -1027,7 +1032,7 @@ describe('activate', () => {
     const request = createOpenRequest();
     const opened = await runtime.executionRuns?.open({ ...request, input: { ...request.input,
       structuredInput: { ...request.input.structuredInput as Record<string, unknown>,
-        engines: { deepsec: { mode: 'current_diff', thinkingLevel: 'xhigh' } } } } }, fixture.context);
+        engines: { deepsec: { mode: 'current_diff', confirmedCostWarning: true, thinkingLevel: 'xhigh' } } } } }, fixture.context);
     if (!opened) throw new Error('Expected DeepSec execution');
     const events = await watchToTerminal(opened);
     await opened.dispose();

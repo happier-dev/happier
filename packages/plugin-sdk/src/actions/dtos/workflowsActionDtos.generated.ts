@@ -36,6 +36,7 @@ export type WorkflowsActionInputById = {
             replay?: undefined | {
                 runId: string;
                 intent?: 'another_round' | undefined;
+                costConsent?: boolean | undefined;
                 agentOverride?: undefined | {
                     sourceKey: string;
                     blockId: string;

@@ -179,6 +179,8 @@ export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
     reviewRound: z.optional(ReviewRoundBindingV1Schema),
     reviewReviewerId: z.optional(z.string().check(z.minLength(1))),
     reviewRoundSettlement: z.optional(z.enum(['execution', 'workflow'])),
+    /** Fresh paid acknowledgement for this prepared pass; null denotes the initial pass. */
+    newRoundCostConsent: z.optional(z.nullable(z.boolean())),
     instructions: z.string().check(z.trim(), z.minLength(1)),
     scope: z._default(ReviewScopeSchema, 'changes'),
     sourceSession: z.optional(ActionSessionAddressV1Schema),

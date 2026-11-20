@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
   readBackendTargetRefV2,
+  buildBackendTargetKeyV2,
   ReviewCommentCreateRequestV1Schema,
   ReviewCommentPrincipalHeaderV1Schema,
   ReviewCommentTransitionRequestV1Schema,
@@ -29,6 +30,7 @@ import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/rev
 import { finishExecutionRun } from '@/agent/runtime/bridges/executionRun/finishExecutionRun';
 import { publishExecutionRunTurn } from '@/agent/runtime/bridges/executionRun/publishExecutionRunTurn';
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
+import { projectExecutionRunPublicState, projectExecutionRunSessionUpdateState } from '@/agent/runtime/bridges/executionRun/publicState';
 import { applyExecutionRunAction } from '@/agent/runtime/bridges/executionRun/executionRunApplyAction';
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import type { ExecutionRunManagerStartParams, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
@@ -42,6 +44,7 @@ import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContrac
 import { createReviewRecordPortV1, type ReviewArtifactTransportV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { buildReviewFindingsV2Payload } from '@/agent/reviews/normalize/buildReviewFindingsV2Payload';
 import { ReviewProfile } from './ReviewProfile';
+import { buildExecutionRunProfileCatalog } from '../intentRegistry';
 import { createPlainAccountArtifactHttpBoundary } from '@/api/artifacts/accountArtifactStore.testkit';
 import { createAccountArtifactStore, createAcknowledgedAccountArtifactTransport } from '@/api/artifacts/accountArtifactStore';
 
@@ -129,7 +132,7 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
-  it.each(['ephemeral', 'resumable', 'fresh', 'launch-failed'] as const)('starts a new native round from the retained requester and launch selection (%s)', async mode => runWithScmAccountScope('new-native-round', async () => {
+  it.each(['ephemeral', 'resumable', 'fresh', 'launch-failed', 'paid-unconfirmed', 'paid-consented', 'paid-alias-unconfirmed'] as const)('starts a new native round from the retained requester and launch selection (%s)', async mode => runWithScmAccountScope('new-native-round', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-new-round-' });
     repositories.push(fixture.rootPath);
     await writeFile(join(fixture.rootPath, fixture.trackedPath), 'first round();\n');
@@ -148,7 +151,7 @@ describe('canonical review Run comments', () => {
       scope: { workspace: { machineId: 'machine-1', path: fixture.rootPath } }, execute: transport(), reviewRecords: records });
     const initial: ExecutionRunState = { ...run(), status: 'succeeded',
       requesterWorkAttributionV1: { serverId: 'home', accountId: 'new-native-round', machineId: 'machine-1', installationId: 'installation-1' },
-      retentionPolicy: mode === 'ephemeral' || mode === 'launch-failed' ? 'ephemeral' : 'resumable',
+      retentionPolicy: mode === 'ephemeral' || mode === 'launch-failed' || mode.startsWith('paid-') ? 'ephemeral' : 'resumable',
       ...(mode === 'resumable' ? { resumeHandle: { kind: 'provider_session.v1',
         backendTarget: readBackendTargetRefV2({ kind: 'builtInAgent', agentId: 'claude' }), providerSessionId: 'original-conversation' } } : {}),
       launch: { cwd: fixture.rootPath, modelId: 'selected-model', connectedServicesSelection: null, reviewOutputSelection: null,
@@ -159,15 +162,45 @@ describe('canonical review Run comments', () => {
       intentInput: { instructions: 'Review.', reviewers: [{ kind: 'engine', engineId: 'claude' }],
         reviewRound, reviewReviewerId: 'step-1-reviewer-1', reviewRoundSettlement: 'execution', comparisonId: first.comparison.id },
     };
+    const paid = mode.startsWith('paid-');
+    const freshConsent = mode === 'paid-consented';
+    const reviewerEngineId = mode === 'paid-alias-unconfirmed'
+      ? buildBackendTargetKeyV2(readBackendTargetRefV2(initial.backendTarget)) : 'claude';
+    const profileCatalog = buildExecutionRunProfileCatalog(paid ? [{
+      id: 'paid-review', intent: 'review', title: 'Paid reviewer', promptAsset: 'review-prompt', compatibleAgents: ['claude'],
+      defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
+      metadata: { reviewCostConsentOption: 'acceptCharge' },
+      optionsSchema: { type: 'object', properties: { acceptCharge: { type: 'boolean', title: 'Accept estimate' } } },
+    }] : []);
+    if (paid) {
+      initial.profileId = 'paid-review';
+      initial.intentInput = { ...initial.intentInput, acceptCharge: true,
+        engines: { claude: { acceptCharge: true, effort: 'high' }, [reviewerEngineId]: { acceptCharge: true, effort: 'high' } },
+        reviewers: [{ kind: 'engine', engineId: reviewerEngineId, options: { acceptCharge: true, effort: 'high' } }] };
+    }
     const started: ExecutionRunManagerStartParams[] = [];
     const result = await runWithScmAccountScope('different-live-account', () => applyExecutionRunAction({ runId: initial.runId,
-      params: { actionId: 'review.new_round', input: mode === 'fresh' ? { fresh: true } : {} },
+      params: { actionId: 'review.new_round', input: mode === 'fresh' ? { fresh: true } : freshConsent ? { costConsent: true } : {} },
       runs: new Map([[initial.runId, initial]]), controllers: new Map(), parentProvider: 'claude',
       voiceAgentManager: {} as import('@/agent/voice/agent/VoiceAgentManager').VoiceAgentManager,
-      reviewComments: comments, startRun: async input => { started.push(input);
+      profileCatalog, reviewComments: comments, startRun: async input => { started.push(input);
         if (mode === 'launch-failed') throw Object.assign(new Error('Provider unavailable'), { code: 'execution_run_failed' });
         return { runId: 'next-run', callId: 'next-call', sidechainId: 'next-sidechain' }; },
     }));
+    if (paid) {
+      expect(result).toMatchObject({ ok: true });
+      expect(started[0]).toMatchObject({ profileId: 'paid-review' });
+      const profileSourceCustody = { kind: 'development', registeredRootId: '/private/review-plugin' } as const;
+      const header = projectExecutionRunPublicState({ ...initial, profileSourceCustody });
+      expect(header).toMatchObject({ profileId: 'paid-review', profileSourceCustody });
+      const sessionUpdate = projectExecutionRunSessionUpdateState(header);
+      expect(sessionUpdate).not.toHaveProperty('profileId');
+      expect(sessionUpdate).not.toHaveProperty('profileSourceCustody');
+      expect(JSON.stringify(sessionUpdate)).not.toContain(profileSourceCustody.registeredRootId);
+      expect(started[0]?.intentInput).toMatchObject({ acceptCharge: freshConsent,
+        engines: { claude: { acceptCharge: freshConsent, effort: 'high' }, [reviewerEngineId]: { acceptCharge: freshConsent, effort: 'high' } },
+        reviewers: [{ options: { acceptCharge: freshConsent, effort: 'high' } }] });
+    }
     if (mode === 'launch-failed') {
       expect(result).toMatchObject({ ok: false, errorCode: 'execution_run_failed' });
       expect((await records.read('stable-review'))?.rounds[1]).toMatchObject({ state: 'failed', runs: [] });

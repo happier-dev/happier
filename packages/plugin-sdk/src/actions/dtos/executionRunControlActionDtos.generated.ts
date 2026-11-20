@@ -1747,6 +1747,32 @@ export type ExecutionRunControlActionInputById = {
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
                 };
+                profileId?: string | undefined;
+                profileSourceCustody?: undefined | {
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
+                } | {
+                    kind: 'bundled_first_party';
+                    packagedRuntime: {
+                        kind: 'cli_version_root';
+                        versionRootId: string;
+                    } | {
+                        kind: 'pinned_runner_snapshot';
+                        snapshotId: string;
+                    } | {
+                        kind: 'source_declaration';
+                        packageName: string;
+                    };
+                } | {
+                    kind: 'development';
+                    registeredRootId: string;
+                } | {
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
+                };
                 requestedConfiguration?: undefined | {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
@@ -2261,6 +2287,32 @@ export type ExecutionRunControlActionResultById = {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
+                    };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
@@ -3080,6 +3132,32 @@ export type ExecutionRunControlActionResultById = {
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
                     };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
+                    };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
@@ -3896,6 +3974,32 @@ export type ExecutionRunControlActionResultById = {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
+                    };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
@@ -4714,6 +4818,32 @@ export type ExecutionRunControlActionResultById = {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
+                    };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
@@ -5585,6 +5715,32 @@ export type ExecutionRunControlActionResultById = {
                 sessionId: string;
                 draftCorrelationId?: string | undefined;
             };
+            profileId?: string | undefined;
+            profileSourceCustody?: undefined | {
+                kind: 'account_release';
+                pluginId: string;
+                version: string;
+                archiveDigestSha256: string;
+            } | {
+                kind: 'bundled_first_party';
+                packagedRuntime: {
+                    kind: 'cli_version_root';
+                    versionRootId: string;
+                } | {
+                    kind: 'pinned_runner_snapshot';
+                    snapshotId: string;
+                } | {
+                    kind: 'source_declaration';
+                    packageName: string;
+                };
+            } | {
+                kind: 'development';
+                registeredRootId: string;
+            } | {
+                kind: 'managed';
+                immutableGenerationId: string;
+                installSource: 'archive' | 'git' | 'localPath' | 'npm';
+            };
             requestedConfiguration?: undefined | {
                 modelId?: string | undefined;
                 reasoningEffort?: string | undefined;
@@ -6272,6 +6428,32 @@ export type ExecutionRunControlActionResultById = {
                 kind: 'session';
                 sessionId: string;
                 draftCorrelationId?: string | undefined;
+            };
+            profileId?: string | undefined;
+            profileSourceCustody?: undefined | {
+                kind: 'account_release';
+                pluginId: string;
+                version: string;
+                archiveDigestSha256: string;
+            } | {
+                kind: 'bundled_first_party';
+                packagedRuntime: {
+                    kind: 'cli_version_root';
+                    versionRootId: string;
+                } | {
+                    kind: 'pinned_runner_snapshot';
+                    snapshotId: string;
+                } | {
+                    kind: 'source_declaration';
+                    packageName: string;
+                };
+            } | {
+                kind: 'development';
+                registeredRootId: string;
+            } | {
+                kind: 'managed';
+                immutableGenerationId: string;
+                installSource: 'archive' | 'git' | 'localPath' | 'npm';
             };
             requestedConfiguration?: undefined | {
                 modelId?: string | undefined;
@@ -7332,6 +7514,32 @@ export type ExecutionRunControlActionResultById = {
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
                 };
+                profileId?: string | undefined;
+                profileSourceCustody?: undefined | {
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
+                } | {
+                    kind: 'bundled_first_party';
+                    packagedRuntime: {
+                        kind: 'cli_version_root';
+                        versionRootId: string;
+                    } | {
+                        kind: 'pinned_runner_snapshot';
+                        snapshotId: string;
+                    } | {
+                        kind: 'source_declaration';
+                        packageName: string;
+                    };
+                } | {
+                    kind: 'development';
+                    registeredRootId: string;
+                } | {
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
+                };
                 requestedConfiguration?: undefined | {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
@@ -8150,6 +8358,32 @@ export type ExecutionRunControlActionResultById = {
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
                 };
+                profileId?: string | undefined;
+                profileSourceCustody?: undefined | {
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
+                } | {
+                    kind: 'bundled_first_party';
+                    packagedRuntime: {
+                        kind: 'cli_version_root';
+                        versionRootId: string;
+                    } | {
+                        kind: 'pinned_runner_snapshot';
+                        snapshotId: string;
+                    } | {
+                        kind: 'source_declaration';
+                        packageName: string;
+                    };
+                } | {
+                    kind: 'development';
+                    registeredRootId: string;
+                } | {
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
+                };
                 requestedConfiguration?: undefined | {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
@@ -8966,6 +9200,32 @@ export type ExecutionRunControlActionResultById = {
                     kind: 'session';
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
+                };
+                profileId?: string | undefined;
+                profileSourceCustody?: undefined | {
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
+                } | {
+                    kind: 'bundled_first_party';
+                    packagedRuntime: {
+                        kind: 'cli_version_root';
+                        versionRootId: string;
+                    } | {
+                        kind: 'pinned_runner_snapshot';
+                        snapshotId: string;
+                    } | {
+                        kind: 'source_declaration';
+                        packageName: string;
+                    };
+                } | {
+                    kind: 'development';
+                    registeredRootId: string;
+                } | {
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 requestedConfiguration?: undefined | {
                     modelId?: string | undefined;
@@ -9784,6 +10044,32 @@ export type ExecutionRunControlActionResultById = {
                     kind: 'session';
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
+                };
+                profileId?: string | undefined;
+                profileSourceCustody?: undefined | {
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
+                } | {
+                    kind: 'bundled_first_party';
+                    packagedRuntime: {
+                        kind: 'cli_version_root';
+                        versionRootId: string;
+                    } | {
+                        kind: 'pinned_runner_snapshot';
+                        snapshotId: string;
+                    } | {
+                        kind: 'source_declaration';
+                        packageName: string;
+                    };
+                } | {
+                    kind: 'development';
+                    registeredRootId: string;
+                } | {
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'git' | 'localPath' | 'npm';
                 };
                 requestedConfiguration?: undefined | {
                     modelId?: string | undefined;

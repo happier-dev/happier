@@ -132,7 +132,10 @@ function projectWorkflowReviewNewRoundReviewersV1(
       const leaf = leaves.get(id);
       if (!leaf) return undefined;
       if (reviewer.kind === 'engine') {
-        rows.push({ id, reviewer, continuity: 'fresh' });
+        rows.push({ id, reviewer: Object.assign({}, reviewer,
+          reviewer.profileId ?? parsed.data.profileId ? { profileId: reviewer.profileId ?? parsed.data.profileId } : {},
+          reviewer.profileSourceCustody ?? parsed.data.profileSourceCustody
+            ? { profileSourceCustody: reviewer.profileSourceCustody ?? parsed.data.profileSourceCustody } : {}), continuity: 'fresh' });
         continue;
       }
       const { participant } = resolveWorkflowAcceptedStepSelectionV1(leaf, undefined, accepted.inputs);

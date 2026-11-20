@@ -16539,6 +16539,26 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `instructions` (textarea): Instructions
 - `sessionId` (text): Session Id
 
+## `review.new_round`
+
+**New Review round** — Review current code in the same Review, reusing the accepted workflow or retained native reviewer.
+
+- Safety: `safe`; side effect: `external`.
+- Approval: `optional` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `voice`, `api`.
+
+### Input guidance
+
+- `reviewId` (json): Review Id
+- `runId` (json): Run Id
+- `costConsent` (json): Cost Consent
+- `sessionId` (json): Session Id
+- `fresh` (json): Fresh
+- `target` (json): Target
+
+
 ## `review.start`
 
 **Start review** — No additional description is published.
@@ -16570,6 +16590,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target` (json): Target
 - `childSelection` (text): Child Selection
 - `cwd` (text): Cwd
+- `newRoundCostConsent` (json): New Round Cost Consent
 - `notifyParentOnCompletion` (boolean): Notify Parent On Completion
 - `reviewCommentAuthorIntent` (select): Review Comment Author Intent
 - `engines` (json): Engines

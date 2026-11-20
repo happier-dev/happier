@@ -127,14 +127,15 @@ describe('runDeepSecReview', () => {
     expect(cleanup).toHaveBeenCalledOnce();
   });
 
-  it('blocks expensive scopes before resolving or launching', async () => {
+  it.each(['current_diff', 'repository_security_audit'] as const)('requires paid-start consent before resolving or launching (%s)', async mode => {
     const resolve = vi.fn(async () => resolvedTool);
     const run = vi.fn(async () => processResult());
     const createTextFile = vi.fn(async () => '/tmp/deepsec-comments.md');
 
     const result = await runDeepSecReview({
       cwd: '/repo',
-      mode: 'repository_security_audit',
+      mode,
+      selectedFiles: ['src/auth.ts'],
       confirmedCostWarning: false,
       exec: { systemTools: { resolve }, run },
       tempFiles: createTempFiles({ createTextFile }),
@@ -142,7 +143,7 @@ describe('runDeepSecReview', () => {
 
     expect(result).toMatchObject({
       status: 'requires_confirmation',
-      warning: { costClass: 'expensive', reason: 'repository_scan' },
+      warning: { costClass: 'expensive' },
     });
     expect(resolve).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();

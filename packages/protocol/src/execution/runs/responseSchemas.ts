@@ -7,6 +7,7 @@ import { ExecutionRunPermissionRequestIdentitySchema } from './runPrimitives.js'
 import { ExecutionRunTransportErrorCodeSchema } from './runPrimitives.js';
 export { ExecutionRunTransportErrorCodeSchema, type ExecutionRunTransportErrorCode } from './runPrimitives.js';
 
+import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
 import { BackendTargetRefSchema } from '../../backends/targets/backendTargetRef.js';
 import {
   ExecutionRunClassSchema,
@@ -220,6 +221,8 @@ export const ExecutionRunPublicStateSchema = lazyZodSchema(() => z.looseObject({
   backendTarget: BackendTargetRefSchema,
   display: z.optional(ExecutionRunDisplaySchema),
   launchOrigin: z.optional(ExecutionRunLaunchOriginSchema),
+  profileId: z.optional(z.string().check(z.minLength(1))),
+  profileSourceCustody: z.optional(PluginSourceCustodyV1Schema),
   requestedConfiguration: z.optional(ExecutionRunRequestedConfigurationSchema),
   resolvedSelection: z.optional(ExecutionRunResolvedSelectionSchema),
   // Policy/class fields are required for client surfaces (e.g. to decide if send/resume controls apply).

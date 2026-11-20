@@ -5872,6 +5872,7 @@ export type DeploymentsActionInputById = {
     readonly "deployments.receipts.list": {
         environmentId: string;
         serverId: string;
+        teardownRequestKey?: string | undefined;
         state?: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded' | undefined;
         actorAccountId?: string | undefined;
         requestedAtFromMs?: number | undefined;

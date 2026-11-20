@@ -1104,6 +1104,7 @@ export type SessionAuthoringActionInputById = {
                         };
                         definitionId?: string | undefined;
                     };
+                    spokenModelName?: string | undefined;
                     modelSelectionInput?: undefined | {
                         modelId: string;
                         updatedAt: number;
@@ -3868,6 +3869,7 @@ export type SessionAuthoringActionInputById = {
                     };
                     definitionId?: string | undefined;
                 };
+                spokenModelName?: string | undefined;
                 modelSelectionInput?: undefined | {
                     modelId: string;
                     updatedAt: number;

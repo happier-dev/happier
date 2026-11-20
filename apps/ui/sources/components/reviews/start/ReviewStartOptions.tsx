@@ -8,24 +8,12 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
-import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { t } from '@/text';
 
 import { ReviewLabel } from '../ReviewLabel';
 
-/**
- * A paid engine's own estimate (P01's engine contract) as the start's consent: the row binds the shipped
- * `confirmedCostWarning` for this start only, so it is never a saved preference.
- */
-export type ReviewStartCostConsent = Readonly<{
-  id: string;
-  engine: string;
-  title: string;
-  description?: string;
-  estimate?: string;
-  accepted: boolean;
-  onAcceptedChange: (accepted: boolean) => void;
-}>;
+import { ReviewCostConsentRows, type ReviewStartCostConsent } from './ReviewCostConsentRows';
+export type { ReviewStartCostConsent } from './ReviewCostConsentRows';
 
 export type ReviewStartOptionsProps = Readonly<{
   then: 'report' | 'fix';
@@ -176,26 +164,7 @@ export function ReviewStartOptions(props: ReviewStartOptionsProps) {
           />
         ))}
       </ExpandableItem>
-      {costs.map((cost, index) => (
-        <Item
-          key={cost.id}
-          testID={index === 0 ? 'review-start-cost-consent' : `review-start-cost-consent:${cost.id}`}
-          leftElement={
-            <SelectionCheckGlyph
-              state={cost.accepted ? 'checked' : 'unchecked'}
-            />
-          }
-          title={cost.title}
-          subtitle={cost.description ?? t('reviewWalkthrough.start.billedTo', {
-            engine: cost.engine,
-          })}
-          accessibilityRole="checkbox"
-          accessibilityChecked={cost.accepted}
-          onPress={() => cost.onAcceptedChange(!cost.accepted)}
-          disabled={props.disabled}
-          showChevron={false}
-        />
-      ))}
+      <ReviewCostConsentRows costs={costs} disabled={props.disabled} />
     </View>
   );
 }

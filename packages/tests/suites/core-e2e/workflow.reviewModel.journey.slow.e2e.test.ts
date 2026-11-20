@@ -442,11 +442,11 @@ else {
       name: 'Native review with workspace writes', workspaceWrites: 'allow' } });
     return roleId;
   }
-  async function stopNativeRound(firstRunId: string, audit: string, isWaiting: (args: string[]) => boolean) {
+  async function stopNativeRound(firstRunId: string, audit: string, isWaiting: (args: string[]) => boolean, costConsent?: boolean) {
     await writeFile(nativeHoldPath, 'hold native process until Stop');
     const previousLines = (await readFile(audit, 'utf8')).trim().split('\n').length;
     const next = ReviewNativeNewRoundResultV1Schema.parse(await act(REVIEW_NEW_ROUND_ACTION_ID_V1, {
-      runId: firstRunId, target: { kind: 'detached' },
+      runId: firstRunId, target: { kind: 'detached' }, ...(costConsent ? { costConsent: true } : {}),
     }));
     await waitFor(async () => (await readFile(audit, 'utf8')).trim().split('\n').slice(previousLines)
       .some(line => isWaiting((JSON.parse(line) as { args: string[] }).args)),
@@ -477,7 +477,7 @@ else {
     for (const round of [1, 2]) {
       if (round === 2) {
         const next = ReviewNativeNewRoundResultV1Schema.parse(await act(REVIEW_NEW_ROUND_ACTION_ID_V1, {
-          runId: firstRunId, target: { kind: 'detached' },
+          runId: firstRunId, target: { kind: 'detached' }, costConsent: true,
         }));
         expect(next.reviewRound).toEqual({ reviewId, roundOrdinal: 2 });
         await act('execution.run.wait', { runId: next.runId, condition: 'terminal' });
@@ -504,7 +504,7 @@ else {
       expect(new Set(commands.slice(start, start + 3).map(command => command.dataRoot)).size).toBe(1);
       expect(commands[start]?.dataRoot).toBeTruthy();
     }
-    await stopNativeRound(firstRunId, deepSecAuditPath, args => args[0] === 'scan');
+    await stopNativeRound(firstRunId, deepSecAuditPath, args => args[0] === 'scan', true);
   });
   it('F2 CodeRabbit preserves findings through public Actions, New round and Stop and refuses a different captured head', async () => {
     // CodeRabbit's native uncommitted mode covers the whole working tree;

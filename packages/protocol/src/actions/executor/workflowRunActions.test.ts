@@ -3309,6 +3309,52 @@ describe('shared Account workflow run owner', () => {
     await expect(owner.execute({ actionId: 'workflow.run.start', input, context: actionContext }))
       .resolves.toMatchObject({ admission: 'existing' });
   });
+  it.each([undefined, false, true])('carries fresh paid consent separately from retained options for direct Another round (%s)', async consent => {
+    if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+    const rounds = { ...definition, inputs: [
+      { name: 'reviewInput', valueType: 'json' as const, required: false },
+      { name: 'previousRoundContext', valueType: 'json' as const, required: false },
+    ] };
+    const reviewInput = { scope: 'repository', instructions: 'Review.', profileId: 'paid-profile',
+      profileSourceCustody: { kind: 'development', registeredRootId: 'paid-root' },
+      acceptCharge: true, engines: { paid: { acceptCharge: true, effort: 'high' } }, reviewers: [
+      { kind: 'engine', engineId: 'paid', options: { acceptCharge: true, effort: 'high' } },
+      { kind: 'engine', engineId: 'free', profileId: 'free-profile',
+        profileSourceCustody: { kind: 'development', registeredRootId: 'free-root' }, options: { effort: 'low' } },
+    ] };
+    const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...acceptedSnapshotResult.snapshot,
+      definition: rounds, authoredDefinition: rounds, inputs: { reviewInput } });
+    const original = { ...runSnapshot(), run: { ...runSnapshot().run, state: 'succeeded' },
+      acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId }, acceptedSnapshot: accepted,
+      })) };
+    let writes = 0;
+    let admitted = '';
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') {
+        if (operation.runId === runId) return original;
+        throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      }
+      if (operation.operation === 'invocations.list') return { invocations: [] };
+      if (operation.operation === 'admit') { writes++; admitted = String(operation.acceptedEnvelope); return { ...runSnapshot(), kind: 'created' }; }
+      throw new Error('unexpected_storage_operation');
+    } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const request = { actionId: 'workflow.run.start' as const, input: WorkflowRunStartRequestV1Schema.parse({
+      runId: '22222222-2222-4222-8222-222222222222', source: { kind: 'inline', definition: rounds,
+        replay: { runId, intent: 'another_round', ...(consent === undefined ? {} : { costConsent: consent }) } },
+    }), context: { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default', serverId: 'home',
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } };
+    await expect(owner.execute(request)).resolves.toMatchObject({ admission: 'created' });
+    expect(writes).toBe(1);
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: request.input.runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(admitted) });
+    expect(opened).toMatchObject({ kind: 'available', content: { inputs: { reviewInput,
+      previousRoundContext: { costConsent: consent === true },
+    } } });
+  });
   it.each(['succeeded', 'cancelled'] as const)('starts Another round from a %s source with accepted inputs and durable outcomes, and rejoins the same new Run', async state => {
     if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
     const discussion = { discussion: { serverId: 'home', discussionId: 'discussion-1' }, messageId: 'question-1', throughSeq: 7 };

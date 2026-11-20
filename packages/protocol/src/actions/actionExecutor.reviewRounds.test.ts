@@ -9,8 +9,65 @@ import { WorkflowRunStartRequestV1Schema } from '../workflows/actionsV1.js';
 import { resolveWorkflowActionFieldBinding } from '../../../../apps/cli/src/daemon/workflows/input.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { createScmCapabilities } from '../scm/index.js';
+import { buildReviewStepsWorkflowV1 } from '../workflows/builtins/reviewAndConverge.js';
+import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { readWorkflowActionFieldTextEncodingV1 } from '../workflows/workflowActionTextV1.js';
 
 describe('Review round preparation', () => {
+  it.each([null, false, true, 'retained-graph'] as const)('uses fresh paid consent at the actual Workflow engine leaf (%s)', async choice => {
+    const records = createInMemoryReviewRecordPortV1();
+    const firstRound = await records.start({ reviewId: 'paid-workflow', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'workflow', reviewerIds: ['step-1-reviewer-1'], startedAt: 1 });
+    if (choice !== null) await records.settle({ ...firstRound, outcome: 'completed', finishedAt: 2, runs: [] });
+    const reviewInput = ReviewStartInputSchema.parse({ sessionId: 'target-session', scope: 'repository',
+      instructions: 'Find defects.', profileId: 'paid-profile',
+      profileSourceCustody: { kind: 'development', registeredRootId: 'paid-root' }, acceptCharge: true,
+      engines: { codex: { acceptCharge: true, effort: 'high' } },
+      reviewers: [{ kind: 'engine', engineId: 'codex', options: { acceptCharge: true, effort: 'high' } }] });
+    const built = buildReviewStepsWorkflowV1(reviewInput, firstRound);
+    const inputs = { ...built.inputs, previousRoundContext: choice === null ? null
+      : { runId: 'previous-run', state: 'succeeded', outcomes: [], costConsent: choice === true } };
+    const prepare = built.definition.blocks.find(block => block.kind === 'action' && block.id === 'prepare');
+    const stage = built.definition.blocks.find(block => block.kind === 'parallel');
+    const leaf = stage?.kind === 'parallel' ? stage.branches[0]?.blocks[0] : undefined;
+    if (prepare?.kind !== 'action' || leaf?.kind !== 'action') throw new Error('Expected the actual Review engine graph');
+    const runtime = { inputs, resolveResult: async () => { throw new Error('No earlier result'); },
+      resolveWorkspace: async () => { throw new Error('No workspace reference'); } };
+    const preparedInput = Object.fromEntries(await Promise.all(Object.entries(prepare.input ?? {}).map(async ([key, binding]) =>
+      [key, await resolveWorkflowActionFieldBinding(binding, runtime)])));
+    const prepared = await prepareReviewRoundV1(ReviewPrepareRoundInputV1Schema.parse(preparedInput), {
+      reviewRecords: records, startedAt: 3, captureComparison: async () => { throw new Error('Repository review'); },
+    });
+    const leafInput = Object.fromEntries(await Promise.all(Object.entries(leaf.input ?? {})
+      .filter(([key]) => choice !== 'retained-graph' || key !== 'newRoundCostConsent')
+      .map(async ([key, binding]) => [key, await resolveWorkflowActionFieldBinding(binding, {
+        ...runtime, resolveResult: async () => StrictJsonValueSchema.parse(prepared),
+      }, undefined, readWorkflowActionFieldTextEncodingV1(null, key))])));
+    let inventoryReads = 0;
+    const starts: unknown[] = [];
+    const executor = createActionExecutor({
+      reviewEnginesList: async input => {
+        inventoryReads++;
+        expect(input.profileSelections).toEqual([{ engineId: 'codex', profileId: 'paid-profile',
+          profileSourceCustody: { kind: 'development', registeredRootId: 'paid-root' } }]);
+        return { items: [], selectionItems: [{ engineId: 'codex', value: 'codex', label: 'Paid reviewer', enabled: true,
+          profileId: 'paid-profile', capabilities: { structuredNarration: false },
+          costConsent: { optionKey: 'acceptCharge', title: 'Approve paid review' } }] };
+      },
+      executionRunStart: async (_sessionId, input) => {
+        starts.push(input);
+        return { runId: 'engine-run', callId: 'call', sidechainId: 'sidechain' };
+      },
+    });
+    expect(await executor.execute('review.start', leafInput, { surface: 'ui' })).toMatchObject({ ok: true });
+    expect(starts).toHaveLength(1);
+    expect(starts[0]).toMatchObject({ profileId: 'paid-profile', intentInput: {
+      acceptCharge: choice === null || choice === true,
+      engines: { codex: { acceptCharge: choice === null || choice === true, effort: 'high' } },
+    } });
+    expect(inventoryReads).toBe(1);
+  });
   it('consumes the initially admitted comparison without resolving its Machine again', async () => {
     const records = createInMemoryReviewRecordPortV1();
     const comparison = { id: 'f'.repeat(64), source: { kind: 'workingTree' as const, area: 'pending' as const },

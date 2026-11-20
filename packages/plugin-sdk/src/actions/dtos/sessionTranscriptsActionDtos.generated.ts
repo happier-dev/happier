@@ -514,6 +514,19 @@ export type SessionTranscriptsActionResultById = {
                 affectsUnread: boolean;
                 affectsMeaningfulActivity: boolean;
             };
+            toolOutputAvailability?: undefined | {
+                status: 'available';
+            } | {
+                status: 'expired';
+                days: number;
+            };
+            toolOutputPart?: undefined | {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
             updatedAt?: number | undefined;
             sourceCreatedAt?: number | undefined;
             sourceUpdatedAt?: number | undefined;
@@ -1173,6 +1186,19 @@ export type SessionTranscriptsActionResultById = {
             attentionImpact?: undefined | {
                 affectsUnread: boolean;
                 affectsMeaningfulActivity: boolean;
+            };
+            toolOutputAvailability?: undefined | {
+                status: 'available';
+            } | {
+                status: 'expired';
+                days: number;
+            };
+            toolOutputPart?: undefined | {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             updatedAt?: number | undefined;
             sourceCreatedAt?: number | undefined;

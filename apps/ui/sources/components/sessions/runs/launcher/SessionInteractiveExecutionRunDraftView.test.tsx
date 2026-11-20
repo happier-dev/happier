@@ -871,7 +871,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         reviewCostEngineId = engineId;
         if (engineId === 'deepsec') backends.deepsec = { available: true, intents: ['review'] };
         reviewCostConsent = engineId === 'deepsec'
-            ? { optionKey: 'confirmedCostWarning', title: 'Accept DeepSec estimate', description: 'Some review scopes can be expensive. Accept the cost warning for this start only; never saved as a preference.' }
+            ? { optionKey: 'confirmedCostWarning', title: 'Accept DeepSec charges', description: 'Every DeepSec review uses paid model access. Accept the charges for this start only; never saved as a preference.' }
             : { optionKey: 'confirmedCostWarning', title: 'Paid analysis', description: 'Charged by the engine' };
         const reviewers = [
             { kind: 'engine', engineId, modelId: 'chosen-model', options: { existing: 'retained' } },

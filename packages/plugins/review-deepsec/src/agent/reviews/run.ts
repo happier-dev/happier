@@ -6,7 +6,7 @@ import type {
 } from '@happier-dev/plugin-sdk/exec';
 
 import { buildDeepSecCommand, type DeepSecReviewMode, type DeepSecThinkingLevel } from './command.js';
-import { buildDeepSecCostWarning, type DeepSecCostWarningInput, type DeepSecCostWarningResult } from './costWarning.js';
+import { buildDeepSecCostWarning, type DeepSecCostWarningResult } from './costWarning.js';
 import { resolveDeepSecExecutable } from './executable.js';
 import { checkDeepSecReadiness, type DeepSecReadiness } from './readiness.js';
 import type { DeepSecProviderRoute } from '../providerBinding.js';
@@ -87,7 +87,6 @@ export type RunDeepSecReviewParams = Readonly<{
   /** Workspace-relative paths already admitted by the host filesystem. */
   selectedFiles?: readonly string[];
   confirmedCostWarning: boolean;
-  cost?: Omit<DeepSecCostWarningInput, 'mode'>;
   preferredExecutablePath?: string | null;
   exec: Pick<ExecService, 'systemTools' | 'run'>;
   tempFiles: DeepSecTempFiles;
@@ -201,8 +200,8 @@ export async function runDeepSecReview(params: RunDeepSecReviewParams): Promise<
     const selectedFiles = params.mode === 'selected_files' || params.mode === 'current_diff'
       ? selectedFilesForNativeList(params.selectedFiles)
       : undefined;
-    const warning = buildDeepSecCostWarning({ mode: params.mode, ...(params.cost ?? {}) });
-    if (warning.status === 'requires_confirmation' && !params.confirmedCostWarning) {
+    const warning = buildDeepSecCostWarning({ mode: params.mode, confirmedCostWarning: params.confirmedCostWarning });
+    if (warning.status === 'requires_confirmation') {
       return { status: 'requires_confirmation', warning };
     }
 

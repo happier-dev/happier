@@ -1013,6 +1013,7 @@ export type IntentStartActionInputById = {
             };
             reviewReviewerId?: string | undefined;
             reviewRoundSettlement?: 'execution' | 'workflow' | undefined;
+            newRoundCostConsent?: boolean | null | undefined;
             scope?: 'changes' | 'repository' | undefined;
             sourceSession?: undefined | {
                 serverId: string;
@@ -1586,16 +1587,19 @@ export type IntentStartActionInputById = {
         reviewId: string;
     } | {
         runId: string;
+        costConsent?: boolean | undefined;
+    } | {
+        runId: string;
         sessionId: string;
         fresh?: boolean | undefined;
+        costConsent?: boolean | undefined;
     } | {
         runId: string;
         target: {
             kind: 'detached';
         };
         fresh?: boolean | undefined;
-    } | {
-        runId: string;
+        costConsent?: boolean | undefined;
     };
     readonly "review.start": {
         [x: string]: unknown;
@@ -2367,6 +2371,7 @@ export type IntentStartActionInputById = {
         };
         reviewReviewerId?: string | undefined;
         reviewRoundSettlement?: 'execution' | 'workflow' | undefined;
+        newRoundCostConsent?: boolean | null | undefined;
         scope?: 'changes' | 'repository' | undefined;
         sourceSession?: undefined | {
             serverId: string;
@@ -2841,6 +2846,7 @@ export type IntentStartActionResultById = {
             reviewId: string;
             roundOrdinal: number;
         };
+        newRoundCostConsent?: boolean | null | undefined;
         inlineThreshold?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
         comparisonId?: string | undefined;
         comparison?: undefined | {
@@ -3056,6 +3062,32 @@ export type IntentStartActionResultById = {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
+                    };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
@@ -3875,6 +3907,32 @@ export type IntentStartActionResultById = {
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
                     };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
+                    };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
@@ -4691,6 +4749,32 @@ export type IntentStartActionResultById = {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
+                    };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
@@ -5509,6 +5593,32 @@ export type IntentStartActionResultById = {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
+                    };
+                    profileId?: string | undefined;
+                    profileSourceCustody?: undefined | {
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
+                    } | {
+                        kind: 'bundled_first_party';
+                        packagedRuntime: {
+                            kind: 'cli_version_root';
+                            versionRootId: string;
+                        } | {
+                            kind: 'pinned_runner_snapshot';
+                            snapshotId: string;
+                        } | {
+                            kind: 'source_declaration';
+                            packageName: string;
+                        };
+                    } | {
+                        kind: 'development';
+                        registeredRootId: string;
+                    } | {
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'git' | 'localPath' | 'npm';
                     };
                     requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
@@ -6342,6 +6452,7 @@ export type IntentStartActionResultById = {
             reviewId: string;
             roundOrdinal: number;
         };
+        newRoundCostConsent?: boolean | null | undefined;
         inlineThreshold?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
         comparisonId?: string | undefined;
         comparison?: undefined | {

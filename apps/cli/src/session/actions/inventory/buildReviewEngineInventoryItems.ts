@@ -22,6 +22,7 @@ import type {
   ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
 
+import { readReviewProfileCostConsent } from '@/agent/executionRuns/profiles/review/costConsent';
 import { buildConfiguredAcpBackendInventoryItems } from './buildAgentBackendInventoryItems';
 
 export type ActionReviewEngineInventoryItem = ReviewEngineListItem & Readonly<{
@@ -92,19 +93,13 @@ function resolveReviewProfileFacts(
 } {
   const selected = catalog ? resolveExecutionRunProfileSelectionForAgent(catalog, { intent: 'review', agentId, ...selection }) : null;
   const profile = selected && catalog ? resolveExecutionRunProfileContributionDescriptor(catalog, selected.profileId) : null;
-  const consentOptionKey = readTrimmedString(profile?.metadata?.reviewCostConsentOption);
-  const consentOption = profile?.optionsSchema?.properties?.[consentOptionKey];
-  const consentTitle = readTrimmedString(consentOption?.title);
-  const consentDescription = readTrimmedString(consentOption?.description);
+  const costConsent = readReviewProfileCostConsent(profile);
   const declaredScopes = profile?.metadata?.reviewScopes;
   const reviewScopes = Array.isArray(declaredScopes)
     ? declaredScopes.filter((scope): scope is ReviewEngineScope => ReviewEngineScopeSchema.safeParse(scope).success)
     : [...ReviewEngineScopeSchema.options];
   return { reviewScopes, retentionPolicy: profile?.defaults.retention ?? 'resumable',
-    ...(consentOption?.type === 'boolean' && consentTitle ? { costConsent: {
-      optionKey: consentOptionKey, title: consentTitle,
-      ...(consentDescription ? { description: consentDescription } : {}),
-    } } : {}),
+    ...(costConsent ? { costConsent } : {}),
     sessionTranscript: profile?.metadata?.reviewInstructionsInput !== 'unsupported',
     ...(selected ? { profileId: selected.profileId,
       ...(selected.profileSourceCustody ? { profileSourceCustody: selected.profileSourceCustody } : {}) } : {}) };

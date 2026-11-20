@@ -506,6 +506,7 @@ export type SessionLifecycleActionInputById = {
             };
             definitionId?: string | undefined;
         };
+        spokenModelName?: string | undefined;
         modelSelectionInput?: undefined | {
             modelId: string;
             updatedAt: number;

@@ -17,6 +17,7 @@ import type {
   CustomModalInjectedProps,
 } from '@/modal/types';
 import { t } from '@/text';
+import { ReviewCostConsentRows } from '../start/ReviewCostConsentRows';
 
 /** A reviewer of the round being repeated, with what happens to it in the new round (from the round owner). */
 export type ReviewNewRoundReviewer = Readonly<{
@@ -25,9 +26,10 @@ export type ReviewNewRoundReviewer = Readonly<{
   mark: React.ReactNode | null;
   continuity: 'continues' | 'fresh' | 'asked_again' | 'unavailable';
   required?: boolean;
+  costConsent?: Readonly<{ title: string; description?: string }>;
 }>;
 
-export type ReviewNewRoundStart = () => Promise<
+export type ReviewNewRoundStart = (costConsent: boolean) => Promise<
   Readonly<{ ok: true } | { ok: false; message: string }>
 >;
 
@@ -62,17 +64,23 @@ function continuityLabel(reviewer: ReviewNewRoundReviewer): string {
 export function ReviewNewRoundDialog(
   props: ReviewNewRoundDialogProps,
 ): React.ReactElement {
+  const [acceptedCosts, setAcceptedCosts] = React.useState<ReadonlySet<string>>(() => new Set());
+  const costs = props.reviewers.flatMap(reviewer => reviewer.costConsent ? [{ id: reviewer.id, engine: reviewer.label,
+    ...reviewer.costConsent, accepted: acceptedCosts.has(reviewer.id), onAcceptedChange: (accepted: boolean) =>
+      setAcceptedCosts(previous => { const next = new Set(previous); if (accepted) next.add(reviewer.id); else next.delete(reviewer.id); return next; }) }] : []);
+  const costsAccepted = costs.every(cost => cost.accepted);
   const [busy, setBusy] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
   const { onStart, onClose } = props;
   const start = React.useCallback(async () => {
     setBusy(true);
     setFailure(null);
-    const result = await onStart();
+    const result = await onStart(costs.length > 0 && costsAccepted);
+    setAcceptedCosts(new Set());
     setBusy(false);
     if (result.ok) onClose();
     else setFailure(result.message);
-  }, [onClose, onStart]);
+  }, [costs.length, costsAccepted, onClose, onStart]);
   const chrome = React.useMemo(
     (): CustomModalChromeCardConfig => ({
       kind: 'card',
@@ -101,7 +109,7 @@ export function ReviewNewRoundDialog(
             testID="review-new-round:start"
             title={t('reviewWalkthrough.detail.startRound')}
             loading={busy}
-            disabled={busy || props.ready === false}
+            disabled={busy || props.ready === false || !costsAccepted}
             onPress={() => {
               void start();
             }}
@@ -109,7 +117,7 @@ export function ReviewNewRoundDialog(
         </ModalCardFooterActions>
       ),
     }),
-    [busy, failure, onClose, props.ready, props.reason, start],
+    [busy, costsAccepted, failure, onClose, props.ready, props.reason, start],
   );
   useModalCardChrome(props.setChrome, chrome);
   return (
@@ -130,6 +138,7 @@ export function ReviewNewRoundDialog(
           />
         ))}
       </ItemGroup>
+      <ReviewCostConsentRows costs={costs} disabled={busy} />
       {props.onFresh ? <TextLinkButton testID="review-new-round:fresh" label={t('reviewWalkthrough.detail.startsFresh')}
         onPress={() => { setFailure(null); props.onFresh?.(); }} /> : null}
       {props.onRetry ? <TextLinkButton testID="review-new-round:retry" label={t('common.retry')}

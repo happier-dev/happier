@@ -172,6 +172,7 @@ export type SessionBoardActionInputById = {
                                     visibleWhenContextSlot?: string | undefined;
                                     requiredWhen?: unknown;
                                     disabledWhen?: unknown;
+                                    optionsDraftDependencies?: readonly string[] | undefined;
                                     optionsSourceId?: string | undefined;
                                     connectedAccountOptions?: true | undefined;
                                     resolvedEmptyConnectedAccountOptions?: true | undefined;
@@ -530,6 +531,7 @@ export type SessionBoardActionResultById = {
                                         visibleWhenContextSlot?: string | undefined;
                                         requiredWhen?: InputPredicate | undefined;
                                         disabledWhen?: InputPredicate | undefined;
+                                        optionsDraftDependencies?: readonly string[] | undefined;
                                         optionsSourceId?: string | undefined;
                                         connectedAccountOptions?: true | undefined;
                                         resolvedEmptyConnectedAccountOptions?: true | undefined;

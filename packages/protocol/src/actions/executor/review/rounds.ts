@@ -84,7 +84,8 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
       const context = detached ? { ...inv.ctx, executionRunTargetMachineId: inv.ctx.externalActionTarget?.kind === 'machine'
         ? inv.ctx.externalActionTarget.machineId : inv.ctx.executionRunTargetMachineId } : inv.ctx;
       const response = await inv.executeHostChild('execution.run.action', { sessionId, runId: input.runId,
-        actionId: REVIEW_NEW_ROUND_ACTION_ID_V1, input: { ...(input.fresh === undefined ? {} : { fresh: input.fresh }) } }, context);
+        actionId: REVIEW_NEW_ROUND_ACTION_ID_V1, input: { ...(input.fresh === undefined ? {} : { fresh: input.fresh }),
+          ...(input.costConsent === undefined ? {} : { costConsent: input.costConsent }) } }, context);
       if (!response.ok) return response;
       const result = readReviewRunActionPayload(response.result);
       return readActionFailureEnvelope(result) ?? { ok: true, result };
@@ -93,7 +94,8 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
     if (!prior.ok) return prior;
     const opened = WorkflowRunGetResultV1Schema.parse(prior.result);
     const prepared = prepareWorkflowRunStartV1({ definition: opened.authoredDefinition, acceptedContext: opened.acceptedContext,
-      replay: { runId: input.runId, intent: 'another_round' } });
+      replay: { runId: input.runId, intent: 'another_round',
+        ...(input.costConsent === undefined ? {} : { costConsent: input.costConsent }) } });
     return await inv.executeHostChild('workflow.run.start', {
       runId: globalThis.crypto.randomUUID(), source: prepared.source, inputs: prepared.inputs,
       ...(prepared.executionTarget ? { executionTarget: prepared.executionTarget } : {}),

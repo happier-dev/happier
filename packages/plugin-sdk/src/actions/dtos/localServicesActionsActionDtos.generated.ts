@@ -588,6 +588,9 @@ export type LocalServicesActionsActionResultById = {
                     runId: string;
                     invocationId: string;
                 };
+                handoffRecovery?: undefined | {
+                    kind: 'session_handoff_source_stopped';
+                };
                 details?: undefined | {
                     authorityReason: 'descriptor' | 'descriptor_identity' | 'destination' | 'destination_not_allowed' | 'identity' | 'target';
                     authorityPhase: 'authenticated' | 'controller_approval' | 'first_contact' | 'post_claim';

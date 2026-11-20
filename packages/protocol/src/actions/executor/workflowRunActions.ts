@@ -1128,6 +1128,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         || (input.inputs !== undefined && !sameStrictJsonValue(input.inputs, replaySource.accepted.inputs))) {
         throw workflowError('invalid_input');
       }
+      const previousInputs = replaySource.accepted.inputs;
       // Existing authorized invocation readers own paging, encryption and exact attempts.
       // Only committed results are included; private held drafts and execution credentials never become context.
       const graph = await readInvocationGraph(replayRequest.runId, replaySource, args.context.signal);
@@ -1139,8 +1140,9 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
           ...(progress.result === undefined ? {} : { result: progress.result }),
           ...(progress.reason === undefined ? {} : { reason: progress.reason }),
         }));
-      startInputs = { ...replaySource.accepted.inputs,
-        [WORKFLOW_PREVIOUS_ROUND_CONTEXT_INPUT_V1]: StrictJsonValueSchema.parse({ runId: replayRequest.runId, state: replaySource.snapshot.run.state, outcomes }) };
+      startInputs = { ...previousInputs,
+        [WORKFLOW_PREVIOUS_ROUND_CONTEXT_INPUT_V1]: StrictJsonValueSchema.parse({ runId: replayRequest.runId,
+          state: replaySource.snapshot.run.state, outcomes, costConsent: replayRequest.costConsent === true }) };
     }
     if (replaySource) {
       assertRunResourceRestriction(args.context, { machineId: replaySource.accepted.machineId,

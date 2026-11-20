@@ -14286,6 +14286,15 @@ admission decision. The engine's existing warning owner decides whether an
 unchecked start requires confirmation before launching vendor work. Hosts keep
 the value in the draft's engine options and never save it as a preference.
 
+DeepSec requires this acknowledgement for every paid launch, including a small
+current diff or a new round. Its existing cost-warning owner consumes admitted
+`confirmedCostWarning` once before vendor work; no file-count or byte-size
+threshold estimates the price. The generic launcher presents the consent option
+declared by the selected profile.
+`review.new_round` and direct Workflow replay carry fresh `costConsent`; the
+previous round's engine options cannot supply consent for the next launch. The
+existing New round confirmation presents the selected profile's cost option.
+
 ### Native review scope preflight (0.3 development)
 
 CodeRabbit's adapter preflight consumes the host SCM Action's checkout facts

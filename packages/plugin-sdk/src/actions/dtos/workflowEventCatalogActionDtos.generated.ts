@@ -100,6 +100,7 @@ export type WorkflowEventCatalogActionResultById = {
                         visibleWhenContextSlot?: string | undefined;
                         requiredWhen?: InputPredicate | undefined;
                         disabledWhen?: InputPredicate | undefined;
+                        optionsDraftDependencies?: readonly string[] | undefined;
                         optionsSourceId?: string | undefined;
                         connectedAccountOptions?: true | undefined;
                         resolvedEmptyConnectedAccountOptions?: true | undefined;
@@ -175,6 +176,7 @@ export type WorkflowEventCatalogActionResultById = {
                         visibleWhenContextSlot?: string | undefined;
                         requiredWhen?: InputPredicate | undefined;
                         disabledWhen?: InputPredicate | undefined;
+                        optionsDraftDependencies?: readonly string[] | undefined;
                         optionsSourceId?: string | undefined;
                         connectedAccountOptions?: true | undefined;
                         resolvedEmptyConnectedAccountOptions?: true | undefined;

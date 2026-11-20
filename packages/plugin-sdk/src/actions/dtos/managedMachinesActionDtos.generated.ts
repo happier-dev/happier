@@ -3749,6 +3749,7 @@ export type ManagedMachinesActionInputById = {
                         inspect: string;
                         destroy: string;
                     };
+                    cliPayloadDelivery?: 'guest-download' | undefined;
                 };
             };
             prices?: undefined | {
@@ -14246,6 +14247,7 @@ export type ManagedMachinesActionResultById = {
                         inspect: string;
                         destroy: string;
                     };
+                    cliPayloadDelivery?: 'guest-download' | undefined;
                 };
             };
             credentialPurposes?: undefined | {
@@ -15836,6 +15838,7 @@ export type ManagedMachinesActionResultById = {
                             inspect: string;
                             destroy: string;
                         };
+                        cliPayloadDelivery?: 'guest-download' | undefined;
                     };
                 };
                 prices?: undefined | {
@@ -16837,6 +16840,7 @@ export type ManagedMachinesActionResultById = {
                         inspect: string;
                         destroy: string;
                     };
+                    cliPayloadDelivery?: 'guest-download' | undefined;
                 };
             };
             prices?: undefined | {
@@ -19029,6 +19033,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -20209,6 +20214,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -23135,6 +23141,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -24315,6 +24322,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -25819,6 +25827,7 @@ export type ManagedMachinesActionResultById = {
                             inspect: string;
                             destroy: string;
                         };
+                        cliPayloadDelivery?: 'guest-download' | undefined;
                     };
                 };
                 prices?: undefined | {
@@ -26858,6 +26867,7 @@ export type ManagedMachinesActionResultById = {
                             inspect: string;
                             destroy: string;
                         };
+                        cliPayloadDelivery?: 'guest-download' | undefined;
                     };
                 };
                 prices?: undefined | {
@@ -27867,6 +27877,7 @@ export type ManagedMachinesActionResultById = {
                         inspect: string;
                         destroy: string;
                     };
+                    cliPayloadDelivery?: 'guest-download' | undefined;
                 };
             };
             prices?: undefined | {
@@ -30059,6 +30070,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -31239,6 +31251,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -34165,6 +34178,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -35345,6 +35359,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -45753,6 +45768,7 @@ export type ManagedMachinesActionResultById = {
                         inspect: string;
                         destroy: string;
                     };
+                    cliPayloadDelivery?: 'guest-download' | undefined;
                 };
             };
             prices?: undefined | {
@@ -47945,6 +47961,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -49125,6 +49142,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -52051,6 +52069,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -53231,6 +53250,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -54776,6 +54796,7 @@ export type ManagedMachinesActionResultById = {
                         inspect: string;
                         destroy: string;
                     };
+                    cliPayloadDelivery?: 'guest-download' | undefined;
                 };
             };
             prices?: undefined | {
@@ -56968,6 +56989,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -58148,6 +58170,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -61074,6 +61097,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -62254,6 +62278,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -63726,6 +63751,7 @@ export type ManagedMachinesActionResultById = {
                         inspect: string;
                         destroy: string;
                     };
+                    cliPayloadDelivery?: 'guest-download' | undefined;
                 };
             };
             prices?: undefined | {
@@ -65918,6 +65944,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -67098,6 +67125,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -70024,6 +70052,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {
@@ -71204,6 +71233,7 @@ export type ManagedMachinesActionResultById = {
                                         inspect: string;
                                         destroy: string;
                                     };
+                                    cliPayloadDelivery?: 'guest-download' | undefined;
                                 };
                             };
                             prices?: undefined | {

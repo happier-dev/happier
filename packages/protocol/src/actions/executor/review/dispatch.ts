@@ -17,7 +17,7 @@ import { SESSION_TRANSCRIPT_GET_MAX_LIMIT, SessionTranscriptGetResultSchema } fr
 import { createPermissionPolicyResult, resolveAgentExecutionRunPermission } from '../callerContext.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_MODES } from '../../executionRunActionPermissionMode.js';
 import { tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions } from '../../../inputs/inputOptions.js';
-import { resolveReviewNarratorPolicy, type ReviewEngineScope } from '../../../reviews/reviewEngines.js';
+import { ReviewEngineInventorySchema, refreshReviewNewRoundCostConsentV1, resolveReviewNarratorPolicy, type ReviewEngineScope } from '../../../reviews/reviewEngines.js';
 import { bytesToHex, randomBytes } from '@noble/hashes/utils';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '../../../execution/runs/responseSchemas.js';
 import { REVIEW_SETTLE_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
@@ -410,6 +410,12 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           return { ok: true, result: { ...readRecord(started.result), reviewRound } };
         }
         if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        // Retained graphs lack the fresh binding; a later round must still clear prior acknowledgement.
+        if ((reviewInput.reviewRound?.roundOrdinal ?? 1) > 1 || typeof reviewInput.newRoundCostConsent === 'boolean') {
+          reviewEngineInventory ??= await readReviewEngineInventory();
+          reviewInput = refreshReviewNewRoundCostConsentV1(reviewInput,
+            ReviewEngineInventorySchema.parse(reviewEngineInventory), reviewInput.newRoundCostConsent === true);
+        }
         const engineSelections = reviewInput.reviewers.flatMap((selection, index) => selection.kind === 'engine'
           ? [{ selection, index, reviewerId: reviewInput.reviewReviewerId ?? reviewReviewerIdForSelectionV1(index) }] : []);
         const admittedEngineSelections = [];
