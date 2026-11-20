@@ -57,6 +57,8 @@ import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import { readProjectSetupLayers } from './projectSetupLayers';
 import { openProjectSharedSetupUpdate } from './ProjectSharedSetupUpdateSheet';
 import { PendingSharedSetupRow } from './PendingSharedSetupRow';
+import { useProjectSetupShareEntry } from './ProjectSetupShareSheet';
+import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
@@ -555,10 +557,14 @@ function DeclaredScripts(
   ) : undefined;
   const binding = props.binding ?? null;
   const decideSharedSetupUpdate = props.controller.decideSharedSetupUpdate;
-  const sharedMenu = props.page && sharedSourceId && binding ? (
-    <ProjectSetupHeaderMenu testID={`${props.testID}.more`} onCheckShared={() => openProjectSharedSetupUpdate({
-      workspace: props.workspace, binding, sourceId: sharedSourceId, sourceName: sharedName, machineName,
-      decide: decideSharedSetupUpdate })} />
+  const router = useRouter();
+  const openSource = React.useCallback((sourceId: string) => router.push(projectSourceRoute(sourceId)), [router]);
+  const share = useProjectSetupShareEntry(props.workspace, props.page ? binding : null, openSource);
+  const checkShared = props.page && sharedSourceId && binding ? () => openProjectSharedSetupUpdate({
+    workspace: props.workspace, binding, sourceId: sharedSourceId, sourceName: sharedName, machineName,
+    decide: decideSharedSetupUpdate }) : null;
+  const sharedMenu = props.page && (checkShared || share) ? (
+    <ProjectSetupHeaderMenu testID={`${props.testID}.more`} onShare={share} onCheckShared={checkShared} />
   ) : null;
   // Without a shared setup the header keeps its one action; the "…" joins it only when there is something to offer.
   const headerActions = sharedMenu ? <View style={styles.headerActions}>{editButton}{sharedMenu}</View> : editButton;
@@ -1571,20 +1577,23 @@ function PhoneSetupReviewPage(
   );
 }
 
-/** The header's "…" beside Edit project file (lab L6 menu): what you can do with a shared setup. */
+/** The header's "…" beside Edit project file (lab L6 menu): share this setup, or check the shared one. */
 const ProjectSetupHeaderMenu = React.memo(function ProjectSetupHeaderMenu(
-  props: Readonly<{ testID: string; onCheckShared: () => void }>,
+  props: Readonly<{ testID: string; onShare: (() => void) | null; onCheckShared: (() => void) | null }>,
 ) {
   const [open, setOpen] = React.useState(false);
+  const { onShare, onCheckShared } = props;
   const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => [
-    { id: 'checkShared', testID: `${props.testID}:checkShared`, title: t('projects.scripts.sharedUpdate.check'),
-      icon: <Icon name="arrows-clockwise" size={16} /> },
-  ], [props.testID]);
-  const { onCheckShared } = props;
+    ...(onShare ? [{ id: 'share', testID: `${props.testID}:share`, title: t('projects.scripts.share.menu'),
+      icon: <Icon name="users" size={16} /> }] : []),
+    ...(onCheckShared ? [{ id: 'checkShared', testID: `${props.testID}:checkShared`, title: t('projects.scripts.sharedUpdate.check'),
+      icon: <Icon name="arrows-clockwise" size={16} /> }] : []),
+  ], [props.testID, onShare, onCheckShared]);
   const select = React.useCallback((id: string) => {
     setOpen(false);
-    if (id === 'checkShared') onCheckShared();
-  }, [onCheckShared]);
+    if (id === 'share') onShare?.();
+    if (id === 'checkShared') onCheckShared?.();
+  }, [onShare, onCheckShared]);
   return (
     <DropdownMenu
       testID={`${props.testID}:menu`}

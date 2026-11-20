@@ -12,6 +12,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { randomUUID } from '@/platform/randomUUID';
 import { formatProjectSourceAddress } from './projectSourceAddress';
 import { resolveProjectSourceAddress, type ProjectSourceAddressMachines, type ProjectSourceAddressResolution, type ProjectSourceSaveDisabledReason } from './resolveProjectSourceAddress';
+import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 
 export type { ProjectSourceAddressMachines, ProjectSourceAddressResolution } from './resolveProjectSourceAddress';
 
@@ -49,6 +50,12 @@ export type ProjectSourcesState = Readonly<{
     addressSaveDisabledReason: ProjectSourceSaveDisabledReason | null;
 }>;
 
+/** Only the admitted management read exposes the complete recipient intent. */
+export function getProjectSourceSharingAudience(state: Pick<ProjectSourcesState, 'current' | 'canManage' | 'detailStatus'>): readonly PrincipalRefV1[] | undefined {
+    const source = state.current;
+    return source?.owner && state.canManage && state.detailStatus === 'ready'
+        ? [source.owner, ...source.audience.map(grant => grant.principal)] : undefined;
+}
 type Execute = (actionId: ActionId, input: unknown, context?: UiActionExecutorContext) => Promise<ActionExecuteResult>;
 export type ProjectSourcesCatalog = Readonly<{
     getSnapshot(): ProjectSourcesState;

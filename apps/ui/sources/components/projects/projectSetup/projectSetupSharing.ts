@@ -5,6 +5,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectManifestActionClient } from './projectManifestActionClient';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
+import { createProjectDefinitionOriginLookupV1, type ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
 
 export type ProjectSetupShareSelection = Readonly<{
     sections: readonly Exclude<keyof ProjectManifestV1, 'version' | 'scripts' | 'services'>[];
@@ -30,6 +31,8 @@ export type ProjectSetupSharingSnapshot = Readonly<{
     publication: Publication | null;
     pending: boolean;
     issue: string | null;
+    /** Declarations decided just for this person; the share leaves them out. */
+    personalOmitted: number;
 }>;
 
 /** Select declarations, never runtime assignments, private binding values, or unknown author fields. */
@@ -41,6 +44,32 @@ export function selectProjectSetupShareManifest(manifest: ProjectManifestV1, sel
         ...(selection.scripts.length ? { scripts: selectedEntries('scripts', selection.scripts) } : {}),
         ...(selection.services.length ? { services: selectedEntries('services', selection.services) } : {}),
     });
+}
+/**
+ * The shareable base: the composed definition without any declaration this person decided just for
+ * themselves. A personal change to a repository entry leaves that entry out rather than sharing either side.
+ */
+export function withoutPersonalProjectSetup(definition: Pick<ProjectEffectiveDefinitionV1, 'effectiveManifest' | 'origins'>) {
+    const manifest: ProjectManifestV1 = definition.effectiveManifest ?? { version: 1 };
+    const decider = createProjectDefinitionOriginLookupV1(definition);
+    let omitted = 0;
+    const personal = (path: readonly string[]) => {
+        const mine = decider(path)?.layer === 'personal';
+        if (mine) omitted += 1;
+        return mine;
+    };
+    const kept: Record<string, unknown> = { version: 1 };
+    for (const [field, value] of Object.entries(manifest)) {
+        if (field === 'version' || value === undefined) continue;
+        if (field === 'scripts' || field === 'services' || field === 'workspace') {
+            const entries = Object.entries(value as Record<string, unknown>).filter(([name]) => !personal([field, name]));
+            if (entries.length) kept[field] = Object.fromEntries(entries);
+        } else if (field === 'environmentVariables') {
+            const requirements = (value as NonNullable<ProjectManifestV1['environmentVariables']>).filter(requirement => !personal([field, requirement.name]));
+            if (requirements.length) kept[field] = requirements;
+        } else if (!personal([field])) kept[field] = value;
+    }
+    return { manifest: ProjectManifestV1Schema.parse(kept), omitted };
 }
 function allSelection(manifest: ProjectManifestV1): ProjectSetupShareSelection {
     return { sections: (Object.keys(manifest) as Array<keyof ProjectManifestV1>)
@@ -55,7 +84,7 @@ function preview(manifest: ProjectManifestV1, selection: ProjectSetupShareSelect
 /** Ephemeral sharing draft. The existing Artifact and Source Actions retain every custody/sharing decision. */
 export function createProjectSetupSharing(input: Readonly<{ client: ProjectManifestActionClient }>) {
     const initial: ProjectSetupSharingSnapshot = { status: 'initial', manifest: null, selection: null, preview: null,
-        warningAcknowledged: false, publication: null, pending: false, issue: null };
+        warningAcknowledged: false, publication: null, pending: false, issue: null, personalOmitted: 0 };
     let state = initial;
     let active = true;
     let loading: Promise<void> | null = null;
@@ -81,11 +110,11 @@ export function createProjectSetupSharing(input: Readonly<{ client: ProjectManif
                     const inspected = await input.client.inspect({ kind: 'editor' });
                     const effective = readProjectEffectiveDefinition(inspected);
                     if (effective.kind === 'unavailable') { publish({ ...state, status: 'unavailable', issue: effective.code }); return; }
-                    const manifest = effective.value.effectiveManifest ?? { version: 1 as const };
-                    if (state.manifest && sameStrictJsonValue(state.manifest, manifest)) publish({ ...state, status: 'ready' });
+                    const { manifest, omitted } = withoutPersonalProjectSetup(effective.value);
+                    if (state.manifest && sameStrictJsonValue(state.manifest, manifest)) publish({ ...state, status: 'ready', personalOmitted: omitted });
                     else {
                         const selection = allSelection(manifest);
-                        publish({ ...initial, status: 'ready', manifest, selection, preview: preview(manifest, selection) });
+                        publish({ ...initial, status: 'ready', manifest, selection, preview: preview(manifest, selection), personalOmitted: omitted });
                     }
                 } catch (error) { publish({ ...state, status: 'unavailable', issue: readActionErrorCodeV1(error) ?? 'action_failed' }); }
                 finally { loading = null; }

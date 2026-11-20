@@ -67,6 +67,29 @@ describe('Project setup share and selected review', () => {
     expect(owner.getSnapshot().publication).toBeNull();
   });
 
+  it('leaves every declaration decided just for this person out of the share and counts them', async () => {
+    const composed = { ...inspect, effectiveDefinition: { effectiveManifest: {
+      ...manifest, workspace: { setup: [{ kind: 'command', command: 'pnpm install' }], teardown: [{ kind: 'command', command: 'rm -rf .cache' }] },
+    }, origins: [
+      { path: ['toolchain'], layer: 'personal', overridden: false },
+      { path: ['environmentVariables', 'TOKEN'], layer: 'repository', overridden: false },
+      { path: ['workspace', 'setup'], layer: 'repository', overridden: false },
+      { path: ['workspace', 'teardown'], layer: 'personal', overridden: false },
+      { path: ['scripts', 'build'], layer: 'repository', overridden: true },
+      { path: ['scripts', 'build'], layer: 'personal', overridden: false },
+      { path: ['scripts', 'test'], layer: 'shared', overridden: false },
+      { path: ['services', 'web'], layer: 'repository', overridden: false },
+    ] } };
+    const owner = createProjectSetupSharing({ client: client({ projectDefinitionAction: async () => composed }) });
+    await owner.load();
+    const snapshot = owner.getSnapshot();
+    expect(snapshot.preview?.manifest).toEqual({ version: 1, environmentVariables: manifest.environmentVariables,
+      workspace: { setup: [{ kind: 'command', command: 'pnpm install' }] },
+      scripts: { test: manifest.scripts!.test }, services: manifest.services });
+    expect(snapshot.preview?.bytes).not.toContain('literal-secret');
+    expect(snapshot.personalOmitted).toBe(3);
+  });
+
   it('refuses an unavailable effective projection instead of exporting repository fallback bytes', async () => {
     const { effectiveDefinition: _effective, ...withoutProjection } = inspect;
     const owner = createProjectSetupSharing({ client: client({ projectDefinitionAction: async () => withoutProjection }) });

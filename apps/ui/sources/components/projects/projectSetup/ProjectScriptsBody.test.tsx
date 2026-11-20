@@ -75,6 +75,8 @@ const shared = vi.hoisted(() => ({
   requesterOperationReads: [] as Array<ReturnType<typeof ActionOperationGetActionInputV1Schema.parse>>,
   actionSettings: {} as Record<string, { approvalRequiredSurfaces: Array<'ui'> }>,
   navigate: vi.fn(),
+  /** The Home's Project Source routes (an HTTP boundary); unset answers like a Home without them. */
+  projectSources: null as null | ((method: string, path: string, body: unknown) => unknown),
 }));
 
 vi.mock('expo-router', async () => {
@@ -519,6 +521,8 @@ async function render(
         if (init?.method === 'PATCH' && result?.ok) host.authoredSession.writes?.push(host.authoredSession.id);
         return result;
       }
+      if (path.startsWith('/v1/projects/sources') && shared.projectSources)
+        return Response.json(await shared.projectSources(init?.method ?? 'GET', path, init?.body ? JSON.parse(String(init.body)) : undefined));
       if (path === '/v1/account/encryption')
         return Response.json({ mode: 'plain', updatedAt: 1 });
       if (path === '/v1/account/encryption/currentness')
@@ -2609,6 +2613,64 @@ describe('ProjectScriptsBody native environment states (plan 24 copy)', () => {
     await act(async () => screen.findAllByTestId('project-manifest-editor.toolchain')[0]?.props.onOpenChange(true));
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('projects.scripts.toolchain.empty'));
     expect(screen.findByTestId('project-manifest-editor.toolchain.checking')).toBeNull();
+  });
+});
+
+describe('Share setup from the Scripts header (plan A U3, lab L6 share)', () => {
+  it.each([
+    { canManage: true, items: ['share'] },
+    { canManage: false, items: [] },
+  ])('offers Share setup from the header only when this person manages the checkout Source (canManage $canManage)', async ({ canManage, items }) => {
+    isolateManifestDrafts();
+    let source = { id: 'src-own', name: 'acme/web', revision: 4, audience: [], createdByAccountId: 'account-1',
+      owner: { kind: 'account' as const, accountId: 'account-1' } };
+    const sourceRequests: Array<{ method: string; path: string; body: unknown }> = [];
+    shared.projectSources = (method, path, body) => {
+      sourceRequests.push({ method, path, body });
+      if (method === 'PATCH') { source = { ...source, revision: source.revision + 1 }; return { ok: true, source, canManage }; }
+      return { ok: true, source, canManage };
+    };
+    onTestFinished(() => { shared.projectSources = null; });
+    shared.inspection = { definition: presentDefinition(declared), detection, importCandidates: [],
+      // The Machine's composition: the repository file plus one script added just for this person.
+      effectiveDefinition: { effectiveManifest: { ...declared, version: 1,
+        scripts: { ...declared.scripts, mine: { source: { kind: 'command', command: 'just for me' } } } },
+      origins: [{ path: ['scripts', 'mine'], layer: 'personal', overridden: false }] } };
+    const refs = [{ id: workspace.workspaceId, serverId: workspace.serverId, machineId: workspace.machineId,
+      rootPath: workspace.rootPath, createdAtMs: 1, projectKey: workspace.workspaceId, source: { sourceId: 'src-own', revision: 4 } }];
+    const screen = await render('page', 'scripts.script:test', { workspaceRefs: refs });
+    await vi.waitFor(() => expect(sourceRequests.some(request => request.method === 'GET')).toBe(true));
+    if (!canManage) {
+      await act(async () => {});
+      expect(screen.findAllHostsByTestId('scripts.more')).toHaveLength(0);
+      return;
+    }
+    await vi.waitFor(() => expect(screen.findAllHostsByTestId('scripts.more').length).toBeGreaterThan(0));
+    await act(async () => { await screen.pressByTestIdAsync('scripts.more'); });
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'scripts.more:menu')!;
+    expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(items);
+    // Nothing is read for sharing until the person opens the sheet.
+    const inspectsBefore = shared.calls.filter(call => call.actionId === 'projects.inspect').length;
+    await act(async () => { menu.props.onSelect('share'); });
+    const [dialog] = showModal.mock.lastCall!;
+    expect(dialog.chrome).toMatchObject({ testID: 'project-setup-share' });
+    const onClose = vi.fn();
+    const sheet = await renderScreen(<dialog.component {...dialog.props} onClose={onClose} />);
+    await vi.waitFor(() => expect(sheet.findByTestId('project-setup-share.row:scripts')).not.toBeNull());
+    expect(shared.calls.filter(call => call.actionId === 'projects.inspect').length).toBe(inspectsBefore + 1);
+    // The personal script stays out of what is shared, and the sheet says so.
+    const { Item } = await import('@/components/ui/lists/Item');
+    const scriptsRow = sheet.findAllByType(Item).find(node => node.props.testID === 'project-setup-share.row:scripts');
+    // One script: the repository's own; the one added just for this person is not counted.
+    expect(scriptsRow?.props.subtitle).toMatch(/^1 · /);
+    expect(sheet.findByTestId('project-setup-share.personal')).not.toBeNull();
+    await act(async () => { await sheet.pressByTestIdAsync('project-setup-share.share'); });
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled(), { timeout: 5000 });
+    expect(sourceRequests.find(request => request.method === 'PATCH')?.body).toMatchObject({
+      sourceId: 'src-own', expectedRevision: 4,
+      patch: { attachment: { kind: 'attach', attachment: { purpose: 'setup' } } },
+    });
   });
 });
 

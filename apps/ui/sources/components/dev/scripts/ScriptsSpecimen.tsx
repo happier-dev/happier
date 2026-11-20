@@ -29,6 +29,8 @@ import type { ProjectSharedSetupReviewSnapshot } from '@/components/projects/pro
 import type { ProjectSetupScope } from '@/components/projects/projectSetup/ProjectSetupReview';
 import { ProjectSetupReviewPage } from '@/components/projects/projectSetup/ProjectSetupReviewPage';
 import { readProjectSetupLayers } from '@/components/projects/projectSetup/projectSetupLayers';
+import { ProjectSetupShareView } from '@/components/projects/projectSetup/ProjectSetupShareSheet';
+import { withoutPersonalProjectSetup, type ProjectSetupSharingSnapshot } from '@/components/projects/projectSetup/projectSetupSharing';
 
 /**
  * Dev-only specimen of the Scripts page, project file editor and setup review (Lane 12 lab
@@ -222,6 +224,29 @@ function PhoneReviewFrame() {
   return <ProjectSetupReviewPage testID="scripts-specimen.reviewPage" manifest={LAYERED_DEFINITION.effectiveManifest ?? MANIFEST as never}
     review={review} onBack={() => {}} onViewFile={() => {}} layerOf={layers.layerOf}
     sharedSetupName="Acme web setup" />;
+}
+
+/** Share setup (lab L6 share) on the layered definition: the personal change stays out and says so. */
+function shareSnapshot(state: string): ProjectSetupSharingSnapshot {
+  const base = { selection: null, warningAcknowledged: false, publication: null, pending: false, issue: null, personalOmitted: 0 };
+  if (state === 'reading') return { ...base, status: 'loading', manifest: null, preview: null };
+  if (state === 'unreadable') return { ...base, status: 'unavailable', manifest: null, preview: null, issue: 'project_setup_review_unavailable' };
+  const { manifest, omitted } = withoutPersonalProjectSetup(LAYERED_DEFINITION);
+  return { ...base, status: 'ready', manifest, personalOmitted: omitted, pending: state === 'sharing',
+    preview: { manifest, bytes: `${JSON.stringify(manifest, null, 2)}\n` } };
+}
+
+function ShareFrame(props: Readonly<{ state: string }>) {
+  const snapshot = React.useMemo(() => shareSnapshot(props.state), [props.state]);
+  const result = props.state === 'notAttached'
+    ? { kind: 'savedNotAttached' as const, publication: { artifactId: 'a', revision: { headerVersion: 1, bodyVersion: 1 } }, code: 'source_conflict' }
+    : null;
+  return (
+    <View style={styles.sheet}>
+      <ProjectSetupShareView snapshot={snapshot} sourceName="acme/web" audience="Acme · everyone" result={result}
+        approval={null} onRetryRead={() => {}} onShare={() => {}} onOpenSourceSharing={() => {}} onClose={() => {}} />
+    </View>
+  );
 }
 
 function SharedUpdateFrame(props: Readonly<{ state: string }>) {
@@ -437,6 +462,8 @@ export function ScriptsSpecimen(
       <PhoneReviewFrame />
     ) : frame === 'UPDATE' ? (
       <SharedUpdateFrame state={props.state ?? 'changed'} />
+    ) : frame === 'SHARE' ? (
+      <ShareFrame state={props.state ?? 'ready'} />
     ) : frame === 'SHARED' ? (
       <ItemGroup>
         <ProjectSetupReview testID="scripts-specimen.shared" manifest={MANIFEST as never} machineName="build-01" sharedRunAs="ben"

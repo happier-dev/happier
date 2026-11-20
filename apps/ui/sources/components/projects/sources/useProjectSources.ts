@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { createProjectSourcesController, type ProjectSourcesState } from './projectSourcesController';
+import { createProjectSourcesController, getProjectSourceSharingAudience, type ProjectSourcesState } from './projectSourcesController';
 import { observeProjectSources } from './observeProjectSources';
 import { readProjectSourceAddressMachines } from './projectSourceAddressMachines';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
@@ -74,8 +74,8 @@ export function useProjectSources(scope: ServerAccountScope, options: Readonly<{
     return { state, controller, repositoryFacts };
 }
 
-type SourceReadState = Pick<ProjectSourcesState, 'current' | 'detailStatus' | 'issue'>;
-const UNAVAILABLE_SOURCE_READ: SourceReadState = Object.freeze({ current: null, detailStatus: 'initial', issue: null });
+type SourceReadState = Pick<ProjectSourcesState, 'current' | 'canManage' | 'detailStatus' | 'issue'>;
+const UNAVAILABLE_SOURCE_READ: SourceReadState = Object.freeze({ current: null, canManage: false, detailStatus: 'initial', issue: null });
 
 /** One accepted Source provenance demands its existing authorized reader, not a catalog scan. */
 export function useProjectSource(lifetime: ServerAccountScopeLifetime | null, sourceId: string | null) {
@@ -99,9 +99,11 @@ export function useProjectSource(lifetime: ServerAccountScopeLifetime | null, so
     // and Account retirement withdraw it; display grants no effect authority.
     const current = lifetime?.isCurrent() ? presentedProjectSource(state, sourceId) : null;
     const source = React.useMemo(() => current && lifetime ? { serverId: lifetime.scope.serverId, source: current } : null, [current, lifetime]);
+    const audience = React.useMemo(() => getProjectSourceSharingAudience({ current, canManage: state.canManage,
+        detailStatus: state.detailStatus }), [current, state.canManage, state.detailStatus]);
     const resolveSource = React.useCallback(() => owner?.settle() ?? Promise.resolve(null), [owner]);
-    return React.useMemo(() => ({ status: state.detailStatus, issue: state.issue, source, resolveSource }),
-        [source, resolveSource, state.detailStatus, state.issue]);
+    return React.useMemo(() => ({ status: state.detailStatus, issue: state.issue, source, audience, resolveSource }),
+        [source, audience, resolveSource, state.detailStatus, state.issue]);
 }
 
 function presentedProjectSource(state: SourceReadState, sourceId: string | null) {
