@@ -469,9 +469,9 @@ export function ReviewDetailHost(props: Readonly<{
           ? <SurfaceStateCard kind="loading" size="line" title={t('common.loading')} /> : null}
         {questionRuns.state.kind === 'unavailable' ? <SurfaceStateCard testID="review-detail:questions-unavailable"
           kind={questionRuns.state.reason === 'read_failed' ? 'error' : 'unavailable'} size="line"
-          title={questionRuns.state.reason === 'temporarily_unavailable' ? t('reviewFindings.questionsMachineUnavailable')
-            : questionRuns.state.reason === 'run_missing' ? t('reviewFindings.questionsRunMissing')
-              : t('surfaceState.couldNotOpen', { name: t('reviewFindings.questionsTitle') })}
+          title={questionRuns.state.reason === 'temporarily_unavailable' ? t('session.reviewFindings.questionsMachineUnavailable')
+            : questionRuns.state.reason === 'run_missing' ? t('session.reviewFindings.questionsRunMissing')
+              : t('surfaceState.couldNotOpen', { name: t('session.reviewFindings.questionsTitle') })}
           action={{ label: t(questionRuns.state.reason === 'run_missing' ? 'surfaceState.checkAgain' : 'common.retry'),
             onPress: questionRuns.retry }} /> : null}
         <ReviewQuestions questions={findings.questions} multiReviewer={(round?.reviewerIds.length ?? 0) > 1}
