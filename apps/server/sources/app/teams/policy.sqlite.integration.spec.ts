@@ -81,6 +81,21 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         expect(fresh).toMatchObject({ ok: true, team: { policy: { reviewCreationPolicy: "team_required" } } });
     });
 
+    it("publishes a changed Team policy once across three equivalent saves", async () => {
+        const { owner, teamId } = await ownedTeam();
+        const input = { actorAccountId: owner.id, teamId, reviewCreationPolicy: "team_required" as const };
+        const seq = async () => (await db.account.findUniqueOrThrow({ where: { id: owner.id }, select: { seq: true } })).seq;
+        const before = await seq();
+        const save = () => inTx(tx => setTeamPolicyInTx(tx, input));
+        const changed = await save();
+        expect(changed).toMatchObject({ ok: true, team: { policy: { reviewCreationPolicy: "team_required" } } });
+        expect(await seq() - before).toBe(1);
+        await expect(save()).resolves.toEqual(changed);
+        await expect(save()).resolves.toEqual(changed);
+        await expect(save()).resolves.toEqual(changed);
+        expect(await seq() - before).toBe(1);
+    });
+
     it("persists managed defaults and patches one active Group without replacing sibling defaults", async () => {
         const { owner, teamId } = await ownedTeam();
         const first = await db.teamGroup.create({ data: { teamId, name: storedPlainPrivateLabel("First") } });

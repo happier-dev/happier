@@ -292,27 +292,27 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
         if (!prospectiveQualification.ok) return prospectiveQualification;
     }
 
-    const data = {
-        ...(managedDefaults === undefined ? {} : {
-            managedDefaults: managedDefaults === null ? getActivePrismaRuntime().DbNull : managedDefaults,
-        }),
-        ...(input.sessionCreationPolicy === undefined ? {} : { sessionCreationPolicy: input.sessionCreationPolicy }),
-        ...(input.reviewCreationPolicy === undefined ? {} : { reviewCreationPolicy: input.reviewCreationPolicy }),
-        ...(input.externalSharingPolicy === undefined ? {} : { externalSharingPolicy: input.externalSharingPolicy }),
-        ...(input.defaultSessionHistoryAccess === undefined
-            ? {}
-            : { defaultSessionHistoryAccess: input.defaultSessionHistoryAccess }),
-        ...(input.admissionMode === undefined ? {} : { admissionMode: input.admissionMode }),
-        ...(input.authenticationPolicy === undefined
-            ? {}
-            : {
-                authenticationPolicy: input.authenticationPolicy === null
-                    ? getActivePrismaRuntime().DbNull
-                    : normalizeTeamAuthenticationPolicyV1(input.authenticationPolicy)
-                        ?? getActivePrismaRuntime().DbNull,
-            }),
+    const next = {
+        managedDefaults,
+        sessionCreationPolicy: input.sessionCreationPolicy,
+        reviewCreationPolicy: input.reviewCreationPolicy,
+        externalSharingPolicy: input.externalSharingPolicy,
+        defaultSessionHistoryAccess: input.defaultSessionHistoryAccess,
+        admissionMode: input.admissionMode,
+        authenticationPolicy: input.authenticationPolicy == null
+            ? input.authenticationPolicy : normalizeTeamAuthenticationPolicyV1(input.authenticationPolicy),
     };
-    if (Object.keys(data).length === 0) return { ok: false, error: "invalid_team_input" };
+    const supplied = (Object.keys(next) as (keyof typeof next)[]).filter(key => next[key] !== undefined);
+    if (supplied.length === 0) return { ok: false, error: "invalid_team_input" };
+    const changed = supplied.filter(key => !sameStrictJsonValue(viewer.team[key], next[key]));
+    if (changed.length === 0) {
+        return { ok: true, team: await projectForActorInTx(tx, viewer.team, input.actorAccountId, input.authentication) };
+    }
+    const data = {
+        ...next,
+        managedDefaults: next.managedDefaults === null ? getActivePrismaRuntime().DbNull : next.managedDefaults,
+        authenticationPolicy: next.authenticationPolicy === null ? getActivePrismaRuntime().DbNull : next.authenticationPolicy,
+    };
 
     const updated = await tx.team.update({
         where: { id: input.teamId },
@@ -320,7 +320,7 @@ export async function setTeamPolicyInTx(tx: Tx, input: SetTeamPolicyInput): Prom
         select: TEAM_PROJECTION_SELECT,
     });
     await publishTeamChangedInTx(tx, { teamId: input.teamId });
-    if (changesAuthenticationPolicy) {
+    if (changed.includes('authenticationPolicy')) {
         await applyTeamSessionAuthenticationContextEffectsInTx(tx, { teamIds: [input.teamId] });
     }
 
