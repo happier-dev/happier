@@ -46,7 +46,7 @@ describe('Triage write approval facts', () => {
         const repositoryRow = describe(forged).rows.find(
             row => row.kind === 'value' && !row.technical && row.title === 'Repository',
         );
-        expect(repositoryRow).not.toEqual(expect.objectContaining({ value: forgedLabel }));
+        expect(repositoryRow).toMatchObject({ value: 'octo/example' });
     });
 
     it('shows the repository, Account and supplied issue fields in normal approval Details', () => {

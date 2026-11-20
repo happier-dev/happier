@@ -2080,6 +2080,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: sources.operations.create.declaration.surfaces,
       placementBindings: [],
       dangerLevel: sources.operations.create.declaration.dangerLevel,
+      inputHints: { fields: [{ path: 'fields.scopeId', title: 'Repository', widget: 'text' }] },
       confirmation: {
         title: { key: 'plugins.github.mutations.issueCreate.confirmation.title', fallback: 'Create this issue?' },
         body: { key: 'plugins.github.mutations.issueCreate.confirmation.body', fallback: 'This creates a new issue on GitHub in the repository you selected.' },
