@@ -115,13 +115,14 @@ type MuteAttemptOwner = {
     tail: Promise<void>;
 };
 
-function createDisconnectedSnapshot(): VoiceSessionSnapshot {
+function createDisconnectedSnapshot(micMuted?: boolean): VoiceSessionSnapshot {
     return {
         adapterId: null,
         sessionId: null,
         status: 'disconnected',
         mode: 'idle',
         canStop: false,
+        ...(micMuted === true ? { micMuted: true } : {}),
     };
 }
 
@@ -701,15 +702,19 @@ export function createVoiceSessionLifecycleController(deps?: Readonly<{
         // lingering error) hijack the published session. Keep the configured
         // provider's error-bearing disconnected projection so recoverable
         // failures such as microphone denial remain visible after teardown.
-        const preferred = snapshots.find(
+        const configured = snapshots.find(
             (snapshot) => snapshot.adapterId === configuredProviderId
-                && (snapshot.status !== 'disconnected' || Boolean(snapshot.errorCode?.trim()))
                 && !(
                     snapshot.adapterId === suppressedTerminalFailureAdapterId
                     && canDismissVoiceSessionFailedAttempt(snapshot)
                 ),
         );
-        return preferred ?? createDisconnectedSnapshot();
+        if (!configured || (configured.status === 'disconnected' && !configured.errorCode?.trim())) {
+            // End releases the adapter and controls while preserving the
+            // runtime's final mute readback. A fresh Start owns its own mute.
+            return createDisconnectedSnapshot(configured?.micMuted);
+        }
+        return configured;
     };
 
     const reconcilePendingSwitch = () => {

@@ -1942,6 +1942,32 @@ describe('createVoiceSessionLifecycleController', () => {
             }
         });
 
+        it('keeps the ended local conversation muted with no live microphone controls', async () => {
+            const state = await getStorage();
+            const settings = state.getState().settings;
+            state.__setState({ settings: { ...settings, voice: { ...settings.voice, providerId: 'local_conversation' } } });
+            await loadLocalVoiceEngineWithCompatState();
+            const { renderScreen } = await import('@/dev/testkit');
+            const { VoiceSessionRuntime } = await import('./VoiceSessionRuntime');
+            const { getVoiceSessionLifecycleController } = await import('./voiceSessionLifecycleControllerStore');
+            const { executeVoiceConversationAction } = await import('@/sync/ops/actions/voiceConversationAction');
+            const runtime = await renderScreen(React.createElement(VoiceSessionRuntime));
+            try {
+                const controller = getVoiceSessionLifecycleController();
+                if (!controller) throw new Error('Mounted Voice lifecycle unavailable');
+                await act(async () => { await controller.toggle({ serverId: localVoiceHomeId, sessionId: 's1' }); });
+                const started = controller.getSnapshot();
+                expect(started).toMatchObject({ adapterId: 'local_conversation', status: 'connected', canStop: true });
+                const sessionId = started.sessionId;
+                if (!sessionId) throw new Error('Local conversation did not acquire a control Session');
+                await act(async () => { await controller.setMuted(sessionId, true); });
+                expect(controller.getSnapshot()).toMatchObject({ status: 'connected', micMuted: true });
+                await act(async () => { await controller.stop(sessionId); });
+                expect(await executeVoiceConversationAction('ui.voice_global.get', {}, { navigate() {} }))
+                    .toMatchObject({ status: 'completed', voice: { status: 'disconnected', muted: true, canMute: false } });
+            } finally { await runtime.unmount(); }
+        });
+
         it('fences a late suspension release from a same-id replacement adapter', async () => {
             const state = await getStorage();
             const settings = state.getState().settings;
