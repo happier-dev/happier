@@ -98,6 +98,34 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
     } finally { await plugin.dispose(); }
   });
 
+  it('refuses create in a readable repository excluded from the configured selection', async () => {
+    const issue = { ...GITHUB_ISSUE_RESPONSE, repository_url: `https://api.github.com/repos/${route}`,
+      html_url: `https://github.com/${route}/issues/${issueNumber}`, title: 'Created task', assignees: [], labels: [] };
+    const transport = createStubGithubTransport({ respond: (request) => {
+      if (request.method === 'POST') return { status: 201, body: issue };
+      if (new URL(request.url).pathname === `/repos/${route}/issues/${issueNumber}`) return { status: 200, body: issue };
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    try {
+      const all = { ...instance, configuration: { v: 1, token: JSON.stringify({ v: 1, selection: { kind: 'all' } }) } };
+      const selected = { ...instance, configuration: { v: 1, token: JSON.stringify({ v: 1,
+        selection: { kind: 'selected', unitIds: ['octo-org/other-app'] } }) } };
+      const fields = { title: 'Created task', scopeId: route };
+      expect(await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance: all, scopeId: route }))
+        .toMatchObject({ kind: 'page', places: [{ id: route }] });
+      expect(await plugin.invokeAction('github/issue/create', { v: 1, instance: all, kindId: 'issue', fields }))
+        .toMatchObject({ kind: 'applied' });
+      const place = await plugin.invokeAction('triage/list-github-creation-places', { v: 1, instance: selected, scopeId: route });
+      expect(place).toEqual({ kind: 'failed', failure: { class: 'unsupportedContract', code: 'github_repository_not_included' } });
+      expect(await plugin.invokeAction('github/issue/create', { v: 1, instance: selected, kindId: 'issue', fields }))
+        .toEqual({ kind: 'refused', reason: 'github_repository_not_included' });
+      expect(transport.requests.filter(({ method }) => method === 'POST')).toHaveLength(1);
+    } finally { await plugin.dispose(); }
+  });
+
   it('does not replay a create whose response is lost or guess the created identity', async () => {
     const transport = createStubGithubTransport({ respond: (request) => {
       if (request.method === 'POST') throw new Error('response lost after dispatch');

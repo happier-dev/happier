@@ -2,6 +2,7 @@ import type { GithubTriageInvocationContext } from './invocation.js';
 import { decodeTriagePagingTokenV1, encodeTriagePagingTokenV1, readTriageResponseHeaderV1, TriageReadAttentionCredentialInputV1Schema, type TriageReadAttentionResultV1 } from '@happier-dev/triage-protocol/v1';
 import { GITHUB_API_ORIGIN } from '../observations/githubProviderContracts.js';
 import { openGithubTriageClient, resolveGithubTriageInstance } from './operations.js';
+import { githubSelectionIncludes } from './configuration.js';
 import { buildGithubEntryLocalRef } from './identity.js';
 import { runGithubTriageGet } from './get.js';
 import { toTriageFailure, toTriageGetResult } from './mapping/protocol.js';
@@ -69,7 +70,7 @@ export async function readGithubAttention(input: unknown, context: GithubTriageI
         const path = /^\/repos\/([^/]+)\/([^/]+)\/pulls\/([1-9][0-9]*)$/u.exec(route.pathname);
         if (route.origin !== GITHUB_API_ORIGIN || route.username || route.password || route.hash || !path) continue;
         const repositoryKey = `${path[1]}/${path[2]}`;
-        if (resolved.configuration.selection.kind !== 'all' && !resolved.configuration.selection.unitIds.includes(repositoryKey)) continue;
+        if (!githubSelectionIncludes(resolved.configuration, repositoryKey)) continue;
         const localRef = buildGithubEntryLocalRef({ kindId: 'pull-request', repositoryId: repository?.id, nativeItemId: path[3] });
         if (!localRef) continue;
         // A reason can change to state_change; terminal facts still retire the original review item.

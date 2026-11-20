@@ -68,8 +68,10 @@ retain its continuation, partial results and failure. A place supplies a name,
 kind, create fields and an optional refusal reason. `childScopeId` requests the
 selected place's children through the same operation: Linear team projects,
 Jira project issue types, or GitHub repository creation details. These are live
-source facts, not cached write permission; the existing create Action remains
-authoritative.
+source facts. The create Action evaluates write admission. For GitHub, an issue
+can be created only in a repository included in the connection's selection.
+The picker marks an excluded repository unavailable, and a direct create
+returns `github_repository_not_included`.
 
 Each picker read consumes one native directory page, with continuation through
 the same operation. The selected place’s children follow continuation so every

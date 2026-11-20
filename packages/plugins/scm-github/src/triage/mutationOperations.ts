@@ -69,6 +69,7 @@ import {
   type GithubPullRequestUpdateBranchResultV1,
   type GithubPullRequestReviewPublicationInputV1,
 } from './mutations/contracts.js';
+import { githubSelectionIncludes } from './configuration.js';
 import {
   addGithubIssueAssignees,
   addGithubIssueLabels,
@@ -128,7 +129,8 @@ export async function createGithubIssueAction(input: unknown, context: PluginInv
   const selection = resolved.configuration.selection;
   const scopeId = request.fields.scopeId ?? (selection.kind === 'selected' && selection.unitIds.length === 1 ? selection.unitIds[0] : undefined);
   const route = parseGithubRoutingToken(scopeId);
-  if (route === null) return { kind: 'refused', reason: 'scope_required' };
+  if (scopeId === undefined || route === null) return { kind: 'refused', reason: 'scope_required' };
+  if (!githubSelectionIncludes(resolved.configuration, scopeId)) return { kind: 'refused', reason: 'github_repository_not_included' };
   const opened = await openGithubTriageClient(request.instance, context);
   if (!opened.ok) return failed(opened.failure);
   return createGithubIssue({ route, fields: request.fields }, { client: opened.client, now: Date.now, signal: context.signal });

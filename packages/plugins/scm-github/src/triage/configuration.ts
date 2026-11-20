@@ -42,6 +42,10 @@ export type GithubTriageConfigurationV1 = Readonly<{
   alerts?: GithubTriageAlertFamiliesV1;
 }>;
 
+export function githubSelectionIncludes(configuration: GithubTriageConfigurationV1, id: string): boolean {
+  return configuration.selection.kind === 'all' || configuration.selection.unitIds.includes(id);
+}
+
 export type GithubTriageAlertFamiliesV1 = Readonly<{ dependabot: boolean; codeScanning: boolean }>;
 const NO_ALERTS: GithubTriageAlertFamiliesV1 = Object.freeze({ dependabot: false, codeScanning: false });
 

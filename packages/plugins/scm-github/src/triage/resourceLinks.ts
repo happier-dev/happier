@@ -1,4 +1,5 @@
 import type { GithubApiClientV1 } from '../observations/githubApiClient.js';
+import { githubSelectionIncludes } from './configuration.js';
 import { buildGithubEntryLocalRef } from './identity.js';
 import { buildGithubEntryLocator, parseGithubResourceUrl } from './locator.js';
 import { createGithubRepositoryReader } from './repositories.js';
@@ -16,8 +17,7 @@ export async function resolveGithubTriageResource(input: unknown, context: Githu
   if (!resolved.ok) return { kind: 'unavailable', failure: resolved.failure };
   const route = parseGithubResourceUrl(parsed.data.resource);
   if (route === null || route.kindId === null) return unsupported;
-  if (resolved.configuration.selection.kind === 'selected'
-    && !resolved.configuration.selection.unitIds.includes(`${route.owner}/${route.name}`)) return unsupported;
+  if (!githubSelectionIncludes(resolved.configuration, `${route.owner}/${route.name}`)) return unsupported;
   const opened = await openGithubTriageClient(parsed.data.instance, context);
   if (!opened.ok) return { kind: 'unavailable', failure: opened.failure };
   return resolveGithubResourceEntry(parsed.data.resource, { client: opened.client, now: () => context.invokedAtMs });
