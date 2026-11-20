@@ -1007,6 +1007,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
   });
 
   it('keeps a nested ensure-or-start request at its already-authorized scope', async () => {
+    const isExecutionRunsEnabled = vi.fn(() => true);
     const start = vi.fn(async () => ({
       runId: 'run_scoped_1',
       callId: 'call_scoped_1',
@@ -1025,7 +1026,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
           maxTurns: null,
         },
       }),
-      isExecutionRunsEnabled: () => true,
+      isExecutionRunsEnabled,
     });
     const ensureOrStart = deps.executionRunEnsureOrStart;
     if (!ensureOrStart) throw new Error('executionRunEnsureOrStart is required');
@@ -1039,6 +1040,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
     })).resolves.toEqual({ ok: true, runId: 'run_scoped_1', created: true,
       callId: 'call_scoped_1', sidechainId: 'sidechain_scoped_1' });
 
+    expect(isExecutionRunsEnabled).toHaveBeenCalledOnce();
     expect(start).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'sess_1' }));
   });
 

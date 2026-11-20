@@ -359,7 +359,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     });
   }
 
-  async function startRun(
+  async function startAdmittedRun(
     raw: unknown,
     sessionId: string | null,
     actionId: 'execution.run.start' | 'execution.run.ensure_or_start',
@@ -376,9 +376,6 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
     }, error ?? failure);
     const beforeStart = (failure: ExecutionRunRpcFailure, error?: unknown) => classifyFailure(failure, 'noRunCreated', error);
 
-    if (!isAuthoritativeScope(sessionId)) return beforeStart(executionRunScopeMismatch());
-    const disabled = ensureEnabled();
-    if (disabled) return beforeStart(disabled);
     // Request-bound recovery belongs to the manager's identity lookup.
     const parsed = ExecutionRunStartRequestSchema.safeParse(raw);
     if (!parsed.success) return beforeStart(invalidParams());
@@ -687,7 +684,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           details: withExecutionRunStartFailureDetails(mismatch.details, 'noRunCreated'),
         };
       }
-      const started = await startRun(request, sessionId, 'execution.run.start', actionOptions);
+      const started = await startAdmittedRun(request, sessionId, 'execution.run.start', actionOptions);
       return started.ok
         ? {
             runId: started.runId,
@@ -852,7 +849,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         return { ok: true, runId, created: false, ...(ensured.actionInvocation ? { actionInvocation: ensured.actionInvocation } : {}) };
       }
 
-      const started = await startRun(parsed.start, sessionId, 'execution.run.ensure_or_start', actionOptions);
+      const started = await startAdmittedRun(parsed.start, sessionId, 'execution.run.ensure_or_start', actionOptions);
       if (!started.ok) return started;
       return { ...started, created: true };
     },
