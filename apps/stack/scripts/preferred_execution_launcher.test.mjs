@@ -2112,6 +2112,35 @@ test('automatic placement excludes mac-host unless it is in the configured comma
   assert.doesNotMatch(configured.stderr, /^HSTACK_PLACEMENT_EXCLUDED /m);
 });
 
+test('AUTO applies each worker resource-class allowlist before probing', async t => {
+  const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  fixture.config.targets[0].autoResourceClasses = ['validation'];
+  await writeFile(fixture.configPath, JSON.stringify(fixture.config));
+  await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'),
+    renderNativeExecutionProjection(fixture.config, { repoRoot }));
+
+  const run = args => {
+    const result = spawnSync('/bin/sh', [launcher, ...args], fixture.invocation);
+    assert.equal(result.status, 0, result.stderr);
+    return result;
+  };
+  const payload = resourceClass => ['--', 'apps/stack/bin/hstack-exec',
+    '--heavyweight-admission', '--class=' + resourceClass, '--', 'node', '-e', 'process.exit(0)'];
+
+  const compilation = run(payload('compilation'));
+  assert.equal(compilation.stdout, 'remote:roomy\n');
+  assert.match(compilation.stderr, /target=starved reason=resource-class class=compilation/u);
+  assert.doesNotMatch(await readFile(fixture.invocation.env.FIXTURE_TRACE, 'utf8'), /starved-host/u);
+
+  assert.equal(run(payload('validation')).stdout, 'remote:starved\n');
+  assert.equal(run(['--target=starved', ...payload('compilation')]).stdout, 'remote:starved\n');
+
+  const names = resourceClass => run(['--execution-workers=' + resourceClass]).stdout.split('\0')
+    .filter((field, index) => field && index % 5 === 0);
+  assert.deepEqual(names('gate-package-typecheck'), ['roomy']);
+  assert.deepEqual(names('validation'), ['starved', 'roomy']);
+});
+
 test('the worker connection query applies the dispatch pool and exclusions before SSH', async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
   const env = { ...fixture.invocation.env, HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS: 'starved' };

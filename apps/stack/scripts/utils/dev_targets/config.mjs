@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import { resolveStackEnvPath } from '../paths/paths.mjs';
+import { HEAVYWEIGHT_COMMAND_RESOURCES } from './command_resources.mjs';
 import {
   normalizeManagedLimaArchitecture,
   resolveManagedLimaProfile,
@@ -190,6 +191,12 @@ function normalizeTarget(raw, index, version) {
   }
   const cliHomeDir = requireNonEmptyString(raw.cliHomeDir, `target ${name} cliHomeDir`);
   const remotePath = normalizeRemotePath(raw.remotePath, platform, name);
+  const autoResourceClasses = raw.autoResourceClasses;
+  if (autoResourceClasses !== undefined && (!Array.isArray(autoResourceClasses)
+    || autoResourceClasses.some(resourceClass => typeof resourceClass !== 'string'
+      || !Object.hasOwn(HEAVYWEIGHT_COMMAND_RESOURCES, resourceClass)))) {
+    throw new Error(`[dev-targets] target ${name}: autoResourceClasses must list known admission resource classes`);
+  }
   const remoteServerPortRaw = raw.remoteServerPort;
   const remoteServerPort =
     remoteServerPortRaw == null || String(remoteServerPortRaw).trim() === ''
@@ -212,6 +219,7 @@ function normalizeTarget(raw, index, version) {
     ...(raw.executorRepoDir ? { executorRepoDir: requireNonEmptyString(raw.executorRepoDir, `target ${name} executorRepoDir`) } : {}),
     cliHomeDir,
     ...(remotePath.length ? { remotePath } : {}),
+    ...(autoResourceClasses !== undefined ? { autoResourceClasses } : {}),
     remoteServerPort,
   };
 }

@@ -54,10 +54,14 @@ if [ -n "$command_repo_root" ]; then
   if [ "$command_repo_root" = "$repo_root" ]; then command_repo_root=; fi
 fi
 list_execution_workers=0
-if [ "${1-}" = --execution-workers ]; then
-  [ "$#" -eq 1 ] || exit 64
-  list_execution_workers=1
-fi
+list_execution_workers_class=
+case "${1-}" in
+  --execution-workers|--execution-workers=?*)
+    [ "$#" -eq 1 ] || exit 64
+    list_execution_workers=1
+    if [ "$1" != --execution-workers ]; then list_execution_workers_class=${1#*=}; fi ;;
+  --execution-workers=) exit 64 ;;
+esac
 
 # The named command checkout supplies the default cwd: its root unless the
 # caller already stands inside it (--cwd still selects a subdirectory).
@@ -1167,7 +1171,7 @@ if [ -n "$command_repo_root" ]; then
 fi
 
 if [ "$list_execution_workers" = 1 ]; then
-  print_execution_worker_connections
+  print_execution_worker_connections "$list_execution_workers_class"
   exit $?
 fi
 
@@ -1842,10 +1846,14 @@ number=1
 while [ "$number" -le "$target_count" ]; do
   if { [ -n "$explicit_target_number" ] && [ "$number" -eq "$explicit_target_number" ]; } || \
      { [ -z "$explicit_target_number" ] && execution_target_is_automatic "$number"; }; then
-    (probe_target "$number" > "$probe_tmp/$number") &
-    probe_pid=$!
-    probe_birth=$(heavyweight_process_token "$probe_pid")
-    probe_children="$probe_children $probe_pid:$probe_birth"
+    if [ -n "$explicit_target_number" ] || execution_target_accepts_resource_class "$number" "${heavyweight_placement_class:-unclassified}"; then
+      (probe_target "$number" > "$probe_tmp/$number") &
+      probe_pid=$!
+      probe_birth=$(heavyweight_process_token "$probe_pid")
+      probe_children="$probe_children $probe_pid:$probe_birth"
+    else
+      report_placement_exclusion "$(value_for_target name "$number")" resource-class
+    fi
   elif [ -z "$explicit_target_number" ]; then
     report_placement_exclusion "$(value_for_target name "$number")" not-in-command-pool
   fi

@@ -4,6 +4,16 @@ execution_target_is_automatic() {
   eval '[ "${target_'"$1"'_automatic-1}" = 1 ]'
 }
 
+execution_target_accepts_resource_class() {
+  [ "${command_mode-}" = auto ] || return 0
+  eval 'allowed_classes=${target_'"$1"'_auto_resource_classes-*}'
+  [ "$allowed_classes" != '*' ] || return 0
+  case " $allowed_classes " in
+    *" $2 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 execution_target_is_excluded() {
   case " ${HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS-} " in
     *" $1 "*) return 0 ;;
@@ -27,7 +37,9 @@ print_execution_worker_connections() (
   [ "${command_mode-}" != local ] || return 0
   worker_number=1
   while [ "$worker_number" -le "${target_count-0}" ]; do
-    if execution_target_is_automatic "$worker_number"; then
+    if execution_target_is_automatic "$worker_number" && {
+      [ -z "${1-}" ] || execution_target_accepts_resource_class "$worker_number" "$1"
+    }; then
       worker_name=$(value_for_target name "$worker_number")
       if ! execution_target_is_excluded "$worker_name"; then
         printf '%s\0%s\0%s\0%s\0%s\0' "$worker_name" "$(value_for_target ssh "$worker_number")" \

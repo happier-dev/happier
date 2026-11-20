@@ -973,10 +973,10 @@ const completeTypecheckRows = (byTree, trees, packages) => trees.every(
 );
 
 // The executor owns the command pool, exclusions and connection addresses.
-function typecheckWorkerConnections(repo, env) {
+function typecheckWorkerConnections(repo, env, resourceClass) {
   const launcher = join(repo, 'apps/stack/bin/hstack-exec');
   if (!existsSync(launcher) || process.platform === 'win32') return new Map();
-  const output = execFileSync(launcher, ['--execution-workers'], { cwd: repo, env, encoding: 'utf8' });
+  const output = execFileSync(launcher, [`--execution-workers=${resourceClass}`], { cwd: repo, env, encoding: 'utf8' });
   const fields = output.split('\0');
   const connections = new Map();
   for (let i = 0; i + 4 < fields.length; i += 5) {
@@ -1082,7 +1082,8 @@ export function workerTreeRows({ repo, state, env = process.env, log = message =
     const label = sides.join('+');
     const unjudged = () => new Map(dirs.map(dir => [dir, undefined]));
     const none = many ? new Map(treeIds.map(id => [id, unjudged()])) : unjudged();
-    const connections = transport ? undefined : typecheckWorkerConnections(repo, env);
+    const resourceClass = lane === GATE_LANE ? GATE_PACKAGE_CHECK_CLASS : 'compilation';
+    const connections = transport ? undefined : typecheckWorkerConnections(repo, env, resourceClass);
     const candidates = transport ? filterExecutionWorkers(workers ?? [], env)
       : workers ? workers.filter(worker => connections.has(worker)) : [...connections.keys()];
     if (!candidates.length) return none;

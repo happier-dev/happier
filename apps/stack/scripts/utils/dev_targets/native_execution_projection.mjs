@@ -54,11 +54,13 @@ export function resolveCommandRepositoryConfig(config, { repoRoot, executorRepoR
     .map(target => [target.name, { ...target, executorRepoDir: target.repoDir,
       repoDir: posix.join(posix.dirname(target.repoDir), name) }]));
   for (const { target } of services) {
+    const commandTarget = targets.get(target.name);
     targets.set(target.name, { ...target,
+      autoResourceClasses: commandTarget ? commandTarget.autoResourceClasses : target.autoResourceClasses,
       // Linked worktrees share a Git-based Stack identity and can inherit the
       // parent checkout's service configuration. Never reuse its destination.
       repoDir: posix.join(posix.dirname(target.repoDir), name),
-      executorRepoDir: normalized.targets.find(parent => parent.name === target.name)?.repoDir ?? target.repoDir });
+      executorRepoDir: commandTarget?.executorRepoDir ?? target.repoDir });
   }
   return parseDevTargetsConfig({
     version: 3, targets: [...targets.values()],
@@ -107,6 +109,7 @@ export function renderNativeExecutionProjection(config, { repoRoot = '', executo
       assignment(`${prefix}_cli_home`, target.cliHomeDir),
       assignment(`${prefix}_remote_path`, target.remotePath?.join(':') ?? ''),
       assignment(`${prefix}_automatic`, selectedNames.has(target.name) ? '1' : '0'),
+      assignment(`${prefix}_auto_resource_classes`, target.autoResourceClasses?.join(' ') ?? '*'),
     );
   });
   return `${lines.join('\n')}\n`;

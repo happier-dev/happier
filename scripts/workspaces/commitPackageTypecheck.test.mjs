@@ -755,7 +755,7 @@ exec /bin/bash -c "$2"
     'packages/cli-common/tempDirOwnership.mjs',
   ]) await write(name, readFileSync(join(source, name)));
   await write('apps/stack/bin/hstack-exec', `#!/bin/sh
-if [ "$1" = --execution-workers ]; then
+if [ "$1" = --execution-workers=gate-package-typecheck ]; then
   printf '%s\\0' test-worker configured-worker ${JSON.stringify(config)} ${JSON.stringify(workerHome)} ''
   exit 0
 fi
