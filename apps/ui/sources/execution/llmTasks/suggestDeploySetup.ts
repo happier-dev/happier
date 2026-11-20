@@ -16,7 +16,9 @@ import { normalizeInteractionTransientQuestionsV1, type InteractionTransientQues
 
 import { waitForRegistrySourcesOfKind } from '@/registries/pluginRegistrySources';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
+import { getMachineSentenceName, isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { readRegisteredStorageState, subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace, stopLlmTaskRun, type LlmTaskHostV1 } from './runLlmTaskInWorkspace';
 
@@ -63,6 +65,36 @@ export async function readDeploySuggestionCatalog(params: Readonly<{ serverId: s
     return parsed.success ? { kind: 'catalog', catalog: parsed.data } : { kind: 'failed', code: 'invalid_action_output' };
 }
 
+/**
+ * The home folder of a Machine whose record sync is still opening, once its owner has opened it (or settled it as
+ * unreadable, which has none). Stop ends the wait; there is no timer, the opening always settles.
+ */
+function readOpenedMachineHomeDir(serverId: string, machineId: string, signal?: AbortSignal): Promise<string | null> {
+    const read = (): string | null | undefined => {
+        const state = readRegisteredStorageState();
+        const machine = state ? resolveServerScopedMachine(state, serverId, machineId) : null;
+        if (machine && isMachineDisplayHydrating(machine)) return undefined;
+        const homeDir = machine?.metadata?.homeDir;
+        return typeof homeDir === 'string' && homeDir ? homeDir : null;
+    };
+    const now = read();
+    if (now !== undefined || signal?.aborted) return Promise.resolve(now ?? null);
+    return new Promise(resolve => {
+        const settle = () => {
+            const next = signal?.aborted ? null : read();
+            if (next === undefined) return;
+            stop?.();
+            signal?.removeEventListener('abort', settle);
+            resolve(next);
+        };
+        const stop = subscribeRegisteredStorageMachineUpdates((_serverId, machineIds) => {
+            if (machineIds.includes(machineId)) settle();
+        });
+        if (!stop) { resolve(null); return; }
+        signal?.addEventListener('abort', settle);
+    });
+}
+
 /** One snapshot and one accepted task; answers reuse the snapshot supplied by the dialog. */
 export async function suggestDeploySetup(params: Readonly<{
     serverId: string;
@@ -93,8 +125,13 @@ export async function suggestDeploySetup(params: Readonly<{
         if (!input.success) return { kind: 'failed', code: 'invalid_parameters', stage: 'setup' };
 
         const unavailable: DeploySuggestionUnavailableMachine[] = [];
-        for (const machine of catalog.machines) {
+        for (const listed of catalog.machines) {
             if (params.signal?.aborted) return { kind: 'stopped' };
+            // A row read while its record was still opening carries no name and no home yet: that is not "unavailable".
+            const homeDir = listed.homeDir ?? (listed.online && listed.label === undefined
+                ? await readOpenedMachineHomeDir(params.serverId, listed.machineId, params.signal) : null);
+            if (params.signal?.aborted) return { kind: 'stopped' };
+            const machine = homeDir ? { ...listed, homeDir } : listed;
             if (!machine.online || !machine.homeDir) {
                 unavailable.push({ machineId: machine.machineId, ...(machine.label ? { label: machine.label } : {}), online: machine.online,
                     reason: machine.online ? 'home_directory_unavailable' : 'offline', unavailableAgents: [] });

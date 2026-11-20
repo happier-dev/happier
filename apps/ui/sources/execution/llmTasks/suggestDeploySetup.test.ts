@@ -220,3 +220,30 @@ it('reads the catalog at once when a starter source is already known, though ano
         expect(catalogReads, 'the catalog read does not wait on a Machine that can only add more starters').toBe(1);
     } finally { unpublish(); }
 });
+
+// AUTO-HUNT pattern 1: a cold load lists online Machines whose records are still opening (no name, no home yet). Such a
+// Machine is not "unavailable": the suggestion waits for its owner to open it, then runs there in its home.
+it('waits for an online Machine whose record is still opening instead of calling it unavailable', async () => {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { createMachineFixture } = await import('@/dev/testkit');
+    const opened = createMachineFixture({ id: 'opening', active: true, activeAt: Date.now() });
+    storage.getState().applyMachines([{ ...opened, metadata: null, availability: undefined }], true, { sourceServerId: 'home' });
+    let starts = 0;
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        agentsModelsList: async () => ({ llmTaskRunner: { ok: true, source: 'auto', runner, title: 'Claude' } }),
+        executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'opening' }),
+        executionRunStart: async () => { starts++; return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }; },
+        executionRunWait: async () => ({ ok: true, status: 'succeeded', result: terminal({ recommendations: [recommendation] }) }),
+    }));
+    execute.mockImplementation(executor.execute);
+    try {
+        // The catalog leaves out the name and home of a row its owner had not opened yet.
+        const result = suggestDeploySetup({ serverId: 'home', description: 'Bakery',
+            catalog: { ...catalog, machines: [{ machineId: 'opening', online: true, readiness: 'unknown' }] } });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(starts, 'nothing runs before the Machine has a home').toBe(0);
+        storage.getState().applyMachines([opened], false, { sourceServerId: 'home' });
+        expect(await result).toMatchObject({ kind: 'recommendations', recommendations: [recommendation] });
+        expect(execute.mock.calls.find(row => row[0] === 'execution.run.start')![1]).toMatchObject({ cwd: opened.metadata!.homeDir });
+    } finally { storage.setState(storage.getInitialState(), true); }
+});
