@@ -149,6 +149,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
   };
   let catalogSource: MuseCatalog | undefined;
   const projection = createMuseEventProjection({ sessionId,
+    mcpServerNames: new Set(Object.keys(nativeMcpServers)),
     resolveModelId: id => catalogSource?.resolveModelId(id) ?? null,
     async onHostPromptEcho(localId) {
       await sessionServices?.transcripts.markSourceFactConsumed?.({ localId, reason: 'host_prompt_echo' });

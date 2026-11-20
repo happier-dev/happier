@@ -1,6 +1,7 @@
 import { questionInput, readMuseNativeJson, readMuseRecord } from './nativeInput.js';
 export { readMuseNativeJson, readMuseRecord } from './nativeInput.js';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { parseMcpToolWireNameV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { AgentExecutionRunConversationEventV1, AgentSessionCompactRequest, AgentSessionRuntimeEvent, AgentSessionSendRequest, AgentSessionSubagentObservation } from '@happier-dev/plugin-sdk/agents/runtime';
 import { SESSION_WORKFLOW_RUN_SNAPSHOT_TITLE_MAX, SESSION_WORKFLOW_RUN_SNAPSHOT_SUMMARY_MAX,
   type SessionWorkflowRunSnapshotV1, type SessionWorkflowAgentStatusV1 } from '@happier-dev/plugin-sdk/sessions/work-state';
@@ -12,8 +13,9 @@ type EventContent<T = AgentExecutionRunConversationEventV1> = T extends AgentExe
 type ProjectionEvent<SessionId extends string | undefined> = SessionId extends string
   ? AgentSessionRuntimeEvent : AgentExecutionRunConversationEventV1;
 type NativeRecord = Readonly<Record<string, JsonValue>>;
-type Admission = { commandId: string; request: AgentSessionSendRequest; accepted: boolean; started: boolean; terminal?: boolean;
+type Admission = { commandId: string; request: AgentSessionSendRequest; accepted: boolean; startedAtMs?: number; terminal?: boolean;
   cancelCause?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-cancelled' }>['cause'];
+  mcpCallCounts?: Map<string, number>;
   continuations?: Set<string>; steerCommandIds?: Set<string> };
 type NativeItem = { value: NativeRecord; revision: number; streamedText: string; committed: boolean;
   compaction?: Pick<AgentSessionCompactRequest, 'compactionId' | 'trigger'>;
@@ -22,6 +24,7 @@ type NativeChild = { state?: NativeItem; workflowChild?: NativeRecord; label?: s
 type ChildObservation = AgentSessionSubagentObservation;
 
 export function createMuseEventProjection<SessionId extends string | undefined = undefined>(options: Readonly<{ sessionId?: SessionId;
+  mcpServerNames?: ReadonlySet<string>;
   resolveModelId?(id: string): string | null;
   onHostPromptEcho?(localId: string): Promise<void>;
   onActivity?(state: 'active' | 'idle' | 'unknown'): void;
@@ -41,7 +44,8 @@ export function createMuseEventProjection<SessionId extends string | undefined =
   const childItems = new Map<string, NativeChild>();
   let expectedCompaction: { request: AgentSessionCompactRequest; itemId?: string } | undefined;
 
-  function publish(content: EventContent | Omit<Extract<AgentSessionRuntimeEvent, { kind: 'catalog-changed' }>, 'sequence' | 'sessionId' | 'emittedAtMs'>) {
+  function publish(content: EventContent | Omit<Extract<AgentSessionRuntimeEvent, { kind: 'catalog-changed' }>, 'sequence' | 'sessionId' | 'emittedAtMs'>,
+    emittedAtMs?: number) {
     if (disposed) return;
     if (content.kind === 'runtime-ended') {
       // A native process can exit after publishing an item start but before
@@ -64,7 +68,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       }
     }
     // The chosen scope supplies its envelope once, before watcher fanout.
-    const event = Object.freeze({ ...content, emittedAtMs: Date.now(),
+    const event = Object.freeze({ ...content, emittedAtMs: emittedAtMs ?? Date.now(),
       ...(options.sessionId === undefined ? {} : { sequence: ++sequence, sessionId: options.sessionId }),
     }) as ProjectionEvent<SessionId>;
     if (firstWatch) pending.push(event);
@@ -382,6 +386,17 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     const state: NativeItem = { value: item, revision, streamedText: previous?.streamedText ?? '', committed: previous?.committed ?? false,
       ...(previous?.compaction ? { compaction: previous.compaction } : {}) };
     items.set(item.itemId, state);
+    if (!previous && !initialReplay && options.mcpServerNames?.size && item.kind === 'toolCall'
+      && typeof item.turnId === 'string' && typeof item.tool === 'string') {
+      const admission = turns.get(item.turnId);
+      if (admission && !admission.terminal) {
+        const tool = parseMcpToolWireNameV1(item.tool, options.mcpServerNames);
+        if (tool) {
+          const counts = admission.mcpCallCounts ??= new Map();
+          counts.set(tool.server, (counts.get(tool.server) ?? 0) + 1);
+        }
+      }
+    }
     if (!initialReplay && compactionItem(item.itemId, state, previous)) return;
     const childPublication = childItem(state, previous, initialReplay);
     const textPublication = textItem(item.itemId, state, completed, initialReplay);
@@ -410,12 +425,12 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       if (typeof params.turnId !== 'string') return;
       const admission = (typeof params.commandId === 'string' ? commands.get(params.commandId) : undefined)
         ?? turns.get(params.turnId);
-      if (!admission || admission.started) return;
-      admission.started = true;
+      if (!admission || admission.startedAtMs !== undefined) return;
+      const startedAtMs = admission.startedAtMs = Date.now();
       turns.set(params.turnId, admission);
       accepted(admission);
       publish({ kind: 'turn-start', turnId: admission.request.delivery.turnId, agentTurnId: params.turnId,
-        startedBy: 'host' });
+        startedBy: 'host' }, startedAtMs);
       return;
     }
     if (message.method === 'turn/foregroundCompleted') {
@@ -435,10 +450,20 @@ export function createMuseEventProjection<SessionId extends string | undefined =
         publish({ kind: 'turn-failed', ...owner, diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error',
           ...(typeof error.message === 'string' ? { message: error.message } : {}) } });
       } else if (params.terminal === 'completed') {
+        const { startedAtMs, mcpCallCounts } = admission;
+        if (startedAtMs !== undefined && mcpCallCounts?.size) {
+          const endMs = Math.max(startedAtMs, Date.now());
+          publish({ kind: 'mcp-tool-usage', ...owner, window: { startMs: startedAtMs, endMs },
+            // MSP exposes observed calls but no evidence of delivered, unused tools.
+            coverage: 'partial',
+            servers: [...mcpCallCounts].map(([serverName, toolCallCount]) => ({ serverName, toolCallCount, schemaBytes: null })),
+          }, endMs);
+        }
         publish({ kind: 'turn-complete', ...owner });
         publish({ kind: 'turn-rollback-boundary', ...owner, providerCheckpoint: { lastTurnId: params.turnId } });
       } else return;
       admission.terminal = true;
+      delete admission.mcpCallCounts;
       if (!admission.continuations?.size) turns.delete(params.turnId);
       return;
     }
@@ -482,7 +507,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
         },
       };
     },
-    admit(request: AgentSessionSendRequest, commandId: string) { commands.set(commandId, { commandId, request, accepted: false, started: false }); },
+    admit(request: AgentSessionSendRequest, commandId: string) { commands.set(commandId, { commandId, request, accepted: false }); },
     retireCommand(commandId: string) {
       const admission = commands.get(commandId);
       commands.delete(commandId);

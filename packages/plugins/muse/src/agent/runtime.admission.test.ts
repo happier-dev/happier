@@ -85,7 +85,8 @@ it('publishes observed native tool results and inference usage without a foregro
   const fixture = await createAdmittedMuseSessionFixture({ native: { recording } });
   const events = createAgentSessionRuntimeHarness();
   try {
-    const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
+    const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd(),
+      mcpServers: { probe: { command: '/fixture/mcp-probe' } } });
     session.watch(events.recordRuntimeEvent);
     await session.send({ inputIds: ['native-tool-input'],
       input: { text: 'Call the injected MCP pebble tool exactly once, then reply only with its returned word. Do not use other tools.' },
@@ -106,6 +107,18 @@ it('publishes observed native tool results and inference usage without a foregro
       { scope: 'turn_delta', tokens: { input: 28397, output: 20, reasoning: 8, cacheRead: 28148, total: 28417 } },
     ]);
     expect(new Set(inferenceUsage.map(event => event.kind === 'usage-observed' && event.observationId)).size).toBe(2);
+    const turnEvents = events.canonicalEvents();
+    const turnStart = turnEvents.find(event => event.kind === 'turn-start');
+    const turnComplete = turnEvents.find(event => event.kind === 'turn-complete');
+    expect(turnEvents.filter(event => event.kind === 'mcp-tool-usage')).toMatchObject([{
+      turnId: 'native-tool-turn',
+      agentTurnId: turnStart?.agentTurnId,
+      window: { startMs: turnStart?.emittedAtMs, endMs: expect.any(Number) },
+      coverage: 'partial',
+      servers: [{ serverName: 'probe', toolCallCount: 1, schemaBytes: null }],
+    }]);
+    const usage = turnEvents.find(event => event.kind === 'mcp-tool-usage');
+    expect(usage?.sequence).toBeLessThan(turnComplete!.sequence);
   } finally {
     events.dispose();
     await fixture.dispose();

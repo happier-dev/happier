@@ -322,6 +322,11 @@ catalog-persistent MCP choice uses the shared choice builder and applies the
 catalog follow-up after the native grant succeeds; the adapter sends the
 captured native grant ID to Muse.
 
+For a completed turn with observed calls to configured MCP bindings, Muse
+publishes partial Usage evidence with per-server call counts. The observed MSP
+frames do not identify the tool inventory delivered to the model, so complete
+coverage and schema byte counts remain unavailable.
+
 These are unreleased development-source integrations, not stable-release or
 authenticated native-platform certification claims.
 
