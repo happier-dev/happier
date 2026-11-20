@@ -30,3 +30,12 @@ test('the Welcome pose samples continuously and lands on the exact step pose', (
   assert.ok(early.reveal > night.reveal && early.reveal < 1);
   assert.ok(early.spin > welcome.spin && early.spin < night.spin);
 });
+
+test('the signed-out step limb clears the Approve ways at the first-launch desktop size', () => {
+  const firstLaunch = { width: 1224, height: 765 };
+  const short = welcomePlanetPose('deep', firstLaunch);
+  assert.ok(short.limb > 618, 'the rendered ways row ends at y=618');
+  assert.equal(short.limb, welcomePlanetPose('deeper', firstLaunch).limb);
+  assert.equal(welcomePlanetPose('deep', { width: 1440, height: 900 }).limb, 684);
+  assert.ok(welcomePlanetPose('deep', { width: 390, height: 844 }, { phone: true }).limb > 401);
+});
