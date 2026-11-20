@@ -6,6 +6,7 @@ import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { searchActionDefinitionSummaries } from '@happier-dev/protocol/actions/actionCatalog';
+import type { PluginActionExecuteRequest } from '@/plugins/daemon/controlRoutes';
 
 
 export type OccurrenceBoundActionExecutorContext = ActionExecutorContext & Readonly<{
@@ -84,16 +85,8 @@ export function createDaemonPluginActionExecutor(params: Readonly<{
   });
 }
 
-export type PluginActionExecutionRequestOwner = (request: Readonly<{
-    actionId: string;
-    input: unknown;
-    surface: 'cli' | 'mcp' | 'agent';
-    defaultSessionId?: string;
-    /** Bounded host-stamped descriptive fact; never permission ancestry. */
-    startedBy?: WorkflowRunStartedByV1;
-    expectedContributorOccurrenceId?: string;
-    requiredDangerLevel?: 'safe';
-  }>, options?: Readonly<{ signal?: AbortSignal }>, invocation?: Readonly<{
+export type PluginActionExecutionRequestOwner = (request: Readonly<PluginActionExecuteRequest>,
+  options?: Readonly<{ signal?: AbortSignal }>, invocation?: Readonly<{
     /** Original public identity and admitted context, never serialized to daemon IPC. */
     actionId: string;
     context?: OccurrenceBoundActionExecutorContext;
@@ -134,6 +127,7 @@ export function createPluginActionExecutor(params: Readonly<{
       ...(context?.requiredContributedActionDangerLevel ? { requiredDangerLevel: context.requiredContributedActionDangerLevel } : {}),
       ...(startedBy ? { startedBy } : {}),
       ...(typeof context?.defaultSessionId === 'string' ? { defaultSessionId: context.defaultSessionId } : {}),
+      ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
       ...(typeof context?.expectedContributorOccurrenceId === 'string'
         && context.expectedContributorOccurrenceId.trim().length > 0
         ? { expectedContributorOccurrenceId: context.expectedContributorOccurrenceId.trim() } : {}),

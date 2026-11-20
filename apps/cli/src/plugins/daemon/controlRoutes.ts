@@ -139,6 +139,9 @@ const PluginActionExecuteRequestSchema = z.strictObject({
   requiredDangerLevel: z.optional(z.literal('safe')),
   surface: z.enum(['cli', 'mcp', 'agent']),
   defaultSessionId: z.optional(NonEmptyStringSchema),
+  // Caller correlation only. This never grants Action authority.
+  actionRequestId: z.optional(NonEmptyStringSchema),
+  // Descriptive starter and the admitted contributor fence are supplied by the host.
   startedBy: z.optional(WorkflowRunStartedByV1Schema),
   expectedContributorOccurrenceId: z.optional(PluginRuntimeOccurrenceIdSchema),
 });
@@ -184,6 +187,7 @@ export async function executeAppliedDaemonPluginActionWithController(
         ...(signal ? { signal } : {}),
         ...(request.startedBy ? { startedBy: request.startedBy } : {}),
         ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+        ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
       },
     });
   } finally {

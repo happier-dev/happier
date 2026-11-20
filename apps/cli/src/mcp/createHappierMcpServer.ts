@@ -681,6 +681,7 @@ export function createHappierMcpServer(
               initiatingActionCaller: admission.caller,
               ...(request.startedBy ? { startedBy: request.startedBy } : {}),
               ...(request.defaultSessionId ? { defaultSessionId: request.defaultSessionId } : {}),
+              ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
               ...(options?.signal ? { signal: options.signal } : {}),
             },
           });

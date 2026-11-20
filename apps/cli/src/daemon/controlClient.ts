@@ -145,6 +145,7 @@ import {
   PLUGIN_CHANGE_REQUEST_PATH,
   PLUGIN_CHANGE_STATUS_PATH,
   PLUGIN_DEVELOPMENT_CONTROL_PATH,
+  type PluginActionExecuteRequest,
 } from '@/plugins/daemon/controlRoutes';
 import type {
   DaemonPluginDevelopmentControlRequest,
@@ -547,17 +548,10 @@ export async function controlDaemonPluginDevelopment(
   return result as DaemonPluginDevelopmentControlResult;
 }
 
-export async function requestDaemonPluginActionExecution(request: Readonly<{
-  actionId: string;
-  input: unknown;
-  requiredDangerLevel?: 'safe';
-  surface: 'cli' | 'mcp' | 'agent';
-  defaultSessionId?: string;
-  /** Host-stamped descriptive starter, not an authorization principal. */
-  startedBy?: import('@happier-dev/protocol').WorkflowRunStartedByV1;
-  /** Host-stamped turn admission fence; never Action input or SDK surface. */
-  expectedContributorOccurrenceId?: string;
-}>, options: DaemonControlRequestOptions = {}): Promise<PluginActionExecutionAttempt> {
+export async function requestDaemonPluginActionExecution(
+  request: Readonly<PluginActionExecuteRequest>,
+  options: DaemonControlRequestOptions = {},
+): Promise<PluginActionExecutionAttempt> {
   const result = await daemonPost(PLUGIN_ACTION_EXECUTE_PATH, request, {
     ...pluginControlOptions(options),
     mutation: true,

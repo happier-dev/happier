@@ -43,19 +43,20 @@ describe('createDaemonPluginActionExecutor', () => {
     expect(transportRequests).toBe(0);
   });
 
-  it('retains an opaque committed message reference through canonical CLI Action admission and daemon transport', async () => {
+  it('retains the invocation and opaque message identities through CLI Action admission and daemon transport', async () => {
     const messageActionReference = { v: 1 as const, sessionId: 'session', messageId: 'message', observedRevision: 'revision' };
     const action = { pluginId: 'acme.source', localId: 'draft' };
+    const actionRequestId = 'reverse-client-request';
     const transport = createDaemonPluginActionExecutor({
       base: { execute: async () => { throw new Error('Unexpected fallback'); } },
       requestPluginActionExecution: async request => {
         expect(request).toMatchObject({ actionId: 'action.invoke', surface: 'cli', input: { action, input: {}, messageActionReference } });
-        return { matched: true, result: { ok: true, result: 'accepted' } };
+        return { matched: true, result: { ok: true, result: { requestId: request.actionRequestId ?? null } } };
       },
     });
     const executor = createActionExecutor({ invokeContributedAction: transport.invokeContributedAction } as unknown as ActionExecutorDeps);
-    expect(await executor.execute('action.invoke', { action, input: {}, messageActionReference }, { surface: 'cli' }))
-      .toEqual({ ok: true, result: 'accepted' });
+    expect(await executor.execute('action.invoke', { action, input: {}, messageActionReference }, { surface: 'cli', actionRequestId }))
+      .toEqual({ ok: true, result: { requestId: actionRequestId } });
   });
   it('retains the host read-only constraint across the private daemon transport', async () => {
     const transport = createDaemonPluginActionExecutor({
