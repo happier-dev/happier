@@ -359,12 +359,27 @@ else {
       runId: stopped.run.id, includeContent: true,
     }));
     const review = history.invocationDetails?.find(row => row.progress.invocationPath.blockId === 'review');
-    expect(review?.index.lifecycle).toBe('cancelled');
     const execution = review?.progress.execution;
     const nativeRunId = execution?.kind === 'action' ? execution.awaitedRuns?.[0]?.runId : undefined;
     if (!nativeRunId) throw new Error('Stopped Hunt lacks its admitted native run');
+    // Workflow Cancel ends authored work before indexed recovery has necessarily
+    // observed the native stop and settled the retained child invocation.
+    await act('execution.run.wait', { runId: nativeRunId, condition: 'terminal' });
     expect(ExecutionRunGetResponseSchema.parse(await act('execution.run.get', { runId: nativeRunId })))
       .toMatchObject({ run: { status: 'cancelled' } });
+    await waitFor(async () => {
+      const settled = WorkflowInvocationListResultV1Schema.parse(await act('workflow.run.invocations.list', {
+        runId: stopped.run.id, includeContent: true,
+      }));
+      const retained = settled.invocationDetails?.find(row => row.index.id === review?.index.id);
+      if (retained?.index.lifecycle === 'cancelled') return true;
+      if (retained?.index.lifecycle !== 'completed') return false;
+      // Fanout completion retains each native outcome in its terminal value;
+      // the Action itself can finish observing an already-cancelled reviewer.
+      const terminal = ReviewStartTerminalValueV1Schema.safeParse(retained.progress.result);
+      return terminal.success && terminal.data.perEngineOutcome.length === 1
+        && terminal.data.perEngineOutcome[0]?.outcome === 'cancelled';
+    }, { failFast: true, context: 'Stopped Hunt native work settles its retained Review invocation' });
     await nativeReply({ summary: 'Completed the explicitly retried repository review.', findings: [] });
     const retried = await start();
     expect(await act('workflow.run.wait', { runId: retried.run.id, conditions: ['terminal'] }))
