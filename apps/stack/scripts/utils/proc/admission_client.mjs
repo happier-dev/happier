@@ -283,7 +283,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               socket.once('close', () => slotConnections.delete(socket));
               socket.on('error', () => socket.destroy());
               if (admittedDuration) socket.write(JSON.stringify(admittedDuration) + '\n');
-              // A successor broker re-sizes this recovered slot from its current and recorded working set.
+              // A successor can use this identity's local duration and peak history.
               if (request.entry !== undefined) socket.write(JSON.stringify({ kind: 'slot-identity', className: request.className,
                 resourceClass: request.resourceClass, projects: request.projects, component: request.component, entry: request.entry }) + '\n');
             });
@@ -294,7 +294,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             control.write(JSON.stringify({ kind: 'ready' }) + '\n');
           }
           if (response.kind === 'admitted' && !payload) {
-            if (request.p99DurationMs && response.slotId && response.admittedAt !== undefined) {
+            if (response.slotId && response.admittedAt !== undefined) {
               admittedDuration = { kind: 'slot-duration', slotId: response.slotId, admittedAt: response.admittedAt,
                 className: request.className, durationClass: request.durationClass, p99DurationMs: request.p99DurationMs };
             }

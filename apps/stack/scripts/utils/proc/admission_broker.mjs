@@ -215,7 +215,6 @@ export function createAdmissionBroker({ root,
   oldLockFd, startupLockFd, sampleResources = readAdmissionMemorySample, readCpuCapacity = availableParallelism,
   readCpuPressure = sampleResources === readAdmissionMemorySample ? readLinuxHostRunnable : () => 0,
   readSlotWorkingSetKiB = readProcessJobScopeWorkingSetKiB,
-  readRecoveredSlotMemoryKiB = readSlotWorkingSetKiB,
   admitDisk = request => request.cacheBaseDir
     ? admitWorkerDiskBudget({ ...request, commandClass: request.className }) : { admitted: true } } = {}) {
   const slots = new Map();
@@ -284,6 +283,9 @@ export function createAdmissionBroker({ root,
     const key = identityKey(item);
     const p99DurationMs = key === null ? null : nearestRankP99(recordedIdentityDurations().get(key) ?? []);
     return p99DurationMs > 0 ? { durationClass: IDENTITY_DURATION_CLASS, p99DurationMs } : {};
+  }
+  function recordedMemoryWarmupMs(key) {
+    return key === null ? undefined : nearestRank(recordedIdentityDurations().get(key) ?? [], 0.5);
   }
   const roundPeak = peakKiB => Math.ceil(peakKiB / IDENTITY_FLOOR_ROUNDING_KIB) * IDENTITY_FLOOR_ROUNDING_KIB;
   function recordedIdentityResource(item, cpu = false) {
@@ -602,16 +604,18 @@ export function createAdmissionBroker({ root,
   async function observe() {
     const now = Date.now();
     const memorySlots = [...slots.values()].map(slot => {
-      const overdue = remainingSlotTimeMs(slot, now) < 0;
-      const measured = (slot.admitted || slot.recovered) && (slot.identityKey || overdue)
+      const warmupMs = slot.memoryWarmupMs ?? slot.p99DurationMs;
+      const warmed = warmupMs > 0 && now - slot.admittedAt > warmupMs;
+      const measured = (slot.admitted || slot.recovered) && (slot.identityKey || warmed)
         ? readSlotWorkingSetKiB(slot.pid) : null;
       const workingSetKiB = Number.isSafeInteger(measured) && measured > 0 ? measured : undefined;
       if (slot.admitted && slot.identityKey && workingSetKiB !== undefined) {
         slot.peakWorkingSetKiB = Math.max(slot.peakWorkingSetKiB ?? 0, workingSetKiB);
       }
-      // This working set is already charged to physical memory. Past p99 it
-      // replaces the floor and is fully credited, leaving no unused reservation.
-      slot.workingSetKiB = overdue ? workingSetKiB : undefined;
+      // Protect the expected peak through the identity's median run time.
+      // Without identity history, use the request's p99, if available. After
+      // warm-up only a measured working set can replace the original charge.
+      slot.workingSetKiB = warmed ? workingSetKiB : undefined;
       return { pid: slot.pid, floorKiB: slot.floorKiB, workingSetKiB: slot.workingSetKiB };
     });
     const { slotRssKiB, ...resources } = await sampleResources({
@@ -943,8 +947,10 @@ export function createAdmissionBroker({ root,
       if (!resources) continue;
       const slotId = randomUUID();
       const address = slotAddress(root, item.pid, floorKiB, slotId, cpuCores);
+      const key = identityKey(item);
       const slot = { address, pid: item.pid, className: item.className, resourceClass: item.resourceClass, projects: item.projects, floorKiB, cpuCores, workers: fitting?.workers, control: item.socket,
-        slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: identityKey(item),
+        slotId, durationClass: item.durationClass, p99DurationMs: item.p99DurationMs, identityKey: key,
+        memoryWarmupMs: recordedMemoryWarmupMs(key),
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
@@ -1015,7 +1021,8 @@ export function createAdmissionBroker({ root,
             || metadata.projects.some(project => typeof project !== 'string')))) return;
         enqueue(async () => {
           slot.identityKey ??= identityKey(metadata);
-          const key = slot.recovered ? identityKey(metadata) : null;
+          const key = slot.recovered ? slot.identityKey : null;
+          if (slot.recovered) slot.memoryWarmupMs = recordedMemoryWarmupMs(key);
           const peaks = recordedIdentityPeaks().get(key);
           const peak = peaks && nearestRank(peaks, 0.95);
           if (peak !== undefined) slot.floorKiB = Math.max(slot.floorKiB, roundPeak(peak));
@@ -1254,10 +1261,8 @@ export function createAdmissionBroker({ root,
             }
             try {
               await connectSlot(slot);
-              // The current working set replaces the old floor when attributable.
-              // Apply the recorded estimate too when the client identifies itself.
-              const currentKiB = readRecoveredSlotMemoryKiB(slot.pid);
-              if (Number.isSafeInteger(currentKiB) && currentKiB > 0) slot.floorKiB = roundPeak(currentKiB);
+              // The socket carries the granted peak through succession. Keep it
+              // until this client supplies its age and passes the same warm-up check.
               slots.set(slot.address, slot);
             }
             catch (error) {

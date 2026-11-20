@@ -1371,36 +1371,77 @@ test('a queued request uses its own newly recorded peak instead of its initial c
   await next.release();
 });
 
-test('succession re-sizes a recovered slot to the greater of its current and recorded working set', linux, async t => {
+test('twenty simultaneous requests reserve only five expected peaks before and during succession', linux, async t => {
   const gib = 1024 * 1024;
-  const readMemory = () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib });
-  const { root, broker, sampleResources } = await fixture(t, { readMemory, admitDisk: () => ({ admitted: true }) });
-  const settle = async () => { while ((await requestAdmissionSample(root)).activeCount !== 0) await new Promise(resolve => setImmediate(resolve)); };
-  const identity = { component: 'apps/ui', entry: 'pnpm run typecheck' };
-  // Record a 9 GiB working-set peak for the identity, then hold one admitted job of it.
-  assert.equal(await runAdmissionCommand({ root, className: 'compilation', floorKiB: 38 * gib, machine: 'fixture', repoDir: root,
-    cacheBaseDir: root, env: {}, projects: ['.'], ...identity, readJobPeakKiB: () => 9 * gib,
-    command: process.execPath, args: ['-e', ''] }), 0);
-  await settle();
-  const anonymous = await (await acquire(root, 38 * gib, t, { className: 'compilation', resourceClass: 'compilation' })).admit();
-  const started = Promise.withResolvers();
-  const finished = Promise.withResolvers();
-  const task = runAdmittedTask({ root, className: 'compilation', floorKiB: 38 * gib, repoDir: root, cacheBaseDir: root,
-    projects: ['.'], ...identity, readJobPeakKiB: () => null, env: {} }, async () => { started.resolve(); return await finished.promise; });
-  t.after(() => finished.resolve());
-  await started.promise;
+  const floorKiB = 2 * gib;
+  const readMemory = () => ({ availableMemoryKiB: 5 * floorKiB, totalMemoryKiB: 64 * gib });
+  const readSlotWorkingSetKiB = () => 1;
+  const { root, broker, sampleResources } = await fixture(t, { readMemory, readSlotWorkingSetKiB,
+    admitDisk: () => ({ admitted: true }) });
+  const requestOptions = { noWait: true, className: 'compilation', resourceClass: 'compilation' };
+  const burst = () => Promise.all(Array.from({ length: 20 }, () => acquire(root, floorKiB, t, requestOptions)));
+  const offers = async clients => {
+    const decisions = await Promise.all(clients.map(client => client.next()));
+    assert.ok(decisions.every(result => result.kind === 'reserved' || result.reason === 'HSTACK_MEMORY_BUSY'));
+    return decisions.filter(result => result.kind === 'reserved').length;
+  };
+
+  const clients = await burst();
+  assert.equal(await offers(clients), 5, 'five expected peaks fit before any payload starts');
+  for (const client of clients) client.socket.destroy();
+  const holders = await Promise.all(Array.from({ length: 5 }, async () =>
+    (await acquire(root, floorKiB, t, requestOptions)).admit()));
+  const before = await requestAdmissionSample(root);
+  assert.equal(before.reservedMemoryKiB, 5 * floorKiB);
   await broker.close();
-  const replacement = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources,
-    readCpuCapacity: () => 128, readRecoveredSlotMemoryKiB: () => Math.round(1.2 * gib) });
+
+  const replacement = createAdmissionBroker({ root, sampleResources, readCpuCapacity: () => 128, readSlotWorkingSetKiB,
+    admitDisk: () => ({ admitted: true }) });
   t.after(() => replacement.close());
   await replacement.start();
-  await new Promise(resolve => setImmediate(resolve));
-  await requestAdmissionSample(root);
-  assert.equal(replacement.status().reservedMemoryKiB, 1.5 * gib + 9 * gib,
-    'the anonymous recovered slot reserves its 1.2 GiB current working set; the identified one its 9 GiB identity peak');
-  finished.resolve();
-  await task;
-  await anonymous.release();
+  assert.equal(await offers(await burst()), 0, 'a successor cannot offer a sixth peak while the first five warm up');
+  const after = await requestAdmissionSample(root);
+  assert.equal(after.activeCount, 5);
+  assert.equal(after.reservedMemoryKiB, before.reservedMemoryKiB);
+  assert.equal(after.reservedCpuCores, before.reservedCpuCores);
+  for (const holder of holders) await holder.release();
+});
+
+test('a slot keeps its expected peak through its recorded median duration then charges its working set', linux, async t => {
+  let now = Date.now();
+  t.mock.method(Date, 'now', () => now);
+  let availableMemoryKiB = 100;
+  const readMemory = () => ({ availableMemoryKiB, totalMemoryKiB: 100 });
+  const readSlotWorkingSetKiB = () => 12;
+  const { root, broker, sampleResources } = await fixture(t, { readMemory, readSlotWorkingSetKiB });
+  const identity = { className: 'compilation', component: 'apps/ui', entry: 'node scripts/workspaces/runTypeScriptCli.mjs', projects: ['.'] };
+  const key = JSON.stringify([identity.className, identity.component, identity.entry, identity.projects]);
+  await writeFile(join(root, 'identity-durations.json'), JSON.stringify({ [key]: [1000, 4000, 2000] }));
+  const started = Promise.withResolvers();
+  const finished = Promise.withResolvers();
+  const task = runAdmittedTask({ root, floorKiB: 60, repoDir: root, env: {}, ...identity }, async () => {
+    started.resolve();
+    return await finished.promise;
+  });
+  t.after(async () => { finished.resolve(); await task; });
+  await started.promise;
+
+  availableMemoryKiB = 88;
+  now += 2000;
+  const tooSoon = await acquire(root, 80, t, { noWait: true });
+  assert.equal((await tooSoon.next()).reason, 'HSTACK_MEMORY_BUSY', 'the charge still holds at the warm-up boundary');
+  await broker.close();
+  const replacement = createAdmissionBroker({ root, sampleResources, readSlotWorkingSetKiB, readCpuCapacity: () => 128 });
+  t.after(() => replacement.close());
+  await replacement.start();
+  assert.equal((await requestAdmissionSample(root)).reservedMemoryKiB, 60,
+    'the successor retains the expected peak at the warm-up boundary');
+
+  now += 1;
+  const afterWarmup = await acquire(root, 80, t, { noWait: true });
+  assert.equal((await afterWarmup.next()).kind, 'reserved',
+    'the successor uses the working set after the local median even without a dispatcher duration');
+  assert.equal((await requestAdmissionSample(root)).reservedMemoryKiB, 92);
 });
 
 test('working-set reads use anon, shmem and kernel and ignore the file cache and lifetime peak', linux, () => {
