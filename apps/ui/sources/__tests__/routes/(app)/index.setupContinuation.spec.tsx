@@ -1,6 +1,5 @@
 import React from 'react';
 import { Pressable, View } from 'react-native';
-import type { Href } from 'expo-router';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
@@ -105,9 +104,16 @@ function LandingRouter({ Screen, children, destinations }: React.PropsWithChildr
     Screen: React.ComponentType;
     destinations?: Readonly<Record<string, React.ComponentType>>;
 }>) {
-    const [destination, replace] = React.useState<Href>('/');
-    expoRouterMock.spies.replace.mockImplementation(replace);
-    const pathname = typeof destination === 'string' ? destination : destination.pathname;
+    const [pathname, setPathname] = React.useState('/');
+    expoRouterMock.spies.replace.mockImplementation(destination => {
+        if (typeof destination === 'string') {
+            setPathname(destination);
+        } else if (destination && typeof destination === 'object' && 'pathname' in destination && typeof destination.pathname === 'string') {
+            setPathname(destination.pathname);
+        } else {
+            throw new TypeError('The mounted navigator requires a route pathname');
+        }
+    });
     const [route = pathname, query] = pathname.split('?');
     const Destination = destinations?.[route];
     if (Destination && query) routeParamsState.value = Object.fromEntries(new URLSearchParams(query));

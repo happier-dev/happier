@@ -129,6 +129,7 @@ function createStepMotionStage(
         pending = null;
         abandoned.cancelled = true;
         abandoned.freeze?.release();
+        requestRenderer(false);
         abandoned.complete?.('skipped');
     }
 
@@ -153,6 +154,7 @@ function createStepMotionStage(
             settled = true;
             if (active?.stop === skip) active = null;
             cancel?.();
+            requestRenderer(false);
             complete?.(outcome);
             syncPresentation();
         };
@@ -178,7 +180,7 @@ function createStepMotionStage(
         if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration ||
             (animation.grammar !== 'opening' && !glyphReady)) {
             freeze?.release();
-            showIncoming(layer, complete);
+            showIncoming(layer, true, complete);
             return;
         }
         const { createStepMotionScene, leavingEdge, radialDistance, readStepLeaves, readStepProgress, readWebFocalInk,
@@ -345,6 +347,7 @@ function createStepMotionStage(
                 else publishHomeArrival(current => current?.finish === releaseHomeArrival ? { ...homeArrival, building: false } : current);
             }
             releaseFreeze();
+            requestRenderer(false);
             syncPresentation();
             complete?.(outcome);
         };
@@ -471,12 +474,16 @@ function createStepMotionStage(
     }
 
     function findLayer(key: string) {
-        return Array.from(layers).findLast(layer => layer.key === key);
+        let latest: StepMotionLayerHandle | undefined;
+        for (const layer of layers) {
+            if (layer.key === key) latest = layer;
+        }
+        return latest;
     }
 
     return {
         attach(layer: StepMotionLayerHandle) {
-            if (layer.warmOnMount && !readReducedMotionPreference()) warm();
+            if (layer.warmOnMount && !glyphReady && !readReducedMotionPreference()) warm();
             layers.add(layer);
             syncPresentation();
             return () => {
@@ -492,7 +499,7 @@ function createStepMotionStage(
             if (pending?.destination !== layer.key) {
                 if (alreadyCommitted && !reactivated && layer.warmOnMount && !pending) {
                     settle();
-                    showIncoming(layer);
+                    showIncoming(layer, true);
                 }
                 return;
             }
@@ -654,7 +661,7 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
     const [stage] = React.useState(() => createStepMotionStage(publish, publishHomeArrival, setWarming, setOpeningPrepared, () => colors.current));
     const { width, height } = useWindowDimensions();
     React.useEffect(() => {
-        if (!warming) return;
+        if (!warming || renderer) return;
         let live = true;
         void Promise.all([import('@/components/atmosphere/glyph/GlyphSurface'), import('./stepMotionPresentation')]).then(
             ([glyph, loaded]) => {
@@ -665,7 +672,7 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
             () => { if (live) stage.glyphReadiness('still'); },
         );
         return () => { live = false; };
-    }, [warming, stage]);
+    }, [warming, renderer, stage]);
     React.useLayoutEffect(() => {
         rootStage = stage;
         return () => {
@@ -685,7 +692,7 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
             </OpeningBuildGlyphsContext.Provider>
             {warming && renderer && !openingPrepared && !opening ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants" aria-hidden
-                style={[StyleSheet.absoluteFillObject, { zIndex: 1001 }]}>
+                style={[StyleSheet.absoluteFillObject, { zIndex: 1001, opacity: paints ? 1 : 0 }]}>
                 {paints?.freeze?.image ? <renderer.StepFreezeImage
                     key={paints.animation.epoch}
                     freeze={paints.freeze}

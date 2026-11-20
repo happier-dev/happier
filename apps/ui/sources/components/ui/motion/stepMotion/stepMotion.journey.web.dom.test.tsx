@@ -7,6 +7,7 @@ import { glyphFrame } from '@happier-dev/brand/glyph-scene';
 
 import type { GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import { HomePlanet } from '@/components/atmosphere/HomePlanet';
+import { useGlyphClock } from '@/components/atmosphere/moments/useMomentClock';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { isShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
@@ -21,6 +22,8 @@ const desktopEvents = vi.hoisted(() => new Map<string, () => void>());
 let stageScene: GlyphSurfaceProps['scene'] = [];
 let homePaint: GlyphSurfaceProps | undefined;
 let stageMotion: GlyphSurfaceProps['motion'];
+let countStageFrame: (() => void) | null = null;
+const paintStageFrame = () => countStageFrame?.();
 
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
     const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
@@ -43,12 +46,13 @@ vi.mock('react-native-unistyles', async () => {
 vi.mock('@/components/atmosphere/glyph/GlyphSurface', () => ({
     GlyphSurface: (props: GlyphSurfaceProps) => {
         const { onReady, scene, motion, testID } = props;
+        useGlyphClock(motion ?? null, countStageFrame && testID === 'step-motion-glyphs' ? 'ready' : null, paintStageFrame);
         React.useEffect(() => { onReady?.('ready'); }, [onReady]);
         React.useEffect(() => {
             if (testID === 'home-planet') homePaint = props;
             else { stageScene = scene; stageMotion = motion; }
         }, [motion, props, scene, testID]);
-        return null;
+        return testID === 'step-motion-glyphs' ? <div data-testid={testID} /> : null;
     },
 }));
 
@@ -214,7 +218,7 @@ it('commits the new step immediately, ignores the previous pointer release, and 
     }
 });
 
-it.each(['back', 'blur'] as const)('keeps stage continuity when a late QR is followed by %s', async (interruption) => {
+it.each(['back', 'blur', 'settle'] as const)('keeps stage continuity when a late QR is followed by %s', async (interruption) => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     setReducedMotionPreferenceOverride(false);
@@ -233,6 +237,22 @@ it.each(['back', 'blur'] as const)('keeps stage continuity when a late QR is fol
         return new DOMRect(20, 40, 400, 520);
     });
     const clock = vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const paints = vi.fn();
+    const frames = new Map<number, FrameRequestCallback>();
+    if (interruption === 'settle') {
+        countStageFrame = paints;
+        let frameId = 0;
+        vi.stubGlobal('requestAnimationFrame', (draw: FrameRequestCallback) => {
+            frames.set(++frameId, draw);
+            return frameId;
+        });
+        vi.stubGlobal('cancelAnimationFrame', (id: number) => frames.delete(id));
+    }
+    const drawFrame = () => {
+        const callbacks = Array.from(frames.values());
+        frames.clear();
+        for (const draw of callbacks) draw(performance.now());
+    };
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
@@ -310,20 +330,65 @@ it.each(['back', 'blur'] as const)('keeps stage continuity when a late QR is fol
             expect(reverse?.particles.length).toBe(forward!.particles.length);
             expect(reverse?.particles.every((value, index) => value === forward!.particles[index])).toBe(true);
             expect(document.activeElement).toBe(find('open-approval'));
-        } else {
+        } else if (interruption === 'blur') {
             expect(document.visibilityState).toBe('visible');
             expect(desktopEvents.has('tauri://blur')).toBe(true);
             await act(async () => { desktopEvents.get('tauri://blur')?.(); });
             expect(document.querySelector('[aria-hidden="true"][style*="position: fixed"]')).toBeNull();
             expect(document.activeElement).toBe(find('late-qr'));
+        } else {
+            expect(container.querySelectorAll('[data-testid="step-motion-glyphs"]')).toHaveLength(1);
+            expect(paints).toHaveBeenCalled();
+            clock.mockReturnValue(1001 + stepMotionTiming.forwardS * 1000);
+            await act(async () => drawFrame());
+            expect(settled).toHaveBeenCalledExactlyOnceWith('settled');
+            paints.mockClear();
+            await act(async () => drawFrame());
+            expect(paints).not.toHaveBeenCalled();
+            expect(container.querySelectorAll('[data-testid="step-motion-glyphs"]')).toHaveLength(0);
+            expect(document.querySelector('body > [aria-hidden="true"][style*="position: fixed"]')).toBeNull();
+            await act(async () => { find('back').click(); });
+            expect(stageMotion?.kind).toBe('transition');
+            expect(container.querySelectorAll('[data-testid="step-motion-glyphs"]')).toHaveLength(1);
+            return;
         }
         expect(settled).toHaveBeenCalledExactlyOnceWith('skipped');
     } finally {
         await act(async () => { desktopEvents.get('tauri://focus')?.(); root.unmount(); });
+        countStageFrame = null;
         container.remove();
         rect.mockRestore();
         clock.mockRestore();
         Object.defineProperty(HTMLElement.prototype, 'animate', { value: previousAnimate });
+        setReducedMotionPreferenceOverride(null);
+        vi.unstubAllGlobals();
+    }
+});
+
+it('settles an opening build through the entrance animation when the layer has no layout', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    setReducedMotionPreferenceOverride(false);
+    const previousAnimate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    const entrance: { onfinish: (() => void) | null; cancel: () => void } = { onfinish: null, cancel() {} };
+    Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: () => entrance });
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+        await act(async () => root.render(<StepMotionStage>
+            <StepMotionLayer layerKey="workflow"><h1>Welcome</h1></StepMotionLayer>
+        </StepMotionStage>));
+        await act(async () => { await vi.dynamicImportSettled(); });
+        const settled = vi.fn();
+        await act(async () => { void playBuild({ layer: 'workflow', choreography: 'opening' }).then(settled); });
+        expect(entrance.onfinish).toBeTypeOf('function');
+        await act(async () => entrance.onfinish?.());
+        expect(settled).toHaveBeenCalledExactlyOnceWith('settled');
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        if (previousAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', previousAnimate);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
         setReducedMotionPreferenceOverride(null);
         vi.unstubAllGlobals();
     }
