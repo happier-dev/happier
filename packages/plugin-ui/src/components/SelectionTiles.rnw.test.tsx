@@ -190,6 +190,55 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  it.each(['card', 'visual'] as const)('moves keyboard focus to a newly drawn distant %s choice', async (variant) => {
+    const pageWindow = { top: 0, bottom: 400 };
+    const tracker: PluginUiScrollActivityTracker = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {}, invalidateLayout() {},
+      getLayoutRevision: () => 0, getWindow: () => pageWindow,
+      subscribe: () => () => {}, measureSpan: async () => ({ top: 0 }),
+    };
+    const options = Array.from({ length: 200 }, (_, index) => ({ id: `c${index}`, title: `Choice ${index}` }));
+    let commitSelection: (next: string | null) => void = () => {};
+    let deferSelection = false;
+    let requested: string | null = null;
+    function ControlledChoices() {
+      const [value, setValue] = useState<string | null>('c0');
+      commitSelection = setValue;
+      return <PluginUiScrollActivityProvider tracker={tracker}>
+        <HappierSelectionTiles variant={variant} scroll="page" maximumColumns={1} accessibilityLabel="Options"
+          testIdPrefix="focus" value={value} onChange={(next) => {
+            if (deferSelection) requested = next;
+            else setValue(next);
+          }} options={options} colors={TILE_COLORS}
+          renderText={({ text }) => <span>{text}</span>} renderGlyph={() => null} />
+      </PluginUiScrollActivityProvider>;
+    }
+    const mount = mountThroughReactNativeWeb(<ControlledChoices />);
+    try {
+      const group = mount.container.querySelector<HTMLElement>('[role="radiogroup"]')!;
+      const layout = Reflect.get(group, '__reactLayoutHandler');
+      await act(async () => { layout({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 400 } } }); });
+      const first = mount.container.querySelector<HTMLElement>('[data-testid="focus:c0"]')!;
+      expect(mount.container.querySelector('[data-testid="focus:c199"]')).toBeNull();
+      await act(async () => { first.focus(); });
+      await pressKey(first, 'End');
+      const last = mount.container.querySelector<HTMLElement>('[data-testid="focus:c199"]')!;
+      expect(last.getAttribute('aria-checked')).toBe('true');
+      expect(document.activeElement).toBe(last);
+      await pressKey(last, 'Home');
+      expect(document.activeElement).toBe(first);
+      // A caller may settle its selection after the keyboard event has returned.
+      deferSelection = true;
+      await pressKey(first, 'End');
+      expect(mount.container.querySelector('[data-testid="focus:c199"]')).toBeNull();
+      await act(async () => { commitSelection(requested); });
+      expect(document.activeElement).toBe(mount.container.querySelector('[data-testid="focus:c199"]'));
+      // An unrelated controlled value change is never an instruction to move focus.
+      await act(async () => { commitSelection('c100'); });
+      expect(document.activeElement).not.toBe(mount.container.querySelector('[data-testid="focus:c100"]'));
+    } finally { mount.unmount(); }
+  });
+
   it('marks a picture card by its outline alone and says its status where the check stood', () => {
     // Theme slots (lab A1, finding 4): the ring alone marks the chosen slot; "Showing now" is a quiet fact of the card.
     const mount = mountTiles(<HappierSelectionTiles variant="card" selectionMark="outline" density="compact" accessibilityLabel="Modes"

@@ -366,6 +366,7 @@ type TileFocusHandle = { focus?: () => void } | null;
  */
 function useChoiceTilesKeyboard<T extends string, I extends string>(props: HappierChoiceSelectionTilesProps<T, I>) {
   const tileRefs = useRef(new Map<T, TileFocusHandle>());
+  const pendingFocus = useRef<T | null>(null);
   const localization = useOptionalHappierUiLocalization();
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const single = props.selectionMode !== 'multiple';
@@ -382,8 +383,14 @@ function useChoiceTilesKeyboard<T extends string, I extends string>(props: Happi
     if (!option) return null;
     return {
       ref: (node: TileFocusHandle) => {
-        if (node) tileRefs.current.set(option.id, node);
-        else tileRefs.current.delete(option.id);
+        if (node) {
+          tileRefs.current.set(option.id, node);
+          // A page-windowed choice binds only after the controlled selection draws its line.
+          if (pendingFocus.current === option.id && node.focus) {
+            pendingFocus.current = null;
+            node.focus();
+          }
+        } else tileRefs.current.delete(option.id);
       },
       tabIndex: single ? (index === focusableIndex ? 0 : -1) : undefined,
       onKeyDown: (event: { key?: string; nativeEvent?: { key?: string }; preventDefault?: () => void }) => {
@@ -407,8 +414,13 @@ function useChoiceTilesKeyboard<T extends string, I extends string>(props: Happi
         const next = nextIndex === null ? null : props.options[nextIndex];
         if (!next) return;
         event.preventDefault?.();
+        pendingFocus.current = next.id;
         handleToggle(props, next.id);
-        tileRefs.current.get(next.id)?.focus?.();
+        const target = tileRefs.current.get(next.id);
+        if (target?.focus) {
+          pendingFocus.current = null;
+          target.focus();
+        }
       },
     };
   };
