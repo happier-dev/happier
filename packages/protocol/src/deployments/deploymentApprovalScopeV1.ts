@@ -4,6 +4,8 @@ import { readActionFailureEnvelope } from '../actions/executor/actionFailureEnve
 import { artifactSavedByFromActionContextV1 } from '../artifacts/artifactBinaryV1.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { isDatabaseActionIdV1 } from '../actions/actionIdsDatabaseV1.js';
+import { databaseActionOperationClass } from '../actions/databaseActionMetadata.js';
+import { isDelegatedActionRequesterV1 } from '../actions/delegatedRequesterV1.js';
 import { DatabaseTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
 import type { DatabaseAgentLevelV1 } from './deploymentEnvironmentDeployerV1.js';
 import { z } from '../zodRuntimePolicy.js';
@@ -127,8 +129,7 @@ export function createDeploymentApprovalScopeResolverV1(
 type DatabaseTargetV1 = z.infer<typeof DatabaseTargetV1Schema>;
 export type DatabaseMachineLocalTargetV1 = Extract<DatabaseTargetV1, Readonly<{ kind: 'worktree' | 'manual' }>>;
 
-function readMachineLocalDatabaseTarget(actionId: string, input: unknown): DatabaseMachineLocalTargetV1 | null {
-  if (!isDatabaseActionIdV1(actionId)) return null;
+function readMachineLocalDatabaseTarget(input: unknown): DatabaseMachineLocalTargetV1 | null {
   const target = DatabaseTargetV1Schema.safeParse(readRecord(input).target);
   return target.success && (target.data.kind === 'worktree' || target.data.kind === 'manual') ? target.data : null;
 }
@@ -136,18 +137,22 @@ function readMachineLocalDatabaseTarget(actionId: string, input: unknown): Datab
 /**
  * The executing Machine's approval scope (F10, D13). A Machine-local database keeps its agent level in that
  * Machine's database plugin, so the daemon reads it there and hands it to the applier as the same Action-time
- * target input an Environment supplies; every other Action keeps its Environment owner. A refused read
- * supplies no level, and the access decider then refuses the operation itself.
+ * target input an Environment supplies. A delegated write must have a readable level before approval routing.
+ * Person Actions and database reads do not use the agent write level. The database owner still admits the effect.
  */
 export function withMachineLocalDatabaseAgentLevelV1(
   resolveEnvironment: NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']>,
-  readLevel: (target: DatabaseMachineLocalTargetV1, context: ActionExecutorContext) => Promise<DatabaseAgentLevelV1 | undefined>,
+  readLevel: (target: DatabaseMachineLocalTargetV1, context: ActionExecutorContext) => Promise<DatabaseAgentLevelV1 | ActionExecuteFailure | undefined>,
 ): NonNullable<ActionExecutorDeps['resolveEnvironmentApprovalScope']> {
   return async args => {
-    const target = readMachineLocalDatabaseTarget(args.actionId, args.input);
+    if (!isDatabaseActionIdV1(args.actionId)) return await resolveEnvironment(args);
+    const target = readMachineLocalDatabaseTarget(args.input);
     if (!target) return await resolveEnvironment(args);
+    if (databaseActionOperationClass(args.actionId, args.input) === 'read') return { scope: null };
+    if (!isDelegatedActionRequesterV1(args.context)) return { scope: null };
     const level = await readLevel(target, args.context);
-    return level ? { scope: null, targetApproval: { databaseAgentLevel: level } } : { scope: null };
+    if (typeof level === 'string') return { scope: null, targetApproval: { databaseAgentLevel: level } };
+    return level ?? failure('database_target_unavailable');
   };
 }
 

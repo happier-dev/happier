@@ -5,6 +5,7 @@ import { DeploymentEnvironmentHeaderV1Schema } from './deploymentActionsV1.js';
 import { ActionsSettingsV1Schema, setScopedActionApprovalPreference } from '../actions/actionSettings.js';
 import { resolveActionApprovalRouting } from '../actions/actionApprovalPolicy.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
 
 function environment(id: string, preview = false) {
   return DeploymentEnvironmentHeaderV1Schema.parse({
@@ -176,14 +177,43 @@ describe('Machine-local database agent level at the approval scope (F10, D13)', 
       targetApproval: admitted.targetApproval })).toMatchObject({ required: true });
   });
 
-  it('supplies no level when the Machine refuses the read, and leaves deployment targets to the Environment owner', async () => {
+  it('waives the Ask when the Machine explicitly allows a delegated write without approval', async () => {
+    const resolve = withMachineLocalDatabaseAgentLevelV1(async () => { throw new Error('No Environment read expected'); },
+      async () => 'readWriteNoApproval');
+    const admitted = await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: worktreeTarget }, context: agent, phase: 'prepare' });
+    if ('ok' in admitted) throw new Error('expected an admission');
+    expect(admitted.targetApproval?.databaseAgentLevel).toBe('readWriteNoApproval');
+    expect(resolveActionApprovalRouting({ actionId: 'action.invoke', spec: getActionSpec('action.invoke'), settings: allow, context: agent,
+      targetApproval: admitted.targetApproval })).toMatchObject({ required: false });
+  });
+
+  it('refuses a delegated write when the Machine cannot read the level and leaves deployment targets to the Environment owner', async () => {
     let hostReads = 0;
     const resolve = withMachineLocalDatabaseAgentLevelV1(async () => { hostReads++; return { scope: null }; }, async () => undefined);
     expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: worktreeTarget }, context: agent, phase: 'prepare' }))
-      .toEqual({ scope: null });
+      .toMatchObject({ ok: false, errorCode: 'database_target_unavailable' });
     expect(hostReads).toBe(0);
     await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: deploymentTarget }, context: agent, phase: 'prepare' });
     await resolve({ actionId: 'deployments.deploy', input: { serverId: 'home', environmentId: 'staging' }, context: agent, phase: 'prepare' });
     expect(hostReads).toBe(2);
+  });
+
+  it('preserves the Machine denial for a delegated write at None', async () => {
+    const denied = { ok: false, errorCode: 'database_agent_access_none', error: 'database_agent_access_none' } as const;
+    const resolve = withMachineLocalDatabaseAgentLevelV1(async () => { throw new Error('No Environment read expected'); },
+      async () => denied);
+    expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: worktreeTarget }, context: agent, phase: 'prepare' }))
+      .toEqual(denied);
+  });
+
+  it('does not read the agent write level for a Person Apply or a delegated read', async () => {
+    const resolve = withMachineLocalDatabaseAgentLevelV1(async () => { throw new Error('No Environment read expected'); },
+      async () => { throw new Error('The level is irrelevant for this invocation'); });
+    expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: worktreeTarget },
+      context: { surface: 'ui', authority: 'present_user' }, phase: 'prepare' })).toEqual({ scope: null });
+    expect(await resolve({ actionId: editsApply, input: { operation: 'edits.apply', target: worktreeTarget },
+      context: {}, phase: 'prepare' })).toEqual({ scope: null });
+    expect(await resolve({ actionId: DATABASE_STATEMENT_RUN_ACTION_ID_V1, input: { mode: 'read', target: worktreeTarget },
+      context: agent, phase: 'prepare' })).toEqual({ scope: null });
   });
 });

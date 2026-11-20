@@ -178,6 +178,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
     readDeploymentTargetRoleAdmissionHost?(context: import('@happier-dev/protocol').ActionExecutorContext):
         Promise<DeploymentTargetRoleAdmissionHost | null>;
     resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
+    readMachineLocalDatabaseAgentLevel?: Parameters<typeof createTargetActionInvocationRegistry>[0]['readMachineLocalDatabaseAgentLevel'];
 }>) {
     const expectedActions = params.contributes.activationTargets.flatMap((target) => (
         deriveActivationTargetRegistrationRights(target).flatMap((right) => right.family === 'actions'
@@ -348,6 +349,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
         expectedActions,
         readActions,
         ...(params.resolveEnvironmentApprovalScope ? { resolveEnvironmentApprovalScope: params.resolveEnvironmentApprovalScope } : {}),
+        ...(params.readMachineLocalDatabaseAgentLevel ? { readMachineLocalDatabaseAgentLevel: params.readMachineLocalDatabaseAgentLevel } : {}),
         evaluateCatalogPolicy: ({ pluginId, localId }) => {
             const action = resolveCatalogAction(pluginId, localId);
             if (!action) {

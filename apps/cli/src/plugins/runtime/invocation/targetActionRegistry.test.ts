@@ -9,7 +9,11 @@ import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-pro
 import { createCliDeploymentActionDeps } from '@/deployments/createCliDeploymentActionDeps';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { DATABASE_EDITS_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 
 import {
     COMPOSER_MEDIA_CONTENT_CAPABILITY_V1,
@@ -230,6 +234,50 @@ describe('target action invocation registry', () => {
                 status: 'failed', code: 'deployment_unavailable', actionHandlerInvocation: 'notStarted',
             });
             expect(handler).not.toHaveBeenCalled();
+        } finally { registry.dispose(); }
+    });
+
+    it('holds a repeated Agent Apply for a Person even when the caller supplies an Environment scope resolver', async () => {
+        const actionRef = parseQualifiedPluginActionId(DATABASE_EDITS_APPLY_ACTION_ID_V1)!;
+        const target = { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
+            workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' },
+            source: { kind: 'service', serviceId: 'db', variable: 'DATABASE_URL' } };
+        const input = { operation: 'edits.apply', target };
+        const context = { surface: 'agent', authority: 'account_automation', serverId: 'home' } as const;
+        const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+            [DATABASE_EDITS_APPLY_ACTION_ID_V1]: { approvalWaivedSurfaces: ['agent'] },
+        } });
+        const environmentResolver = createDeploymentApprovalScopeResolverV1(async () => {
+            throw new Error('A worktree target has no Environment metadata');
+        });
+        let level: 'readWriteNoApproval' | 'readWriteAsk' | undefined = 'readWriteNoApproval';
+        const handler = vi.fn(async () => ({ echoed: 'committed' }));
+        const registry = createRegistry({
+            actions: [{ ...action({ id: actionRef.localId, surfaces: ['agent'], approvalScope: 'environment', dangerLevel: 'writesRemote',
+                inputSchema: { type: 'object' } }),
+                pluginId: actionRef.pluginId, localId: actionRef.localId, handler }],
+            resolveEnvironmentApprovalScope: environmentResolver,
+            readMachineLocalDatabaseAgentLevel: async () => level,
+        });
+        const invocation = {
+            ...actionRef, surface: 'agent', input, approvalContext: context,
+            resolveEnvironmentApprovalScope: environmentResolver,
+            isApprovalRequiredByActionSettings: (_manifestDefault, _input, admission) => resolveActionApprovalRouting({
+                actionId: 'action.invoke', profileActionId: DATABASE_EDITS_APPLY_ACTION_ID_V1,
+                spec: getActionSpec('action.invoke'), settings, context, targetApproval: admission?.targetApproval,
+            }).required,
+            requestCurrentIntent: async () => ({ status: 'deferred', artifactId: 'person-review' }),
+        } satisfies Parameters<typeof registry.invoke>[0];
+        try {
+            expect(await registry.invoke(invocation)).toMatchObject({ status: 'executed', value: { echoed: 'committed' } });
+            expect(handler).toHaveBeenCalledTimes(1);
+            level = 'readWriteAsk';
+            expect(await registry.invoke(invocation)).toMatchObject({ status: 'deferred', artifactId: 'person-review' });
+            expect(handler).toHaveBeenCalledTimes(1);
+            level = undefined;
+            expect(await registry.invoke(invocation)).toMatchObject({ status: 'failed', code: 'database_target_unavailable',
+                actionHandlerInvocation: 'notStarted' });
+            expect(handler).toHaveBeenCalledTimes(1);
         } finally { registry.dispose(); }
     });
 

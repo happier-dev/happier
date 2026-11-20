@@ -21,6 +21,7 @@ import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '@happier-dev/pro
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { projectPluginActionApprovalScopeV1 } from '@happier-dev/protocol/plugins/actions/approvalScope';
+import { withMachineLocalDatabaseAgentLevelV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import type { PluginAutomationSubjectKindDeclarationV1 } from '@happier-dev/protocol/automations/automationPluginSubjectV1';
 import { createActionAutomationInvocationV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import { isActionEffectHookableV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -351,6 +352,7 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
     expectedActions?: readonly Readonly<{ pluginId: string; localId: string }>[];
     readActions?: () => readonly TargetActionInvocationRegistration[];
     resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
+    readMachineLocalDatabaseAgentLevel?: Parameters<typeof withMachineLocalDatabaseAgentLevelV1>[1];
     resolveAuthorizationFacts: (action: ResolvedTargetAction) => TargetActionAuthorizationFacts;
     evaluateCatalogPolicy?: (params: Readonly<{
         pluginId: string;
@@ -1127,16 +1129,22 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             beginDiagnosticScope(preparedInput.input);
             let environmentAdmission: ActionEnvironmentApprovalScopeAdmissionV1 | undefined;
             if (indexed.registration.definition.approvalScope === 'environment') {
-                const resolveScope = invocation.resolveEnvironmentApprovalScope ?? params.resolveEnvironmentApprovalScope;
+                const resolveEnvironment = invocation.resolveEnvironmentApprovalScope ?? params.resolveEnvironmentApprovalScope
+                    ?? (async () => withActionFailureDiagnostic(
+                        { ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' },
+                        { phase: 'deployment.plugin.approval.scope', causeKind: 'client_required' },
+                        diagnostic => logger.warnLocalFile('[Deployment] Unavailable', { ...diagnostic, requestId: invocation.requestId ?? correlationId })));
+                // The requester may supply Environment custody. Machine-local policy still comes from this Machine.
+                const resolveScope = params.readMachineLocalDatabaseAgentLevel
+                    ? withMachineLocalDatabaseAgentLevelV1(resolveEnvironment, params.readMachineLocalDatabaseAgentLevel)
+                    : resolveEnvironment;
                 try {
-                    const admitted = resolveScope ? await resolveScope({
+                    const admitted = await resolveScope({
                         actionId: formatQualifiedPluginActionId({ pluginId: invocation.pluginId, localId: invocation.localId }),
                         input: preparedInput.input,
                         context: { ...invocation.approvalContext, signal: lifetime.signal },
                         phase: invocation.requireCurrentIntent ? 'replay' : 'prepare',
-                    }) : withActionFailureDiagnostic({ ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' },
-                        { phase: 'deployment.plugin.approval.scope', causeKind: 'client_required' },
-                        diagnostic => logger.warnLocalFile('[Deployment] Unavailable', { ...diagnostic, requestId: invocation.requestId ?? correlationId }));
+                    });
                     if ('errorCode' in admitted) {
                         const diagnostic = readActionOutputDiagnostic(admitted);
                         if (diagnostic) logger.warnLocalFile('[Deployment] Unavailable', {

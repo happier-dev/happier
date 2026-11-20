@@ -214,7 +214,6 @@ import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsPr
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { withMachineLocalDatabaseAgentLevelV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { DATABASE_ACCESS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DatabaseAccessReadResultV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createPluginSessionsInventory } from '@/session/services/pluginSessionsInventory';
@@ -541,7 +540,6 @@ function resolveManagedDependencyHostPlatform(): 'darwin' | 'linux' | 'win32' {
         message: 'Managed dependencies are unavailable on this host platform',
     });
 }
-
 
 // The literal canonical id always parses; the database plugin owns this read-only Action.
 const DATABASE_ACCESS_READ_REF = parseQualifiedPluginActionId(DATABASE_ACCESS_READ_ACTION_ID_V1)!;
@@ -4656,14 +4654,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
     targetActionInvocations = buildTargetActionInvocationRegistry({
         ...(params?.ensureEnvironmentServices ? { ensureEnvironmentServices: params.ensureEnvironmentServices } : {}),
         readDeploymentTargetRoleAdmissionHost,
-        resolveEnvironmentApprovalScope: withMachineLocalDatabaseAgentLevelV1(async request => {
+        async resolveEnvironmentApprovalScope(request) {
             const host = await readDeploymentTargetRoleAdmissionHost(request.context);
             return host?.resolveEnvironmentApprovalScope?.(request)
                 ?? deploymentUnavailableDiagnostic({ ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' },
                     'deployment.target_role.approval_scope.host', 'client_required');
-        }, async (target, context) => {
-            // F10: the database plugin on this Machine owns a Machine-local level; read it through its own
-            // read-only Action as the same requester, before routing. A refusal supplies no level.
+        },
+        async readMachineLocalDatabaseAgentLevel(target, context) {
+            // Read the Machine's database level through the owner's read-only Action as the same requester.
             const action = { pluginId: DATABASE_ACCESS_READ_REF.pluginId, localId: DATABASE_ACCESS_READ_REF.localId };
             const occurrenceId = readCurrentPluginOccurrenceId(action.pluginId);
             const sourceCustody = readCurrentPluginSourceCustody(action.pluginId);
@@ -4672,10 +4670,10 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 caller: Object.freeze({ kind: 'plugin' as const, pluginId: action.pluginId, occurrenceId, sourceCustody,
                     contribution: Object.freeze({ id: action.localId, qualifiedId: DATABASE_ACCESS_READ_ACTION_ID_V1 }) }),
                 approvalContext: context, signal: context.signal ?? new AbortController().signal });
-            if (result.status !== 'executed') return undefined;
+            if (result.status !== 'executed') return { ok: false, errorCode: result.code, error: result.code };
             const read = DatabaseAccessReadResultV1Schema.safeParse(result.value);
             return read.success && read.data.setBy === 'machine' ? read.data.agentAccess : undefined;
-        }),
+        },
         async readAccountScope(signal) {
             const authority = params?.accountExecution;
             const serverId = authority?.serverIdentityId ?? authority?.serverId;
