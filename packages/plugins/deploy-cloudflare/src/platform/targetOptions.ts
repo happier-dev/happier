@@ -54,6 +54,11 @@ async function read(input: Input, context: DeploymentContext) {
   if (input.fieldPath === 'providerIdentity.providerAccountId' || input.fieldPath === 'providerAccountId') {
     if (input.query) params.set('name', input.query);
     reply = await requestAccounts(context, params.size ? `?${params}` : '');
+  } else if (input.product === 'pages' && input.fieldPath === 'providerEnvironment') {
+    // Pages environments are fixed; a pre-Create draft names one before any Account is chosen.
+    return { options: options([
+      { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' },
+    ], input.query) };
   } else {
     const accountId = input.providerIdentity?.providerAccountId ?? input.providerAccountId;
     if (!accountId) missingDependency(input.fieldPath.startsWith('providerIdentity.') ? 'providerIdentity.providerAccountId' : 'providerAccountId');
@@ -65,9 +70,6 @@ async function read(input: Input, context: DeploymentContext) {
       if (typeof workerTag !== 'string') refuse(workerTag);
       path = `/builds/workers/${encodeURIComponent(workerTag)}/triggers`;
     } else if (input.product === 'pages') {
-      if (input.fieldPath === 'providerEnvironment') return { options: options([
-        { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' },
-      ], input.query) };
       path = `/pages/projects${params.size ? `?${params}` : ''}`;
     } else if (input.product === 'workers') {
       if (input.fieldPath === 'providerEnvironment' && input.resourceName) return { options: options([

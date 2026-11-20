@@ -212,6 +212,18 @@ it('discovers Accounts with provider paging and filters product and Pages enviro
   } finally { await kit.dispose(); }
 });
 
+// A pre-Create draft names its Pages environment before any Cloudflare Account is chosen (the Review
+// notice Inspect, AUTO-LIVE-REVIEW #187): the fixed Pages environment choices need no Account.
+it('answers Pages environment choices for a draft that names no Account yet', async () => {
+  const http = createPluginHttpFixture({ async request() { throw new Error('no provider read expected'); } });
+  const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
+  try {
+    await expect(kit.invokeAction('target-options-read', { credentialRef, credentialPrincipal, product: 'pages',
+      fieldPath: 'providerEnvironment' })).resolves.toEqual({ options: [
+      { value: { kind: 'production' }, label: 'Production' }, { value: { kind: 'preview' }, label: 'Preview' }] });
+  } finally { await kit.dispose(); }
+});
+
 it('cancels an in-flight provider read with the invoking lifetime', async () => {
   const controller = new AbortController();
   let entered!: () => void;
