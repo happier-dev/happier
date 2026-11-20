@@ -68,22 +68,23 @@ export function stepNumbers(document: ImageMarksDocumentV1): Readonly<Record<str
 }
 
 /**
- * The agent's words for a picture's numbered steps, "N. note" in number order, starting at `firstNumber`
- * (a video frame continues its message's numbering). A step without a note keeps its bare number so the
- * list matches the picture; null when no step has a note, since the numbers already sit on the picture.
+ * The agent's words for a picture's numbered steps: a lead line naming them ("Numbered marks:", or the caller's
+ * label such as "Numbered marks on [Image #1]"), then "N. note" in number order from `firstNumber` (a video
+ * frame may continue its message's numbering). A step without a note reads "N. (no note)" so the list matches
+ * the picture; null when no step has a note, since the numbers already sit on the picture.
  */
-export function formatStepNotes(document: ImageMarksDocumentV1, firstNumber = 1): string | null {
+export function formatStepNotes(document: ImageMarksDocumentV1, options: Readonly<{ firstNumber?: number; label?: string }> = {}): string | null {
   const lines: string[] = [];
-  let next = firstNumber;
+  let next = options.firstNumber ?? 1;
   let noted = false;
   for (const mark of document.marks) {
     if (mark.kind !== 'step') continue;
     const note = mark.note?.trim() ?? '';
     if (note) noted = true;
-    lines.push(note ? `${next}. ${note.split('\n').join('\n   ')}` : `${next}.`);
+    lines.push(`${next}. ${note ? note.split('\n').join('\n   ') : '(no note)'}`);
     next += 1;
   }
-  return noted ? lines.join('\n') : null;
+  return noted ? [`${options.label ?? 'Numbered marks'}:`, ...lines].join('\n') : null;
 }
 
 /** Admitted operations share one owner between interactive edits and headless Actions. */

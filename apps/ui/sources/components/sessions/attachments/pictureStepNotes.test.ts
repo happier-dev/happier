@@ -51,11 +51,11 @@ describe('picture numbered comments on send', () => {
       picture('browser', marked(['Already in the marks document']), true),
     ];
     expect(appendPictureStepNotes('Enter should queue.  ', drafts)).toBe(
-      'Enter should queue.\n\n[Image #3]\n1. Steer here\n2.',
+      'Enter should queue.\n\nNumbered marks on [Image #3]:\n1. Steer here\n2. (no note)',
     );
     expect(
       appendPictureStepNotes('', [picture('noted', marked(['Only this']))]),
-    ).toBe('[Image #1]\n1. Only this');
+    ).toBe('Numbered marks on [Image #1]:\n1. Only this');
     expect(
       appendPictureStepNotes('Unchanged', [
         picture('plain'),

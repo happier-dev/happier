@@ -525,7 +525,7 @@ describe('submitSessionDraft', () => {
         } });
         expect(await submitSessionDraft({ sessionTarget: scope })).toMatchObject({ ok: true, result: { status: 'accepted' } });
         expect(sent).toHaveLength(1);
-        const steps = '[Image #1]\n1. Move this group under Input\n2.\n3. List the microphones here';
+        const steps = 'Numbered marks on [Image #1]:\n1. Move this group under Input\n2. (no note)\n3. List the microphones here';
         expect(sent[0]).toMatchObject({ input: { message: `${text}\n\n${steps}`,
             structuredInput: { sessionAttachments: [{ id: 'marked', sessionId }] } } });
         const uploads = [buildUploadedAttachment({ id: 'marked', name: 'settings.png', path: 'settings.png', sizeBytes: 2,

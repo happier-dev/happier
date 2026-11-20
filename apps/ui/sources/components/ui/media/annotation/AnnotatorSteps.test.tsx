@@ -8,6 +8,7 @@ import {
 import { renderScreen } from '@/dev/testkit';
 import { createImageAnnotator } from './annotatorStore';
 import { AnnotatorSteps } from './AnnotatorSteps';
+import { annotationAnnouncementText } from './annotationAnnouncement';
 
 const step = (id: string, x: number, note?: string) => ({
   id,
@@ -59,7 +60,7 @@ describe('numbered comments list', () => {
       expect(annotator.store.getState().history.undo).toHaveLength(1);
       expect(annotator.store.getState().canvasFocused).toBe(true);
       expect(formatStepNotes(annotator.store.getState().document)).toBe(
-        '1. Move this group under Input\n2. The title jumps\n3. List the microphones',
+        'Numbered marks:\n1. Move this group under Input\n2. The title jumps\n3. List the microphones',
       );
 
       await act(async () =>
@@ -72,6 +73,14 @@ describe('numbered comments list', () => {
       ]);
       await act(async () => annotator.undo());
       expect(noteValue(1)).toBe('Move this group under Input');
+      // Selecting a step announces its number and note together.
+      await act(async () => annotator.select('c'));
+      expect(annotationAnnouncementText(annotator.store.getState().announcement!)).toContain('List the microphones');
+      // Delete on a focused badge removes that step through the same mark.remove path, renumbering the rest.
+      const badge = screen.find(node => node.props.testID === 'annotator-step-1' && typeof node.props.onKeyDown === 'function');
+      await act(async () => { badge.props.onKeyDown('Delete', {}); });
+      expect(annotator.store.getState().document.marks.map(mark => mark.id)).toEqual(['b', 'c']);
+      expect(noteValue(1)).toBe('The title jumps');
     } finally {
       await screen.unmount();
     }

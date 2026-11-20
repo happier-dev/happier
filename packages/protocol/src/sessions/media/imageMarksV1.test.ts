@@ -58,10 +58,11 @@ describe('image marks public owner', () => {
       { id: 'b', kind: 'step', at: { x: 2, y: 2 }, color: 'red', size: 'm' },
       { id: 'c', kind: 'step', at: { x: 3, y: 3 }, color: 'red', size: 'm', note: 'List the microphones\nnot only System default' },
     ] });
-    expect(formatStepNotes(doc)).toBe('1. Move this group under Input\n2.\n3. List the microphones\n   not only System default');
+    expect(formatStepNotes(doc)).toBe('Numbered marks:\n1. Move this group under Input\n2. (no note)\n3. List the microphones\n   not only System default');
     // Removing a step renumbers the rest; a video frame continues the message's numbering.
     const removed = applyImageMarksOperations(doc, [{ kind: 'mark.remove', id: 'b' }]);
-    expect(formatStepNotes(removed, 4)).toBe('4. Move this group under Input\n5. List the microphones\n   not only System default');
+    expect(formatStepNotes(removed, { firstNumber: 4, label: 'Numbered marks on [Image #2]' }))
+      .toBe('Numbered marks on [Image #2]:\n4. Move this group under Input\n5. List the microphones\n   not only System default');
     // Numbers alone already sit on the picture: no note, no words.
     expect(formatStepNotes({ ...doc, marks: [{ id: 'b', kind: 'step', at: { x: 2, y: 2 }, color: 'red', size: 'm', note: '  ' }] })).toBeNull();
   });
