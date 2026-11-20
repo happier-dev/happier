@@ -6,7 +6,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import {
@@ -17,6 +17,7 @@ import {
 import type { AtmosphereBackdrop } from '@/components/atmosphere/atmosphereBandBoundary';
 import type { HomePlanetHero } from '@/components/atmosphere/HomePlanet';
 import type { HomeOrbitRect } from '@/components/atmosphere/orbit/homeOrbitScene';
+import { resolveAgentInputRestingCardTopInset } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
 import { useHeaderHeight } from '@/utils/platform/responsive';
 import {
@@ -152,16 +153,18 @@ export function useHomeHeroFrame(
   const destinationKey = useDestinationInstanceKey();
   const holdsStage = destinationKey !== null ? visible : input.focused;
   const stageId = useAtmosphereStage(holdsStage ? 'home' : null, holdsStage ? geometry : null, input.focused, input.active, input.backdrop);
+  const { theme } = useUnistyles();
+  const restingCardTopInset = resolveAgentInputRestingCardTopInset(theme);
   const hero = React.useMemo<HomePlanetHero | null>(
     () =>
       frame?.headline
         ? {
-            composerTop: frame.composer ? frame.composer.y : null,
+            composerTop: frame.composer ? frame.composer.y + restingCardTopInset : null,
             aboveBottom: bottomOf(frame.suggestions ?? frame.composer ?? frame.headline),
             nextTop: frame.next ? frame.next.y : null,
           }
         : null,
-    [frame],
+    [frame, restingCardTopInset],
   );
   // What takes the pointer over the moons, in page coordinates: the hero's content, and on a phone the
   // transparent route header Home sits under (rootStackRouteOptions 'home'). A moon under them could be

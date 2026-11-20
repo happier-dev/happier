@@ -64,6 +64,8 @@ describe('Home atmosphere geometry while the composer is focused', () => {
         const measure = async () => act(async () => { hook.getCurrent().measure(); });
         await measure();
         const before = hook.getCurrent().hero;
+        // The measured band starts at 300; its resting card starts below the padding and instrument strip.
+        expect(before?.composerTop).toBe(336);
         await act(async () => { hook.getCurrent().onComposerFocus(); });
         composerHeight = 70;
         composerTop = 285;

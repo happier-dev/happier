@@ -8,6 +8,7 @@ import { buildGlassCastShadowStyle, resolveGlassRimStyle } from '@/shadowElevati
 import type { GlassSurfaceGroup } from '@/components/ui/glass/glassMaterial';
 import { COMPOSER_PHONE_CARD_CONTENT_INSET } from '../composerContentInset';
 import { resolveComposerSurfacePaint } from '../composerSurfaceStyle';
+import { INSTRUMENT_STRIP_LINE_HEIGHT_PX } from '../instrumentStrip/instrumentStripStyles';
 
 
 type Theme = UnistylesThemes[keyof UnistylesThemes];
@@ -90,6 +91,11 @@ export function resolveAgentInputPhonePanelLayoutStyle(theme: Theme) {
 
 export function resolveAgentInputBandStyle(theme: Theme) {
     return { alignItems: 'center' as const, width: '100%' as const, paddingTop: theme.space.s8, paddingBottom: theme.space.s8 };
+}
+
+/** The resting card starts below the band's top padding and its single instrument line. */
+export function resolveAgentInputRestingCardTopInset(theme: Theme) {
+    return resolveAgentInputBandStyle(theme).paddingTop + INSTRUMENT_STRIP_LINE_HEIGHT_PX;
 }
 
 export function resolveAgentInputPanelMaterial(input: Readonly<{
