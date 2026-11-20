@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { UsageAnalyticsContribution, UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
+import { UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema,
+    type UsageAnalyticsContribution, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { projectUsageAgentAccountingCalendar, projectUsageAgentCalendar, UsageAgentCalendarSchema } from './usageAgentCalendar.js';
 import { projectUsageWorkIntervals } from './usageWorkIntervals.js';
 import * as workIntervals from './usageWorkIntervals.js';
 import { aggregateUsageContributionCosts, resolveUsageContributionCosts } from './usageAggregation.js';
 import { resolveUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
+import { projectUsageAnalyticsSummary, repriceUsageAnalyticsResponse } from './usageCost.js';
 import { buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates } from './usagePricingPopulation.js';
 
 const ms = (value: string) => Date.parse(value);
@@ -55,7 +57,10 @@ describe('projectUsageAgentCalendar', () => {
         expect(result.hourOfDayBuckets[0]!.totals.peakParallel).toBe(3);
         expect(sweptSpans, 'the five dated hour spans need one Agent sweep and one shared total sweep').toBe(10);
     });
-    it('keeps covered identity separate from unavailable money when admitted compact costs cross local hours', () => {
+    it.each([
+        { scenario: 'a complete report', includeUnpriced: false },
+        { scenario: 'a report beside an unpriced event', includeUnpriced: true },
+    ])('keeps compact and rich calendar coverage in sync for $scenario', ({ includeUnpriced }) => {
         const selectedPeriod = { startMs: 0, endMs: 3_600_000 };
         const covered = { ...row('covered', 'a', 2), observedAtMs: 600_000,
             cost: { reportedUsd: 0, estimatedUsd: 0.2, currency: 'USD', costSource: 'pricing_estimate' as const,
@@ -67,22 +72,35 @@ describe('projectUsageAgentCalendar', () => {
             cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD', costSource: 'none' as const } };
         const catalog = { v: 1 as const, models: {}, provenance: { source: 'litellm' as const,
             origin: 'bundled' as const, asOfMs: 1, revision: 'calendar-admitted', fetchStatus: 'ready' as const } };
-        for (const originals of [[covered, report], [covered, report, unknown]]) {
-            const states = resolveUsagePricingPopulationStates(originals);
-            const populations = new Map(originals.map(item => [item.id, buildUsagePricingPopulation([item], states)]));
-            const compact = originals.map(item => {
-                const { reportedTotalId: _id, reportedTotalContributionIds: _ids, ...cost } = item.cost;
-                return { ...item, cost };
-            });
-            const expected = projectUsageAgentAccountingCalendar({ period: selectedPeriod,
-                timeZoneOffsetMinutes: 30, accounting: accounting(originals) }).projection;
-            const input = { period: selectedPeriod, timeZoneOffsetMinutes: 30, accounting: accounting(compact),
-                accountingSelectedCosts: (selected: readonly UsageAnalyticsContribution[], mode: UsageCostMode) =>
-                    selected.map(item => priceUsagePricingPopulation(populations.get(item.id)!, catalog, {}, mode).selectedCost) };
-            const actual = projectUsageAgentAccountingCalendar(input).projection;
-            expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
-            expect(actual.hours[0]?.totals.cost).toBeNull();
-            expect(actual.periodSummary.totals.cost?.amountUsd ?? null).toBe(1.25);
+        const originals = includeUnpriced ? [covered, report, unknown] : [covered, report];
+        const states = resolveUsagePricingPopulationStates(originals);
+        const populations = new Map(originals.map(item => [item.id, buildUsagePricingPopulation([item], states)]));
+        const compact = originals.map(item => {
+            const { reportedTotalId: _id, reportedTotalContributionIds: _ids, ...cost } = item.cost;
+            return { ...item, cost };
+        });
+        const expected = projectUsageAgentAccountingCalendar({ period: selectedPeriod,
+            timeZoneOffsetMinutes: 30, accounting: accounting(originals) }).projection;
+        const actual = projectUsageAgentAccountingCalendar({ period: selectedPeriod,
+            timeZoneOffsetMinutes: 30, accounting: accounting(compact),
+            accountingSelectedCosts: (selected: readonly UsageAnalyticsContribution[], mode: UsageCostMode) =>
+                selected.map(item => priceUsagePricingPopulation(populations.get(item.id)!, catalog, {}, mode).selectedCost),
+        }).projection;
+        expect(JSON.stringify(actual)).toBe(JSON.stringify(expected));
+        const request = UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: selectedPeriod, timeZoneOffsetMinutes: 30, includeActivity: true,
+        });
+        const compactResponse = projectUsageAnalyticsSummary(accounting(originals), request);
+        const decoded = UsageAnalyticsQueryResponseSchema.parse(JSON.parse(JSON.stringify(compactResponse)));
+        const delivered = decoded.summary!.accountingCalendar!.value;
+        const repriced = repriceUsageAnalyticsResponse(decoded, catalog).summary!.accountingCalendar!.value;
+        for (const calendar of [actual, delivered, repriced]) {
+            expect(calendar.hours[0]?.totals.cost).toBeNull();
+            for (const cell of [calendar.hours[1], calendar.days[0], calendar.weeks[0], calendar.periodSummary]) {
+                const cost = cell?.totals.cost;
+                expect(cost).toMatchObject({ kind: 'reported', amountUsd: 1.25, currency: 'USD', source: 'provider_reported' });
+                expect(cost?.partial).toBe(includeUnpriced ? true : undefined);
+            }
         }
     });
     it('keeps carried and direct projections identical across source coverage, cost modes and refused private evidence', () => {

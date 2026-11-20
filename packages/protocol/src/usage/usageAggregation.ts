@@ -151,12 +151,14 @@ export function createEmptyUsageSelectedCost(): UsageSelectedCostAccumulator {
 }
 
 export function selectResolvedUsageCost(cost: UsageObservationCost, mode: UsageCostMode): UsageSelectedCostAccumulator {
-    const admitted = (cost as AggregatedUsageCost)[usageCostAggregationBasis];
-    if (admitted?.covered) return createEmptyUsageSelectedCost();
+    const state = (cost as AggregatedUsageCost)[usageCostAggregationBasis];
+    if (state?.covered) return createEmptyUsageSelectedCost();
+    const admitted = state?.mode === mode ? state : undefined;
     const selected = resolveUsageCostBasis(cost, mode);
-    return { available: admitted?.mode === mode ? admitted.available : true, selected,
-        ...(admitted?.hasUnpriced || selected?.partial || !selected && resolveEffectiveUsageCostUsd(cost, mode) !== 0
-            ? { hasUnpriced: true as const } : {}) };
+    // A folded partition already decided whether its missing selection is neutral or unpriced.
+    const hasUnpriced = admitted ? admitted.hasUnpriced : !selected && resolveEffectiveUsageCostUsd(cost, mode) !== 0;
+    return { available: admitted?.available ?? true, selected,
+        ...(hasUnpriced || selected?.partial ? { hasUnpriced: true as const } : {}) };
 }
 
 /** Merge already-selected partitions without re-reading raw facts or resolving overlap. */
