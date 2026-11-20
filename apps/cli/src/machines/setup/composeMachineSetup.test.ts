@@ -93,6 +93,7 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
   await storage.execute({ operation: 'transition', runId, expectedRevision: storage.run().revision,
     state, ...(!pendingNative && state !== 'running' && state !== 'interrupted' ? { custodyState: 'settled' as const } : {}),
     checkpointEnvelope: storage.checkpointEnvelope() });
+  let nativeReadUnavailable = false;
   const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
     storage: { ...storage, execute: async (operation, options) => {
       if (operation.operation === 'wait' && waitError instanceof Error) throw waitError;
@@ -103,8 +104,11 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     randomBytes: () => { throw new Error('plain_account_has_no_keys'); },
     observeRecovery: async ({ progress }) => await observeWorkflowInvocationRecoveryEvidence({ runId, machineId,
       credentials: { token: 'fixture', encryption: null }, progress,
-      getOperation: async target => native.success && native.data.operationId === target.operationId
-        ? { kind: 'found', operation: native.data } : { kind: 'not_found' },
+      getOperation: async target => {
+        if (nativeReadUnavailable) throw new Error('machine_unreachable');
+        return native.success && native.data.operationId === target.operationId
+          ? { kind: 'found', operation: native.data } : { kind: 'not_found' };
+      },
       getRun: async () => { throw new Error('Native Setup uses an Action Operation'); },
     }) });
   const deps = createCombinedMachineSetupActionDeps({ readDeps: createUnavailableActionTransportDeps,
@@ -122,7 +126,8 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
   });
   const readRecovery = () => reader.execute({ actionId: 'workflow.run.invocations.get',
     input: { runId, invocationId: 'setup-child' }, context });
-  return { apply: () => deps.machineSetupApply!({ input, context }), input, context, deps, runId, storage, store, key, readRecovery };
+  return { apply: () => deps.machineSetupApply!({ input, context }), input, context, deps, runId, storage, store, key, readRecovery,
+    disconnectNativeOperationRead: () => { nativeReadUnavailable = true; } };
 }
 
 describe('Combined Machine setup child settlement', () => {
@@ -190,8 +195,8 @@ describe('Combined Machine setup child settlement', () => {
       } });
     }, undefined, undefined, 'plain');
   });
-  it('settles an interrupted Setup from its exact retained terminal native failure without parent attention', async () => {
-    const child = { version: 1, operationId: 'native-child', revision: 5,
+  it('settles an interrupted Setup from its exact retained terminal native failure when a fresh Machine read fails', async () => {
+    const child = { version: 1, operationId: 'native-child', revision: 5, requestId: 'native-request',
       actionId: 'machines.setup.apply', state: 'failed', scope: { accountId: 'actor', machineId: 'guest' },
       title: 'Set up machine', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported',
       error: { errorCode: 'terminal_spawn_failed', error: 'terminal_spawn_failed' } } as const;
@@ -201,6 +206,7 @@ describe('Combined Machine setup child settlement', () => {
       conditions: ['terminal', 'attention'] })).toMatchObject({ observation: 'waiting',
       run: { state: 'interrupted', workflowCustodyState: 'pending', attentionRequired: false } });
     expect((await fixture.store.read(fixture.key))?.result).toEqual({ operation: child });
+    fixture.disconnectNativeOperationRead();
     const detail = await fixture.readRecovery();
     expect(detail, JSON.stringify(detail)).toMatchObject({ invocation: { recoveryAvailability: { retry: { kind: 'available' } } } });
     const store = createActionOperationStore();

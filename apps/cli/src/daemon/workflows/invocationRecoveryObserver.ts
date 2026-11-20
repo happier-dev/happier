@@ -18,12 +18,12 @@ import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/r
 import { SessionContinuationInspectionV1Schema } from '@happier-dev/protocol/sessions/agentTransition';
 import type { WorkflowAccountRunActionDeps, WorkflowProgressEnvelopeV1, WorkflowMaterializedLeafV1, WorkflowRunSummaryV1 } from '@happier-dev/protocol';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
-import { resumeActionCompletionV1, readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
+import { ActionOperationCompletionOutputV1Schema, resumeActionCompletionV1, readActionCompletionRunObservationV1, isActionCompletionRunObservationPendingV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readProjectSetupConsentHoldV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { DaemonAgentInstallStartResponseSchema, MachinesAgentsInstallInputSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
-import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupOperationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionOperationGetV1ResponseSchema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -184,7 +184,7 @@ export async function resolveWorkflowSessionConversation(params: Readonly<{
   };
 }
 
-/** Fresh exact native facts only; the Protocol owner decides which controls they permit. */
+/** Exact native facts; the Protocol owner decides which controls they permit. */
 export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly<{
   runId: string;
   credentials: StoredCredentials;
@@ -220,6 +220,19 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
         if (install.success && install.data.waitForTerminal === true && receipt.success && !receipt.data.ok
           && receipt.data.errorCode === 'native_effect_failed' && receipt.data.details.outcome.kind === 'failed') {
           return { activity: 'not_active', canReattach: false, canContinueConversation: false };
+        }
+      }
+      if (params.progress.blockKind === 'action' && isMachineSetupOperationActionIdV1(execution.actionId)
+        && execution.awaitedOperations?.length === 1) {
+        const [target] = execution.awaitedOperations;
+        const receipt = ActionOperationCompletionOutputV1Schema.safeParse(params.progress.result);
+        const operation = receipt.success ? receipt.data.operation : undefined;
+        // The Workflow already retained this exact finite settlement. Another Machine read
+        // cannot make the same failed operation active again.
+        if (operation?.state === 'failed' && operation.operationId === target.operationId
+          && operation.scope.machineId === target.machineId && operation.actionId === execution.actionId
+          && operation.requestId === execution.actionRequestId && operation.error?.errorCode === reason?.code) {
+          return { activity: 'not_active', canReattach: true, canContinueConversation: false };
         }
       }
       if (execution.awaitedOperations?.length && params.getOperation) {

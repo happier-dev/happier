@@ -89,6 +89,27 @@ describe('ActionOperationDetailModal', () => {
         expect(screen.findByTestId('action-operation-cancel')).toBeNull();
     });
 
+    it('opens the exact Workflow recovery from a failed Machine Setup receipt', async () => {
+        const serverId = 'setup-home';
+        const onClose = vi.fn();
+        const snapshot = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'failed-setup', revision: 2, actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1,
+            state: 'failed', scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Apply machine setup',
+            createdAt: 100, startedAt: 110, settledAt: 120, cancellation: 'unsupported',
+            error: { errorCode: 'machine_setup_setup_failed', error: 'Setup failed',
+                setupRetry: { runId: '5b423e3b-62a0-47ba-b4e1-93fe5895a517', invocationId: 'b7ea2558-7e4c-4e56-8439-4678c89f21c2' } },
+        });
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+        const screen = await renderScreen(<ActionOperationDetailModal serverId={serverId} operationId={snapshot.operationId} onClose={onClose} />);
+        try {
+            await screen.pressByTestIdAsync('action-operation-retry-setup');
+            expect(routerPush).toHaveBeenCalledExactlyOnceWith(
+                '/workflows/runs/5b423e3b-62a0-47ba-b4e1-93fe5895a517?invocationId=b7ea2558-7e4c-4e56-8439-4678c89f21c2&serverId=setup-home',
+            );
+            expect(onClose).toHaveBeenCalledOnce();
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the Account investigation owner when Inbox opens a failed operation in the shell modal', async () => {
         const [{ AppPaneModalProvider }, { renderScreen: renderRoot }, { openActionOperationDetail }, { AccountNoticeInvestigationBoundary }] = await Promise.all([
             import('@/components/appShell/providers/AppPaneModalProvider'), import('@/dev/testkit'),
@@ -129,6 +150,7 @@ describe('ActionOperationDetailModal', () => {
         const screen = await renderScreen(<ActionOperationDetailModal serverId="home-a" operationId={snapshot.operationId} onClose={() => {}} />);
         try {
             expect(screen.findByTestId('action-operation-investigate') !== null).toBe(failed);
+            expect(screen.findByTestId('action-operation-retry-setup')).toBeNull();
         } finally { await screen.unmount(); }
     });
 

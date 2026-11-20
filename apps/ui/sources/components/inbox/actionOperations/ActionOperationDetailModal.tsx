@@ -26,6 +26,7 @@ import {
   useSessionListRenderableWithServerScope,
 } from '@/sync/domains/state/storage';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
+import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { acknowledgeActionOperationPresented } from '@/sync/domains/actionOperations/acknowledgeActionOperationPresented';
 import { t } from '@/text';
@@ -297,6 +298,7 @@ export const ActionOperationDetailModal = React.memo(
     const failedAddress = snapshot.state === 'failed' && operation.serverId ? {
       serverId: operation.serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId,
     } : null;
+    const setupRetry = failedAddress ? snapshot.error?.setupRetry : undefined;
     const investigationSubject: TriageFailureSubjectV1 | null = !failedAddress ? null
       : isDeploymentBackupEvidenceActionIdV1(snapshot.actionId) ? { kind: 'backupRun', operation: failedAddress }
       : snapshot.domainRef?.kind === 'managedMachine' || isMachineSetupOperationActionIdV1(snapshot.actionId)
@@ -634,7 +636,8 @@ export const ActionOperationDetailModal = React.memo(
 
         {investigationSubject && operation.serverId ? <SectionContentRow>
           <FailureInvestigationActions subject={investigationSubject} serverId={operation.serverId}
-            controllerMachineId={snapshot.scope.machineId} compact={false} testID="action-operation-investigate" />
+            controllerMachineId={snapshot.scope.machineId} compact={false} emphasis={setupRetry ? 'secondary' : undefined}
+            testID="action-operation-investigate" />
         </SectionContentRow> : null}
 
         <ActionOperationDetailControls
@@ -644,6 +647,16 @@ export const ActionOperationDetailModal = React.memo(
           onClose={props.onClose}
           leading={
             <>
+              {setupRetry ? (
+                <RoundButton
+                  title={t('managedMachines.creation.retrySetup')}
+                  testID="action-operation-retry-setup"
+                  onPress={() => {
+                    router.push(createWorkflowInvocationRoute(setupRetry.runId, setupRetry.invocationId, operation.serverId) as never);
+                    props.onClose();
+                  }}
+                />
+              ) : null}
               {detail.nextAction?.kind === 'open_deployment_backups' ? (
                 <OpenDeploymentBackupsButton
                   serverId={detail.nextAction.serverId}
