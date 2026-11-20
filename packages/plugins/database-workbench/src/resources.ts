@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseOwnWriteV1Schema, type DatabaseDemandSnapshotV1 } from '@happier-dev/database-protocol';
 import type { DatabaseWorkbenchConnection } from './connection.js';
+import { workbenchTargetKey } from './targetIdentity.js';
 
 export { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/database-protocol';
 
@@ -37,7 +38,7 @@ export function createDatabaseConnectionResourceRuntime(options: Readonly<{
                 throw new PluginError({ code: 'plugin_resource_demand_unavailable' });
             }
             const input = DatabaseDescribeInputV1Schema.parse(context.context.launchInput);
-            const targetKey = JSON.stringify(input.target);
+            const targetKey = workbenchTargetKey(input.target);
             const { descriptor, connection } = await options.resolve({
                 input, requesterAccount: context.requesterAccount, secrets: context.secrets, signal: context.signal,
                 ...(context.chosenMachine ? { chosenMachine: context.chosenMachine } : {}),
@@ -63,7 +64,7 @@ export function createDatabaseConnectionResourceRuntime(options: Readonly<{
                 },
                 async invoke(operand: JsonValue, invocation: Readonly<{ signal: AbortSignal }>) {
                     const operation = DatabaseOperationInputV1Schema.parse(operand);
-                    if (JSON.stringify(operation.target) !== targetKey) {
+                    if (workbenchTargetKey(operation.target) !== targetKey) {
                         throw new PluginError({ code: 'database_demand_target_mismatch' });
                     }
                     return operation.operation === 'describe'
@@ -72,7 +73,7 @@ export function createDatabaseConnectionResourceRuntime(options: Readonly<{
                 },
                 notify(operand: JsonValue) {
                     const change = DatabaseOwnWriteV1Schema.parse(operand);
-                    if (JSON.stringify(change.target) !== targetKey) return;
+                    if (workbenchTargetKey(change.target) !== targetKey) return;
                     if (change.relation) {
                         const relationKey = JSON.stringify(change.relation);
                         const current = relationRevisions.get(relationKey);

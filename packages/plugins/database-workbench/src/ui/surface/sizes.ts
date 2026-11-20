@@ -17,11 +17,12 @@ export function formatCount(
 ): string | null {
   if (value === undefined || value === null) return null;
   const number = typeof value === 'number' ? value : Number(value);
-  if (!Number.isFinite(number)) return String(value);
-  const shown = options?.full === true ? groupedCount.format(number) : compact(number);
-  if (options?.approximate === true) return number < 1_000 ? groupedCount.format(number) : `~${shown}`;
-  if (options?.full === true) return shown;
-  return number < 100_000 ? groupedCount.format(number) : compact(number);
+  const approximate = options?.approximate === true;
+  const prefix = approximate && Math.abs(number) >= 1_000 ? '~' : '';
+  if (!Number.isSafeInteger(number) || options?.full === true || Math.abs(number) < (approximate ? 1_000 : 100_000)) {
+    return prefix + countLabel(value);
+  }
+  return prefix + compact(number);
 }
 
 /** A row count the database estimated (D27 #2); unknown stays unknown. */
@@ -32,9 +33,9 @@ export function approxRowsLabel(
 }
 
 /** A whole count read in full ("48,210"); digits too large for a number keep the engine's own text. */
-export function countLabel(count: string): string {
+export function countLabel(count: string | number): string {
   const value = Number(count);
-  return Number.isSafeInteger(value) ? groupedCount.format(value) : count;
+  return Number.isSafeInteger(value) ? groupedCount.format(value) : String(count);
 }
 
 /** Storage bytes (D27 #1) from the producer's decimal counter; a missing figure is null, never 0. */

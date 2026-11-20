@@ -11,6 +11,7 @@ import {
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import type { DatabaseActionProducers } from '../actions.js';
 import { buildDatabaseFindingBriefV1 } from './brief.js';
+import { selectDatabaseStatement } from './presentation.js';
 
 type AvailableStats = Extract<DatabaseStatsObservationV1, { status: 'available' }>;
 type Summary = DatabaseFindingObservationV1['summary'];
@@ -156,8 +157,7 @@ export function createDatabaseInsightProducers(options: Readonly<{
     }
     const readFinding: NonNullable<DatabaseActionProducers['readFinding']> = async (input, context) => {
         const request = input.request.group === 'statements'
-            ? { ...input.request, selection: { ...input.request.selection,
-                page: { ...input.request.selection.page, offset: 0 }, statementKey: input.recordKey } }
+            ? selectDatabaseStatement(input.request, input.recordKey)
             : input.request.group === 'activity'
                 ? { ...input.request, selection: { ...input.request.selection,
                     page: { ...input.request.selection.page, offset: 0 }, activityKey: input.recordKey } }

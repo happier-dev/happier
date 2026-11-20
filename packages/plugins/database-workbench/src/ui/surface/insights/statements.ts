@@ -4,7 +4,7 @@ import type {
     DatabaseStatsReadV1,
 } from '@happier-dev/plugin-sdk/database';
 import { WORKBENCH_DISPLAY_PAGE_ROWS } from '../mount.js';
-import { projectDatabaseStatementMetrics } from '../../../insights/presentation.js';
+import { projectDatabaseStatementMetrics, selectDatabaseStatement } from '../../../insights/presentation.js';
 
 export type StatementsObservation = Extract<
   DatabaseStatsObservationV1,
@@ -33,10 +33,7 @@ export const STATEMENTS_BY_TOTAL_TIME: Extract<
 export function statementByKey(
   statementKey: string,
 ): Extract<DatabaseStatsReadV1, { group: 'statements' }> {
-  return {
-    ...STATEMENTS_BY_TOTAL_TIME,
-    selection: { ...STATEMENTS_BY_TOTAL_TIME.selection, statementKey },
-  };
+  return selectDatabaseStatement(STATEMENTS_BY_TOTAL_TIME, statementKey);
 }
 
 export type StatementView = Readonly<{

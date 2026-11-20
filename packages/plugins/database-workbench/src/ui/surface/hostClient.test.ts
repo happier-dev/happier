@@ -74,6 +74,26 @@ it('preserves demand admission refusal without reconnecting through an ordinary 
   }
 });
 
+it('shares one admitted demand when the same target arrives in a different property order', async () => {
+  const descriptor = createDatabaseDescriptorV1Fixture();
+  const signal = new AbortController().signal;
+  const watchResource = vi.fn<PluginUiHostApi['watchResource']>().mockRejectedValue(new PluginError({ code: 'database_read_unavailable' }));
+  const fixture = await createHostFixture('canonical-target');
+  const client = createHostWorkbenchClient({ ...fixture.context.hostApi, watchResource }, { pageLocation: false });
+  const reordered = Object.fromEntries(Object.entries(descriptor.target).reverse());
+  try {
+    await expect(client.operation({ operation: 'describe', target: descriptor.target }, signal)).rejects.toMatchObject({ code: 'database_read_unavailable' });
+    const target = DatabaseOperationInputV1Schema.parse({ operation: 'describe', target: reordered }).target;
+    // Simulate a second source carrying the same already typed target with different insertion order.
+    const fromLaunch = Object.assign(reordered, target) as typeof target;
+    await expect(client.operation({ operation: 'describe', target: fromLaunch }, signal)).rejects.toMatchObject({ code: 'database_read_unavailable' });
+    expect(watchResource).toHaveBeenCalledTimes(1);
+  } finally {
+    client.dispose();
+    await fixture.dispose();
+  }
+});
+
 it('retains each mounted target demand and refreshes both workbenches from producer revisions only', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'dbw-host-demand-'));
   const path = join(directory, 'database.sqlite');

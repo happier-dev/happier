@@ -10,8 +10,8 @@ import type {
     DatabaseStatsReadV1,
     DatabaseStatsObservationV1,
 } from '@happier-dev/plugin-sdk/database';
-import { createCanonicalJsonSigningInput, type JsonValue } from '@happier-dev/plugin-sdk';
-import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { workbenchTargetKey } from '../targetIdentity.js';
 import { inspectJsonCell } from './cellInspection.js';
 import { createConsoleState } from './consoleState.js';
 import { createConsole, type WorkbenchConsole } from './console.js';
@@ -37,13 +37,7 @@ function success<O extends Extract<DatabaseOperationResultV1, { ok: true }>['ope
     return result as Extract<DatabaseOperationResultV1, { ok: true; operation: O }>;
 }
 const key = (value: unknown): string => JSON.stringify(value);
-/**
- * A database target's one identity in the workbench: its canonical JSON, so the same target names the same key
- * whichever producer delivered it (a launch input keeps the host's field order, a target list the parser's).
- */
-export function workbenchTargetKey(target: DatabaseDescriptorV1['target']): string {
-    return createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(target));
-}
+export { workbenchTargetKey } from '../targetIdentity.js';
 const draftKey = (change: Pick<WorkbenchChange, 'rowKey' | 'relation' | 'targetKey'>) => key([change.targetKey, change.relation, change.rowKey]);
 
 /** A physical workbench occurrence owns this object until close/Account retirement. */

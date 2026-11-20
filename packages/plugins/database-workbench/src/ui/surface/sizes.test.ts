@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { approxRowsLabel, formatCount } from './sizes.js';
+import { approxRowsLabel, countLabel, formatCount } from './sizes.js';
 
 describe('counts', () => {
   it('says a small estimate exactly and a large one compactly, still marked approximate', () => {
@@ -15,5 +15,12 @@ describe('counts', () => {
     expect(formatCount(1_400_000)).toBe('1.4M');
     expect(formatCount(undefined)).toBeNull();
     expect(formatCount('48210', { approximate: true, full: true })).toBe('~48,210');
+  });
+
+  it('preserves every digit when the counter exceeds JavaScript integer precision', () => {
+    const exact = '9007199254740993';
+    expect(formatCount(exact)).toBe(exact);
+    expect(formatCount(exact, { full: true })).toBe(countLabel(exact));
+    expect(formatCount(exact, { approximate: true })).toBe(`~${exact}`);
   });
 });

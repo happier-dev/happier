@@ -20,6 +20,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { encodeWorkbenchRootSubPath, encodeWorkbenchSubPath } from './subPath.js';
 import type { WorkbenchClient } from '../models.js';
+import { workbenchTargetKey } from '../../targetIdentity.js';
 
 type HostOptions = Readonly<{
   /** Page mounts own a location; the services panel has none, so navigation stays local there. */
@@ -41,7 +42,7 @@ export function createHostWorkbenchClient(
   const listeners = new Set<Parameters<WorkbenchClient['subscribeOwnWrites']>[0]>();
   const demands = new Map<string, Readonly<{ ready: Promise<DatabaseDemandSnapshotV1>; subscriptionId(): string; dispose(): void }>>();
   function demand(target: DatabaseTargetV1) {
-    const targetKey = JSON.stringify(target);
+    const targetKey = workbenchTargetKey(target);
     const held = demands.get(targetKey);
     if (held) return held;
     const input = projectNativeJsonValueForTransport({ operation: 'describe', target });

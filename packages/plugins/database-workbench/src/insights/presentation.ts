@@ -1,4 +1,12 @@
-import type { DatabaseStatsStatementV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseStatsReadV1, DatabaseStatsStatementV1 } from '@happier-dev/plugin-sdk/database';
+
+type StatementRead = Extract<DatabaseStatsReadV1, { group: 'statements' }>;
+
+/** Selecting a statement starts at the first page of that exact key. */
+export function selectDatabaseStatement(request: StatementRead, statementKey: string): StatementRead {
+    return { ...request, selection: { ...request.selection,
+        page: { ...request.selection.page, offset: 0 }, statementKey } };
+}
 
 /** Selected-statement metrics use the native cumulative counters. They say
  * nothing about database-wide/OS cache use, interval continuity or index advice. */

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { DatabaseCellV1 } from '@happier-dev/plugin-sdk/database';
 import { Text, type PluginTranslate } from '@happier-dev/plugin-ui';
+import { countLabel } from './sizes.js';
 
 type CellPresentation = Readonly<{
   text: string;
@@ -8,10 +9,6 @@ type CellPresentation = Readonly<{
   code: boolean;
   incomplete: boolean;
 }>;
-
-const integerFormat = new Intl.NumberFormat(undefined, {
-  maximumFractionDigits: 0,
-});
 
 function byteCount(base64: string): number {
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
@@ -50,10 +47,7 @@ export function presentCell(
       };
     case 'integer': {
       // Grouping only where the value is a safe integer; larger values keep the engine's digits.
-      const safe = Number(cell.value);
-      const text = Number.isSafeInteger(safe) && options?.identifier !== true
-        ? integerFormat.format(safe)
-        : cell.value;
+      const text = options?.identifier === true ? cell.value : countLabel(cell.value);
       return { text, tone: 'neutral', code: false, incomplete: false };
     }
     case 'decimal':
@@ -87,7 +81,7 @@ export function presentCell(
     case 'binary':
       return {
         text: translate('plugins.database.cell.bytes', '{count} bytes', {
-          count: integerFormat.format(byteCount(cell.value)),
+          count: countLabel(byteCount(cell.value)),
         }),
         tone: 'muted',
         code: false,
@@ -98,7 +92,7 @@ export function presentCell(
       if (cell.valueType === 'binary')
         return {
           text: translate('plugins.database.cell.bytes', '{count} bytes', {
-            count: integerFormat.format(total ?? byteCount(cell.value)),
+            count: countLabel(total ?? byteCount(cell.value)),
           }),
           tone: 'muted',
           code: false,
