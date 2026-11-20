@@ -75,6 +75,7 @@ export type EmailPasswordAuthPanelProps = Readonly<{
     admission?: NativeAccountAdmissionV1;
     invitationEmailVerificationRequired?: boolean;
     initialEmail?: string;
+    initialView?: 'forgot';
     /**
      * Create the Account for account-service sign-in (the mail landing of an account-service
      * creation): the service answers with its Directory credential instead of a Home one.
@@ -136,7 +137,8 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
     const router = useRouter();
     const { theme } = useUnistyles();
     const [draft, setDraft] = React.useState<EmailPasswordDraft>(() => createEmailPasswordDraft(props.initialEmail ?? ''));
-    const [view, setView] = React.useState<PanelView>(() => ({ kind: props.action }));
+    const entryView = props.initialView ?? props.action;
+    const [view, setView] = React.useState<PanelView>(() => ({ kind: entryView }));
     const permittedModes = React.useMemo(() => resolveEmailPasswordProvisionModes(props.mode), [props.mode]);
     const defaultAccountMode = resolveEmailPasswordProvisionDefault(props.mode, props.recommendedProvisionMode);
     const [accountMode, setAccountMode] = React.useState<'plain' | 'e2ee'>(defaultAccountMode);
@@ -167,10 +169,10 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
         setResent(false);
         setProblem(null);
         setDraft(createEmailPasswordDraft(props.initialEmail ?? ''));
-        setView({ kind: props.action });
+        setView({ kind: entryView });
         // Another Home (or a changed Home policy) starts from its own recommendation.
         setAccountMode(defaultAccountMode);
-    }, [defaultAccountMode, props.action, props.initialEmail, targetScope]);
+    }, [defaultAccountMode, entryView, props.initialEmail, targetScope]);
     React.useEffect(() => {
         // A late permitted-mode narrowing must never leave a selection the Home
         // would refuse; it also must not silently reword the person's choice.
@@ -537,7 +539,7 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                     title={t('common.back')}
                     iconName="arrow-left"
                     escape
-                    onPress={() => setView({ kind: props.action })}
+                    onPress={props.initialView === 'forgot' ? props.onBack : () => setView({ kind: props.action })}
                 />
             </View>
             </WelcomeActionAdmissionContext.Provider>

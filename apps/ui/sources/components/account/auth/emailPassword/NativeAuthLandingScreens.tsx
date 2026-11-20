@@ -7,7 +7,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useAuth } from '@/auth/context/AuthContext';
 import { HomeAuthenticationFlow } from '@/components/account/auth/HomeAuthenticationFlow';
-import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
+import { resolveHomeAuthenticationTarget, type ResolvedHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
 import { fetchAuthEntry, fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
 import {
     projectAuthEntryMethodCapabilities,
@@ -35,6 +35,7 @@ import { AuthRouteStepFrame } from '@/components/onboarding/ui/AuthRouteStepFram
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { teamDetailPath } from '@/components/settings/teams/teamsRoutes';
 
 import { PasswordField } from './PasswordField';
@@ -63,6 +64,7 @@ type NativeAuthLandingTargetState =
     | Readonly<{
         kind: 'ready';
         target: HomeTargetInput;
+        authenticationTarget: ResolvedHomeAuthenticationTarget;
         endpointUrl: string;
         serverId: string;
         homeServerIdentityId: string;
@@ -101,6 +103,7 @@ function useNativeAuthLandingTarget(carrier: string | null): NativeAuthLandingTa
         return {
             kind: 'ready',
             target: resolution.target,
+            authenticationTarget: target,
             endpointUrl: target.endpointUrl,
             serverId: target.serverId,
             homeServerIdentityId: target.serverIdentityId,
@@ -148,7 +151,7 @@ function moveLandingStep(kind: 'step' | 'back', commit: () => void) {
     runStepMove({ kind, layer: 'workflow', commit });
 }
 
-function LandingShell(props: Readonly<{ title: string; children: React.ReactNode; testID: string; stepId?: string }>) {
+function LandingShell(props: Readonly<{ title: string; homeLabel?: string; children: React.ReactNode; testID: string; stepId?: string }>) {
     const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
     const activeActionRef = React.useRef<string | null>(null);
     const mountedRef = React.useRef(true);
@@ -175,7 +178,8 @@ function LandingShell(props: Readonly<{ title: string; children: React.ReactNode
     // A mailed link opens one more step of sign-in: signed out it sits in the welcome split's
     // pane like every other standalone auth route, signed in it takes the same focused card.
     return (
-        <AuthRouteStepFrame testID={props.testID} stepId={props.stepId} title={props.title}>
+        <AuthRouteStepFrame testID={props.testID} stepId={props.stepId} title={props.title}
+            context={props.homeLabel ? <Text style={styles.body}>{props.homeLabel}</Text> : undefined}>
             <WelcomeActionList admission={admission}>
                 <View style={styles.card}>{props.children}</View>
             </WelcomeActionList>
@@ -222,7 +226,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
     const authenticationRead = useLandingReadRetry();
     const destination = useExactHomeDestination({
         refreshAuth: auth.refreshFromActiveServer,
-        onFocused: React.useCallback(() => router.replace('/'), [router]),
+        onFocused: React.useCallback(() => resolvePostAuthLanding({ replace: router.replace }), [router]),
     });
     const readyPreview = state.kind === 'ready' ? state.preview : null;
     const verificationContinuation = state.kind === 'ready'
@@ -400,7 +404,8 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
         && landingTarget.kind === 'ready'
         && authActions?.provision) {
         return (
-            <LandingShell testID="native-auth-verify" stepId="home-admission" title={t('settingsAccount.nativePassword.verifyTitle')}>
+            <LandingShell testID="native-auth-verify" stepId="home-admission" homeLabel={landingTarget.homeLabel}
+                title={t('settingsAccount.nativePassword.verifyTitle')}>
                 <HomeAuthenticationFlow
                     target={landingTarget.target}
                     actions={[authActions.provision]}
@@ -450,7 +455,8 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
         && authActions
         && authActions.login.length > 0) {
         return (
-            <LandingShell testID="native-auth-verify" stepId="verify-authentication" title={t('settingsAccount.nativePassword.verifyTitle')}>
+            <LandingShell testID="native-auth-verify" stepId="verify-authentication" homeLabel={landingTarget.homeLabel}
+                title={t('settingsAccount.nativePassword.verifyTitle')}>
                 <HomeAuthenticationFlow
                     target={landingTarget.target}
                     actions={authActions.login}
@@ -490,7 +496,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
     // here with a retry rather than being dropped onto the Home it came from.
     if (destination.state.kind !== 'idle') {
         const destinationState = destination.state;
-        return <LandingShell testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
             <ExactHomeDestinationNotice
                 testID="native-auth-verify-destination-home"
                 state={destinationState}
@@ -506,13 +512,13 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
     }
 
     if (state.kind === 'loading') {
-        return <LandingShell testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
             <Text style={styles.body}>{t('settingsAccount.nativePassword.working')}</Text>
         </LandingShell>;
     }
 
     if (state.kind === 'invalid' || state.kind === 'unavailable') {
-        return <LandingShell testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
             <Text testID="native-auth-verify-invalid" accessibilityRole="alert" style={[styles.body, { color: theme.colors.status.error }]}>
                 {state.kind === 'invalid' ? t('settingsAccount.nativePassword.linkExpired') : problemMessage ?? t('settingsAccount.nativePassword.serverUnavailable')}
             </Text>
@@ -533,7 +539,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
     }
 
     const preview = state.preview;
-    return <LandingShell testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
+    return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-verify" title={t('settingsAccount.nativePassword.verifyTitle')}>
         <Text testID="native-auth-verify-destination" style={styles.body}>
             {preview.maskedDestination
                 ? t('settingsAccount.nativePassword.verifyDestination', { email: preview.maskedDestination })
@@ -652,13 +658,14 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
     const [draft, setDraft] = React.useState<EmailPasswordDraft>(() => createEmailPasswordDraft());
     const [problem, setProblem] = React.useState<EmailPasswordProblem | null>(null);
     const [busy, setBusy] = React.useState(false);
+    const [retryForgotOpen, setRetryForgotOpen] = React.useState(false);
     const [authenticationOpen, setAuthenticationOpen] = React.useState(false);
     const [loginActions, setLoginActions] = React.useState<readonly HomeAuthenticationAction[] | null | undefined>(undefined);
     const previewRead = useLandingReadRetry();
     const authenticationRead = useLandingReadRetry();
     const destination = useExactHomeDestination({
         refreshAuth: auth.refreshFromActiveServer,
-        onFocused: React.useCallback(() => router.replace('/'), [router]),
+        onFocused: React.useCallback(() => resolvePostAuthLanding({ replace: router.replace }), [router]),
     });
     const passwordRef = React.useRef<{ focus: () => void } | null>(null);
     const confirmRef = React.useRef<{ focus: () => void } | null>(null);
@@ -729,6 +736,7 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
         setProblem(null);
         setBusy(false);
         setAuthenticationOpen(false);
+        setRetryForgotOpen(false);
     }, [routeKey]);
 
     const problemMessage = problem ? resolveEmailPasswordProblemMessage(problem) : null;
@@ -763,13 +771,31 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
     }, [busy, draft, landingTarget, props.token, routeKey]);
 
     if (state.kind === 'loading') {
-        return <LandingShell testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
             <Text style={styles.body}>{t('settingsAccount.nativePassword.working')}</Text>
         </LandingShell>;
     }
 
+    const emailLogin = loginActions?.find(({ execution }) => execution.kind === 'email_password')?.execution;
+    if (state.kind === 'invalid' && retryForgotOpen && landingTarget.kind === 'ready' && emailLogin?.kind === 'email_password') {
+        return <LandingShell homeLabel={landingTarget.homeLabel} testID="native-auth-reset" stepId="reset-request" title={t('settingsAccount.nativePassword.forgotTitle')}>
+            <EmailPasswordAuthPanel
+                target={landingTarget.authenticationTarget}
+                recoveryTarget={landingTarget.homeServerIdentityId}
+                homeLabel={landingTarget.homeLabel}
+                action="login"
+                mode={emailLogin.mode}
+                passwordReset={emailLogin.passwordReset}
+                initialView="forgot"
+                onAuthenticated={() => {}}
+                onBack={() => moveLandingStep('back', () => setRetryForgotOpen(false))}
+            />
+        </LandingShell>;
+    }
+
     if (state.kind === 'invalid' || state.kind === 'unavailable') {
-        return <LandingShell testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset"
+            title={t(state.kind === 'invalid' ? 'settingsAccount.nativePassword.resetLinkInvalidTitle' : 'settingsAccount.nativePassword.resetLinkUnavailableTitle')}>
             <Text testID="native-auth-reset-invalid" accessibilityRole="alert" style={[styles.body, { color: theme.colors.status.error }]}>
                 {state.kind === 'invalid' ? t('settingsAccount.nativePassword.linkExpired') : problemMessage ?? t('settingsAccount.nativePassword.serverUnavailable')}
             </Text>
@@ -777,6 +803,15 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
                 <LandingRetryAction testID="native-auth-reset-retry-home" onPress={landingTarget.retry} />
             ) : state.kind === 'unavailable' && landingTarget.kind === 'ready' ? (
                 <LandingRetryAction testID="native-auth-reset-retry" onPress={previewRead.retry} />
+            ) : null}
+            {state.kind === 'invalid' && emailLogin?.kind === 'email_password' ? (
+                <WelcomeActionCard
+                    testID="native-auth-reset-request-new-link"
+                    title={t(emailLogin.passwordReset === 'email'
+                        ? 'settingsAccount.nativePassword.requestNewLink' : 'settingsAccount.nativePassword.useRecoveryKey')}
+                    iconName={emailLogin.passwordReset === 'email' ? 'envelope-simple' : 'key'}
+                    onPress={() => moveLandingStep('step', () => setRetryForgotOpen(true))}
+                />
             ) : null}
             <WelcomeActionCard
                 testID="native-auth-reset-return"
@@ -793,7 +828,7 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
         // dropped onto whichever Home it came from.
         if (destination.state.kind !== 'idle') {
             const destinationState = destination.state;
-            return <LandingShell testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
+            return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetCompleteTitle')}>
                 <Text testID="native-auth-reset-done" style={styles.body}>{t('settingsAccount.nativePassword.resetComplete')}</Text>
                 <ExactHomeDestinationNotice
                     testID="native-auth-reset-destination-home"
@@ -809,7 +844,7 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
             </LandingShell>;
         }
         if (authenticationOpen && landingTarget.kind === 'ready' && loginActions && loginActions.length > 0) {
-            return <LandingShell testID="native-auth-reset" stepId="reset-authentication"
+            return <LandingShell testID="native-auth-reset" stepId="reset-authentication" homeLabel={landingTarget.homeLabel}
                 title={t('settingsAccount.nativePassword.resetCompleteTitle')}>
                 <HomeAuthenticationFlow
                     target={landingTarget.target}
@@ -827,7 +862,7 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
                 />
             </LandingShell>;
         }
-        return <LandingShell testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
+        return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetCompleteTitle')}>
             <Text testID="native-auth-reset-done" style={styles.body}>{t('settingsAccount.nativePassword.resetComplete')}</Text>
             {landingTarget.kind === 'ready' && loginActions && loginActions.length > 0 ? (
                 <WelcomeActionCard
@@ -850,7 +885,7 @@ export const NativeAuthPasswordResetScreen = React.memo(function NativeAuthPassw
         </LandingShell>;
     }
 
-    return <LandingShell testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
+    return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-reset" title={t('settingsAccount.nativePassword.resetTitle')}>
         <Text style={styles.body}>{t('settingsAccount.nativePassword.resetChooseNew')}</Text>
         <PasswordField
             testID="native-auth-reset-password"

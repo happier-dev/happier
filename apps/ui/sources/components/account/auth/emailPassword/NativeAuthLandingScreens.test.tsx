@@ -45,6 +45,7 @@ const FRESH_HOME_URL = 'https://fresh.example.test';
 const FRESH_HOME_IDENTITY = 'srv_fresh_home';
 const PREVIEW = '/v1/auth/email/verify/preview';
 const RESET_PREVIEW = '/v1/auth/password/reset/preview';
+const RESET_REQUEST = '/v1/auth/password/reset/request';
 const RESET_SUBMIT = '/v1/auth/password/reset/submit';
 const EMAIL_CHANGE = '/v1/account/email/change';
 const ENTRY = '/v1/auth/entry';
@@ -76,7 +77,7 @@ function answerEntry(options: { failOnce?: boolean; publicClosed?: boolean } = {
         const request = AuthEntryRequestV1Schema.parse(input);
         if (fail) { fail = false; return { status: 503, body: { error: 'unavailable' } }; }
         const provision = { kind: 'authenticate', methodId: 'email_password', action: 'provision', mode: 'keyless', origin: 'home', presentation: { displayName: 'Email and password' } };
-        const login = { ...provision, action: 'login' };
+        const login = { ...provision, action: 'login', passwordReset: 'email' };
         const invitation = teamInvitationPreviewFixture({ home: { serverId: SAVED_HOME_IDENTITY }, team: { teamId: 'team-a', name: 'Team A' } });
         return { body: AuthEntryProjectionV1Schema.parse(request.scope.kind === 'invitation' ? {
             v: 1, scope: { kind: 'invitation' }, state: 'admission_required', home: invitation.home,
@@ -246,6 +247,24 @@ it('fails closed without a portable Home target and never previews the bearer ag
 });
 it('fails a password-reset landing closed when the Home profile cannot be resolved', async () => {
     await mountReset(RESET, null); await waitForId('native-auth-reset-invalid'); expect(homes.requestsFor(RESET_PREVIEW)).toHaveLength(0);
+});
+it('opens password reset recovery on the exact Home named by an expired link', async () => {
+    homes.answer(savedHomeProfileId, RESET_PREVIEW, { body: NativePasswordResetPreviewResponseV1Schema.parse({ v: 1, valid: false }) });
+    homes.answer(savedHomeProfileId, RESET_REQUEST, { body: { v: 1, accepted: true } });
+    await mountReset();
+    await waitForId('native-auth-reset-request-new-link');
+    expect(screen!.getTextContent()).toContain('Saved Home');
+    await screen!.pressByTestIdAsync('native-auth-reset-request-new-link');
+    await waitForId('email-password-request-reset');
+    expect(screen!.getTextContent()).toContain('Saved Home');
+    await fill('email-password-email', 'person@example.test');
+    await screen!.pressByTestIdAsync('email-password-request-reset');
+    const [request] = homes.requestsFor(RESET_REQUEST);
+    expect(request?.serverId).toBe(savedHomeProfileId);
+    expect(request?.input).toEqual({ v: 1, email: 'person@example.test' });
+    expect(getActiveServerSnapshot().serverUrl).not.toBe('https://saved.example.test');
+    expect(homes.requestsFor(RESET_PREVIEW)).toHaveLength(1);
+    expect(homes.requestsFor(RESET_SUBMIT)).toHaveLength(0);
 });
 it('authenticates a signed-out email-change recipient against the carried Home and consumes the bearer only in the owning mutation', async () => {
     preview('sign_in_email_change'); await mountVerify(); await waitForId('native-auth-verify-sign-in');
