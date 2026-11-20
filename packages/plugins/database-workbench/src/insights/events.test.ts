@@ -81,8 +81,9 @@ describe('native completed observation admission', () => {
             expect(native.sqlReads()).toBe(1); // Emission consumes completed evidence; it performs no second SQL read.
             expect(JSON.stringify(admissions)).not.toContain('first');
             expect(JSON.stringify(admissions)).not.toContain('CREATE');
-            expect(admissions[0]).toMatchObject({ payload: { subject: source.subject,
-                observation: { sourceScope: source.sourceScope, kind: 'tables', summary: { records: 2 } } } });
+            expect(admissions[0]).toMatchObject({ subjectContexts: [{ role: 'operand', subject: source.subject }],
+                payload: { subject: source.subject,
+                    observation: { sourceScope: source.sourceScope, kind: 'tables', summary: { records: 2 } } } });
             expect(await kit.invokeAction(databaseActionLocalIdV1(DATABASE_STATS_READ_ACTION_ID_V1),
                 { operation: 'stats.read', target, ...(held ? { subscriptionId: 'fixture' } : {}),
                     request: { kind: 'stats.read', group: 'statements', selection: { page: { rows: 20 }, order: 'calls' } } }, invocation))

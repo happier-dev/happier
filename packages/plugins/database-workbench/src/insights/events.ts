@@ -80,5 +80,6 @@ export async function emitDatabaseFindingObservation(input: Readonly<{
         occurredAt: observation.observedWindow.toMs,
         observationReceivedAt: input.observationReceivedAt, observedDelta: input.observedDelta,
         payload: DatabaseFindingEventPayloadV1Schema.parse({ subject, observation }),
+        subjectContexts: [{ role: 'operand', subject }],
     }, context);
 }
