@@ -302,8 +302,10 @@ async function pressRelayTile(screen: RelayTileScreen, testID: string): Promise<
     });
 }
 
-/** Opens a Home choice's "…" menu and picks one of its items through the shared DropdownMenu. */
-async function chooseRelayMenuAction(screen: RelayTileScreen, tileTestID: string, actionId: string): Promise<void> {
+/** Opens the saved profile row's own menu through the shared DropdownMenu. */
+async function chooseSavedHomeMenuAction(screen: RelayTileScreen, alias: string, actionId: string): Promise<void> {
+    const tileTestID = homeRowTestId(alias);
+    relayTile(screen, tileTestID);
     await screen.pressByTestIdAsync(`${tileTestID}-menu`);
     // Opening measures the trigger before the menu's rows become pressable.
     await vi.waitFor(() => {
@@ -1274,7 +1276,7 @@ describe('OnboardingWizardSurface', () => {
     });
 
     it('updates the active relay row when the active server changes', async () => {
-        await focusHomeAtAddress('https://relay.example.test');
+        await focusHomeAtAddress('https://relay.example.test', 'First Home');
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(
             React.createElement(OnboardingWizardSurface, {
@@ -1285,15 +1287,18 @@ describe('OnboardingWizardSurface', () => {
             }),
         );
 
-        expect(relayTileText(screen, homeRowTestId('active'))).toContain('https://relay.example.test');
+        const firstRow = homeRowTestId('active');
+        expect(relayTileText(screen, firstRow)).toContain('First Home');
 
         await act(async () => {
-            await focusHomeAtAddress('https://relay-other.example.test');
+            await focusHomeAtAddress('https://relay-other.example.test', 'Other Home');
             // The real profile write above published its subscription.
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(relayTileText(screen, homeRowTestId('active'))).toContain('https://relay-other.example.test');
+        const otherRow = homeRowTestId('active');
+        expect(otherRow).not.toBe(firstRow);
+        expect(relayTileText(screen, otherRow)).toContain('Other Home');
     });
 
     it('stores an awaiting-auth resume intent when continuing past relay selection', async () => {
@@ -2715,8 +2720,10 @@ describe('OnboardingWizardSurface', () => {
         expect(relayTileText(screen, offlineTile)).toEqual(expect.arrayContaining(['Offline Relay', 'common.unreachable']));
 
         const callCountBefore = runtimeFetchMock.mock.calls.length;
-        await chooseRelayMenuAction(screen, offlineTile, 'retry');
-        await vi.waitFor(() => expect(runtimeFetchMock.mock.calls.length).toBeGreaterThan(callCountBefore));
+        await chooseSavedHomeMenuAction(screen, 'relay-offline', 'retry');
+        await vi.waitFor(() => expect(runtimeFetchMock.mock.calls.slice(callCountBefore).some(([input]) => (
+            (input instanceof Request ? input.url : String(input)).startsWith('https://unreachable-relay.example.test/')
+        ))).toBe(true));
     });
 
     it('does not auto-select another relay when removing the selected saved relay', async () => {
@@ -2758,7 +2765,7 @@ describe('OnboardingWizardSurface', () => {
         const relayBTile = homeRowTestId('relay-b');
         expect(isRelayTileChecked(screen, relayATile)).toBe(true);
 
-        await chooseRelayMenuAction(screen, relayATile, 'remove');
+        await chooseSavedHomeMenuAction(screen, 'relay-a', 'remove');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await vi.waitFor(() => expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).toBeNull());
@@ -2806,7 +2813,7 @@ describe('OnboardingWizardSurface', () => {
 
         await flushHookEffects({ cycles: 2, turns: 2 });
 
-        await chooseRelayMenuAction(screen, homeRowTestId('relay-a'), 'remove');
+        await chooseSavedHomeMenuAction(screen, 'relay-a', 'remove');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await vi.waitFor(() => expect(modalShowMock).toHaveBeenCalledTimes(1));
@@ -2855,14 +2862,12 @@ describe('OnboardingWizardSurface', () => {
         expect(isRelayTileChecked(screen, homeRowTestId('relay-a'))).toBe(true);
 
         expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).not.toBeNull();
-        await chooseRelayMenuAction(screen, homeRowTestId('relay-a'), 'remove');
+        await chooseSavedHomeMenuAction(screen, 'relay-a', 'remove');
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         await vi.waitFor(() => expect(profiles.getServerProfileById(homeProfileRef('relay-a'))).toBeNull());
-        const relayARowAfter = screen.findAll((node) => node.props?.testID === homeRowTestId('relay-a'));
-        const relayBRowAfter = screen.findAll((node) => node.props?.testID === homeRowTestId('relay-b'));
-        expect(relayARowAfter).toHaveLength(0);
-        expect(relayBRowAfter.length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId(homeRowTestId('relay-a'))).toHaveLength(0);
+        expect(isRelayTileChecked(screen, homeRowTestId('relay-b'))).toBe(false);
         expect(screen.findByTestId('onboarding-wizard-primary')!.props.disabled).toBe(true);
     });
 
@@ -3338,7 +3343,6 @@ describe('OnboardingWizardSurface', () => {
         expect(screen.findAllByTestId('onboarding-wizard-relay:thisComputer').some((node) => (
             node.props.accessibilityState?.checked === true
         ))).toBe(false);
-        expect(screen.getTextContent()).toContain('http://localhost:53288');
     });
 
     it('selects a single saved relay row when multiple profiles share the same server URL', async () => {

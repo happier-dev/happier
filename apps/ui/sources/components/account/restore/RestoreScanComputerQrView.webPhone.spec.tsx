@@ -132,7 +132,7 @@ async function openRequesterInvite(origin: 'scan' | 'paste' | 'native' | 'deskto
     activeInvite = invite;
     const link = buildHomeQrInviteDeepLink({ invite });
     if (origin === 'scan') {
-        const screen = await mount();
+        const screen = await mountRestoreRoute('/restore?entryIntent=add_home');
         await scan(screen, invite);
         return screen;
     }
@@ -344,8 +344,8 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(screen.getTextContent()).toContain('connect.confirmDeviceApproval');
         expect(screen.findByTestId('restore-enrollment-approval-expiry')).not.toBeNull();
         await screen.pressByTestIdAsync('restore-enrollment-approve');
+        await vi.waitFor(() => expect(observed('/v1/auth/pairing/start')).toHaveLength(1));
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('connect.requesterDeviceAddedBody'));
-        expect(observed('/v1/auth/pairing/start')).toHaveLength(1);
         expect(observed('/v1/auth/account/response')).toHaveLength(1);
         expect(observed('/v1/auth/pairing/start')[0]?.body).toMatchObject({ direction: 'requester_displays', pairId: invite.pairId });
         expect(observed('/v1/auth/account/response')[0]?.body).toMatchObject({ pairId: invite.pairId,
@@ -428,7 +428,8 @@ describe('RestoreScanComputerQrView (web phone)', () => {
             : { ...features, capabilities: { ...features.capabilities, serverIdentity: { serverIdentityId: 'srv_other' } } }));
         const screen = await mount(); await scan(screen);
         expect(screen.getTextContent()).toContain(failure === 'invalid_payload' ? 'connect.updateRequiredBody' : 'connect.wrongHomeBody');
-        expect(screen.findByTestId('restore-enrollment-retry') === null).toBe(failure === 'invalid_payload');
+        expect(screen.findByTestId('restore-enrollment-retry')).toBeNull();
+        expect(screen.findByTestId('restore-enrollment-scan-new') !== null).toBe(failure !== 'invalid_payload');
         expect(boundary.alert).not.toHaveBeenCalled();
         expect(observed('/v1/auth/pairing/request')).toHaveLength(0); await expectNoAdoption();
     });
@@ -480,8 +481,9 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         http.poll.mockImplementation(() => Response.json(body, { status }));
         const screen = await mount(); await scan(screen);
         expect(screen.getTextContent()).toContain(copy);
-        expect(screen.findByTestId('restore-enrollment-retry') !== null).toBe(reason !== 'expired');
-        if (reason === 'expired') expect(screen.findByTestId('restore-enrollment-scan-new')).not.toBeNull();
+        const needsNewCode = reason === 'expired' || reason === 'wrong_target';
+        expect(screen.findByTestId('restore-enrollment-retry') !== null).toBe(!needsNewCode);
+        expect(screen.findByTestId('restore-enrollment-scan-new') !== null).toBe(needsNewCode);
         expect(boundary.alert).not.toHaveBeenCalled(); await expectNoAdoption();
     });
     it('cancels a pre-request attempt quietly and ignores a stale successful registration', async () => {
@@ -570,8 +572,10 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         const logs = [vi.spyOn(console, 'log'), vi.spyOn(console, 'warn'), vi.spyOn(console, 'info'), vi.spyOn(console, 'error'), vi.spyOn(console, 'debug')];
         const screen = await mount(); await act(async () => { await cameraScan(screen, releasedV1Link); });
         expect(requests.filter(request => request.url.pathname.includes('/auth/') && !request.url.pathname.endsWith('/ping'))).toHaveLength(0);
-        expect(boundary.alert).toHaveBeenCalledWith('connect.updateRequiredTitle', 'connect.legacyPairingUpdateRequiredBody', expect.any(Array));
-        const guidance = JSON.stringify(boundary.alert.mock.calls); expect(guidance).not.toContain('sec_abc'); expect(guidance).not.toContain('pid123');
+        expect(screen.getTextContent()).toContain('connect.legacyPairingUpdateRequiredBody');
+        expect(screen.findByTestId('restore-enrollment-scan-new')).not.toBeNull();
+        expect(boundary.alert).not.toHaveBeenCalled();
+        const guidance = screen.getTextContent(); expect(guidance).not.toContain('sec_abc'); expect(guidance).not.toContain('pid123');
         for (const log of logs) expect(JSON.stringify(log.mock.calls)).not.toContain('sec_abc');
         await expectNoAdoption();
     });

@@ -8,9 +8,13 @@ import { RELEASED_SERVER_V0_2_1_FEATURES_JSON } from '@/dev/testkit/fixtures/rel
 const boundary = vi.hoisted(() => ({ fetch: vi.fn() }));
 
 installTokenStorageWebPlatformMocks();
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: boundary.fetch ,
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = { runtimeFetch: boundary.fetch, resetRuntimeFetch: () => boundary.fetch.mockReset(),
     get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+};
+    return mocked;
+});
 
 // Compile the real Action entry graph before per-test deadlines. Its first
 // dynamic import must not consume the behavior budget under shared-host load.
