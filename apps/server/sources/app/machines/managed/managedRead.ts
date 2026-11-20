@@ -196,20 +196,28 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
             const row = await tx.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
                 homeId: input.homeId, admittedActionRequestId: input.creationRequestId,
             } } });
-            const root = row && readManagedAdmissionState(row.admittedInput).continuation?.workflowRoot;
-            if (!row || !root || root.binding.accountId !== params.actorAccountId
-                || root.binding.serverIdentityId !== input.homeId) throw new ManagedMachineError('managed_not_found');
-            const account = await tx.account.findUnique({ where: { id: params.actorAccountId }, select: { encryptionMode: true } });
-            const mode = account && resolveEffectiveAccountEncryptionModeFromAccountRow(account);
-            if (mode?.status !== 'ready' || !isExternalActionRequestVersionAllowedForAccountModeV1({
-                accountEncryptionMode: mode.mode, envelopeVersion: root.envelope.v,
-            })) throw new ManagedMachineError('managed_not_found');
-            try { await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false); }
-            catch (error) {
-                if (error instanceof ManagedMachineError && error.code === 'permission_denied') throw new ManagedMachineError('managed_not_found');
-                throw error;
+            if (!row) throw new ManagedMachineError('managed_not_found');
+            const root = readManagedAdmissionState(row.admittedInput).continuation?.workflowRoot;
+            const isCustodian = row.custodianAccountId === params.actorAccountId;
+            // Reservation custody and replay of the original Workflow request have distinct authority.
+            let retainedWorkflowRoot: typeof root;
+            if (root?.binding.accountId === params.actorAccountId && root.binding.serverIdentityId === input.homeId) {
+                const account = await tx.account.findUnique({ where: { id: params.actorAccountId }, select: { encryptionMode: true } });
+                const mode = account && resolveEffectiveAccountEncryptionModeFromAccountRow(account);
+                if (mode?.status === 'ready' && isExternalActionRequestVersionAllowedForAccountModeV1({
+                    accountEncryptionMode: mode.mode, envelopeVersion: root.envelope.v,
+                })) {
+                    try {
+                        await requireManagedMachineAccessInTx(tx, row, params.actorAccountId, false);
+                        retainedWorkflowRoot = root;
+                    } catch (error) {
+                        if (!(error instanceof ManagedMachineError && error.code === 'permission_denied')) throw error;
+                    }
+                }
             }
-            return { ...await projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId), retainedWorkflowRoot: root };
+            if (!isCustodian && !retainedWorkflowRoot) throw new ManagedMachineError('managed_not_found');
+            return { ...await projectManagedMachineReadForActorInTx(tx, row, params.actorAccountId),
+                ...(retainedWorkflowRoot ? { retainedWorkflowRoot } : {}) };
         }
         const row = await readManagedMachineInTx(tx, input);
         if (params.enrolledMachineId !== undefined && row.enrolledMachineId !== params.enrolledMachineId) {

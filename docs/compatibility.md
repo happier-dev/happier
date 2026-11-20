@@ -4288,6 +4288,12 @@ Selection happens in the managed query before access projection; it grants no
 additional access. Active and archived history keep their separate reads, and
 requests without selectors retain their existing shape and behavior.
 
+The existing `machines.managed.get` creation-request selector lets the retained
+custodian read an admitted reservation as soon as Home commits it, including
+when a different Account requested acquisition. Returning a retained Workflow
+request still requires the original requester and its existing access and
+encryption-mode checks. The request and response schemas are unchanged.
+
 Stored Managed Machines keep their admitted launch under the protocol-owned
 retained grammar. A different host can publish another declaration at the same
 development version; that must not re-admit the immutable launch or prevent

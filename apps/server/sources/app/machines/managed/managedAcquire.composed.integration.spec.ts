@@ -171,8 +171,9 @@ describe("managed acquisition durable authority", () => {
     it('recovers retained Workflow placement by creation request without disclosing it to another Account', async () => {
         const homeId = `srv_${'a'.repeat(32)}`;
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
+        const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
             metadata: '{}', installationId: crypto.randomUUID() } });
         const creationRequestId = crypto.randomUUID();
         const target = { kind: 'machine', machineId: controller.id, project: { machineId: controller.id,
@@ -186,7 +187,7 @@ describe("managed acquisition durable authority", () => {
                     controller: { machineId: controller.id, installationId: controller.installationId! } } } },
         };
         // Database boundary fixture represents Home's retained, not yet enrolled allocation.
-        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id,
+        const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: custodian.id,
             controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
             admittedActionRequestId: creationRequestId, admittedInput: { enrollmentAccountId: owner.id,
                 continuation: { requestEnvelopeDigest: 'original-root-digest', workflowRoot: retainedWorkflowRoot } },
@@ -206,6 +207,11 @@ describe("managed acquisition durable authority", () => {
         const found = await read(creationRequestId);
         expect(found.statusCode).toBe(200);
         expect(found.json()).toMatchObject({ id: row.id, controller: { machineId: controller.id }, retainedWorkflowRoot });
+        actorAccountId = custodian.id;
+        const custodyRead = await read(creationRequestId);
+        expect(custodyRead.statusCode, custodyRead.body).toBe(200);
+        expect(custodyRead.json()).toMatchObject({ id: row.id, controller: { machineId: controller.id } });
+        expect(custodyRead.json()).not.toHaveProperty('retainedWorkflowRoot');
         actorAccountId = other.id;
         const foreign = await read(creationRequestId);
         const absent = await read(crypto.randomUUID());
@@ -1021,8 +1027,8 @@ describe("managed acquisition durable authority", () => {
             .toMatchObject({ machine: { id: row.id, desired: 'stop', intentRevision: 1 } });
     });
 
-    it('binds enrollment to the admitted requester and refuses another Account before Machine writes', async () => {
-        const fixture = await createManagedComputeFixture('requester-enrollment');
+    it.each(['active', 'canceled'] as const)('lets the custodian read a cross-account reservation and settles %s enrollment', async state => {
+        const fixture = await createManagedComputeFixture(`requester-enrollment-${state}`);
         const { account: custodian, homeId, controller } = fixture;
         const requester = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
         await db.account.update({ where: { id: custodian.id }, data: createSignedAccountContentBinding() });
@@ -1031,6 +1037,12 @@ describe("managed acquisition durable authority", () => {
         const request = { ...fixture.request, requesterAccountId: requester.id };
         const created = await admitManagedAcquire(request);
         expect(created.machine).toMatchObject({ custodianAccountId: custodian.id, enrollmentAccountId: requester.id });
+        const reservation = { homeId, creationRequestId: request.input.requestId };
+        await expect(getManagedMachine({ actorAccountId: custodian.id, input: reservation })).resolves.toMatchObject({
+            id: created.machine.id, enrollmentAccountId: requester.id, controller, allocation: 'unsubmitted',
+        });
+        await expect(getManagedMachine({ actorAccountId: requester.id, input: reservation }))
+            .rejects.toMatchObject({ code: 'managed_not_found' });
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).admittedInput)
             .toMatchObject({ enrollmentAccountId: requester.id });
         expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true });
@@ -1059,8 +1071,8 @@ describe("managed acquisition durable authority", () => {
         expect(enrollmentContext.statusCode, enrollmentContext.body).toBe(200);
         expect(enrollmentContext.json()).toMatchObject({ machine: { enrollmentAccountId: requester.id } });
         const keys = tweetnacl.sign.keyPair();
-        const machineId = 'requester-enrolled-guest';
-        const installationId = 'requester-enrolled-installation';
+        const machineId = `requester-enrolled-guest-${state}`;
+        const installationId = `requester-enrolled-installation-${state}`;
         const register = () => app.inject({ method: 'POST', url: '/v1/machines', payload: {
             id: machineId, metadata: 'ciphertext', installationId,
             installationPublicKey: Buffer.from(keys.publicKey).toString('base64url'),
@@ -1073,15 +1085,17 @@ describe("managed acquisition durable authority", () => {
         expect(refused.json()).toMatchObject({ reason: 'resource_mismatch' });
         expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
         enrollingAccountId = requester.id;
-        // Installation can finish after acquisition retirement. Registration's
-        // transaction remains authoritative even without installer re-reads.
-        await db.managedMachine.update({ where: { id: created.machine.id }, data: { creationState: 'canceled' } });
-        const retired = await register();
-        expect(retired.statusCode, retired.body).toBe(409);
-        expect(retired.json()).toMatchObject({ reason: 'enrollment_retired' });
-        expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
-        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).enrolledMachineId).toBeNull();
-        await db.managedMachine.update({ where: { id: created.machine.id }, data: { creationState: 'active' } });
+        if (state === 'canceled') {
+            const canceled = await cancelManagedCreation({ actorAccountId: custodian.id,
+                input: { homeId, managedId: created.machine.id, expectedIntentRevision: 0 } });
+            expect(canceled.machine).toMatchObject({ creationState: 'canceled', intentRevision: 1 });
+            const retired = await register();
+            expect(retired.statusCode, retired.body).toBe(409);
+            expect(retired.json()).toMatchObject({ reason: 'enrollment_retired' });
+            expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: created.machine.id } })).enrolledMachineId).toBeNull();
+            return;
+        }
         const enrolled = await register();
         expect(enrolled.statusCode, enrolled.body).toBe(200);
         expect(await db.machine.findUniqueOrThrow({ where: { id: machineId } })).toMatchObject({ accountId: requester.id });
