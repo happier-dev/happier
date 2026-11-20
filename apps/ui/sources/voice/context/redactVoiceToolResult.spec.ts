@@ -44,15 +44,15 @@ describe('redactVoiceToolResultValue', () => {
 
   it.each(['provider_model_ambiguous', 'provider_model_not_found'])(
     'keeps the exact spawn choices for %s when Session summaries are private', errorCode => {
-      const value = { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'model' };
+      const value = { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'cloudflare/@cf/openai/gpt-oss-120b' };
       const result = { ok: false, errorCode, error: errorCode, details: {
-        candidates: [{ value, label: 'Named Model', description: 'Native' }],
+        candidates: [{ value, label: 'Named Model', description: 'Configured at /home/user/private.json and src/private.json' }],
         session: { title: 'PRIVATE TITLE' },
       } };
-      const prefs = { ...SHARE_ALL, shareSessionSummary: false, shareDeviceInventory: true };
+      const prefs = { ...SHARE_ALL, shareSessionSummary: false, shareDeviceInventory: true, shareFilePaths: false };
       for (const redact of [redactVoiceToolResultForProvider, redactVoiceActionExecutionResultForProvider]) {
         const projected = redact('spawnSession', result, prefs);
-        expect(projected).toMatchObject({ details: { candidates: [{ value, label: 'Named Model', description: 'Native' }] } });
+        expect(projected).toMatchObject({ details: { candidates: [{ value, label: 'Named Model', description: 'Configured at <path_redacted> and <path_redacted>' }] } });
         expect(JSON.stringify(projected)).not.toContain('PRIVATE TITLE');
         expect(redact('spawnSession', result, { ...prefs, shareDeviceInventory: false }))
           .toMatchObject({ errorCode, details: { candidates: [] } });

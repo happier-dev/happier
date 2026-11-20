@@ -82,12 +82,12 @@ export function redactVoicePathLikeString(value: string): string {
 
 export function redactVoicePathLikeData(input: unknown, options?: Readonly<{
     preserveSchemaFieldPaths?: boolean;
-    preserveSettingsDeclarationMetadata?: boolean;
+    catalogMetadata?: 'settingsDeclarations' | 'modelChoices';
 }>): unknown {
     const seen = new Set<object>();
 
     const walk = (value: unknown, depth: number, parentKey: string | null, schemaSectionField = false,
-        settingsDeclarationMetadata = false): unknown => {
+        catalogValue = false, modelChoice = false): unknown => {
         // Provider-bound redaction must fail closed at the traversal guard. An
         // untouched deep subtree could otherwise carry paths beyond the limit.
         if (depth > 20) return null;
@@ -101,10 +101,9 @@ export function redactVoicePathLikeData(input: unknown, options?: Readonly<{
                 && !(options?.preserveSchemaFieldPaths && parentKey === 'path')) {
                 return REDACTED_PATH_TOKEN;
             }
-            // Settings list items contain declarations, never the person's stored
-            // values. Slashes in catalog identifiers, choices and prose are not
-            // filesystem paths; actual absolute paths remain private.
-            return settingsDeclarationMetadata
+            // Catalog values can contain qualified IDs with slashes.
+            // Absolute paths still pass through the standard redactor.
+            return catalogValue
                 ? redactPathLikeTokens(replaceAbsolutePathPatterns(value), true)
                 : redactVoicePathLikeString(value);
         }
@@ -113,14 +112,15 @@ export function redactVoicePathLikeData(input: unknown, options?: Readonly<{
         seen.add(value as object);
 
         if (Array.isArray(value)) {
-            return value.map((entry) => walk(entry, depth + 1, parentKey, false,
-                settingsDeclarationMetadata || (options?.preserveSettingsDeclarationMetadata === true && parentKey === 'items')));
+            const declarations = options?.catalogMetadata === 'settingsDeclarations' && parentKey === 'items';
+            const choices = options?.catalogMetadata === 'modelChoices' && parentKey === 'candidates';
+            return value.map(entry => walk(entry, depth + 1, parentKey, false, catalogValue || declarations, choices));
         }
 
         const output: Record<string, unknown> = {};
         for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
             output[key] = walk(entry, depth + 1, key,
-                parentKey === 'schemaSections' || parentKey === 'schemaSection', settingsDeclarationMetadata);
+                parentKey === 'schemaSections' || parentKey === 'schemaSection', catalogValue || (modelChoice && key === 'value'));
         }
         return output;
     };

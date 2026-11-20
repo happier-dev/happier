@@ -215,7 +215,7 @@ function redactVoiceToolResultValueWithClassification(
   prefs: VoiceToolResultRedactionPrefs,
   preservePresentationLabels: boolean,
   preserveSchemaFieldPaths = false,
-  preserveSettingsDeclarationMetadata = false,
+  catalogMetadata?: 'settingsDeclarations' | 'modelChoices',
 ): unknown {
   const resolvedPrefs: VoiceToolResultRedactionPrefs = {
     shareFilePaths: prefs?.shareFilePaths === true,
@@ -224,7 +224,7 @@ function redactVoiceToolResultValueWithClassification(
   };
   const stripped = stripGatedKeys(value, resolvedPrefs, 0, preservePresentationLabels);
   return resolvedPrefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped, {
-    preserveSchemaFieldPaths, preserveSettingsDeclarationMetadata,
+    preserveSchemaFieldPaths, catalogMetadata,
   });
 }
 
@@ -313,7 +313,7 @@ export function redactVoiceToolResultForProvider(
         }) : [];
       return redactVoiceToolResultValueWithClassification({
         ok: false, errorCode: failure.errorCode, error: failure.errorCode, details: { candidates: choices },
-      }, prefs, true);
+      }, prefs, true, false, 'modelChoices');
     }
   }
   return redactVoiceToolResultValueWithClassification(
@@ -322,7 +322,7 @@ export function redactVoiceToolResultForProvider(
     toolName === CURRENT_UI_CONTEXT_READ_TOOL_NAME || DECLARATION_LABEL_TOOL_NAMES.has(toolName)
       || ACTION_CATALOG_TOOL_NAMES.has(toolName) || ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName),
     ACTION_CATALOG_TOOL_NAMES.has(toolName),
-    toolName === SETTINGS_LIST_TOOL_NAME || toolName === SETTINGS_LIST_ACTION_ID_V1,
+    toolName === SETTINGS_LIST_TOOL_NAME || toolName === SETTINGS_LIST_ACTION_ID_V1 ? 'settingsDeclarations' : undefined,
   );
 }
 
