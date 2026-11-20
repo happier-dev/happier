@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Message } from '@happier-dev/session-core/messages';
+import type { Message, TranscriptAccountActor } from '@happier-dev/session-core/messages';
 
 import { buildTranscriptTurnUnits } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits';
 import { buildTranscriptTurns } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
@@ -8,12 +8,14 @@ import {
   projectTranscriptTurnEnds,
 } from './transcriptMarkers';
 
-const user = (seq: number): Message => ({
+const viewer = { serverId: 'home', accountId: 'viewer' };
+const user = (seq: number, accountActor?: TranscriptAccountActor): Message => ({
   kind: 'user-text',
   id: `m${seq}`,
   localId: null,
   seq,
   createdAt: seq,
+  accountActor,
   text: `prompt ${seq}`,
 });
 const agent = (seq: number): Message => ({
@@ -104,7 +106,7 @@ describe('transcript markers', () => {
       tool(3, 'Read'),
       agent(4),
       turnDiff(5, 'turn-1'),
-      user(6),
+      user(6, { v: 1, ...viewer, profile: null }),
       agent(7),
     ]);
     const turnEnds = projectTranscriptTurnEnds([
@@ -156,6 +158,7 @@ describe('transcript markers', () => {
       items: rows,
       sessionId: 's1',
       getMessageById,
+      viewerScope: viewer,
       newDividerAfterSeq: 5,
       turnEnds,
     });
@@ -166,11 +169,64 @@ describe('transcript markers', () => {
       'm4',
       'transcript-marker:turn-end:turn-1',
       'm5',
-      'transcript-marker:new',
       'm6',
+      'transcript-marker:new',
       'm7',
       'transcript-marker:turn-end:turn-2',
     ]);
+  });
+
+  it('keeps a collaborator prompt or a prompt of unknown authorship eligible for New', () => {
+    const otherActors = [undefined, { v: 1 as const, ...viewer, accountId: 'collaborator', profile: null },
+      { v: 1 as const, ...viewer, serverId: 'other-home', profile: null }];
+    for (const otherActor of otherActors) {
+      const { rows, getMessageById } = rowsFor([agent(5), user(6, { v: 1, ...viewer, profile: null }), user(7, otherActor), agent(8)]);
+      const marked = insertTranscriptMarkers({
+        items: rows, sessionId: 's1', getMessageById, viewerScope: viewer, newDividerAfterSeq: 5, turnEnds: [],
+      });
+      expect(shape(marked)).toEqual(['m5', 'm6', 'transcript-marker:new', 'm7', 'm8']);
+    }
+  });
+
+  it('waits for the closing anchor when a transcript page stops before it or has a gap at it', () => {
+    const turnEnds = projectTranscriptTurnEnds([
+      { turnId: 'turn-1', status: 'completed', startedAt: 0, updatedAt: 4_000, terminalAt: 4_000,
+        transcriptAnchors: { startSeqInclusive: 1, endSeqInclusive: 100 } },
+    ]);
+    for (const messages of [[user(1), agent(2)], [user(1), agent(2), agent(101)]]) {
+      const { rows, getMessageById } = rowsFor(messages);
+      expect(insertTranscriptMarkers({ items: rows, sessionId: 's1', getMessageById, viewerScope: null, newDividerAfterSeq: null, turnEnds })).toBe(rows);
+    }
+    const { rows, getMessageById } = rowsFor([user(1), agent(2), agent(100)]);
+    expect(shape(insertTranscriptMarkers({ items: rows, sessionId: 's1', getMessageById, viewerScope: null, newDividerAfterSeq: null, turnEnds })))
+      .toEqual(['m1', 'm2', 'm100', 'transcript-marker:turn-end:turn-1']);
+  });
+
+  it('allows a loaded target-window end that was absorbed into a visible row', () => {
+    const { rows, getMessageById } = rowsFor([user(1), agent(2)]);
+    const turnEnds = projectTranscriptTurnEnds([
+      { turnId: 'turn-1', status: 'completed', startedAt: 0, updatedAt: 4_000, terminalAt: 4_000,
+        transcriptAnchors: { startSeqInclusive: 1, endSeqInclusive: 3 } },
+    ]);
+    expect(shape(insertTranscriptMarkers({
+      items: rows, sessionId: 's1', getMessageById, viewerScope: null, newDividerAfterSeq: null, turnEnds,
+      isSeqRangeLoaded: (from, to) => from >= 1 && to <= 3,
+    }))).toEqual(['m1', 'm2', 'transcript-marker:turn-end:turn-1']);
+  });
+
+  it('closes after the whole collapsed tool group when a member represents the closing anchor', () => {
+    const turnEnds = projectTranscriptTurnEnds([
+      { turnId: 'turn-1', status: 'completed', startedAt: 0, updatedAt: 4_000, terminalAt: 4_000,
+        transcriptAnchors: { startSeqInclusive: 1, endSeqInclusive: 3 } },
+    ]);
+    const place = (messages: Message[]) => {
+      const { rows, getMessageById } = rowsFor(messages);
+      return shape(insertTranscriptMarkers({ items: rows, sessionId: 's1', getMessageById, viewerScope: null, newDividerAfterSeq: null, turnEnds }));
+    };
+    expect(place([tool(2, 'Bash'), tool(3, 'Read'), tool(4, 'Bash'), user(5)]))
+      .toEqual(['tool-group-header', 'tool-group-footer', 'transcript-marker:turn-end:turn-1', 'm5']);
+    expect(place([tool(2, 'Bash'), tool(4, 'Bash'), user(5)]))
+      .toEqual(['tool-group-header', 'tool-group-footer', 'm5']);
   });
 
   it('ends a turn after its own error and late tool rows, before the next prompt or turn, with closing spacing', () => {
@@ -186,7 +242,7 @@ describe('transcript markers', () => {
       // A context-only turn with no prompt row starts at seq 7: turn 2's line stays before it.
       { turnId: 'turn-3', status: 'in_progress', startedAt: 20_000, updatedAt: 20_000, transcriptAnchors: { startSeqInclusive: 7 } },
     ]);
-    const marked = insertTranscriptMarkers({ items: rows, sessionId: 's1', getMessageById, newDividerAfterSeq: null, turnEnds });
+    const marked = insertTranscriptMarkers({ items: rows, sessionId: 's1', getMessageById, viewerScope: null, newDividerAfterSeq: null, turnEnds });
     expect(shape(marked)).toEqual(['m1', 'm2', 'm3', 'tool-group-header', 'tool-group-footer', 'transcript-marker:turn-end:turn-1',
       'm5', 'm6', 'transcript-marker:turn-end:turn-2', 'm7']);
     expect(marked.filter((row) => row.kind === 'transcript-marker').map((row) => row.kind === 'transcript-marker' ? row.marker : null))
@@ -202,6 +258,7 @@ describe('transcript markers', () => {
           items: rows,
           sessionId: 's1',
           getMessageById,
+          viewerScope: null,
           newDividerAfterSeq: 0,
           turnEnds: [],
         }),
@@ -212,6 +269,7 @@ describe('transcript markers', () => {
         items: rows,
         sessionId: 's1',
         getMessageById,
+        viewerScope: null,
         newDividerAfterSeq: 2,
         turnEnds: [],
       }),

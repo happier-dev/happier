@@ -5,6 +5,7 @@ import {
   useOptionalSessionSurfacePresenceSignal,
 } from '@/components/sessions/shell/sessionSurfacePresence';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 
@@ -107,6 +108,7 @@ function useOpenedFacts(
 export function useTranscriptMarkerInputs(
   session: Session,
   hasTranscriptRows: boolean,
+  viewerScope: ServerAccountScope | null,
 ): TranscriptMarkerInputs {
   const showTurnDuration = useSetting('transcriptShowTurnDuration') !== false;
   const turns = session.sessionTurns?.turns ?? null;
@@ -124,7 +126,7 @@ export function useTranscriptMarkerInputs(
   }, [lateSettled, settledTurnEnds]);
   const newDividerAfterSeq = opened?.seq ?? null;
   return React.useMemo(
-    () => ({ newDividerAfterSeq, turnEnds }),
-    [newDividerAfterSeq, turnEnds],
+    () => ({ newDividerAfterSeq, viewerScope, turnEnds }),
+    [newDividerAfterSeq, viewerScope, turnEnds],
   );
 }

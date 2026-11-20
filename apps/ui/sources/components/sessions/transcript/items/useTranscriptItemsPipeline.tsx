@@ -135,6 +135,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         showToolCalls,
         transcriptMarkers,
     } = deps;
+    const { newDividerAfterSeq, viewerScope, turnEnds } = transcriptMarkers;
 
     const getTurnMessageById = React.useCallback((messageId: string): Message | null => {
         if (getMessageByIdOverride) return getMessageByIdOverride(messageId);
@@ -162,6 +163,13 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         return toolMessages;
     }, [getTurnMessageById]);
 
+    const jumpWindowFacts = useTranscriptJumpWindowFacts({
+        forkMessageMetadataById,
+        getMessageById: getTurnMessageById,
+        messagesById,
+        sessionId,
+    });
+    const { isSeqRangeLoaded } = jumpWindowFacts;
     const findActive = useTranscriptFindActive();
     const quietWorkflowTurnIds = useQuietWorkflowTurnIds(items, getTurnMessageById, { findActive, jumpToSeq });
     // Turn units are rebuilt on each list change; an unchanged unit keeps its identity, so the list and its
@@ -181,8 +189,10 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             items: rebuilt,
             sessionId,
             getMessageById: getTurnMessageById,
-            newDividerAfterSeq: transcriptMarkers.newDividerAfterSeq,
-            turnEnds: transcriptMarkers.turnEnds,
+            newDividerAfterSeq,
+            viewerScope,
+            turnEnds,
+            isSeqRangeLoaded,
         });
         const retained = retainKeyedRows(previousDecomposedItemsRef.current, marked, (item) => item.id, { freeze: false });
         previousDecomposedItemsRef.current = retained;
@@ -191,21 +201,17 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         expandedToolCallsAnchorMessageIds,
         forkMessageMetadataById,
         getTurnMessageById,
+        isSeqRangeLoaded,
         items,
         quietWorkflowTurnIds,
         sessionId,
         transcriptToolCallsCollapsedPreviewCountSetting,
         showToolCalls,
-        transcriptMarkers.newDividerAfterSeq,
-        transcriptMarkers.turnEnds,
+        newDividerAfterSeq,
+        viewerScope,
+        turnEnds,
     ]);
 
-    const jumpWindowFacts = useTranscriptJumpWindowFacts({
-        forkMessageMetadataById,
-        getMessageById: getTurnMessageById,
-        messagesById,
-        sessionId,
-    });
     const renderWindowProjection = React.useMemo(() => {
         return resolveTranscriptRenderWindowProjection({
             createWindowGapItem: createTranscriptWindowGapItem,

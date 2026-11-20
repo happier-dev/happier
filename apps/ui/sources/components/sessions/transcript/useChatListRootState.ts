@@ -489,7 +489,11 @@ export function useChatListRootState(props: ChatListProps) {
         props.session.id,
     ]);
     const internalMessagesById = forkedTranscriptEnabled ? messagesById : EMPTY_MESSAGES_BY_ID;
-    const transcriptMarkers = useTranscriptMarkerInputs(props.session, messageIdsOldestFirst.length > 0);
+    const transcriptMarkers = useTranscriptMarkerInputs(
+        props.session,
+        messageIdsOldestFirst.length > 0,
+        transcriptSessionCommon.messageDisplay.accountActorViewerScope ?? null,
+    );
 
     return {
         boundary: {

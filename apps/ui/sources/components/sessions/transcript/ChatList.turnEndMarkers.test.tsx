@@ -177,7 +177,10 @@ const messages = [
     2,
     'Drafts now live under their session in the device-local store.',
   ),
-  userText(3, 'Also keep image attachments in the draft.'),
+  {
+    ...userText(3, 'Also keep image attachments in the draft.'),
+    accountActor: { v: 1, accountId: 'reader', profile: null },
+  } satisfies SessionMessageV1,
   agentText(4, 'Starting on attachments.'),
 ];
 
@@ -314,15 +317,15 @@ describe('Session open → settled turns and read cursor → transcript markers'
       // Message rows keep transcript order; seq N is the Nth message row.
       const at = (seq: number) => rows.indexOf(messageRows[seq - 1]!);
       const newIndex = rows.indexOf('marker:transcript-marker:new');
-      // New sits between what was read (through seq 2) and the first row after the cursor.
-      expect(newIndex, rows.join(',')).toBeGreaterThan(at(2));
-      expect(newIndex).toBeLessThan(at(3));
+      // The viewer's own prompt (seq 3) precedes New, and the reply follows it.
+      expect(newIndex, rows.join(',')).toBeGreaterThan(at(3));
+      expect(newIndex).toBeLessThan(at(4));
       const turnA = rows.indexOf('marker:transcript-marker:turn-end:turn-a');
       const turnB = rows.indexOf('marker:transcript-marker:turn-end:turn-b');
       if (showTurnDuration !== false && turnsAtOpen) {
-        // Each line closes its own turn, ahead of the next turn's divider and prompt.
+        // Each line closes its own turn, ahead of the next turn's prompt.
         expect(turnA).toBeGreaterThan(at(2));
-        expect(turnA).toBeLessThan(newIndex);
+        expect(turnA).toBeLessThan(at(3));
         expect(turnB).toBeGreaterThan(at(4));
         // Each line's length comes from the turn's recorded start and end; a stopped turn says so.
         const markers = (chatListHarnessState.legendListProps?.data as readonly Row[] | undefined ?? [])

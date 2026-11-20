@@ -29,7 +29,7 @@ function Source(props: React.PropsWithChildren) {
 
 type ItemsPipelineDeps = Parameters<typeof useTranscriptItemsPipeline>[0];
 
-const NO_TRANSCRIPT_MARKERS = Object.freeze({ newDividerAfterSeq: null, turnEnds: Object.freeze([]) });
+const NO_TRANSCRIPT_MARKERS = Object.freeze({ newDividerAfterSeq: null, viewerScope: null, turnEnds: Object.freeze([]) });
 
 function createRef<T>(current: T): { current: T } {
     return { current };
@@ -198,7 +198,7 @@ describe('useTranscriptItemsPipeline identity stability', () => {
             outcome: 'worked' as const, durationMs: 72_000, endedAtMs: 72_000 });
         const base = { ...buildDeps(createStableMembers()), getMessageById: (id: string) => byId[id] ?? null };
         const depsWith = (count: number, turnEnds: ReturnType<typeof turnEnd>[]) => ({ ...base, items: rowsFor(count),
-            transcriptMarkers: { newDividerAfterSeq: 2, turnEnds } });
+            transcriptMarkers: { newDividerAfterSeq: 2, viewerScope: null, turnEnds } });
         const initialItems = rowsFor(4);
         const initial = { ...depsWith(4, [turnEnd('a', 1, 2), turnEnd('b', 3, 4)]), items: initialItems };
         const hook = await renderHook((value: typeof initial) => useTranscriptItemsPipeline(value), { initialProps: initial, wrapper: Source });
@@ -208,7 +208,7 @@ describe('useTranscriptItemsPipeline identity stability', () => {
 
         // Unrelated renders, and a turns refresh that carries equal facts in new objects: nothing is re-published.
         for (let pass = 0; pass < 5; pass += 1) {
-            await hook.rerender({ ...initial, transcriptMarkers: { newDividerAfterSeq: 2, turnEnds: [turnEnd('a', 1, 2), turnEnd('b', 3, 4)] } });
+            await hook.rerender({ ...initial, transcriptMarkers: { ...initial.transcriptMarkers, turnEnds: [turnEnd('a', 1, 2), turnEnd('b', 3, 4)] } });
             expect(hook.getCurrent().decomposedItems).toBe(first);
         }
 
