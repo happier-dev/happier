@@ -15805,6 +15805,11 @@ settingsSession: {
     invalidConnectionLinkDescription:
       "Il link di connessione è mancante o non valido. Controlla l'URL e riprova.",
     connectTerminal: "Connetti terminale",
+    connectedStep: {
+      title: 'Terminale connesso',
+      body: 'Questo terminale può ora avviare sessioni che puoi seguire da qualsiasi dispositivo.',
+      continue: 'Continua verso Home',
+    },
     terminalRequestDescription:
       "Un terminale richiede di connettersi al tuo account Happier. Questo consentirà al terminale di inviare e ricevere messaggi in modo sicuro.",
     connectionDetails: "Dettagli connessione",
@@ -16445,6 +16450,15 @@ settingsSession: {
 	    savedRelaysTitle: 'Home salvati',
         removeRelayConfirmTitle: 'Rimuovere l’Home?',
         removeRelayConfirmBody: 'Questo lo rimuove dagli Home salvati su questo dispositivo.',
+	    homeAddressStep: {
+	      title: 'L’indirizzo del tuo Home',
+	      pairingHelp: 'Puoi usare anche un link di associazione.',
+	    },
+	    connectComputerStep: {
+	      title: ({ home }: { home: string }) => `Connetti questo computer a ${home}`,
+	      desktop: 'Continua nell’app desktop',
+	      detectedAfterSignIn: 'Dopo l’accesso, Happier troverà questo computer automaticamente.',
+	    },
 	    customRelayUrlLabel: 'Indirizzo Home',
     relayNameLabel: 'Nome dell’Home',
     addAndUseRelay: 'Aggiungi Home',

@@ -219,12 +219,8 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
 
             if (approvalResult === 'approved') {
                 setIsLoading(false);
-                await Modal.alertAsync(t('common.success'), t('modals.terminalConnectedSuccessfully'), [
-                    {
-                        text: t('common.ok'),
-                    }
-                ]);
-                options?.onSuccess?.();
+                if (options?.onSuccess) options.onSuccess();
+                else await Modal.alertAsync(t('common.success'), t('modals.terminalConnectedSuccessfully'), [{ text: t('common.ok') }]);
                 return true;
             }
 

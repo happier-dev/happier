@@ -15869,6 +15869,11 @@ settingsSession: {
     invalidConnectionLinkDescription:
       "接続リンクが見つからないか無効です。URLを確認して再試行してください。",
     connectTerminal: "ターミナルを接続",
+    connectedStep: {
+      title: 'ターミナルを接続しました',
+      body: 'このターミナルからセッションを開始し、どのデバイスからでも確認できます。',
+      continue: 'Home に進む',
+    },
     terminalRequestDescription:
       "ターミナルがHappierアカウントへの接続を要求しています。これにより、ターミナルは安全にメッセージを送受信できるようになります。",
     connectionDetails: "接続の詳細",
@@ -16375,6 +16380,15 @@ settingsSession: {
 		    savedRelaysTitle: '保存済みの Home',
             removeRelayConfirmTitle: 'Home を削除しますか？',
             removeRelayConfirmBody: 'このデバイスの保存済み Home から削除されます。',
+	    homeAddressStep: {
+	      title: 'Home のアドレス',
+	      pairingHelp: 'ペアリングリンクも使えます。',
+	    },
+	    connectComputerStep: {
+	      title: ({ home }: { home: string }) => `このコンピューターを ${home} に接続`,
+	      desktop: 'デスクトップアプリで続ける',
+	      detectedAfterSignIn: 'サインインすると、Happier がこのコンピューターを自動的に検出します。',
+	    },
 	    customRelayUrlLabel: 'Home アドレス',
     relayNameLabel: 'Home 名',
     addAndUseRelay: 'Home を追加',

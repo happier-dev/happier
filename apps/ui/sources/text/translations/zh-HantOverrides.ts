@@ -12734,6 +12734,11 @@ settingsSession: {
         invalidConnectionLink: '無效的連線連結',
         invalidConnectionLinkDescription: '連線連結缺失或無效。請檢查 URL 並重試。',
         connectTerminal: '連線終端',
+        connectedStep: {
+          title: '終端機已連線',
+          body: '這個終端機現在可以啟動工作階段，你可以在任何裝置上跟進。',
+          continue: '前往 Home',
+        },
         terminalRequestDescription: '有終端正在請求連線到您的 Happier 帳戶。這將允許終端安全地傳送和接收訊息。',
         connectionDetails: '連線詳情',
         encryption: '加密',
@@ -13146,6 +13151,15 @@ settingsSession: {
         webDesktopOnlyOptionalNextBody: '安裝 Happier 後，可在 設定 → 安全存取 (Tailscale) 連接手機，並在 設定 → 供應商 安裝你偏好的工具。',
 	        accountWillLiveOnRelay: ({ relayUrl }: { relayUrl: string }) => `你的帳號將位於 ${relayUrl}。`,
 	        savedRelaysTitle: '已儲存的 Home',
+        homeAddressStep: {
+          title: '你的 Home 位址',
+          pairingHelp: '也可以使用配對連結。',
+        },
+        connectComputerStep: {
+          title: ({ home }: { home: string }) => `將這台電腦連線到 ${home}`,
+          desktop: '在桌面應用程式中繼續',
+          detectedAfterSignIn: '登入後，Happier 會自動找到這台電腦。',
+        },
         customRelayUrlLabel: 'Home 位址',
         relayNameLabel: 'Home 名稱',
         addAndUseRelay: '新增 Home',

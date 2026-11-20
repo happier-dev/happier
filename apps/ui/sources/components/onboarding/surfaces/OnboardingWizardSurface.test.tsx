@@ -2121,6 +2121,17 @@ describe('OnboardingWizardSurface', () => {
         await flushHookEffects({ cycles: 1, turns: 1 });
 
         const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
+        const answer = runtimeFetchMock.getMockImplementation()!;
+        expect(screen.findByTestId('onboarding-wizard-skip')).toBeNull();
+        let advertisedInstaller = false;
+        runtimeFetchMock.mockImplementation(async (input, init) => {
+            if (String(input) !== 'https://relay.local.test/v1/features') return answer(input, init);
+            if (advertisedInstaller) return new Response(null, { status: 503 });
+            advertisedInstaller = true;
+            return Response.json(createRootLayoutFeaturesResponse({
+                capabilities: { guestCli: { source: 'public-release', line: '0.3', channel: 'stable' } },
+            }));
+        });
         await act(async () => {
             relayInput.props.onChangeText?.('https://relay.local.test');
         });
@@ -2134,10 +2145,10 @@ describe('OnboardingWizardSurface', () => {
         await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard-background-service-handoff')).not.toBeNull());
         const backgroundServiceHandoff = screen.findByTestId('onboarding-wizard-background-service-handoff');
         expect(backgroundServiceHandoff).not.toBeNull();
-        expect(screen.findByTestId('onboarding-wizard-background-service-arrival')).not.toBeNull();
+        const command = screen.findByTestId('onboarding-wizard-background-service-arrival.code');
+        expect(command?.props.children).toContain('https://relay.local.test');
         expect(screen.findByTestId('machine-arrival-card-status')).toBeNull();
         expect(screen.findByTestId('onboarding-wizard-background-service-handoff-download-desktop')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('setupOnboarding.machineArrival.detectedAfterSignIn');
         expect(screen.findByTestId('onboarding-wizard-lost-access')).toBeNull();
 
         const advanceToAuthButton = screen.findByTestId('onboarding-wizard-primary')!;

@@ -72,6 +72,15 @@ describe('terminal pairing storage disclosure', () => {
 describe('terminal connect frame', () => {
     const message = { kind: 'message' as const, title: 'terminal.connectTerminal', loading: true };
 
+    it('leaves the successful connection step only after Continue', async () => {
+        const onContinue = vi.fn();
+        const screen = await renderScreen(<TerminalConnectSurface state={{ kind: 'connected', onContinue }} />);
+        expect(screen.findByTestId('terminal-connect-approve')).toBeNull();
+        expect(onContinue).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('terminal-connect-continue');
+        expect(onContinue).toHaveBeenCalledOnce();
+    });
+
     it('keeps a signed-out terminal link in the welcome split workflow pane', async () => {
         const screen = await renderScreen(<TerminalConnectSurface testID="terminal-connect" state={message} />);
         expect(screen.findByTestId('unauth-shell-terminal-connect')).not.toBeNull();

@@ -5,7 +5,6 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
 import { ADD_HOME_RESTORE_PATH } from '@/auth/pairing/homeQrEntryIntent';
-import { buildExpiredHomeQrRestoreRoutePath, buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -20,11 +19,12 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { StepFieldGroup, StepFieldHelp, StepFieldLabel, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
-import { PaneHeader } from './journeyPaneKit';
+import { JourneyPanePresentationContext, PaneHeader } from './journeyPaneKit';
 import {
     confirmCanonicalHomeUrl,
     confirmInsecureHomeHttp,
     homeConnectFailureMessage,
+    resolveHomeConnectLink,
 } from '../../add/homeConnectPresentation';
 
 const LINK_LABEL_ID = 'already-use-happier-home-link-label';
@@ -57,6 +57,7 @@ export function DirectHomePathPane(props: Readonly<{
     onAddressChange?: (address: string) => void;
 }>) {
     const router = useRouter();
+    const isStep = React.useContext(JourneyPanePresentationContext) === 'step';
     const { theme } = useUnistyles();
     const phone = useViewportClass() === 'compact';
     const [link, setLink] = React.useState('');
@@ -74,23 +75,9 @@ export function DirectHomePathPane(props: Readonly<{
     }, [onLeave, router]);
 
     const openLink = React.useCallback(() => {
-        const classified = classifyPairingLink(link);
-        if (classified.kind === 'home_qr_invite') {
-            const path = buildHomeQrInviteRestoreRoutePath(classified.rawLink, 'add_home');
-            if (path) {
-                leaveFor(path, 'AlreadyUseHappier.homeLink');
-                return;
-            }
-        }
-        if (classified.kind === 'expired_home_qr_invite') {
-            leaveFor(buildExpiredHomeQrRestoreRoutePath('add_home'), 'AlreadyUseHappier.homeLink');
-            return;
-        }
-        if (classified.kind === 'team_join' || classified.kind === 'source_setup') {
-            leaveFor(classified.path, 'AlreadyUseHappier.teamJoinLink');
-            return;
-        }
-        setLinkError(t('homesJourneys.notAHomeLink'));
+        const destination = resolveHomeConnectLink(classifyPairingLink(link));
+        if (destination) leaveFor(destination, 'AlreadyUseHappier.homeLink');
+        else setLinkError(t('homesJourneys.notAHomeLink'));
     }, [leaveFor, link]);
 
     const connect = React.useCallback(async (requestedAddress = address) => {
@@ -136,6 +123,21 @@ export function DirectHomePathPane(props: Readonly<{
         }
     }, [address, onHomeConnected]);
 
+    const submitAddress = React.useCallback(() => {
+        if (isStep) {
+            const destination = resolveHomeConnectLink(classifyPairingLink(address));
+            if (destination) {
+                leaveFor(destination, 'AlreadyUseHappier.homeLink');
+                return;
+            }
+            if (destination === null) {
+                setAddressState({ kind: 'failed', message: t('homesJourneys.notAHomeLink'), endpoint: '', remediation: null });
+                return;
+            }
+        }
+        void connect();
+    }, [address, connect, isStep, leaveFor]);
+
     const remediation = addressState.kind === 'failed' ? addressState.remediation : null;
     const remediationController = useEndpointReachabilityRemediationController({
         remediation,
@@ -146,53 +148,58 @@ export function DirectHomePathPane(props: Readonly<{
     const hasLink = link.trim().length > 0;
     return (
         <View style={styles.pane} testID="already-use-happier.pane.direct">
-            <PaneHeader title={t('homesJourneys.pathDirectTitle')} lead={t('homesJourneys.directLead')} />
-            <StepFieldGroup>
-                <StepFieldLabel nativeID={LINK_LABEL_ID}>{t('homesJourneys.fromDeviceLabel')}</StepFieldLabel>
-                <View style={styles.fieldRow}>
-                    <FieldTextInput
-                        testID="already-use-happier.home-link"
-                        value={link}
-                        onChangeText={(value) => {
-                            setLink(value);
-                            if (linkError) setLinkError(null);
-                        }}
-                        accessibilityLabel={t('homesJourneys.homeLinkLabel')}
-                        accessibilityLabelledBy={LINK_LABEL_ID}
-                        placeholder={t('homesJourneys.homeLinkPlaceholder')}
-                        autoCapitalize="none"
-                        keyboardType="url"
-                        returnKeyType="go"
-                        onSubmitEditing={openLink}
-                        error={linkError}
-                        style={styles.fieldInput}
-                    />
-                    {hasLink ? (
-                        <RoundButton
-                            testID="already-use-happier.home-link-open"
-                            size="normal"
-                            display="secondary"
-                            title={t('homesJourneys.openLink')}
-                            onPress={openLink}
+            <PaneHeader
+                title={t(isStep ? 'setupOnboarding.homeAddressStep.title' : 'homesJourneys.pathDirectTitle')}
+                lead={t(isStep ? 'homesJourneys.byAddressHelp' : 'homesJourneys.directLead')}
+            />
+            {!isStep ? <>
+                <StepFieldGroup>
+                    <StepFieldLabel nativeID={LINK_LABEL_ID}>{t('homesJourneys.fromDeviceLabel')}</StepFieldLabel>
+                    <View style={styles.fieldRow}>
+                        <FieldTextInput
+                            testID="already-use-happier.home-link"
+                            value={link}
+                            onChangeText={(value) => {
+                                setLink(value);
+                                if (linkError) setLinkError(null);
+                            }}
+                            accessibilityLabel={t('homesJourneys.homeLinkLabel')}
+                            accessibilityLabelledBy={LINK_LABEL_ID}
+                            placeholder={t('homesJourneys.homeLinkPlaceholder')}
+                            autoCapitalize="none"
+                            keyboardType="url"
+                            returnKeyType="go"
+                            onSubmitEditing={openLink}
+                            error={linkError}
+                            style={styles.fieldInput}
                         />
-                    ) : (
-                        <RoundButton
-                            testID="already-use-happier.use-camera"
-                            size="normal"
-                            display="secondary"
-                            title={t(phone ? 'homesJourneys.phone.scan' : 'homesJourneys.useCamera')}
-                            leading={<Icon name="camera" size={14} color={theme.colors.text.secondary} />}
-                            onPress={() => leaveFor(ADD_HOME_RESTORE_PATH, 'AlreadyUseHappier.camera')}
-                        />
+                        {hasLink ? (
+                            <RoundButton
+                                testID="already-use-happier.home-link-open"
+                                size="normal"
+                                display="secondary"
+                                title={t('homesJourneys.openLink')}
+                                onPress={openLink}
+                            />
+                        ) : (
+                            <RoundButton
+                                testID="already-use-happier.use-camera"
+                                size="normal"
+                                display="secondary"
+                                title={t(phone ? 'homesJourneys.phone.scan' : 'homesJourneys.useCamera')}
+                                leading={<Icon name="camera" size={14} color={theme.colors.text.secondary} />}
+                                onPress={() => leaveFor(ADD_HOME_RESTORE_PATH, 'AlreadyUseHappier.camera')}
+                            />
+                        )}
+                    </View>
+                    {linkError ? null : (
+                        <StepFieldHelp>{t(phone ? 'homesJourneys.phone.fromDeviceHelp' : 'homesJourneys.fromDeviceHelp')}</StepFieldHelp>
                     )}
-                </View>
-                {linkError ? null : (
-                    <StepFieldHelp>{t(phone ? 'homesJourneys.phone.fromDeviceHelp' : 'homesJourneys.fromDeviceHelp')}</StepFieldHelp>
-                )}
-            </StepFieldGroup>
-            <StepOrDivider label={t('common.or')} />
+                </StepFieldGroup>
+                <StepOrDivider label={t('common.or')} />
+            </> : null}
             <StepFieldGroup>
-                <StepFieldLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.byAddressLabel')}</StepFieldLabel>
+                {!isStep ? <StepFieldLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.byAddressLabel')}</StepFieldLabel> : null}
                 <View style={styles.fieldRow}>
                     <FieldTextInput
                         testID="already-use-happier.home-address"
@@ -203,12 +210,12 @@ export function DirectHomePathPane(props: Readonly<{
                             if (addressState.kind === 'failed') setAddressState({ kind: 'idle' });
                         }}
                         accessibilityLabel={t('homesJourneys.byAddressLabel')}
-                        accessibilityLabelledBy={ADDRESS_LABEL_ID}
+                        accessibilityLabelledBy={isStep ? undefined : ADDRESS_LABEL_ID}
                         placeholder={t('homesJourneys.homeAddressPlaceholder')}
                         autoCapitalize="none"
                         keyboardType="url"
                         returnKeyType="go"
-                        onSubmitEditing={() => { void connect(); }}
+                        onSubmitEditing={submitAddress}
                         style={styles.fieldInput}
                     />
                     <RoundButton
@@ -216,13 +223,13 @@ export function DirectHomePathPane(props: Readonly<{
                         size="normal"
                         title={t('homesJourneys.connect')}
                         loading={addressState.kind === 'connecting'}
-                        onPress={() => { void connect(); }}
+                        onPress={submitAddress}
                     />
                 </View>
                 {addressState.kind === 'failed' ? (
                     <StepFieldHelp tone="error" testID="already-use-happier.home-address-error">{addressState.message}</StepFieldHelp>
                 ) : (
-                    <StepFieldHelp>{t('homesJourneys.byAddressHelp')}</StepFieldHelp>
+                    <StepFieldHelp>{t(isStep ? 'setupOnboarding.homeAddressStep.pairingHelp' : 'homesJourneys.byAddressHelp')}</StepFieldHelp>
                 )}
                 {remediation ? (
                     <ServerReachabilityRemediationCard

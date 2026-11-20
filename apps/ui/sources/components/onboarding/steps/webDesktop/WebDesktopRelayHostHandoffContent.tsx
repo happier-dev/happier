@@ -34,6 +34,7 @@ export function WebDesktopCommandHandoff(props: Readonly<{
     commandTestID: string;
     commands: Readonly<Record<CommandOs, string | null>> | null;
     help?: string;
+    desktopLabel?: string;
 }>) {
     return (
         <View testID={props.testID} style={styles.root}>
@@ -44,7 +45,7 @@ export function WebDesktopCommandHandoff(props: Readonly<{
                 {props.help ? <StepFieldHelp>{props.help}</StepFieldHelp> : null}
             </View>
             <StepOrDivider label={t('common.or')} />
-            <WebDesktopDownloadCta testIDPrefix={props.testID} />
+            <WebDesktopDownloadCta testIDPrefix={props.testID} label={props.desktopLabel} />
         </View>
     );
 }

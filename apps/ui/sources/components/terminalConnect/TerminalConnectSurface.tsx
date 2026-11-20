@@ -35,6 +35,7 @@ type TerminalConnectApprovalState = Readonly<{
 }>;
 
 export type TerminalConnectSurfaceState =
+    | Readonly<{ kind: 'connected'; onContinue: () => void }>
     | TerminalConnectMessageState
     | TerminalConnectApprovalState;
 
@@ -134,6 +135,20 @@ export function TerminalConnectSurface(props: TerminalConnectSurfaceProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const signedIn = useOptionalAuth()?.isAuthenticated === true;
+
+    if (props.state.kind === 'connected') {
+        return (
+            <UnauthenticatedRouteStep
+                shellTestID="unauth-shell-terminal-connect"
+                stepId="terminal-connected"
+                testID={props.testID ?? 'terminal-connect-surface'}
+                title={t('terminal.connectedStep.title')}
+                subtitle={t('terminal.connectedStep.body')}
+                mark={<StepMark iconName="check" />}
+                primary={{ testID: 'terminal-connect-continue', label: t('terminal.connectedStep.continue'), onPress: props.state.onContinue }}
+            />
+        );
+    }
 
     if (props.state.kind === 'message') {
         const action = props.state.action;

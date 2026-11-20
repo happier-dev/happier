@@ -1,6 +1,27 @@
+import type { ClassifiedPairingLink } from '@/auth/pairing/classifyPairingLink';
+import { buildExpiredHomeQrRestoreRoutePath, buildHomeQrInviteRestoreRoutePath } from '@/auth/pairing/pairingUrl';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { ConnectHomeAtAddressResult, HomeAddressChangeConfirmation } from '@/sync/ops/home/connectHomeAtAddress';
+
+/** The destinations accepted by the add-Home form's link entry points. */
+export function resolveHomeConnectLink(link: ClassifiedPairingLink): string | null | undefined {
+    switch (link.kind) {
+        case 'home_qr_invite':
+            return buildHomeQrInviteRestoreRoutePath(link.rawLink, 'add_home');
+        case 'expired_home_qr_invite':
+            return buildExpiredHomeQrRestoreRoutePath('add_home');
+        case 'team_join':
+        case 'source_setup':
+            return link.path;
+        case 'unknown':
+            // The caller can try it as an address.
+            return undefined;
+        default:
+            // A recognized link outside the add-Home flow.
+            return null;
+    }
+}
 
 export async function confirmInsecureHomeHttp(): Promise<boolean> {
     return Boolean(await Modal.confirm(

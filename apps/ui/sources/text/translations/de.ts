@@ -15693,6 +15693,11 @@ settingsSession: {
         invalidConnectionLink: 'Ungültiger Verbindungslink',
         invalidConnectionLinkDescription: 'Der Verbindungslink fehlt oder ist ungültig. Prüf die URL und versuch es noch einmal.',
         connectTerminal: 'Terminal verbinden',
+        connectedStep: {
+          title: 'Terminal verbunden',
+          body: 'Dieses Terminal kann jetzt Sitzungen starten, denen du auf jedem Gerät folgen kannst.',
+          continue: 'Weiter zum Home',
+        },
         terminalRequestDescription: 'Ein Terminal möchte sich mit deinem Happier-Coder-Konto verbinden. Damit kann das Terminal sicher Nachrichten senden und empfangen.',
         connectionDetails: 'Verbindungsdetails',
         encryption: 'Verschlüsselung',
@@ -16250,6 +16255,15 @@ settingsSession: {
 	        savedRelaysTitle: 'Gespeicherte Homes',
             removeRelayConfirmTitle: 'Home entfernen?',
             removeRelayConfirmBody: 'Damit wird es auf diesem Gerät aus deinen gespeicherten Homes entfernt.',
+	        homeAddressStep: {
+	          title: 'Die Adresse deines Home',
+	          pairingHelp: 'Ein Kopplungslink funktioniert auch.',
+	        },
+	        connectComputerStep: {
+	          title: ({ home }: { home: string }) => `Diesen Computer mit ${home} verbinden`,
+	          desktop: 'In der Desktop-App fortfahren',
+	          detectedAfterSignIn: 'Nach der Anmeldung findet Happier diesen Computer automatisch.',
+	        },
 	        customRelayUrlLabel: 'Home-Adresse',
         relayNameLabel: 'Home-Name',
         addAndUseRelay: 'Home hinzufügen',

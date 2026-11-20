@@ -15420,6 +15420,11 @@ settingsSession: {
     invalidConnectionLinkDescription:
       "Link połączenia jest nieprawidłowy lub go brakuje. Sprawdź URL i spróbuj ponownie.",
     connectTerminal: "Połącz terminal",
+    connectedStep: {
+      title: 'Terminal połączony',
+      body: 'Ten terminal może już rozpoczynać sesje, które możesz śledzić z dowolnego urządzenia.',
+      continue: 'Przejdź do Home',
+    },
     terminalRequestDescription:
       "Terminal żąda połączenia z Twoim kontem Happier. Pozwoli to terminalowi bezpiecznie wysyłać i odbierać wiadomości.",
     connectionDetails: "Szczegóły połączenia",
@@ -15926,6 +15931,15 @@ settingsSession: {
 	    savedRelaysTitle: 'Zapisane Home',
         removeRelayConfirmTitle: 'Usunąć Home?',
         removeRelayConfirmBody: 'To usunie go z zapisanych Home na tym urządzeniu.',
+	    homeAddressStep: {
+	      title: 'Adres Twojego Home',
+	      pairingHelp: 'Możesz też użyć linku do parowania.',
+	    },
+	    connectComputerStep: {
+	      title: ({ home }: { home: string }) => `Połącz ten komputer z ${home}`,
+	      desktop: 'Kontynuuj w aplikacji komputerowej',
+	      detectedAfterSignIn: 'Po zalogowaniu Happier automatycznie znajdzie ten komputer.',
+	    },
 	    customRelayUrlLabel: 'Adres Home',
     relayNameLabel: 'Nazwa Home',
     addAndUseRelay: 'Dodaj Home',

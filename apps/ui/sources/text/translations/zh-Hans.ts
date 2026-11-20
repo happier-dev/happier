@@ -15096,6 +15096,11 @@ settingsSession: {
     invalidConnectionLink: "无效的连接链接",
     invalidConnectionLinkDescription: "连接链接缺失或无效。请检查 URL 并重试。",
     connectTerminal: "连接终端",
+    connectedStep: {
+      title: '终端已连接',
+      body: '此终端现在可以启动会话，你可以在任何设备上跟进。',
+      continue: '前往 Home',
+    },
     terminalRequestDescription:
       "有终端正在请求连接到您的 Happier 账户。这将允许终端安全地发送和接收消息。",
     connectionDetails: "连接详情",
@@ -15759,6 +15764,15 @@ settingsSession: {
 	    savedRelaysTitle: '已保存的 Home',
         removeRelayConfirmTitle: '移除 Home？',
         removeRelayConfirmBody: '这会将它从此设备上已保存的 Home 中移除。',
+	    homeAddressStep: {
+	      title: '你的 Home 地址',
+	      pairingHelp: '也可以使用配对链接。',
+	    },
+	    connectComputerStep: {
+	      title: ({ home }: { home: string }) => `将这台电脑连接到 ${home}`,
+	      desktop: '在桌面应用中继续',
+	      detectedAfterSignIn: '登录后，Happier 会自动找到这台电脑。',
+	    },
 	    customRelayUrlLabel: 'Home 地址',
     relayNameLabel: 'Home 名称',
     addAndUseRelay: '添加 Home',

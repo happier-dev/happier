@@ -13,7 +13,6 @@ import { clearPendingTerminalConnect } from '@/sync/domains/pending/pendingTermi
 export function useTerminalConnectContinuation(options: Readonly<{
     request: ParsedTerminalConnectUrl | null;
     replace: Router['replace'];
-    onSuccess: () => void;
     onReject: () => void;
     allowLoopbackServerOverride?: boolean;
     onCaptured?: () => void;
@@ -23,10 +22,14 @@ export function useTerminalConnectContinuation(options: Readonly<{
     const [preAuthTarget, setPreAuthTarget] = React.useState<TerminalConnectPreAuthTargetDecision | null>(null);
     const linkState = resolveTerminalConnectLinkState(request);
     const requiresUpdate = linkState === 'update_required';
+    const requestKey = request?.publicKeyB64Url ?? null;
+    const [connectedKey, setConnectedKey] = React.useState<string | null>(null);
+    const connected = connectedKey !== null && (requestKey === null || connectedKey === requestKey);
+    const onConnected = React.useCallback(() => setConnectedKey(requestKey), [requestKey]);
     const approval = useConnectTerminal({
         approvalRequest: linkState === 'ready' ? request : null,
         allowLoopbackServerOverride,
-        onSuccess: options.onSuccess,
+        onSuccess: onConnected,
     });
     const approve = React.useCallback(async () => { await approval.approve(); }, [approval.approve]);
     const reject = React.useCallback(() => {
@@ -53,5 +56,5 @@ export function useTerminalConnectContinuation(options: Readonly<{
         return () => { cancelled = true; };
     }, [allowLoopbackServerOverride, auth.isAuthenticated, auth.refreshFromActiveServer, linkState, onCaptured, replace, request]);
 
-    return { ...approval, approve, reject, preAuthTarget, requiresUpdate, linkState };
+    return { ...approval, approve, reject, preAuthTarget, requiresUpdate, linkState, connected };
 }

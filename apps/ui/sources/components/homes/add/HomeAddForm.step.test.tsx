@@ -6,9 +6,15 @@ import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { renderScreen } from '@/dev/testkit';
 import { AuthProvider } from '@/auth/context/AuthContext';
+import { buildHomeQrInviteDeepLink } from '@/auth/pairing/pairingUrl';
+import { encodeBase64 } from '@/encryption/base64';
 
-const network = vi.hoisted(() => ({ fetch: vi.fn() }));
+const { network, routerPush } = vi.hoisted(() => ({ network: { fetch: vi.fn() }, routerPush: vi.fn() }));
 installTokenStorageWebPlatformMocks();
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router: { push: routerPush } }).module;
+});
 // The Home's HTTP answers are the system boundary; the add-home flow, connect owner and sign-in pane are real.
 // The module's other transports stay real and reach the platform fetch, which the test points at the same Home.
 vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
@@ -52,10 +58,48 @@ function answerAsHome(url: string) {
 describe('Add Home as a step of a host page (the Welcome wizard)', () => {
   afterEach(async () => {
     network.fetch.mockReset();
+    routerPush.mockClear();
     vi.unstubAllGlobals();
     const { resetServerProfilesRuntimeForTests } =
       await import('@/sync/domains/server/serverProfiles');
     resetServerProfilesRuntimeForTests();
+  });
+
+  it('opens a pairing link pasted in the same field used for a Home address', async () => {
+    const { HomeAddForm } = await import('./HomeAddForm');
+    const onClose = vi.fn();
+    const screen = await renderScreen(
+      <AuthProvider initialCredentials={null}>
+        <HomeAddForm layout="step" testID="welcome-connect-home" initialPath="direct" onClose={onClose} />
+      </AuthProvider>,
+    );
+    expect(screen.findByTestId('already-use-happier.home-link')).toBeNull();
+    const homeUrl = 'https://paired-home.example.test';
+    const now = Date.now();
+    const invitation = buildHomeQrInviteDeepLink({ invite: {
+      v: 2,
+      intent: 'home_device',
+      direction: 'trusted_home_displays',
+      pairId: 'pair-1',
+      home: {
+        v: 1,
+        homeServerIdentityId: 'srv_paired_home',
+        canonicalServerUrl: homeUrl,
+        revision: 1,
+        endpoints: [{ kind: 'https', url: homeUrl }],
+      },
+      qrSecretBase64Url: encodeBase64(new Uint8Array(32).fill(3), 'base64url'),
+      issuedAtMs: now,
+      expiresAtMs: now + 60_000,
+    } });
+    await act(async () => {
+      screen.findByTestId('already-use-happier.home-address')?.props.onChangeText?.(invitation);
+    });
+    await screen.pressByTestIdAsync('already-use-happier.home-connect');
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(routerPush).toHaveBeenCalledWith(expect.stringMatching(/^\/restore\?/));
+    expect(network.fetch).not.toHaveBeenCalled();
+    await screen.unmount();
   });
 
   it('signs in to a directly connected Home with the host back control as the only way back', async () => {

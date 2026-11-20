@@ -6,9 +6,9 @@ import {
     resolveEndpointReachabilityRemediation,
     type EndpointReachabilityRemediation,
 } from '@/components/serverReachability/remediation';
-import { observeAuthenticatedServerFeaturesFresh, probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';
+import { observeAuthenticatedServerFeaturesFresh, primeServerFeaturesSnapshot, probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';
 import { adoptHomeProfileWithCredentials } from '@/sync/domains/server/adoptHomeProfile';
-import { readHomeAddressSelection, type HomeAddressSelection } from '@/sync/domains/server/homeAddressSelection';
+import { readHomeAddressSelection, resolveHomeConnectionAddress, type HomeAddressSelection } from '@/sync/domains/server/homeAddressSelection';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import {
     adoptHomeProfile,
@@ -203,5 +203,10 @@ export async function connectHomeAtAddress(input: ConnectHomeAtAddressInput): Pr
         preserveUserLabel: true,
         ...(addressSelection ? { addressSelection } : {}),
     });
+    // The admitted endpoint already returned a public feature snapshot. Share it with
+    // the profile's consumers only when they will use that same endpoint.
+    if (createServerUrlComparableKey(resolveHomeConnectionAddress(saved)) === createServerUrlComparableKey(enteredUrl)) {
+        primeServerFeaturesSnapshot({ serverId: saved.id, snapshot });
+    }
     return { kind: 'connected', profile: saved };
 }

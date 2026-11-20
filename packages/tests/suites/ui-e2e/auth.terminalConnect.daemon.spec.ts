@@ -618,6 +618,8 @@ test.describe('ui e2e: auth + terminal connect', () => {
 
       await loggedOutPage.getByTestId('terminal-connect-approve').click();
       await cliLogin.waitForSuccess();
+      await loggedOutPage.getByTestId('terminal-connect-continue').click();
+      await expect(loggedOutPage).not.toHaveURL(/\/terminal(?:\/connect)?(?:\?|$)/);
     } catch (error) {
       thrown = error;
       throw error;

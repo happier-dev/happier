@@ -64,11 +64,11 @@ const wizardStepRegistryEntries = [
     },
     {
         id: 'relay_enter_url',
-        titleKey: 'setupOnboarding.customRelayUrlLabel',
-        subtitleKey: 'setupOnboarding.relayCustomUrlSubtitle',
+        titleKey: 'setupOnboarding.homeAddressStep.title',
+        subtitleKey: 'homesJourneys.byAddressHelp',
         kind: 'choice',
         surface: 'onboarding',
-        canSkip: true,
+        canSkip: false,
         visibleWhen: onboardingVisible('relay_enter_url'),
     },
     {

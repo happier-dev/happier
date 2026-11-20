@@ -1,11 +1,13 @@
 import React from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { TerminalConnectSurface } from '@/components/terminalConnect/TerminalConnectSurface';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { terminalLinkProblemMessage } from '@/components/terminalConnect/terminalLinkProblem';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useTerminalConnectContinuation } from '@/hooks/session/useTerminalConnectContinuation';
 import { usePendingTerminalConnect } from '@/hooks/session/usePendingTerminalConnect';
 import { parseTerminalConnectRouteParams, type TerminalConnectRouteParams } from '@/utils/path/terminalConnectUrl';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { t } from '@/text';
 
 export default function TerminalScreen() {
@@ -20,11 +22,16 @@ export default function TerminalScreen() {
         return parseTerminalConnectRouteParams(params);
     }, [routeParamsJson]) ?? pending;
     const serverUrl = parsed?.serverUrl ?? parsed?.homeConnectionDescriptor?.canonicalServerUrl ?? null;
-    const onSuccess = React.useCallback(() => { router.back(); }, [router]);
-    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, linkState } = useTerminalConnectContinuation({
-        request: parsed, replace: router.replace, onSuccess, onReject: onSuccess,
+    const onSuccess = React.useCallback(() => { resolvePostAuthLanding({ replace: router.replace }); }, [router]);
+    const onReject = React.useCallback(() => { safeRouterBack({ router, fallbackHref: '/' }); }, [router]);
+    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, linkState, connected } = useTerminalConnectContinuation({
+        request: parsed, replace: router.replace, onReject,
     });
     const publicKey = linkState === 'ready' ? parsed?.publicKeyB64Url ?? null : null;
+
+    if (connected) {
+        return <TerminalConnectSurface testID="terminal-connect-surface" state={{ kind: 'connected', onContinue: onSuccess }} />;
+    }
 
     const linkProblem = (
         <TerminalConnectSurface

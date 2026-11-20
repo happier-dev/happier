@@ -8,7 +8,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { StepFieldGroup, StepFieldHelp, StepForm } from '@/components/onboarding/unauthShell/StepFormParts';
-import { t, tLoose } from '@/text';
+import { t } from '@/text';
 
 import { normalizeServerUrl } from '@/sync/domains/server/activeServerSwitch';
 
@@ -105,6 +105,8 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
 
     urlDraft: string;
     onUrlDraftChange: (next: string) => void;
+    onHomeAddressSubmit?: () => Promise<void>;
+    homeAddressError: string | null;
 
     relaySelectionServerUrl: string | null;
     confirmRelayUrl: string | null;
@@ -262,12 +264,14 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                         keyboardType="url"
                         value={params.urlDraft}
                         onChangeText={params.onUrlDraftChange}
-                        accessibilityLabel={t('setupOnboarding.customRelayUrlLabel')}
+                        returnKeyType="go"
+                        onSubmitEditing={() => { void params.onHomeAddressSubmit?.(); }}
+                        accessibilityLabel={t('setupOnboarding.homeAddressStep.title')}
                     />
-                    {params.reachabilityRemediationError ? (
-                        <StepFieldHelp tone="error">{params.reachabilityRemediationError}</StepFieldHelp>
+                    {params.homeAddressError || params.reachabilityRemediationError ? (
+                        <StepFieldHelp tone="error">{params.homeAddressError ?? params.reachabilityRemediationError}</StepFieldHelp>
                     ) : (
-                        <StepFieldHelp>{t('homesJourneys.byAddressHelp')}</StepFieldHelp>
+                        <StepFieldHelp>{t('setupOnboarding.homeAddressStep.pairingHelp')}</StepFieldHelp>
                     )}
                 </StepFieldGroup>
                 {params.reachabilityRemediation ? (
@@ -538,7 +542,8 @@ function BackgroundServiceHandoff(props: Readonly<{ testIDPrefix: string; server
             testID={`${props.testIDPrefix}-background-service-handoff`}
             commandTestID={`${props.testIDPrefix}-background-service-arrival`}
             commands={commands}
-            help={tLoose('setupOnboarding.machineArrival.detectedAfterSignIn')}
+            desktopLabel={t('setupOnboarding.connectComputerStep.desktop')}
+            help={t('setupOnboarding.connectComputerStep.detectedAfterSignIn')}
         />
     );
 }

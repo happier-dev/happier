@@ -7,6 +7,7 @@ import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 export type WebDesktopDownloadCtaProps = Readonly<{
     testIDPrefix: string;
+    label?: string;
 }>;
 
 /**
@@ -19,7 +20,7 @@ export function WebDesktopDownloadCta(props: WebDesktopDownloadCtaProps) {
             testID={`${props.testIDPrefix}-download-desktop`}
             presentation="pill"
             iconName="download"
-            title={t('setupOnboarding.webDesktopOnlyDesktopAppButton')}
+            title={props.label ?? t('setupOnboarding.webDesktopOnlyDesktopAppButton')}
             escape
             onPress={() => { void requestOpenExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL); }}
         />

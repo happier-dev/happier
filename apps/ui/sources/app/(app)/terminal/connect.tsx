@@ -21,8 +21,8 @@ export default function TerminalConnectScreen() {
     const onReject = React.useCallback(() => {
         safeRouterBack({ router, fallbackHref: '/' });
     }, [router]);
-    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, linkState } = useTerminalConnectContinuation({
-        request, replace: router.replace, onSuccess, onReject, allowLoopbackServerOverride: true, onCaptured: scrubIfResumable,
+    const { approve: handleConnect, reject: handleReject, isLoading, approvalDetails, retryApprovalDetails, preAuthTarget, linkState, connected } = useTerminalConnectContinuation({
+        request, replace: router.replace, onReject, allowLoopbackServerOverride: true, onCaptured: scrubIfResumable,
     });
     const publicKey = linkState === 'ready' ? request?.publicKeyB64Url ?? null : null;
 
@@ -37,6 +37,10 @@ export default function TerminalConnectScreen() {
                 }}
             />
         );
+    }
+
+    if (connected) {
+        return <TerminalConnectSurface testID="terminal-connect-surface" state={{ kind: 'connected', onContinue: onSuccess }} />;
     }
 
     if (!hashProcessed) {

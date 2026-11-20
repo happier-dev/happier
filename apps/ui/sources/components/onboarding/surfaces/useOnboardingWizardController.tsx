@@ -17,6 +17,7 @@ import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import type { WizardAction } from '../state/wizardTypes';
 import { t } from '@/text';
 import { Modal } from '@/modal';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
@@ -25,9 +26,10 @@ import { resolveRoutineServerSelectionScope } from '@/sync/domains/server/select
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
-import { listServerProfiles, removeServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
+import { defaultHomeNameForAddress, listServerProfiles, removeServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { connectHomeAtAddress } from '@/sync/ops/home/connectHomeAtAddress';
-import { confirmCanonicalHomeUrl, confirmInsecureHomeHttp, homeConnectFailureMessage } from '@/components/homes/add/homeConnectPresentation';
+import { classifyPairingLink } from '@/auth/pairing/classifyPairingLink';
+import { confirmCanonicalHomeUrl, confirmInsecureHomeHttp, homeConnectFailureMessage, resolveHomeConnectLink } from '@/components/homes/add/homeConnectPresentation';
 import { openAddHome } from '@/components/homes/add/openAddHome';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
@@ -193,6 +195,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const canScanQr = loginLeadsWithLink && canUseCurrentDeviceQrScanner();
 
     const [urlDraft, setUrlDraft] = React.useState('');
+    const [homeAddressError, setHomeAddressError] = React.useState<string | null>(null);
+    const changeHomeAddress = React.useCallback((value: string) => {
+        setUrlDraft(value);
+        setHomeAddressError(null);
+    }, []);
     const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
     const relayAccessRunnerRef = React.useRef<RelayAccessControlOptions['runWithTarget']>(undefined);
@@ -279,7 +286,11 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         return result;
     }, [props.onSelectAccountService]);
 
-    const connectAndFocusHomeAddress = React.useCallback(async (serverUrl: string): Promise<ServerProfile | null> => {
+    const connectAndFocusHomeAddress = React.useCallback(async (
+        serverUrl: string,
+        onFailure?: (message: string) => void,
+    ): Promise<ServerProfile | null> => {
+        const showFailure = onFailure ?? ((message: string) => Modal.alert(t('common.error'), message));
         const saved = listServerProfiles().find((profile) => (
             isSameServerUrl(profile.serverUrl, serverUrl)
             || (profile.canonicalServerUrl != null && isSameServerUrl(profile.canonicalServerUrl, serverUrl))
@@ -305,21 +316,24 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 return result.profile;
             }
             const failureMessage = homeConnectFailureMessage(result);
-            if (failureMessage) await Modal.alert(t('common.error'), failureMessage);
+            if (failureMessage) showFailure(failureMessage);
             return null;
         } catch (error) {
             if (error instanceof Error && error.name === 'AbortError') return null;
-            await Modal.alert(t('common.error'), t('errors.operationFailed'));
+            showFailure(t('errors.operationFailed'));
             return null;
         }
     }, [props.onInitialServerUrlConnected]);
 
-    const applyWizardAdvanceResolution = React.useCallback(async (resolution: WizardAdvanceResolution): Promise<boolean> => {
+    const applyWizardAdvanceResolution = React.useCallback(async (
+        resolution: WizardAdvanceResolution,
+        onAddressFailure?: (message: string) => void,
+    ): Promise<boolean> => {
         let connectedProfile: ServerProfile | null = null;
         for (const effect of resolution.effects) {
             switch (effect.type) {
                 case 'activateServerUrl':
-                    connectedProfile = await connectAndFocusHomeAddress(effect.serverUrl);
+                    connectedProfile = await connectAndFocusHomeAddress(effect.serverUrl, onAddressFailure);
                     if (!connectedProfile) return false;
                     break;
                 case 'activateServerProfile':
@@ -517,13 +531,14 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         });
     }, [activeServerSnapshotForLocalBind.activeLocalRelayUrl, activeServerSnapshotForLocalBind.serverUrl]);
 
+    const enteredHomeLink = React.useMemo(() => classifyPairingLink(urlDraft), [urlDraft]);
     const relayEnterUrlEndpointForReadiness = React.useMemo(() => {
-        if (stepId !== 'relay_enter_url') {
+        if (stepId !== 'relay_enter_url' || enteredHomeLink.kind !== 'unknown') {
             return null;
         }
         const trimmed = urlDraft.trim();
         return trimmed ? normalizeServerUrl(trimmed) : null;
-    }, [stepId, urlDraft]);
+    }, [enteredHomeLink.kind, stepId, urlDraft]);
 
     const confirmSwitchRelayEndpointForReadiness = React.useMemo(() => {
         if (stepId !== 'confirm_switch_relay' || relaySwitchDecision !== 'switch') {
@@ -861,6 +876,16 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
 
     const handleSaveCustomRelayUrl = React.useCallback(async () => {
         const trimmed = urlDraft.trim();
+        setHomeAddressError(null);
+        const destination = resolveHomeConnectLink(enteredHomeLink);
+        if (destination) {
+            await runGuardedNavigation(() => homeRouter.push(destination as never));
+            return;
+        }
+        if (destination === null) {
+            setHomeAddressError(t('homesJourneys.notAHomeLink'));
+            return;
+        }
         await applyWizardAdvanceResolution(resolveWizardAdvance(
             state,
             wizardStepRegistry,
@@ -868,8 +893,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 type: 'saveCustomRelayUrl',
                 relayUrl: trimmed,
             },
-        ));
-    }, [applyWizardAdvanceResolution, state, urlDraft]);
+        ), setHomeAddressError);
+    }, [applyWizardAdvanceResolution, enteredHomeLink, homeRouter, state, urlDraft]);
 
     const showBack = stepId !== 'welcome';
     const showSkip = stepId !== 'relay_select'
@@ -885,7 +910,10 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         );
 
     const stepDefinition = getWizardStepDefinition(stepId);
-    const title = t(stepDefinition.titleKey);
+    const handoffHomeUrl = state.context.relaySelection.serverUrl;
+    const title = stepId === 'background_service_handoff' && handoffHomeUrl
+        ? t('setupOnboarding.connectComputerStep.title', { home: defaultHomeNameForAddress(handoffHomeUrl) })
+        : t(stepDefinition.titleKey);
     const subtitle = stepDefinition.subtitleKey ? t(stepDefinition.subtitleKey) : null;
 
     const primaryLabel =
@@ -893,8 +921,8 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             ? t('setupOnboarding.letsStart')
             : stepId === 'desktop_handoff'
                 ? t('setupOnboarding.webDesktopOnlyPrimary')
-                : stepId === 'background_service_handoff'
-                    ? t('setupOnboarding.webDesktopConnectComputer')
+                : stepId === 'relay_enter_url'
+                    ? t('homesJourneys.connect')
                     : t('common.continue');
 
     const selectedRelayFooterUrl = React.useMemo(() => {
@@ -1455,7 +1483,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         canCreatePersonalHome,
         relaySelectBody,
         urlDraft,
-        onUrlDraftChange: setUrlDraft,
+        onUrlDraftChange: changeHomeAddress,
+        onHomeAddressSubmit: primaryDisabled ? undefined : handleSaveCustomRelayUrl,
+        homeAddressError,
         relaySelectionServerUrl,
         confirmRelayUrl,
         serverProfileId: state.context.relaySelection.relayProfileId ?? null,

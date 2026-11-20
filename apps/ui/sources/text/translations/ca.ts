@@ -14640,6 +14640,11 @@ settingsSession: {
         invalidConnectionLink: 'Enllaç de connexió no vàlid',
         invalidConnectionLinkDescription: 'L\'enllaç de connexió falta o no és vàlid. Comprova l\'URL i torna-ho a provar.',
         connectTerminal: 'Connecta el terminal',
+        connectedStep: {
+          title: 'Terminal connectat',
+          body: 'Aquest terminal ja pot iniciar sessions que pots seguir des de qualsevol dispositiu.',
+          continue: 'Continua al Home',
+        },
         terminalRequestDescription: 'Un terminal està sol·licitant connectar-se al teu compte de Happier. Això permetrà al terminal enviar i rebre missatges de forma segura.',
         connectionDetails: 'Detalls de la connexió',
         encryption: 'Xifratge',
@@ -15036,6 +15041,15 @@ settingsSession: {
 	        savedRelaysTitle: 'Homes desats',
             removeRelayConfirmTitle: 'Vols eliminar el Home?',
             removeRelayConfirmBody: 'Això l’elimina dels teus Homes desats en aquest dispositiu.',
+	        homeAddressStep: {
+	          title: 'L’adreça del teu Home',
+	          pairingHelp: 'També pots fer servir un enllaç d’aparellament.',
+	        },
+	        connectComputerStep: {
+	          title: ({ home }: { home: string }) => `Connecta aquest ordinador a ${home}`,
+	          desktop: 'Continua a l’aplicació d’escriptori',
+	          detectedAfterSignIn: 'Quan iniciïs la sessió, Happier trobarà aquest ordinador automàticament.',
+	        },
 	        customRelayUrlLabel: 'Adreça del Home',
         relayNameLabel: 'Nom del Home',
         addAndUseRelay: 'Afegeix un Home',

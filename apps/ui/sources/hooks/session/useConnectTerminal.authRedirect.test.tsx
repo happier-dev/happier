@@ -704,7 +704,11 @@ describe('useConnectTerminal real approval outcomes', () => {
         const onSuccess = vi.fn();
         const hook = await renderHook(home, { onSuccess });
         expect(await hook.approveLink(link(pairing()))).toBe(fixture.result);
-        expect(modalAlertSpy).toHaveBeenCalledWith(fixture.title, fixture.message, [{ text: 'common.ok' }]);
+        if (fixture.result) {
+            expect(modalAlertSpy).not.toHaveBeenCalled();
+        } else {
+            expect(modalAlertSpy).toHaveBeenCalledWith(fixture.title, fixture.message, [{ text: 'common.ok' }]);
+        }
         expect(onSuccess).toHaveBeenCalledTimes(fixture.result ? 1 : 0);
         expect(posts()).toHaveLength(fixture.result ? 1 : 0);
         expect(pending.getPendingTerminalConnect()).toBeNull();

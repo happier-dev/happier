@@ -18742,6 +18742,11 @@ const enTerminal = {
   invalidConnectionLinkDescription:
     'The connection link is missing or invalid. Please check the URL and try again.',
   connectTerminal: 'Connect terminal',
+  connectedStep: {
+    title: 'Terminal connected',
+    body: 'This terminal can now start sessions you can follow from any device.',
+    continue: 'Continue to Home',
+  },
   terminalRequestDescription:
     'A terminal is asking to connect to your Happier account. It will be able to send and receive messages securely.',
   connectionDetails: 'Connection Details',
@@ -19384,6 +19389,15 @@ const enSetupOnboarding = {
   removeRelayConfirmTitle: 'Remove Home?',
   removeRelayConfirmBody:
     'This removes it from your saved Homes on this device.',
+  homeAddressStep: {
+    title: 'Your Home’s address',
+    pairingHelp: 'A pairing link works too.',
+  },
+  connectComputerStep: {
+    title: ({ home }: { home: string }) => `Connect this computer to ${home}`,
+    desktop: 'Continue in the desktop app',
+    detectedAfterSignIn: 'After you sign in, Happier finds this computer by itself.',
+  },
   customRelayUrlLabel: 'Home address',
   relayNameLabel: 'Home name',
   addAndUseRelay: 'Add Home',

@@ -34,21 +34,18 @@ async function waitForLocatorGone(params: Readonly<{
   }
 }
 
-async function maybeDismissWebModal(params: Readonly<{ page: TerminalConnectApprovePage; timeoutMs: number }>): Promise<boolean> {
+async function maybeAcknowledgeTerminalConnect(params: Readonly<{ page: TerminalConnectApprovePage; timeoutMs: number }>): Promise<boolean> {
+  const continueButton = first(params.page.locator('[data-testid="terminal-connect-continue"]:visible'));
   const confirm = first(params.page.locator('[data-testid="web-modal-confirm"]:visible'));
   const button0 = first(params.page.locator('[data-testid="web-modal-button-0"]:visible'));
 
   const intervalMs = 200;
   const attempts = resolvePollAttempts(params.timeoutMs, intervalMs);
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    if ((await confirm.count()) > 0) {
-      await confirm.click({ timeout: 15_000, noWaitAfter: true });
-      await waitForLocatorGone({ locator: confirm, page: params.page, timeoutMs: 60_000 });
-      return true;
-    }
-    if ((await button0.count()) > 0) {
-      await button0.click({ timeout: 15_000, noWaitAfter: true });
-      await waitForLocatorGone({ locator: button0, page: params.page, timeoutMs: 60_000 });
+    for (const action of [continueButton, confirm, button0]) {
+      if ((await action.count()) === 0) continue;
+      await action.click({ timeout: 15_000, noWaitAfter: true });
+      await waitForLocatorGone({ locator: action, page: params.page, timeoutMs: 60_000 });
       return true;
     }
     await params.page.waitForTimeout(intervalMs);
@@ -114,7 +111,7 @@ export async function approveTerminalConnect(params: Readonly<{ page: Page | Ter
       clicked = true;
       await activateApproveLocator(approve);
       await params.page.waitForTimeout(intervalMs);
-      if (await maybeDismissWebModal({ page: params.page, timeoutMs: 1_000 })) {
+      if (await maybeAcknowledgeTerminalConnect({ page: params.page, timeoutMs: 1_000 })) {
         if (await didLeaveTerminalConnect(params.page, 5_000)) {
           return;
         }

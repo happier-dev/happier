@@ -15413,6 +15413,11 @@ settingsSession: {
     invalidConnectionLinkDescription:
       "Ссылка подключения отсутствует или неверна. Проверьте URL и попробуйте снова.",
     connectTerminal: "Подключить терминал",
+    connectedStep: {
+      title: 'Терминал подключён',
+      body: 'Этот терминал теперь может запускать сессии, за которыми можно следить с любого устройства.',
+      continue: 'Перейти в Home',
+    },
     terminalRequestDescription:
       "Терминал запрашивает подключение к вашему аккаунту Happier. Это позволит терминалу безопасно отправлять и получать сообщения.",
     connectionDetails: "Детали подключения",
@@ -16015,6 +16020,15 @@ settingsSession: {
 	    savedRelaysTitle: "Сохранённые Home",
         removeRelayConfirmTitle: "Удалить Home?",
         removeRelayConfirmBody: "Он будет удалён из сохранённых Home на этом устройстве.",
+	    homeAddressStep: {
+	      title: 'Адрес вашего Home',
+	      pairingHelp: 'Также подойдёт ссылка для сопряжения.',
+	    },
+	    connectComputerStep: {
+	      title: ({ home }: { home: string }) => `Подключите этот компьютер к ${home}`,
+	      desktop: 'Продолжить в приложении для компьютера',
+	      detectedAfterSignIn: 'После входа Happier автоматически найдёт этот компьютер.',
+	    },
 	    customRelayUrlLabel: "Адрес Home",
     relayNameLabel: "Имя Home",
     addAndUseRelay: "Добавить Home",
