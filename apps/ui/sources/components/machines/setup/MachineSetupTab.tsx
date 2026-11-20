@@ -54,11 +54,11 @@ import {
   readOpenedMachineSetupSources,
   readMachineSetupRecipes,
   type MachineSetupOpenedSourceV1,
-  type MachineSetupPresetUpdateV1,
   useMachineSetup,
   type MachineSetupRecipeRow,
   type MachineSetupState,
 } from './useMachineSetup';
+import type { MachineSetupPresetUpdateV1 } from './useMachinePresetUpdates';
 import { describeMachineSetupReason } from './machineSetupReasonText';
 import { MachineSetupRunProgress } from './MachineSetupRunRegion';
 import { MachineSignInsSection } from './MachineSignInsSection';

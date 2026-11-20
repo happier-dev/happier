@@ -35,8 +35,7 @@ import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStor
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useMachineField } from '@/sync/store/hooks';
-import { readMachinePresetRevisionsSnapshot, retainMachinePresets, subscribeMachinePresets } from '@/sync/engine/machines/machinePresetsResource';
-import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+import { useMachinePresetUpdates } from './useMachinePresetUpdates';
 import {
   openManagedMachineSetupPlanSourcesV1,
   type ManagedMachineSetupSourcePresentationV1,
@@ -84,9 +83,6 @@ export type MachineSetupFailure = Readonly<{
   during: 'check' | 'review' | 'apply';
   failure?: ActionExecuteFailure;
 }>;
-export type MachineSetupPresetUpdateV1 =
-  | Readonly<{ kind: 'changed'; presetId: string; presetRevision: number; setupRevision: number }>
-  | Readonly<{ kind: 'unavailable'; presetId: string; reason: 'preset_not_found' | 'preset_archived' }>;
 
 /**
  * The Setup tab's one data port (P-M1): the Machine's current setup read through `machines.setup.plan` on open and on
@@ -112,29 +108,7 @@ export function useMachineSetup(
   const retainedSetup = useMachineField(machineId, 'metadata', 'setup', { serverId, enabled: input.active });
   const { binding } = useServerCredentialAccountScopeBinding(serverId);
   const homeId = getServerProfileById(serverId)?.serverIdentityId ?? null;
-  const hasAttachedPresets = observation?.attachedPresets?.some(source => source.kind === 'accountPreset') === true;
-  React.useEffect(() => input.active && homeId && binding && hasAttachedPresets
-    ? retainMachinePresets(binding, homeId, undefined, { projection: 'revisions' }) : undefined,
-  [input.active, homeId, binding, hasAttachedPresets]);
-  const subscribeRevisions = React.useCallback((listener: () => void) =>
-    input.active && hasAttachedPresets ? subscribeMachinePresets([serverId], listener) : () => {},
-  [input.active, hasAttachedPresets, serverId]);
-  const readRevisions = React.useCallback(() => readMachinePresetRevisionsSnapshot(serverId, homeId ?? '', binding?.accountId),
-    [serverId, homeId, binding?.accountId]);
-  const revisions = React.useSyncExternalStore(subscribeRevisions, readRevisions, readRevisions);
-  const previousPresetUpdates = React.useRef<readonly MachineSetupPresetUpdateV1[]>([]);
-  const notices: MachineSetupPresetUpdateV1[] = [];
-  if (input.active && revisions.value !== null) for (const source of observation?.attachedPresets ?? []) {
-    if (source.kind !== 'accountPreset') continue;
-    const header = revisions.value[source.presetId];
-    if (!header || header.archivedAt !== undefined) notices.push({ kind: 'unavailable', presetId: source.presetId,
-      reason: header ? 'preset_archived' : 'preset_not_found' });
-    else if (source.setupRevision !== undefined && header.setupRevision > source.setupRevision) notices.push({
-      kind: 'changed', presetId: source.presetId, presetRevision: header.revision, setupRevision: header.setupRevision,
-    });
-  }
-  const presetUpdates = retainKeyedRows(previousPresetUpdates.current, notices, notice => notice.presetId);
-  previousPresetUpdates.current = presetUpdates;
+  const presetUpdates = useMachinePresetUpdates({ serverId, machineId, active: input.active });
   const scopeKey = JSON.stringify([
     serverId,
     binding?.accountId ?? null,

@@ -249,6 +249,11 @@ export function useWorkspaceRefs() {
   return getStorage()(readProjectWorkspaceRefs);
 }
 
+/** One fact over the current Account's checkouts; the reader renders only when that fact changes. */
+export function useWorkspaceRefsSelector<T>(select: (refs: readonly WorkspaceRefV1[]) => T): T {
+  return getStorage()((state) => select(readProjectWorkspaceRefs(state)));
+}
+
 export function useProjectOrganizations() {
   return getStorage()((state) => readCurrentProjectAccountRows(state)?.organizations ?? EMPTY_PROJECT_ORGANIZATIONS);
 }
