@@ -2,13 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 
 import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { buildSessionWorkspaceOrderScopeKey } from '@/sync/domains/session/listing/sessionWorkspaceOrderStateV1';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import type { SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
+import { writeSessionOrganizationFolderAssignment, type SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
 import type { SessionFolderV1 } from '@/sync/domains/session/folders/types';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { treeRowId } from './drop-resolution/treeRowId';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { createSessionListOrganizationActionAdapter, invokeSessionListOrganizationAction, registerMountedSessionListOrganizationAction } from './drag/sessionListOrganizationAction';
+import { useSessionListOrganizationWriters } from './useSessionListOrganizationWriters';
 
 const boundary = vi.hoisted(() => ({ reorder: vi.fn(), upsertFolder: vi.fn(), credentials: vi.fn(), alert: vi.fn() }));
 
@@ -37,15 +40,13 @@ describe('mounted Session list organization writer bridge', () => {
         boundary.upsertFolder.mockReset();
         boundary.credentials.mockReset();
         boundary.alert.mockClear();
-        const profiles = await import('@/sync/domains/server/serverProfiles');
-        const profile = await profiles.upsertServerProfile({ serverUrl: 'https://list-write.example.test', name: 'Writer Home' });
+        const profile = await upsertServerProfile({ serverUrl: 'https://list-write.example.test', name: 'Writer Home' });
         scope = { credentials: { token: 'captured-account-token', secret: 'captured-secret' }, serverId: profile.id, serverIdAliases: [], serverUrl: profile.serverUrl };
         boundary.credentials.mockResolvedValue({ token: 'replacement-account-token', secret: 'replacement-secret' });
     });
     afterEach(standardCleanup);
 
     it.each(['group', 'workspace'] as const)('keeps %s acknowledgement pending and propagates a real API rejection with captured credentials', async (kind) => {
-        const { useSessionListOrganizationWriters } = await import('./useSessionListOrganizationWriters');
         const requestReached = createDeferred<void>();
         const response = createDeferred<Awaited<ReturnType<typeof import('@/sync/api/session/sessionOrganizationApi').reorderSessionOrganization>>>();
         boundary.reorder.mockImplementation(() => { requestReached.resolve(); return response.promise; });
@@ -61,7 +62,7 @@ describe('mounted Session list organization writer bridge', () => {
         expect(write).toBeInstanceOf(Promise);
         let settled = false;
         const outcome = Promise.resolve(write).then(() => { settled = true; }, (error: unknown) => { settled = true; return error; });
-        await requestReached.promise;
+        expect(await Promise.race([requestReached.promise.then(() => 'dispatched'), outcome])).toBe('dispatched');
         expect(settled).toBe(false);
         expect(boundary.reorder.mock.calls[0]?.[0]).toMatchObject({ credentials: scope.credentials, serverUrl: scope.serverUrl });
         response.reject(new Error('Network acknowledgement lost'));
@@ -72,7 +73,6 @@ describe('mounted Session list organization writer bridge', () => {
     });
 
     it('awaits the captured Home folder write while excluding changed same-id folders from another Home', async () => {
-        const { useSessionListOrganizationWriters } = await import('./useSessionListOrganizationWriters');
         const folder = (serverId: string, name: string): SessionFolderV1 => ({
             id: 'same-folder', name, parentId: null, createdAt: 1, updatedAt: 1,
             workspace: { t: 'workspaceScope', serverId, machineId: 'machine-a', rootPath: '/repo' },
@@ -87,7 +87,7 @@ describe('mounted Session list organization writer bridge', () => {
         const pending = hook.getCurrent().setSessionFoldersV1({ v: 1, folders: [folder(scope.serverId, 'After'), folder('foreign-home', 'Foreign after')] }, scope);
         let settled = false;
         const outcome = Promise.resolve(pending).then(() => { settled = true; }, (error: unknown) => { settled = true; return error; });
-        await requestReached.promise;
+        expect(await Promise.race([requestReached.promise.then(() => 'dispatched'), outcome])).toBe('dispatched');
         expect(settled).toBe(false);
         expect(boundary.upsertFolder.mock.calls.map(([request]) => request)).toEqual([expect.objectContaining({
             credentials: scope.credentials,
@@ -101,9 +101,6 @@ describe('mounted Session list organization writer bridge', () => {
     });
 
     it('keeps the mounted organization Action pending until the real bridge reports the rejected write as unknown', async () => {
-        const { useSessionListOrganizationWriters } = await import('./useSessionListOrganizationWriters');
-        const { createSessionListOrganizationActionAdapter, registerMountedSessionListOrganizationAction, invokeSessionListOrganizationAction } = await import('./drag/sessionListOrganizationAction');
-        const { writeSessionOrganizationFolderAssignment } = await import('@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner');
         const requestReached = createDeferred<void>();
         const response = createDeferred<Awaited<ReturnType<typeof import('@/sync/api/session/sessionOrganizationApi').reorderSessionOrganization>>>();
         boundary.reorder.mockImplementation(() => { requestReached.resolve(); return response.promise; });
@@ -123,7 +120,7 @@ describe('mounted Session list organization writer bridge', () => {
                 setSessionListGroupOrderV1: next => writers.setSessionListGroupOrderV1(next, scope),
                 setSessionWorkspaceOrderV1: next => writers.setSessionWorkspaceOrderV1(next, scope),
                 setSessionFolderAssignment: input => writeSessionOrganizationFolderAssignment({ scope, sessionId: input.sessionId, folderId: input.folderId }),
-            }))), [writers.setSessionListGroupOrderV1, writers.setSessionWorkspaceOrderV1, writers.setSessionFoldersV1]);
+            }))), [writers.setSessionListGroupOrderV1, writers.setSessionWorkspaceOrderV1]);
         });
         const pending = invokeSessionListOrganizationAction({ mutationScope: scope, input: {
             scope: entityScope, sourceRowId: treeRowId.session(scope.serverId, 'session-b'), sourceKind: 'leaf', instructionKind: 'reorder-before',
