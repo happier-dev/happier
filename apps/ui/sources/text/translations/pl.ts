@@ -16893,6 +16893,7 @@ settingsSession: {
       sourceKindFromLogs: "Z dzienników",
       sourceKindNotAdded: "Niedodane",
       workNotRead: "Pull requesty i gałęzie nie są teraz dostępne.",
+      workMachinesOffline: "Niektóre maszyny są offline",
       coverageFailed: ({ sources }: { sources: string | number }) => `Nie udało się odczytać: ${sources}. Pokazujemy otrzymane dane.`,
       coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Odczyt: ${sources} wymaga nowszej wersji Twojego Home`,
       coveragePending: ({ sources }: { sources: string | number }) => `Nadal odczytujemy: ${sources}`,

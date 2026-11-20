@@ -16897,6 +16897,7 @@ settingsSession: {
             sourceKindFromLogs: "Dos registos",
             sourceKindNotAdded: "Não adicionado",
             workNotRead: "Pull requests e branches não estão disponíveis agora.",
+            workMachinesOffline: "Algumas máquinas estão offline",
             coverageFailed: ({ sources }: { sources: string | number }) => `Não foi possível ler ${sources}. Mostrando o que chegou.`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Ler ${sources} requer uma versão mais recente do seu Home`,
             coveragePending: ({ sources }: { sources: string | number }) => `Ainda lendo ${sources}`,

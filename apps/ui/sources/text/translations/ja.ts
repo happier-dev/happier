@@ -17066,6 +17066,7 @@ settingsSession: {
             sourceKindFromLogs: "ログから",
             sourceKindNotAdded: "未追加",
             workNotRead: "プルリクエストとブランチは現在利用できません。",
+            workMachinesOffline: "一部のマシンがオフラインです",
             coverageFailed: ({ sources }: { sources: string | number }) => `${sources}を読み込めませんでした。届いた分を表示しています。`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `${sources}を読み込むには Home を新しいバージョンにする必要があります`,
             coveragePending: ({ sources }: { sources: string | number }) => `${sources}を読み込み中`,

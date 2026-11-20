@@ -16431,6 +16431,7 @@ settingsSession: {
             sourceKindFromLogs: "来自日志",
             sourceKindNotAdded: "未添加",
             workNotRead: "拉取请求和分支暂不可用。",
+            workMachinesOffline: "部分机器处于离线状态",
             coverageFailed: ({ sources }: { sources: string | number }) => `无法读取${sources}。显示已到达的内容。`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `读取${sources}需要将你的 Home 更新到较新版本`,
             coveragePending: ({ sources }: { sources: string | number }) => `仍在读取${sources}`,

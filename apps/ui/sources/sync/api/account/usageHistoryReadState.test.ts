@@ -18,6 +18,11 @@ it('keeps explicit HTTP refusal codes and unsupported-shape failures without car
     expect(readUsageHistoryFailure({ code: 'usage_work_facts_mode_mismatch' })).toEqual({ errorCode: 'usage_work_facts_mode_mismatch', retryable: false });
 });
 
+it('keeps settled offline Work reusable and read failures retryable', () => {
+    expect(readUsageHistoryFailure({ errorCode: 'machine_offline' })).toEqual({ errorCode: 'machine_offline', retryable: false });
+    expect(readUsageHistoryFailure({ errorCode: 'work_evidence_failed' })).toEqual({ errorCode: 'work_evidence_failed', retryable: true });
+});
+
 it.each([
     { code: 'forbidden', error: new SessionPartsHttpError(403, { error: 'forbidden' }) },
     { code: 'scoped_session_encryption_unavailable', error: createSessionEncryptionUnavailableError('denied', 'scoped_session_encryption_unavailable') },

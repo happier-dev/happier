@@ -16734,6 +16734,7 @@ settingsSession: {
             sourceKindFromLogs: "Из журналов",
             sourceKindNotAdded: "Не добавлено",
             workNotRead: "Пул-реквесты и ветки сейчас недоступны.",
+            workMachinesOffline: "Некоторые машины не в сети",
             coverageFailed: ({ sources }: { sources: string | number }) => `Не удалось прочитать: ${sources}. Показано то, что пришло.`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Для чтения: ${sources} нужна более новая версия вашего Home`,
             coveragePending: ({ sources }: { sources: string | number }) => `Ещё читается: ${sources}`,

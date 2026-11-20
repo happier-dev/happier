@@ -4,13 +4,14 @@ import { SessionPartsHttpError, SessionPartsInvalidResponseError } from '@/sync/
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isBlockedSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 
-/** These settled input facts need changed access/content/client support, rather than another attempt. */
+/** These settled facts need an input or availability change before another attempt can help. */
 function isLastingCoverageReason(code: string): boolean {
     switch (code) {
         case 'forbidden':
         case 'not_found':
         case 'invalid_response':
         case 'update_required':
+        case 'machine_offline':
         case 'session_key_unavailable':
         case 'session_key_invalid':
         case 'session_encryption_not_found':

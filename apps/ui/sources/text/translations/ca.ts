@@ -15944,6 +15944,7 @@ settingsSession: {
           sourceKindFromLogs: "Dels registres",
           sourceKindNotAdded: "No afegit",
           workNotRead: "Les sol·licituds de canvi i les branques no estan disponibles ara.",
+          workMachinesOffline: "Algunes màquines estan sense connexió",
           coverageFailed: ({ sources }: { sources: string | number }) => `No s’ha pogut llegir ${sources}. Es mostra el que ha arribat.`,
           coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Llegir ${sources} necessita una versió més nova del teu Home`,
           coveragePending: ({ sources }: { sources: string | number }) => `Encara s’està llegint ${sources}`,

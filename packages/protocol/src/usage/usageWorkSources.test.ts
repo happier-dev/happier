@@ -18,8 +18,9 @@ const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCou
 const accounting = [{ query, value, status: 'available' as const }];
 
 describe('Usage Work repository admission', () => {
-  it('publishes readable Work and conserves the remainder when Machines fail independently', async () => {
-    const sessions = ['linked', 'unlinked', 'offline', 'denied', 'slow'];
+  it.each([false, true])('publishes readable Work and distinguishes offline hosts from independent failures: %s', async fails => {
+    const sessions = ['linked', 'unlinked', 'unavailable', 'unresolved', 'offline', ...(fails ? ['denied', 'slow'] : [])];
+    const reportedUsd = fails ? 28 : 15;
     const tokens = value.totals.tokens;
     const contributions = sessions.map((sessionId, index) => ({
       id: sessionId, sessionId, turnId: 'turn', observedAtMs: 1, agentId: 'coding-agent', modelId: 'model',
@@ -27,15 +28,16 @@ describe('Usage Work repository admission', () => {
       cost: { reportedUsd: index + 1, estimatedUsd: null, currency: 'USD' as const },
     }));
     const snapshot = UsageAnalyticsQueryResponseSchema.parse({
-      ...value, contributions, totals: { ...value.totals, cost: { reportedUsd: 15, estimatedUsd: null, currency: 'USD' } },
+      ...value, contributions, totals: { ...value.totals, cost: { reportedUsd, estimatedUsd: null, currency: 'USD' } },
       sessionMembership: { turns: sessions.map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier'] })) },
     });
     const accounting = [{ query, value: snapshot, status: 'available' as const }];
     const work = await collectUsageWorkSources({
       queries: [query], accounting, assertCurrent: () => {},
-      resolveSession: async sessionId => ({ machineId: sessionId, cwd: '/repo' }),
+      resolveSession: async sessionId => sessionId === 'unresolved' ? null : { machineId: sessionId, cwd: '/repo' },
       readMachine: async (machineId, request) => {
-        if (machineId === 'offline') throw createRpcCallError({ error: 'Offline', errorCode: 'target_unavailable' });
+        if (machineId === 'unavailable') throw createRpcCallError({ error: 'Unavailable', errorCode: 'target_unavailable' });
+        if (machineId === 'offline') throw createRpcCallError({ error: 'Offline', errorCode: 'machine_offline' });
         if (machineId === 'denied') throw createRpcCallError({ error: 'Denied', errorCode: RPC_ERROR_CODES.FORBIDDEN });
         if (machineId === 'slow') throw Object.assign(new Error('Timed out'), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE });
         return { sessions: request.sessions.map(({ sessionId }) => ({
@@ -55,12 +57,14 @@ describe('Usage Work repository admission', () => {
     const result = UsageQueryResultSliceSchema.parse(batch.results[0]);
     expect(result.workSummary?.mergedPrCount).toBe(1);
     expect(result.work?.allocations.map(row => [row.contribution.sessionId, row.reason, row.contribution.cost.reportedUsd])).toEqual([
-      ['linked', 'allocated', 1], ['unlinked', 'missing_evidence', 2], ['offline', 'missing_evidence', 3],
-      ['denied', 'missing_evidence', 4], ['slow', 'missing_evidence', 5],
+      ['linked', 'allocated', 1], ['unlinked', 'missing_evidence', 2], ['unavailable', 'missing_evidence', 3],
+      ['unresolved', 'missing_evidence', 4], ['offline', 'missing_evidence', 5],
+      ...(fails ? [['denied', 'missing_evidence', 6], ['slow', 'missing_evidence', 7]] : []),
     ]);
-    expect(result.accounting?.totals.cost.reportedUsd).toBe(15);
+    expect(result.accounting?.totals.cost.reportedUsd).toBe(reportedUsd);
     const workSource = {
-      source: 'work', status: 'partial', unreadSessions: { machine_unavailable: 1, not_entitled: 1, timed_out: 1 },
+      source: 'work', status: 'partial', errorCode: fails ? 'work_evidence_failed' : 'machine_offline',
+      unreadSessions: { machine_unavailable: 2, failed: 1, ...(fails ? { not_entitled: 1, timed_out: 1 } : {}) },
     };
     expect(result.sources.find(source => source.source === 'work')).toEqual(workSource);
     const delivered = UsageQueryBatchResultSchema.parse(projectUsageQueryDelivery(batch, 'agent')).results[0];
@@ -96,18 +100,25 @@ describe('Usage Work repository admission', () => {
     expect(work[0]?.branchEvidence).toHaveLength(624);
     expect(firstReadCalls).toBe(20);
   });
-  it.each(['target_unavailable', 'RPC_FORBIDDEN'] as const)('distinguishes unavailable Work hosts from authorization failure: %s', async code => {
-    let calls = 0;
+  it.each([
+    ['legacy target unavailable', 'target_unavailable', undefined, true],
+    ['bare forbidden', RPC_ERROR_CODES.FORBIDDEN, undefined, false],
+    ['Machine admission unavailable', RPC_ERROR_CODES.FORBIDDEN, 'machine_unavailable', true],
+    ['Machine admission access denied', RPC_ERROR_CODES.FORBIDDEN, 'access_denied', false],
+  ] as const)('distinguishes unavailable Work hosts from authorization failure: %s', async (_scenario, errorCode, causeCode, unavailable) => {
     const work = await collectUsageWorkSources({ queries: [query], accounting, assertCurrent: () => {},
       resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
-      readMachine: async () => { calls++; throw createRpcCallError({ error: code, errorCode: code }); },
+      readMachine: async () => { throw createRpcCallError({
+        error: errorCode,
+        errorCode,
+        failureCause: causeCode ? { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: causeCode, httpStatus: 403 } : undefined,
+      }); },
     });
     const result = resolveUsagePageAggregation({ queries: [query], accounting, work }, bundledUsageModelPriceCatalog);
-    expect(result.results[0]?.sources.find(source => source.source === 'work')).toEqual(code === 'target_unavailable'
+    expect(result.results[0]?.sources.find(source => source.source === 'work')).toEqual(unavailable
       ? { source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 1 } }
       : { source: 'work', status: 'error', errorCode: 'work_evidence_failed', unreadSessions: { not_entitled: 1 } });
     expect(work[0]?.evidence ?? []).toEqual([]);
-    expect(calls).toBe(1);
   });
   it('keeps admitted siblings when one Session is refused and excludes foreign Session witnesses', async () => {
     const turns = ['allowed', 'refused', 'forged'].map(sessionId => ({ sessionId, turnId: 'turn', executions: ['happier'] }));
@@ -126,7 +137,7 @@ describe('Usage Work repository admission', () => {
     });
     expect(work[0]).toMatchObject({ status: 'partial',
       unreadSessions: { failed: 1, not_entitled: 1 }, branchEvidence: [branch] });
-    expect(work[0]?.errorCode).toBeUndefined();
+    expect(work[0]?.errorCode).toBe('work_evidence_failed');
   });
   it('acquires a newly admitted turn set while reusing the exact admitted read', async () => {
     let calls = 0;

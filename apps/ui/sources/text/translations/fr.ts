@@ -16663,6 +16663,7 @@ settingsSession: {
             sourceKindFromLogs: "Depuis les journaux",
             sourceKindNotAdded: "Non ajouté",
             workNotRead: "Les demandes de fusion et les branches ne sont pas disponibles pour le moment.",
+            workMachinesOffline: "Certaines machines sont hors ligne",
             coverageFailed: ({ sources }: { sources: string | number }) => `Impossible de lire ${sources}. Affichage de ce qui est arrivé.`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Lire ${sources} nécessite une version plus récente de ton Home`,
             coveragePending: ({ sources }: { sources: string | number }) => `Lecture de ${sources} en cours`,

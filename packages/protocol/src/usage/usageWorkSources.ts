@@ -1,4 +1,5 @@
 import { isMachineRpcTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isMachineRequestReachabilityFailureV1 } from '../machines/machineReachabilityV1.js';
 import { SCM_OPERATION_ERROR_CODES } from '../scm/operationError.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
 import { ScmWorkEvidenceReadResponseSchema, type ScmWorkEvidenceReadRequest, type ScmBranchWorkEvidence } from '../scm/index.js';
@@ -7,7 +8,7 @@ import { readUsageAccountingSessionMembership } from './usageAccountingMembershi
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 
 type UnreadSessions = NonNullable<UsageWorkSourceSnapshot['unreadSessions']>;
-type UnreadReason = keyof UnreadSessions;
+type UnreadReason = keyof UnreadSessions | 'machine_offline';
 
 export type SessionWorkSourceResult = Readonly<(
     | { status: 'unsupported' | 'error' | 'unknown' }
@@ -16,6 +17,8 @@ export type SessionWorkSourceResult = Readonly<(
 
 function classifyUnreadReason(code: string | undefined): UnreadReason {
     switch (code) {
+        case 'machine_offline':
+            return 'machine_offline';
         case 'target_unavailable':
         case RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE:
             return 'machine_unavailable';
@@ -32,14 +35,17 @@ function classifyUnreadReason(code: string | undefined): UnreadReason {
 
 function unreadSession(code: string | undefined): SessionWorkSourceResult {
     const unreadReason = classifyUnreadReason(code);
-    if (unreadReason === 'machine_unavailable') return { status: 'unknown', unreadReason };
+    if (unreadReason === 'machine_offline' || unreadReason === 'machine_unavailable') return { status: 'unknown', unreadReason };
     // Explicit refusal withdraws old witnesses. A failed replacement carries no new admission.
     if (unreadReason === 'not_entitled') return { status: 'error', unreadReason, evidence: [], branchEvidence: [] };
     return { status: 'error', unreadReason };
 }
 
 function readWorkFailureCode(error: unknown): string | undefined {
-    return isMachineRpcTimeoutError(error) ? MACHINE_RPC_TIMEOUT_ERROR_CODE : readRpcErrorCode(error);
+    if (isMachineRpcTimeoutError(error)) return MACHINE_RPC_TIMEOUT_ERROR_CODE;
+    const code = readRpcErrorCode(error);
+    if (code === 'machine_offline') return code;
+    return isMachineRequestReachabilityFailureV1(error) ? 'target_unavailable' : code;
 }
 
 export async function collectUsageWorkSources(input: Readonly<{
@@ -150,17 +156,24 @@ export async function collectUsageWorkSources(input: Readonly<{
         const branchEvidence = selected.flatMap(source => 'branchEvidence' in source ? source.branchEvidence ?? [] : [])
             .filter(witness => turns.has(JSON.stringify([witness.sessionId, witness.turnId])));
         const unreadSessions: UnreadSessions = {};
+        let hasOfflineMachine = false;
         for (const { unreadReason } of selected) {
-            if (unreadReason !== undefined) unreadSessions[unreadReason] = (unreadSessions[unreadReason] ?? 0) + 1;
+            if (unreadReason === undefined) continue;
+            if (unreadReason === 'machine_offline') hasOfflineMachine = true;
+            const reason = unreadReason === 'machine_offline' ? 'machine_unavailable' : unreadReason;
+            unreadSessions[reason] = (unreadSessions[reason] ?? 0) + 1;
         }
         const failedReplacement = selected.length > 0 && selected.every(source => source.status === 'error' && !('evidence' in source));
+        const readFailed = selected.some(source => source.status === 'error');
         const status = selected.some(source => source.status === 'partial') ? 'partial' as const
-            : selected.some(source => source.status === 'error') ? 'error' as const : selected.some(source => source.status === 'unsupported') ? 'unsupported' as const : 'unknown' as const;
+            : readFailed ? 'error' as const : selected.some(source => source.status === 'unsupported') ? 'unsupported' as const : 'unknown' as const;
         const summary = status === 'partial' && (query.workProjection === 'summary' || query.population === 'public_eligible_personal')
             ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence }).outcomes) : undefined;
+        const errorCode = readFailed ? 'work_evidence_failed'
+            : hasOfflineMachine && (status === 'unknown' || status === 'partial') ? 'machine_offline' : undefined;
         return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
             ...(summary ? { summary } : {}),
             ...(Object.keys(unreadSessions).length ? { unreadSessions } : {}),
-            ...(status === 'error' ? { errorCode: 'work_evidence_failed' } : {}) };
+            ...(errorCode === undefined ? {} : { errorCode }) };
     });
 }

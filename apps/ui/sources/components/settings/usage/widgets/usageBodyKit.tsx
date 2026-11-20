@@ -777,15 +777,29 @@ export function readUsageCoverageGaps(
   return [...unique.values()];
 }
 
-function usageCoverageHeadlineKey(gaps: readonly Pick<UsageQuerySourceState, 'status'>[]) {
-  return gaps.some(gap => gap.status === 'error') ? 'usage.board.page.coverageFailed' as const
+type UsageCoverageStatus = Pick<UsageQuerySourceState, 'status' | 'errorCode'> & { source?: string };
+
+function isUsageCoverageFailure(source: UsageCoverageStatus): boolean {
+  return source.status === 'error' || source.source === 'work' && source.errorCode === 'work_evidence_failed';
+}
+
+function isUsageWorkOffline(source: UsageQuerySourceState): boolean {
+  return source.source === 'work' && source.errorCode === 'machine_offline';
+}
+
+export function readUsagePageWorkOffline(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[]): boolean {
+  return slices.some(slice => slice.sources.some(isUsageWorkOffline));
+}
+
+function usageCoverageHeadlineKey(gaps: readonly UsageCoverageStatus[]) {
+  return gaps.some(isUsageCoverageFailure) ? 'usage.board.page.coverageFailed' as const
     : gaps.some(gap => gap.status === 'partial') ? 'usage.board.page.coveragePartial' as const
       : gaps.some(gap => gap.status !== 'pending' && gap.status !== 'not_loaded') ? 'usage.board.sources.coverageUnknown' as const
         : 'usage.board.page.coveragePending' as const;
 }
 
 /** The headline names its sources, except the unknown-coverage line, which takes none. */
-function formatUsageCoverageHeadline(gaps: readonly Pick<UsageQuerySourceState, 'status'>[], sources: string): string {
+function formatUsageCoverageHeadline(gaps: readonly UsageCoverageStatus[], sources: string): string {
   const key = usageCoverageHeadlineKey(gaps);
   return key === 'usage.board.sources.coverageUnknown' ? t(key) : t(key, { sources });
 }
@@ -798,7 +812,8 @@ function formatUsageCoverageHeadline(gaps: readonly Pick<UsageQuerySourceState, 
 export function usageCoverageSummary(slice: UsageQueryResultSlice, sources: readonly string[]): string {
   const gaps = readUsageCoverageGaps(slice, sources);
   if (!gaps.length) return '';
-  if (!gaps.some(needsNewerServer) && usageCoverageHeadlineKey(gaps) === 'usage.board.page.coveragePartial') return usagePartialHistoryLabel();
+  if (!gaps.some(needsNewerServer) && !gaps.some(isUsageWorkOffline)
+    && usageCoverageHeadlineKey(gaps) === 'usage.board.page.coveragePartial') return usagePartialHistoryLabel();
   return usageCoverageDescription(slice, sources);
 }
 
@@ -848,11 +863,12 @@ export function usageCoverageDescription(slice: UsageQueryResultSlice, sources: 
   const nameGaps = (list: readonly UsageQuerySourceState[]) => [...new Set(list.map(gap => gap.status === 'unsupported'
     ? `${usageSourceTitle(gap.source)} (${t('usage.board.sources.unsupported')})` : usageSourceTitle(gap.source)))].join(', ');
   const newer = gaps.filter(needsNewerServer);
-  const rest = gaps.filter(gap => !needsNewerServer(gap));
+  const rest = gaps.filter(gap => !needsNewerServer(gap) && !isUsageWorkOffline(gap));
   const reasons = sources.includes('accounting')
     ? [...new Set(slice.accounting?.coverage?.reasons ?? [])].map(reason => t(COVERAGE_REASON_KEYS[reason])) : [];
   return [
     ...(rest.length ? [formatUsageCoverageHeadline(rest, nameGaps(rest))] : []),
+    ...(gaps.some(isUsageWorkOffline) ? [t('usage.board.page.workMachinesOffline')] : []),
     ...(newer.length ? [t('usage.board.page.coverageNeedsNewerServer', { sources: nameGaps(newer) })] : []),
     ...reasons,
   ].join(' · ');
@@ -865,12 +881,12 @@ export type UsageCoverageLineMode = 'hidden' | 'failed' | 'detail';
  * and its detail, and the page header says once what is still being read, so a body keeps a line only
  * for a failed read (with Retry). Hosts without those page indicators keep the full detail line.
  */
-export function usageCoverageLineMode(gaps: readonly (Pick<UsageQuerySourceState, 'status'> & { source?: string })[], pageHasDetail: boolean): UsageCoverageLineMode {
+export function usageCoverageLineMode(gaps: readonly UsageCoverageStatus[], pageHasDetail: boolean): UsageCoverageLineMode {
   if (gaps.length === 0) return 'hidden';
   // A failed page read is said once by the page header (`describeUsagePageFailedSources`); only a
   // widget's own failed read (a comparison, a pool selection) keeps its line beside the body.
-  const ownFailure = gaps.some(gap => gap.status === 'error' && !(gap.source !== undefined && isUsagePageReadSource(gap.source)));
-  if (gaps.some(gap => gap.status === 'error')) return pageHasDetail ? ownFailure ? 'failed' : 'hidden' : 'detail';
+  const ownFailure = gaps.some(gap => isUsageCoverageFailure(gap) && !(gap.source !== undefined && isUsagePageReadSource(gap.source)));
+  if (gaps.some(isUsageCoverageFailure)) return pageHasDetail ? ownFailure ? 'failed' : 'hidden' : 'detail';
   return pageHasDetail ? 'hidden' : 'detail';
 }
 
@@ -887,7 +903,7 @@ function isUsagePageReadSource(source: string): boolean {
 
 function readUsagePageFailedNames(slices: readonly Pick<UsageQueryResultSlice, 'sources'>[], newerServer = false): string[] {
   return [...new Set(slices.flatMap(slice => slice.sources
-    .filter(source => source.status === 'error' && isUsagePageReadSource(source.source) && needsNewerServer(source) === newerServer)
+    .filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source) && needsNewerServer(source) === newerServer)
     .map(source => usageSourceTitle(usagePageReadFamily(source.source)))))];
 }
 
@@ -911,7 +927,7 @@ export function describeUsagePageNewerServerSources(slices: readonly Pick<UsageQ
  * with its Retry. Activity read from only some Sessions joins the same quiet line; it shows what arrived (R135 item 12).
  */
 export function isUsagePageFailureOnlyWork(slices: readonly Pick<UsageQueryResultSlice, 'sources' | 'howYouWork'>[]): boolean {
-  const failed = slices.flatMap(slice => slice.sources.filter(source => source.status === 'error' && isUsagePageReadSource(source.source)));
+  const failed = slices.flatMap(slice => slice.sources.filter(source => isUsageCoverageFailure(source) && isUsagePageReadSource(source.source)));
   return failed.length > 0 && failed.every(source => source.source === 'work');
 }
 
@@ -1012,12 +1028,12 @@ export function UsageCoverageLine(
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
   const gaps = readUsageCoverageGaps(props.slice, props.sources);
   const mode = usageCoverageLineMode(gaps, pageHasDetail);
-  const failed = mode === 'failed' || gaps.some((gap) => gap.status === 'error' && !needsNewerServer(gap));
+  const failed = mode === 'failed' || gaps.some(gap => isUsageCoverageFailure(gap) && !needsNewerServer(gap));
   const retry = useUsageRetryCommand(callerContext => props.onRetry?.(callerContext), mode !== 'hidden' && failed && !!props.onRetry);
   if (mode === 'hidden') return null;
   if (mode === 'failed') {
     // One short line: what failed, with its Retry; the detail is in Sources.
-    const names = [...new Set(gaps.filter(gap => gap.status === 'error').map(gap => usageSourceTitle(gap.source)))].join(', ');
+    const names = [...new Set(gaps.filter(isUsageCoverageFailure).map(gap => usageSourceTitle(gap.source)))].join(', ');
     return (
       <SurfaceFreshnessLine
         testID={props.testID}

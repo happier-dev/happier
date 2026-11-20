@@ -1,4 +1,4 @@
-import { RPC_ERROR_CODES, readRpcErrorCode } from '../rpc/errors.js';
+import { isRpcMachineAdmissionUnavailableError, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 
 // Owner ruling 2026-11-04 (3): Machines beat every 60 s. 0.3 Homes own presence expiry
 // (`presenceProtocolVersion: 1`), so the 0.2-client 60 s grace no longer sets the cadence.
@@ -49,14 +49,15 @@ export function isMachineReachableV1(input: Readonly<{
 }
 
 /**
- * Only an explicit target-unavailable verdict (the Machine row exists but no daemon of it is connected to this
- * Home) is a request-reachability failure. A missing method, a deadline or an answered error is not: none of them
- * says anything about the Machine as a whole. UI and CLI readers feed this verdict to `isMachineReachableV1`.
+ * An explicit target-unavailable verdict or Machine admission availability refusal is a request-reachability
+ * failure. A missing method, a deadline or an access refusal says nothing about the Machine as a whole.
+ * UI and CLI readers feed this verdict to `isMachineReachableV1`.
  */
 export function isMachineRequestReachabilityFailureV1(error: unknown): boolean {
     const rpcErrorCode = readRpcErrorCode(error);
     if (rpcErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return false;
-    if (rpcErrorCode === 'target_unavailable' || rpcErrorCode === 'machine_unavailable' || rpcErrorCode === 'machine_offline') {
+    if (rpcErrorCode === 'target_unavailable' || rpcErrorCode === 'machine_unavailable' || rpcErrorCode === 'machine_offline'
+        || isRpcMachineAdmissionUnavailableError(error)) {
         return true;
     }
     if (!error || typeof error !== 'object') return false;

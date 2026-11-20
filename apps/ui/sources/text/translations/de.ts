@@ -16962,6 +16962,7 @@ settingsSession: {
             sourceKindFromLogs: "Aus Protokollen",
             sourceKindNotAdded: "Nicht hinzugefügt",
             workNotRead: "Pull-Requests und Branches sind gerade nicht verfügbar.",
+            workMachinesOffline: "Einige Rechner sind offline",
             coverageFailed: ({ sources }: { sources: string | number }) => `${sources} konnte nicht gelesen werden. Angezeigt wird, was angekommen ist.`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Zum Lesen von ${sources} braucht dein Home eine neuere Version`,
             coveragePending: ({ sources }: { sources: string | number }) => `${sources} wird noch gelesen`,

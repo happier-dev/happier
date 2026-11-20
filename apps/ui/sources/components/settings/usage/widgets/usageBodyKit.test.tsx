@@ -447,6 +447,39 @@ describe('shared Usage identity and dependent coverage', () => {
         expect.soft(screen.getTextContent()).not.toContain(t('usage.board.page.coverageFailed', { sources: usageSourceTitle('how_you_work') }));
         expect(screen.getTextContent()).not.toContain(t('common.retry'));
     });
+    it('discloses confirmed offline Work without Retry and keeps failed reads actionable', async () => {
+        const query = normalizeUsageQuery({ includeWorkEvidence: true });
+        const slice = resolveUsagePageAggregation({ queries: [query] }, bundledUsageModelPriceCatalog).results[0]!;
+        const workSource = slice.sources.find(source => source.source === 'work')!;
+        const onRetry = vi.fn();
+        const render = (source: UsageQueryResultSlice['sources'][number]) =>
+            <UsageCoverageLine slice={{ ...slice, sources: [source] }} sources={['work']} onRetry={onRetry} testID="work-coverage" />;
+        const offline = { ...workSource, status: 'unknown' as const,
+            errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 2 } };
+        const screen = await renderScreen(render(offline));
+        const failed = t('usage.board.page.coverageFailed', { sources: usageSourceTitle('work') });
+        expect.soft(screen.getTextContent()).toContain(t('usage.board.page.workMachinesOffline'));
+        expect.soft(screen.getTextContent()).not.toContain(failed);
+        expect.soft(screen.getTextContent()).not.toContain(t('common.retry'));
+
+        await screen.update(render({ ...offline, status: 'partial' }));
+        expect.soft(screen.getTextContent()).toContain(t('usage.board.page.workMachinesOffline'));
+        expect.soft(screen.getTextContent()).not.toContain(t('common.retry'));
+
+        await screen.update(render({ ...workSource, status: 'unknown', unreadSessions: { machine_unavailable: 2 } }));
+        expect.soft(screen.getTextContent()).not.toContain(t('usage.board.page.workMachinesOffline'));
+        expect.soft(screen.getTextContent()).not.toContain(t('common.retry'));
+
+        await screen.update(render({ ...workSource, status: 'pending' }));
+        expect.soft(screen.getTextContent()).toContain(t('usage.board.page.coveragePending', { sources: usageSourceTitle('work') }));
+        expect.soft(screen.getTextContent()).not.toContain(t('common.retry'));
+
+        for (const status of ['error', 'stale', 'partial'] as const) {
+            await screen.update(render({ ...workSource, status, errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } }));
+            expect.soft(screen.getTextContent()).toContain(failed);
+            expect.soft(screen.getTextContent()).toContain(t('common.retry'));
+        }
+    });
     it('names a failed page read once for the header, never a widget-own read', () => {
         const slice = (sources: readonly { source: string; status: string }[]) =>
             ({ sources }) as unknown as Parameters<typeof describeUsagePageFailedSources>[0][number];

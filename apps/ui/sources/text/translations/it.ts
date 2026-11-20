@@ -17160,6 +17160,7 @@ settingsSession: {
             sourceKindFromLogs: "Dai log",
             sourceKindNotAdded: "Non aggiunto",
             workNotRead: "Pull request e branch non sono disponibili al momento.",
+            workMachinesOffline: "Alcune macchine sono offline",
             coverageFailed: ({ sources }: { sources: string | number }) => `Impossibile leggere ${sources}. Mostra ciò che è arrivato.`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Per leggere ${sources} serve una versione più recente del tuo Home`,
             coveragePending: ({ sources }: { sources: string | number }) => `Lettura di ${sources} in corso`,

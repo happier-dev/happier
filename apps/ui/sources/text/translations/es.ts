@@ -16789,6 +16789,7 @@ settingsSession: {
             sourceKindFromLogs: "De los registros",
             sourceKindNotAdded: "No añadido",
             workNotRead: "Las solicitudes de cambios y las ramas no están disponibles ahora.",
+            workMachinesOffline: "Algunas máquinas están sin conexión",
             coverageFailed: ({ sources }: { sources: string | number }) => `No se pudo leer ${sources}. Se muestra lo que llegó.`,
             coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Leer ${sources} requiere una versión más reciente de tu Home`,
             coveragePending: ({ sources }: { sources: string | number }) => `Aún leyendo ${sources}`,

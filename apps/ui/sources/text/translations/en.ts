@@ -20243,6 +20243,7 @@ const enUsage = {
       sourceKindFromLogs: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.sourceKindFromLogs,
       sourceKindNotAdded: "Not added",
       workNotRead: "Pull requests and branches aren't available right now.",
+      workMachinesOffline: "Some Machines are offline",
       coverageFailed: ({ sources }: { sources: string | number }) => `Couldn't read ${sources}. Showing what arrived.`,
       coverageNeedsNewerServer: ({ sources }: { sources: string | number }) => `Reading ${sources} needs a newer version of your Home`,
       coveragePending: ({ sources }: { sources: string | number }) => `Still reading ${sources}`,

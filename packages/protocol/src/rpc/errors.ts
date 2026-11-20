@@ -135,3 +135,10 @@ export function isRpcMethodNotFoundError(error: unknown): boolean {
 export function isRpcSessionMachineControlUnavailableError(error: unknown): boolean {
   return readRpcErrorCode(error) === RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE;
 }
+
+/** Recognize Home's Machine availability refusal through the validated RPC cause. */
+export function isRpcMachineAdmissionUnavailableError(error: unknown): boolean {
+  return error instanceof RpcError && error.rpcErrorCode === RPC_ERROR_CODES.FORBIDDEN
+    && error.failureCause?.phase === 'rpc.admission.machine'
+    && error.failureCause.errorCode === 'machine_unavailable';
+}

@@ -6,6 +6,9 @@ import type { UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/us
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -102,7 +105,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function renderUsagePage(layoutId = 'overview', response = accounting) {
+async function renderUsagePage(
+  layoutId = 'overview',
+  response = accounting,
+  beforeRender?: (serverId: string) => Promise<void>,
+) {
   const artifacts = createArtifactStoreBoundary({
     ownerAccountId: () => 'account-a',
     encryptionMode: 'plain',
@@ -143,6 +150,7 @@ async function renderUsagePage(layoutId = 'overview', response = accounting) {
   const credentials = (await TokenStorage.getCredentialsForServerUrl(
     server.serverUrl,
   ))!;
+  await beforeRender?.(server.id);
   const screen = await renderScreen(
     <InjectedAuthProvider credentials={credentials}>
       <MainAppTabStateProvider>
@@ -220,6 +228,32 @@ it('gives the phone read-failure notice the short form with Details and its Retr
   expect(line()!.props.reason).not.toBe(t('usage.board.charts.coveragePartialShort'));
   expect((line()!.props.actions as readonly { testID?: string }[]).map(action => action.testID))
     .toEqual(['usage-page.header.failed.detail', 'usage-page.header.retry']);
+});
+
+it('shows offline Work in the Usage header without Retry', async () => {
+  const sessionId = 'offline-work-session';
+  const phone = await renderUsagePage('work', {
+    ...accounting,
+    sessionMembership: { turns: [{ sessionId, turnId: 'turn', executions: ['happier'] }] },
+  }, async serverId => {
+    const { sync } = await import('@/sync/sync');
+    await sync.awaitBootstrapForegroundAcquisition();
+    const scope = { serverId, accountId: 'account-a' };
+    const machine = createHydratedPlainMachineFixture({
+      id: 'offline-work-machine', accountId: scope.accountId,
+      machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 },
+    });
+    await publishMachineInventoryForTest(scope, [machine]);
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId, active: true,
+      metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' },
+    })]);
+  });
+  const header = () => phone.findAllByType(SurfaceFreshnessLine)
+    .find(candidate => candidate.props.testID?.startsWith('usage-page.header.'));
+  await waitForHomeGovernance(() => expect(header()?.props.reason).toBe(t('usage.board.page.workMachinesOffline')));
+  const actions = [header()?.props.action, ...(header()?.props.actions ?? [])];
+  expect(actions.map(action => action?.label)).not.toContain(t('common.retry'));
 });
 
 it('dates the header by the read and shows the older source date in Details', async () => {

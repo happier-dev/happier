@@ -18,6 +18,7 @@ import { readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
+import { resolveMachinePresence } from '@/sync/domains/machines/reachability/machinePresence';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -1321,30 +1322,33 @@ type SessionWorkSourceResult = import('@happier-dev/protocol/usage/usageWorkSour
 
 /** Only Machine availability is shared; each Session keeps its own request and authorization. */
 function createUsageWorkMachineReader(context: UsageQueryAccountContext, signal?: AbortSignal) {
-    const availability = new Map<string, Promise<boolean>>();
+    const availability = new Map<string, Promise<RpcError | null>>();
     const scope = context.accountLifetime.scope;
     const unavailable = new RpcError('Machine unavailable', 'target_unavailable');
+    const offline = new RpcError('Machine offline', 'machine_offline');
     return async (machineId: string, request: Parameters<typeof machineScmWorkEvidenceRead>[1]) => {
         const previous = availability.get(machineId);
         if (previous) {
-            if (!await previous) throw unavailable;
+            const blocker = await previous;
+            if (blocker) throw blocker;
             requireCurrent(context, signal);
         } else {
             const machine = resolveServerScopedMachine(getStorage().getState(), scope.serverId, machineId);
             // An absent inventory row is unanswered, while the reachability owner
             // still retains an explicit failed connection for this exact scope.
             if (resolveMachineReachability(scope, machine ?? { id: machineId, active: false }) === 'unreachable') {
-                availability.set(machineId, Promise.resolve(false));
-                throw unavailable;
+                const blocker = machine && resolveMachinePresence(machine) === 'offline' ? offline : unavailable;
+                availability.set(machineId, Promise.resolve(blocker));
+                throw blocker;
             }
         }
         const reading = machineScmWorkEvidenceRead(machineId, request, { ...scope, signal });
-        const verdict = reading.then(() => true, error => {
-            // Only a positively classified Machine absence withdraws availability;
+        const verdict = reading.then(() => null, error => {
             // Session refusals, missing methods and deadlines remain request-local.
-            const available = !isMachineRequestReachabilityFailureV1(error);
-            if (!available) availability.set(machineId, Promise.resolve(false));
-            return available;
+            if (!isMachineRequestReachabilityFailureV1(error)) return null;
+            const blocker = readRpcErrorCode(error) === 'machine_offline' ? offline : unavailable;
+            availability.set(machineId, Promise.resolve(blocker));
+            return blocker;
         });
         if (!previous) availability.set(machineId, verdict);
         return reading;

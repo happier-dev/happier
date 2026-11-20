@@ -79,7 +79,7 @@ import {
 } from './widgets/usageWidgetBatch';
 import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 import type { UsagePageHistoryFact } from './useUsageWidgetPageContext';
-import { describeUsagePageFailedSources, isUsagePageFailureOnlyWork, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFreshness, usageSourceTitle } from './widgets/usageBodyKit';
+import { describeUsagePageFailedSources, isUsagePageFailureOnlyWork, describeUsagePageNewerServerSources, describeUsagePagePartialSources, describeUsagePagePendingSources, readUsageCoverageGaps, readUsagePageFreshness, readUsagePageWorkOffline, usageSourceTitle } from './widgets/usageBodyKit';
 
 const PRESET_ICON: Readonly<Record<UsageWidgetPresetId, IconName>> = {
   overview: 'squares-four',
@@ -537,6 +537,7 @@ function readUsagePageFacts(slices: readonly UsageQueryResultSlice[], needsFilte
       failed: describeUsagePageFailedSources(slices),
       failedQuiet: isUsagePageFailureOnlyWork(slices),
       newerServer: describeUsagePageNewerServerSources(slices),
+      workOffline: readUsagePageWorkOffline(slices),
       partial: describeUsagePagePartialSources(slices),
       // The displayed minute, not the raw clock: a refresh within the same minute changes nothing on screen.
       observedAtMs: observedAt === null ? null : Math.floor(observedAt / 60_000) * 60_000,
@@ -608,6 +609,7 @@ function resolveUsagePageNotice(
       action: { label: t('usage.board.coach.firstUseAction'), onPress: startSession, testID: 'usage-page.header.nothingRecordedAction' } };
   }
   if (newerServer) return { testID: 'usage-page.header.newerServer', reason: newerServer, tone: 'neutral' };
+  if (facts.workOffline) return { testID: 'usage-page.header.workOffline', reason: t('usage.board.page.workMachinesOffline'), tone: 'neutral' };
   if (partial) return { testID: 'usage-page.header.partial', reason: partial, tone: 'neutral', short: t('usage.board.charts.coveragePartialShort') };
   if (pending) return { testID: 'usage-page.header.reading', reason: pending, tone: 'neutral', busy: true };
   return null;

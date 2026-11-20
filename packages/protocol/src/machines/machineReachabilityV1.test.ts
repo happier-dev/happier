@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { isMachineOnlineV1, isMachineReachableV1 } from './machineReachabilityV1.js';
+import { createRpcCallError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isMachineOnlineV1, isMachineReachableV1, isMachineRequestReachabilityFailureV1 } from './machineReachabilityV1.js';
 
 describe('Home-owned Machine presence', () => {
     const homePresence = { presenceProtocolVersion: 1 as const };
@@ -14,6 +15,38 @@ describe('Home-owned Machine presence', () => {
         expect(isMachineOnlineV1({ active: false, activeAt: 1_000_000, ...homePresence }, 1_000_000)).toBe(false);
         expect(isMachineOnlineV1({ active: true, ...homePresence, revokedAt: 1 }, 1_000_000)).toBe(false);
         expect(isMachineReachableV1({ machine: { active: true, ...homePresence }, requestOutcome: 'failed' })).toBe(false);
+    });
+});
+
+describe('Machine request reachability', () => {
+    const machineUnavailableCause = {
+        phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403,
+    };
+
+    it('recognizes a validated Machine admission availability refusal', () => {
+        const error = createRpcCallError({ error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+            failureCause: machineUnavailableCause });
+
+        expect(error).toHaveProperty('failureCause', machineUnavailableCause);
+        expect(isMachineRequestReachabilityFailureV1(error)).toBe(true);
+    });
+
+    it('keeps other admission failures, missing methods and deadlines local to their request', () => {
+        const forbidden = (failureCause?: unknown) => createRpcCallError({
+            error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause,
+        });
+        const missing = createRpcCallError({ error: 'Method unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+            failureCause: machineUnavailableCause });
+        const deadline = Object.assign(new Error('Deadline'), { code: MACHINE_RPC_TIMEOUT_ERROR_CODE });
+
+        for (const error of [
+            forbidden(),
+            forbidden({ ...machineUnavailableCause, errorCode: 'access_denied' }),
+            forbidden({ ...machineUnavailableCause, phase: 'rpc.admission.session' }),
+            forbidden({ ...machineUnavailableCause, httpStatus: 99 }),
+            missing,
+            deadline,
+        ]) expect(isMachineRequestReachabilityFailureV1(error)).toBe(false);
     });
 });
 

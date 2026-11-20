@@ -3309,7 +3309,7 @@ describe('usage query captured Resource adapter', () => {
       expect(work()?.mergedPrCount ?? 0).toBe(0);
       expect.soft(scmTransport, 'an answered offline Machine receives zero automatic Work RPCs').not.toHaveBeenCalled();
       expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.sources).toContainEqual(expect.objectContaining({
-        source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 2 },
+        source: 'work', status: 'unknown', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 2 },
       }));
       const accountingReads = home!.requests.filter(request => request.path === '/v2/usage/query').length;
       scmTransport.mockClear();
@@ -9133,14 +9133,31 @@ describe('usage query Work composition', () => {
     refusal.reject(createRpcCallError({ error: 'Machine unavailable', errorCode: 'target_unavailable' }));
     const result = await reading;
     expect.soft(scmTransport, 'one unavailable Machine receives at most one SocketRPC CALL in the finite read').toHaveBeenCalledTimes(1);
-    for (const slice of result.results) expect(slice.sources).toContainEqual(expect.objectContaining({
-      source: 'work', status: 'unknown', unreadSessions: { machine_unavailable: 1 },
-    }));
-    // A known failed connection is authoritative even if its inventory row is absent.
+    const workSources = (batch: typeof result) => batch.results.map(slice => slice.sources.find(source => source.source === 'work'));
+    for (const source of workSources(result)) {
+      expect(source).toMatchObject({ status: 'unknown', unreadSessions: { machine_unavailable: 1 } });
+      expect(source).not.toHaveProperty('errorCode');
+    }
+    // A failed request can settle an unanswered Machine's reachability, but does not prove offline presence.
     await publishMachineInventoryForTest(scope, []);
     scmTransport.mockClear();
-    await readUiUsageQueryBatch(captured, { queries: [first, second] });
+    const knownUnavailable = await readUiUsageQueryBatch(captured, { queries: [first, second] });
     expect.soft(scmTransport, 'a later finite read consumes canonical failure without another unavailable probe').not.toHaveBeenCalled();
+    for (const source of workSources(knownUnavailable)) {
+      expect(source).toMatchObject({ status: 'unknown', unreadSessions: { machine_unavailable: 1 } });
+      expect(source).not.toHaveProperty('errorCode');
+    }
+
+    await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: 'cold-work-machine', accountId: 'account-a',
+      machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } })]);
+    scmTransport.mockClear();
+    const knownOffline = await readUiUsageQueryBatch(captured, { queries: [first, second] });
+    expect.soft(scmTransport, 'answered offline presence blocks both disjoint Work slices before RPC').not.toHaveBeenCalled();
+    expect(workSources(knownOffline)).toHaveLength(2);
+    for (const source of workSources(knownOffline)) expect.soft(source).toMatchObject({
+      status: 'unknown', errorCode: 'machine_offline', unreadSessions: { machine_unavailable: 1 },
+    });
+
     unavailable = false;
     await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: 'cold-work-machine', accountId: 'account-a',
       machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } })]);
@@ -9151,12 +9168,14 @@ describe('usage query Work composition', () => {
     expect(scmTransport.mock.calls.map(([request]) => request.payload.sessions.map((session: { sessionId: string }) => session.sessionId)))
       .toEqual(expect.arrayContaining([[sessionIds[0]], [sessionIds[1]]]));
     for (const slice of recovered.results) expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'work', status: 'partial' }));
-    // A later positive Machine refusal withdraws the earlier successful
-    // verdict for slices whose accounting has not arrived yet.
+    // A later typed Home Machine-admission refusal stops work whose accounting has not arrived yet.
     let attempts = 0;
     scmTransport.mockClear();
     scmTransport.mockImplementation(async request => {
-      if (++attempts === 2) throw createRpcCallError({ error: 'Machine unavailable', errorCode: 'target_unavailable' });
+      if (++attempts === 2) throw createRpcCallError({
+        error: 'Forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN,
+        failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 },
+      });
       return workBatch(request, { status: 'partial', evidence: [] });
     });
     holdLaterAccounting = true;
@@ -9165,8 +9184,16 @@ describe('usage query Work composition', () => {
     await expect.poll(() => scmTransport.mock.calls.length).toBe(2);
     laterAccounting.resolve();
     const departed = await disappearing;
-    expect(scmTransport, 'a later unavailable reply stops subsequent slices in the same finite read').toHaveBeenCalledTimes(2);
-    expect(departed.results.filter(slice => slice.sources.some(source => source.source === 'work' && source.status === 'unknown'))).toHaveLength(2);
+    expect.soft(scmTransport, 'a typed Machine admission refusal stops the delayed slice before RPC').toHaveBeenCalledTimes(2);
+    expect(workSources(departed)).toEqual(expect.arrayContaining([expect.objectContaining({ status: 'partial' })]));
+    const unavailableSources = workSources(departed).filter(source => source?.status === 'unknown');
+    expect(unavailableSources).toHaveLength(2);
+    for (const source of unavailableSources) {
+      expect(source).toMatchObject({ unreadSessions: { machine_unavailable: 1 } });
+      expect(source).not.toHaveProperty('errorCode');
+    }
+    const delayedWork = departed.results.find(slice => slice.key === getUsageQueryKey(third))?.sources.find(source => source.source === 'work');
+    expect(delayedWork).toMatchObject({ status: 'unknown', unreadSessions: { machine_unavailable: 1 } });
   });
 
   it.each(['available', 'unresolved'] as const)('keeps unresolved Session Machine control distinct from failed Work evidence (%s)', async target => {

@@ -40,8 +40,8 @@ import {
     isRpcMethodNotAvailableError,
     isRpcMethodNotFoundError,
     readRpcErrorCode,
-    RpcError,
 } from '@/sync/runtime/rpcErrors';
+import { isRpcMachineAdmissionUnavailableError } from '@happier-dev/protocol/rpcErrors';
 import {
     parseDaemonContributionRegistryProjectionDescribeResponse,
     parseDaemonPluginUiTargetedContributionsReadResponse,
@@ -283,8 +283,7 @@ function classifyMachineProjectionReadError(error: unknown): MachineContribution
             // available, not that the Machine is offline or lacks integrations.
             return 'transport-unavailable';
         case RPC_ERROR_CODES.FORBIDDEN:
-            return error instanceof RpcError && error.failureCause?.errorCode === 'machine_unavailable'
-                ? 'machine-unavailable' : 'access-denied';
+            return isRpcMachineAdmissionUnavailableError(error) ? 'machine-unavailable' : 'access-denied';
         case RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED:
             return 'authentication-required';
         case RPC_ERROR_CODES.TEAM_AUTHENTICATION_UNAVAILABLE:
