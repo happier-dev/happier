@@ -58,24 +58,27 @@ export function readSourceSelectionRollbackPaths(stackBaseDir) {
   return Object.values(record?.selections ?? {}).flatMap(selectionPaths);
 }
 
-/** Select the incumbent's revision again after its replacement failed readiness.
- * Refuses, keeping the current selection, unless every recorded entry still exists. */
+/** Restore the selections changed by activation after its replacement failed readiness.
+ * Validate all entries that would change before writing any of them. */
 export async function restoreSourceSelectionRollback({ stackBaseDir }) {
   const record = await readJsonIfExists(rollbackPath(stackBaseDir));
   if (!record?.selections) throw unavailable('no recorded incumbent selection');
-  const restored = [];
+  const changes = [];
   for (const component of COMPONENTS) {
+    const path = selectionPath(stackBaseDir, component);
     const selection = record.selections[component] ?? null;
+    const current = await readJsonIfExists(path);
+    // A controller can have stale local selections for a component placed on a dev target.
+    if (JSON.stringify(current) === JSON.stringify(selection)) continue;
     if (selection && !existsSync(selection.entrypoint ?? selection.uiDir ?? '')) {
       throw unavailable(`the incumbent ${component} revision was released`);
     }
+    changes.push({ component, path, selection });
   }
-  for (const component of COMPONENTS) {
-    const selection = record.selections[component] ?? null;
-    const current = await readJsonIfExists(selectionPath(stackBaseDir, component));
-    if (JSON.stringify(current) === JSON.stringify(selection)) continue;
-    if (selection) await writeJsonAtomic(selectionPath(stackBaseDir, component), selection);
-    else await rm(selectionPath(stackBaseDir, component), { force: true });
+  const restored = [];
+  for (const { component, path, selection } of changes) {
+    if (selection) await writeJsonAtomic(path, selection);
+    else await rm(path, { force: true });
     restored.push(component);
   }
   if (record.homeBindings?.length) {

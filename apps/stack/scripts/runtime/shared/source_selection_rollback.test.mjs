@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
 import { readSourceSelectionRollbackPaths, recordSourceSelectionRollback, restoreSourceSelectionRollback,
@@ -41,6 +41,33 @@ test('a reload restores the selection it replaced, and only while that revision 
   await rm(incumbentServer);
   await assert.rejects(restoreSourceSelectionRollback({ stackBaseDir }), { code: 'ESOURCEROLLBACKUNAVAILABLE' });
   assert.notEqual((await read('server')).entrypoint, incumbentServer, 'a refused restore keeps the current selection');
+});
+
+test('stale unchanged controller selections do not block restoring the incumbent on its execution host', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-placed-source-rollback-' });
+  const controller = fixture.path('controller');
+  const target = fixture.path('target');
+  const controllerServerSelection = join(controller, 'source-runtime', 'selected-server.json');
+  const targetServerSelection = join(target, 'source-runtime', 'selected-server.json');
+  const stale = { entrypoint: fixture.path('released-controller-server.mjs') };
+  const incumbent = { entrypoint: fixture.path('incumbent-server.mjs') };
+  const replacement = { entrypoint: fixture.path('replacement-server.mjs') };
+  await mkdir(dirname(controllerServerSelection), { recursive: true });
+  await mkdir(dirname(targetServerSelection), { recursive: true });
+  await writeFile(incumbent.entrypoint, '');
+  await writeFile(replacement.entrypoint, '');
+  await writeFile(controllerServerSelection, JSON.stringify(stale));
+  await writeFile(targetServerSelection, JSON.stringify(incumbent));
+
+  await recordSourceSelectionRollback({ stackBaseDir: controller });
+  await recordSourceSelectionRollback({ stackBaseDir: target });
+  await writeFile(targetServerSelection, JSON.stringify(replacement));
+
+  // The controller restores its own changes before dispatching restore to the target.
+  assert.deepEqual(await restoreSourceSelectionRollback({ stackBaseDir: controller }), []);
+  assert.deepEqual(await restoreSourceSelectionRollback({ stackBaseDir: target }), ['server']);
+  assert.deepEqual(JSON.parse(await readFile(controllerServerSelection, 'utf8')), stale);
+  assert.deepEqual(JSON.parse(await readFile(targetServerSelection, 'utf8')), incumbent);
 });
 
 // P03 ORCH 2026-11-18: a shared-database stack's replacement re-establishes its CLI profiles on
