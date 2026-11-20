@@ -31,8 +31,7 @@ import type {
   ProviderSpawnAuthorizationResult,
 } from './resolve';
 import {
-  resolveProviderSpawnAuthorization,
-  resolveProviderSpawnSelection,
+  prepareProviderSpawnAuthorization,
   resolveProviderSpawnDefinitiveRejection,
   selectProviderSpawnRoleModels,
   type ResolveProviderSpawnAuthorizationInput,
@@ -788,7 +787,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     const runtimeModelDescriptor =
       remotePlacement ? runtimeModelObservation?.model ?? null
         : input.runtimeModelDescriptor ?? runtimeModelObservation?.model ?? null;
-    const authorizationInput: Parameters<typeof resolveProviderSpawnSelection>[0] = {
+    const authorizationInput: Parameters<typeof prepareProviderSpawnAuthorization>[0] = {
       selection: input.selection,
       ...(input.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: input.sessionConfigOptionOverrides } : {}),
       machineId: input.machineId,
@@ -813,27 +812,18 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
         ? { runtimeCatalogSnapshotExists: true }
         : {}),
     };
-    const admissionCredential = connectionResolution.status === 'resolved'
-      ? connectionResolution.record.source.kind === 'contribution'
-        ? connectionResolution.record.source.definition.credential : connectionResolution.record.source.template.credential
-      : undefined;
-    if (admissionCredential?.transports.some(transport => transport.additionalCredentials?.length)
-      && connectionResolution.status === 'resolved' && connectionResolution.record.deployment.kind === 'external') {
-      const selection = resolveProviderSpawnSelection(authorizationInput);
-      if (!selection.ok) return selection;
-      const additionalCredentials = selection.selection.selectedCredentialTransport?.additionalCredentials;
-      if (additionalCredentials?.length) {
-        const admitted = await admitRuntimeProviderSavedSecret({
-          connection: connectionResolution.record, providerSettings, snapshot, getAccountSettingsSnapshot,
-          lifetime: admissionLifetime, additionalCredentials,
-          ...(admittedSavedSecretCatalog ? { admittedPrimaryCredential: admittedSavedSecretCatalog } : {}),
-          ...(input.savedSecretOperationContext ? { operationContext: input.savedSecretOperationContext } : {}),
-        });
-        if (!admitted.ok) return admitted;
-        snapshot = admitted.snapshot;
-      }
+    const prepared = prepareProviderSpawnAuthorization(authorizationInput);
+    if (!prepared.ok) return prepared;
+    if (prepared.companion) {
+      const admitted = await admitRuntimeProviderSavedSecret({
+        ...prepared.companion, providerSettings, snapshot, getAccountSettingsSnapshot, lifetime: admissionLifetime,
+        ...(admittedSavedSecretCatalog ? { admittedPrimaryCredential: admittedSavedSecretCatalog } : {}),
+        ...(input.savedSecretOperationContext ? { operationContext: input.savedSecretOperationContext } : {}),
+      });
+      if (!admitted.ok) return admitted;
+      snapshot = admitted.snapshot;
     }
-    const authorization = resolveProviderSpawnAuthorization({ ...authorizationInput,
+    const authorization = prepared.authorize({
       accountSettings: snapshot.settings, savedSecretResources: snapshot.savedSecretResources,
       savedSecretMaterializer: createSavedSecretMaterializerFromSnapshotV1(snapshot, {
         isCurrent: () => !admissionLifetime.signal?.aborted,

@@ -1064,13 +1064,49 @@ export function resolveProviderSpawnSelection(
     modelNameCatalog, model, modelSettings, compatibility, compatibilityResult, selectedCredentialTransport } };
 }
 
+type ProviderSpawnCredentialInput = Pick<ResolveProviderSpawnAuthorizationInput,
+  'accountSettings' | 'savedSecretResources' | 'savedSecretMaterializer'>;
+
+/** Retain the model and transport choice across acquisition of their companion material. */
+export function prepareProviderSpawnAuthorization(input: Parameters<typeof resolveProviderSpawnSelection>[0]) {
+  const resolved = resolveProviderSpawnSelection(input);
+  if (!resolved.ok) return resolved;
+  const { record, selectedCredentialTransport, errorContext } = resolved.selection;
+  const companion = record.deployment.kind === 'external' && selectedCredentialTransport?.additionalCredentials?.length
+    ? { connection: record, additionalCredentials: selectedCredentialTransport.additionalCredentials }
+    : null;
+  return {
+    ok: true as const,
+    companion,
+    authorize(credentials: ProviderSpawnCredentialInput): ProviderSpawnAuthorizationResult {
+      if (companion) {
+        // Companion acquisition can yield. Keep the same adapter-generation check at that boundary.
+        try {
+          if (!readLeasedAgentProviderBindingAdapter({ lease: input.lease, agentId: input.agentId })) {
+            return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext) };
+          }
+        } catch (error) {
+          return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', errorContext, error) };
+        }
+      }
+      return completeProviderSpawnAuthorization({ ...input, ...credentials }, resolved.selection);
+    },
+  };
+}
+
 export function resolveProviderSpawnAuthorization(
   input: ResolveProviderSpawnAuthorizationInput,
 ): ProviderSpawnAuthorizationResult {
   const resolved = resolveProviderSpawnSelection(input);
-  if (!resolved.ok) return resolved;
+  return resolved.ok ? completeProviderSpawnAuthorization(input, resolved.selection) : resolved;
+}
+
+function completeProviderSpawnAuthorization(
+  input: ResolveProviderSpawnAuthorizationInput,
+  selection: Extract<ProviderSpawnSelectionResult, { ok: true }>['selection'],
+): ProviderSpawnAuthorizationResult {
   const { connectionId, providerSettings, record, authorization: connectionAuthorization, errorContext, adapter, facts, modelNameCatalog, model,
-    modelSettings, compatibility, compatibilityResult, selectedCredentialTransport } = resolved.selection;
+    modelSettings, compatibility, compatibilityResult, selectedCredentialTransport } = selection;
   if (record.deployment.kind === 'managedLocal') {
     const managedPurposeBindingSnapshot = input.managedPurposeBindingSnapshot;
     const contributionSource = record.source.kind === 'contribution'

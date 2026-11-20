@@ -653,7 +653,7 @@ describe('provider spawn authorization resolver', () => {
       ].sort());
     };
     // These spies observe the real admission and model owner; no internal result is replaced.
-    const resolutions = vi.spyOn(spawnResolution, 'resolveProviderSpawnAuthorization');
+    const selections = vi.spyOn(spawnResolution, 'prepareProviderSpawnAuthorization');
     const projections = vi.spyOn(runtimeCatalog, 'resolveProviderRuntimeCatalogSelectionObservation');
     const resolveAddresses = vi.fn(async () => renamed === 'named-private Machine' || renamed === 'legacy Machine' ? ['10.0.0.1'] : ['1.1.1.1']);
     const cancellation = new AbortController();
@@ -708,7 +708,7 @@ describe('provider spawn authorization resolver', () => {
           .not.toMatch(/admitted-(?:provider|companion)-value/u);
       }
       expect(await result.attempt.revalidateBeforeCommit()).toEqual({ ok: true });
-      expect(resolutions).toHaveBeenCalledTimes(1);
+      expect(selections).toHaveBeenCalledTimes(1);
       expect(projections).toHaveBeenCalledTimes(1);
       if (renamed === 'legacy Machine') expect(resolveAddresses).toHaveBeenCalledTimes(1);
       else expect(resolveAddresses).not.toHaveBeenCalled();
