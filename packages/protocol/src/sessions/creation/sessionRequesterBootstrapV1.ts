@@ -422,7 +422,7 @@ export function isManagedControllerCodecActionV1(binding: Readonly<{
 
 /** Account roots and reviewed Setup leaves carry this codec; ordinary PAT roots use their own transport. */
 export function isManagedControllerCodecRootV1(binding: ExternalActionExecutionAuthorizationV1['binding']): boolean {
-  return isManagedControllerCodecActionV1(binding)
+  return binding.requesterOperationRead === true || isManagedControllerCodecActionV1(binding)
     && ('authentication' in binding || isReviewedMachineSetupCodecV1(binding));
 }
 

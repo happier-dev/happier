@@ -130,6 +130,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
         controller: binding.sessionPresetAcquisition.controller } : undefined, input.envelope.sessionSpawnAdmission?.managedPresetAcquisition)) return false;
     return binding.actionId === input.actionId && binding.machineId === input.machineId
       && binding.requestId === input.envelope.requestId
+      && binding.requesterOperationRead === (input.envelope.v === 2 ? input.envelope.requesterOperationRead : undefined)
       && binding.idempotencyKey === input.envelope.idempotencyKey
       && (input.envelope.v !== 2 || binding.machineRuntimeDemand === input.envelope.machineRuntimeDemand)
       && (input.envelope.target?.kind === 'session'

@@ -149,6 +149,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
     type ManagedActivityRpcRequestV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { ManagedControllerCurrentnessV1Schema, type ManagedControllerCurrentnessV1, ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from '@/app/machines/managed/managedRows';
 import { MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -379,6 +380,7 @@ type ExternalActionExecutionMachineAdmissionInput = ExternalActionManagedAdmissi
         workflowAdmission?: WorkflowExternalActionAdmission;
         managedCreationAdmission?: ManagedCreationChildAdmission;
         capturedMachineAdmission?: SocketRpcMachineAdmissionContextV1;
+        requesterOperationRead?: true;
         nativePurpose?: 'machine_npm_profile_acquisition';
         carrier?: 'select' | 'home_relay';
     }>;
@@ -440,6 +442,23 @@ async function resolveExternalActionExecutionMachineAccessInTx(
         return admitted ? { ...admitted, role: binding.admittedMachineRole } : { kind: 'denied', code: 'machine_unavailable' };
     }
     const native = input.executionBinding;
+    if (input.requesterOperationRead || native?.requesterOperationRead) {
+        // This selects an installed carrier only. The operation store is the
+        // authority on whether this requester can read the encrypted operand.
+        const machine = await reader.machine.findUnique({ where: { id: input.machineId }, select: {
+            accountId: true, kind: true, installationId: true, revokedAt: true, replacedByMachineId: true,
+            account: { select: { encryptionMode: true } },
+        } });
+        const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
+        if (input.actionId !== ACTION_OPERATION_GET_ACTION_ID_V1 || !machine?.installationId || mode?.status !== 'ready'
+            || classifyMachineAvailabilityState(machine) !== 'available'
+            || machine.kind === 'ephemeral_session_runner' && machine.accountId !== input.actorAccountId
+            || native && (native.actionId !== input.actionId || native.accountId !== input.actorAccountId
+                || native.machineId !== input.machineId || native.custodianAccountId !== machine.accountId
+                || native.installationId !== machine.installationId)) return { kind: 'denied', code: 'machine_unavailable' };
+        return { kind: 'admitted', actorAccountId: input.actorAccountId, machineId: input.machineId, role: 'use',
+            custodianAccountId: machine.accountId, installationId: machine.installationId, encryptionMode: mode.mode };
+    }
     if (native?.managedContinuation && input.actionId === native.actionId && input.actorAccountId === native.accountId
         && input.machineId === native.machineId) {
         const admitted = input.managedCreationAdmission ? readSelectedManagedCreationChildAdmission(input.managedCreationAdmission, native)
@@ -1769,6 +1788,8 @@ async function verifyCommon(
     if (!binding) return refuseExternalActionExecutionRequest('authorization_token', proof);
     const refuse =(phase: ExternalActionAuthorizationRefusalPhase) => refuseExternalActionExecutionRequest(phase, proof, undefined,
         { rootActionId: binding.actionId, effectActionId: effectActionId.data });
+    if (binding.requesterOperationRead && (effectActionId.data !== binding.actionId || proof.method !== 'POST'
+        || proof.path !== bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId))) return refuse('verification_purpose');
     if (!isExternalActionResolvedTargetAllowedV1({
         authorizedTarget: binding.target,
         resolvedTarget: target,
@@ -5139,7 +5160,7 @@ export async function verifyExternalActionMachineRpcExecution(
         onRefusal?: ExternalActionExecutionRequestProof['onRefusal'];
         resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'] }>,
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
-    if (!request.requestId) return null;
+    if (!request.requestId || execution.authorization.binding.requesterOperationRead) return null;
     if (request.workspaceSyncSeedRouting) {
         if (execution.managedAdmission !== undefined || execution.deploymentChildRouting || execution.deploymentChildExecution
             || request.paramsPresent !== undefined || request.paramsDigest !== undefined || request.originalActionEnvelope

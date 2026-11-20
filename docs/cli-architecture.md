@@ -1679,6 +1679,17 @@ Open reports that exact initial prerequisite refusal as not started; later,
 replayed or uncertain failures retain their existing effect/outcome classification.
 No background requester controller or custodian-credential fallback is implied.
 
+### Reading an admitted operation (unreleased 0.3)
+
+The requester can open `action.operations.get` with the retained Home, Machine
+and operation id. Home routes the signed Account request to the current
+installation and the daemon's operation owner looks up the snapshot under that
+requester's Account. Another Account receives `not_found` for the same address.
+The requester read uses a per-invocation sealed codec. It needs no grant on
+the executor Machine or access to its content keys. This transport is scoped
+to a single operation read and requires the current 0.3 Home and daemon.
+0.2 Homes retain the ordinary Machine RPC read.
+
 ### Presented workspace observation (0.3 development)
 
 Presented Session composers, Git panes and Reviews, and Project Changes/Git

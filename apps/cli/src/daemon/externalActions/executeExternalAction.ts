@@ -329,6 +329,7 @@ async function executeExternalActionRequest(input: Readonly<{
   let requesterContext: Awaited<ReturnType<PrepareExternalActionRequesterAccountContext>> = null;
   const managedControllerCodec = executionAuthorization?.success
     && (executionAuthorization.data.binding.accountId !== executionAuthorization.data.binding.custodianAccountId
+      || executionAuthorization.data.binding.requesterOperationRead
       || isReviewedMachineSetupCodecV1(executionAuthorization.data.binding))
     && isManagedControllerCodecRootV1(executionAuthorization.data.binding);
   let envelopeCodecMaterial: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | null = null;
@@ -339,6 +340,11 @@ async function executeExternalActionRequest(input: Readonly<{
   let rootAdmittedTarget: ExternalActionTargetV1 | undefined;
   if (managedControllerCodec && executionAuthorization?.success) {
     const authorization = executionAuthorization.data;
+    if (authorization.binding.requesterOperationRead && (envelope.data.v !== 2 || !envelope.data.requesterOperationRead
+      || input.machineAdmission?.actorAccountId !== authorization.binding.accountId
+      || input.machineAdmission.installationId !== authorization.binding.installationId)) {
+      return { kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope', requestId: envelope.data.requestId };
+    }
     const current = await runExternalActionPhase('managed_controller_codec_currentness', input.currentMachineId, () =>
       input.verifyExecutionAuthorization!({ authorization, effectActionId: actionId.data,
         target: authorization.binding.target, ...(input.signal ? { signal: input.signal } : {}) }));

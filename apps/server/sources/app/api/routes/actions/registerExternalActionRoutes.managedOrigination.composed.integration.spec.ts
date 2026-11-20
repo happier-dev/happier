@@ -1,5 +1,8 @@
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
+import { readRequesterActionOperationV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
@@ -27,7 +30,7 @@ import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
-import { ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1, managedWorkspaceAttachmentIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcceptedV1Schema, ManagedAcquireInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControlAdmissionInputV1Schema, ManagedControllerSubmitOutputV1Schema, managedMachineActionEndpointPathV1, managedWorkspaceAttachmentIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { resolveManagedMachineEnrollmentAgentIsolationV1 } from '@happier-dev/protocol/machines/managed/enrollmentIdentityV1';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -1422,10 +1425,12 @@ describe('composed CLI managed Action origination', () => {
     ] as const)('consumes only admitted delegation with custodian credentials under approval policy ($mode, $surface, delegated=$delegated)', async ({ mode, delegated, surface }) => {
         const selected = await fixture(true);
         const requester = await fixture(true, mode);
+        const otherMember = mode === 'e2ee' ? await fixture(true, mode) : null;
         const team = await db.team.create({ data: { name: 'Reviewed Team compute' } });
         await db.teamMembership.createMany({ data: [
             { teamId: team.id, accountId: selected.account.id, role: 'owner' },
             { teamId: team.id, accountId: requester.account.id, role: 'member' },
+            ...(otherMember ? [{ teamId: team.id, accountId: otherMember.account.id, role: 'member' as const }] : []),
         ] });
         if (!delegated) await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
             accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
@@ -1467,6 +1472,9 @@ describe('composed CLI managed Action origination', () => {
                 binding, material, input, randomBytes: tweetnacl.randomBytes });
         let nativeEffects = 0;
         let artifactWrites = 0;
+        const operations = createHostActionOperationRuntime({ machineId: target.machineId,
+            custodyBinding: { serverId: homeId, installationId: selected.controller.installationId },
+            resolveAccountId: async () => selected.account.id });
         const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
             serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl,
             runtimeActionMachineId: selected.controller.machineId,
@@ -1484,18 +1492,34 @@ describe('composed CLI managed Action origination', () => {
                     expectedIntentRevision: 0, requestId: binding.requestId, controller: selected.controller },
                 ManagedControllerSubmitOutputV1Schema);
                 nativeEffects++;
+                if (otherMember) {
+                    expect(context.machineAdmission?.actorAccountId).toBe(requester.account.id);
+                    const observed = await operations.observeExecution({ actionId, input, rpcContext: context, actionContext: context,
+                        actionRequestId: binding.requestId, execute: async ({ operationAcceptance }) => {
+                            if (!operationAcceptance) throw new Error('Missing operation observer');
+                            const result = { managedId: row.id, operation: { operationId: operationAcceptance.operationId } };
+                            operationAcceptance.accept(result);
+                            return { ok: true, result };
+                        } });
+                    if (!observed.ok) throw new Error(observed.errorCode);
+                    return observed.result;
+                }
                 return { managedId: row.id };
             },
         });
         const instance = await app(async request => {
             const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
             expect(request.targetUserId).toBe(selected.account.id);
-            expect(admitted.executionAuthorization?.binding).toMatchObject({ accountId: requester.account.id,
+            const read = admitted.actionId === ACTION_OPERATION_GET_ACTION_ID_V1;
+            expect(admitted.executionAuthorization?.binding).toMatchObject({
+                accountId: admitted.principal.accountId,
                 custodianAccountId: selected.account.id });
+            if (!read) expect(admitted.principal.accountId).toBe(requester.account.id);
             const result = await executeExternalAction({ ...admitted, executor: receiver,
                 currentAccountId: selected.account.id, currentMachineId: selected.controller.machineId,
                 currentInstallationId: selected.controller.installationId, currentServerId: homeId,
                 currentServerHttpBaseUrl: serverHttpBaseUrl, externalActionMachineRequestPrivateKey: selected.keys.secretKey,
+                ...(request.machineAdmission ? { machineAdmission: request.machineAdmission } : {}),
                 verifyExecutionAuthorization: request => verifyExternalActionExecutionAuthorizationCurrent({ ...request,
                     privateKey: selected.keys.secretKey, installationId: selected.controller.installationId, serverHttpBaseUrl }),
                 resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
@@ -1562,6 +1586,25 @@ describe('composed CLI managed Action origination', () => {
             await expect(auth.mintExternalActionExecutionAuthorization({ ...authorization.binding,
                 managedAcquireDelegation: true }, { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
             if (delegated) expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: target.machineId })).toBeNull();
+            if (otherMember) {
+                const operationId = execution?.ok ? ManagedAcceptedV1Schema.parse(execution.result).operation?.operationId : undefined;
+                if (!operationId) throw new Error('Missing accepted operation');
+                const address = { serverId: homeId, machineId: target.machineId, operationId, waitForTerminal: true as const };
+                const read = (member: typeof requester) => readRequesterActionOperationV1({ input: address,
+                    accountId: member.account.id, serverIdentityId: homeId, tokenEpoch: member.account.tokenEpoch,
+                    requestId: crypto.randomUUID(), randomBytes: tweetnacl.randomBytes,
+                    request: async (url, payload) => {
+                        const response = await instance.inject({ method: 'POST', url, payload,
+                            headers: { authorization: `Bearer ${member.token}` } });
+                        return { status: response.statusCode, value: response.json() };
+                    },
+                });
+                expect(await read(requester)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+                    operationId, state: 'succeeded', scope: { accountId: requester.account.id, machineId: target.machineId },
+                } } });
+                expect(await read(otherMember)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+                expect(await resolveMachineAccess({ actorAccountId: otherMember.account.id, machineId: target.machineId })).toBeNull();
+            }
         } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }
     });
 

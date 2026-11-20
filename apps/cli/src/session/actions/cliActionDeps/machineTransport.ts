@@ -3,6 +3,7 @@ import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/a
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { CliActionDepsParams } from './types';
 import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isMachineSetupCombinedActionIdV1, isOrdinaryMachineSetupNativeActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -258,10 +259,17 @@ export function createCliMachineActionTransport(
       && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST
       && managedBinding.workspaceSyncAdmission?.source.machineId === input.machineId
       && managedBinding.workspaceSyncAdmission.source.installationId === params.externalActionMachineInstallationId);
+    const originalRequester = input.context?.verifiedExternalActionRequester;
+    // The requester read spends its verified Account scope inside the installed
+    // operation store. Its carrier has no authority on the general RPC route.
+    const admittedRequesterOperationRead = managedBinding?.requesterOperationRead
+      && input.effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V2.get
+      && originalRequester && originalRequester.authorization === input.context?.externalActionExecutionAuthorization;
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
       && managedBinding.actionId === input.effectActionId
-      && (admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId));
+      && (managedBinding.requesterOperationRead ? admittedRequesterOperationRead
+        : admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding) === input.effectActionId));
     // This in-process admission was installed only after opening the exact
     // controller codec at Home. Reuse it for the two scoped reads; serializing
     // a self-RPC would lose that private receiver authority. A foreign requester
@@ -272,7 +280,6 @@ export function createCliMachineActionTransport(
       && managedBinding.actionId === input.effectActionId
       && (input.effectActionId === 'action.operations.list' && input.method === ACTION_OPERATION_RPC_METHODS_V2.list
         || input.effectActionId === 'action.operations.get' && input.method === ACTION_OPERATION_RPC_METHODS_V2.get));
-    const originalRequester = input.context?.verifiedExternalActionRequester;
     // Options admission already authorized discovery at this installed Machine.
     // Keep that original proof through the native effect gate, rather than
     // re-entering Account HTTP under the child's ungranted inventory Action.

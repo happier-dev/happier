@@ -9,6 +9,7 @@ import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChil
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
 import { ACTION_INVOKE_ACTION_ID_V1, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, WorkflowActionIdV1Schema, isProjectSessionDefaultsPreparationReadActionIdV1, isSessionSpawnHomeDefaultsReadEffectV1 } from './actionIds.js';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from './operations/actionIdsV1.js';
 import { ProjectSessionDefaultsAdmissionV1Schema, ProjectSessionDefaultsContextSelectionV1Schema, ProjectSessionDefaultsGetInputV1Schema, type ProjectSessionDefaultsAdmissionV1 } from '../projects/projectSessionDefaultsSelectionV1.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
 import { SessionInitialAccessDraftV1Schema } from '../sessions/access/sessionInitialAccessDraftV1.js';
@@ -981,6 +982,8 @@ export function projectExternalActionApprovalDecisionAdmissionV1(input: unknown)
 /** V2 is closed at every routing and encryption boundary; content is opaque. */
 export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(2), requestId: ExternalActionRequestIdV1Schema,
+  /** Requester-scoped Get opens with an invocation key instead of Machine content material. */
+  requesterOperationRead: z.optional(z.literal(true)),
   /** Non-content Browser Session operand; checked against the sealed command on open. */
   browserSessionId: z.optional(ExternalActionTargetIdV1Schema),
   /** Declaration-derived pre-effect runtime demand; private operands remain sealed. */
@@ -1429,6 +1432,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
       rootRequestEnvelopeDigest: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
     })),
     accountEncryptionMode: z.optional(AccountEncryptionModeSchema),
+    requesterOperationRead: z.optional(z.literal(true)),
     sessionActionOrigin: z.optional(SessionActionRpcOriginV1Schema),
     sessionActionSource: z.optional(ExternalActionSessionSourceV1Schema),
     workflowActionOrigin: z.optional(ExternalActionWorkflowOriginV1Schema),
@@ -1453,6 +1457,14 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionAccountServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(z.omit(ExternalActionTerminalServerPrincipalV1Schema, { authority: true }), externalActionExecutionAuthorizationRoutingShapeV1())),
 ]).check(z.superRefine((value, context) => {
+  if (value.requesterOperationRead && (!('authentication' in value) || value.authentication.kind !== 'account'
+    || value.actionId !== ACTION_OPERATION_GET_ACTION_ID_V1 || value.target.kind !== 'machine'
+    || value.target.machineId !== value.machineId || value.target.project || value.admittedMachineRole
+    || value.managedAdmission || value.environmentId
+    || value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin || value.managedContinuation
+    || value.handoffAdmission)) {
+    context.addIssue({ code: 'custom', path: ['requesterOperationRead'], message: 'Requester custody binds only the exact Account operation read' });
+  }
   const publication = value.deploymentCandidatePublication;
   if (publication?.reviewed && (!isDeploymentRolloutActionIdV1(value.actionId)
     || publication.reviewed.contentArtifactId !== publication.contentArtifactId
@@ -1634,6 +1646,8 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
   })),
   /** Private installed-key custody on this same carrier; never principal authority. */
   requesterAccountContext: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
+  /** Public recipient key for the invocation codec. Never a Machine content key. */
+  requesterOperationReadInstallationPublicKey: z.optional(MachineInstallationPublicKeySchema),
   /** Home-proved finite placement hint and private custody; neither retargets the root. */
   managedFiniteWake: z.optional(z.strictObject({
     target: ManagedWakeTargetV1Schema,
@@ -1643,6 +1657,9 @@ export const ExternalActionExecutionAuthorizationV1Schema = lazyZodSchema(() => 
     requesterAccountContext: z.optional(SessionRequesterInstallationSealedBootstrapV1Schema),
   })),
 }).check(z.superRefine((value, context) => {
+  if (value.requesterOperationReadInstallationPublicKey && !value.binding.requesterOperationRead) {
+    context.addIssue({ code: 'custom', path: ['requesterOperationReadInstallationPublicKey'], message: 'Expected the requester operation read carrier' });
+  }
   const wake = value.managedFiniteWake;
   if (!wake) return;
   const root = value.binding;

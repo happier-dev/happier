@@ -94,7 +94,8 @@ import { agentRoutingIdAddressesContributionIdentityV1 } from '@happier-dev/prot
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, listApprovalArtifactsV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { StoredApprovalRequestSchema, readApprovalRequesterDecisionV1, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { verifyExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { readOriginalAccountActionMachine } from '@/sync/api/externalActionAccountTransport';
+import { readOriginalAccountActionMachine, readOriginalAccountRequesterOperation } from '@/sync/api/externalActionAccountTransport';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { sessionGoalGet, sessionGoalSet, sessionGoalClear } from '@/sync/ops/sessionGoals';
 import {
@@ -2697,6 +2698,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           const execution = await executeManagedMachineNativeAction({ account: accountContext, actionId, input, context,
             ...(signal ? { signal } : {}) });
           return execution.ok ? execution.result : execution;
+        }
+        if (accountContext && actionId === ACTION_OPERATION_GET_ACTION_ID_V1 && (!context.actionCaller || context.actionCaller.kind === 'host')) {
+          const execution = await readOriginalAccountRequesterOperation({ account: accountContext, actionId, input,
+            requestId: context.actionRequestId ?? randomUUID(), authority: context.authority, ...(signal ? { signal } : {}) });
+          if (execution) return execution.ok ? execution.result : execution;
         }
         return await executeActionOperationActionV1({
           actionId, input, ...(signal ? { signal } : {}),

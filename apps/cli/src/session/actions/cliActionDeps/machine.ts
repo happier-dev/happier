@@ -23,8 +23,12 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { readRequesterAccountActionContext, resolveRequesterSavedSecretActionCustody } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { randomUUID } from 'node:crypto';
+import { readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { readOriginalAccountRequesterOperation } from '@/api/externalActionExecutionAuthorization';
+
 export function createCliMachineActionDeps(
-  params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl' | 'isCredentialCurrent' | 'savedSecretOperationContext' | 'token' | 'serverId'>,
+  params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl' | 'isCredentialCurrent' | 'savedSecretOperationContext' | 'token' | 'serverId' | 'serverIdentityId'>,
   { callMachineAction, isMachineActionServerScopeCurrent, resolveServerRequestHeaders }: Readonly<{
     callMachineAction: CliMachineActionCall;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
@@ -85,21 +89,39 @@ export function createCliMachineActionDeps(
         context, effectActionId: 'machines.work.summary.get', exactMachine: true, ...(signal ? { signal } : {}) });
       return await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, read) : read());
     },
-    actionOperationAction: async ({ actionId, input, context, signal }) => executeActionOperationActionV1({
-      actionId, input, ...(signal ? { signal } : {}),
-      context: { surface: context.surface,
-        expectedAccountId: params.credentials ? readAccountIdFromToken(params.credentials.token) ?? undefined : context.expectedAccountId },
-      transport: async ({ serverId, machineId, method, payload, signal: requestSignal }) => {
-        if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
-          return { ok: false, errorCode: 'operation_transport_unavailable', error: 'An authenticated machine transport is required.' };
+    actionOperationAction: async ({ actionId, input, context, signal }) => {
+      const credentials = params.credentials;
+      const serverIdentityId = context.serverIdentityId ?? params.serverIdentityId;
+      const address = readRequesterOperationAddressV1(actionId, input);
+      if (address && credentials && serverIdentityId
+        && !context.externalActionExecutionAuthorization && !context.externalActionCredential
+        && (!context.actionCaller || context.actionCaller.kind === 'host')
+        && params.machineActionDirectTargetTransport?.machineId !== address.machineId) {
+        if (!await isMachineActionServerScopeCurrent({ ...address, context, signal })) {
+          return { ok: false, errorCode: 'server_scope_mismatch', error: 'server_scope_mismatch' };
         }
-        return await callMachineAction({ serverId, machineId, method, request: payload,
-          context, effectActionId: actionId, authority: context.authority, exactMachine: true, ...(requestSignal ? { signal: requestSignal } : {}),
-          ...(actionId === 'action.operations.get' && 'waitForTerminal' in input && input.waitForTerminal
-            ? { timeoutMs: null } : {}),
-        });
-      },
-    }),
+        const result = await readOriginalAccountRequesterOperation({ input: address, requestId: context.actionRequestId ?? randomUUID(),
+          credentials, serverIdentityId,
+          serverHttpBaseUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), authority: context.authority,
+          isCurrent: params.isCredentialCurrent, ...(signal ? { signal } : {}) });
+        if (result) return result.ok ? result.result : result;
+      }
+      return executeActionOperationActionV1({
+        actionId, input, ...(signal ? { signal } : {}),
+        context: { surface: context.surface,
+          expectedAccountId: params.credentials ? readAccountIdFromToken(params.credentials.token) ?? undefined : context.expectedAccountId },
+        transport: async ({ serverId, machineId, method, payload, signal: requestSignal }) => {
+          if (!params.credentials && params.machineActionDirectTargetTransport?.machineId !== machineId) {
+            return { ok: false, errorCode: 'operation_transport_unavailable', error: 'An authenticated machine transport is required.' };
+          }
+          return await callMachineAction({ serverId, machineId, method, request: payload,
+            context, effectActionId: actionId, authority: context.authority, exactMachine: true, ...(requestSignal ? { signal: requestSignal } : {}),
+            ...(actionId === 'action.operations.get' && 'waitForTerminal' in input && input.waitForTerminal
+              ? { timeoutMs: null } : {}),
+          });
+        },
+      });
+    },
     machinePageAction: async ({ actionId, input, context }) => {
       if (actionId === MACHINE_CAPABILITIES_DETECT_ACTION_ID) {
         const { machineId, serverId } = input;

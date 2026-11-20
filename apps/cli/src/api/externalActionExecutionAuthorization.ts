@@ -46,6 +46,7 @@ import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkf
 import { projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1, projectDeploymentPreparationAdmissionV1,
   projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { readRequesterActionOperationV1, readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { randomBytes } from 'node:crypto';
 
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, ExternalActionActionIdV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyResponseV1Schema, ExternalActionRequestEnvelopeSchema, externalActionTargetsEqualV1, projectExternalActionWorkflowPreparationTargetV1, bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -850,6 +851,43 @@ export async function prepareOriginalAccountPresetAcquire(
   if (!controller) return async () => ({ ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' });
   return () => dispatchOriginalAccountAction({ ...params, input: bound.input, managedPresetOrigin: bound,
     target: { kind: 'machine', machineId: controller.machineId } });
+}
+
+export function readOriginalAccountRequesterOperation(params: Readonly<{
+  input: NonNullable<ReturnType<typeof readRequesterOperationAddressV1>>;
+  credentials: StoredCredentials;
+  serverIdentityId: string;
+  serverHttpBaseUrl: string;
+  requestId: string;
+  authority?: ActionExecutorContext['authority'];
+  isCurrent?: () => boolean | Promise<boolean>;
+  signal?: AbortSignal;
+}>): Promise<ActionExecuteResult | null> {
+  const claims = decodeJwtPayload(params.credentials.token);
+  const provenance = readAuthTokenProvenance(claims, { allowLegacyHome: false });
+  const accountId = readAccountIdFromToken(params.credentials.token);
+  const extras = claims && typeof claims.extras === 'object' && claims.extras !== null && !Array.isArray(claims.extras)
+    ? claims.extras as Readonly<Record<string, unknown>> : {};
+  const authentication = ExternalActionSignedAuthenticationV1Schema.safeParse({ kind: 'account', tokenEpoch: claims?.tokenEpoch ?? extras.tokenEpoch });
+  if (!accountId || provenance?.provenance.kind !== 'account' || provenance.provenance.authority !== 'present_user'
+    || !authentication.success) return Promise.resolve(null);
+  const home = normalizeServerHttpBaseUrl(params.serverHttpBaseUrl);
+  const headers = { Authorization: `Bearer ${params.credentials.token}`, 'Content-Type': 'application/json',
+    ...(params.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) };
+  const assertCurrent = async () => {
+    params.signal?.throwIfAborted();
+    if (params.isCurrent && !await params.isCurrent()) throw new Error('not_authenticated');
+  };
+  return readRequesterActionOperationV1({ input: params.input, accountId, serverIdentityId: params.serverIdentityId,
+    tokenEpoch: authentication.data.tokenEpoch, requestId: params.requestId, randomBytes,
+    request: async (path, body) => {
+      await assertCurrent();
+      const response = await axios.post<unknown>(`${home}${path}`, body, { headers, validateStatus: () => true,
+        ...(params.input.waitForTerminal ? { timeout: 0 } : {}), ...(params.signal ? { signal: params.signal } : {}) });
+      await assertCurrent();
+      return { status: response.status, value: response.data };
+    },
+  });
 }
 
 export function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly: true }>): Promise<ActionExecuteResult | null>;

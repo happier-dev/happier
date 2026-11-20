@@ -24,6 +24,8 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { parseTokenPayload } from '@/utils/auth/parseToken';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { readRequesterActionOperationV1, readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { MachinePublishedRowV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
@@ -69,6 +71,38 @@ export function readOriginalAccountActionAuthentication(token: string) {
     const authentication = ExternalActionAccountAuthenticationV1Schema.safeParse({ kind: 'account', tokenEpoch: claims.tokenEpoch ?? extras.tokenEpoch });
     return provenance?.provenance.kind === 'account' && provenance.provenance.authority === 'present_user' && authentication.success
         ? authentication.data : null;
+}
+
+export async function readOriginalAccountRequesterOperation(params: Readonly<{
+    account: LazyActionAccountContext;
+    actionId: string;
+    input: unknown;
+    requestId: string;
+    authority?: ActionRequiredAuthority;
+    signal?: AbortSignal;
+}>): Promise<ActionExecuteResult | null> {
+    const { account } = params;
+    if (!account.serverIdentityId || account.credentialAuthorityKind !== 'account') return null;
+    const input = readRequesterOperationAddressV1(params.actionId, params.input);
+    if (!input) return null;
+    if (input.serverId !== account.serverIdentityId && !areServerProfileIdentifiersEquivalent(account.serverId, input.serverId)) {
+        return failure('server_scope_mismatch');
+    }
+    const authentication = readOriginalAccountActionAuthentication(account.credentials.token);
+    if (!authentication) return null;
+    const serverIdentityId = account.serverIdentityId;
+    return withActionAccountRequestSignal(account, params.signal, signal => readRequesterActionOperationV1({
+        input, accountId: account.accountId, serverIdentityId, tokenEpoch: authentication.tokenEpoch,
+        requestId: params.requestId, randomBytes: getRandomBytes,
+        request: async (path, body) => {
+            const response = await account.request(path, { method: 'POST', headers: { 'Content-Type': 'application/json',
+                ...(params.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) },
+                body: JSON.stringify(body), ...(signal ? { signal } : {}) }, { includeAuth: true, retry: 'none' });
+            const value: unknown = await response.json().catch(() => undefined);
+            account.assertCurrent();
+            return { status: response.status, value };
+        },
+    }));
 }
 
 function projectActionMachine(source: (Pick<MachinePublishedRowV1, 'id' | 'kind' | 'active' | 'revokedAt' | 'replacedByMachineId'

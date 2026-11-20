@@ -6,6 +6,7 @@ import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_
 import { readExternalActionRequestPrincipal } from './requestPrincipal';
 import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { isNewDeploymentOrBotWorkEnabled } from './actionFeatureAdmission';
 import { isManagedPresentUser } from '@/app/machines/managed/managedRequestAuthority';
 import { Buffer } from "node:buffer";
@@ -787,6 +788,15 @@ export function registerExternalActionRoutes(
             // minted root belongs to B's installation, never to A's private key.
             const receivingMachineId = body.data.workflowActionOrigin && target.kind === 'machine'
                 ? target.machineId : body.data.machineId;
+            const requesterOperationRead = body.data.envelope.v === 2 && body.data.envelope.requesterOperationRead;
+            if (requesterOperationRead && (actionId.data !== ACTION_OPERATION_GET_ACTION_ID_V1
+                || !('authentication' in principal) || principal.authentication.kind !== 'account'
+                || body.data.envelope.pluginInvocation
+                || managedAdmission || deploymentNativeAdmission || deploymentMetadataEnvironmentId
+                || target.kind !== 'machine' || target.machineId !== receivingMachineId || target.project
+                || body.data.sessionActionOrigin || body.data.workflowActionOrigin || continuation || handoffAdmission)) {
+                return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
+            }
             if (actionId.data === 'machines.managed.credentials.install'
                 && (managedAdmission?.actionId !== 'machines.managed.credentials.install'
                     || !await prepareManagedCredentialDeliveryForAction(app, {
@@ -804,6 +814,7 @@ export function registerExternalActionRoutes(
                 ? await resolveMachineAdmission({ actorAccountId: principal.accountId, machineId: receivingMachineId })
                 : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: principal.accountId,
                     machineId: receivingMachineId, actionId: actionId.data, envelope: body.data.envelope, carrier: 'select',
+                    ...(requesterOperationRead ? { requesterOperationRead } : {}),
                     ...(workflowAdmission ? { workflowAdmission } : {}),
                     ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
                     ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
@@ -846,7 +857,8 @@ export function registerExternalActionRoutes(
                     serverIdentityId: homeId,
                     ...provenance,
                     machineId: receivingMachineId,
-                    ...('role' in admission ? { admittedMachineRole: admission.role } : {}),
+                    ...(requesterOperationRead ? { requesterOperationRead }
+                        : 'role' in admission ? { admittedMachineRole: admission.role } : {}),
                     ...(admission.sessionPresetAcquisition ? { sessionPresetAcquisition: admission.sessionPresetAcquisition } : {}),
                     actionId: actionId.data,
                     ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
@@ -910,6 +922,14 @@ export function registerExternalActionRoutes(
                     resolveCurrentSessionMachine: app.resolveCurrentSessionMachine });
                 const managedFiniteWake = isExternalActionManagedWakeRootV1(authorization.binding)
                     ? await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: authorization })) : null;
+                if (requesterOperationRead) {
+                    if (authorization.binding.installationId !== machine.installationId
+                        || authorization.binding.custodianAccountId !== admission.custodianAccountId) {
+                        return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
+                    }
+                    return reply.header('cache-control', 'no-store').send({ ...authorization,
+                        requesterOperationReadInstallationPublicKey: Buffer.from(machine.installationPublicKey).toString('base64url') });
+                }
                 return reply.header("cache-control", "no-store").send(managedFiniteWake
                     ? { ...authorization, managedFiniteWake } : authorization);
             } catch (error) {
