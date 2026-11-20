@@ -39,11 +39,11 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
   createExternalActionAuthorizedRequestHeaders,
   resolveExternalActionRequesterServerRequestHeaders,
   resolveExternalActionServerRequestHeaders,
-  readDeploymentReferenceServiceListEnvironmentIdV1,
   createExternalActionMachineRpcExecution,
   createExternalActionSourceMachineRpcExecution,
   readExternalActionSourceMachineRpcSigner,

@@ -3,11 +3,13 @@ import { preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture"
 import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createPrepareEnvironmentContentForHost } from '../../../../cli/src/deployments/prepareEnvironmentContentForHost';
 import { resolvePrivateServiceExportAdmissionForHost } from '../../../../cli/src/deployments/targets/ownServer/privateServiceReference';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '../../../../cli/src/api/machine/machineRpcAuthorization';
 import { createRpcHandlerManager } from '../../../../cli/src/api/rpc/RpcHandlerManager';
+import { decrypt, encrypt } from '../../../../cli/src/api/encryption';
+import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { createDaemonDeploymentActionDeps } from '../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
 import { registerDaemonDeploymentChildRpcHandler } from '../../../../cli/src/deployments/daemonDeploymentChildRpc';
 import { createOwnServerDeploymentRuntimeForHost } from '../../../../cli/src/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
@@ -119,6 +121,7 @@ import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeD
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { auth } from '@/app/auth/auth';
+import * as loginEligibility from '@/app/auth/enforceLoginEligibility';
 import { verifyExternalActionMachineRpcExecution, verifyExternalActionDomainExecutionRequest,
     isDeploymentNativeHttpPurpose, isDeploymentReadPreparation, readAdmittedFiniteOperationPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { isDeploymentPreparationHttpPurposeInTx, isDeploymentReadOperandInAdmittedScopeInTx,
@@ -1494,6 +1497,7 @@ describe('deployment children retain their controller Action authority', () => {
                     const originPort = 30080;
                     const observedService = { serviceId: service.serviceId, name: 'app', authority: 'project',
                         lifecyclePurpose: 'deployment', generation: 'current-origin', state: 'healthy',
+                        serviceExportGeneration: 'current-origin-export',
                         environmentId: reference.id, deployment, native: { phase: 'running', readiness: 'ready' },
                         health: { status: 'up', observedAtMs: Date.now(), freshness: 'current' },
                         configuration: { ports: [{ target: 3000, published: originPort, bindAddress: '127.0.0.1', protocol: 'tcp' }] },
@@ -1599,6 +1603,65 @@ describe('deployment children retain their controller Action authority', () => {
                         createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId,
                             target: authorization.binding.target, installationId: f.member.installationId, method: 'GET', path: readPath,
                             reviewedChild, deploymentChildExecution, privateKey: f.member.keys.secretKey });
+                    const callInventory = async (params: unknown) => {
+                        const requestId = crypto.randomUUID();
+                        const externalActionExecution = { v: 1, authorization: f.authorization, target,
+                            effectActionId: RPC_METHODS.MACHINES_SERVICE_LIST, installationId: f.member.installationId,
+                            reviewedChild, deploymentChildExecution: createDeploymentChildExecutionProofV1(packet),
+                            machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: f.authorization.token, target,
+                                effectActionId: RPC_METHODS.MACHINES_SERVICE_LIST, installationId: f.member.installationId,
+                                method: serviceMethod, params, requestId, reviewedChild,
+                                deploymentChildExecution: packet, event: SOCKET_RPC_EVENTS.CALL, privateKey: f.member.keys.secretKey }),
+                        };
+                        let reply: unknown;
+                        await triggerSocketHandler(sender, SOCKET_RPC_EVENTS.CALL, { method: serviceMethod,
+                            requestId, params, externalActionExecution }, result => { reply = result; });
+                        return reply;
+                    };
+                    const expectedParams = { serverId, machineId: exportHolder.machineId, environmentId: reference.id };
+                    const incorrectParams = { ...expectedParams, environmentId: f.environment.id };
+                    let holderVisits = holderTransportCalls;
+                    expect(await callInventory(incorrectParams)).toMatchObject({ ok: true,
+                        result: { errorCode: 'RPC_FORBIDDEN', effectAttempted: false } });
+                    expect(inventoryReads).toHaveLength(1);
+                    expect(holderTransportCalls).toBe(holderVisits + 1);
+                    const encryptionKey = f.controller.contentKey;
+                    const encrypted: SocketRpcContent = { mode: 'e2ee', cipher: {
+                        encryptRaw: async value => encodeBase64(encrypt(encryptionKey, 'dataKey', value)),
+                        decryptRaw: async ciphertext => decrypt(encryptionKey, 'dataKey', privacyKit.decodeBase64(ciphertext)),
+                    } };
+                    const callEncryptedInventory = async (params: typeof expectedParams) => {
+                        const callId = randomBytes(16).toString('hex');
+                        const wireParams = await socketRpcCodec.encodeParams(encrypted, params, { method: serviceMethod, callId });
+                        return socketRpcCodec.decodeResult(encrypted, await callInventory(wireParams), callId);
+                    };
+                    const metadata = privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(
+                        { host: 'Child', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/child', happyHomeDir: '/home/child/.happier' },
+                        encryptionKey)));
+                    const dataEncryptionKey = sealEncryptedDataKeyEnvelopeV1({ dataKey: encryptionKey,
+                        recipientPublicKey: f.accountKeys.publicKey, randomBytes: nacl.randomBytes });
+                    await inTx(async tx => {
+                        await tx.account.update({ where: { id: f.account.id }, data: { encryptionMode: 'e2ee',
+                            ...createSignedAccountContentBinding(f.accountKeys.publicKey) } });
+                        await tx.machine.update({ where: { id: exportHolder.machineId }, data: { metadata, dataEncryptionKey } });
+                    });
+                    holder.adoptEncryptionContext({ encryptionMode: 'e2ee', encryptionVariant: 'dataKey', encryptionKey });
+                    try {
+                        expect(await callEncryptedInventory(expectedParams)).toMatchObject({ kind: 'snapshot' });
+                        holderVisits = holderTransportCalls;
+                        expect(await callEncryptedInventory(incorrectParams)).toMatchObject({ errorCode: 'RPC_FORBIDDEN', effectAttempted: false });
+                        expect(holderTransportCalls).toBe(holderVisits + 1);
+                        expect(inventoryReads).toEqual([expectedParams, expectedParams]);
+                    } finally {
+                        holder.adoptEncryptionContext({ encryptionMode: 'plain' });
+                        await inTx(async tx => {
+                            await tx.account.update({ where: { id: f.account.id }, data: { encryptionMode: 'plain',
+                                publicKey: f.account.publicKey, contentPublicKey: f.account.contentPublicKey,
+                                contentPublicKeySig: f.account.contentPublicKeySig } });
+                            await tx.machine.update({ where: { id: exportHolder.machineId },
+                                data: { metadata: f.controller.metadata, dataEncryptionKey: f.controller.dataEncryptionKey } });
+                        });
+                    }
                     // The reviewer is on the consumer Link, and the outsider is
                     // readable by the same Account. Neither is on the source Link.
                     for (const machineId of [f.member.id, f.outsider.id]) {
@@ -1626,6 +1689,79 @@ describe('deployment children retain their controller Action authority', () => {
             }, { authentication: 'real' });
         } finally { await runtime.dispose(); }
     });
+
+    it.each([{ credential: 'account', workflowOrigin: false }, { credential: 'api', workflowOrigin: false },
+        { credential: 'account', workflowOrigin: true }] as const)(
+        'retains exact saved-reference inventory for an active Deploy without re-admission ($credential, Workflow: $workflowOrigin)',
+        async ({ credential, workflowOrigin }) => {
+            const f = await fixture('account', credential, { readableEnvironment: true, workflowOrigin });
+            const effectActionId = RPC_METHODS.MACHINES_SERVICE_LIST;
+            const { authorization } = f;
+            const actionId = 'deployments.environments.get';
+            const reviewedChild = { actionId, role: 'deployment.reference', environmentId: f.environment.id,
+                inputDigest: computeActionInputApprovalDigestV1(actionId, { serverId, environmentId: f.environment.id }) };
+            const verifyInventory = async (machineId = f.member.id) => {
+                const method = `${machineId}:${effectActionId}`;
+                const requestId = crypto.randomUUID();
+                const params = { serverId, machineId, environmentId: f.environment.id };
+                const target = authorization.binding.target;
+                const installationId = f.controller.installationId;
+                return verifyExternalActionMachineRpcExecution({ v: 1, authorization, effectActionId, target, installationId, reviewedChild,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token, reviewedChild,
+                        effectActionId, target, installationId, method, requestId, params, event: SOCKET_RPC_EVENTS.CALL,
+                        privateKey: f.controller.keys.secretKey }),
+                }, { method, requestId, params });
+            };
+            const placement = { machineId: f.member.id, installationId: f.member.installationId };
+            const accountReevaluations = vi.spyOn(auth, 'isSignedCredentialCurrent');
+            const apiReevaluations = vi.spyOn(auth, 'verifyCurrentApiTokenPrincipal');
+            const loginReevaluations = vi.spyOn(loginEligibility, 'enforceLoginEligibility');
+            const actionReevaluations = vi.spyOn(await import('@happier-dev/protocol/actions/decisionAuthority'), 'resolveCredentialActionAdmissionV1');
+            let machineAdmissionReads = 0;
+            let receiptReads = 0;
+            const stopReads = observeSqliteRequests({ before: query => {
+                if (query.model === 'Deployment' && query.action === 'findFirst') receiptReads++;
+                if (query.model !== 'Machine' || query.action !== 'findFirst' || !query.args || typeof query.args !== 'object') return;
+                const where = Reflect.get(query.args, 'where') as { id?: unknown; accountId?: unknown; installationId?: unknown } | undefined;
+                if (where?.id === authorization.binding.machineId
+                    && where?.accountId === authorization.binding.custodianAccountId
+                    && where?.installationId === authorization.binding.installationId) machineAdmissionReads++;
+            } });
+            try {
+                for (let call = 0; call < 2; call += 1) {
+                    expect(await verifyInventory()).toMatchObject({ deploymentReferenceServiceList: placement });
+                }
+                expect.soft(accountReevaluations.mock.calls.length + apiReevaluations.mock.calls.length).toBe(0);
+                expect.soft(loginReevaluations.mock.calls.length).toBe(0);
+                expect.soft(actionReevaluations.mock.calls.length).toBe(0);
+                expect.soft(machineAdmissionReads).toBe(0);
+                expect.soft(receiptReads).toBe(2);
+            } finally {
+                stopReads();
+                accountReevaluations.mockRestore();
+                apiReevaluations.mockRestore();
+                loginReevaluations.mockRestore();
+                actionReevaluations.mockRestore();
+            }
+            if ('credentialId' in authorization.binding) {
+                await auth.revokeApiToken({ accountId: f.account.id, tokenId: authorization.binding.credentialId });
+            } else {
+                await db.account.update({ where: { id: f.account.id }, data: { tokenEpoch: { increment: 1 } } });
+            }
+            expect.soft(await verifyInventory()).toMatchObject({ deploymentReferenceServiceList: placement });
+            expect(await verifyInventory(f.outsider.id)).toBeNull();
+            if (f.workflowActionOrigin) {
+                const where = { id: f.workflowActionOrigin.runId };
+                await db.automationRun.update({ where, data: { state: 'paused' } });
+                expect(await verifyInventory()).toMatchObject({ deploymentReferenceServiceList: placement });
+                await db.automationRun.update({ where, data: { state: 'cancelled' } });
+                expect(await verifyInventory()).toBeNull();
+            }
+            await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
+            expect(await verifyInventory()).toBeNull();
+            await db.deployment.delete({ where: { id: f.receipt.id } });
+            expect(await verifyInventory()).toBeNull();
+        });
 
     it('admits controller-signed saved-reference metadata and inventory during a two-Machine Deploy review', async () => {
         // DB-MOVE cutover (COR3B-DATA-1115): Environment A references B's export.

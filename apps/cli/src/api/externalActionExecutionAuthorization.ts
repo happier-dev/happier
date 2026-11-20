@@ -29,7 +29,7 @@ import { observeManagedChildApprovalExecution } from './managedChildApproval';
 import { readDeploymentTargetRetentionMachineIds } from '@/deployments/targetEnablementRetention';
 import { machineSetupPlanNeedsHomeSources } from '@/machines/setup/machineSetupPlanHomeSources';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
-  DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+  DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/projectReadinessActionIdsV1';
 import { PROJECT_SETUP_SET_ACTION_ID_V1, readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
@@ -122,7 +122,6 @@ import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
@@ -2126,17 +2125,6 @@ export async function prepareExternalActionRequesterAccountAuthorization(
   input: Parameters<typeof prepareExternalActionRequesterAccountAuthorizationWithEnvelope>[0],
 ): Promise<ExternalActionExecutionAuthorizationV1 | null> {
   return (await prepareExternalActionRequesterAccountAuthorizationWithEnvelope(input))?.authorization ?? null;
-}
-
-export function readDeploymentReferenceServiceListEnvironmentIdV1(
-  rootActionId: string | undefined,
-  effectActionId: string | undefined,
-  child: ReturnType<typeof readHostAdmittedReviewedChildHttpProofV1>,
-): string | undefined {
-  if (rootActionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 || effectActionId !== RPC_METHODS.MACHINES_SERVICE_LIST
-    || !MACHINE_SERVICE_FRONTDOOR_ACTION_IDS.includes(effectActionId)
-    || child?.actionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || child.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1) return undefined;
-  return child.environmentId;
 }
 
 /** Spend the existing requester projection without substituting an Account bearer. */

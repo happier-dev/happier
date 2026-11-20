@@ -61,10 +61,10 @@ import { doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterT
     doesWorkspaceSyncTargetRoutingMatchWriterTarget, doesWorkspaceSyncProjectSourceRequestMatchRouting,
     doesWorkspaceSyncSeedRootMatchRouting, doesWorkspaceSyncFinitePrepareRequestMatchRouting } from '@/api/machine/machineRpcAuthorization';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
-import { readDeploymentReferenceServiceListEnvironmentIdV1, resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedProjectSetupSetChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
+import { resolveExternalActionRootInvocationAuthority, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedProjectSetupSetChild, isReviewedSessionActionCreationChild, isReviewedSessionStopChild, isReviewedDeploymentChild, isReviewedSessionAgentReadinessChild, claimReviewedServiceMoveStart } from '@/api/externalActionExecutionAuthorization';
 import { readProjectSetupSetChildRpcEffectV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
-import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';

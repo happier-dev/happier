@@ -71,7 +71,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     readDeploymentEnvironmentContentPreparationHttpPurpose, readDeploymentEnvironmentSetupHttpPurpose,
     isDeploymentMoveToRepositoryHttpEffect, readDeploymentMoveToRepositoryHttpPurpose,
     readDeclaredDeploymentPreparationHttpRead, readDeploymentPreparationHttpReadPurpose, readDeploymentReferenceHttpPurpose,
-    isDeploymentReferenceServiceListChild, readDeploymentReferenceServiceListInTx,
+    readDeploymentReferenceServiceListInTx,
     isDeploymentCandidatePublicationHttpPurposeInTx,
     readReviewedDeploymentCandidateArtifactPurpose,
     isDeploymentCandidatePublicationEffect,
@@ -98,7 +98,8 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
-    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
+    readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { DeploymentEnvironmentUpdateStorageInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -1604,7 +1605,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         readArtifactId: () => readArtifactGetHttpPurpose(proof),
     }, signerAccountId, referenceReceiverMachineId);
     const deploymentReferenceServices = deploymentReferenceRead === true
-        && isDeploymentReferenceServiceListChild(binding, effectActionId, proof.reviewedChild);
+        && readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, proof.reviewedChild) !== undefined;
     const machineSetupEffect = isMachineSetupPlanOrApplyActionIdV1(effectActionId)
         || isMachineSetupCombinedActionIdV1(effectActionId) || isMachineSetupNativeCodecActionIdV1(effectActionId);
     const reviewedSessionAgentReadinessChild = readGrantedSessionAgentReadinessChild(binding, proof.reviewedChild) === effectActionId;
@@ -1746,7 +1747,7 @@ async function verifyCommon(
         if (proof.reviewedChild && ((routing?.kind !== 'member' && routing?.kind !== 'review')
             || proof.reviewedChild.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1
             || effectActionId.data !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
-                && !isDeploymentReferenceServiceListChild(packet.externalActionExecution.authorization.binding, effectActionId.data, proof.reviewedChild)))
+                && !readDeploymentReferenceServiceListEnvironmentIdV1(packet.externalActionExecution.authorization.binding.actionId, effectActionId.data, proof.reviewedChild)))
             return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         if (packet.externalActionExecution.authorization.token !== proof.authorizationToken) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const referenceReview = routing?.kind === 'review' && proof.reviewedChild !== undefined;
@@ -1772,7 +1773,7 @@ async function verifyCommon(
             resolveCurrentSessionMachine: proof.resolveCurrentSessionMachine });
         if (!verified || !routing || !(verified.binding.deploymentChildRoot === true)
             || effectActionId.data !== routing.actionId && !isDeploymentReadPreparation(verified.binding, effectActionId.data)
-                && !isDeploymentReferenceServiceListChild(verified.binding, effectActionId.data, proof.reviewedChild)
+                && !readDeploymentReferenceServiceListEnvironmentIdV1(verified.binding.actionId, effectActionId.data, proof.reviewedChild)
             || !sameStrictJsonValue(target, verified.target)) return refuseExternalActionExecutionRequest('deployment_child_http', proof);
         const receiver = admittedReadReceiver ?? await db.machine.findUnique({ where: { id: routing.machineId }, select: {
             accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
@@ -5269,7 +5270,7 @@ export async function verifyExternalActionMachineRpcExecution(
             resolvedTarget: execution.target, selectedMachineId: binding.machineId })) return null;
 
     const separator = request.method.indexOf(':');
-    if (isDeploymentReferenceServiceListChild(binding, execution.effectActionId, execution.reviewedChild)) {
+    if (readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, execution.effectActionId, execution.reviewedChild)) {
         if (separator < 1 || request.method.slice(separator + 1) !== RPC_METHODS.MACHINES_SERVICE_LIST
             || request.event !== undefined && request.event !== SOCKET_RPC_EVENTS.CALL
             || execution.authorization.requesterAccountContext !== undefined || execution.deploymentChildRouting || execution.managedAdmission
@@ -5281,7 +5282,7 @@ export async function verifyExternalActionMachineRpcExecution(
         if (packet && (packet.archiveOrigin || packet.externalActionExecution.authorization.token !== execution.authorization.token
             || !(routing?.kind === 'review' || routing?.kind === 'member' && routing.phase !== 'cleanup'))) return null;
         const signer = await db.machine.findUnique({ where: { id: routing?.machineId ?? binding.machineId }, select: {
-            accountId: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
+            accountId: true, kind: true, installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
         if (!signer?.installationPublicKey || signer.installationId !== (routing?.installationId ?? binding.installationId)
             || signer.installationId !== execution.installationId || classifyMachineAvailabilityState(signer) !== 'available'
             || !routing && signer.accountId !== binding.custodianAccountId
@@ -5299,16 +5300,21 @@ export async function verifyExternalActionMachineRpcExecution(
         const placement = await readDeploymentReferenceServiceListInTx(db, binding, execution.effectActionId,
             execution.reviewedChild, signer.accountId, request.method.slice(0, separator));
         if (!placement) return null;
-        const { installationId, encryptionMode, ...expected } = placement;
-        if (encryptionMode === 'e2ee' ? typeof request.params !== 'string' : !sameStrictJsonValue(request.params, expected)) return null;
+        const { installationId, encryptionMode, receipt } = placement;
+        // The authenticated installed receiver checks the decoded tuple in both modes.
+        if (encryptionMode === 'e2ee' && typeof request.params !== 'string') return null;
         const deploymentReferenceServiceList = { machineId: placement.machineId, installationId };
         if (parent) return { binding, effectActionId: execution.effectActionId, target: execution.target,
             principal: parent.principal, effectiveAuthority: parent.effectiveAuthority, deploymentReferenceServiceList };
-        const current = await verifyCurrentExternalActionPrincipal(binding);
-        const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
-        if (!principal || !await hasCurrentExecutionMachineAdmission(binding)
-            || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(DEPLOYMENT_DEPLOY_ACTION_ID_V1), authority: principal.authority,
-                grant: 'grant' in binding ? binding.grant : null }).ok) return null;
+        let principal = receipt && signer.kind === 'persistent'
+            ? readAdmittedFiniteOperationPrincipal(binding, undefined, receipt) : null;
+        if (!principal) {
+            const current = await verifyCurrentExternalActionPrincipal(binding);
+            principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
+            if (!principal || !await hasCurrentExecutionMachineAdmission(binding, signer)
+                || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(DEPLOYMENT_DEPLOY_ACTION_ID_V1), authority: principal.authority,
+                    grant: 'grant' in binding ? binding.grant : null }).ok) return null;
+        }
         return { binding, effectActionId: execution.effectActionId, target: execution.target, principal,
             effectiveAuthority: principal.authority, deploymentReferenceServiceList };
     }

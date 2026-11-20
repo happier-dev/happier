@@ -1,7 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import * as deploymentActionIds from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import * as managedIds from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -1717,29 +1715,21 @@ async function readCurrentDeploymentReferenceInput(tx: Tx, binding: ExternalActi
     if (child.inputDigest !== computeActionInputApprovalDigestV1(DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, input)) return null;
     // The signed root is the admission while its Deploy review renders runtime
     // bindings, before Home accepts a receipt; once accepted, the job must still run.
-    if (await readAcceptedDeploymentReceiptInTx(tx, binding, undefined,
-        { state: { notIn: deploymentInProgressStates() } })) return null;
+    const receipt = await readAcceptedDeploymentReceiptInTx(tx, binding);
+    if (receipt && !deploymentInProgressStates().includes(receipt.state)) return null;
     if (signerAccountId !== binding.accountId && !(await loadDeploymentEnvironmentInTx(tx, signerAccountId,
         binding.serverIdentityId, child.environmentId)).ok) return null;
-    return input;
-}
-
-export function isDeploymentReferenceServiceListChild(binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'actionId'>,
-    effectActionId: string, child: ReviewedActionChildHttpProofV1 | undefined): boolean {
-    return binding.actionId === deploymentActionIds.DEPLOYMENT_DEPLOY_ACTION_ID_V1
-        && effectActionId === RPC_METHODS.MACHINES_SERVICE_LIST && MACHINE_SERVICE_FRONTDOOR_ACTION_IDS.includes(effectActionId)
-        && child?.actionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1
-        && child.role === deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && Boolean(child.environmentId);
+    return { input, receipt };
 }
 
 /** Service inventory is narrower than the reference's metadata and artifact reads. */
 export async function readDeploymentReferenceServiceListInTx(tx: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1, effectActionId: string, child: ReviewedActionChildHttpProofV1 | undefined,
     signerAccountId: string, machineId: string) {
-    if (!isDeploymentReferenceServiceListChild(binding, effectActionId, child)) return null;
-    const input = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
-    if (!input) return null;
-    const { environmentId, serverId } = input;
+    if (!deploymentActionIds.readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) return null;
+    const reference = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
+    if (!reference) return null;
+    const { environmentId, serverId } = reference.input;
     const environment = await loadDeploymentEnvironmentInTx(tx, binding.accountId, serverId, environmentId);
     if (!environment.ok || environment.row.deletedAt || !environment.row.runtimeTargetLinkId) return null;
     const member = await tx.deploymentTargetLinkMachine.findFirst({ where: { targetLinkId: environment.row.runtimeTargetLinkId,
@@ -1748,7 +1738,7 @@ export async function readDeploymentReferenceServiceListInTx(tx: Tx,
         select: { installationId: true, machine: { select: { installationId: true, account: { select: { encryptionMode: true } } } } } });
     if (!member || member.machine.installationId !== member.installationId) return null;
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(member.machine.account);
-    return mode.status === 'ready' ? { serverId, environmentId, machineId, installationId: member.installationId, encryptionMode: mode.mode } : null;
+    return mode.status === 'ready' ? { machineId, installationId: member.installationId, encryptionMode: mode.mode, receipt: reference.receipt } : null;
 }
 
 export async function readDeploymentReferenceHttpPurpose(tx: Tx,
@@ -1760,7 +1750,7 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
     const child = proof.reviewedChild;
     if (child?.role !== deploymentActionIds.DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 && child?.environmentId === undefined) return null;
     if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
-    if (isDeploymentReferenceServiceListChild(binding, effectActionId, child)) {
+    if (deploymentActionIds.readDeploymentReferenceServiceListEnvironmentIdV1(binding.actionId, effectActionId, child)) {
         const match = /^\/v1\/machines\/([^/?#]+)$/u.exec(proof.path);
         if (!match) return false;
         let machineId: string;
@@ -1770,8 +1760,9 @@ export async function readDeploymentReferenceHttpPurpose(tx: Tx,
             && Boolean(await readDeploymentReferenceServiceListInTx(tx, binding, effectActionId, child, signerAccountId, machineId));
     }
     if (effectActionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1) return false;
-    const input = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
-    if (!input) return false;
+    const reference = await readCurrentDeploymentReferenceInput(tx, binding, child, signerAccountId);
+    if (!reference) return false;
+    const { input } = reference;
     if (transports.isEnvironmentRead()) return sameStrictJsonValue(proof.routeInput, input);
     if (transports.isCurrentnessRead()) return proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, {});
     const artifactId = transports.readArtifactId();

@@ -1,4 +1,6 @@
 import type { DeploymentPreparationAdmissionV1 } from './deploymentPreparationAdmissionV1.js';
+import { RPC_METHODS } from '../rpc/methods.js';
+import type { ReviewedActionChildHttpProofV1 } from '../actions/externalActionApi.js';
 import { isProjectReadinessActionIdV1, type ProjectReadinessActionIdV1 } from '../actions/projectReadinessActionIdsV1.js';
 
 /** Snapshot composition and pure validation are Account reads, never Environment transports. */
@@ -68,6 +70,18 @@ export const DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 = 'deployments.environment
 export const DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 = 'deployments.environments.get' as const;
 /** A host-selected saved service reference retains its exact Environment read operand. */
 export const DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1 = 'deployment.reference';
+
+/** The reviewed Deploy may read inventory for its saved-reference Environment. */
+export function readDeploymentReferenceServiceListEnvironmentIdV1(
+  rootActionId: string | undefined,
+  effectActionId: string | undefined,
+  child: Pick<ReviewedActionChildHttpProofV1, 'actionId' | 'role' | 'environmentId'> | undefined,
+): string | undefined {
+  if (rootActionId !== DEPLOYMENT_DEPLOY_ACTION_ID_V1 || effectActionId !== RPC_METHODS.MACHINES_SERVICE_LIST
+    || child?.actionId !== DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1 || child.role !== DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1) return undefined;
+  return child.environmentId || undefined;
+}
+
 export const DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 = 'deployments.environments.telemetry.set';
 export const DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 = 'telemetry.bindings';
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';

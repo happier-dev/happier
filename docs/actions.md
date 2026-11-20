@@ -6254,9 +6254,11 @@ against the same request and current placement. The referenced Environment,
 its content, and the Machine reads keep their existing access rules. Deploy
 preparation can read service inventory on a current installed runtime Machine
 of that referenced Environment. The inventory request carries the same signed
-reference and selects that exact Environment and Machine. After approval,
-member activation uses the accepted deployment receipt for the same reference
-read.
+reference and selects that exact Environment and Machine. The receiving Machine
+checks the decoded operands on both plaintext and encrypted calls. Before Home
+accepts a receipt, the signed review still uses requester admission. Afterward,
+inventory calls use the active receipt and the current placement of the
+referenced service.
 
 An explicit Domain Add to reconcile after a restart starts a new Domain
 operation. Home admits it against the current Environment, runtime Link, and
