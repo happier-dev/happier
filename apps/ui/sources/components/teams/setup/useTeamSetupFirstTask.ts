@@ -1,27 +1,40 @@
 import * as React from 'react';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import {
   resolveProjectSourceOnboardingTaskV1,
   type ProjectSourceOnboardingTaskSelectionV1,
 } from '@happier-dev/protocol/projects/sources/projectSourceOnboardingTaskV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { PromptDocReadResultV1Schema } from '@happier-dev/protocol/prompts/library/promptDocV2';
+
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
+
+import type { TeamSetupActionContext } from './teamSetupPlan';
 
 /**
  * The Team's suggested first task (plan D1/M1), read only once setup is done and the page is about to show it.
- * The Source names the prompt; the ordinary prompt reader owns access and decryption.
+ * The Source names the prompt. The ordinary prompt Action handles policy, access and decryption.
  */
 export function useTeamSetupFirstTask(
   input: Readonly<{
-    serverId: string;
+    execute: FrontDoorActionExecute;
+    context: TeamSetupActionContext;
     sources: readonly ProjectSourceV1[];
     enabled: boolean;
   }>,
 ): ProjectSourceOnboardingTaskSelectionV1['task'] {
-  const { serverId, sources, enabled } = input;
-  const [task, setTask] =
-    React.useState<ProjectSourceOnboardingTaskSelectionV1['task']>(null);
+  const { execute, context, sources, enabled } = input;
+  const { serverId, expectedAccountId } = context;
+  const [selection, setSelection] = React.useState<{
+    key: string;
+    task: ProjectSourceOnboardingTaskSelectionV1['task'];
+  } | null>(null);
   const key = enabled
     ? JSON.stringify([
         serverId,
+        expectedAccountId,
         sources.map((source) => [source.id, source.revision]),
       ])
     : null;
@@ -30,48 +43,39 @@ export function useTeamSetupFirstTask(
   React.useEffect(() => {
     if (!key) return;
     const controller = new AbortController();
+    const { signal, dispose } = mergeAbortSignals([controller.signal, context.signal]);
     void resolveProjectSourceOnboardingTaskV1({
       sources: sourcesRef.current.map((source) => ({ serverId, source })),
-      signal: controller.signal,
-      readPrompt: async (ref, options) => {
+      signal,
+      readPrompt: async (ref) => {
         try {
-          const [
-            { readPromptDocInLibrary },
-            { withUiPromptLibraryArtifactStore },
-          ] = await Promise.all([
-            import('@happier-dev/protocol/prompts/library/promptLibraryActionOperations'),
-            import('@/sync/ops/promptLibrary/promptLibraryArtifactStore'),
-          ]);
-          return await withUiPromptLibraryArtifactStore(
-            (store) =>
-              readPromptDocInLibrary({
-                store,
-                artifactId: ref.artifactId,
-                ...(options?.signal ? { signal: options.signal } : {}),
-              }),
-            {
-              serverId: ref.serverId,
-              ...(options?.signal ? { signal: options.signal } : {}),
-            },
-          );
+          const result = await execute('prompt_doc.get', { artifactId: ref.artifactId }, {
+            surface: context.surface,
+            serverId: ref.serverId,
+            ...(areServerProfileIdentifiersEquivalent(serverId, ref.serverId) ? { expectedAccountId } : {}),
+            signal,
+          });
+          if (!result.ok) return result;
+          const document = PromptDocReadResultV1Schema.safeParse(result.result);
+          return document.success
+            ? document.data
+            : { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
         } catch (error) {
-          options?.signal?.throwIfAborted();
-          const code =
-            error instanceof Error &&
-            'code' in error &&
-            typeof error.code === 'string'
-              ? error.code
-              : 'content_unavailable';
-          return { ok: false as const, errorCode: code, error: code };
+          signal.throwIfAborted();
+          const code = readActionErrorCodeV1(error) ?? 'content_unavailable';
+          return { ok: false, errorCode: code, error: code };
         }
       },
     }).then(
       (selection) => {
-        if (!controller.signal.aborted) setTask(selection.task);
+        if (!signal.aborted) setSelection({ key, task: selection.task });
       },
       () => {},
     );
-    return () => controller.abort();
-  }, [key, serverId]);
-  return key ? task : null;
+    return () => {
+      controller.abort();
+      dispose();
+    };
+  }, [context, execute, expectedAccountId, key, serverId]);
+  return selection?.key === key ? selection.task : null;
 }

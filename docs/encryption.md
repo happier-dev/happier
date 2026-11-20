@@ -2731,9 +2731,10 @@ revision. Detach or Source deletion ends new parent-scoped reads while preservin
 independent Artifact access and already accepted private setup copies.
 
 The development `onboarding_task` attachment identifies a suggested first task by
-qualified prompt-document reference only. It uses the same independent Artifact
-admission and ordinary prompt read as other references; it creates no content-parent
-relationship or recipient grant. The Source writer replaces or removes that one
+qualified prompt-document reference only. Team Setup reads it through `prompt_doc.get`,
+which applies the Account's Action policy before the ordinary independent Artifact
+admission. The reference creates no content-parent relationship or recipient grant.
+The Source writer replaces or removes that one
 suggestion through the existing attachment intent. Background prompt stacks consume
 only `context` attachments. Task content is read on explicit task display, and a
 refused prompt remains unavailable without blocking other setup resources. The

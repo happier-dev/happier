@@ -387,7 +387,7 @@ function TeamSetupPlanPage(
   } : null, [context.scope.serverId, machineId, presetUpdate, router]);
 
   const done = run.kind === 'done';
-  const suggestedTask = useTeamSetupFirstTask({ serverId: context.scope.serverId, sources: included, enabled: done });
+  const suggestedTask = useTeamSetupFirstTask({ execute, context: actionContext, sources: included, enabled: done });
   const openTask = React.useCallback(async (project: OpenedProject, prompt: string) => {
     if (!machineId) return;
     const result = await plan.openFirstTask({ project, machineId, prompt });
