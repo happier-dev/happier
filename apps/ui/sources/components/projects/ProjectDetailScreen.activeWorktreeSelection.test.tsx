@@ -44,7 +44,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', (
 
 const { storage } = await import('@/sync/domains/state/storage');
 const { buildProjectPaneScopeId } = await import('./detail/projectPaneScope');
+const { ProjectDestinationBody } = await import('./detail/ProjectDestinationBody');
 const { ProjectDetailScreen } = await import('./ProjectDetailScreen');
+const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
+const { router: nativeRouter } = await import('expo-router');
 const { ProjectRightPanel } = await import('./detail/ProjectRightPanel');
 const { ProjectCockpitShell } = await import('@/components/workspaceCockpit/project/ProjectCockpitShell');
 const { ProjectShellHeaderHost } = await import('./shell/ProjectShellHeaderHost');
@@ -88,6 +91,8 @@ const snapshot = ScmWorkingSnapshotSchema.parse({
 });
 let workspaceRef: WorkspaceRefV1;
 let unregisterWorkspace: (() => void) | undefined;
+let initializeWorkspaceNavigation: (href: string) => void;
+const commitWorkspaceUrl = vi.fn<(href: string) => void>();
 afterEach(() => { unregisterWorkspace?.(); unregisterWorkspace = undefined; });
 beforeEach(async () => {
     viewport.width = 1440;
@@ -122,8 +127,10 @@ beforeEach(async () => {
     } });
     const navigation = createWorkspaceNavigationAdapter({ getState: () => workspace, getCatalog: () => catalog,
         dispatch: action => { workspace = reduceWorkspaceState(workspace, action); }, createId: () => `project:${++nextId}`,
-        onChange: () => {}, transport: { commit: () => {} } });
+        onChange: () => {}, transport: { commit: commitWorkspaceUrl } });
+    initializeWorkspaceNavigation = href => navigation.initialize(href);
     navigation.initialize(`/projects/wr_1/context?serverId=${runtime.serverId}`);
+    commitWorkspaceUrl.mockClear();
     const execute = createWorkspaceActionAdapter({ getState: () => workspace, navigation,
         readCanvas: () => null, createId: () => `project:${++nextId}` });
     unregisterWorkspace = registerMountedWorkspaceAction(async request => {
@@ -399,6 +406,27 @@ describe('ProjectDetailScreen active worktree selection', () => {
         expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
         expect(projectLastActiveRootPathState.readAll()).toEqual({
             wr_1: '/repo/.worktrees/deleted-worktree', [selectionKey()]: '/repo',
+        });
+    });
+
+    it('replaces the deleted checkout in the Project destination URL after discovery', async () => {
+        initializeWorkspaceNavigation(`/projects/wr_1/context?serverId=${runtime.serverId}&worktreeId=gitwt_deleted`);
+        commitWorkspaceUrl.mockClear();
+        const screen = await renderScreen(<runtime.Wrapper>
+            <DestinationInstanceHost tabId="project" ref={{ kind: 'project', params: {
+                workspaceRefId: workspaceRef.id, serverId: runtime.serverId, worktreeId: 'gitwt_deleted',
+            } }} pathname="/projects/wr_1/context" visible focused stackOwned navigation={nativeRouter}>
+                <ProjectDestinationBody />
+            </DestinationInstanceHost>
+        </runtime.Wrapper>);
+        expect(screen.findByType(ProjectCockpitShell).props.activeRootPath).toBe('/repo');
+        expect(screen.findByTestId('project-worktree-recovery-toast')).not.toBeNull();
+        await vi.waitFor(() => {
+            const href = commitWorkspaceUrl.mock.lastCall?.[0];
+            expect(href).toBeDefined();
+            const repaired = new URL(href!, 'http://localhost');
+            expect(repaired.pathname).toBe('/projects/wr_1/context');
+            expect(repaired.searchParams.get('worktreeId')).toBe('@root');
         });
     });
 

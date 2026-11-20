@@ -25,6 +25,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
+import type { RepoWorktreeSelectionResolution } from '@/components/workspaces/scm/worktrees/resolveRepoWorktreeSelection';
 import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
@@ -75,6 +76,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     surface?: ProjectMobileSurface;
     activeWorktreeId?: string | null;
     activeRootPath?: string | null;
+    resolvedRouteCheckout?: Pick<RepoWorktreeSelectionResolution, 'resolvedRootPath' | 'resolvedWorktreeId'>;
     isFocused?: boolean;
     showWorktrees?: boolean;
     onSelectRootPath?: (path: string) => void | boolean | Promise<boolean>;
@@ -127,10 +129,11 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const localActiveRootPath = localSelection?.storageKey === preferenceKeys?.storageKey ? localSelection?.rootPath ?? null : null;
     const controlledActiveRootPath = props.activeRootPath ?? null;
     const workspaceRootPath = workspaceRef?.rootPath ?? '';
-    const { activeRootPath: persistedActiveRootPath, worktreeId: persistedWorktreeId } = useProjectSelectionUiState(preferenceKeys);
+    const routeOwnsCheckout = props.resolvedRouteCheckout !== undefined;
+    const { activeRootPath: persistedActiveRootPath, worktreeId: persistedWorktreeId } = useProjectSelectionUiState(routeOwnsCheckout ? null : preferenceKeys);
     React.useEffect(() => {
         if (!workspaceRef || !preferenceKeys) return;
-        if (controlledActiveRootPath != null) return;
+        if (routeOwnsCheckout || controlledActiveRootPath != null) return;
         setLocalSelection((currentSelection) => {
             const currentPath = currentSelection?.storageKey === preferenceKeys.storageKey ? currentSelection.rootPath : null;
             if (currentPath == null) {
@@ -145,18 +148,12 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
             }
             return currentSelection;
         });
-    }, [controlledActiveRootPath, persistedActiveRootPath, preferenceKeys, workspaceRef]);
+    }, [controlledActiveRootPath, persistedActiveRootPath, preferenceKeys, routeOwnsCheckout, workspaceRef]);
 
     const requestedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRootPath;
     const worktreeScope = React.useMemo(() => workspaceRef ? workspaceScopeFromProject(workspaceRef, workspaceRootPath) : null, [workspaceRef, workspaceRootPath]);
-    const {
-        requestedRootPath,
-        resolvedRootPath: resolvedActiveRootPath,
-        resolvedWorktreeId: resolvedActiveWorktreeId,
-        didRecoverMissingWorktree,
-        availableWorktrees,
-    } = useResolvedRepoWorktreeSelection({
-        scope: worktreeScope,
+    const standaloneCheckout = useResolvedRepoWorktreeSelection({
+        scope: routeOwnsCheckout ? null : worktreeScope,
         defaultRootPath: workspaceRootPath,
         requestedRootPath: requestedActiveRootPath,
         refreshOnMount: props.selection?.kind !== 'plugin',
@@ -167,7 +164,10 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
                 ? persistedWorktreeId
                 : null),
     });
-    const recoveryToastKey = props.recoveryToastKey ?? (didRecoverMissingWorktree
+    const { resolvedRootPath: resolvedActiveRootPath, resolvedWorktreeId: resolvedActiveWorktreeId } =
+        props.resolvedRouteCheckout ?? standaloneCheckout;
+    const { requestedRootPath, didRecoverMissingWorktree, availableWorktrees } = standaloneCheckout;
+    const recoveryToastKey = props.recoveryToastKey ?? (!routeOwnsCheckout && didRecoverMissingWorktree
         ? `${workspaceRef?.id ?? props.workspaceRefId}:${requestedRootPath}`
         : null);
     const { navigateToSegment } = useProjectRouteActions({
@@ -185,6 +185,10 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     const handleSelectRootPath = React.useCallback(async (path: string) => {
         const trimmedPath = path.trim();
         if (!trimmedPath || !workspaceRef || !preferenceKeys) return;
+        if (routeOwnsCheckout) {
+            await props.onSelectRootPath?.(trimmedPath);
+            return;
+        }
         const nextWorktreeId = trimmedPath === workspaceRef.rootPath
             ? null
             : (findVisibleRepoWorktreeByPath(availableWorktrees, trimmedPath)?.id ?? null);
@@ -203,11 +207,12 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         props.workspaceRefId,
         navigateToSegment,
         preferenceKeys,
+        routeOwnsCheckout,
         workspaceRef,
     ]);
 
     React.useEffect(() => {
-        if (props.isFocused === false) return;
+        if (routeOwnsCheckout || props.isFocused === false) return;
         if (!workspaceRef || !preferenceKeys) return;
         if (requestedRootPath === resolvedActiveRootPath) return;
 
@@ -229,6 +234,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         requestedRootPath,
         resolvedActiveRootPath,
         resolvedActiveWorktreeId,
+        routeOwnsCheckout,
         workspaceRef,
     ]);
 

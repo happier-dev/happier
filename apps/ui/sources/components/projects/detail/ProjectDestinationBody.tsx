@@ -60,14 +60,15 @@ export const ProjectDestinationBody = React.memo(() => {
         persistedWorktreeId,
     });
     const worktreeScope = React.useMemo(() => workspaceRef ? workspaceScopeFromProject(workspaceRef, fallbackRootPath) : null, [workspaceRef, fallbackRootPath]);
-    const { requestedRootPath, didRecoverMissingWorktree, resolvedRootPath: activeRootPath, resolvedWorktreeId: activeWorktreeId, availableWorktrees } = useResolvedRepoWorktreeSelection({
+    const checkout = useResolvedRepoWorktreeSelection({
         scope: worktreeScope,
         defaultRootPath: fallbackRootPath,
         requestedRootPath: selection.requestedRootPath,
         requestedWorktreeId: selection.requestedWorktreeId,
         refreshOnMount: pageSelection?.kind !== 'plugin',
     });
-    const replaceSelection = React.useCallback((path: string, nextShowWorktrees = showWorktrees) => {
+    const { requestedRootPath, didRecoverMissingWorktree, resolvedRootPath: activeRootPath, resolvedWorktreeId: activeWorktreeId, availableWorktrees } = checkout;
+    const replaceSelection = React.useCallback((path: string, worktreeId: string | null, nextShowWorktrees = showWorktrees) => {
         if (!workspaceRef || !path.trim()) return;
         const details = paneContext?.getSnapshot().state.scopes[scopeId]?.details;
         return replaceProjectRouteSelection({
@@ -81,17 +82,26 @@ export const ProjectDestinationBody = React.memo(() => {
             initialResource: readProjectSelectedRouteResource(details ? buildDetailsWorkspaceStateView(details) : null) ?? (resourcePending ? undefined : null),
             activeRootPath: path,
             defaultRootPath: workspaceRef.rootPath,
-            activeWorktreeId: path === workspaceRef.rootPath ? null : findVisibleRepoWorktreeByPath(availableWorktrees, path)?.id ?? null,
+            activeWorktreeId: worktreeId,
             showWorktrees: nextShowWorktrees,
         });
-    }, [availableWorktrees, page, pageSelection, paneContext, scopeId, params, resourcePending, routerRef, showWorktrees, surface, workspaceRef, workspaceRefId]);
-    const selectRootPath = React.useCallback((path: string) => replaceSelection(path), [replaceSelection]);
+    }, [page, pageSelection, paneContext, scopeId, params, resourcePending, routerRef, showWorktrees, surface, workspaceRef, workspaceRefId]);
+    const selectRootPath = React.useCallback((path: string) => {
+        const worktreeId = path === fallbackRootPath ? null : findVisibleRepoWorktreeByPath(availableWorktrees, path)?.id ?? null;
+        return replaceSelection(path, worktreeId);
+    }, [availableWorktrees, fallbackRootPath, replaceSelection]);
     React.useEffect(() => {
         if (!isFocused || !workspaceRef || !preferenceKeys) return;
         const worktreeId = activeWorktreeId ?? PROJECT_ROUTE_ROOT_SENTINEL;
         persistProjectSelectionUiState(preferenceKeys, activeRootPath, worktreeId);
     }, [activeRootPath, activeWorktreeId, isFocused, preferenceKeys, workspaceRef]);
-    const setShowWorktrees = React.useCallback((value: boolean) => replaceSelection(activeRootPath, value), [activeRootPath, replaceSelection]);
+    React.useEffect(() => {
+        if (isFocused && pageRoute && didRecoverMissingWorktree) {
+            void replaceSelection(activeRootPath, activeWorktreeId);
+        }
+    }, [activeRootPath, activeWorktreeId, didRecoverMissingWorktree, isFocused, pageRoute, replaceSelection]);
+    const setShowWorktrees = React.useCallback((value: boolean) => replaceSelection(activeRootPath, activeWorktreeId, value),
+        [activeRootPath, activeWorktreeId, replaceSelection]);
     const actions = useProjectRouteActions({ workspaceRef, activeRootPath, activeWorktreeId, showWorktrees, pane });
     // A page's pushed detail (a phone Service) takes the bar's Back while it is open; otherwise Back leaves the Project.
     const [pageBack, setPageBack] = React.useState<(() => void) | null>(null);
@@ -130,8 +140,7 @@ export const ProjectDestinationBody = React.memo(() => {
             page={page}
             selection={pageSelection}
             surface={surface}
-            activeRootPath={activeRootPath}
-            activeWorktreeId={activeWorktreeId}
+            resolvedRouteCheckout={checkout}
             isFocused={isFocused}
             showWorktrees={showWorktrees}
             onSelectRootPath={selectRootPath}
