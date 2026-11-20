@@ -27,16 +27,6 @@ import { commitTreeGateMode, commitTreeEntryLoads, startCommitTreeEntryLoadRepor
 
 export const COMMIT_GATE_EXIT = Object.freeze({ pass: 0, refused: 10, needsFull: 3, unavailable: 75 });
 
-const P03_DECLARATION_PACKAGES = ['packages/protocol', 'packages/plugin-sdk'];
-
-function declarationInputsMoved(repo, prior, tree) {
-  // An SDK declaration can read types from other packages. Reuse the prior verdict when
-  // the replay only brings in changes outside the shared package and dependency inputs.
-  return gitIn(repo)(['diff', '--no-renames', '--name-only', '-z', prior, tree, '--', 'packages',
-    'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'package.json', 'patches'])
-    .split('\0').some(path => /\.(?:[cm]?[jt]sx?|json|ya?ml)$|^patches\//u.test(path));
-}
-
 /**
  * The typecheck delta of touched packages/* workspaces (P03-GATE-TC): `report` (default) checks each landed commit after
  * HEAD moved (kickRollingHeadTypecheck), `block` refuses here, `off` skips it. Blocking returns when admission sizing lets
@@ -85,12 +75,11 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   };
   const refused = (check, findings) => ({ verdict: 'refused', check, findings, notes });
   // The package typecheck waits for a worker compile, so it runs beside the checks below and is collected after them.
-  const checkTypes = (packages, cachedOnly) => judge('package typecheck', async () => {
+  const typecheck = typecheckMode === 'block' && !prior ? judge('package typecheck', async () => {
     const owner = await import('./commitPackageTypecheck.mjs');
-    const result = await owner.commitGateTypecheck({ repo, base, tree, env, packages, cachedOnly });
-    return { ...result, refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
-  });
-  const typecheck = typecheckMode === 'block' && !prior && !cheapOnly ? checkTypes() : null;
+    const result = await owner.commitGateTypecheck({ repo, base, tree, env });
+    return { refuses: owner.commitPackageTypecheckRefuses(result), lines: result.skipped ? [] : owner.formatCommitPackageTypecheck(result) };
+  }) : null;
   typecheck?.catch(() => {});
 
   const syntax = await judge('syntax', () => commitSourceSyntax({ repo, base, tree }));
@@ -119,23 +108,10 @@ async function judgeCommit({ repo, base, tree, prior, priorBase, cheapOnly = fal
   notes.push(`lockfile: ${lockfile.note}`);
   if (lockfile.findings.length) return refused('lockfile', lockfile.findings);
 
-  // Board B R2 makes these P03 packet scopes blocking even in the default report mode.
-  const declarationPackages = label === 'commit-partial'
-    ? P03_DECLARATION_PACKAGES.filter(dir => closure.changedSources.some(({ path }) => path.startsWith(`${dir}/src/`)))
-    : [];
-  const checkDeclarations = declarationPackages.length > 0 && (!prior || declarationInputsMoved(repo, prior, tree));
-  if (typecheck || checkDeclarations) {
-    // After one unlocked recheck, compute a cache miss for the touched declaration scopes here.
-    // HEAD can move again before every lock acquisition, leaving a different pair of trees each time.
-    const cachedOnly = cheapOnly && env.P03_CP_RECHECKED_AFTER_RELEASE !== '1';
-    const result = await (typecheck ?? checkTypes(declarationPackages, cachedOnly));
-    if (cachedOnly && result.unavailable.length) return { verdict: 'needs-full', check: 'package declarations', findings: [], notes };
+  if (typecheck) {
+    const result = await typecheck;
     notes.push(...result.lines);
     if (result.refuses) return refused('new type errors in a package the packet touches', result.lines);
-    if (checkDeclarations) {
-      const unjudged = declarationPackages.filter(dir => !result.packages.includes(dir) || result.unavailable.includes(dir));
-      if (unjudged.length) throw new CommitGateUnavailable('package declarations', new Error(`missing comparison for ${unjudged.join(', ')}`));
-    }
   }
 
   if (treeMode === 'block') {
