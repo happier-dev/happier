@@ -273,6 +273,8 @@ export function* prepareUsageAnalyticsProjectionSteps(snapshot: UsageAnalyticsPr
         modelTimeline,
         engineTimeline,
         messageStats,
+        // Repricing fills this field; retain its wire order across direct and cached projections.
+        costFacts: undefined,
         ...projection,
     };
     // Compact delivery already owns tariff-linear populations. Prepare them
