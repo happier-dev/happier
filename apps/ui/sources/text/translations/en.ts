@@ -24508,6 +24508,7 @@ const enPluginRuntime = {
     'This plugin view needs a compatible Happier or plugin version.',
   installationConflict:
     'Your machines have different versions of this plugin. Choose the machine it should run on.',
+  localArtifactLoadFailure: "Happier couldn’t load this plugin view. Try loading it again.",
   localArtifactFailure: "This plugin view failed on this device. Try loading it again.",
   authorFailure:
     'This plugin view could not start because its built UI is missing or invalid. Rebuild the plugin, or ask its author for a fixed version.',

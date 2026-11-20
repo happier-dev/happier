@@ -390,6 +390,8 @@ const WIDGET_KEYS = {
  */
 const PLUGIN_RUNTIME_KEYS = {
     local_artifact_failure: 'pluginRuntime.localArtifactFailure',
+    load_error: 'pluginRuntime.localArtifactLoadFailure',
+    render_error: 'pluginRuntime.localArtifactFailure',
     timeout: 'ui.pluginUi.actionNoAnswer',
     plugin_action_outcome_unknown: 'ui.pluginUi.actionNoAnswer',
     plugin_daemon_unsupported: 'pluginSurfaces.originReason.daemon_unsupported',
@@ -540,6 +542,7 @@ type StreamPlayerMessageKey =
 
 type PluginRuntimeMessageKey =
     | 'pluginRuntime.localArtifactFailure'
+    | 'pluginRuntime.localArtifactLoadFailure'
     | 'ui.pluginUi.actionNoAnswer'
     | `pluginSurfaces.originReason.${'home_unreachable' | 'daemon_unsupported' | 'daemon_invalid_response' | 'daemon_unavailable' | 'activation_refused' | 'source_not_ready'}`
     | 'pluginRuntime.collectionConflict'

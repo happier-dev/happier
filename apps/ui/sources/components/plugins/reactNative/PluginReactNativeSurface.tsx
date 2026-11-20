@@ -52,12 +52,11 @@ import {
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
     createPluginReactNativeWatchdog,
+    type PluginReactNativeLocalFailure,
     type PluginReactNativeWatchdog,
 } from './watchdog';
 import { PLUGIN_UI_PRIVATE_SURFACE_ENTRY_PROVIDER_KEY } from '@/components/plugins/pluginUiPrivateCarrierKeys';
 import { useWidgetFrameResourceStoreActivity } from '@/components/widgets/frame/widgetFrameResourceActivity';
-
-type PluginReactNativeLocalFailure = 'render_error' | 'invalid_surface_module' | 'load_error';
 
 /**
  * Cooperative host-private carrier bindings for the bundled `defineUiSurface`
@@ -398,9 +397,9 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     const retainedModule = loadedModuleState.cacheKey !== props.cacheKey
         ? loadedModuleState.module
         : null;
-    const [loadFailed, setLoadFailed] = React.useState(false);
+    const [localFailure, setLocalFailure] = React.useState<readonly string[] | null>(null);
+    const loadFailed = localFailure !== null;
     const [targetedFallbackMountAttemptId, setTargetedFallbackMountAttemptId] = React.useState<string | null>(null);
-    const [loadFailureDiagnostics, setLoadFailureDiagnostics] = React.useState<readonly string[]>([]);
     const [retryGeneration, setRetryGeneration] = React.useState(0);
     const [retrying, setRetrying] = React.useState(false);
     const loadPolicy = props.load && !props.loadPolicy
@@ -438,9 +437,8 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     ]);
     const resetMountAttemptIdRef = React.useRef(mountAttemptId);
     const resetMountSignalRef = React.useRef(props.renderContext.signal);
-    const pendingQuarantine = artifactDigest
-        ? watchdog.isContained({ artifactDigest })
-        : false;
+    const quarantinedFailure = artifactDigest ? watchdog.readFailure({ artifactDigest }) : null;
+    const pendingQuarantine = quarantinedFailure !== null;
 
     React.useLayoutEffect(() => {
         const changedMountAttempt = resetMountAttemptIdRef.current !== mountAttemptId
@@ -448,9 +446,8 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         resetMountAttemptIdRef.current = mountAttemptId;
         resetMountSignalRef.current = props.renderContext.signal;
         if (changedMountAttempt) {
-            setLoadFailed(false);
+            setLocalFailure(null);
             setTargetedFallbackMountAttemptId(null);
-            setLoadFailureDiagnostics([]);
         }
     }, [mountAttemptId, props.renderContext.signal]);
 
@@ -463,6 +460,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
     const recordLocalFailure = React.useCallback((
         failure: PluginReactNativeLocalFailure,
         error?: unknown,
+        diagnostics: readonly string[] = [],
     ) => {
         logPluginSurfaceDiagnostic(
             {
@@ -475,8 +473,9 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                 error: readPluginSurfaceDiagnosticError(error),
             },
         );
+        setLocalFailure([...diagnostics, failure]);
         if (artifactDigest) {
-            watchdog.recordFailure({ artifactDigest });
+            watchdog.recordFailure({ artifactDigest, failure });
         }
     }, [
         artifactDigest,
@@ -515,8 +514,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             .then(() => !signal.aborted ? load?.(signal) : undefined)
             .then((nextModule) => {
                 if (!cancelled && !signal.aborted && isPluginReactNativeSurfaceModule(nextModule)) {
-                    setLoadFailureDiagnostics([]);
-                    setLoadFailed(false);
+                    setLocalFailure(null);
                     setPendingModuleState({
                         cacheKey: props.cacheKey,
                         module: nextModule,
@@ -525,16 +523,12 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
                     setRetrying(false);
                 } else if (!cancelled && !signal.aborted) {
                     recordLocalFailure('invalid_surface_module');
-                    setLoadFailureDiagnostics(['invalid_surface_module']);
-                    setLoadFailed(true);
                     setRetrying(false);
                 }
             })
             .catch((error: unknown) => {
                 if (!cancelled && !signal.aborted) {
-                    recordLocalFailure('load_error', error);
-                    setLoadFailureDiagnostics(readLoaderErrorDiagnostics(error));
-                    setLoadFailed(true);
+                    recordLocalFailure('load_error', error, readLoaderErrorDiagnostics(error));
                     setRetrying(false);
                 }
             });
@@ -563,8 +557,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
             ? { cacheKey: props.cacheKey, module: null }
             : current);
         setPendingModuleState(null);
-        setLoadFailureDiagnostics([]);
-        setLoadFailed(false);
+        setLocalFailure(null);
         setRetrying(true);
         setRetryGeneration((generation) => generation + 1);
     }, [
@@ -585,7 +578,6 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         if (props.targetedFallback !== undefined) {
             setTargetedFallbackMountAttemptId(mountAttemptId);
         }
-        setLoadFailed(true);
         setRetrying(false);
         props.onCrash?.(surfaceId, error);
     }, [mountAttemptId, props.onCrash, props.targetedFallback, recordLocalFailure]);
@@ -602,8 +594,7 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         }
         setLoadedModuleState({ cacheKey: pending.cacheKey, module: pending.module });
         setPendingModuleState(null);
-        setLoadFailureDiagnostics([]);
-        setLoadFailed(false);
+        setLocalFailure(null);
         setRetrying(false);
     }, [pendingModuleState, props.cacheKey]);
     const failPendingModule = React.useCallback((surfaceId: string, error: Error) => {
@@ -685,14 +676,12 @@ export function PluginReactNativeSurface(props: PluginReactNativeSurfaceProps): 
         // This is only the targeted render-failure latch. Loader and daemon
         // fault state retain their existing owner/currentness rules.
         setTargetedFallbackMountAttemptId(null);
-        setLoadFailed(false);
-        setLoadFailureDiagnostics([]);
+        setLocalFailure(null);
         setRetrying(false);
     }, [launchInputResetKey, mountAttemptId, targetedFallbackMountAttemptId]);
 
     const unavailableDiagnostics = Object.freeze([
-        ...loadFailureDiagnostics,
-        ...(pendingQuarantine ? ['local_artifact_failure'] : []),
+        ...(localFailure ?? (quarantinedFailure ? [quarantinedFailure] : [])),
         ...props.decision.diagnostics,
         ...loadPolicy.diagnostics,
         ...(canonicalRenderContextDiagnostic ? [canonicalRenderContextDiagnostic] : []),

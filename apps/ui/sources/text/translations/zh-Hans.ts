@@ -20445,6 +20445,7 @@ settingsSession: {
         integrityFailed: 'Happier 无法验证此插件视图。请打开插件设置以修复所选安装。',
         incompatible: '此视图需要兼容的 Happier 或插件版本。',
         installationConflict: '你的机器上安装了此插件的不同版本。请选择要运行它的机器。',
+        localArtifactLoadFailure: "Happier 无法加载此插件视图。请尝试重新加载。",
         localArtifactFailure: "此插件视图在这台设备上出现问题。请尝试重新加载。",
         authorFailure: '此视图无法启动，因为其可执行界面无效。请联系插件作者重新构建。',
         retired: '此插件视图已不再启用。请打开插件设置以启用或重新安装。',

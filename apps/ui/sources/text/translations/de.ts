@@ -20937,6 +20937,7 @@ settingsSession: {
         integrityFailed: 'Happier konnte diese Plugin-Ansicht nicht verifizieren. Öffne die Plugin-Einstellungen, um die ausgewählte Installation zu reparieren.',
         incompatible: 'Diese Plugin-Ansicht benötigt eine kompatible Happier- oder Plugin-Version.',
         installationConflict: 'Deine Rechner haben unterschiedliche Versionen dieses Plugins. Wähle den Rechner, auf dem es laufen soll.',
+        localArtifactLoadFailure: "Happier konnte diese Plugin-Ansicht nicht laden. Versuche, sie erneut zu laden.",
         localArtifactFailure: "Diese Plugin-Ansicht ist auf diesem Gerät fehlgeschlagen. Versuche, sie erneut zu laden.",
         authorFailure: 'Diese Plugin-Ansicht konnte nicht gestartet werden, weil ihre ausführbare Oberfläche ungültig ist. Bitte den Plugin-Autor, sie neu zu erstellen.',
         retired: 'Diese Plugin-Ansicht ist nicht mehr aktiv. Öffne die Plugin-Einstellungen, um sie zu aktivieren oder neu zu installieren.',

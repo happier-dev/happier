@@ -20935,6 +20935,7 @@ settingsSession: {
         integrityFailed: 'O Happier não conseguiu verificar esta vista do plugin. Abra as definições do plugin para reparar a instalação selecionada.',
         incompatible: 'Esta vista requer uma versão compatível do Happier ou do plugin.',
         installationConflict: 'As suas máquinas têm versões diferentes deste plugin. Escolha a máquina onde deve ser executado.',
+        localArtifactLoadFailure: "O Happier não conseguiu carregar esta vista do plugin. Tente carregá-la novamente.",
         localArtifactFailure: "Esta visualização do plugin falhou neste dispositivo. Tente carregá-la novamente.",
         authorFailure: 'Esta vista não iniciou porque a sua interface executável é inválida. Peça ao autor do plugin para a recompilar.',
         retired: 'Esta vista do plugin já não está ativa. Abra as definições do plugin para a ativar ou reinstalar.',

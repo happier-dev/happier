@@ -78,6 +78,62 @@ afterAll(() => {
 });
 
 describe('PluginReactNativeSurface', () => {
+    it.each([
+        {
+            code: 'load_error',
+            reason: 'pluginRuntime.localArtifactLoadFailure',
+            load: async () => { throw new Error('Synthetic loader failure'); },
+        },
+        {
+            code: 'invalid_surface_module',
+            reason: 'pluginRuntime.authorFailure',
+            // The loader boundary returned a module that does not meet the renderer contract.
+            load: async () => ({ renderSurface: null } as unknown as PluginReactNativeSurfaceModule),
+        },
+        {
+            code: 'render_error',
+            reason: 'pluginRuntime.localArtifactFailure',
+            load: async () => ({ renderSurface() { throw new Error('Synthetic render failure'); } }),
+        },
+    ])('explains a $code artifact failure across mounts', async ({ code, reason, load }) => {
+        const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
+        const watchdog = createPluginReactNativeWatchdog();
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const artifactDigest = `sha256:${'c'.repeat(64)}` as const;
+        const loadArtifact = vi.fn<() => Promise<PluginReactNativeSurfaceModule>>(load);
+        const element = (surfaceId: string) => <PluginReactNativeSurface
+            surfaceId={surfaceId}
+            renderContext={defaultRenderContext}
+            decision={{ state: 'load', reason: 'compatible', diagnostics: [] }}
+            cacheKey={`f7-failure:${code}`}
+            load={loadArtifact}
+            loadPolicy={{ source: 'installedArtifact' }}
+            watchdog={watchdog}
+            loadedRuntimeIdentity={{ pluginId: 'acme.preview', occurrenceId: 'failure-copy', artifactDigest }}
+        />;
+        try {
+            const first = await renderScreen(element('failure-first'));
+            try {
+                await flushHookEffects({ cycles: 3, turns: 2 });
+                expect(loadArtifact).toHaveBeenCalledOnce();
+                expect(first.findByTestId(`plugin-rn-ui-unavailable-diagnostic-${code}`)).toBeTruthy();
+                expect(first.findByTestId('plugin-rn-ui-unavailable-reason')?.props.children).toBe(reason);
+            } finally {
+                await first.unmount();
+            }
+            const successor = await renderScreen(element('failure-successor'));
+            try {
+                expect(loadArtifact).toHaveBeenCalledOnce();
+                expect(successor.findByTestId(`plugin-rn-ui-unavailable-diagnostic-${code}`)).toBeTruthy();
+                expect(successor.findByTestId('plugin-rn-ui-unavailable-reason')?.props.children).toBe(reason);
+            } finally {
+                await successor.unmount();
+            }
+        } finally {
+            consoleError.mockRestore();
+        }
+    });
+
     it('retries a failed mount at reconnect through its existing local retry owner', async () => {
         const { PluginReactNativeSurface } = await import('./PluginReactNativeSurface');
         let reachable = false;
@@ -917,7 +973,7 @@ describe('PluginReactNativeSurface', () => {
             retired.abort();
             retiredLoad.reject(new Error('artifact_lease_revoked'));
         });
-        expect(watchdog.isContained({ artifactDigest })).toBe(false);
+        expect(watchdog.readFailure({ artifactDigest })).toBeNull();
         await screen.update(element(successor.signal, async () => healthy));
         await flushHookEffects();
         expect(screen.findByTestId('successor-native-module')).toBeTruthy();
@@ -1270,7 +1326,7 @@ describe('PluginReactNativeSurface', () => {
 
             expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeNull();
             expect(screen.findByTestId('plugin-native-surface')).toBeTruthy();
-            expect(watchdog.isContained({ artifactDigest })).toBe(false);
+            expect(watchdog.readFailure({ artifactDigest })).toBeNull();
         } finally {
             vi.useRealTimers();
         }
@@ -1463,7 +1519,7 @@ describe('PluginReactNativeSurface', () => {
             await flushHookEffects({ cycles: 2, turns: 2 });
 
             expect(screen.findByTestId('plugin-rn-ui-unavailable')).toBeTruthy();
-            expect(watchdog.isContained({ artifactDigest })).toBe(true);
+            expect(watchdog.readFailure({ artifactDigest })).toBe('render_error');
         } finally {
             consoleError.mockRestore();
         }
@@ -1558,7 +1614,7 @@ describe('PluginReactNativeSurface', () => {
             expect(onCrash).toHaveBeenCalledWith('surface_1', expect.objectContaining({
                 message: 'targeted_contributor_render_failure',
             }));
-            expect(watchdog.isContained({ artifactDigest })).toBe(true);
+            expect(watchdog.readFailure({ artifactDigest })).toBe('render_error');
         } finally {
             consoleError.mockRestore();
         }

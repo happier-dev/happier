@@ -15447,6 +15447,7 @@ settingsSession: {
       integrityFailed: 'Happier 無法驗證此外掛檢視。請開啟外掛設定以修復所選安裝。',
       incompatible: '此檢視需要相容的 Happier 或外掛版本。',
       installationConflict: '你的機器上安裝了此外掛的不同版本。請選擇要執行它的機器。',
+      localArtifactLoadFailure: "Happier 無法載入此外掛檢視。請嘗試重新載入。",
       localArtifactFailure: "這個外掛程式檢視在這台裝置上發生問題。請嘗試重新載入。",
       authorFailure: '此檢視無法啟動，因為其可執行介面無效。請聯絡外掛作者重新建置。',
       retired: '此外掛檢視已不再啟用。請開啟外掛設定以啟用或重新安裝。',

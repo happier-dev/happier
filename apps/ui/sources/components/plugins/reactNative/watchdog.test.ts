@@ -9,33 +9,33 @@ describe('plugin React Native local watchdog', () => {
     it('deduplicates repeated failures into one containment fact per digest', () => {
         const watchdog = createPluginReactNativeWatchdog();
 
-        watchdog.recordFailure({ artifactDigest: digestA });
-        watchdog.recordFailure({ artifactDigest: digestA });
+        watchdog.recordFailure({ artifactDigest: digestA, failure: 'render_error' });
+        watchdog.recordFailure({ artifactDigest: digestA, failure: 'render_error' });
 
-        expect(watchdog.isContained({ artifactDigest: digestA })).toBe(true);
+        expect(watchdog.readFailure({ artifactDigest: digestA })).toBe('render_error');
     });
 
     it('Retry clears only the requested digest and a new digest starts uncontained', () => {
         const watchdog = createPluginReactNativeWatchdog();
-        watchdog.recordFailure({ artifactDigest: digestA });
-        watchdog.recordFailure({ artifactDigest: digestB });
+        watchdog.recordFailure({ artifactDigest: digestA, failure: 'render_error' });
+        watchdog.recordFailure({ artifactDigest: digestB, failure: 'load_error' });
 
         watchdog.clear({ artifactDigest: digestA });
 
-        expect(watchdog.isContained({ artifactDigest: digestA })).toBe(false);
-        expect(watchdog.isContained({ artifactDigest: digestB })).toBe(true);
-        expect(watchdog.isContained({
+        expect(watchdog.readFailure({ artifactDigest: digestA })).toBeNull();
+        expect(watchdog.readFailure({ artifactDigest: digestB })).toBe('load_error');
+        expect(watchdog.readFailure({
             artifactDigest: `sha256:${'c'.repeat(64)}`,
-        })).toBe(false);
+        })).toBeNull();
     });
 
     it('does not restore crash authority into a fresh watchdog instance', () => {
         const first = createPluginReactNativeWatchdog();
-        first.recordFailure({ artifactDigest: digestA });
+        first.recordFailure({ artifactDigest: digestA, failure: 'render_error' });
 
         const fresh = createPluginReactNativeWatchdog();
 
-        expect(first.isContained({ artifactDigest: digestA })).toBe(true);
-        expect(fresh.isContained({ artifactDigest: digestA })).toBe(false);
+        expect(first.readFailure({ artifactDigest: digestA })).toBe('render_error');
+        expect(fresh.readFailure({ artifactDigest: digestA })).toBeNull();
     });
 });

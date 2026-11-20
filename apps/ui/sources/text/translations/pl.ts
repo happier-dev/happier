@@ -20654,6 +20654,7 @@ settingsSession: {
         integrityFailed: 'Happier nie mógł zweryfikować tego widoku wtyczki. Otwórz ustawienia wtyczki, aby naprawić wybraną instalację.',
         incompatible: 'Ten widok wymaga zgodnej wersji Happier lub wtyczki.',
         installationConflict: 'Twoje maszyny mają różne wersje tej wtyczki. Wybierz maszynę, na której ma działać.',
+        localArtifactLoadFailure: "Happier nie mógł wczytać tego widoku wtyczki. Spróbuj wczytać go ponownie.",
         localArtifactFailure: "Widok wtyczki nie zadziałał na tym urządzeniu. Spróbuj wczytać go ponownie.",
         authorFailure: 'Nie udało się uruchomić tego widoku, ponieważ jego wykonywalny interfejs jest nieprawidłowy. Poproś autora wtyczki o ponowne zbudowanie.',
         retired: 'Ten widok wtyczki nie jest już aktywny. Otwórz ustawienia wtyczki, aby go włączyć lub ponownie zainstalować.',
