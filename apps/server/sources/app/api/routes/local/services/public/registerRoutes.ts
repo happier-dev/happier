@@ -312,9 +312,9 @@ function publicRedirectLocation(input: Readonly<{
     path: string;
     search: string;
 }>): string {
-    const root = localServicePublicTokenCookiePath(input.exposureId);
-    const suffix = input.path === "/" ? "" : input.path;
-    return `${root}${suffix}${input.search}`;
+    // `path` always starts with "/": the root lands on `<exposure>/`, so the page's relative
+    // links resolve inside the exposure instead of beside it.
+    return `${localServicePublicTokenCookiePath(input.exposureId)}${input.path}${input.search}`;
 }
 
 function redirectPublicTokenExchange(

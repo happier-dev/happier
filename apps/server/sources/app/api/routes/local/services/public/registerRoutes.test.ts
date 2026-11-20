@@ -978,7 +978,7 @@ describe("local service public exposure routes", () => {
         expect(reply.headers["Set-Cookie"]).toContain("happier_public_token=cookie_token_1");
         expect(reply.headers["Set-Cookie"]).toContain("Path=/v1/local-services/public/public_preview_1");
         expect(reply.headers["Set-Cookie"]).toContain("HttpOnly");
-        expect(reply.headers.Location).toBe("/v1/local-services/public/public_preview_1");
+        expect(reply.headers.Location).toBe("/v1/local-services/public/public_preview_1/");
     });
 
     it("proxies public exposure requests with an exchanged public cookie token", async () => {
