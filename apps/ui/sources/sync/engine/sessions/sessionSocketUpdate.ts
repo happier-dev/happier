@@ -581,6 +581,9 @@ async function handleSessionMessageSocketUpdate(params: HandleSessionMessageSock
 
             if (lastMessage) {
                 applyTranscriptObservationMetadata(lastMessage, rawMessage);
+                if (lastMessage.role === 'agent' && lastMessage.content[0]?.type === 'tool-result' && revisionUpdatedAt !== null) {
+                    lastMessage.rowUpdatedAt = revisionUpdatedAt;
+                }
                 applyTranscriptAccountActorMetadata(lastMessage, {
                     accountActor: qualifyTranscriptAccountActor(rawMessage?.accountActor, params.serverId),
                 });

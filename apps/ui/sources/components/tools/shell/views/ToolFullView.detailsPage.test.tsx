@@ -2,6 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createTestSessionTranscriptSource,
   renderWithSessionTranscriptSource as renderScreen,
   standardCleanup,
 } from '@/dev/testkit';
@@ -140,6 +141,42 @@ const createSessionPendingCall = makeToolCall({
 });
 
 describe('ToolFullView as the tool-details page', () => {
+  it('reopens the exact Shell result on reconnect and drops expired output behind the cursor', async () => {
+    let connection: 'live' | 'offline' = 'live';
+    let expired = false;
+    const loadToolOutput = vi.fn(async ({ messageId }: { messageId: string }) => {
+      expect(messageId).toBe('shell-result-row');
+      return expired ? { status: 'expired', days: 7 } as const
+        : { status: 'available', result: { exitCode: 0, stdout: 'detached fixture stdout' } } as const;
+    });
+    const source = {
+      ...createTestSessionTranscriptSource({ sessionId: 's1',
+        authorship: { viewerScope: { serverId: 'home-1', accountId: 'viewer' }, hasOtherNamedCollaborator: false } }),
+      loadToolOutput,
+      useConnectionState: () => connection,
+    };
+    const tool = makeToolCall({ id: 'shell-use', name: 'Bash', state: 'completed', input: { command: 'echo fixture' },
+      result: { exitCode: 0 }, toolOutputMessageId: 'shell-result-row', toolOutputAvailability: { status: 'available' } });
+    const screen = await renderScreen(<ToolFullView tool={tool} owningMessageId="shell-call-row" />, source);
+    await act(async () => {});
+    expect(loadToolOutput).toHaveBeenCalledTimes(1);
+    expect(screen.getTextContent()).toContain('detached fixture stdout');
+    connection = 'offline';
+    await screen.update(<ToolFullView tool={tool} owningMessageId="shell-call-row" />);
+    expect(screen.getTextContent()).not.toContain('detached fixture stdout');
+    expect(loadToolOutput).toHaveBeenCalledTimes(1);
+    expired = true;
+    connection = 'live';
+    await screen.update(<ToolFullView tool={tool} owningMessageId="shell-call-row" />);
+    await act(async () => {});
+    expect(screen.getTextContent()).not.toContain('detached fixture stdout');
+    expect(screen.findByTestId('tool-details-result-expired')).toBeTruthy();
+    expect(loadToolOutput).toHaveBeenCalledTimes(2);
+    await screen.update(<ToolFullView tool={{ ...tool, toolOutputAvailability: { status: 'expired', days: 7 } }}
+      owningMessageId="shell-call-row" />);
+    expect(loadToolOutput).toHaveBeenCalledTimes(2);
+  });
+
   it('replaces expired Shell output in the details page and in Debug', async () => {
     const tool = makeToolCall({
       name: 'Bash', state: 'completed', input: { command: 'echo retained-command' },

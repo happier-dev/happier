@@ -3308,6 +3308,11 @@ publication boundary as the shell. The sweep clears the part and records the app
 days in the row revision. A content correction changes the shell and part together.
 An exact replay preserves terminal expiry.
 
+Expanded tool details request the exact result row under the current Home and
+Account. The opened part lives only in the expanded view. A row correction or
+reconnect retires the displayed bytes and checks the same row again. A known
+expired result displays its applied days directly.
+
 A supported historical import may submit a comparison digest of the original normalized
 inline envelope through its authorized write transaction. Plain envelopes use canonical
 JSON and ciphertext uses the original encoded string. A matching existing inline

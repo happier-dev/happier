@@ -24,6 +24,8 @@ export type ToolCall = {
     description: string | null;
     result?: any;
     toolOutputAvailability?: SessionMessageToolOutputAvailability;
+    toolOutputMessageId?: string;
+    toolOutputUpdatedAt?: number;
     permission?: {
         nativeChoices?: NativePermissionChoicesV1;
         /** The offered choice that was applied; its label is read from `nativeChoices`. */

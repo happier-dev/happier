@@ -9,7 +9,7 @@ export function toToolResultUpdate(c: Readonly<{
     content: unknown;
     is_error: boolean;
     permissions?: ToolResultUpdate['permissions'];
-}>, source: Pick<TracedMessage, 'seq' | 'toolOutputAvailability'>): ToolResultUpdate {
+}>, source: Pick<TracedMessage, 'id' | 'seq' | 'rowUpdatedAt' | 'toolOutputAvailability'>): ToolResultUpdate {
     return {
         tool_use_id: c.tool_use_id,
         content: c.content,
@@ -17,6 +17,8 @@ export function toToolResultUpdate(c: Readonly<{
         ...(c.permissions ? { permissions: c.permissions } : {}),
         ...(source.seq !== undefined && source.seq > 0 ? { seq: source.seq } : {}),
         ...(source.toolOutputAvailability ? { toolOutputAvailability: source.toolOutputAvailability } : {}),
+        sourceMessageId: source.id,
+        ...(source.rowUpdatedAt !== undefined ? { rowUpdatedAt: source.rowUpdatedAt } : {}),
     };
 }
 

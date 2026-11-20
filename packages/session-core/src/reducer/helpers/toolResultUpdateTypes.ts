@@ -20,5 +20,7 @@ export type ToolResultUpdate = {
   permissions?: ToolResultPermissionsUpdate;
   seq?: number;
   toolOutputAvailability?: SessionMessageToolOutputAvailability;
+  sourceMessageId?: string;
+  rowUpdatedAt?: number;
 };
 

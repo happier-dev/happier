@@ -208,7 +208,9 @@ describe('reducer runtime tool snapshots', () => {
       }],
       toolOutputAvailability: { status: 'available' },
     } as const;
-    reducer(state, [{ ...result, content: [...result.content] }], null);
+    const available = reducer(state, [{ ...result, content: [...result.content] }], null)
+      .messages.find(message => message.kind === 'tool-call');
+    expect(available?.tool).toMatchObject({ toolOutputMessageId: 'result' });
     const expired = {
       ...result,
       content: [{ ...result.content[0], content: { exitCode: 1 } }],
@@ -221,6 +223,7 @@ describe('reducer runtime tool snapshots', () => {
       toolOutputAvailability: { status: 'expired', days: 30 },
     });
     expect(card?.tool.result).toEqual({ exitCode: 1 });
+    expect(card?.tool).not.toHaveProperty('toolOutputMessageId');
     expect(reducer(state, [expired], null).messages).toEqual([]);
 
     const fresh = {
@@ -232,6 +235,28 @@ describe('reducer runtime tool snapshots', () => {
       .toMatchObject({ state: 'completed', result: { exitCode: 0 }, toolOutputAvailability: { status: 'available' } });
     expect(reducer(state, [expired], null).messages).toEqual([]);
 
+  });
+
+  it('advances an expanded tool result through a same-row correction with an unchanged shell', () => {
+    const state = createReducer();
+    reducer(state, [toolMessage({ id: 'terminal', input: { command: 'example' } })], null);
+    const result = {
+      id: 'result', seq: 2, localId: 'result-local', createdAt: 1_200, rowUpdatedAt: 1_200,
+      role: 'agent', isSidechain: false,
+      content: [{ type: 'tool-result', tool_use_id: 'call-1', is_error: false,
+        uuid: 'result-block', parentUUID: null, content: { exitCode: 0 } }],
+      toolOutputAvailability: { status: 'available' },
+    } satisfies NormalizedMessage;
+    reducer(state, [result], null);
+    const correction = { ...result, rowUpdatedAt: 1_201, isAuthoritativeUpdate: true } as const;
+    expect(reducer(state, [correction], null).messages.find(message => message.kind === 'tool-call')?.tool)
+      .toMatchObject({ toolOutputMessageId: 'result', toolOutputUpdatedAt: 1_201, result: { exitCode: 0 } });
+    expect(reducer(state, [correction], null).messages).toEqual([]);
+    const inline = { ...correction, rowUpdatedAt: 1_202, toolOutputAvailability: undefined,
+      content: [{ ...result.content[0], content: { exitCode: 0, stdout: 'inline correction' } }] };
+    const current = reducer(state, [inline], null).messages.find(message => message.kind === 'tool-call')?.tool;
+    expect(current?.result).toEqual({ exitCode: 0, stdout: 'inline correction' });
+    expect(current).not.toHaveProperty('toolOutputMessageId');
   });
 
   it('keeps the expired observation when a tool result page precedes its call', () => {

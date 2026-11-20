@@ -41,6 +41,9 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
     (resultSeq === undefined || previousSeq === undefined || resultSeq <= previousSeq)) return;
   if (expired && resultSeq !== undefined && previousSeq !== undefined && resultSeq < previousSeq) return;
 
+  const correctsDetachedResult = toolResult.sourceMessageId !== undefined &&
+    toolResult.sourceMessageId === message.tool.toolOutputMessageId && toolResult.rowUpdatedAt !== undefined &&
+    toolResult.rowUpdatedAt > (message.tool.toolOutputUpdatedAt ?? -Infinity);
   const isApprovedPlaceholder =
     message.tool.state === 'completed' &&
     message.tool.result === 'Approved' &&
@@ -65,6 +68,7 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
     !isApprovedPlaceholder &&
     !isRuntimeTerminalResult &&
     !supersedesAsyncAgentLaunch &&
+    !correctsDetachedResult &&
     !expired
   ) {
     return;
@@ -90,12 +94,20 @@ export function applyToolResultUpdateToReducerMessage(params: Readonly<{
   }
 
   message.tool.state = toolResult.is_error ? 'error' : 'completed';
-  message.tool.result = availability
+  message.tool.result = availability || correctsDetachedResult
     ? toolResult.content
     : mergeExistingStdStreamsIntoFinalResultIfMissing(message.tool.result, toolResult.content);
   if (resultSeq !== undefined) message.toolResultSeq = resultSeq;
   if (availability) message.tool.toolOutputAvailability = availability;
   else delete message.tool.toolOutputAvailability;
+  if (availability?.status === 'available' && toolResult.sourceMessageId) {
+    message.tool.toolOutputMessageId = toolResult.sourceMessageId;
+    if (toolResult.rowUpdatedAt !== undefined) message.tool.toolOutputUpdatedAt = toolResult.rowUpdatedAt;
+    else delete message.tool.toolOutputUpdatedAt;
+  } else {
+    delete message.tool.toolOutputMessageId;
+    delete message.tool.toolOutputUpdatedAt;
+  }
   message.tool.completedAt = resultCreatedAt;
 
   if (toolResult.permissions) {

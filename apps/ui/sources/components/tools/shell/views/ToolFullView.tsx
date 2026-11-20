@@ -29,6 +29,7 @@ import {
 import { ChainTranscriptList } from '@/components/sessions/transcript/ChainTranscriptList';
 import { SessionTranscriptSourceProvider, useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { toolDetailsTranscriptSource } from '@/components/sessions/transcript/source/toolDetailsTranscriptSource';
+import { useDetachedToolOutput } from './useDetachedToolOutput';
 import { TranscriptNicknameSidechainScope } from '@/components/sessions/transcript/references/TranscriptNicknameReferences';
 import { createAppSidechainHistoryLoader } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { resolveToolTranscriptSidechainId } from './resolveToolTranscriptSidechainId';
@@ -85,6 +86,7 @@ export function ToolFullView(props: ToolFullViewProps) {
 function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metadata, messages = [], jumpChildId, forcePermissionFooterInTranscript = false, pendingMessages, discardedMessages, pendingRecipient, header, declinedApproval }: ToolFullViewProps) {
     const source = useSessionTranscriptSource();
     const interaction = source.useInteraction();
+    const detachedOutput = useDetachedToolOutput(source, tool);
     // This view opens one historical row on its own screen, so the row's own
     // Agent — published by the opener — outranks the Session's current one.
     const historicalAgentId = useHistoricalTranscriptAgentId();
@@ -92,11 +94,14 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
     // baked-in `layout.maxWidth` would freeze the user's content-width preference.
     const contentMaxWidthStyle = useLayoutMaxWidthStyle();
     const toolForRendering = React.useMemo<ToolCall>(() => {
+        const currentTool = detachedOutput?.status === 'available' ? { ...tool, result: detachedOutput.result }
+            : detachedOutput?.status === 'expired' ? { ...tool, toolOutputAvailability: detachedOutput, result: undefined }
+            : tool;
         return resolveInactiveSessionToolCallFailure({
-            tool: normalizeToolCallForRendering(tool),
+            tool: normalizeToolCallForRendering(currentTool),
             permissionDisabledReason: interaction?.permissionDisabledReason,
         });
-    }, [interaction?.permissionDisabledReason, tool]);
+    }, [detachedOutput, interaction?.permissionDisabledReason, tool]);
 
     const outputExpired = toolForRendering.toolOutputAvailability?.status === 'expired';
 
@@ -328,6 +333,12 @@ function ToolFullViewContent({ tool, owningMessageId, sessionId, serverId, metad
                     </TextSelectabilityScope>
                 </PageContentColumn>
             )}
+            {!outputExpired && (detachedOutput?.status === 'loading' || detachedOutput?.status === 'unavailable' || detachedOutput?.status === 'corrupt') ? (
+                <ItemGroup title={t('tools.fullView.output')} testID="tool-details-detached-output-status">
+                    <Item title={t(detachedOutput.status === 'loading' ? 'common.loading'
+                        : detachedOutput.status === 'corrupt' ? 'common.error' : 'common.unavailable')} mode="info" showChevron={false} />
+                </ItemGroup>
+            ) : null}
             {permissionTerminalError || permissionFooter ? (
                 <PageContentColumn style={styles.pageBody}>
                     {permissionTerminalError}

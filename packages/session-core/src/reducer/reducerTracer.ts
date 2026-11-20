@@ -259,7 +259,9 @@ function getProcessedKey(message: NormalizedMessage): string {
 
     // A retention pass changes the row observation without changing its sealed shell or sequence.
     const availability = message.toolOutputAvailability;
-    const outputRevision = availability?.status === 'expired' ? `:output-expired:${availability.days}` : '';
+    const outputRevision = availability?.status === 'expired' ? `:output-expired:${availability.days}`
+        : type === 'tool-result' && (availability || message.isAuthoritativeUpdate) && message.rowUpdatedAt !== undefined
+            ? `:result-revision:${message.rowUpdatedAt}` : '';
     return uuid
         ? `agent:${message.id}:${type}:${uuid}:${streamFingerprint}${outputRevision}`
         : `agent:${message.id}:${type}:${streamFingerprint}${outputRevision}`;

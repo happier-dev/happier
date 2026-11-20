@@ -14,6 +14,7 @@ import { areSessionValuesDeepEqual } from '@/sync/store/domains/areStoredSession
 import { getForkedTranscriptSnapshotCached } from '@/sync/domains/sessionFork/forkedTranscriptSnapshot';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { sync } from '@/sync/sync';
+import { readSessionToolOutput } from '@/sync/api/session/sessionToolOutput';
 import {
     getStorage, storage, useForkedTranscriptSnapshot, useMessagesByRefs,
     readSessionMessagesSnapshot,
@@ -233,6 +234,7 @@ function createAppSessionTranscriptReads(sessionId: string, serverId: string | n
         useWorkspacePath: () => useSessionWorkspacePath(sessionId, serverId),
         useForkSupportSource: () => useSessionForkSupportSource(sessionId, serverId),
         useAuthorship: () => useSessionMessageAuthorshipScope(sessionId, serverId),
+        loadToolOutput: (target) => readSessionToolOutput({ ...target, sessionId }),
         usePendingRequests: () => {
             const normalizedSessionId = normalizeSessionId(sessionId);
             const activeServerId = useActiveServerSnapshot(Boolean(serverId)).serverId;
@@ -267,7 +269,7 @@ function createAppSessionTranscriptReads(sessionId: string, serverId: string | n
     } satisfies Pick<SessionTranscriptSource,
         | 'useMessageIdsOldestFirst' | 'useMessagesById' | 'useMessage' | 'useMessagesByIds'
         | 'useReducerState' | 'useMetadata' | 'useAgentState' | 'useWorkspacePath'
-        | 'useForkSupportSource' | 'useAuthorship' | 'usePendingRequests' | 'useAwareness' | 'useRuntimeLastObservedAt'>;
+        | 'useForkSupportSource' | 'useAuthorship' | 'loadToolOutput' | 'usePendingRequests' | 'useAwareness' | 'useRuntimeLastObservedAt'>;
 }
 
 type AppSourceProviderProps = Readonly<{

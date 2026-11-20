@@ -598,6 +598,9 @@ export async function runSessionMessagesPagePipeline(params: {
             }, normalizationState);
             if (normalized) {
                 applyTranscriptObservationMetadata(normalized, inputMessage);
+                if (normalized.role === 'agent' && normalized.content[0]?.type === 'tool-result' && inputUpdatedAt !== undefined) {
+                    normalized.rowUpdatedAt = inputUpdatedAt;
+                }
                 applyTranscriptAccountActorMetadata(normalized, {
                     accountActor: qualifyTranscriptAccountActor(inputMessage?.accountActor, params.serverId),
                 });

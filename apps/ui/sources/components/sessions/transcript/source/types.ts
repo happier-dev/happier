@@ -1,3 +1,4 @@
+import type { SessionToolOutputRead, SessionToolOutputReadTarget } from '@/sync/api/session/sessionToolOutput';
 import type { Message, TranscriptOlderPageLoadResult } from '@happier-dev/session-core/messages';
 import type { MessagesByRefsSelectorOptions } from '@/sync/store/messageSelection';
 import type { ReducerState } from '@happier-dev/session-core/reducer';
@@ -71,6 +72,7 @@ export type SessionTranscriptSource = Readonly<{
         loadFindPage?: ((direction: 'older' | 'newer', options?: Parameters<typeof sync.loadOlderMessages>[1]) => Promise<TranscriptOlderPageLoadResult>) | null;
         loadTargetWindow: ((target: TranscriptTargetWindowRequest, options?: Parameters<typeof sync.loadTargetWindowMessages>[2]) => ReturnType<typeof sync.loadTargetWindowMessages>) | null;
     }>;
+    loadToolOutput?: (target: SessionToolOutputReadTarget) => Promise<SessionToolOutputRead>;
     loadSidechain: ((sidechainId: string) => ReturnType<typeof sync.ensureSidechainMessagesLoaded>) | null;
     navigate: ((href: string) => void) | null;
     actions: SessionTranscriptActions | null;

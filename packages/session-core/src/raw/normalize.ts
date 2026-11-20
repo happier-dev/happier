@@ -110,6 +110,8 @@ export type NormalizedMessage = ({
     structuredPresentation?: MessageStructuredPresentationV1,
     /** Set only by canonical ACK and socket readers for a server-declared durable row update. */
     isAuthoritativeUpdate?: true,
+    /** Committed tool result revision from the admitted row reader. */
+    rowUpdatedAt?: number,
 } & TranscriptObservationMetadata & TranscriptAccountActorMetadata;
 
 export type RawMessageNormalizationInput = Readonly<{
