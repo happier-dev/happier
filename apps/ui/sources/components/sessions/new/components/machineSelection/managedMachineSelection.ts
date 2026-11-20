@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { ManagedCreationSelectionV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { hasOpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
+import { hasOpenedManagedMachinePresetCreationV1, isOpenedManagedMachinePresetV1, type OpenedManagedMachinePresetCreationV1, type OpenedManagedMachinePresetV1, type ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 
 import { readManagedMachineSelectionReceipt, type ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -95,7 +95,12 @@ export function managedMachineSelectionOptionId(selection: ManagedCreationSelect
         : `managed-machine:${selection.homeId}:one-off`;
 }
 
-/** Current-Home presets open the shared review; no offer admits native effects. */
+type UnopenedManagedMachinePresetV1 = Exclude<ManagedMachinePresetListEntryV1, OpenedManagedMachinePresetV1>;
+
+/**
+ * Current-Home presets open the shared review; no offer admits native effects. A preset this Account cannot open yet
+ * keeps its place as an unavailable offer when its presenter can say why (`describeUnopened`); otherwise it is left out.
+ */
 export function buildManagedMachineSelectionOffers(params: Readonly<{
     homeId: string;
     presets: readonly ManagedMachinePresetListEntryV1[];
@@ -103,15 +108,26 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
     oneOffSubtitle?: string;
     describeOffer?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
     describeUnavailable?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => string | undefined;
+    describeUnopened?: (preset: UnopenedManagedMachinePresetV1) => Readonly<{ title: string; reason: string }> | null;
     markFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
     costFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) => ReactNode;
     lineFor?: (preset: OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1, extra?: string) => ReactNode;
     onConfigure: (preset: (OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1) | null) => void;
 }>): readonly ManagedMachineSelectionOffer[] {
-    return [...params.presets.filter((preset): preset is OpenedManagedMachinePresetV1 & OpenedManagedMachinePresetCreationV1 =>
-        preset.homeId === params.homeId && preset.archivedAt === undefined && hasOpenedManagedMachinePresetCreationV1(preset)).map(preset => {
+    return [...params.presets.flatMap((entry): ManagedMachineSelectionOffer[] => {
+        if (entry.homeId !== params.homeId || entry.archivedAt !== undefined) return [];
+        if (!isOpenedManagedMachinePresetV1(entry)) {
+            const unopened = params.describeUnopened?.(entry);
+            return unopened ? [{
+                id: managedMachineSelectionOptionId({ kind: 'preset', homeId: entry.homeId, id: entry.id, revision: entry.revision }),
+                homeId: entry.homeId, presetId: entry.id, kind: 'preset', title: unopened.title,
+                disabled: true, unavailableText: unopened.reason,
+            }] : [];
+        }
+        if (!hasOpenedManagedMachinePresetCreationV1(entry)) return [];
+        const preset = entry;
         const unavailableText = params.describeUnavailable?.(preset);
-        return {
+        return [{
             id: managedMachineSelectionOptionId({ kind: 'preset', homeId: preset.homeId, id: preset.id, revision: preset.revision }),
             homeId: preset.homeId,
             presetId: preset.id,
@@ -123,7 +139,7 @@ export function buildManagedMachineSelectionOffers(params: Readonly<{
             ...(params.costFor ? { cost: params.costFor(preset) } : {}),
             ...(params.lineFor ? { subtitleLine: (extra?: string) => params.lineFor!(preset, extra) } : {}),
             onSelect: () => params.onConfigure(preset),
-        };
+        }];
     }), {
         id: `managed-machine:${params.homeId}:one-off`, homeId: params.homeId, kind: 'one-off' as const,
         title: params.oneOffTitle, subtitle: params.oneOffSubtitle,

@@ -14,6 +14,7 @@ import { useManagedMachineAccountSettings } from '@/components/settings/machines
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { MANAGED_PROVISIONER_MARK_SIZE, ManagedPresetCost, ManagedPresetMark, ManagedPresetOfferLine } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { describeManagedPresetOffer } from '@/components/settings/machines/managed/managedConfigurationPresentation';
+import { describeManagedPresetKeyPending } from '@/components/settings/machines/managed/managedNativeFailurePresentation';
 import { MachineProvisionerPicker, type ManagedProvisionerSelection } from '@/components/settings/machines/managed/MachineProvisionerPicker';
 import { ManagedMachineConfigurationView } from '@/components/settings/machines/managed/ManagedMachineConfigurationView';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -144,6 +145,8 @@ export function useManagedMachineSelectionOffers(input: Readonly<{
         homeId, presets: presets ?? [],
         oneOffTitle: t('managedMachines.picker.oneOff'), oneOffSubtitle: t('managedMachines.picker.oneOffHelp'),
         describeOffer: preset => describeManagedPresetOffer(preset),
+        // A shared preset whose key hasn't reached this Account keeps its place, unavailable, with the reason on its row.
+        describeUnopened: preset => describeManagedPresetKeyPending(preset.reason),
         describeUnavailable: preset => !unavailable[preset.id] ? undefined
             : preset.controller && names[preset.controller.machineId]
                 ? t('managedMachines.controller.required', { controller: names[preset.controller.machineId]! })

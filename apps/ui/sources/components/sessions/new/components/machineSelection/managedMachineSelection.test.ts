@@ -12,6 +12,7 @@ import { buildMachineDestinationModel } from './buildMachineDestinationModel';
 import { createMachineFixture } from '@/dev/testkit';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainManagedMachinePresetFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 
 const selection = { kind: 'preset', homeId: 'home-a', id: 'preset-a', revision: 3 } as const;
 const receipt = {
@@ -75,6 +76,22 @@ describe('managed machine selection draft', () => {
         expect(onConfigure).toHaveBeenLastCalledWith(null);
         expect(offers[0]).not.toHaveProperty('draft');
         expect(offers[0]).not.toHaveProperty('price');
+    });
+    it('keeps a shared preset that cannot be opened yet in its place, as an unavailable offer with its reason', () => {
+        const onConfigure = vi.fn();
+        const opened = createPlainManagedMachinePresetFixture({ id: 'preset-a', homeId: 'home-a', revision: 3, name: 'Guest',
+            owner: { kind: 'account', accountId: 'owner' }, launch: receipt.launch, controller: receipt.controller }).opened;
+        const { content: _content, recipients: _recipients, ...metadata } = createPlainManagedMachinePresetFixture({ id: 'shared',
+            homeId: 'home-a', revision: 1, name: 'Unread', owner: { kind: 'team', teamId: 'team-a' }, launch: receipt.launch });
+        const waiting = { ...metadata, kind: 'private_content_unavailable' as const, reason: MACHINE_PRESET_TEAM_KEY_PENDING };
+        const unreadable = { ...metadata, id: 'unreadable', kind: 'private_content_unavailable' as const };
+        const offers = buildManagedMachineSelectionOffers({ homeId: 'home-a', oneOffTitle: 'One-off', onConfigure,
+            presets: [waiting, opened, unreadable, { ...waiting, id: 'archived-shared', archivedAt: 1 }],
+            describeUnopened: entry => entry.reason === MACHINE_PRESET_TEAM_KEY_PENDING ? { title: 'Shared', reason: 'Later' } : null });
+        expect(offers.map(offer => offer.id)).toEqual(['managed-machine:home-a:preset:shared:1',
+            'managed-machine:home-a:preset:preset-a:3', 'managed-machine:home-a:one-off']);
+        expect(offers[0]).toMatchObject({ kind: 'preset', presetId: 'shared', title: 'Shared', disabled: true, unavailableText: 'Later' });
+        expect(offers[0]).not.toHaveProperty('onSelect');
     });
     it('counts new-machine offers and waits for their projection before taking a sole-machine shortcut', () => {
         const machine = { ...createMachineFixture({ id: 'host' }), active: true, activeAt: Date.now() };
