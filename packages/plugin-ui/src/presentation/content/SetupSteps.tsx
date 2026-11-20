@@ -330,8 +330,8 @@ export function HappierSetupSteps(props: HappierSetupStepsProps) {
             trailing={step.meta ? renderMeta(step.meta) : undefined}
             titleContent={renderTitle(step, state)}
             action={step.action}
+            description={step.detail ? renderDetail(step.detail) : undefined}
           >
-            {step.detail ? renderDetail(step.detail) : null}
             {step.body ? (
               <View
                 style={{

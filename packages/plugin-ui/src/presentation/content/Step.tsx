@@ -85,8 +85,10 @@ export function HappierStepMarkerView(props: Readonly<{
       ? { role: 'img' as const, 'aria-label': props.markerLabel, accessibilityLabel: props.markerLabel }
       : { 'aria-hidden': true })}
     style={{ width: MARKER_SIZE, height: MARKER_SIZE, borderRadius: MARKER_SIZE / 2,
-      backgroundColor: fill, borderWidth: ringed ? 1.5 : 0,
-      borderColor: theme.colors.text, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+      backgroundColor: fill,
+      // The control fill can be the very surface the rail sits on (a dark sheet), so a marker on it keeps its edge.
+      borderWidth: ringed ? 1.5 : fill === theme.colors.control ? 1 : 0,
+      borderColor: ringed ? theme.colors.text : theme.colors.border, alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
     {marker.kind === 'number' ? (progress === 'done' || progress === 'failed' || progress === 'waiting' ? props.stateGlyph
       : progress === 'running' ? <HappierSpinner size={MARKER_GLYPH_SIZE} color={theme.colors.text} />
         : progress === 'cancelled' ? <HappierStepCancelledMark color={theme.colors.mutedText} />
@@ -116,6 +118,8 @@ export function HappierStep(props: Readonly<{
   numberState?: HappierStepProgress;
   /** A core text-host binding, preserving plain instruction versus heading semantics. */
   titleContent?: ReactNode;
+  /** The line under the title that finishes its thought; it reads with the title as one block, before any body. */
+  description?: ReactNode;
   /**
    * The one operation the step asks for (a small button). It sits at the end of the step, level with
    * its words, so every step's title and detail keep one left edge; on a narrow row it moves beneath.
@@ -127,16 +131,21 @@ export function HappierStep(props: Readonly<{
   const marker = props.marker;
   const markerId = props.testID === undefined ? undefined : `${props.testID}:marker`;
   const hasAction = props.action !== undefined && props.action !== null;
+  const titleLine = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.small, minHeight: MARKER_SIZE }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        {props.titleContent ?? <HappierHeading level={3} theme={theme}>{props.title}</HappierHeading>}
+      </View>
+      {props.trailing === undefined || props.trailing === null ? null : (
+        <View style={{ flexShrink: 1, alignItems: 'flex-end' }}>{props.trailing}</View>
+      )}
+    </View>
+  );
   const words = (
     <>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.spacing.small, minHeight: MARKER_SIZE }}>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          {props.titleContent ?? <HappierHeading level={3} theme={theme}>{props.title}</HappierHeading>}
-        </View>
-        {props.trailing === undefined || props.trailing === null ? null : (
-          <View style={{ flexShrink: 1, alignItems: 'flex-end' }}>{props.trailing}</View>
-        )}
-      </View>
+      {props.description === undefined || props.description === null ? titleLine : (
+        <View>{titleLine}{props.description}</View>
+      )}
       {props.children}
     </>
   );
