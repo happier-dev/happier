@@ -1077,9 +1077,13 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
             if (rawInput.success) beginDiagnosticScope(rawInput.data);
             // The same normalized value is disclosed, fingerprinted and dispatched.
             // Durable replay must not run a transforming executable parser again.
+            const qualifiedActionId = formatQualifiedPluginActionId({ pluginId: invocation.pluginId, localId: invocation.localId });
+            const admittedEffect = invocation.requireCurrentIntent === true
+                && invocation.approvalContext?.actionAutomationAdmission?.actionId === qualifiedActionId;
             const preparedInput = indexed.invocation.prepare(invocation.input, {
                 ...(invocation.signal ? { signal: invocation.signal } : {}),
                 ...(invocation.requireCurrentIntent === true ? { inputAlreadyNormalized: true as const } : {}),
+                ...(admittedEffect ? { admittedEffect: true as const } : {}),
             });
             if (preparedInput.kind === 'settled') {
                 try {
@@ -1165,7 +1169,6 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                     diagnostic => logger.warnLocalFile('[Deployment] Unavailable', { ...diagnostic, requestId: invocation.requestId ?? correlationId })) });
                 }
             }
-            const qualifiedActionId = formatQualifiedPluginActionId({ pluginId: invocation.pluginId, localId: invocation.localId });
             const automationPort = invocation.approvalContext?.actionAutomationPort;
             const effectHookable = isActionEffectHookableV1(preparedInput.isReadOnly ? 'read' : 'external');
             const context = { ...invocation.approvalContext,

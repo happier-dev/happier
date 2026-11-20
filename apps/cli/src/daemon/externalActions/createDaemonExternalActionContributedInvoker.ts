@@ -7,6 +7,7 @@ import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failu
 import { redactPluginInvocationResultData } from '@happier-dev/cli-common/plugins/registration';
 import { signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { classifyApprovalExecutionOriginCurrentness } from '@happier-dev/protocol/actions/executor/approvalResults';
+import { restoreApprovalAutomaticContextV1 } from '@happier-dev/protocol/actions/executor/automaticApprovalContinuation';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { projectTargetActionApprovalInvocationV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
@@ -335,6 +336,8 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
             replayContext.hostReviewedChild = createHostReviewedChildPortV1({
               actionId: 'action.invoke', input: { action, input: approved.input }, context: replayContext, reviewAdmitted: true,
             });
+            const approvalContext = restoreApprovalAutomaticContextV1(approved, approved.qualifiedActionId,
+              replayContext, context?.actionAutomationPort);
             const attempt = await executeContributedAction({
               runtimeRegistry: lease.registry,
               actionId: buildQualifiedPluginContributionKey(action),
@@ -345,8 +348,8 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
               requestCurrentIntent: async () => ({
                 status: 'approved', fingerprint: approved.subjectFingerprint, artifactId,
               }),
-              approvalContext: { ...replayContext,
-                ...(input.createFileDownloadPublisher ? { prepareFileDownload: input.createFileDownloadPublisher(replayContext) } : {}),
+              approvalContext: { ...approvalContext,
+                ...(input.createFileDownloadPublisher ? { prepareFileDownload: input.createFileDownloadPublisher(approvalContext) } : {}),
               },
               approvalExecutionOrigin: origin,
               context: {

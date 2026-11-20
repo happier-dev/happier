@@ -891,6 +891,8 @@ type PluginActionInvocationInputOptions = Readonly<{
   signal?: AbortSignal;
   /** Host-only durable replay: the approval already holds this owner's normalized input. */
   inputAlreadyNormalized?: true;
+  /** Durable replay of an effect classified by the original Action admission. */
+  admittedEffect?: true;
 }>;
 
 type PluginActionInvocationPreparation = Readonly<
@@ -1014,7 +1016,8 @@ export function createPluginActionInvocation(params: Readonly<{
             .map(issue => ({ ...issue, message: issue.message ?? invalidInput.message })))
           : invalidInput);
       }
-      const isReadOnly = pluginActionDeclarationIsReadOnlyForInput(params.declaration, normalizedInput);
+      const isReadOnly = options.admittedEffect !== true
+        && pluginActionDeclarationIsReadOnlyForInput(params.declaration, normalizedInput);
       return Object.freeze({
         kind: 'ready', input: normalizedInput, isReadOnly,
         invoke: (invokeOptions: PluginActionInvocationOptions) => invokePrepared(normalizedInput, isReadOnly, invokeOptions),
