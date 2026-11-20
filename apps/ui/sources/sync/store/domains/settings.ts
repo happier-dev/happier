@@ -7,7 +7,7 @@ import type { Machine, Session } from '../../domains/state/storageTypes';
 import type { SessionListIndexItem } from '../../domains/sessionList/sessionListIndex';
 import { applyLocalSettings, type LocalSettings } from '../../domains/settings/localSettings';
 import { customerInfoToPurchases, purchasesDefaults, type Purchases } from '../../domains/purchases/purchases';
-import { applySettings, settingsDefaults, settingsParse, type Settings } from '../../domains/settings/settings';
+import { applySettings, projectRuntimeAccountSettings, settingsDefaults, settingsParse, type Settings } from '../../domains/settings/settings';
 import {
     loadAccountSettings,
     prepareAccountSettingsScopeForActivation,
@@ -240,12 +240,12 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
     const { settings: parsedSettings } = loadStartupAccountSettings();
     const homeViewState = loadHomeViewState();
     const settings = homeViewState
-        ? {
+        ? projectRuntimeAccountSettings({
             ...parsedSettings,
             serverSelectionGroups: normalizeServerSelectionGroupsForSettings(homeViewState.groups),
             serverSelectionActiveTargetKind: homeViewState.activeTargetKind,
             serverSelectionActiveTargetId: homeViewState.activeTargetId,
-        }
+        })
         : parsedSettings;
     safeSetPreferredLanguageFromSettings(settings.preferredLanguage);
     const localSettings = loadLocalSettings();
@@ -265,7 +265,7 @@ export function createSettingsDomain<S extends SettingsDomain & SettingsDomainDe
                     setPreferredLanguageFromSettings(selected);
                     if (getPreferredLanguage() === previousLanguage) return current;
                     // Activation and the existing settings subscription notification are atomic.
-                    return { ...current, settings: { ...current.settings } };
+                    return { ...current, settings: projectRuntimeAccountSettings({ ...current.settings }) };
                 });
             }).catch((error: unknown) => {
                 console.error('Failed to load preferred language; keeping the current locale:', error);

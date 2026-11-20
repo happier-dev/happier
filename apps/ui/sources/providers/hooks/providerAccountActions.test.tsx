@@ -87,7 +87,7 @@ describe('Account Provider UI actions without a machine', () => {
         expect(screen.findByTestId('settings.agents.detail.permissionMode')).toBeNull();
     });
 
-    it('writes favorites through the Account Action and refuses a retained writer after Account retirement', async () => {
+    it('writes favorites through the Account Action and restores them after restart with a saved device Home view', async () => {
         const opaque = { v: 99, futureWriterField: 'keep' };
         const { serverId, accountId } = await account.restore({ catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, machines: [],
             settings: { favoriteModelSelectionsV1: [opaque] } });
@@ -95,10 +95,11 @@ describe('Account Provider UI actions without a machine', () => {
         const { AccountSettingsV2UpdateRequestSchema } = await import('@happier-dev/protocol/account/settings/accountSettingsApiV2');
         let persisted: Record<string, unknown> = { favoriteModelSelectionsV1: [opaque] };
         let version = 1;
-        account.home.answer(serverId, '/v2/account/settings', {
+        const readSettings = {
             select: () => ({ body: { version, content: { t: 'plain', v: persisted } } }),
-        });
-        account.home.answer(serverId, 'POST /v2/account/settings', { select: input => {
+        };
+        account.home.answer(serverId, '/v2/account/settings', readSettings);
+        const writeSettings: Parameters<typeof account.home.answer>[2] = { select: input => {
             const request = AccountSettingsV2UpdateRequestSchema.parse(input);
             if (request.expectedVersion !== version) return { status: 409, body: {
                 success: false, error: 'version-mismatch', currentVersion: version, currentContent: { t: 'plain', v: persisted },
@@ -107,16 +108,38 @@ describe('Account Provider UI actions without a machine', () => {
             persisted = request.content.v;
             version += 1;
             return { body: { success: true, version } };
-        } });
-        const { useApplyFavoriteModelSelectionReplacementIntent } = await import('@/sync/store/settingsWriters');
+        } };
+        account.home.answer(serverId, 'POST /v2/account/settings', writeSettings);
+        const { useAccountSettingsScope, useApplyFavoriteModelSelectionReplacementIntent } = await import('@/sync/store/settingsWriters');
+        const { useCurrentFavoriteModelSelectionsV1Mutable } = await import('@/sync/store/hooks');
         const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
-        const { useAccountSettingsScope } = await import('@/sync/store/settingsWriters');
         const hook = await renderHook(() => ({ writer: useApplyFavoriteModelSelectionReplacementIntent(),
+            favorites: useCurrentFavoriteModelSelectionsV1Mutable(),
             ready: useMountedActionExecution(useAccountSettingsScope()).ready }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
-        const selection = { selection: { v: 1 as const, updatedAt: 5,
-            ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'favorite-model' } } };
-        await act(async () => { await hook.getCurrent().writer({ base: [], proposed: [selection] }); });
+        const { toggleFavoriteModelSelection } = await import('@/sync/domains/models/favoriteModelSelections');
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const favorites = toggleFavoriteModelSelection({
+            favorites: hook.getCurrent().favorites[0],
+            backend: { backendTargetKey: agentTargetKey, builtInAgentId: 'codex' },
+            modelRef: { agentTargetKey, providerConnectionId: accountConnectionId, modelId: 'gpt-6.2-sol' },
+            modelLabel: 'GPT 6.2 Sol',
+            providerDisplaySnapshot: {
+                providerName: 'CLIProxyAPI',
+                connectionName: 'Work',
+                connectionRole: 'named',
+                connectionDisplayNameMode: 'custom',
+            },
+            reasoningEffort: 'high',
+            addedAtMs: 5,
+        });
+        const selection = favorites[0]!;
+        expect(selection).toMatchObject({
+            selection: { ref: { providerConnectionId: accountConnectionId, modelId: 'gpt-6.2-sol' } },
+            reasoningEffort: 'high',
+        });
+        await act(async () => { hook.getCurrent().favorites[1](favorites); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().favorites[0]).toEqual(favorites));
         const { storage } = await import('@/sync/domains/state/storage');
         expect(storage.getState().settings.currentFavoriteModelSelectionsV1).toEqual([selection]);
         const { readRetainedFavoriteModelSelectionsV1 } = await import('@/sync/domains/settings/sessionAuthoringSelectionPersistence');
@@ -126,6 +149,23 @@ describe('Account Provider UI actions without a machine', () => {
         expect(await createDefaultActionExecutor().execute('models.favorite.set', { selection, favorite: true },
             { serverId, expectedAccountId: accountId, surface: 'ui' }))
             .toEqual({ ok: true, result: { status: 'updated' } });
+        const [{ saveHomeViewState }, { createSettingsDomain }, { createStore }] = await Promise.all([
+            import('@/sync/domains/server/serverProfiles'), import('@/sync/store/domains/settings'), import('zustand/vanilla'),
+        ]);
+        await saveHomeViewState({ version: 1, groups: [], activeTargetKind: 'server', activeTargetId: serverId });
+        type StoreState = ReturnType<typeof storage.getState>;
+        const restarted = createStore<StoreState>()((set, get) => ({
+            ...storage.getState(),
+            ...createSettingsDomain<StoreState>({ set, get }),
+        }));
+        expect(restarted.getState().settings.currentFavoriteModelSelectionsV1).toEqual([selection]);
+        await restarted.getState().activateSettingsScope({ serverId, accountId });
+        expect(restarted.getState().settings.currentFavoriteModelSelectionsV1).toEqual([selection]);
+        await account.restore({ accountId: 'other-account', machines: [] });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().favorites[0]).toEqual([]));
+        await account.restore({ accountId, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, machines: [],
+            httpAnswers: { '/v2/account/settings': readSettings, 'POST /v2/account/settings': writeSettings } });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().favorites[0]).toEqual([selection]));
         // Removal uses the same admitted favorite Action and preserves forward-version entries.
         await act(async () => { await hook.getCurrent().writer({ base: [selection], proposed: [] }); });
         expect(storage.getState().settings.currentFavoriteModelSelectionsV1).toEqual([]);
