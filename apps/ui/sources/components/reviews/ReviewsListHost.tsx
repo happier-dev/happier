@@ -51,11 +51,11 @@ const EMPTY_ITEMS: readonly ReviewRow[] = Object.freeze([]);
  * saved views. The title chevron is the view menu, the strip holds the spaces and + New space, a dragged Review joins
  * a space by dropping on its tab, and search waits behind its icon. Rows open their Review.
  */
-export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home' | 'column' }> = {}): React.ReactElement {
+export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home' | 'column' | 'hub' }> = {}): React.ReactElement {
     const focused = useIsFocused();
     const presented = useLayoutPresentationActive();
     const { columnVisible } = useAppShellColumn();
-    const overview = surface === 'home' && columnVisible;
+    const overview = surface === 'hub' || surface === 'home' && columnVisible;
     const view = useReviewsCollectionView(focused, surface === 'home');
     const { list } = view;
     const router = useRouter();
@@ -106,7 +106,7 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
         byline: item => [reviewSubjectLabel(item.subjectKind), reviewStateLabel(item.state),
             formatRelativeTimeShort(item.createdAt, Date.now())].join(' · '),
         action: item => <ReviewRowSpaceMenu item={item} view={view} />,
-        testID: item => `${surface === 'column' ? 'reviews:column:row' : 'reviews:row'}:${item.reviewId}`,
+        testID: item => `${surface === 'hub' ? 'reviews:home:row' : surface === 'column' ? 'reviews:column:row' : 'reviews:row'}:${item.reviewId}`,
     }), [reviewLabel, scope, surface, view]);
     const failure = list.error ? <SurfaceStateCard kind="error" title={t('common.error')}
         diagnosticCode={list.error.code ?? undefined} action={{ label: t('common.retry'), onPress: list.refresh }}
@@ -114,7 +114,7 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
     const collection = <Collection model={model} anatomy={anatomy} presentation="list" detail="none"
         accessibilityLabel={t('homeSettings.groups.reviews')}
         scroll={surface === 'column' ? 'collection' : 'page-virtualized'} minListWidth={0} minDetailWidth={0} preferredListRatio={1}
-        loading={list.items === null && list.error === null} testID={surface === 'column' ? 'reviews:column' : 'reviews:list'}
+        loading={list.items === null && list.error === null} testID={surface === 'hub' ? 'reviews:home' : surface === 'column' ? 'reviews:column' : 'reviews:list'}
         empty={failure ?? (searching ? <SurfaceStateCard kind="empty" title={t('ui.pluginUi.empty')} replacesContent />
             : overview && list.items?.length ? <SurfaceStateCard kind="empty"
                 title={t('reviewWalkthrough.collection.caughtUp')} replacesContent />
@@ -122,7 +122,7 @@ export function ReviewsListHost({ surface = 'home' }: Readonly<{ surface?: 'home
                 reason={t('reviewWalkthrough.detail.emptyReason')} replacesContent
                 action={universalSearch ? { testID: 'reviews:empty:start', label: t('reviewWalkthrough.detail.startReview'),
                     onPress: () => universalSearch.open(t('commandPalette.commands.startReviewRunTitle')) } : undefined} />)} />;
-    if (surface === 'column') return <CoreCollectionScope>
+    if (surface !== 'home') return <CoreCollectionScope>
         {list.items?.length ? failure : null}{collection}
     </CoreCollectionScope>;
     return <ReviewsCollectionPage view={view} failure={failure}>{collection}</ReviewsCollectionPage>;

@@ -7968,17 +7968,24 @@ fields and array entries survive composition, while later scalar values win.
 - The [runtime core](runtime-core.md) owns Session/turn admission and transcript/lifecycle state. [Providers](providers.md) owns model sources, connections and materialization. SDK projections do not transfer those domains to plugins.
 - In 0.3 development, Agent Provider-binding environment declarations distinguish required `authIsolation.ownedEnvKeys` from `optionalOwnedEnvKeys`. Materialization must cover every required key exactly once and may emit only a declared optional subset, without duplicates or overlap. This lets managed-only native configuration leave external bindings unchanged. The adapter's optional `modelRoles` consumes connection-owned `roleModels`; the plugin's portable Provider requirements project the same declared roles to editors. Only the selected adapter's declared roles are admitted and materialized.
 - Trusted daemon and native plugin code is executable code. Managed services provide portable APIs, resource custody, cancellation and diagnostics; they are not a malicious-code sandbox. Per-plugin network targets, filesystem scopes, Exec environment keys and system-tool argument lists do not restrict trusted code. Account and Team authorization, credential-origin handling, secret redaction and OS permission boundaries still apply.
+- In 0.3 development source, `services.fs.getPluginDataDirectory({ relativePath })` creates or reopens a directory in the existing plugin-data filesystem root and returns its absolute native path for Exec arguments. Logical `pluginData` operations address the same bytes. The caller can select a configuration subdirectory; invocation disposal does not delete native state. The filesystem service remains the sole path owner, with no second storage root.
 - Capability declarations, runtime registration and lifecycle must exist in the applicable realm. A daemon declaration does not establish browser or native support. Registry publication and a loaded invocation are separate evidence, not substitute availability authorities.
 
 In 0.3 development source, Plugin UI `readResource` and `watchResource` also
 accept the closed host-read reference `{ hostRead: actionId, input }` for
 `usage.query`, `connectedServices.quota.get`, `connectedServices.pools.selection.get`,
-`discussion.get`, `review.get`, `action.operations.get` and `deployments.environments.list`.
+`discussion.get`, `review.get`, `reviews.comments.list`, `action.operations.get` and `deployments.environments.list`.
 The Review reference accepts only `{ reviewId }` and borrows the captured Account's
 existing Review detail owner. Its JSON contains the canonical `review` and opened
 `human` projection. Live demand shares the owner's scoped AccountChange observation;
 explicit Resource refresh invokes that owner's refresh once, while invalidations
-consume its applied snapshot without another HTTP read. The deployment
+consume its applied snapshot without another HTTP read. The Review comments reference
+also accepts only `{ reviewId }`. It borrows the native finite comment window,
+root-finding projection and pushed revisions, retaining the owner's cursor without
+automatically draining later pages. Public `HappierReviewSummaryHost` consumes these
+two Resources for GitHub and GitLab; opened findings use the shared finding/body
+presentation and canonical persisted decision. The native Review remains the editing
+destination. The deployment
 collection observes every matching page, including current receipt state, through the
 existing deployment controller and Account change subscription while presented. Its
 JSON projection includes canonical controller availability, observed through the

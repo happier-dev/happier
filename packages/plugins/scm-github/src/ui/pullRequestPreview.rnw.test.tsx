@@ -42,6 +42,7 @@ async function mountOverview(
   serverId: string | null = 'srv_preview',
   directTabs = false,
   settlement?: PluginUiActionControlExecution,
+  admittedReview?: Readonly<{ reviewId: string }>,
 ) {
   const transportOptions = {
     pullRequestState: 'open',
@@ -87,6 +88,7 @@ async function mountOverview(
       viewer: { involvement: [] },
     },
     linkedSessions: [],
+    ...(admittedReview ? { admittedReview: { ...admittedReview, roundOrdinal: 1 } } : {}),
   });
   const previewReads: unknown[] = [];
   const previewRequestIds: string[] = [];
@@ -121,6 +123,22 @@ async function mountOverview(
         actionControl: controls.handler,
         readResource: async ({ resource }) => {
           resourceReads.push(resource);
+          if (typeof resource !== 'string' && 'hostRead' in resource && resource.hostRead === 'review.get') {
+            return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({
+              review: { reviewId: 'embedded-review', state: 'completed', counts: { total: 1, needsDecision: 1 } },
+              human: { needsYou: { needsYou: true } },
+            })), digest };
+          }
+          if (typeof resource !== 'string' && 'hostRead' in resource && String(resource.hostRead) === 'reviews.comments.list') {
+            return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({
+              status: 'loaded', cursor: 'next-page', pending: {}, comments: [], unavailableFindings: [],
+              rows: [{ rowId: 'same-finding', finding: { id: 'engine-finding', title: 'Preserve the persisted finding',
+                severity: 'high', category: 'correctness', summary: 'A finding shared with the native Review.' },
+                comment: { id: 'same-finding', reviewId: 'embedded-review', state: 'open', serverRevision: 3,
+                  reviewTriageStatus: 'accept', body: 'The current finding explanation.',
+                  author: { kind: 'plugin', pluginId: 'review-engine' }, transitions: [], edits: [] } }],
+            })), digest };
+          }
           return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify({ digest })), digest };
         },
         watchResource: async ({ resource }) => {
@@ -171,6 +189,18 @@ async function mountOverview(
 }
 
 describe('the PR Overview Preview step', () => {
+  it('opens the admitted persisted finding through the production PR summary and shared finding body', async () => {
+    const { detail, resourceReads } = await mountOverview({}, 'srv_preview', false, undefined, { reviewId: 'embedded-review' });
+    await vi.waitFor(() => detail.getByText('1 finding to decide'));
+    await expect(detail.getByText('Preserve the persisted finding')).resolves.toBeDefined();
+    await detail.press(await detail.getByRole('button', { name: 'Preserve the persisted finding' }));
+    await expect(detail.getByText('The current finding explanation.')).resolves.toBeDefined();
+    await expect(detail.getByText('Implement fix')).resolves.toBeDefined();
+    expect(resourceReads.filter(resource => typeof resource === 'object' && resource !== null
+      && 'hostRead' in resource && resource.hostRead === 'reviews.comments.list')).toEqual([
+      { hostRead: 'reviews.comments.list', input: { reviewId: 'embedded-review' } },
+    ]);
+  });
   it('keeps the native Preview refusal and issued request identity in Details', async () => {
     const { detail, agentRead, changed, lastPreviewRequestId } = await mountOverview({ operation: 'deploy', domainState: 'active' });
     await vi.waitFor(() => detail.getByText(`Deployed ${SHA}`));

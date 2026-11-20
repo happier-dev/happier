@@ -21,6 +21,8 @@ import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentat
 import { AppShellColumnContext } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { WorkspaceRouteBody } from '@/app/(app)/reviews';
 import { ReviewsListHost } from './ReviewsListHost';
+import { findHomeHubBuiltinSection } from '@/components/hub/homeHubSections';
+import { HOME_HUB_BUILTIN_DEFINITIONS, getHomeHubDefaultLayoutV1, resolveHomeHubLayout } from '@/components/hub/layout/homeHubLayout';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
@@ -58,6 +60,60 @@ beforeEach(() => {
 afterEach(async () => { await homes.reset(); routerPush.mockClear(); membershipAlert.mockClear(); restoreDimensions(); });
 
 describe('/reviews live host', () => {
+    it('opens actionable Reviews from the actual Home section without a second toolbar or automatic page drain', async () => {
+        const section = findHomeHubBuiltinSection('reviews');
+        expect(section, 'Home registers the Reviews consumer').not.toBeNull();
+        expect(resolveHomeHubLayout(getHomeHubDefaultLayoutV1(), HOME_HUB_BUILTIN_DEFINITIONS, []).sections)
+            .toContainEqual(expect.objectContaining({ id: 'reviews', hidden: false }));
+        const serverId = await homes.addHome({ serverUrl: 'https://home-reviews.example', name: 'Reviews', accountId: 'alice' });
+        await setActiveServerId(serverId, { scope: 'device' });
+        const previousScope = storage.getState().profileScope;
+        const previousApplied = getAppliedActiveServerSnapshot();
+        const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+        storage.setState({ profileScope: { serverId, accountId: 'alice' } });
+        const items: ReviewListResponseV1['items'] = ['needs', 'running', 'finished'].map(reviewId => ({
+            reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+            state: reviewId === 'running' ? 'running' : 'completed', currentRoundOrdinal: 1,
+            startedAt: 1, finishedAt: reviewId === 'running' ? null : 2, createdAt: 1, updatedAt: 2,
+            // An aggregate pending count does not make a Review need this person's decision.
+            counts: { total: 8, needsDecision: 8 }, needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you',
+                needsYou: reviewId === 'needs', requestedVerdict: reviewId === 'needs', pendingDecisions: false,
+                canSubmitVerdict: reviewId === 'needs' },
+        }));
+        let reads = 0;
+        homes.answer(serverId, 'POST /v1/reviews/list', { select: () => {
+            reads++;
+            return { body: { items, cursor: 'next-page' } };
+        } });
+        for (const item of items) homes.artifacts(serverId).replaceStoredRow({ id: item.reviewId, ownerAccountId: 'alice', access: 'owner',
+            publicAudience: 'none', encryptionMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 1, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: item.reviewId, title: `Exact ${item.reviewId}` }),
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://home-reviews.example', accountId: 'alice', request: homes.request });
+        await sync.awaitBootstrapForegroundAcquisition();
+        const screen = await renderScreen(<PluginSurfaceFocusEligibilityProvider active presentationActive>
+            {section!.render({ menu: <React.Fragment />, placeholder: '', frameStyle: 'plain', composerSuggestions: 'none' })}
+        </PluginSurfaceFocusEligibilityProvider>);
+        try {
+            await reportCollectionLayout(screen, 'reviews:home');
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('reviews:home:row:needs')).not.toBeNull());
+            expect(screen.findHostByTestId('reviews:home:row:running')).not.toBeNull();
+            expect(screen.findHostByTestId('reviews:home:row:finished')).toBeNull();
+            expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.needsYourDecision'));
+            expect(screen.getTextContent()).toContain(t('reviewWalkthrough.collection.stateRunning'));
+            expect(screen.findByTestId('reviews:scope-line')).toBeNull();
+            expect(reads).toBe(1);
+            await screen.pressByTestIdAsync('reviews:home:row:needs');
+            expect(routerPush).toHaveBeenCalledWith(artifactViewRoute('needs'));
+        } finally {
+            await screen.unmount();
+            await connection.dispose();
+            storage.setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+        }
+    });
     it.each([['desktop', 1024, true], ['phone', 390, false], ['collapsed desktop', 1024, false]] as const)('projects the %s collection from per-person attention and shares list, titles and search demand', async (surface, width, columnVisible) => {
         vi.spyOn(Dimensions, 'get').mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
         const serverUrl = `https://review-groups-${surface.replaceAll(' ', '-')}.example`;

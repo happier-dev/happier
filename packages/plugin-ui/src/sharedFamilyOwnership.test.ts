@@ -46,7 +46,7 @@ const APPROVED_CATALOG_VOCABULARY = [
   'Markdown', 'CodeBlock', 'ContentPreview', 'SceneArt', 'CodeEditor',
   'ShareConnectedPeoplePrompt', 'ShareGrantRow', 'ShareHelp', 'ShareLevelControl',
   'SharePrincipalVisual', 'ShareRowAction', 'ShareSheet',
-  'Spinner', 'Status', 'ReviewSeverity',
+  'Spinner', 'Status', 'ReviewSeverity', 'HappierReviewFinding', 'HappierReviewFindingBody', 'HappierReviewSummaryHost',
   'ApprovalPrompt', 'ApprovalFields', 'ApprovalPendingNotice', 'Timeline',
   'State', 'LoadingState', 'EmptyState', 'ErrorState',
   'Button', 'IconButton',
@@ -156,13 +156,14 @@ const APPROVED_CATALOG_VOCABULARY = [
   'PlanChecklistCard', 'RegistryShelf', 'RegistryShelfAddControl', 'RegistrySourcesUnavailable',
 ] as const;
 
-// These author-barrel values build or describe selection models without mounting UI.
+// These author-barrel values build or describe presentation models without mounting UI.
 const APPROVED_PRESENTATION_SUPPORT_EXPORTS = [
   'SELECTION_LIST_STATUS_VARIANTS',
   'SHARE_ACCESS_LEVEL_ORDER',
   'SHARE_DIRECTORY_KINDS',
   'buildDirectorySelectionSection',
   'buildShareSheetSelectionStep',
+  'formatHappierReviewFindingLocation',
   'orderShareAccessLevels',
   'shareSheetStepId',
 ] as const;
@@ -401,6 +402,51 @@ const GRADUATED_FAMILIES: readonly GraduatedFamily[] = [
     deletedCoreDuplicates: [
       { path: 'components/sessions/reviews/findings/reviewFindingPresentation.ts', symbol: 'reviewSeverityTone' },
     ],
+  },
+  {
+    publicName: 'HappierReviewFinding',
+    propTypeName: 'HappierReviewFindingProps',
+    family: 'Review finding disclosure',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/ReviewFinding.tsx',
+    sharedSymbol: 'HappierReviewFinding',
+    pluginOwner: { module: 'components/ReviewFinding.tsx', symbol: 'HappierReviewFinding' },
+    coreConsumers: ['components/sessions/reviews/findings/ReviewFindingRow.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Findings consume admitted Review data and controlled decisions in mounted product hosts.' },
+  },
+  {
+    publicName: 'HappierReviewFindingBody',
+    propTypeName: 'HappierReviewFindingBodyProps',
+    family: 'Review finding content',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/ReviewFinding.tsx',
+    sharedSymbol: 'HappierReviewFindingBody',
+    pluginOwner: { module: 'components/ReviewFinding.tsx', symbol: 'HappierReviewFindingBody' },
+    coreConsumers: ['components/reviews/finding/ReviewFindingBody.tsx'],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Finding evidence, history and conversation are supplied by the admitted mounted Review host.' },
+  },
+  {
+    publicName: 'HappierReviewSummaryHost',
+    propTypeName: 'HappierReviewSummaryHostProps',
+    family: 'Admitted Review summary',
+    disposition: 'required',
+    proofTier: 'behavior-owning',
+    phase: 'in-progress',
+    publiclyExported: true,
+    sharedModule: 'components/ReviewSummaryHost.tsx',
+    sharedSymbol: 'HappierReviewSummaryHost',
+    pluginOwner: { module: 'components/ReviewSummaryHost.tsx', symbol: 'HappierReviewSummaryHost' },
+    coreConsumers: [],
+    devMountSymbols: [],
+    declarative: { kind: 'not-applicable', reason: 'Mounted GitHub and GitLab surfaces consume the admitted native Review finding Resource.' },
   },
   {
     publicName: 'State',
@@ -4273,6 +4319,9 @@ describe('graduated shared presentation families (§8.2)', () => {
       .map((entry) => entry.publicName);
 
     expect(unfinished).toEqual([
+      'HappierReviewFinding',
+      'HappierReviewFindingBody',
+      'HappierReviewSummaryHost',
       'Action.Control',
       'ItemAddRow',
       'AgentActionButton',

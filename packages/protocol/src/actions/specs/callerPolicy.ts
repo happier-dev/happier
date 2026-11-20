@@ -28,6 +28,7 @@ export const ACTION_PLUGIN_CALLER_POLICY_BY_ID: Readonly<
   'connectedServices.pools.selection.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'discussion.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'review.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
+  'reviews.comments.list': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'deployments.environments.list': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'usage.query': HOST_DOMAIN_PLUGIN_CALLER_POLICY,
   'usage.prices.get': HOST_DOMAIN_PLUGIN_CALLER_POLICY,

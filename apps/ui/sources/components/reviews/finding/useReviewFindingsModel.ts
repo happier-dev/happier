@@ -8,7 +8,7 @@ import type { ReviewQuestion } from '@happier-dev/protocol/reviews/ReviewQuestio
 import type { ReviewTriageStatus } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewFindingsApplyResultV1Schema } from '@happier-dev/protocol/reviews/reviewApplyV1';
-import { projectReviewFindingRoundStatusV1, reviewCommentFindingScopeV1,
+import { projectReviewFindingRoundStatusV1,
     type ReviewFindingRoundContextV1 } from '@happier-dev/protocol/reviews/comments/findingIdentity';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -27,6 +27,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { beginClipboardWriteFromUi } from '@/utils/ui/clipboard';
+import { projectReviewFindingRoots } from './reviewFindingRoots';
+export { projectReviewFindingRoots } from './reviewFindingRoots';
 
 export type ReviewFindingsMember = ReviewMember & Readonly<{
     /** The producing Session, when admitted for reviewer follow-up. */
@@ -49,25 +51,6 @@ function taskOriginOf(comments: readonly ReviewCommentV1[]) {
         ? { reviewId, findingIds: [...new Set(comments.map(comment => comment.id))] }
         : null;
 }
-
-/** The Review's durable roots and their sealed finding payloads, shared by opened and summary views. */
-export function projectReviewFindingRoots(reviewId: string, comments: readonly ReviewCommentV1[]): Readonly<{
-    roots: readonly ReviewCommentV1[];
-    rows: readonly Readonly<{ rowId: string; finding: NonNullable<ReviewCommentV1['finding']>; comment: ReviewCommentV1 }>[];
-    unavailableFindings: readonly ReviewCommentV1[];
-}> {
-    const roots = comments.filter(comment => {
-        const identity = reviewCommentFindingScopeV1(comment);
-        return identity?.[0] === 'review' && identity[1] === reviewId;
-    });
-    return {
-        roots,
-        rows: sortReviewFindingRows(roots.flatMap(comment => comment.finding
-            ? [{ rowId: comment.id, finding: comment.finding, comment }] : [])),
-        unavailableFindings: roots.filter(comment => !comment.finding),
-    };
-}
-
 
 function sourceDecision(source: ReviewFindingSource, pending: Readonly<Record<string, ReviewTriageStatus>>): ReviewFindingDecision | 'undecided' {
     if (!source.comment) return 'undecided';

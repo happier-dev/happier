@@ -33,6 +33,10 @@ export const PluginUiHostReadReferenceV1Schema = lazyZodSchema(() => z.union([z.
   hostRead: z.literal('review.get'),
   input: ReviewGetRequestV1Schema,
 }), z.strictObject({
+  // This Resource observes the canonical Review window; paging stays with that owner.
+  hostRead: z.literal('reviews.comments.list'),
+  input: z.strictObject({ reviewId: ReviewGetRequestV1Schema.shape.reviewId }),
+}), z.strictObject({
   hostRead: z.literal('deployments.environments.list'),
   input: DeploymentEnvironmentListInputV1Schema,
 }), z.strictObject({

@@ -44,6 +44,8 @@ import {
   Button,
   EmptyState,
   ErrorState,
+  HappierReviewSummaryHost,
+  type HappierReviewSummaryHandle,
   Item,
   ItemGroup,
   List,
@@ -459,6 +461,9 @@ function OverviewPanel({
               )}
             </Stack>
           )}
+        {input.observation.entryRef.kindId === 'merge-request' && input.admittedReview
+          ? <AdmittedHappierReviewSummary key={input.admittedReview.reviewId} reviewId={input.admittedReview.reviewId} />
+          : null}
         {withWrites ? <GitlabMutationControls input={effectiveInput} /> : null}
         {story && controller.failure === null ? null : (
           <RefreshRow
@@ -1233,10 +1238,18 @@ function MergeRequestReviewHeader({ input, proposals }: Readonly<{
 }>): React.ReactElement {
   return (
     <Stack gap="large">
+      {input.admittedReview ? <AdmittedHappierReviewSummary key={input.admittedReview.reviewId} reviewId={input.admittedReview.reviewId} /> : null}
       <GitlabMergeRequestPublicationControls input={input} proposals={proposals} />
       <ApprovalsSection input={input} />
     </Stack>
   );
+}
+
+function AdmittedHappierReviewSummary({ reviewId }: Readonly<{ reviewId: string }>): React.ReactElement {
+  const summary = React.useRef<HappierReviewSummaryHandle>(null);
+  const refresh = React.useCallback(async () => { await summary.current?.refresh(); }, []);
+  useTriagePageRefresh(refresh);
+  return <HappierReviewSummaryHost ref={summary} reviewId={reviewId} />;
 }
 
 /** The non-host Reviews tab: the approvals and the discussions walk, on the shared stream. */

@@ -6,6 +6,8 @@ import type { WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { resolveWidgetInstanceTitle, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { t } from '@/text';
 import { readWidgetGroupTitle } from '@/components/widgets/group/widgetGroupTitle';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ReviewsListHost } from '@/components/reviews/ReviewsListHost';
 
 import { HubAttentionSection } from './HubAttentionSection';
 import { HomeCompletedBots } from './HomeCompletedBots';
@@ -62,6 +64,15 @@ export const HOME_HUB_BUILTIN_SECTIONS: readonly HomeHubBuiltinSection[] = Objec
         description: () => t('homeIndex.attentionDescription'),
         title: () => t('settingsOverview.attentionTitle'),
         render: ({ menu }) => <HubAttentionSection menu={menu} />,
+    },
+    {
+        ...builtin('reviews'),
+        icon: 'check-circle',
+        description: () => t('homeSettings.groups.reviews'),
+        title: () => t('homeSettings.groups.reviews'),
+        render: ({ menu }) => <ItemGroup title={t('homeSettings.groups.reviews')} action={menu} density="compact">
+            <ReviewsListHost surface="hub" />
+        </ItemGroup>,
     },
     {
         ...builtin('setup'),

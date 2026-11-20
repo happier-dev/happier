@@ -1665,6 +1665,7 @@ export {
   type HappierReviewFindingBodyProps,
   type HappierReviewFindingDecision,
 } from './ReviewFinding.js';
+export { HappierReviewSummaryHost, type HappierReviewSummaryHostProps, type HappierReviewSummaryHandle, type HappierReviewFindingWindow } from './ReviewSummaryHost.js';
 export {
   buildHappierWorkMap,
   formatHappierWorkMapNodeName,

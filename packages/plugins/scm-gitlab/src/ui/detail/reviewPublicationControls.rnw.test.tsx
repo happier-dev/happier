@@ -12,7 +12,7 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   GITLAB_PLUGIN_ID,
@@ -133,7 +133,11 @@ let completed = 0;
 
 type MountedControl = 'merge-request' | 'thread-reply' | 'issue-comment';
 
-async function mountControl(kind: MountedControl): Promise<MountedFixture> {
+async function mountControl(kind: MountedControl, options?: Readonly<{
+  input: TriageDetailSurfaceInputV1;
+  proposals: GitlabReviewProposalReadV1;
+  withWalkthrough?: boolean;
+}>): Promise<MountedFixture> {
   const { reviewRevision: _reviewRevision, ...issueSnapshot } = INPUT.observation.snapshot;
   const issueInput = kind === 'issue-comment'
     ? ({
@@ -159,7 +163,7 @@ async function mountControl(kind: MountedControl): Promise<MountedFixture> {
       surface: defineUiSurface(() => (
         <TriagePostMutationCompletionProvider onComplete={async () => { completed += 1; }}>
           {kind === 'merge-request'
-            ? <GitlabMergeRequestPublicationControls input={INPUT} proposals={PROPOSALS} />
+            ? <GitlabMergeRequestPublicationControls input={options?.input ?? INPUT} proposals={options?.proposals ?? PROPOSALS} />
             : kind === 'thread-reply'
               ? <GitlabThreadReplyPublicationControl input={INPUT} discussionId="discussion-7" proposals={PROPOSALS} />
               : <GitlabIssueCommentPublicationControl input={issueInput} proposals={PROPOSALS} />}
@@ -169,6 +173,18 @@ async function mountControl(kind: MountedControl): Promise<MountedFixture> {
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
         actionControl: controls.handler,
+        ...(options?.input.admittedReview ? {
+          readResource: async () => ({
+            contentType: 'application/json',
+            digest: `sha256:${'1'.repeat(64)}`,
+            bytes: new TextEncoder().encode(JSON.stringify({
+              roundQuality: { roundOrdinal: 1, aggregation: 'median', score: 3.5, reviewers: [{ score: 2 }, { score: 5 }] },
+              ...(options.withWalkthrough ? { roundWalkthrough: { roundOrdinal: 1, stops: [
+                { title: 'Retry ownership', explanationMarkdown: 'The new scheduler owns retries. Keep this extra detail in Happier.' },
+              ] } } : {}),
+            })),
+          }),
+        } : {}),
         executeAction: async ({ action, input }) => {
           if (typeof action !== 'string' && Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
             throw new Error('A press write must execute through the host Action control.');
@@ -206,6 +222,22 @@ async function mountRenderedDetail(input: TriageDetailSurfaceInputV1): Promise<M
       launchInput: input as unknown as JsonValue,
       handlers: {
         actionControl: controls.handler,
+        readResource: async ({ resource }) => {
+          if (typeof resource === 'string' || !('hostRead' in resource)) throw new Error('Expected the admitted Review Resource');
+          const value = resource.hostRead === 'review.get' ? {
+            review: { reviewId: 'embedded-review', state: 'completed', counts: { total: 1, needsDecision: 1 } },
+            human: { needsYou: { needsYou: true } },
+          } : {
+            status: 'loaded', cursor: null, pending: {}, comments: [], unavailableFindings: [],
+            rows: [{ rowId: PROPOSAL.id,
+              finding: { id: 'engine-finding', title: 'Use the shared persisted finding', severity: 'high',
+                category: 'correctness', summary: 'This finding also opens in Reviews.' },
+              comment: { ...PROPOSAL, body: 'Persisted current body after a decision.', reviewId: 'embedded-review', state: 'open', reviewTriageStatus: 'reject',
+                author: { kind: 'plugin', pluginId: 'review-engine' }, transitions: [], edits: [] } }],
+          };
+          return { contentType: 'application/json', bytes: new TextEncoder().encode(JSON.stringify(value)), digest: `sha256:${'1'.repeat(64)}` };
+        },
+        watchResource: async () => ({ digest: `sha256:${'1'.repeat(64)}` }),
         executeAction: async ({ action, input: dispatched }) => {
           if (typeof action !== 'string' && Object.values(GITLAB_TRIAGE_MUTATION_ACTION_IDS).some(localId => localId === action.localId)) {
             throw new Error('A press write must execute through the host Action control.');
@@ -282,6 +314,14 @@ function actionRef(localId: string) {
 }
 
 describe('mounted GitLab Review publication controls', () => {
+  it.each(['overview', 'activity'] as const)('opens the admitted persisted finding through the production merge request summary and shared body (%s)', async panel => {
+    const detail = await mountRenderedDetail({ ...INPUT, panel,
+      admittedReview: { reviewId: 'embedded-review', roundOrdinal: 1 } });
+    await vi.waitFor(() => detail.getByText('Use the shared persisted finding'));
+    await detail.press(await detail.getByRole('button', { name: 'Use the shared persisted finding' }));
+    await expect(detail.getByText('Persisted current body after a decision.')).resolves.toBeDefined();
+    await expect(detail.getByText('Ignored')).resolves.toBeDefined();
+  });
   it('reaches all four controls through the real GitLab MR/issue surface compositions', async () => {
     const mergeRequest = await mountRenderedDetail(INPUT);
     await act(async () => mergeRequest.press(await mergeRequest.getByRole('tab', { name: 'Reviews' })));
@@ -348,6 +388,48 @@ describe('mounted GitLab Review publication controls', () => {
       disabled: true,
     });
     await expect(detail.getByText('Add a summary before publishing this verdict.')).resolves.toBeDefined();
+  });
+
+  it.each([false, true])('sends the same formatted verdict body shown in the publication preview (walkthrough=%s)', async withWalkthrough => {
+    const detail = await mountControl('merge-request', {
+      input: { ...INPUT, admittedReview: { reviewId: 'selected-review', roundOrdinal: 1 } },
+      withWalkthrough,
+      proposals: { status: 'ready', proposals: [{
+        ...PROPOSAL,
+        finding: { id: 'model-finding', severity: 'high', category: 'correctness',
+          title: 'Keep retry state consistent', summary: 'Current retry policy discards the saved attempt.' },
+      }] },
+    });
+    await act(async () => detail.press(await detail.getByRole('radio', { name: 'Request changes' })));
+    const box = document.body.querySelector('textarea');
+    if (!box) throw new Error('Expected the verdict summary editor');
+    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!;
+    const authored = 'Check the retry behavior before merging.';
+    await act(async () => {
+      setValue.call(box, authored);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const readPreview = () => document.body.querySelector('[data-testid="gitlab-review-publication-preview"]')?.textContent;
+    await vi.waitFor(() => expect(readPreview()).toContain('Quality: 3/5 (median). Reviewer scores: 2, 5.'));
+    if (withWalkthrough) {
+      await vi.waitFor(() => expect(readPreview()).toContain('<summary>Walkthrough · 1 stop</summary>'));
+      expect(readPreview()).toContain('The new scheduler owns retries.');
+      expect(readPreview()).not.toContain('Keep this extra detail in Happier.');
+      await act(async () => detail.press(await detail.getByRole('switch', { name: 'Include the walkthrough' })));
+      expect(readPreview()).not.toContain('<summary>Walkthrough · 1 stop</summary>');
+    }
+    const preview = readPreview();
+    expect(preview).toContain(authored);
+    expect(preview).toContain(`Head: ${HEAD}`);
+    expect(preview).toContain('Reviewed with Happier');
+    expect(preview).toContain('[Open in Happier](https://cloud.happier.dev/artifacts/selected-review)');
+    expect(preview).toContain('[Fix in Happier](https://cloud.happier.dev/artifacts/selected-review?thread=review-comment-1)');
+
+    await act(async () => detail.controls.press('Submit review'));
+    expect(recorded.at(-1)).toMatchObject({
+      action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview),
+      input: { publicationPlan: { verdict: { kind: 'requestChanges', body: preview } } },
+    });
   });
 
   it('reports a declined host confirmation as canceled with no provider completion', async () => {

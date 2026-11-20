@@ -15,6 +15,7 @@ import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCle
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactReadBatchHttpResponse, createPlainArtifactHttpFixture, projectArtifactBoundaryReadRow } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -37,6 +38,8 @@ import { useManagedMachineInventory } from '@/components/settings/machines/manag
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { sync } from '@/sync/sync';
+import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
+import { resetReviewRunCommentsForTests } from '@/sync/domains/reviews/comments/reviewRunComments';
 
 const reference = { hostRead: 'usage.query' as const, input: { queries: [{}] } };
 const quotaReference = { hostRead: 'connectedServices.quota.get' as const, input: { source: { bindingKind: 'account' as const,
@@ -52,6 +55,7 @@ afterEach(async () => {
     clearDiscussionRepositoryRegistryForTests();
     retireActiveServerAccountScopeLifetime(); await home?.dispose(); home = undefined;
     actionOperationStore.reset();
+    resetReviewRunCommentsForTests();
 });
 
 async function mount(route: Parameters<typeof serveAccountHomes>[0]['route'], enabled: boolean | (() => boolean) = true,
@@ -138,6 +142,48 @@ async function settleUsageDetail(entry: PluginUiResourceEntry) {
 }
 
 describe('mounted native and hosted host reads', () => {
+    it('opens the admitted Review finding window and pushes the same persisted decision and history without draining pages', async () => {
+        const resource = { hostRead: 'reviews.comments.list', input: { reviewId: 'embedded-review' } } satisfies PluginUiHostReadReferenceV1;
+        let enabled = false;
+        let current = buildReviewCommentFixture({ id: 'finding', reviewId: 'embedded-review',
+            findingIdentity: 'a'.repeat(64), reviewTriageStatus: 'accept',
+            finding: { id: 'engine-finding', title: 'Preserve the decision', severity: 'high', category: 'correctness', summary: 'Keep the canonical comment.' } });
+        const artifact = createPlainArtifactHttpFixture({ id: 'embedded-review', title: 'Review', isDecrypted: true,
+            rawHeader: { kind: 'review.v1', v: 1, reviewId: 'embedded-review', title: 'Review' },
+            body: JSON.stringify({ v: 1, rounds: [] }), headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 1 }, 'account-a');
+        const { native, lifetime } = await mount(request => {
+            if (request.url.pathname === '/v1/artifacts/read') return createArtifactReadBatchHttpResponse(request.body,
+                id => id === 'embedded-review' ? { ok: true, artifactId: id, artifact } : { ok: false, artifactId: id, error: 'not_found' });
+            if (request.url.pathname === '/v1/artifacts/embedded-review') return Response.json(projectArtifactBoundaryReadRow(artifact));
+            if (request.url.pathname === '/v1/reviews/comments') return Response.json({ items: [storePlainReviewCommentFixture(current)], cursor: 'next-page' });
+            if (request.url.pathname === '/v1/reviews/comments/finding') return Response.json({ comment: storePlainReviewCommentFixture(current) });
+            return undefined;
+        }, () => enabled);
+        const read = async () => JSON.parse(new TextDecoder().decode((await native.api.readResource(resource)).bytes)) as {
+            rows: readonly { rowId: string; comment: { serverRevision: number; reviewTriageStatus: string; transitions: readonly unknown[] } }[];
+            cursor: string | null;
+        };
+        let release: Awaited<ReturnType<typeof native.api.watchResource>> | undefined;
+        try {
+            await expect(native.api.readResource(resource)).rejects.toMatchObject({ code: 'action_disabled' });
+            expect(home!.requests.filter(request => request.path.split('?')[0] === '/v1/reviews/comments')).toHaveLength(0);
+            enabled = true;
+            const snapshot = await read();
+            expect(snapshot).toMatchObject({ rows: [{ rowId: 'finding', comment: { reviewTriageStatus: 'accept' } }], cursor: expect.any(String) });
+            expect(home!.requests.filter(request => request.path.split('?')[0] === '/v1/reviews/comments')).toHaveLength(1);
+            let changed = false;
+            release = await native.api.watchResource(resource, () => { changed = true; });
+            current = { ...current, serverRevision: 2, state: 'dismissed', reviewTriageStatus: 'reject', transitions: [...current.transitions,
+                { transitionId: 'decision-2', toState: 'dismissed', transitionedAt: 2, transitionedBy: { kind: 'user', userId: 'account-a' }, serverRevision: 2 }] };
+            publishHomeAccountChange(lifetime.scope.serverId, ['embedded-review'], { changeKinds: ['artifact'],
+                reviewCommentChanges: [{ reviewId: 'embedded-review', commentId: current.id, serverRevision: 2,
+                    state: current.state, reviewTriageStatus: 'reject' }] });
+            await expect.poll(() => changed).toBe(true);
+            await expect.poll(read).toMatchObject({ rows: [{ comment: { serverRevision: 2, reviewTriageStatus: 'reject', transitions: current.transitions } }] });
+            expect(home!.requests.filter(request => request.path.split('?')[0] === '/v1/reviews/comments')).toHaveLength(1);
+        } finally { release?.dispose(); native.dispose(); }
+    });
     it('admits Review detail through its original Action and propagates the canonical Account refusal', async () => {
         let enabled = false;
         const resource = { hostRead: 'review.get', input: { reviewId: 'selected-review' } } satisfies PluginUiHostReadReferenceV1;

@@ -1,4 +1,5 @@
 /** @moduleRealm any */
+export { readReviewFindingDecisionV1 } from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils';
 

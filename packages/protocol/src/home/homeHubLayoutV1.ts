@@ -54,7 +54,7 @@ export type HomeHubLayoutIntent = z.infer<typeof HomeHubLayoutIntentSchema>;
 export type HomeHubBuiltinDefinition = Readonly<{ id: string; hideable: boolean; defaultHidden?: boolean; afterWidgets?: boolean; card?: boolean; size?: WidgetSizeV1 }>;
 /** The UI renderer table and daemon consume these same built-in layout rules. */
 export const HOME_HUB_BUILTIN_DEFINITIONS: readonly HomeHubBuiltinDefinition[] = Object.freeze([
-    { id: 'start', hideable: false }, { id: 'attention', hideable: false }, { id: 'setup', hideable: true },
+    { id: 'start', hideable: false }, { id: 'attention', hideable: false }, { id: 'reviews', hideable: true }, { id: 'setup', hideable: true },
     { id: 'automations', hideable: true, afterWidgets: true, card: true, size: 'small' },
 ]);
 export type HomeHubWidgetInput = WidgetCandidateIdentityV1 & Readonly<{
