@@ -18,6 +18,7 @@ import { HAPPIER_PAGE_METRICS, isHappierPageRowNarrow } from '../layout/pageMetr
 import { resolveHappierTabKeySelection } from '../navigation/Tabs.js';
 import { HAPPIER_FIELD_BOX_METRICS } from './FieldBox.js';
 import { HAPPIER_RADIO_MARK_METRICS, resolveHappierRadioMarkStyle } from './RadioMark.js';
+import type { HappierStyleProp } from '../portableTypes.js';
 import { HappierMaterialSurface, useContainingHappierMaterialRole, useHappierMaterialColorResolver, type HappierMaterialSurfaceRender } from '../layout/Surface.js';
 import { splitForWebMiddleEllipsis, HAPPIER_MIDDLE_ELLIPSIS_STYLE } from '../text/middleEllipsis.js';
 import { usePageWindow } from '../collection/pageCollectionVirtualizer.js';
@@ -974,7 +975,8 @@ function CardTileFrame(props: Readonly<{
   if (props.material && !onFloatingPlane) {
     return (
       <HappierMaterialSurface materialRole="card" gradient={null} renderMaterialSurface={props.renderMaterialSurface}
-        {...(props.onLayout ? { onLayout: props.onLayout } : {})} style={style}>
+        // The frame's RN styles cross into the portable surface at this boundary, as the other shared frames do.
+        {...(props.onLayout ? { onLayout: props.onLayout } : {})} style={style as HappierStyleProp}>
         {props.children(hover)}
       </HappierMaterialSurface>
     );
