@@ -158,6 +158,29 @@ describe('useAuthEntryOptions', () => {
         expect(hook.getCurrent().retentionDisclosure).toMatchObject({ kind: 'summary', summary: expect.any(String) });
     });
 
+    it('does not offer a retention retry when the selected Home uses its enrollment transport', async () => {
+        const home = await adoptPersonalHomeProfileAndComplete({
+            source: 'desktop-personal-home',
+            descriptorAuthority: 'current_connection_observation',
+            descriptor: homeConnectionDescriptorFixture({
+                homeServerIdentityId: 'srv_descriptor',
+                canonicalServerUrl: endpoint,
+                endpoints: [{ kind: 'https', url: endpoint }],
+            }),
+        });
+        await setActiveServer({ serverId: home.id, scope: 'device' });
+        features = () => {
+            const response = keyFeatures();
+            Object.assign(response.capabilities, { serverIdentity: { serverIdentityId: 'srv_descriptor' } });
+            return Response.json(response);
+        };
+        const hook = await mount();
+        await settle();
+        expect(hook.getCurrent().serverAvailability).toBe('ready');
+        expect(hook.getCurrent().retentionDisclosure).toBeNull();
+        expect(calls('/v2/retention-policy')).toHaveLength(0);
+    });
+
     it('projects the active Home carrier as the exact authentication transport', async () => {
         // The byte carrier is a genuine transport boundary, published through the real runtime owner.
         const homeCarrier = { endpointId: 'a'.repeat(64), readObservedPath: () => 'relay' as const,
