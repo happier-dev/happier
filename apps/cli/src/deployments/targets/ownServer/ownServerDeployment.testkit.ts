@@ -203,14 +203,23 @@ if (args[0] === 'system' && args[1] === 'dial-stdio') {
     // Mock only that native transport, retaining real HTTP framing and processes.
     let ready = false;
     let previous = state;
+    const emitContainerEvent = (row, action) => {
+        const event = JSON.stringify({ Type: 'container', Action: action, Actor: { ID: row.Id } })+'\n';
+        write(Buffer.byteLength(event).toString(16)+'\r\n'+event+'\r\n');
+    };
     const changed = () => {
         if (!ready) return;
         const current = JSON.parse(fs.readFileSync(statePath, 'utf8'));
         for (const row of current.containers) {
+            const previousStatus = previous.containers.find(container => container.Id === row.Id)?.State.Status;
+            if (previousStatus !== row.State.Status) {
+                if (row.State.Status === 'exited') emitContainerEvent(row, 'die');
+                if (row.State.Status === 'running') emitContainerEvent(row, 'start');
+            }
             const service = row.Config.Labels['com.docker.compose.service'];
-            if (previous.health[service] === current.health[service]) continue;
-            const event = JSON.stringify({ Type: 'container', Action: 'health_status: '+(current.health[service] || 'healthy'), Actor: { ID: row.Id } })+'\n';
-            write(Buffer.byteLength(event).toString(16)+'\r\n'+event+'\r\n');
+            if (previous.health[service] !== current.health[service]) {
+                emitContainerEvent(row, 'health_status: '+(current.health[service] || 'healthy'));
+            }
         }
         previous = current;
     };

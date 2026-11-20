@@ -31,6 +31,11 @@ export { allowRealServerSocketBoundary as allowRealActionServerSocketBoundary } 
 export { createMachineClientEnrollmentOutputFixture } from './machineClientEnrollmentOutputFixture';
 export { createAccountOutputFixture } from './machineAccountOutputContractFixture';
 export { createUiMachineOutputFixture } from './machinesOutputContractFixture';
+export async function mountUiInboxJourney() {
+    const { mountUiInboxJourney } = await import('./inboxJourneyIntegrationTestkit');
+    return mountUiInboxJourney();
+}
+
 export async function readUiChannelProviderProjection(machineId: string, input: Readonly<{ pluginId: string; serverId: string }>) {
     const { machinePluginUiTargetedContributionsRead } = await import('@/sync/ops/machineContributionRegistryProjection');
     return machinePluginUiTargetedContributionsRead(machineId, input);

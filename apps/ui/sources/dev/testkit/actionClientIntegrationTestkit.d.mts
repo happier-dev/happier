@@ -133,6 +133,7 @@ export function mountUiWorkflowEnginePicker(params: Readonly<{
     close(): Promise<void>;
 }>>;
 
+export const mountUiInboxJourney: typeof import('./inboxJourneyIntegrationTestkit.js').mountUiInboxJourney;
 export const readUiChannelProviderProjection: typeof import('../../sync/ops/machineContributionRegistryProjection.js').machinePluginUiTargetedContributionsRead;
 
 export function createUiMachineOutputFixture(serverId: string): Readonly<{
