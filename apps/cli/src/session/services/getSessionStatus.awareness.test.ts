@@ -467,7 +467,7 @@ describe('getSessionStatus awareness acquisition', () => {
     }
   });
 
-  it('exposes exact pending permission and question identities through the status Action contract', async () => {
+  it('exposes pending request addresses and published operands through the status Action', async () => {
     serveE2ee({
       dataEncryptionKey,
       agentState: encryptSessionPayload({
@@ -485,10 +485,9 @@ describe('getSessionStatus awareness acquisition', () => {
     expect(SessionStatusActionResultV1Schema.parse(result)).toMatchObject({
       ok: true,
       pendingRequests: [
-        { requestId: 'exec-native-pwd', turnId: 'native-turn-1', kind: 'permission', tool: 'Bash' },
-        { requestId: 'ask-choice', kind: 'user_action', tool: 'AskUserQuestion' },
+        { requestId: 'exec-native-pwd', turnId: 'native-turn-1', kind: 'permission', tool: 'Bash', arguments: { command: 'pwd' } },
+        { requestId: 'ask-choice', kind: 'user_action', tool: 'AskUserQuestion', arguments: { questions: [{ id: 'choice', question: 'Continue?' }] } },
       ],
     });
-    expect(result).not.toHaveProperty('pendingRequests.0.arguments');
   });
 });

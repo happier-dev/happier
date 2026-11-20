@@ -9,11 +9,12 @@ import { summarizeSessionRecord } from '@/cli/output/session/sessionSummary';
 import { SESSION_STATUS_PRESENTATION } from './sessionLeafPresentation';
 
 describe('Session status presentation', () => {
-  it('prints the pending permission address needed to answer it, without private arguments', async () => {
+  it('prints the pending permission address and its published operands', async () => {
+    const argumentsFixture = { text: 'Check the fixture' };
     const pendingRequests = projectSessionStatusPendingRequestsV1(listPendingRequests({
       sessionId: 'session', active: true, permissionRelationship: 'owner',
       agentState: AgentStateSchema.parse({ requests: {
-        'permission-address': { tool: 'mcp__fixture__echo', kind: 'permission', arguments: { private: 'content' }, createdAt: 1 },
+        'permission-address': { tool: 'mcp__fixture__echo', kind: 'permission', arguments: argumentsFixture, createdAt: 1 },
       } }),
       actionConfirmations: null, presentationCompletedRequests: null, projected: null,
     }));
@@ -26,9 +27,8 @@ describe('Session status presentation', () => {
     try {
       await SESSION_STATUS_PRESENTATION.presentSuccess!(payload, { command, json: true, input: { sessionId: 'session' }, callerInput: {} });
       expect(JSON.parse(output.text())).toMatchObject({ ok: true, kind: 'session_status', data: {
-        pendingRequests: [{ requestId: 'permission-address', kind: 'permission', tool: 'mcp__fixture__echo' }],
+        pendingRequests: [{ requestId: 'permission-address', kind: 'permission', tool: 'mcp__fixture__echo', arguments: argumentsFixture }],
       } });
-      expect(output.text()).not.toContain('private');
     } finally {
       output.restore();
     }
