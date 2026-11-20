@@ -405,7 +405,7 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
                         healthcheck: { test: ['CMD', 'pg_isready', '-h', '127.0.0.1', '-U', 'fixture', '-d', 'fixture'] } },
                     web: { image, ports: ['127.0.0.1::3000'], depends_on: { db: { condition: 'service_healthy' } },
                         healthcheck: { test: ['CMD', 'node', '-e',
-                            "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"], interval: '1s' },
+                            "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] },
                         environment: { DATABASE_URL: 'postgresql://fixture:fixture@db:5432/fixture',
                             ...Object.fromEntries(TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.map(key => [key, null])) } },
                 } });
