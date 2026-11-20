@@ -121,7 +121,9 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
   if (!databaseUrl || !String(databaseUrl).trim()) {
     throw new Error('Missing databaseUrl');
   }
-  if (contractFile !== undefined && (mode === 'e2e' || mode === 'ui' || typeof contractFile !== 'string' || !contractFile.trim() || contractFile.startsWith('-'))) {
+  const contractFiles = contractFile === undefined ? [] : Array.isArray(contractFile) ? contractFile : [contractFile];
+  if (contractFile !== undefined && (mode === 'e2e' || mode === 'ui' || contractFiles.length === 0
+    || contractFiles.some(file => typeof file !== 'string' || !file.trim() || file.startsWith('-')))) {
     throw new Error('A contract file filter requires contract or extended mode and a test file path');
   }
   const e2eFiles = e2eFile === undefined ? [] : Array.isArray(e2eFile) ? e2eFile : [e2eFile];
@@ -224,7 +226,7 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl, contractFile
   const contractStep = {
     kind: 'contract',
     command: 'pnpm',
-    args: ['--filter', resolveServerAppWorkspaceName(), 'run', 'test:db-contract', ...(contractFile === undefined ? [] : [contractFile])],
+    args: ['--filter', resolveServerAppWorkspaceName(), 'run', 'test:db-contract', ...contractFiles],
     env: {
       ...providerEnv,
       ...(containerId === undefined ? {} : {

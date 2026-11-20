@@ -7,7 +7,7 @@ export interface ExtendedDbArgs {
   keep?: boolean;
   db?: ExtendedDbName;
   name?: string;
-  'contract-file'?: string;
+  'contract-file'?: string | string[];
   'e2e-file'?: string | string[];
 }
 

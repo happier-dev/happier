@@ -18,7 +18,7 @@ function usage() {
 Run Happier extended DB tests with an auto-provisioned Docker database.
 
 Usage:
-  node packages/tests/scripts/run-extended-db-docker.mjs --db postgres|mysql [--mode e2e|ui|contract|extended|session-system-record-upgrade] [--contract-file <server-relative-test-file>] [--e2e-file <tests-relative-slow-test-file> (repeatable)] [--ui-file <tests-relative-browser-file>] [--ui-grep <test-name-pattern>] [--keep]
+  node packages/tests/scripts/run-extended-db-docker.mjs --db postgres|mysql [--mode e2e|ui|contract|extended|session-system-record-upgrade] [--contract-file <server-relative-test-file> (repeatable)] [--e2e-file <tests-relative-slow-test-file> (repeatable)] [--ui-file <tests-relative-browser-file>] [--ui-grep <test-name-pattern>] [--keep]
 
 Examples:
   node packages/tests/scripts/run-extended-db-docker.mjs --db postgres --mode e2e
@@ -111,7 +111,7 @@ export function parseArgs(argv) {
   const args = argv.slice(2);
   /** @type {Record<string, string|boolean|string[]>} */
   const out = { mode: 'extended', keep: false };
-  const e2eFiles = [];
+  const selectedFiles = { '--contract-file': [], '--e2e-file': [] };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '-h' || a === '--help') return { help: true };
@@ -123,9 +123,10 @@ export function parseArgs(argv) {
       || a === '--ui-file' || a === '--ui-grep') {
       const v = args[++i];
       if (!v) throw new Error(`Missing value for ${a}`);
-      if (a === '--e2e-file') {
-        e2eFiles.push(v);
-        out['e2e-file'] = e2eFiles.length === 1 ? v : e2eFiles;
+      if (a === '--contract-file' || a === '--e2e-file') {
+        const files = selectedFiles[a];
+        files.push(v);
+        out[a.slice(2)] = files.length === 1 ? v : files;
       } else out[a.slice(2)] = v;
       continue;
     }

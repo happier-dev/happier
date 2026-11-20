@@ -52,6 +52,24 @@ describe('extended-db container ownership', () => {
       .map(([, args]) => args)).toEqual([]);
   });
 
+  it('runs repeated server contract file selections against one disposable database', async () => {
+    const id = 'e'.repeat(64);
+    const files = [
+      'sources/app/teams/identity/teamIdentityConnectionLifecycle.dbcontract.spec.ts',
+      'sources/app/teams/memberships/memberAdministration.dbcontract.spec.ts',
+    ];
+    vi.mocked(spawnSync).mockImplementation((command, args) => ({
+      status: 0, signal: null, pid: 1, output: [], stderr: '',
+      stdout: command !== 'docker' ? '' : args?.[0] === 'run' ? id
+        : args?.[0] === 'inspect' ? 'healthy' : args?.[0] === 'port' ? '127.0.0.1:54321' : '',
+    }));
+    await runExtendedDbDockerScript.main(['node', 'runner', '--db', 'mysql', '--mode', 'contract',
+      ...files.flatMap(file => ['--contract-file', file])]);
+    const contract = vi.mocked(spawnSync).mock.calls.find(([, args]) => args?.includes('test:db-contract'));
+    expect(contract?.[1]).toEqual(['--filter', '@happier-dev/server', 'run', 'test:db-contract', ...files]);
+    expect(contract?.[2]?.env).toMatchObject({ HAPPIER_DB_PROVIDER: 'mysql', HAPPIER_DB_CONTRACT_CONTAINER_ID: id });
+  });
+
   it.each([
     ['suites/core-e2e/teamSetup.D.existingClones.slow.e2e.test.ts'],
     ['suites/core-e2e/teamSetup.F.storage.slow.e2e.test.ts', 'suites/core-e2e/teamSetup.F.resources.slow.e2e.test.ts'],
