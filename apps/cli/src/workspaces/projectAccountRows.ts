@@ -27,7 +27,7 @@ import type { StoredCredentials } from '@/persistence';
 import { AccountSettingsEncryptionMaterialUnavailableError, hasUsableAccountSettingsEncryptionMaterial, requireAccountSettingsEncryptionCredentials } from '@/settings/accountSettings/accountSettingsEncryptionMaterial';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
-import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { isPromptStackSystemAppendPlacementV1 } from '@happier-dev/protocol/prompts/library/promptPlacementV1';
@@ -753,7 +753,8 @@ export function createProjectAccountSnapshotMutation(authority: StoredCredential
       const retained = before.workspaceRefs.filter(ref => ref.serverId === input.serverId).map(ref => ({ ...ref, serverId: homeId }));
       for (const ref of next.workspaceRefs) {
         if (ref.serverId !== homeId || resolveWorkspaceRefById(before.workspaceRefs, ref.id, homeId)) continue;
-        const resolution = resolveWorkspaceRefV1(retained, { serverId: homeId, machineId: ref.machineId, rootPath: ref.rootPath });
+        const { workspaceId: _id, ...locator } = workspaceAddressFromRefV2(ref);
+        const resolution = resolveWorkspaceRefV1(retained, locator);
         if (resolution.kind !== 'missing') throw rowError('project_home_reconciliation_required');
       }
     }

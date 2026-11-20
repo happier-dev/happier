@@ -10,12 +10,15 @@ import { PromptStackEntryV1Schema } from '@happier-dev/protocol/prompts/library/
 import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
 import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createProjectWorkspaceRetirement } from './projectWorkspaceRetirement';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ManagedWorkspaceRefV2, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary as boundary } from './projectAccountRows.testkit';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { readWorkspaceSyncWorkerTargetSnapshot } from './sync/workspaceSyncPreparation';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
-import { configuration } from '@/configuration';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 // Prepare the real lazy Machine transport during collection; this fixture measures HTTP row work, not source transformation.
 await import('@/api/api');
@@ -653,6 +656,46 @@ describe('Project Account row transport', () => {
     current = false;
     expect(await observation.isCurrent()).toBe(false);
     expect(getActiveProjectAccountRowsSnapshot()).toBe(installed);
+  });
+
+  it.each(['new guest', 'same guest'] as const)('reconciles a %s using the exact namespace under a local profile', async scenario => {
+    await withTempDir('project-rows-home-', async homeDir => {
+      const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL']);
+      env.patch({ HAPPIER_HOME_DIR: homeDir, HAPPIER_ACTIVE_SERVER_ID: undefined,
+        HAPPIER_SERVER_URL: undefined, HAPPIER_WEBAPP_URL: undefined });
+      reloadConfiguration();
+      try {
+        const serverUrl = 'https://profile.example.test';
+        const profile = await addServerProfile({ name: 'local', serverUrl, webappUrl: serverUrl, use: true });
+        const serverId = 'srv_managed_open';
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact',
+          descriptor: { v: 1, homeServerIdentityId: serverId, canonicalServerUrl: serverUrl, revision: 1,
+            endpoints: [{ kind: 'https', url: serverUrl }] } });
+        const controller = { machineId: 'controller', installationId: 'controller-installation' };
+        const workspace: ManagedWorkspaceRefV2 = {
+          v: 2, kind: 'managed', id: 'opened-guest', serverId, managedId: 'guest', controller,
+          rootPath: '/home/coder/project', createdAtMs: 1,
+        };
+        const rows = [
+          createPlainProjectAccountRefRow({ ...ref, serverId: profile.id, machineId: controller.machineId,
+            rootPath: workspace.rootPath }),
+          createPlainProjectAccountRefRow({ ...workspace, id: 'retained-guest', serverId: profile.id,
+            managedId: scenario === 'same guest' ? workspace.managedId : 'other-guest' }),
+        ];
+        const post = boundary(rows);
+        const mutate = createProjectAccountSnapshotMutation({ credentials, serverId: profile.id, serverHttpBaseUrl: serverUrl });
+        const outcome = mutate(snapshot => ({ ...snapshot, workspaceRefs: [...snapshot.workspaceRefs, workspace] }));
+        if (scenario === 'same guest') {
+          await expect(outcome).rejects.toMatchObject({ code: 'project_home_reconciliation_required' });
+          expect(post.mock.calls.map(([url]) => url.split('/').at(-1))).toEqual(['list']);
+        } else {
+          await expect(outcome).resolves.toMatchObject({ status: 'applied', snapshot: { workspaceRefs: expect.arrayContaining([workspace]) } });
+        }
+      } finally {
+        env.restore();
+        reloadConfiguration();
+      }
+    });
   });
 
   it('keeps published observations across equivalent reprojected topology but refuses changed or withdrawn topology', async () => {
