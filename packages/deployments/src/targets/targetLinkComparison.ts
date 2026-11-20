@@ -24,8 +24,12 @@ async function* readableTargetLinks(selection: TargetLinkSelection, reads: Targe
     } while (cursor);
 }
 
-/** Both admitted client hosts compare private provider tuples through their own Artifact reader. */
-export async function findExistingDeploymentTargetLinkV1(input: DeploymentTargetLinkProviderIntentInputV1, reads: TargetLinkReads): Promise<DeploymentTargetLinkAlreadyLinkedResultV1 | undefined> {
+type ProviderLinkCandidate = Pick<DeploymentTargetLinkProviderIntentInputV1, 'serverId' | 'source' | 'targetKind'>
+    & Partial<Pick<DeploymentTargetLinkProviderIntentInputV1, 'environmentId' | 'replacesLinkId'>>
+    & Readonly<{ provider: Pick<DeploymentTargetLinkProviderIntentInputV1['provider'], 'providerIdentity'> }>;
+
+/** Check and admitted Link compare private provider tuples through their host's Artifact reader. */
+export async function findExistingDeploymentTargetLinkV1(input: ProviderLinkCandidate, reads: TargetLinkReads): Promise<DeploymentTargetLinkAlreadyLinkedResultV1 | undefined> {
     for await (const { environment, targetLink } of readableTargetLinks({ source: input.source, targetKind: input.targetKind }, reads)) {
         if (environment.id === input.environmentId && targetLink.id === input.replacesLinkId) continue;
         const opened = readDeploymentTargetLinkArtifactV1(targetLink, await reads.artifact(targetLink));

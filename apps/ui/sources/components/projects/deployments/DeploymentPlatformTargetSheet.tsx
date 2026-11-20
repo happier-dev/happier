@@ -55,6 +55,7 @@ import { t } from '@/text';
 
 import { readDeploymentActionError, readDeploymentRefusal } from './deploymentActionOutcome';
 import type { createDeploymentActions } from './deploymentActions';
+import { readExistingPlatformTargetAssociation } from './deploymentReadTransport';
 import { DeploymentSourceMethodChoice } from './DeploymentSourceMethodChoice';
 import { DeploymentPlatformInspectState } from './DeploymentPlatformInspectState';
 import {
@@ -65,6 +66,7 @@ import {
   readProviderCreate,
   type PreparedPlatformTargetLink,
   readPlatformInspectOutcome,
+  platformTargetAssociation,
   readPlatformReviewNotice,
   type PlatformInspectOutcome,
   applyPlatformFieldPatch,
@@ -196,8 +198,8 @@ const EMPTY_VALUES: Readonly<Record<string, unknown>> = Object.freeze({});
 /**
  * Prepare a platform target inline in the draft, or link one from an existing Environment:
  * choose a target from the plugins' declarations, the connected account it uses, and the project, environment
- * and product through the provider's own choices. Check reads the provider only; Link records exactly what the
- * check returned. Linking deploys nothing; the next Deploy does.
+ * and product through the provider's own choices. Check reads the provider and the saved association. Link records
+ * the checked target after write admission. Linking deploys nothing.
  */
 export function DeploymentPlatformTargetEditor(
   props: Omit<DeploymentPlatformTargetSheetInput, 'environment'> & CustomModalInjectedProps & Readonly<{
@@ -323,9 +325,8 @@ export function DeploymentPlatformTargetEditor(
   const needsConnect = target !== null && account === null && firstConnection.missing;
   const connectionPending = firstConnection.pending;
   const connectionNeeded = needsConnect || connectionPending;
-  const source =
-    useProjectSource(props.lifetime, props.environment.projectSourceId).source
-      ?.source ?? null;
+  const sourceRead = useProjectSource(props.lifetime, props.environment.projectSourceId);
+  const source = sourceRead.source?.source ?? null;
   const repository = React.useMemo(
     () => readProjectRepositoryIdentityV1({ source }),
     [source],
@@ -453,18 +454,43 @@ export function DeploymentPlatformTargetEditor(
   const check = async () => {
     if (!target || !draft || busy) return;
     setBusy('check');
+    setOutcome(null);
+    props.onPrepared?.(null);
     setLinkRefused(null);
-    const result = await actions.inspectPlatformTarget(
-      target.inspectActionId,
-      draft,
-      props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined,
-    );
-    if (!shouldContinue()) return;
-    setBusy(null);
-    const inspected = readPlatformInspectOutcome(result);
-    setOutcome(inspected);
-    props.onPrepared?.(inspected.kind === 'ready' ? { kind: 'existing', provider: inspected.provider,
-      reviewNotice: readPlatformReviewNotice(inspected.provider) } : null);
+    try {
+      const result = await actions.inspectPlatformTarget(
+        target.inspectActionId,
+        draft,
+        props.environment.controllerMachineId ? { externalActionTarget: { kind: 'machine', machineId: props.environment.controllerMachineId } } : undefined,
+      );
+      if (!shouldContinue() || !props.lifetime.isCurrent()) return;
+      const inspected = readPlatformInspectOutcome(result);
+      if (inspected.kind === 'ready') {
+        const currentSource = await sourceRead.resolveSource();
+        if (!shouldContinue() || !props.lifetime.isCurrent()) return;
+        if (!currentSource) {
+          setOutcome(readDeploymentRefusal('deployment_content_unavailable'));
+          return;
+        }
+        const linked = await readExistingPlatformTargetAssociation(props.lifetime, currentSource.owner, {
+          ...platformTargetAssociation(target), environmentId: props.environment.id, provider: inspected.provider,
+        });
+        if (!shouldContinue() || !props.lifetime.isCurrent()) return;
+        if (linked) {
+          setLinkSettlement(linked);
+          return;
+        }
+      }
+      setOutcome(inspected);
+      if (inspected.kind === 'ready') props.onPrepared?.({ kind: 'existing', provider: inspected.provider,
+        reviewNotice: readPlatformReviewNotice(inspected.provider) });
+    } catch (error) {
+      if (!shouldContinue() || !props.lifetime.isCurrent()) return;
+      const refusal = readDeploymentActionError(error);
+      setOutcome(refusal.kind === 'refused' ? refusal : readDeploymentRefusal('deployment_content_unavailable'));
+    } finally {
+      if (shouldContinue() && props.lifetime.isCurrent()) setBusy(null);
+    }
   };
   const link = async () => {
     if (!target || outcome?.kind !== 'ready' || busy || !props.environment.id || props.environment.revision === undefined) return;

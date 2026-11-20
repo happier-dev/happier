@@ -934,7 +934,7 @@ describe('Environment draft Machine Home', () => {
     const previous = storage.getState();
     let authored: Record<string, unknown> | undefined;
     let committed: Record<string, unknown> | undefined;
-    let linkedArtifact: string | undefined;
+    let linkedProvider: import('@happier-dev/protocol/deployments/deploymentActionsV1').DeploymentTargetLinkProviderIntentInputV1['provider'] | undefined;
     const saved: Array<[string, unknown]> = [];
     const pluginId = 'com.example.draft-platforms';
     const awaitImportSchemas = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
@@ -973,10 +973,8 @@ describe('Environment draft Machine Home', () => {
         body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.targets.link', tokenEpoch: 0, execute: input => {
-          const { DeploymentActionInputSchemasV1 } = awaitImportSchemas;
-          const link = DeploymentActionInputSchemasV1['deployments.targets.link'].parse(input);
-          if (!('contentArtifactId' in link)) throw new Error('Expected the canonical protected link content');
-          linkedArtifact = link.contentArtifactId;
+          const link = awaitImportSchemas.DeploymentTargetLinkProviderIntentInputV1Schema.parse(input);
+          linkedProvider = link.provider;
           expect(link).toMatchObject({ environmentId: 'platform-environment', expectedRevision: 1,
             source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } } });
           return linkRefused ? { ok: false, error: 'deployment_conflict' }
@@ -1053,13 +1051,8 @@ describe('Environment draft Machine Home', () => {
         expect(committed, screen.getTextContent()).toBeDefined(); });
       expect(committed).not.toHaveProperty('firstTargetLink');
       await waitForHomeGovernance(async () => { await act(async () => {});
-        expect(linkedArtifact, screen.getTextContent()).toBeDefined(); });
-      await act(async () => {});
-      expect(linkedArtifact).toBeTruthy();
-      const linkedContent = await account.readArtifactContent(linkedArtifact!);
-      if (!linkedContent || typeof linkedContent.body !== 'string') throw new Error('Expected the saved link as a text Artifact');
-      expect(linkedContent.header).toMatchObject({ kind: 'deployment-target-link.v1' });
-      expect(JSON.parse(linkedContent.body)).toEqual({
+        expect(linkedProvider, screen.getTextContent()).toBeDefined(); });
+      expect(linkedProvider).toEqual({
           credentialPrincipal: { kind: 'account', accountId: 'alice',
             purpose: { consumer: { pluginId, localId: 'inspect-beta' }, purpose: 'beta.manage' },
             target: { kind: 'account', account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' } } },
@@ -1102,7 +1095,7 @@ describe('Environment draft Machine Home', () => {
           expect(await inspect()).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
           await publishMachineInventoryForTest(account.accountLifetime.scope,
             [{ ...runtime, access: { ...access, custodian: { accountId: 'alice', displayName: 'Alice' } } }]);
-          expect(await inspect()).toMatchObject({ ok: true, result: JSON.parse(linkedContent.body) });
+          expect(await inspect()).toMatchObject({ ok: true, result: linkedProvider });
         } finally { receiverProjection.mockRestore(); }
       }
       if (linkRefused) {

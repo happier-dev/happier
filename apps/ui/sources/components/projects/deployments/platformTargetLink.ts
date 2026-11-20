@@ -273,6 +273,13 @@ export async function buildPlatformTargetCreateLinkInput(
   return parsed.success ? parsed.data : null;
 }
 
+export function platformTargetAssociation(target: Pick<DeploymentPlatformTarget, 'pluginId' | 'targetId' | 'targetKind'>) {
+  return {
+    targetKind: target.targetKind,
+    source: { kind: 'plugin' as const, contribution: { pluginId: target.pluginId, localId: target.targetId } },
+  };
+}
+
 export function buildPlatformTargetLinkInput(
   input: Readonly<{
     target: Pick<DeploymentPlatformTarget, 'targetId' | 'pluginId' | 'targetKind'>;
@@ -288,15 +295,8 @@ export function buildPlatformTargetLinkInput(
     ...(input.title ? { title: input.title } : {}),
     targetId: input.target.targetId,
     role: input.role ?? 'runtime',
-    targetKind: input.target.targetKind,
+    ...platformTargetAssociation(input.target),
     machines: [],
-    source: {
-      kind: 'plugin' as const,
-      contribution: {
-        pluginId: input.target.pluginId,
-        localId: input.target.targetId,
-      },
-    },
     provider: input.provider,
   };
 }

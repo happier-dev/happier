@@ -3450,8 +3450,11 @@ Both admitted clients' provider-link preparation consumes those pages in the cur
 Account/Team owner scope and opens matching contribution/kind link Artifacts through
 the canonical mode-aware reader. Equal provider Account/resource/environment tuples
 return `provider_scope_already_linked` with the existing Source/Environment/link
-destination before creating private content or associating a new link. Requester
-keys and credential principals do not define that tuple. Incomplete coverage or
+destination before creating private content or associating a new link. In the
+development UI, Configure's Check uses the same comparison in the Project
+Source's owner scope. An existing association offers to open the linked Environment.
+Link repeats the comparison at write admission because the inventory can change
+after Check. Requester keys and credential principals do not define that tuple. Incomplete coverage or
 unreadable content refuses preparation without disclosing an existing destination;
 replacing that same link skips its own prior tuple. Its link writer stores host,
 plugin runtime and data identities in the same relational owner. Prepared Artifact

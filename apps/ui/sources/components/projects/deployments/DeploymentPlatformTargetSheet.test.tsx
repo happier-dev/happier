@@ -9,7 +9,7 @@ import { buildQualifiedPluginContributionKey, qualifyPluginContributionReference
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentTargetLinkProviderIntentInputV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION, DEPLOYMENT_TARGETS_TEST_SERVICE, answerDeploymentTargetInspectForHome } from './deploymentPlatformTargetPlugin.testFixture';
 import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -472,6 +472,11 @@ it('selects independent third-party targets before resolving their account, fiel
   const actions = createDeploymentActions(context.accountLifetime, projectSourceId);
   const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: 'owner', machineId: 'runtime', plugin: authored });
   try {
+    homes.answer(serverId, `GET /v1/projects/sources/${projectSourceId}`, { body: { ok: true, canManage: true, source: {
+      id: projectSourceId, revision: 1, name: 'App', owner: { kind: 'account', accountId: 'owner' },
+      audience: [], createdByAccountId: 'owner',
+    } } });
+    homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
     const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
     await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId, controllerMachineId: 'runtime' },
       ownerAccountId: 'owner', lifetime: context.accountLifetime, actions, onApproval: () => {} }));
@@ -537,22 +542,72 @@ it('selects independent third-party targets before resolving their account, fiel
     const environment = createDeploymentEnvironmentHeaderV1({ id: 'environment', revision: 4, projectSourceId,
       serverId: context.serverIdentityId ?? serverId, controllerMachineId: 'runtime', owner: { kind: 'account', accountId: 'owner' } });
     homes.answer(serverId, 'GET /v1/deployments/environments/environment', { body: { ok: true, environment, targetLinks: [] } });
-    homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: { ok: true, items: [], nextCursor: null, coverage: 'complete' } });
-    let linkedArtifactId = '';
+    let linkedResourceTitle: string | undefined;
     await answerExternalActionAccountForHome(homes, serverId, { machineId: environment.controllerMachineId, installationId: 'runtime-installation',
       actionId: 'deployments.targets.link', tokenEpoch: 0, execute: raw => {
-        const linked = DeploymentTargetLinkInputV1Schema.parse(raw);
-        linkedArtifactId = linked.contentArtifactId;
+        const linked = DeploymentTargetLinkProviderIntentInputV1Schema.parse(raw);
+        linkedResourceTitle = linked.title;
         return { ok: true, environmentId: environment.id, revision: 5, targetLinkId: 'platform-link', targetLinkRevision: 1 };
       } });
     await screen.pressByTestIdAsync('project-deployments.platform.link');
-    await waitForHomeGovernance(async () => { await act(async () => {}); expect(linkedArtifactId).not.toBe(''); });
-    expect(await context.readArtifactContent(linkedArtifactId)).toMatchObject({ header: { title: 'beta West' } });
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(linkedResourceTitle).toBe('beta West'); });
   } finally {
     await receiver.dispose();
     await installed.dispose();
     context.dispose();
   }
+});
+
+it('shows the existing association when Check finds the same provider scope in another Environment', async () => {
+  const pluginId = 'com.example.duplicate-platform';
+  const projectSourceId = 'source-duplicate-platform';
+  const owner = { kind: 'account', accountId: 'owner' } as const;
+  const plugin = createDeploymentTargetsTestPlugin(pluginId);
+  const serverId = await homes.addHome({ name: 'Duplicate platform', serverUrl: 'https://duplicate-platform.test',
+    serverIdentityId: `srv_${'e'.repeat(32)}`, accountId: owner.accountId, currentAccount: true });
+  const account = await captureLazyActionAccountContext(serverId);
+  const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION.account;
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+    activate: api => plugin.activateAccount(api, execution), accountLifetime: account.accountLifetime, publishProjection: true });
+  const receiver = await answerDeploymentTargetInspectForHome({ homes, serverId, accountId: owner.accountId, machineId: 'runtime', plugin });
+  try {
+    const { createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } = await import('@happier-dev/deployment-protocol');
+    const artifact = await account.createArtifactDocument({
+      header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Beta West' },
+      body: JSON.stringify({ providerIdentity: { providerAccountId: 'cloud', providerResourceId: 'beta-west', providerEnvironment: 'production' } }),
+    });
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'linked-environment', projectSourceId, owner,
+      serverId: account.serverIdentityId ?? serverId, controllerMachineId: 'runtime' });
+    const targetLink = createDeploymentTargetLinkHeaderV1({ id: 'platform-link', environmentId: environment.id,
+      machines: [], members: [], targetKind: 'beta', source: { kind: 'plugin', contribution: { pluginId, localId: 'beta' } },
+      contentArtifactId: artifact.artifactId, contentHeaderVersion: artifact.revision.headerVersion, contentBodyVersion: artifact.revision.bodyVersion });
+    homes.answer(serverId, `GET /v1/projects/sources/${projectSourceId}`, { body: { ok: true, canManage: true, source: {
+      id: projectSourceId, revision: 1, name: 'App', owner, audience: [], createdByAccountId: owner.accountId,
+    } } });
+    homes.answer(serverId, 'POST /v1/deployments/targets/list', { body: {
+      ok: true, items: [{ environment, targetLink }], nextCursor: null, coverage: 'complete',
+    } });
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    try {
+      await act(async () => showDeploymentPlatformTargetSheet({ name: 'Another site',
+        environment: { id: 'another-environment', revision: 1, projectSourceId, controllerMachineId: 'runtime' },
+        ownerAccountId: owner.accountId, lifetime: account.accountLifetime,
+        actions: createDeploymentActions(account.accountLifetime, projectSourceId), onApproval: () => {}, initialTargetKey: `${pluginId}/beta` }));
+      const chooser = () => screen.root.findByType(ConnectedAccountPurposeTargetChooser);
+      await waitForHomeGovernance(() => expect(chooser()).toBeDefined());
+      await act(async () => chooser().props.onChange({ kind: 'account', account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } }, null));
+      const field = () => screen.root.findAllByType(ActionInputFields)[0]!;
+      await act(async () => field().props.onPatch({ beta: 'beta-west' }));
+      await act(async () => field().props.onPatch({ providerAccountId: 'cloud' }));
+      await act(async () => field().props.onPatch({ providerEnvironment: { kind: 'production' } }));
+      await screen.pressByTestIdAsync('project-deployments.platform.check');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.platform.duplicate')
+        ?? screen.findByTestId('project-deployments.platform.link')).not.toBeNull());
+      expect(screen.findByTestId('project-deployments.platform.duplicate')).not.toBeNull();
+      expect(screen.findByTestId('project-deployments.platform.link')).toBeNull();
+    } finally { await screen.unmount(); }
+  } finally { await receiver.dispose(); await installed.dispose(); account.dispose(); }
 });
 
 it('opens on the platform the person already chose in the draft', async () => {
