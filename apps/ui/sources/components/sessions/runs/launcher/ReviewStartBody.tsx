@@ -157,6 +157,7 @@ function ParticipantStepWho(props: Props & Readonly<{
     };
     const participantSource = useContextualStartParticipantSource({ accountLifetime: props.accountLifetime,
         enabled: props.source.enabled, busy: props.disabled, selected, onChoose, people,
+        requireWorkspaceWriteDenial: true,
         onReplace: (previous, next) => replace(reviewers.map(reviewer => reviewer === previous ? next : reviewer)),
         consumerSessionId: props.consumerSessionId,
         question: '', onQuestionChange: NO_PROJECT_CHANGE, showWhere: false, onProject: NO_PROJECT_CHANGE,

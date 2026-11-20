@@ -431,7 +431,8 @@ function harness(fixtures: Fixtures = {}) {
   }; };
   const freshConversations = createProductionWorkflowConversationOwner({ machineId: workspace.machineId,
     createFreshConversation: async ({ selection, launch }) => {
-      expect(launch).toMatchObject({ agentTarget, permissionMode: 'read-only', executionTarget: { serverId: 'home', machineId: 'machine' } });
+      expect(launch).toMatchObject({ agentTarget, permissionMode: 'read-only',
+        configuration: { workspaceWrites: 'deny' }, executionTarget: { serverId: 'home', machineId: 'machine' } });
       expect(selection.permissionMode).toBe('read-only');
       return { sessionId: fixtures.freshSessionId!, ...workspace };
     },

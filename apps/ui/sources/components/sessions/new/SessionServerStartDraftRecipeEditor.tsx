@@ -12,6 +12,7 @@ import { SessionServerStartDraftComposerBody } from './SessionServerStartDraftCo
 type RecipeEditorProps = Readonly<{
     seed: SessionServerStartDraftSeed;
     target: SessionServerStartDraftTarget;
+    requireWorkspaceWriteDenial?: boolean;
     onResolve: (draft: SessionServerStartSpawnDraftV1 | null) => void;
 }>;
 

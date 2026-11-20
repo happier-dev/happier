@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 
 import type { AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { supportsAgentWorkspaceWriteDenial } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { stripBackendTargetSourceKind } from '@/agents/backendCatalog/backendTargetRouteParams';
@@ -58,8 +59,9 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     serverId?: string | null;
     /** The project folder on that Machine; with the Machine it scopes the MCP preview. */
     directory?: string | null;
+    requireWorkspaceWriteDenial?: boolean;
 }>): SessionAuthoringControlFacts {
-    const { machineId } = params;
+    const { machineId, requireWorkspaceWriteDenial } = params;
     const serverId = params.serverId ?? null;
     const directory = params.directory?.trim() ?? '';
     const selectedMachine = useServerScopedMachine(serverId, machineId);
@@ -103,6 +105,8 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
     const agentTargets = React.useMemo<readonly SessionAuthoringAgentTargetOption[]>(() => {
         const options: SessionAuthoringAgentTargetOption[] = [];
         for (const entry of backendEntries) {
+            const capabilities = projectionInputs?.pluginProjectionV2?.agentsById[entry.agentId]?.capabilities;
+            if (requireWorkspaceWriteDenial && !supportsAgentWorkspaceWriteDenial(capabilities?.sessions)) continue;
             // A configured backend with no machine projection has no resolvable
             // Agent contribution. Offering it would author a target the ingress
             // normalizer rejects, so it is left out rather than guessed.
@@ -139,7 +143,6 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             // Retained facts of a Machine not answering now decide nothing.
             const readiness = machineAgent && !machineAgent.stale
                 ? resolveMachineAgentExecutionStateV1({ inventoryState: machineAgent.state }) : undefined;
-            const capabilities = projectionInputs?.pluginProjectionV2?.agentsById[entry.agentId]?.capabilities;
             const noTools = capabilities?.tools?.noTools;
             options.push({
                 pickerEntry: entry,
@@ -182,7 +185,7 @@ export function useSessionAuthoringControlFacts(params: Readonly<{
             });
         }
         return options;
-    }, [backendEntries, directTranscriptsEnabled, localizePluginText, machineAgents, machineId, projectionInputs, settings]);
+    }, [backendEntries, directTranscriptsEnabled, localizePluginText, machineAgents, machineId, projectionInputs, requireWorkspaceWriteDenial, settings]);
 
     /**
      * Which Agent New Session would preselect here, resolved by that same owner

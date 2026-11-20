@@ -3,7 +3,7 @@ import { WorkflowRunAcceptedContextV1Schema, WorkflowRunStartRequestV1Schema } f
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { prepareWorkflowRunStartV1, resolveWorkflowContextInputsV1 } from './workflowStartPreparationV1.js';
 import * as preparation from './workflowStartPreparationV1.js';
-import { materializeWorkflowAcceptedSnapshotV1 } from './materializeWorkflowAcceptedSnapshotV1.js';
+import { materializeWorkflowAcceptedSnapshotV1, readWorkflowAcceptedAgentStartLeavesV1 } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { actionSpecToActionDefinitionV1 } from '../actions/actionCatalog.js';
 import { getActionSpec } from '../actions/actionSpecs.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
@@ -13,11 +13,18 @@ import { ActionIdSchema } from '../actions/actionIds.js';
 
 it('previews each accepted Review participant without turning a Workflow repeat into leaf replays', async () => {
   const review = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review this repository.', reviewers: [
-    { kind: 'engine', engineId: 'codex' },
+    { kind: 'engine', engineId: 'pi', modelId: 'meta/muse-spark-1.3-contributor',
+      sessionConfigOptionOverrides: { v: 1, updatedAt: 3, overrides: { reasoning_effort: { value: 'minimal', updatedAt: 3 } } } },
     { kind: 'session', session: { serverId: 'home', sessionId: 'existing-reviewer' } },
     { kind: 'model', launch: { executionTarget: { serverId: 'home', machineId: 'machine-a' },
       directory: { kind: 'path', path: '/repo' },
-      agentTarget: { kind: 'agent', identity: { pluginId: 'acme.agent', localId: 'default' } } } },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.pi', localId: 'pi' } },
+      configuration: {
+        mode: { value: null, updatedAtMs: 0 },
+        model: { value: 'meta/muse-spark-1.3-contributor', updatedAtMs: 1 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 2 },
+        options: { reasoning_effort: { value: 'minimal', updatedAtMs: 3 } },
+      } } },
     { kind: 'person', principal: { kind: 'account', accountId: 'requested-reviewer' }, required: false },
   ] });
   const built = buildReviewStepsWorkflowV1(review, { reviewId: 'review', roundOrdinal: 1 });
@@ -38,6 +45,17 @@ it('previews each accepted Review participant without turning a Workflow repeat 
     } });
   expect(accepted).toMatchObject({ ok: true });
   if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
+  expect(accepted.snapshot.materializedLeaves.find(leaf => leaf.blockId === 'step-1-reviewer-3'))
+    .toMatchObject({ participantBindings: { selections: [{ participant: { kind: 'model', launch: {
+      permissionMode: 'read-only', configuration: {
+        workspaceWrites: 'deny',
+        model: { value: 'meta/muse-spark-1.3-contributor', updatedAtMs: 1 },
+        options: { reasoning_effort: { value: 'minimal', updatedAtMs: 3 } },
+      },
+    } } }] } });
+  expect(await readWorkflowAcceptedAgentStartLeavesV1(accepted.snapshot)).toContainEqual(
+    expect.objectContaining({ blockId: 'step-1-reviewer-3', kind: 'session', workspaceWrites: 'deny' }),
+  );
   const replay = { runId: '11111111-1111-4111-8111-111111111111', intent: 'another_round' as const };
   const prepared = prepareWorkflowRunStartV1({ definition: accepted.snapshot.authoredDefinition,
     acceptedContext: accepted.snapshot, replay });

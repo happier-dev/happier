@@ -10,7 +10,7 @@ import { useMachineListStatusByServerId, useActiveMachineFacts, useMachineListBy
 import { useSessionPlacementCandidateRows } from './useSessionPlacementCandidateRows';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useSessionAuthoringControlFacts } from '@/components/sessions/authoring/controls/useSessionAuthoringControlFacts';
-import type { SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
+import { findSessionAuthoringAgentTargetOption, type SessionAuthoringFieldId } from '@/components/sessions/authoring/controls/sessionAuthoringFieldControls';
 import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/organization/useNewSessionOrganizationPlacement';
 import {
     buildSessionFolderSelectionOptions,
@@ -59,6 +59,7 @@ function selectionFromDraft(draft: SessionServerStartSpawnDraftV1): RecipeSelect
 export function useSessionServerStartDraftRecipe(props: Readonly<{
     seed: SessionServerStartDraftSeed;
     target: SessionServerStartDraftTarget;
+    requireWorkspaceWriteDenial?: boolean;
 }>) {
     const existingDraft = props.seed.existingDraft;
     const seededDirectoryIntent = props.seed.directoryIntent
@@ -115,6 +116,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         machineId: selectedTarget.machineId,
         serverId: selectedTarget.serverId,
         directory: directory.trim() || null,
+        requireWorkspaceWriteDenial: props.requireWorkspaceWriteDenial,
     });
     const agentTargets = facts.agentTargets ?? [];
     const [selection, setSelection] = React.useState<RecipeSelection>(() => (
@@ -126,7 +128,8 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
     // A new recipe starts on the seeded Agent, else the one default-Agent owner's
     // answer for this Machine, once this Machine lists its Agents.
     const initialAgentTarget = agentTargets.find((option) => option.agentId === props.seed.agentId)?.target
-        ?? facts.contextualDefaultAgentTarget ?? null;
+        ?? facts.contextualDefaultAgentTarget
+        ?? (props.requireWorkspaceWriteDenial ? agentTargets[0]?.target : null);
     React.useEffect(() => {
         if (selection.agentTarget || !initialAgentTarget) return;
         setSelection((current) => current.agentTarget ? current : { ...current, agentTarget: initialAgentTarget });
@@ -169,6 +172,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
     const canSubmit = selectedPlacement.machineReady
         && daemonMergedProjection.phase === 'ready'
         && selection.agentTarget != null
+        && (!props.requireWorkspaceWriteDenial || findSessionAuthoringAgentTargetOption(agentTargets, selection.agentTarget) !== null)
         // This surface only authors a recipe. Keeping an unchanged placement does
         // not invoke the feature-gated Session creation path.
         && (organization.valid || !organizationScopeEdited)

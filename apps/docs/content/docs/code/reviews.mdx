@@ -31,6 +31,11 @@ another stage of review or verification. A generic coding Agent can review
 without native JSON output support; Happier asks for structured findings and
 uses its existing repair turn if needed. A final parsing failure is visible.
 
+In 0.3 development, a fresh model Session for a Review requires an Agent that
+can enforce read-only workspace access. The Agent picker lists eligible
+Agents for the selected Machine. An existing Session keeps its current
+workspace permissions when you add it as a reviewer.
+
 Setup and unsupported-scope reasons belong to the selected reviewer. Repair its
 setup or choose another reviewer. Happier does not silently replace a captured
 comparison with the ambient checkout. In particular,

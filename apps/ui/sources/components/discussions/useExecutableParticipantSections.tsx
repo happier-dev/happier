@@ -94,6 +94,7 @@ export function useExecutableParticipantSections(
     readinessSessionId?: string | null;
     onReadinessSessionChange?: (sessionId: string | null) => void;
     modelOptions?: readonly ExecutableParticipantPickerOption[];
+    requireWorkspaceWriteDenial?: boolean;
     preferredMachineId?: string | null;
     /** The Session this choice is for: an added agent starts on its Machine and folder. */
     consumerSessionId?: string | null;
@@ -368,6 +369,7 @@ export function useExecutableParticipantSections(
   }, [consumerSessionId, launchMachines, onChoose, preferredMachineId, serverId]);
   const recipeEditor = input.enabled && recipe ? <SessionServerStartDraftRecipeEditor
     seed={recipe.seed} target={recipe.target}
+    requireWorkspaceWriteDenial={input.requireWorkspaceWriteDenial}
     onResolve={draft => {
       setRecipe(null);
       if (!draft || !input.accountLifetime.isCurrent()) return;

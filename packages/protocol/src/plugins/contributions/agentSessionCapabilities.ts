@@ -103,3 +103,10 @@ export function supportsAgentNativeFunctionTools(capabilities: Readonly<{
   return capabilities?.sessions?.functionTools === true
     && capabilities.sessions.open?.includes('create') === true;
 }
+
+/** Whether the selected native execution surface can enforce workspace-write denial. */
+export function supportsAgentWorkspaceWriteDenial(
+  capabilities: Readonly<{ workspaceWrites?: 'deny' }> | null | undefined,
+): boolean {
+  return capabilities?.workspaceWrites === 'deny';
+}

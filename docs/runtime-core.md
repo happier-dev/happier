@@ -3912,6 +3912,11 @@ only when its native runtime enforces `configuration.workspaceWrites: 'deny'`.
 An undeclared surface retains `role_policy_unenforceable`; an admitted ceiling
 reaches the selected native factory in its existing open configuration.
 
+In a Review Workflow, materializing a fresh model Session records the
+workspace-write denial in its launch configuration. The ordinary Session
+creation and native admission path enforce it. An existing Session reviewer
+continues with its current runtime policy.
+
 OpenCode server mode applies the same ceiling through its native permission
 config and Session rules, denying file-modification tools, Bash and native
 child Agents while retaining read tools. Session rules also apply on resume

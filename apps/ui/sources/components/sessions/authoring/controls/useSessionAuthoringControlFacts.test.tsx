@@ -1,17 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { getStorage } from '@/sync/domains/state/storageStore';
 
 const capabilityState = vi.hoisted(() => ({
     value: { status: 'idle' } as Record<string, unknown>,
+}));
+const daemonProjection = vi.hoisted(() => ({
+    inputs: null as ReturnType<typeof publishDaemonMergedProjectionInputs> | null,
 }));
 
 vi.mock('@/hooks/server/useDaemonScopedMachineCapabilitiesCache', () => ({
     useDaemonScopedMachineCapabilitiesCache: () => ({ state: capabilityState.value, refresh: vi.fn() }),
 }));
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
-    useDaemonMergedProjectionInputs: () => ({ phase: 'loading' }),
+    useDaemonMergedProjectionInputs: () => daemonProjection.inputs
+        ? { phase: 'ready', inputs: daemonProjection.inputs }
+        : { phase: 'loading' },
 }));
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({ useFeatureEnabled: () => false }));
 // The Account's profile read is the network boundary: a cold open waits on it.
@@ -28,6 +35,7 @@ let previous = getStorage().getState();
 beforeEach(() => {
     previous = getStorage().getState();
     capabilityState.value = { status: 'idle' };
+    daemonProjection.inputs = null;
     const windows = createMachineFixture({ id: 'machine-1' });
     const selected = { ...windows, metadata: { ...windows.metadata!, platform: 'win32', host: 'windows.test' } };
     const otherHome = { ...selected, metadata: { ...selected.metadata, platform: 'linux', host: 'linux.test' } };
@@ -43,6 +51,30 @@ afterEach(async () => {
 });
 
 describe('useSessionAuthoringControlFacts', () => {
+    it('offers only Agents that can enforce workspace denial when a fresh reviewer requires it', async () => {
+        const open = { open: ['create'], delivery: ['newTurn'], cancel: true };
+        daemonProjection.inputs = publishDaemonMergedProjectionInputs({ projection: PluginProjectionV2Schema.parse({
+            v: 2, generation: 1, installedPackagesById: {}, actionsById: {}, familiesById: {},
+            resourcesById: {}, settingsById: {}, diagnostics: [],
+            agentsById: {
+                pi: { id: 'pi', title: 'Pi', capabilities: { sessions: open } },
+                codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { ...open, workspaceWrites: 'deny' } } },
+            },
+        }) });
+        const { useSessionAuthoringControlFacts } = await import('./useSessionAuthoringControlFacts');
+        const hook = await renderHook(() => {
+            const target = { machineId: 'machine-1', serverId: 'server-1', directory: 'C:\\repo' };
+            return [
+                useSessionAuthoringControlFacts(target),
+                useSessionAuthoringControlFacts({ ...target, requireWorkspaceWriteDenial: true }),
+            ] as const;
+        });
+        const [ordinary, restricted] = hook.getCurrent();
+        expect(ordinary.agentTargets?.map(option => option.agentId)).toEqual(expect.arrayContaining(['pi', 'codex']));
+        expect(restricted.agentTargets?.map(option => option.agentId)).toEqual(['codex']);
+        await hook.unmount();
+    });
+
     it('projects the incumbent New Session Windows Terminal capability and fails closed without it', async () => {
         const { useSessionAuthoringControlFacts } = await import('./useSessionAuthoringControlFacts');
         const hook = await renderHook(() => useSessionAuthoringControlFacts({

@@ -34,6 +34,7 @@ import { normalizeExecutableParticipantSelectionV1 } from '../discussions/execut
 import { SessionSpawnNewSelectionV2Schema } from '../sessions/creation/sessionSpawnNewSelectionV2.js';
 import { resolveWorkflowContextInputsV1, workflowInputErrorV1, WorkflowInputErrorV1, type ResolveWorkflowSessionTargetV1, type WorkflowResolvedSessionTargetV1 } from './workflowStartPreparationV1.js';
 import { requiresReviewWorkflowCompositionV1, readReviewSessionReviewerAddressesV1 } from '../reviews/reviewStart.js';
+import { ReviewSessionInputV1Schema } from '../reviews/reviewRoundActionsV1.js';
 
 export type WorkflowMaterializationContextV1 = Readonly<{
   /** Host-stamped admitting caller; private input, never authored Workflow content. */
@@ -199,7 +200,8 @@ function agentLeaf(snapshot: Pick<WorkflowAcceptedSnapshotV1, 'machineId' | 'wor
       ...(launch.roleId ? { roleId: launch.roleId } : {}),
       engine: { agentTargetKey: buildBackendTargetKeyV2(launch.agentTarget),
         ...roleEngineModelFieldsV1(readAuthoredSessionModelSelection(launch)?.ref) },
-      runsAs: { kind: 'session' }, workspaceWrites: leaf.role?.workspaceWrites ?? 'allow',
+      runsAs: { kind: 'session' },
+      workspaceWrites: launch.configuration?.workspaceWrites === 'deny' ? 'deny' : leaf.role?.workspaceWrites ?? 'allow',
       facts: start.facts };
   }
   const agentTargetKey = buildBackendTargetKeyV2(selection.agentTarget!);
@@ -698,6 +700,8 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
               && key !== 'workspace'
               && !(key === 'executionTarget' && leaf.execution?.executionTarget?.kind === 'session')))) return invalidInput(leaf.id);
           boundParticipants = { reference: participantBinding, selections: [] };
+          const reviewSession = leaf.input?.some(binding =>
+            binding.kind === 'literal' && ReviewSessionInputV1Schema.safeParse(binding.value).success);
           for (const inputs of frameInputs) {
             const items = participantBinding.kind === 'item'
               ? participantBinding.roster !== undefined
@@ -798,6 +802,19 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
                 if (!effectiveLaunch.success) return invalidInput(leaf.id);
                 const participant = { kind: 'model' as const, launch: effectiveLaunch.data };
                 if (accepted && !sameStrictJsonValue(accepted.participant, participant)) return invalidInput(leaf.id);
+                if (reviewSession) {
+                  // The Review contract sets a workspace ceiling on a fresh Session. Its permission
+                  // intent and any existing Session reviewer's runtime policy remain independent.
+                  const configuration = participant.launch.configuration;
+                  participant.launch = { ...participant.launch, configuration: {
+                    mode: { value: null, updatedAtMs: 0 },
+                    model: { value: null, updatedAtMs: 0 },
+                    permissionIntent: { value: 'read-only', updatedAtMs: 0 },
+                    options: {},
+                    ...configuration,
+                    workspaceWrites: 'deny',
+                  } };
+                }
                 boundParticipants.selections.push({ value, participant,
                   selection: { agentTarget: effectiveLaunch.data.agentTarget,
                     ...(effectiveLaunch.data.approvalProfileId === undefined ? {} : { approvalProfileId: effectiveLaunch.data.approvalProfileId }),

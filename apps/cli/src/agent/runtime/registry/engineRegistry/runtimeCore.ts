@@ -76,6 +76,7 @@ import { createExecutionRunCodedError } from '@/agent/runtime/bridges/executionR
 import { resolveAgentToolsDelivery } from '@/agent/tools/happierTools/runtime/resolveAgentToolsDelivery';
 import type { PublicAcpHostLaunchResolver } from '@/agent/acp/runtime/publicSession/createPublicAcpSession';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { supportsAgentWorkspaceWriteDenial } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 import { createHostTerminalTranscriptFollowService } from '@/agent/runtime/session/terminal/transcriptFollow';
 import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/session/terminal/contract';
 import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
@@ -648,10 +649,10 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                 runClass: options.start?.runClass ?? null,
                                 retentionPolicy: options.start?.retentionPolicy ?? null,
                             });
-                        const workspaceWrites = adapterSelection === 'native_execution_run'
-                            ? executionRunCapabilities?.workspaceWrites
-                            : effectiveSessionCapabilities?.workspaceWrites;
-                        if (options.workspaceWrites === 'deny' && workspaceWrites !== 'deny') {
+                        const workspaceWriteCapabilities = adapterSelection === 'native_execution_run'
+                            ? executionRunCapabilities
+                            : effectiveSessionCapabilities;
+                        if (options.workspaceWrites === 'deny' && !supportsAgentWorkspaceWriteDenial(workspaceWriteCapabilities)) {
                             throw createExecutionRunCodedError('role_policy_unenforceable', 'Agent cannot enforce the role workspace-write policy');
                         }
                         if (

@@ -43,6 +43,7 @@ import { materializeSessionInputCausalPermissionAuthorityV1 } from '@happier-dev
 import { readLeadingSlashCommandName } from '@happier-dev/protocol/sessions/slashCommands';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionWorkspaceWritesV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
+import { supportsAgentWorkspaceWriteDenial } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { isSessionTerminalPermanentlyAbsent, SessionTerminalMetadataSchema } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { registerSensitiveDiagnosticValues } from '@happier-dev/protocol/bugs/reports/redaction';
@@ -4086,7 +4087,7 @@ export function createNativeAgentSessionOperations(
             if (isNativeAgentSessionModeUnavailable(nextConfiguration.snapshot, publications)) {
                 return reportOutcome({ status: 'failed', reason: 'native_agent_session_mode_unavailable' }, 'native_agent_session_mode_unavailable');
             }
-            if (nextConfiguration.snapshot.workspaceWrites === 'deny' && directFacets.capabilities.workspaceWrites !== 'deny') {
+            if (nextConfiguration.snapshot.workspaceWrites === 'deny' && !supportsAgentWorkspaceWriteDenial(directFacets.capabilities)) {
                 return reportOutcome({ status: 'failed', reason: 'role_policy_unenforceable' }, 'role_policy_unenforceable');
             }
             const result = await directFacets.configuration.updateConfiguration(
@@ -5922,7 +5923,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         startupModeRefusal = error;
                     }
                 });
-                if (openRequest.configuration?.workspaceWrites === 'deny' && sessionCapabilities.workspaceWrites !== 'deny') {
+                if (openRequest.configuration?.workspaceWrites === 'deny' && !supportsAgentWorkspaceWriteDenial(sessionCapabilities)) {
                     throw Object.assign(new Error('Agent cannot enforce the role workspace-write policy'), { code: 'role_policy_unenforceable' });
                 }
                 const continuationDeclaration =
