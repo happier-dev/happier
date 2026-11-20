@@ -270,18 +270,25 @@ describe("Team lifecycle (SQLite integration)", () => {
             return { owner, teamId: created.team.id };
         }
 
-        it("renames without changing identity and keeps the description optional", async () => {
+        it("publishes one metadata change and leaves equivalent repeated saves quiet", async () => {
             const { owner, teamId } = await ownedTeam();
+            const readOwnerSeq = async () => (await db.account.findUniqueOrThrow({
+                where: { id: owner.id }, select: { seq: true },
+            })).seq;
+            const before = await readOwnerSeq();
 
             const renamed = await inTx(tx => updateTeamInTx(tx, {
                 actorAccountId: owner.id, teamId, name: "Renamed", description: "  ",
             }));
+            expect(renamed).toMatchObject({ ok: true, team: { id: teamId, name: "Renamed", description: null } });
+            expect(await readOwnerSeq() - before).toBe(1);
 
-            expect(renamed.ok).toBe(true);
-            if (!renamed.ok) return;
-            expect(renamed.team.id).toBe(teamId);
-            expect(renamed.team.name).toBe("Renamed");
-            expect(renamed.team.description).toBeNull();
+            for (let i = 0; i < 3; i++) {
+                await expect(inTx(tx => updateTeamInTx(tx, {
+                    actorAccountId: owner.id, teamId, name: "  Renamed  ", description: null,
+                }))).resolves.toMatchObject({ ok: true, team: { id: teamId, name: "Renamed", description: null } });
+            }
+            expect(await readOwnerSeq() - before).toBe(1);
         });
 
         it("requires the current credential to qualify before mutating a restricted Team", async () => {

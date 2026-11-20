@@ -297,13 +297,14 @@ export async function updateTeamInTx(tx: Tx, input: UpdateTeamInput): Promise<Te
     }
     if (data.name === undefined && data.description === undefined) return denied("invalid_team_input");
 
-    const updated = await tx.team.update({
-        where: { id: input.teamId },
-        data,
-        select: TEAM_PROJECTION_SELECT,
-    });
-    await publishTeamChangedInTx(tx, { teamId: input.teamId });
-    return { ok: true, team: await projectForActorInTx(tx, updated, input.actorAccountId, input.authentication) };
+    const changed = (data.name !== undefined && data.name !== viewer.team.name)
+        || (data.description !== undefined && data.description !== viewer.team.description);
+    let team = viewer.team;
+    if (changed) {
+        team = await tx.team.update({ where: { id: input.teamId }, data, select: TEAM_PROJECTION_SELECT });
+        await publishTeamChangedInTx(tx, { teamId: input.teamId });
+    }
+    return { ok: true, team: await projectForActorInTx(tx, team, input.actorAccountId, input.authentication) };
 }
 
 export type ArchiveTeamInput = Readonly<{
