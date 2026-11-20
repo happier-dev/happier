@@ -1,15 +1,18 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from "fastify-type-provider-zod";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createBuiltinRelayAccessSelection } from "@happier-dev/cli-common/relayAccess";
+import { resolveHomeIrohEndpointKeyPath } from "@happier-dev/cli-common/firstPartyRuntime/server";
 
 import { auth } from "@/app/auth/auth";
 import { createPerSendAuthEmailDelivery } from "@/app/auth/email/resolveAuthEmailDelivery";
+import { createFileHomeConnectionDescriptorContinuityStore } from "@/app/features/homeConnectionDescriptorContinuity";
 import { readHomeConfigEnv } from "@/app/home/settings/homeSettings";
 import { resetPublicServerUrlInferenceCacheForTests } from "@/app/integrations/publicUrl/publicServerUrlInference";
+import { registerHomeIrohComposition, resetHomeIrohEndpointStateForTests } from "@/app/iroh/homeIrohEndpoint";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { db } from "@/storage/db";
 
@@ -109,6 +112,48 @@ afterEach(async () => {
 });
 
 describe("home.reachability routes", () => {
+    it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("reports Iroh retirement pending when the committed disable cannot remove the key", async () => {
+        const app = createTestApp();
+        const owner = await createAccount("owner");
+        process.env.HAPPIER_PUBLIC_SERVER_URL = "https://home.test";
+        const env = { ...process.env, HAPPIER_SERVER_LIGHT_DATA_DIR: homeDir };
+        const keyPath = resolveHomeIrohEndpointKeyPath({ env });
+        const keyDir = dirname(keyPath);
+        await mkdir(keyDir, { recursive: true });
+        await writeFile(keyPath, Buffer.alloc(32, 7));
+        registerHomeIrohComposition({
+            env,
+            apiPort: 43123,
+            continuityStore: createFileHomeConnectionDescriptorContinuityStore(join(homeDir, "descriptor.json")),
+            native: null,
+        });
+
+        try {
+            const read = await post(app, "/v1/home/reachability/get", owner.token, {});
+            expect(read.statusCode).toBe(200);
+            expect(read.json().iroh).toMatchObject({ availability: "available", mode: "enabled" });
+            await chmod(keyDir, 0o500);
+
+            const disable = await post(app, "/v1/home/reachability/iroh/set", owner.token, { mode: "disabled" });
+            expect((await db.homeSettings.findUniqueOrThrow({ where: { id: "home" } })).values)
+                .toMatchObject({ HAPPIER_HOME_IROH_MODE: "disabled" });
+            expect(disable.statusCode, disable.body).toBe(200);
+            const pending = await post(app, "/v1/home/reachability/get", owner.token, {});
+            expect(pending.json().iroh).toMatchObject({ mode: "disabled", state: "failed", failureReason: "endpoint_cleanup_pending", endpointId: null });
+            await expect(stat(keyPath)).resolves.toBeDefined();
+
+            await chmod(keyDir, 0o700);
+            const retry = await post(app, "/v1/home/reachability/iroh/set", owner.token, { mode: "disabled" });
+            expect(retry.statusCode).toBe(200);
+            const retired = await post(app, "/v1/home/reachability/get", owner.token, {});
+            expect(retired.json().iroh).toMatchObject({ mode: "disabled", state: "retired", failureReason: null, endpointId: null });
+            await expect(stat(keyPath)).rejects.toMatchObject({ code: "ENOENT" });
+        } finally {
+            await chmod(keyDir, 0o700);
+            await resetHomeIrohEndpointStateForTests();
+        }
+    });
+
     it("resolves the public address env → stored → inferred → none, and a stored address beats an inferred one (I2)", async () => {
         const app = createTestApp();
         const owner = await createAccount("owner");

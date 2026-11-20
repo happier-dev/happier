@@ -293,7 +293,16 @@ export async function retireHomeIrohEndpoint(): Promise<HomeIrohEndpointState> {
     if (!current) return lifecycleState;
     await stopHomeIrohEndpoint();
     const keyPath = resolveHomeIrohEndpointKeyPath({ env: current.env });
-    await rm(keyPath, { force: true });
+    try {
+        await rm(keyPath, { force: true });
+    } catch (error) {
+        if (!(error instanceof Error) || !('code' in error) || (error.code !== 'EACCES' && error.code !== 'EROFS')) {
+            throw error;
+        }
+        // The desired mode is already stored. Keep the endpoint off and its identity pinned until cleanup succeeds.
+        lifecycleState = failed('endpoint_cleanup_pending', error);
+        return lifecycleState;
+    }
     lifecycleState = RETIRED_STATE;
     return lifecycleState;
 }
