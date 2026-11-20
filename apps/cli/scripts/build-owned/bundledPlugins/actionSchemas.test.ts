@@ -76,6 +76,7 @@ describe('published Action schema compaction', () => {
     const admitted = ingestPluginManifestV2(serializeCanonicalPluginManifest(manifest));
     if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
     expect(compactActionSchemas(admitted.manifest)).toEqual(compactActionSchemas(manifest));
+    expect(compactActionSchemas(parsed.manifest)).toEqual(parsed.manifest);
     expect(JSON.stringify(manifest)).toBe(original);
     expect(manifest.contributes.actions[0]!.inputSchema!.properties!.first!.type).toBe('object');
   });

@@ -94,6 +94,7 @@ import {
   type ProjectionPublicationLease,
 } from './bundledPlugins/outputs.ts';
 import { mapWithConcurrency } from './bundledPlugins/concurrency.ts';
+import { compactActionSchemas } from './bundledPlugins/actionSchemas.ts';
 import {
   prepareCanonicalRuntimeWorkspacePackages,
   selectCanonicalRuntimeWorkspacePackageRoots,
@@ -2184,6 +2185,7 @@ function addBundledPluginPublishedPathsToPackageFiles(
 async function readBundledAgentRuntimeFacts(params: Readonly<{
   packageRoot: string;
   manifest: PluginManifestJson;
+  targetOwnedOnly?: boolean;
 }>): Promise<Awaited<ReturnType<
   PluginRuntimeStagingSourceModule['evaluatePluginAuthorRuntimeStagingSource']
 >>> {
@@ -2209,7 +2211,12 @@ async function readBundledAgentRuntimeFacts(params: Readonly<{
     ...params.manifest,
     runtime: authoredRuntime,
   });
-  if (runtimeSource.evaluated.canonicalManifestJson !== staticCanonicalManifest) {
+  // Replicas consume the controller's compact declaration representation.
+  // Authored source publication retains its exact runtime agreement check.
+  const runtimeCanonicalManifest = params.targetOwnedOnly
+    ? manifestSerializer.serializeCanonicalPluginManifest(compactActionSchemas(runtimeSource.evaluated.manifest))
+    : runtimeSource.evaluated.canonicalManifestJson;
+  if (runtimeCanonicalManifest !== staticCanonicalManifest) {
     throw new Error(
       `Bundled plugin source manifest differs from the statically projected canonical manifest: '${params.manifest.id}'`,
     );
@@ -2220,6 +2227,7 @@ async function readBundledAgentRuntimeFacts(params: Readonly<{
 async function stageBundledPluginDaemonRuntime(params: Readonly<{
   packageRoot: string;
   manifest: PluginManifestJson;
+  targetOwnedOnly?: boolean;
   scope: GeneratorScope;
   dependencies: GeneratorWorkspaceDependencies;
   getCanonicalWorkspacePackageRoots: () => Readonly<Record<string, string>> | undefined;
@@ -2466,6 +2474,7 @@ async function prepareBundledPluginPackageArtifacts(params: Readonly<{
   const stagedRuntimeFiles = await stageBundledPluginDaemonRuntime({
     packageRoot: params.packageRoot,
     manifest: params.manifest,
+    targetOwnedOnly: params.targetOwnedOnly,
     scope: params.scope,
     dependencies: params.dependencies,
     getCanonicalWorkspacePackageRoots: params.getCanonicalWorkspacePackageRoots,

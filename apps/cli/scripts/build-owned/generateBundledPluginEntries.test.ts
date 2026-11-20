@@ -540,17 +540,46 @@ describe('packaged runtime eligibility', () => {
 });
 
 describe('bundled plugin installed runtime publication', () => {
-  it('target-owned publication materializes cold and stale package manifests from controller declarations', async () => {
+  it.each([
+    { executable: false, drift: false },
+    { executable: true, drift: false },
+    { executable: true, drift: true },
+  ])('target-owned publication materializes controller declarations (executable=$executable, drift=$drift)', async ({ executable, drift }) => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happier-target-owned-publication-');
     try {
       const packageRoot = writeWorkspacePackageFixture({ repoRoot,
         workspacePath: 'packages/plugins/inspector', packageName: '@happier-dev/plugins-inspector',
-        manifestOverrides: { files: ['dist', 'assets', '.happier-plugin'] },
+        manifestOverrides: { files: ['dist', 'assets', '.happier-plugin', ...(executable ? ['.happier-plugin-build'] : [])] },
       });
       writeBundledPluginSourceInputs({ repoRoot, pluginId: 'inspector', writePackageJson: false });
       const manifest = { schemaVersion: 2, id: 'happier.inspector', version: '0.0.0', displayName: 'Inspector',
-        runtime: { apiVersion: 1 }, contributes: { resources: [{ id: 'payload', kind: 'asset',
-          path: 'assets/payload.txt', contentType: 'text/plain' }] } };
+        runtime: { apiVersion: 1 },
+        ...(executable ? { entrypoints: { daemon: '.happier-plugin-build/daemon.js' } } : {}),
+        contributes: { resources: [{ id: 'payload', kind: 'asset',
+          path: 'assets/payload.txt', contentType: 'text/plain' }],
+          ...(executable ? { actions: [{ id: 'inspect', title: 'Inspect', scopes: ['global'], surfaces: ['cli'],
+            execution: { target: 'daemon' }, dangerLevel: 'safe',
+            inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+            resultSchema: { type: 'object', additionalProperties: false, properties: {
+              first: { type: 'string', minLength: 1, description: 'A complete label supplied by the person for inspection.' },
+              second: { type: 'string', minLength: 1, description: 'A complete label supplied by the person for inspection.' },
+            }, required: ['first', 'second'] },
+          }] } : {}),
+        } };
+      if (executable) {
+        const runtimeManifest = structuredClone(manifest);
+        if (drift) {
+          const action = runtimeManifest.contributes.actions?.[0];
+          if (!action) throw new Error('Executable fixture requires its Action');
+          action.resultSchema.properties.first.minLength = 2;
+        }
+        writeFileSync(join(packageRoot, 'src/runtimeManifest.ts'),
+          `export const manifest = ${JSON.stringify(runtimeManifest)};`);
+        writeFileSync(join(packageRoot, 'src/index.ts'), [
+          'export { manifest } from "./runtimeManifest.js";',
+          'export function activate(api) { api.actions.register("inspect", async () => ({})); }',
+        ].join('\n'));
+      }
       writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(manifest)};`);
       mkdirSync(join(packageRoot, 'dist'), { recursive: true });
       mkdirSync(join(packageRoot, 'assets'), { recursive: true });
@@ -567,14 +596,25 @@ describe('bundled plugin installed runtime publication', () => {
       mkdirSync(dirname(uiPath), { recursive: true });
       writeFileSync(uiPath, renderUiBundledPluginEntriesTs({ packageNames: pluginPackages.map(entry => entry.packageName), pluginPackages }));
       writeRetainedCatalogAgent(repoRoot, happyCliDir);
+      if (executable) {
+        for (const packageName of PLUGIN_HOST_SHARED_RUNTIME_PACKAGES) {
+          writeWorkspacePackageFixture({ repoRoot,
+            workspacePath: `packages/${packageName.split('/').at(-1)}`, packageName });
+        }
+      }
       writeCliBundledHostPackage({ happyCliDir,
-        bundledDependencies: ['@happier-dev/plugins-inspector', '@happier-dev/plugins-fixture-acp'] });
+        bundledDependencies: ['@happier-dev/plugins-inspector', '@happier-dev/plugins-fixture-acp',
+          ...(executable ? PLUGIN_HOST_SHARED_RUNTIME_PACKAGES : [])] });
       await withWorkspaceBundleLock(lease => publishBundledPluginSemanticProjection(
         parseGeneratorCliArgs(['--root', repoRoot, '--mode', 'write', '--aggregate']),
         { protocol: { ingestPluginManifestV2 } }, lease,
       ), { lockPath: join(repoRoot, 'publication.lock') });
       const declarationPath = join(happyCliDir, 'assets/bundled-plugin-manifests/inspector.json');
       const declarationBytes = readFileSync(declarationPath, 'utf8');
+      if (executable) {
+        // The controller projection is intentionally different from authored runtime bytes.
+        expect(declarationBytes).toContain('#/definitions/schema');
+      }
       const catalogPath = join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
       const catalogBytes = readFileSync(catalogPath, 'utf8');
       rmSync(join(packageRoot, '.happier-plugin'), { recursive: true });
@@ -583,7 +623,18 @@ describe('bundled plugin installed runtime publication', () => {
       writeFileSync(join(packageRoot, 'src/manifest.ts'), 'throw new Error("Unpublished source declaration");');
       const publish = () => main(['--root', repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector',
         '--package-artifacts', '--target-owned-only']);
-      await publish();
+      const published = await publish();
+      if (drift) {
+        expect(published).toMatchObject({ failures: [expect.objectContaining({
+          packageName: '@happier-dev/plugins-inspector', diagnostic: expect.objectContaining({
+            code: 'plugin_package_build_failed',
+            message: expect.stringContaining('source manifest differs'),
+          }),
+        })] });
+        expect(existsSync(manifestPath)).toBe(false);
+        return;
+      }
+      expect(published).toMatchObject({ failures: [] });
       expect(JSON.parse(readFileSync(manifestPath, 'utf8'))).toEqual(JSON.parse(declarationBytes));
       writeFileSync(manifestPath, '{}');
       await publish();
@@ -1436,7 +1487,7 @@ writeFileSync(join(output, 'index.d.ts'), 'export declare const fresh: number;\\
       }
       // Check mode still reads all current source and rejects serialized drift.
       await expect(main(['--root', repoRoot, '--mode', 'check', '--scope', 'projections', '--workspace', 'plugins-inspector']))
-        .rejects.toThrow(/plugin\.json.*Run .*generateBundledPluginEntries\.ts.*--package-artifacts/u);
+        .rejects.toThrow(/generated output differs:.*bundled-plugin-manifests[/\\]neighbor\.json/u);
       // Align the peer's authored facts with its retained publication, then
       // repair the package artifacts through the canonical serializer.
       for (const id of packages.filter(id => id !== 'inspector')) {
