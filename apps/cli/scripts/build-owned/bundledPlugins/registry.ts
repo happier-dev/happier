@@ -10,6 +10,7 @@ import type {
   BundledFirstPartyAgentRegistrationIdentity,
   BundledPluginPackage,
 } from './projectionFacts.ts';
+import { bundledPluginManifestAssetRelativePath } from './manifestAssetPath.mjs';
 import '../../../../../packages/cli-common/registerSourceRuntime.mjs';
 
 // The publisher's source loader must be active before linking Protocol's .js
@@ -37,9 +38,7 @@ const {
 } = await import('../../../src/plugins/projection/registry/builtIn/declarationAssets.ts');
 
 
-export function bundledPluginManifestAssetRelativePath(pluginPackageId: string): string {
-  return `assets/bundled-plugin-manifests/${pluginPackageId}.json`;
-}
+export { bundledPluginManifestAssetRelativePath };
 
 export function renderCliBundledPluginManifestEntriesTs(params: Readonly<{
   pluginPackages: readonly BundledPluginPackage[];

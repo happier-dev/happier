@@ -1,9 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { listBundledPluginUiArtifactExports } from '../../ui/scripts/generateBundledPluginUiArtifacts.mjs';
+import { bundledPluginManifestAssetRelativePath } from './build-owned/bundledPlugins/manifestAssetPath.mjs';
 
 /** Source CLI locators read workspace package roots. Materialize their graphs
- * through the same compiler used by retained daemon and native CLI roots.
+ * from the CLI's own bundled declarations through the shared source compiler.
  * Return per-plugin failures so optional hosts can keep healthy graphs available. */
 export async function prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNames, pluginFailures = [] }) {
   const excluded = new Set(pluginFailures.map(failure => failure.packageName));
@@ -16,7 +17,7 @@ export async function prepareSourceCliPluginUiArtifacts({ repoRoot, workspaceNam
     const packageJson = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8'));
     if (listBundledPluginUiArtifactExports(packageJson).length === 0) continue;
     plugins.push({ directory, loadManifest: async () => JSON.parse(
-      await readFile(resolve(root, '.happier-plugin/plugin.json'), 'utf8'),
+      await readFile(resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(directory)), 'utf8'),
     ) });
     artifactOutputDirs[directory] = resolve(root, 'dist/happier-plugin-ui');
   }

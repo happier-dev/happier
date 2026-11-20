@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { expect, it } from 'vitest';
+import { beforeAll, expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 
 import {
@@ -42,11 +42,23 @@ import { repoRootDir } from '../../src/testkit/paths';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
 
+const providers = ['neon', 'supabase'] as const;
+
+beforeAll(async () => {
+  // The source CLI reads package-local Account graphs, which can be absent on a cold test worker.
+  const { prepareSourceCliPluginUiArtifacts } = await import('../../../../apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs');
+  const result = await prepareSourceCliPluginUiArtifacts({
+    repoRoot: repoRootDir(),
+    workspaceNames: providers.map(provider => `plugins-deployment-${provider}`),
+  });
+  expect(result).toMatchObject({ pluginFailures: [] });
+});
+
 // Only third-party HTTPS is replaced. PROGRAM G1 and P1 section 15 require each
 // transport's supported path: selected semantic reads plus the bound
 // direct write precede missing-connection and provider-error controls.
 // A failure before those positive controls is a setup blocker, not valid RED.
-it.each(['neon', 'supabase'] as const)('F4 selects %s preview/production without a neighboring fallback', async provider => {
+it.each(providers)('F4 selects %s preview/production without a neighboring fallback', async provider => {
   const testDir = await mkdtemp(join(tmpdir(), `happier-dbw-${provider}-`));
   const boundary = await startDeploymentProvidersHttp({ seedManagedProjects: true });
   let fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchFixture>> | undefined;

@@ -1,15 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempDir';
 import { readGeneratedPluginUiArtifactsManifest } from '../../src/plugins/install/ui/generatedArtifacts';
 import { publishBundledPluginArtifactsAfterWorkspaceBuild } from '../buildSharedDeps.mjs';
+import { bundledPluginManifestAssetRelativePath } from '../build-owned/bundledPlugins/manifestAssetPath.mjs';
 import { writeBundledPluginSourceInputs, FIXTURE_PNPM_WORKSPACE_YAML } from './testkit/packageLayoutSandbox';
 
 describe('source CLI Plugin UI preparation with the real compiler', () => {
-  it('publishes executable graphs at the selected source package roots before declaring preparation complete', async () => {
-    const repoRoot = createTempDirSync('happier-source-cli-plugin-ui-');
+  it('publishes executable graphs from CLI declarations on a cold checkout without packaged manifests', async () => {
+    const repoRoot = createTempDirSync('happier source CLI plugin UI-');
     try {
       const packageRoot = writeBundledPluginSourceInputs({ repoRoot, pluginId: 'fixture' });
       mkdirSync(join(repoRoot, 'apps/cli'), { recursive: true });
@@ -37,8 +38,9 @@ describe('source CLI Plugin UI preparation with the real compiler', () => {
         // The semantic publisher is a child-process boundary. Its normalized
         // declaration is input to the real compiler, inventory and CLI reader.
         publishBundledPluginArtifactsImpl: async () => {
-          mkdirSync(join(packageRoot, '.happier-plugin'), { recursive: true });
-          writeFileSync(join(packageRoot, '.happier-plugin/plugin.json'), JSON.stringify({
+          const declaration = join(repoRoot, 'apps', 'cli', bundledPluginManifestAssetRelativePath('fixture'));
+          mkdirSync(dirname(declaration), { recursive: true });
+          writeFileSync(declaration, JSON.stringify({
             schemaVersion: 2, id: 'happier.fixture', version: '0.0.0', displayName: 'Fixture', runtime: { apiVersion: 1 },
             contributes: { ui: { renderers: [{ id: 'card', kind: 'reactNative', artifact: 'card' }],
               views: [{ id: 'card', container: 'appPage', target: { kind: 'app' }, renderer: 'card', title: 'Fixture' }] } },
@@ -47,6 +49,7 @@ describe('source CLI Plugin UI preparation with the real compiler', () => {
         },
       });
       writeFileSync(join(packageRoot, 'src/card.ts'), 'export function renderSurface( {\n');
+      expect(existsSync(join(packageRoot, '.happier-plugin', 'plugin.json'))).toBe(false);
       await expect(prepare()).rejects.toMatchObject({ code: 'plugin_ui_artifact_invalid' });
       expect(existsSync(graphPath)).toBe(false);
       writeFileSync(join(packageRoot, 'src/card.ts'), 'export function renderSurface() { return null; }\n');

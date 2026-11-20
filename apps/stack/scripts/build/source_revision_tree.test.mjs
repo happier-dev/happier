@@ -87,8 +87,9 @@ test('daemon revision trees publish voice graphs at their declared plugin roots 
       exports['./happier-plugin-ui/voice-runtime'] = { 'happier-source': './src/voice.ts', default: './dist/happier-plugin-ui/react-native/voice-runtime/entry.cjs.bundle' };
     }
     await mkdir(join(root, 'src'), { recursive: true });
-    await mkdir(join(root, '.happier-plugin'), { recursive: true });
-    await writeFile(join(root, '.happier-plugin/plugin.json'), JSON.stringify(manifest));
+    const declarationPath = join(repoDir, 'apps/cli/assets/bundled-plugin-manifests', `${directory}.json`);
+    await mkdir(dirname(declarationPath), { recursive: true });
+    await writeFile(declarationPath, JSON.stringify(manifest));
     await writeFile(join(root, 'package.json'), JSON.stringify({ name, version: '0.0.0', type: 'module', exports }));
     await writeFile(join(root, 'src/index.ts'), 'export {};');
     await writeFile(join(root, 'src/voice.ts'), directory === 'voice-broken' ? 'export function activate( {'
