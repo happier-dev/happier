@@ -201,8 +201,13 @@ it('opens named-view prompts through their mounted owner and preserves the actua
         await invoke(createTitle, { value: 'Personal view' }, true);
         await invoke(t('common.create'), undefined, true);
         await vi.waitFor(() => expect(mounted.bar?.selectedName).toBe('Personal view'));
-        await invoke(t('usage.board.page.renameViewTitle'));
-        await invoke(t('common.cancel'));
+        const renameTitle = t('usage.board.page.renameViewTitle');
+        await invoke(renameTitle);
+        await vi.waitFor(() => expect(command(t('common.save'))).toBeDefined());
+        const cancelLabel: unknown = screen.findByTestId('web-prompt-cancel')?.props.accessibilityLabel;
+        if (typeof cancelLabel !== 'string') throw new Error('Expected a labelled Cancel control in the Rename prompt');
+        await invoke(cancelLabel);
+        await vi.waitFor(() => expect(command(renameTitle)).toBeDefined());
         expect(mounted.bar?.selectedName).toBe('Personal view');
     } finally { await screen.unmount(); }
 });
@@ -817,10 +822,10 @@ it('keeps an untouched Usage widget unchanged while its configured UI edit await
         const surface = binding.surface!;
         let pending!: ReturnType<NonNullable<typeof binding.port>['execute']>;
         await act(async () => { pending = binding.port!.execute({ actionId: 'widgets.item.rename', instanceId: 'displayed', displayName: 'Personal' }); });
-        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
         expect(artifacts.readPlainBody(buildWidgetSurfaceArtifactIdV1(surface))).toBeNull();
         expect(artifacts.list()).toEqual([]);
-        await screen.pressByTestIdAsync('web-modal-cancel');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(artifacts.readPlainBody(buildWidgetSurfaceArtifactIdV1(surface))).toBeNull();
     } finally { await screen.unmount(); }
@@ -844,11 +849,11 @@ it('keeps a new Usage view unapplied while native confirmation is open', async (
         await vi.waitFor(() => expect(current.layouts.state.status).toBe('ready'));
         let created!: ReturnType<typeof current.layouts.create>;
         await act(async () => { created = current.layouts.create('Personal', current.binding.surface!); });
-        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
         expect(current.layouts.state.dashboards.map(row => row.name)).toEqual(['Overview']);
         expect(current.layouts.approvalId).toBeNull();
         expect(artifacts.list()).toEqual([]);
-        await screen.pressByTestIdAsync('web-modal-cancel');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         await expect(created).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(current.layouts.state.dashboards.map(row => row.name)).toEqual(['Overview']);
     } finally { await screen.unmount(); }
@@ -876,11 +881,11 @@ it('keeps an edited preset and offers no Undo while Reset awaits native confirma
             actions: { 'widgets.area.layout.reset': { approvalRequiredSurfaces: ['ui'] } },
         }));
         await screen.pressByTestIdAsync('pending.preset.reset');
-        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
         expect(readPresentationNotice()?.undo).toBeUndefined();
         expect(artifacts.readPlainBody(artifactId)).toBe(before);
         expect(artifacts.list().map(row => row.id)).toEqual([artifactId]);
-        await screen.pressByTestIdAsync('web-modal-cancel');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         expect(artifacts.readPlainBody(artifactId)).toBe(before);
         expect(readPresentationNotice()?.undo).toBeUndefined();
     } finally { await screen.unmount(); }
@@ -909,12 +914,12 @@ it('retains the selected user view while Delete awaits native confirmation', asy
         }));
         let removed!: ReturnType<typeof current.layouts.remove>;
         await act(async () => { removed = current.layouts.remove(personal); });
-        await vi.waitFor(() => expect(screen.findByTestId('web-modal-cancel')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
         expect(current.binding.surface).toMatchObject({ owner: { layoutId: 'personal' } });
         expect(artifacts.readPlainBody(personal.artifactId)).toBe(before);
         expect(current.layouts.approvalId).toBeNull();
         expect(artifacts.list().map(row => row.id)).toEqual([personal.artifactId]);
-        await screen.pressByTestIdAsync('web-modal-cancel');
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
         await expect(removed).resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
         expect(current.binding.surface).toMatchObject({ owner: { layoutId: 'personal' } });
         expect(artifacts.readPlainBody(personal.artifactId)).toBe(before);
