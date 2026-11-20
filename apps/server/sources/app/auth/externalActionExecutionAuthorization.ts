@@ -1714,6 +1714,11 @@ function readActionBrokerHttpPurpose(proof: ExternalActionExecutionRequestProof)
     return body;
 }
 
+function isExactExecutionMachineLookup(machineId: string, proof: ExternalActionExecutionRequestProof): boolean {
+    return proof.method.toUpperCase() === 'GET' && proof.body === undefined
+        && proof.path === `/v1/machines/${encodeURIComponent(machineId)}`;
+}
+
 async function verifyCommon(
     proof: ExternalActionExecutionRequestProof,
 ): Promise<VerifiedSignedChildRequest | null> {
@@ -1804,8 +1809,9 @@ async function verifyCommon(
     if (!binding) return refuseExternalActionExecutionRequest('authorization_token', proof);
     const refuse =(phase: ExternalActionAuthorizationRefusalPhase) => refuseExternalActionExecutionRequest(phase, proof, undefined,
         { rootActionId: binding.actionId, effectActionId: effectActionId.data });
-    if (binding.requesterOperationRead && (effectActionId.data !== binding.actionId || proof.method !== 'POST'
-        || proof.path !== bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId))) return refuse('verification_purpose');
+    if (binding.requesterOperationRead && (effectActionId.data !== binding.actionId
+        || !isExactExecutionMachineLookup(binding.machineId, proof) && (proof.method.toUpperCase() !== 'POST'
+            || proof.path !== bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId)))) return refuse('verification_purpose');
     if (!isExternalActionResolvedTargetAllowedV1({
         authorizedTarget: binding.target,
         resolvedTarget: target,
@@ -1909,6 +1915,7 @@ async function verifyCommon(
         ? verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'))
         : Boolean(machine?.installationPublicKey && verifySignature(machine.installationPublicKey));
     const boundMachineSigned = signatureCurrent;
+    if (binding.requesterOperationRead && !boundMachineSigned) return refuse('machine_signature');
     if (managedPowerContinuation) {
         if (!boundMachineSigned) return refuse('machine_signature');
         if (!managedPowerContinuation.success
@@ -4151,7 +4158,8 @@ export async function verifyExternalActionDomainExecutionRequest(
     const nativePurpose = rootSpec?.originalExecution?.nativePurpose;
     const rootMachineAction = MachineAccessActionIdSchema.safeParse(verified.binding.actionId);
     const effectMachineAction = MachineAccessActionIdSchema.safeParse(verified.effectActionId);
-    const readsExecutionMachine = root.success
+    const readsExecutionMachine = isExactExecutionMachineLookup(verified.binding.machineId, proof)
+        && (verified.binding.requesterOperationRead === true || root.success
         && (((rootSpec?.executionPlacements ?? [rootSpec?.executionPlacement]).includes('machine')
                 || verified.binding.sessionActionOrigin && isLedSubtreeSessionLifecycleActionId(root.data))
             && verified.binding.target.kind === 'machine' && verified.binding.target.machineId === verified.binding.machineId
@@ -4159,9 +4167,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         && (verified.effectActionId === verified.binding.actionId
             || isContributedActionRoot(verified.binding.actionId)
             || verified.signedChildPurpose.sibling.archiveStop
-            || verified.signedChildPurpose.sibling.projectPrepareReview)
-        && proof.method.toUpperCase() === 'GET' && proof.body === undefined
-        && proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`;
+            || verified.signedChildPurpose.sibling.projectPrepareReview));
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(verified.binding.actionId);
     const admittedReadRootRequesterGet = isAdmittedReadRootRequesterGet(verified, proof);
     const reviewedMachineSetupChild = verified.signedChildPurpose.reviewedMachineSetupChild

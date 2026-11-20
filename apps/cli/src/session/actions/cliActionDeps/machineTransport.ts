@@ -27,6 +27,7 @@ import { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 
 export { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc';
@@ -240,7 +241,8 @@ export function createCliMachineActionTransport(
     const admittedLocalRequester = requester?.authorization.binding.machineId === input.machineId;
     const admittedLocalRequesterAction = admittedLocalRequester
       && requester?.authorization.binding.actionId === input.effectActionId;
-    const managedBinding = input.context?.externalActionExecutionAuthorization?.binding;
+    const executionAuthorization = input.context?.externalActionExecutionAuthorization;
+    const managedBinding = executionAuthorization?.binding;
     const managedAdmission = input.context?.machineAdmission;
     const boundToThisMachine = Boolean(managedBinding && managedAdmission
       && managedBinding.machineId === input.machineId && managedAdmission.machineId === input.machineId
@@ -264,7 +266,7 @@ export function createCliMachineActionTransport(
     // operation store. Its carrier has no authority on the general RPC route.
     const admittedRequesterOperationRead = managedBinding?.requesterOperationRead
       && input.effectActionId === ACTION_OPERATION_GET_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V2.get
-      && originalRequester && originalRequester.authorization === input.context?.externalActionExecutionAuthorization;
+      && readRetainedVerifiedExternalActionRequester(executionAuthorization) !== undefined;
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
       && managedBinding.actionId === input.effectActionId

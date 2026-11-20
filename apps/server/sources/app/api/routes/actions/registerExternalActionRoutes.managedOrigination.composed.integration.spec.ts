@@ -62,6 +62,7 @@ import { registerExternalActionRoutes } from './registerExternalActionRoutes';
 import { handleActionsCommand } from '../../../../../../cli/src/cli/commands/actions';
 import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionExecutor } from '../../../../../../cli/src/session/actions/createCliActionExecutor';
+import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '../../../../../../cli/src/api/clientCompatibility/cliClientCompatibility';
 import { executeExternalAction } from '../../../../../../cli/src/daemon/externalActions/executeExternalAction';
 import type { RpcHandler } from '../../../../../../cli/src/api/rpc/types';
 import { registerExternalActionRpcHandler } from '../../../../../../cli/src/rpc/handlers/externalAction';
@@ -1505,6 +1506,7 @@ describe('composed CLI managed Action origination', () => {
                 binding, material, input, randomBytes: tweetnacl.randomBytes });
         let nativeEffects = 0;
         let artifactWrites = 0;
+        const signedMachineLookups: Array<{ kind: string; ownMachine: boolean; status: number; phase?: string }> = [];
         const operations = createHostActionOperationRuntime({ machineId: target.machineId,
             custodyBinding: { serverId: homeId, installationId: selected.controller.installationId },
             resolveAccountId: async () => selected.account.id });
@@ -1552,6 +1554,22 @@ describe('composed CLI managed Action origination', () => {
                 accountId: admitted.principal.accountId,
                 custodianAccountId: selected.account.id });
             if (!read) expect(admitted.principal.accountId).toBe(requester.account.id);
+            const authorization = admitted.executionAuthorization;
+            if (read && authorization?.binding.requesterOperationRead && 'authentication' in authorization.binding) {
+                const path = `/v1/machines/${encodeURIComponent(target.machineId)}`;
+                const lookup = async (path: string) => instance.inject({ method: 'GET', url: path,
+                    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+                        ...createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: ACTION_OPERATION_GET_ACTION_ID_V1,
+                            target, installationId: selected.controller.installationId, method: 'GET', path,
+                            privateKey: selected.keys.secretKey }) } });
+                const exact = await lookup(path);
+                signedMachineLookups.push({ kind: authorization.binding.authentication.kind,
+                    ownMachine: authorization.binding.accountId === selected.account.id, status: exact.statusCode,
+                    phase: exact.statusCode === 401 ? exact.json().authorizationRefusal : undefined });
+                const unrelated = await lookup(`${path}?include=unrelated`);
+                expect(unrelated.statusCode).toBe(401);
+                expect(unrelated.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
+            }
             const result = await executeExternalAction({ ...admitted, executor: receiver,
                 currentAccountId: selected.account.id, currentMachineId: selected.controller.machineId,
                 currentInstallationId: selected.controller.installationId, currentServerId: homeId,
@@ -1636,10 +1654,12 @@ describe('composed CLI managed Action origination', () => {
                         return { status: response.statusCode, value: response.json() };
                     },
                 });
-                expect(await read(requester)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+                expect.soft(await read(requester)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
                     operationId, state: 'succeeded', scope: { accountId: requester.account.id, machineId: target.machineId },
                 } } });
-                expect(await read(otherMember)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+                expect.soft(await read(otherMember)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+                const browserOwnMachine = await read(selected);
+                expect.soft(browserOwnMachine, JSON.stringify(browserOwnMachine)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
                 const readWithPairedCli = async (member: typeof requester) => {
                     const token = await auth.createToken(member.account.id, undefined,
                         { kind: 'terminal', authority: 'account_automation' });
@@ -1657,10 +1677,19 @@ describe('composed CLI managed Action origination', () => {
                     });
                 };
                 const ownRead = await readWithPairedCli(requester);
-                expect(ownRead, JSON.stringify(ownRead)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+                expect.soft(ownRead, JSON.stringify(ownRead)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
                     operationId, state: 'succeeded', scope: { accountId: requester.account.id, machineId: target.machineId },
                 } } });
-                expect(await readWithPairedCli(otherMember)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+                expect.soft(await readWithPairedCli(otherMember)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+                expect.soft(await readWithPairedCli(selected)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
+                expect(signedMachineLookups).toEqual([
+                    { kind: 'account', ownMachine: false, status: 404 },
+                    { kind: 'account', ownMachine: false, status: 404 },
+                    { kind: 'account', ownMachine: true, status: 200 },
+                    { kind: 'terminal', ownMachine: false, status: 404 },
+                    { kind: 'terminal', ownMachine: false, status: 404 },
+                    { kind: 'terminal', ownMachine: true, status: 200 },
+                ]);
                 expect(await resolveMachineAccess({ actorAccountId: otherMember.account.id, machineId: target.machineId })).toBeNull();
             }
         } finally { restoreHttp(); resetActiveAccountSettingsSnapshotForTests(); await instance.close(); }

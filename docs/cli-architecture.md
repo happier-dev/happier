@@ -1690,6 +1690,10 @@ for the same address.
 The requester read uses a per-invocation sealed codec. It needs no grant on
 the executor Machine or access to its content keys. This transport is scoped
 to a single operation read and requires the current 0.3 Home and daemon.
+On the receiver, the exact local call uses the verified requester proof
+retained on the current authorization. The installation may also sign the
+exact Machine lookup under the requester-read purpose. The lookup applies the
+requester's own Machine access when selecting its response.
 0.2 Homes retain the ordinary Machine RPC read.
 
 ### Presented workspace observation (0.3 development)
