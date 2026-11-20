@@ -10,9 +10,16 @@ export function usePluginProjectScopeControl(pluginId: string) {
     const reader = useActivePluginAccountAvailabilityReader(pluginId);
     const intent = reader?.readCurrentAccountIntent(pluginId);
     if (!lifetime || intent === undefined) return { kind: 'unavailable' } as const;
+    const projectScope = intent?.projectScope ?? null;
+    const summary = projectScope === null
+        ? { kind: 'all' } as const
+        : projectScope.projectKeys.length === 1
+            ? { kind: 'project', projectKey: projectScope.projectKeys[0]! } as const
+            : { kind: 'projects', count: projectScope.projectKeys.length } as const;
     return {
         kind: 'available',
-        projectScope: intent?.projectScope ?? null,
+        projectScope,
+        summary,
         async setProjectScope(projectScope: PluginProjectScopeV1 | null) {
             if (!lifetime.isCurrent()) return { kind: 'unavailable', code: 'account_scope_changed' } as const;
             return await setActivePluginAccountAvailabilityIntent({
