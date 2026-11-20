@@ -188,8 +188,8 @@ export function usageSourceTimelineSeries(input: Readonly<{
                 : resolveUsageCostBasis(leader.cost, input.costMode) : null;
             appendMeasurement(entry, bucket.bucketStartMs, basis?.amountUsd ?? null, basis?.partial);
         } else if (!leader.sources?.length) {
-            const tokens = resolveUsageMeasuredTokens(leader.tokens);
-            appendMeasurement(entry, bucket.bucketStartMs, tokens.total, tokens.fromParts);
+            const tokens = leader.tokens ? resolveUsageMeasuredTokens(leader.tokens) : null;
+            appendMeasurement(entry, bucket.bucketStartMs, tokens?.total ?? null, tokens?.fromParts);
         }
         for (const part of leader.sources ?? []) {
             if (part.execution !== 'outside') entry.allOutside = false;

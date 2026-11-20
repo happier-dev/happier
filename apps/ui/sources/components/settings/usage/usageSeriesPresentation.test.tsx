@@ -131,6 +131,18 @@ describe('usage projection into the shared series renderer', () => {
         expect(series[0]?.points.map(point => point.y)).toEqual([9, 9]);
         expect(series[0]?.fillPattern).toBeUndefined();
     });
+    it('keeps the token value unavailable for an unpartitioned bucket without token measurements', () => {
+        const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
+        const cost = { reportedUsd: 0, estimatedUsd: 9, currency: 'USD', costSource: 'pricing_estimate' as const };
+        const { series, incompleteBucketStarts } = usageSourceTimelineSeries({ timeline: [
+            { bucketStartMs: 0, bucketEndMs: 10, leaders: [{ key: 'claude', eventCount: 1, cost }] },
+            { bucketStartMs: 10, bucketEndMs: 20, leaders: [{ key: 'claude', eventCount: 1, tokens, cost,
+                sources: [{ source: 'native', path: 'native', execution: 'outside', eventCount: 1, tokens, cost }] }] },
+        ], range: null, metric: 'tokens', costMode: 'auto',
+        dimensionKey: key => key, label: key => key, color: () => 'ink', bucketLabel: String });
+        expect(series[0]?.points.map(point => point.y)).toEqual([null, 5]);
+        expect(incompleteBucketStarts.has(0)).toBe(true);
+    });
     it('keeps source appearance orthogonal to dimension hue and missing calendar evidence', () => {
         const day = 86_400_000;
         const tokens = { input: 5, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 5 };
