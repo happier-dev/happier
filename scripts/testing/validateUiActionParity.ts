@@ -58,7 +58,12 @@ export function readCurrentActionDispatchParity(specs = listActionSpecs()) {
       const registered = await withSetupRpcRegistrations(manager => methods.filter(method => manager.hasHandler(method)));
       console.log('ACTION_DISPATCH_EVIDENCE ' + JSON.stringify({
         registered, coveredActionIds: SETUP_RPC_REGISTRATION_ACTION_IDS, hostPorts,
-        uiMachineActionIds: listActionSpecs().filter(spec => isUiMachineOwnedAdmissionAction(spec.id, undefined)).map(spec => spec.id),
+        // A catalog audit has no admitted operands. For input-dependent Actions,
+        // inspect whether their declaration includes a UI-to-Machine route.
+        uiMachineActionIds: listActionSpecs().filter(spec => spec.executionPlacementForInput
+          ? hasDeclaredActionDaemonIngress(spec, 'ui')
+            && (spec.executionPlacements ?? [spec.executionPlacement]).includes('machine')
+          : isUiMachineOwnedAdmissionAction(spec.id, undefined)).map(spec => spec.id),
         hostMachineActionIds: listActionSpecs().filter(spec => hasDeclaredActionDaemonIngress(spec, 'cli')).map(spec => spec.id),
       }));
     `], { cwd: root, encoding: 'utf8', env: environment });

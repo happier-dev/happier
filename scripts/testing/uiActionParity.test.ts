@@ -119,9 +119,11 @@ test('maps current UI Action invocations, registrations and settings mutations t
 });
 
 test('Artifact browser view controls use the declared settings Action ingress', () => {
-  const path = 'apps/ui/sources/components/artifacts/ArtifactsBrowserScreen.tsx';
-  assert.deepEqual(report().findings.filter(site => site.filePath === path), []);
-  assert.ok(report().settings.some(site => site.filePath === path && site.key === 'artifactsBrowserViewV1'));
+  const browser = 'apps/ui/sources/components/artifacts/ArtifactsBrowserScreen.tsx';
+  const owner = 'apps/ui/sources/components/ui/lists/collection/useCollectionDisplayOptions.ts';
+  assert.deepEqual(report().findings.filter(site => site.filePath === browser || site.filePath === owner), []);
+  assert.ok(report().settings.some(site => site.filePath === owner
+    && site.scope === 'declaration' && site.key === 'appearance.collectionDisplay'));
 });
 
 test('machine resources UI intents map to canonical agent and MCP specs (AGW-1)', () => {

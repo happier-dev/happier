@@ -407,13 +407,19 @@ export function readActionDispatchGraph(root: string, sources: readonly Source[]
     return found;
   }
   const daemonUiOwner = 'apps/ui/sources/sync/ops/actions/executeMachineActionAtDaemon.ts';
+  const admissionPolicy = 'isUiMachineOwnedAdmissionAction';
   const uiExecute = uiFunctions.get('executeAction');
   let uiMachineBranch = false;
   function machineBranch(node: ts.Node): void {
     if (ts.isFunctionLike(node) && !appInstalled.has(node)) return;
-    if (ts.isConditionalExpression(node)
-      && callsOwned(node.condition, 'isUiMachineOwnedAdmissionAction', daemonUiOwner)
-      && callsOwned(node.whenTrue, 'executeMachineAction', ui)) uiMachineBranch = true;
+    if (ts.isConditionalExpression(node) && ts.isIdentifier(node.condition)
+      && callsOwned(node.whenTrue, 'executeMachineAction', ui)) {
+      const declarations = symbol(node.condition)?.declarations ?? [];
+      uiMachineBranch ||= declarations.some(declaration => ts.isVariableDeclaration(declaration)
+        && callsOwned(declaration.initializer, 'resolveMachineAdmissionContext', ui)
+        && (uiFunctions.get('resolveMachineAdmissionContext') ?? []).some(owner =>
+          callsOwned(owner, admissionPolicy, daemonUiOwner, appInstalled)));
+    }
     ts.forEachChild(node, machineBranch);
   }
   for (const execute of uiExecute ?? []) machineBranch(execute);

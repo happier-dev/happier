@@ -152,7 +152,11 @@ test('declared surfaces require actual callable composition and receiver registr
       import { executeOriginalAccountMachineAction } from '../../api/externalActionAccountTransport';
       const executeMachineOwnedAction = () => executeOriginalAccountMachineAction();
       const executeMachineAction = () => executeMachineActionAtDaemon(executeMachineOwnedAction());
-      const executeAction = (id, input) => isUiMachineOwnedAdmissionAction(id, input) ? executeMachineAction() : executor.execute(id, input);
+      const resolveMachineAdmissionContext = async (id, input) => isUiMachineOwnedAdmissionAction(id, input) ? {} : null;
+      const executeAction = async (id, input) => {
+        const machineContext = await resolveMachineAdmissionContext(id, input);
+        return machineContext ? await executeMachineAction() : executor.execute(id, input);
+      };
       export function createDefaultActionExecutor() { return { execute: executeAction }; }
     ` } : file.filePath.endsWith('/createCliActionExecutorFromCredentials.ts') ? { ...file,
       content: file.content.replace('return createCliActionExecutor({ accountServerActionDeps });', `
@@ -371,8 +375,11 @@ test('declared surfaces require actual callable composition and receiver registr
       hostMachineDispatch: disconnectedHost.hostMachineDispatch }, [catalog[0]], discovery, methods, undefined,
       new Set(), machineActionIds).some(row => row.reason === 'machine_forwarding_unverified'));
     const disconnectedRole = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/defaultActionExecutor.ts')
-      ? { ...file, content: file.content.replace('? executeMachineAction() :', '? executor.execute(id, input) :') } : file));
+      ? { ...file, content: file.content.replace('? await executeMachineAction() :', '? await executor.execute(id, input) :') } : file));
     assert.equal(disconnectedRole.uiMachineDispatch, false);
+    const disconnectedAdmission = readActionDispatchGraph(root, roleFiles.map(file => file.filePath.endsWith('/defaultActionExecutor.ts')
+      ? { ...file, content: file.content.replace('return machineContext ?', 'return input ?') } : file));
+    assert.equal(disconnectedAdmission.uiMachineDispatch, false);
     assert.ok(collectActionDispatchParity({ ...complete, uiPorts: [], daemonPorts: routed.daemonPorts,
       uiMachineDispatch: disconnectedRole.uiMachineDispatch }, [catalog[0]], discovery, methods, undefined, machineActionIds)
       .some(row => row.reason === 'machine_forwarding_unverified'));
