@@ -2396,6 +2396,14 @@ remote_cwd=$remote_repo
 pid_file="$remote_home/remote-exec/$execution_id.pid"
 remote_path_setup="export PATH=$(quote_remote "$remote_home/cache/pnpm-toolchain/bin${remote_path:+:$remote_path}"):\$PATH;"
 remote_script="set -euo pipefail; export HAPPIER_DEV_TARGET_EXECUTION=1; export HAPPIER_STACK_PM_CACHE_BASE_DIR=$(quote_remote "$remote_home/cache"); export HAPPIER_WORKSPACE_BUILD_MODE=$(quote_remote "$remote_preparation_build_mode");"
+# Worker mirrors omit Git metadata. Carry the primary checkout's baseline
+# into both preparation and payload admission without serializing any Git data.
+if [ "$heavyweight_admission_required" -eq 1 ]; then
+  admission_source_tree=$(git --no-optional-locks -C "$repo_root" rev-parse --verify --quiet 'HEAD^{tree}' 2>/dev/null) || admission_source_tree=
+  if [ -n "$admission_source_tree" ]; then
+    remote_script="$remote_script export HAPPIER_ADMISSION_SOURCE_TREE=$(quote_remote "$admission_source_tree");"
+  fi
+fi
 # Historical duration is diagnostic, never an admission limit or kill timer.
 # Send the producer's class, which can differ from the worker resource class.
 duration_p99=

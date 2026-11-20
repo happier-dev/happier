@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { resolveAdmissionCheckoutTree } from '../proc/admission_client.mjs';
 import { killProcessTree, runCaptureResult, spawnProc } from '../proc/proc.mjs';
 import {
   buildRemoteCancelCommand,
@@ -393,6 +394,8 @@ export async function runDevTargetCommand(
   const lifetimeStdin = target.platform !== 'windows' && !tty;
   const durationP99 = commandPolicy.heavyClass
     ? await readExecutionDurationP99(stackBaseDir, commandPolicy.commandClass, target.name) : null;
+  const sourceTree = target.platform !== 'windows' && (commandPolicy.heavyClass || commandPolicy.placementHeavyClass)
+    ? await resolveAdmissionCheckoutTree(sourceDir, { env, signal }) : '';
   const remoteCommand = buildRemoteExecCommand(target, {
     executionId,
     cwd,
@@ -410,6 +413,7 @@ export async function runDevTargetCommand(
     }),
     environment: {
       ...environment,
+      ...(sourceTree ? { HAPPIER_ADMISSION_SOURCE_TREE: sourceTree } : {}),
       ...(durationP99 === null ? {} : {
         HAPPIER_ADMISSION_DURATION_CLASS: commandPolicy.commandClass,
         HAPPIER_ADMISSION_DURATION_P99_MS: String(durationP99),

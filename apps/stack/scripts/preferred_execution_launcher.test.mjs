@@ -2411,6 +2411,28 @@ test('AUTO sizes a heavy command by the floor each worker\'s broker would reserv
   }
 });
 
+test('routed admission carries the authoritative checkout tree across a Git-free mirror', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await placementFleet(t, {
+    nl1: placementSample({ availableKiB: gibKiB(16), unreservedKiB: gibKiB(16), achievableKiB: gibKiB(16) }),
+  });
+  const tree = 'b'.repeat(40);
+  await executable(join(fixture.binDir, 'git'), `#!/bin/sh
+case "$*" in *rev-parse*HEAD*) printf '%s\\n' '${tree}' ;; *) exec /usr/bin/git "$@" ;; esac
+`);
+  const ssh = join(fixture.binDir, 'ssh');
+  const trace = join(fixture.root, 'admission-payload.log');
+  await executable(`${ssh}.real`, await readFile(ssh, 'utf8'));
+  await executable(ssh, `#!/bin/sh
+case "$*" in *'--heavyweight-admission '*) printf '%s\\n' "$*" >> ${JSON.stringify(trace)} ;; esac
+exec ${JSON.stringify(`${ssh}.real`)} "$@"
+`);
+  const result = spawnSync('/bin/sh', [launcher, '--', 'node', '--test', 'focused.test.mjs'], fixture.invocation);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'remote:nl1\n');
+  const payload = await readFile(trace, 'utf8');
+  assert.ok(payload.includes('HAPPIER_ADMISSION_SOURCE_TREE=') && payload.includes(tree), 'the worker receives the controller tree');
+});
+
 for (const dispatcher of ['native', 'javascript']) {
   test(`AUTO ${dispatcher} ranks preparation-only demand by broker headroom before dispatch`, async t => {
     const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 80 });

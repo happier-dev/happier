@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstatSync } from 'node:fs';
 import { lstat } from 'node:fs/promises';
@@ -6,6 +6,7 @@ import { createConnection, createServer } from 'node:net';
 import { constants } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
@@ -13,6 +14,7 @@ import { brokerAddress } from './admission_socket.mjs';
 import { resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 
 export const DECLARATION_COMPARISON_STALL_MARKER = 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE ';
+const execFileAsync = promisify(execFile);
 const brokerPath = fileURLToPath(new URL('./admission_broker.mjs', import.meta.url));
 const brokerDisconnected = error => ['ECONNRESET', 'EPIPE', 'ECONNREFUSED', 'ENOENT'].includes(error.code);
 
@@ -136,7 +138,8 @@ async function runPayload({ command, args, env, signal }) {
  */
 export async function runAdmittedTask({ root, className, floorKiB, machine,
   locks = [], noWait = false, requireInherited = false, failureId, repoDir = process.cwd(),
-  exportMode, exportWorkers, requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, judgment, readJobPeakKiB,
+  exportMode, exportWorkers, requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, readJobPeakKiB,
+  treeIds = [], selectedFiles = [], commandArgs = process.argv,
   cacheBaseDir = process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, env = process.env, signal } = {}, action) {
   if (typeof action !== 'function') throw new TypeError('Admission requires a task callback');
   const cancellation = new AbortController();
@@ -220,6 +223,8 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     const durationClass = env.HAPPIER_ADMISSION_DURATION_CLASS;
     const p99DurationMs = Number(env.HAPPIER_ADMISSION_DURATION_P99_MS);
     let admittedDuration;
+    const judgment = await admissionJudgment({ repoDir, component, commandArgs, selectedFiles, treeIds, projects,
+      env, signal: cancellation.signal });
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost,
@@ -441,27 +446,44 @@ export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = proces
   return { component: relative(repoDir, cwd) || '.', entry: entry.join(' ') };
 }
 
-export async function runAdmissionCommand({ command, args = [], authoredArgs, treeIds = [], selectedFiles = [],
-  validationPreparation, ...options } = {}) {
+export async function resolveAdmissionCheckoutTree(repoDir, { env, signal } = {}) {
+  try {
+    const { stdout } = await execFileAsync('git', ['--no-optional-locks', '-C', repoDir, 'rev-parse', '--verify', '--quiet', 'HEAD^{tree}'],
+      { env, signal });
+    return stdout.trim();
+  } catch (error) {
+    // Validation can run in a Git-free checkout or before its first commit.
+    if (signal?.aborted) throw error;
+    return '';
+  }
+}
+
+async function admissionJudgment({ repoDir, component, commandArgs, selectedFiles, treeIds, projects, env, signal }) {
+  const [program, ...args] = commandArgs;
+  // A routed mirror may have no Git metadata. Its launcher can supply the
+  // source checkout's revision. Explicit exact-tree judgments take precedence.
+  const checkoutTree = treeIds.length === 0
+    ? (await resolveAdmissionCheckoutTree(repoDir, { env, signal })) || env.HAPPIER_ADMISSION_SOURCE_TREE
+    : '';
+  const repoArg = argument => {
+    if (!isAbsolute(argument)) return argument;
+    const path = relative(repoDir, argument);
+    return path === '..' || path.startsWith('../') ? argument : { repoPath: path || '.' };
+  };
+  const selection = selectedFiles.length ? selectedFiles : projects ?? [];
+  const commandDigest = createHash('sha256').update(JSON.stringify([
+    component ?? (relative(repoDir, process.cwd()) || '.'),
+    program === process.execPath ? 'node' : repoArg(program), args.map(repoArg), [...new Set(selection)].sort(),
+  ])).digest('hex');
+  return { treeIds: checkoutTree ? [checkoutTree] : treeIds, commandDigest };
+}
+
+export async function runAdmissionCommand({ command, args = [], authoredArgs, validationPreparation, ...options } = {}) {
   let payloadStarted = false;
   let payloadStartedAt;
   try {
     const identity = options.entry !== undefined ? {} : admissionCommandIdentity({ repoDir: options.repoDir, command, args });
-    const [program, ...commandArgs] = authoredArgs ?? commandArgv(command, args);
-    // Exact-tree workers may run the same command from different temporary
-    // copies of the tool tree. Use repo-relative paths for those arguments.
-    const repoArg = argument => {
-      if (!isAbsolute(argument)) return argument;
-      const path = relative(options.repoDir ?? process.cwd(), argument);
-      return path === '..' || path.startsWith('../') ? argument : { repoPath: path || '.' };
-    };
-    const fileSelection = selectedFiles.length ? selectedFiles : options.projects ?? [];
-    const commandDigest = createHash('sha256').update(JSON.stringify([
-      options.component ?? identity.component ?? '.', program === process.execPath ? 'node' : repoArg(program),
-      commandArgs.map(repoArg),
-      [...new Set(fileSelection)].sort(),
-    ])).digest('hex');
-    const admission = { ...identity, ...options, judgment: { treeIds, commandDigest },
+    const admission = { ...identity, ...options, commandArgs: authoredArgs ?? commandArgv(command, args),
       cpuCost: resolveAdmissionCpuCost(options.className, authoredArgs ?? args),
       requestedCpuCores: options.requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env: options.env ?? process.env, args }),
     };

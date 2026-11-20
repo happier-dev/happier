@@ -1,5 +1,6 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -54,6 +55,10 @@ test('workspace aliases prepare their manifest component before remote payload a
   writeFileSync(join(sourceDir, 'apps', 'viewer', 'package.json'), JSON.stringify({
     name: '@fixture/viewer', scripts: { build: 'node compile.mjs' },
   }));
+  const git = (...args) => execFileSync('git', args, { cwd: sourceDir, encoding: 'utf8' }).trim();
+  git('init', '--quiet');
+  git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '--allow-empty', '--no-gpg-sign', '-m', 'Fixture');
+  const tree = git('rev-parse', 'HEAD^{tree}');
   let request;
   const result = await runDevTargetCommand({ target, sourceDir, stackBaseDir: '/tmp/stack',
     syncAlreadyVerified: true, provenance: 'skip', commandArgs: ['yarn', 'workspace', '@fixture/viewer', 'build'] }, {
@@ -64,6 +69,7 @@ test('workspace aliases prepare their manifest component before remote payload a
   assert.match(command, /remote_validation_preparation\.mjs/);
   assert.match(command, /--component-relative-dir=apps\/viewer/);
   assert.ok(command.indexOf('remote_validation_preparation.mjs') < command.indexOf('--heavyweight-admission'));
+  assert.ok(command.includes('HAPPIER_ADMISSION_SOURCE_TREE=') && command.includes(tree), 'the worker receives the controller tree');
 });
 
 for (const platform of ['posix', 'windows']) test(`entry graph preparation reaches the ${platform} worker before its payload`, async t => {

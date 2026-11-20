@@ -311,6 +311,35 @@ test('the broker snapshot identifies waiting and recently finished judgments wit
     assert.deepEqual((await snapshot()).queue.recentlyFinished, []);
   });
 
+test('ordinary admission records the checkout tree and command selection without caller flags',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await restartFixture(t);
+    const git = (...args) => childProcess.execFileSync('git', args, { cwd: fixture.root, encoding: 'utf8' }).trim();
+    git('init', '--quiet');
+    git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '--quiet', '--allow-empty', '-m', 'Fixture');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    const root = fixture.native.admissionRoot;
+    const broker = createAdmissionBroker({ root, oldLockPath: join(fixture.root, 'old-admission.lock'),
+      sampleResources: async () => ({ availableMemoryKiB: 100, totalMemoryKiB: 100 }) });
+    await broker.start();
+    t.after(() => broker.close());
+
+    for (const file of ['private/first.test.mjs', 'private/first.test.mjs', 'private/second.test.mjs']) {
+      const client = fixture.start('process.exit(0)', ['--identity-arg=node', '--identity-arg=--test', `--identity-arg=${file}`]);
+      assert.deepEqual(await client.closed, [0, null], client.stderr());
+    }
+    const { queue } = await requestAdmissionSample(root, { kind: 'sample', includeQueue: true });
+    assert.equal(queue.recentlyFinished.length, 3);
+    for (const row of queue.recentlyFinished) {
+      assert.deepEqual(row.treeIds, [tree]);
+      assert.match(row.commandDigest, /^[0-9a-f]{64}$/);
+    }
+    const [first, repeated, different] = queue.recentlyFinished;
+    assert.equal(first.commandDigest, repeated.commandDigest);
+    assert.notEqual(first.commandDigest, different.commandDigest);
+    assert.doesNotMatch(JSON.stringify(queue), /private|first[.]test|second[.]test/);
+  });
+
 test('a broker started before a newer admission class admits it through the client-resolved disk class',
   { skip: process.platform !== 'linux' }, async t => {
     const fixture = await restartFixture(t);

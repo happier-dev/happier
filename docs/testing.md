@@ -655,10 +655,13 @@ last 15 minutes of this broker's lifetime. `observedSince` and `sampledAt`
 describe the covered interval. A complete key uses one of an entry's Git
 `treeIds` and its `commandDigest`. The digest covers the command, working
 directory, and selected inputs without publishing their names.
-Exact-tree compiler workers supply the Git tree IDs they judge. Commands
-running against a moving mirror and older clients can appear with an empty
-`treeIds` array. Count those entries as unknown when calculating duplicate
-demand. Admission continues to schedule each request independently.
+Exact-tree compiler workers and commit-gate steps supply the Git tree IDs
+they judge. Ordinary registrations use the checkout's HEAD tree. The launcher
+carries that baseline to Git-free mirrors. It identifies the committed revision
+and can group runs whose working trees have different uncommitted contents.
+A Git-free command with no source baseline or an older client can still report
+an empty `treeIds` array. Count those entries as unknown. Admission continues
+to schedule each request independently.
 
 A nested Linux command uses the parent's grant when it retains the admission
 environment. If it sends a new acquire request, the broker checks the
