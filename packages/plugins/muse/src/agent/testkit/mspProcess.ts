@@ -1,6 +1,6 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { watch } from 'node:fs';
-import { basename, dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -146,18 +146,21 @@ export async function readMuseMspProcessAudit(path: string): Promise<MuseMspProc
 export async function waitForMuseMspProcessAudit(
     path: string,
     accept: (audit: MuseMspProcessAudit) => boolean,
-    options?: Readonly<{ signal?: AbortSignal }>,
+    options?: Readonly<{ signal?: AbortSignal; perProcessAudit?: boolean }>,
 ): Promise<MuseMspProcessAudit> {
     return await new Promise((resolve, reject) => {
+        const acceptsFilename = (filename: string) => options?.perProcessAudit
+            ? filename.startsWith(`${basename(path)}.`) && !filename.endsWith('.tmp')
+            : filename === basename(path);
         const watcher = watch(dirname(path), (_event, filename) => {
-            if (filename === basename(path)) void read();
+            if (filename && acceptsFilename(filename)) void read(join(dirname(path), filename));
         });
         const close = () => { watcher.close(); options?.signal?.removeEventListener('abort', abort); };
         const abort = () => { close(); reject(options?.signal?.reason); };
         watcher.on('error', error => { close(); reject(error); });
-        async function read() {
+        async function read(auditPath: string) {
             try {
-                const audit = await readMuseMspProcessAudit(path);
+                const audit = await readMuseMspProcessAudit(auditPath);
                 if (accept(audit)) { close(); resolve(audit); }
             } catch (error) {
                 if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) { close(); reject(error); }
@@ -165,7 +168,11 @@ export async function waitForMuseMspProcessAudit(
         }
         options?.signal?.addEventListener('abort', abort, { once: true });
         if (options?.signal?.aborted) abort();
-        else void read();
+        else if (options?.perProcessAudit) {
+            void readdir(dirname(path)).then(filenames => {
+                for (const filename of filenames.filter(acceptsFilename)) void read(join(dirname(path), filename));
+            }).catch(error => { close(); reject(error); });
+        } else void read(path);
     });
 }
 

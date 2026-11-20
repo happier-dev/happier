@@ -8,6 +8,8 @@ import { MUSE_MSP_PLAYBACK_SCRIPT, readMuseLoginRecording } from '../../../plugi
 export async function writeFinMuseExecutable(params: Readonly<{
     binDir: string;
     auditPath: string;
+    /** Concurrent reviewer processes must not overwrite each other's boundary evidence. */
+    perProcessAudit?: boolean;
     /** Re-read on each native launch so Review and Check may return different output. */
     recordingPath?: string;
 }>): Promise<string> {
@@ -45,7 +47,7 @@ for (const row of capture.rows) {
 }
 delete process.env.MUSE_TEST_RECORDING_PATH;
 process.env.MUSE_TEST_RECORDING = JSON.stringify(capture);
-process.env.MUSE_TEST_AUDIT_PATH = ${JSON.stringify(params.auditPath)};
+process.env.MUSE_TEST_AUDIT_PATH = ${JSON.stringify(params.auditPath)}${params.perProcessAudit ? " + '.' + process.pid" : ''};
 process.env.MUSE_TEST_SCHEMA = '{}';
 ${MUSE_MSP_PLAYBACK_SCRIPT}
 }

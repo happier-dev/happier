@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { delimiter, dirname, join } from 'node:path';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { resolveAgentCliManagedCommandPathForRuntime } from '@happier-dev/cli-common/agents';
 import { connectUiPersonActionClient } from '@happier-tests/ui-action-client';
@@ -307,7 +307,15 @@ else {
     expect(history.invocationDetails?.find(row => row.progress.invocationPath.blockId === 'check'))
       .toMatchObject({ index: { lifecycle: 'completed' }, progress: { result: { verdict } } });
   });
+  async function readHuntReviewInputs(instructions: string) {
+    const paths = (await readdir(dirname(auditPath))).filter(name => name.startsWith(`${basename(auditPath)}.`) && !name.endsWith('.tmp'));
+    const audits = await Promise.all(paths.map(name => readMuseMspProcessAudit(join(dirname(auditPath), name))));
+    // Match the authored input, as in F1, to exclude native startup/warmup turns.
+    return audits.flatMap(audit => audit.turnInputs).filter(input => JSON.stringify(input).includes(instructions));
+  }
   it.each(['complete', 'partial'] as const)('F5 saved Hunt preserves %s repository coverage outside the diff', async reviewOutcome => {
+    await writeFinMuseExecutable({ binDir: join(dirname(auditPath), 'bin'), recordingPath, auditPath, perProcessAudit: true });
+    const instructions = 'Inspect security throughout this repository.';
     // The unchanged file is deliberately absent from the worktree diff. Native
     // playback models the external reviewer; its received prompt proves scope.
     await writeFile(join(machine.workspaceDir, 'unchanged.ts'), 'export const unsafe = true;\n');
@@ -323,7 +331,7 @@ else {
     const started = WorkflowRunStartResultV1Schema.parse(await act('workflow.run.start', {
       runId: randomUUID(), executionTarget: { kind: 'detached_run' },
       source: { kind: 'saved', definitionId: saved.definitionId, revision: saved.revision },
-      inputs: { cwd: machine.workspaceDir, instructions: 'Inspect security throughout this repository.',
+      inputs: { cwd: machine.workspaceDir, instructions,
         reviewers: [{ kind: 'engine', engineId: 'muse', modelId,
           sessionConfigOptionOverrides: { v: 1, updatedAt: 0,
             overrides: { reasoning_effort: { value: 'minimal', updatedAt: 0 } } } }],
@@ -348,10 +356,13 @@ else {
       state: reviewOutcome === 'partial' ? 'partial' : 'completed' });
     const runs = WorkflowRunListResultV1Schema.parse(await act('workflow.run.list', { sourceArtifactId: saved.definitionId }));
     expect(runs.runs.map(row => row.id)).toContain(runId);
-    const audit = await readMuseMspProcessAudit(auditPath);
-    expect(JSON.stringify(audit.turnInputs)).toContain('including unchanged and tracked files outside the current diff');
+    const reviewInputs = await readHuntReviewInputs(instructions);
+    expect(reviewInputs).toHaveLength(1);
+    expect(JSON.stringify(reviewInputs)).toContain('including unchanged and tracked files outside the current diff');
   });
   it('F5 saved Hunt stops native work and permits an explicit fresh retry in ordinary history', async () => {
+    await writeFinMuseExecutable({ binDir: join(dirname(auditPath), 'bin'), recordingPath, auditPath, perProcessAudit: true });
+    const instructions = 'Inspect the whole repository.';
     const captured = readMuseRecord(recording);
     if (!Array.isArray(captured.rows)) throw new Error('Muse capture lacks its native frames');
     // Model an admitted native turn that has not completed. The real host still
@@ -366,7 +377,7 @@ else {
     const start = async () => WorkflowRunStartResultV1Schema.parse(await act('workflow.run.start', {
       runId: randomUUID(), executionTarget: { kind: 'detached_run' },
       source: { kind: 'saved', definitionId: saved.definitionId, revision: saved.revision },
-      inputs: { cwd: machine.workspaceDir, instructions: 'Inspect the whole repository.',
+      inputs: { cwd: machine.workspaceDir, instructions,
         reviewers: [{ kind: 'engine', engineId: 'muse', modelId,
           sessionConfigOptionOverrides: { v: 1, updatedAt: 0,
             overrides: { reasoning_effort: { value: 'minimal', updatedAt: 0 } } } }],
@@ -375,7 +386,9 @@ else {
     const stopped = await start();
     const observation = new AbortController();
     try {
-      await waitForMuseMspProcessAudit(auditPath, audit => audit.turnInputs.length > 0, { signal: observation.signal });
+      await waitForMuseMspProcessAudit(auditPath,
+        audit => audit.turnInputs.some(input => JSON.stringify(input).includes(instructions)),
+        { signal: observation.signal, perProcessAudit: true });
     } finally { observation.abort(); }
     const opened = WorkflowRunGetResultV1Schema.parse(await act('workflow.run.get', { runId: stopped.run.id }));
     await act('workflow.run.cancel', { runId: stopped.run.id, expectedRevision: opened.run.revision });
@@ -406,6 +419,7 @@ else {
       return terminal.success && terminal.data.perEngineOutcome.length === 1
         && terminal.data.perEngineOutcome[0]?.outcome === 'cancelled';
     }, { failFast: true, context: 'Stopped Hunt native work settles its retained Review invocation' });
+    expect(await readHuntReviewInputs(instructions)).toHaveLength(1);
     await nativeReply({ summary: 'Completed the explicitly retried repository review.', findings: [] });
     const retried = await start();
     expect(await act('workflow.run.wait', { runId: retried.run.id, conditions: ['terminal'] }))
@@ -421,6 +435,7 @@ else {
     expect(retained.review).toMatchObject({ sourceKind: 'workflow', workflowId: saved.definitionId });
     const runs = WorkflowRunListResultV1Schema.parse(await act('workflow.run.list', { sourceArtifactId: saved.definitionId }));
     expect(runs.runs.map(row => row.id)).toEqual(expect.arrayContaining([stopped.run.id, retried.run.id]));
+    expect(await readHuntReviewInputs(instructions)).toHaveLength(2);
   });
   async function startNativeReview(engineId: string, extra: Readonly<{ comparisonId?: string; scope?: 'repository'; changeType?: 'all' }> = {},
     reviewer: Omit<ReviewEngineReviewerSelectionV1, 'kind' | 'engineId'> = {}) {
