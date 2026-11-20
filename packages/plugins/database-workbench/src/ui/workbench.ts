@@ -272,6 +272,16 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             await client.navigate(next);
             local.set('location', next);
         },
+        /** A link straight to a place: reopen it from the database's root so the host's Back reaches the rail. */
+        async openFromRoot() {
+            await client.navigate(local.get('location'), { fromRoot: true });
+        },
+        /** The host moved the page (its Back, Forward or a link): take its place without writing it back. */
+        adopt(place: Pick<WorkbenchLocation, 'mode' | 'relation'>) {
+            const current = local.get('location');
+            if (current.mode === place.mode && sameRelation(current.relation, place.relation)) return;
+            local.set('location', mergeWorkbenchLocation(current, { mode: place.mode, relation: place.relation }));
+        },
         async back() {
             const previous = foreignKeyBack(local.get('location'));
             if (previous) { await client.navigate(previous); local.set('location', previous); }

@@ -94,7 +94,8 @@ export interface WorkbenchClient {
     /** Existing R4 demand subscription. No second own-write channel. */
     subscribeOwnWrites(listener: (change: Readonly<{ target: DatabaseTargetV1; relation?: DatabaseRelationV1 }>) => void): () => void;
     /** Uses the existing page navigation owner; never rediscover an Environment target. */
-    navigate(location: WorkbenchLocation): Promise<void>;
+    /** `fromRoot`: open this place as if picked from the database's root, so the host's Back has a step to it. */
+    navigate(location: WorkbenchLocation, options?: Readonly<{ fromRoot?: boolean }>): Promise<void>;
     setUnsavedChanges(value: boolean): Promise<void>;
     /** Existing device-store failure presentation. */
     presentDeviceStorageError(error: unknown): void;

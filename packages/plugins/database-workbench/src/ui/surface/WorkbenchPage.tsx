@@ -166,6 +166,18 @@ function MountedWorkbenchPage({ context, launch, place, root, client }: Readonly
   );
   const options = React.useMemo(() => ({ pageLocation: true }), []);
   const instance = useWorkbenchMount(context, launch, initial, options, client);
+  // The host's Back, Forward or a link moves the page: the workbench takes that place, never writing it back.
+  React.useEffect(() => { instance?.adopt(place); }, [instance, place]);
+  // A link straight to a place opens it from the root once, so a phone's Back reaches the rail (lab tablesp).
+  // Only the address the page opened at decides this; a place picked later already came from the root.
+  const openedAtRoot = React.useRef(root);
+  const declaredBack = React.useRef<typeof instance>(null);
+  React.useEffect(() => {
+    if (!instance || openedAtRoot.current || declaredBack.current === instance) return;
+    declaredBack.current = instance;
+    // A host without page locations (a widget, an older host) has no Back to declare; the page still works.
+    instance.openFromRoot().catch(() => undefined);
+  }, [instance]);
   if (!instance || !targetKey || !launch) {
     return (
       <EmptyState
