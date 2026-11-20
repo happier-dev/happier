@@ -183,7 +183,7 @@ describe('current Source deployment authority', () => {
             expect((await post(readerToken, route, { ...body, executionAuthorization })).statusCode).toBe(403);
             expect(relayed).toHaveLength(1);
             expect((await readReceipts(regression, environment.id))?.acceptedDeploymentReceipt?.read)
-                .toEqual({ environmentId: environment.id, contentCustody: false });
+                .toStrictEqual({ environmentId: environment.id });
         }, { authentication: 'real' });
     });
 

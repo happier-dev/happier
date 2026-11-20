@@ -3157,7 +3157,7 @@ async function readDeploymentDataQueryHttpPurpose(verified: VerifiedSignedChildR
         const input = DeploymentActionInputSchemasV1[DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1].safeParse(proof.routeInput);
         return input.success && input.data.serverId === admission.telemetryCollector.serverId
             && admission.telemetryCollector.environmentIds.includes(input.data.environmentId)
-            ? { acceptedDeploymentReceipt: { read: { environmentId: input.data.environmentId, contentCustody: false } } } : false;
+            ? { acceptedDeploymentReceipt: { read: { environmentId: input.data.environmentId } } } : false;
     }
     if (!('databaseTarget' in admission) && admission.actionId !== DEPLOYMENT_DATA_SIZE_ACTION_ID_V1) return false;
     if (verified.effectActionId === admission.actionId && proof.method.toUpperCase() === 'POST'
