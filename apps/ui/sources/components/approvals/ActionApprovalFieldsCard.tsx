@@ -346,7 +346,8 @@ function collectApprovalTechnicalLines(rows: readonly ApprovalFieldRow[]): reado
     for (const row of rows) {
         if (row.kind !== 'value') continue;
         if (row.reference) lines.push({ key: row.path, label: row.title, value: row.value });
-        else if (row.technical && !row.entries && row.path !== 'v'
+        // The input's own schema version (`v`, or `input.v` under a contributed Action) does not identify the effect.
+        else if (row.technical && !row.entries && !/^(input\.)?v$/.test(row.path)
             && !['', '{}', '[]', 'null'].includes(row.value)) lines.push({ key: row.path, label: row.title, value: row.value });
         if (!row.entries) continue;
         const trail: string[] = [];

@@ -7,6 +7,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { storage } from '@/sync/domains/state/storage';
 import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { ActionApprovalFieldsCard } from './ActionApprovalFieldsCard';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import type { ApprovalActionFieldsPresentation } from './approvalFieldValues';
 import { describeUnnamedApprovalSession } from './approvalRequesterLabels';
 import { describeApprovalActionFields, describeApprovalRequestFields } from './approvalFieldValues';
@@ -792,4 +793,17 @@ it('reads an open card\'s arguments as one key/value table with no inner card he
     expect(screen.getTextContent()).toContain('http://127.0.0.1:4000');
     const first = presentation.rows.find(row => row.kind === 'value' && !row.technical);
     expect(screen.findByTestId(`approvals.fields-table.row:${first?.path}`)).not.toBeNull();
+});
+
+it('keeps a declared contributed Action\'s raw input in Technical details without its schema version', async () => {
+    const fields = { scopeId: 'github:1424792902', title: 'Focus returns to the top after Deny', body: 'Seen on phones.' };
+    // The stored target request: declared facts read from its operands, its raw input kept for Technical details.
+    const presentation = describeApprovalRequestFields({ kind: 'plugin_target_action', status: 'open', secretInputPaths: [],
+        input: { v: 1, instance: { locator: { displayLabel: 'happier-dev (GitHub)' } }, kindId: 'issue', fields },
+        inputFields: [{ path: 'instance.locator.displayLabel', title: 'Connected Account' }, { path: 'fields.title', title: 'Title' }] });
+    const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" presentation={presentation} />);
+    expect(screen.getTextContent()).toContain('happier-dev (GitHub)');
+    const labels = screen.findAllByType(TechnicalDetailsDisclosure).flatMap(node => node.props.lines.map(line => line.label));
+    expect(labels).toEqual(expect.arrayContaining(['Instance', 'Fields']));
+    expect(labels).not.toContain('V');
 });

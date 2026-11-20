@@ -566,13 +566,19 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // A confidential entry waiting for its credential is likewise decided by its own form, not by "Pending".
   const statusFollowsFacts = (deploymentDecision !== null || confidentialApproval !== null || confidentialInputs !== null)
     && parsed.request.status === 'open';
+  const open = parsed.request.status === 'open' && !answeredWhileOpen;
+  const requestNotice = Boolean(executionFailure || (cannotRun && parsed.request.status === 'open') || approvalRouteUnavailable);
+  const previewShown = parsed.kind === 'built_in' && Boolean(previewSummary) && !deploymentDecision && !computerAction;
+  // A waiting request with nothing else to say reads its status as one header fact, not a section of one row.
+  const statusInHeader = open && !requestNotice && !showActionRow && !previewShown && !statusFollowsFacts;
+  if (statusInHeader) headerFacts.unshift({ key: 'status', text: statusLabel, testID: 'approvals.status' });
   const requestGroup = (
     <ItemGroup
       title={t('detailPages.approval.requestTitle')}
       description={t('detailPages.approval.requestDescription')}
     >
       {/* A family presenter (deploy, Computer) says what is asked; the Action's generic summary would lead with agent-facing text. */}
-      {parsed.kind === 'built_in' && previewSummary && !deploymentDecision && !computerAction ? (
+      {parsed.kind === 'built_in' && previewShown ? (
         <SectionContentRow testID="approvals.preview">
           <ApprovalPreviewSummary preview={parsed.request.preview} request={parsed.request} serverId={approvalServerId} />
         </SectionContentRow>
@@ -819,10 +825,10 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       : requestTitle.detail ?? undefined),
     headerFacts,
     /** Still waiting for this person's answer (an answer recorded here counts as given). */
-    open: parsed.request.status === 'open' && !answeredWhileOpen,
+    open,
     /** The request group says something beyond its status: a failure, why it cannot run, or an unreachable Home. */
-    requestNotice: Boolean(executionFailure || (cannotRun && parsed.request.status === 'open') || approvalRouteUnavailable),
-    requestGroup, statusFollowsFacts, sections, decision, decisionBar, capabilityDecisions, compactViewport,
+    requestNotice,
+    requestGroup: statusInHeader ? null : requestGroup, statusFollowsFacts, sections, decision, decisionBar, capabilityDecisions, compactViewport,
     workspaceSyncReview, requesterContext, requesterConfirmationSection, confidential,
     /** The parsed request this review reads, for a host that presents its facts in its own words. */
     request: parsed.request,

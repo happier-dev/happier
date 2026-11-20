@@ -1867,6 +1867,16 @@ describe('ApprovalDetailScreen', () => {
     expect(decodedArtifactWrite().body).toMatchObject({ status: 'approved', input });
   });
 
+  it('says a waiting request\'s status in the header, with no Request section holding only that one fact', async () => {
+    currentArtifact = createTargetActionApprovalArtifact();
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId="target-artifact-1" />);
+    const header = screen.tree.root.findAll(node => node.props?.testID === 'approvals.header' && node.props?.title !== undefined);
+    expect(header[0]!.props.meta).toEqual([expect.objectContaining({ key: 'status', text: 'approvals.status.open' })]);
+    expect(approvalItem(screen, 'approvals.status')).toBeUndefined();
+    expect(readRenderedText(screen)).not.toContain('detailPages.approval.requestTitle');
+  });
+
   it('withholds legacy plugin approval when a secret operand hides the effect despite unrelated readable input', async () => {
     const artifact = createTargetActionApprovalArtifact();
     const { approvalInputCustody: _liveCustody, ...legacy } = TargetActionApprovalRequestV1Schema.parse(JSON.parse(artifact.body));
