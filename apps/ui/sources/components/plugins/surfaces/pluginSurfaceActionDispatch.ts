@@ -1848,7 +1848,11 @@ async function executeClientContributedAction(
                             }
                             if ((nestedInput.contributedAction || selectedAction && selectedAction.execution.target !== 'daemon')
                                 && (sessionMachineResolved || !resolveProjectedContributedAction(nestedInput, nestedIdentity))) {
-                                const acquired = await acquirePluginSurfaceContributedAction(nestedInput, nestedIdentity, nestedInput.contributedAction, accountLifetime);
+                                // Reuse only an identified Account callee's declaration.
+                                const accountDeclaration = selectedAction && selectedAction.execution.target !== 'daemon'
+                                    ? declaration ?? undefined : undefined;
+                                const acquired = await acquirePluginSurfaceContributedAction(
+                                    nestedInput, nestedIdentity, nestedInput.contributedAction, accountLifetime, accountDeclaration);
                                 if (!acquired) {
                                     throw createPluginActionHandlerNotStartedError({ code: 'plugin_surface_action_projection_unavailable',
                                         message: 'The selected Machine Action projection is unavailable' });

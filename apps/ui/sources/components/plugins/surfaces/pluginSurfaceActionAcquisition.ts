@@ -1,6 +1,7 @@
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
+import type { PluginAccountExecutionAdmission } from '@/sync/domains/plugins/availability/reader';
 import { createPluginUiProjectedActionResolver, isPluginProjectedActionExecutable,
     type PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
 import { mergeInstalledPluginUiProjections } from '@/sync/domains/plugins/ui/projectionUnion';
@@ -22,10 +23,13 @@ export function resolveProjectedContributedAction(input: DispatchPluginSurfaceAc
 export async function acquirePluginSurfaceContributedAction(input: DispatchPluginSurfaceActionInput,
     identity: PluginContributionIdentityV1, machine?: PluginSurfaceContributedActionBinding,
     accountLifetime = input.actionAccountLifetime ?? machine?.accountLifetime,
+    accountDeclaration?: PluginAccountExecutionAdmission,
 ): Promise<DispatchPluginSurfaceActionInput | ReturnType<typeof failure> | null> {
     if (accountLifetime) {
         const availability = readPluginAccountAvailability(accountLifetime.scope);
-        await availability.ensureCurrentAccountExecution(identity.pluginId);
+        // A nested caller can supply the declaration it just read for placement.
+        // The projection and its occurrence still come from the current owner.
+        if (accountDeclaration === undefined) await availability.ensureCurrentAccountExecution(identity.pluginId);
         const account = availability.readAccountUiProjection();
         const resolveAccount = createPluginUiProjectedActionResolver(account?.actionsById);
         if (resolveAccount(identity)?.hostAccountOrigin) {

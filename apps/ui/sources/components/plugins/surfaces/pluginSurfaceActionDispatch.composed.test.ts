@@ -3520,12 +3520,35 @@ describe('Account Action placement through the executable dispatcher', () => {
         }
     });
 
-    it('preserves the public failure metadata of a nested Account Action', async () => {
+    it.each([true, false])('preserves nested Account Action failure metadata with one declaration read on a projection miss (mounted=%s)', async mounted => {
         const accountLifetime = clientAccountLifetime();
-        const target = createClientActionActivation({ pluginId: 'acme.account-failure', accountPlacement: true,
-            artifactGraph: PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
-                digest: `sha256:${'b'.repeat(64)}` }),
-            accountLifetime, surfaces: ['plugin'], accountHandler: async () => { throw new PluginError({
+        const pluginId = 'acme.account-failure';
+        const localId = 'refresh-index';
+        const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({ ...CLIENT_ACTION_ARTIFACT_GRAPH,
+            digest: `sha256:${'b'.repeat(64)}` });
+        const targetDefinition = definePlugin({ id: pluginId, version: '1.2.3', actions: {
+            [localId]: { title: 'Nested Account failure', scopes: ['global'], surfaces: ['plugin'], dangerLevel: 'safe',
+                execution: { target: 'account', account: { artifactId: CLIENT_ACTION_TARGET.artifactId,
+                    exportName: CLIENT_ACTION_TARGET.exportName } }, run: async () => null },
+        } });
+        const parsed = ingestPluginManifestV2(targetDefinition.manifest);
+        if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+        replacePluginAccountAvailabilityProjection({ scope: accountLifetime.scope, snapshot: { availabilityCursor: 1,
+            materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
+                availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                intent: { pluginId, desiredVersion: parsed.manifest.version, enabled: true,
+                    offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                release: { ref: { pluginId, version: parsed.manifest.version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                    normalizedManifest: parsed.manifest, collectionContracts: [],
+                    uiSlots: [{ contributionId: localId, tier: 'reactNative', platform: 'web', artifactId: artifactGraph.artifactId,
+                        artifactDigest: artifactGraph.digest, hostUiApiRange: artifactGraph.hostUiApiRange, artifactGraph }],
+                    packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+            } }] } });
+        const selected = readPluginAccountAvailability(accountLifetime.scope).readCurrentAccountExecution(pluginId);
+        if (selected.kind !== 'available') throw new Error('Expected a declared Account callee');
+        const target = createClientActionActivation({ pluginId, localId, accountPlacement: true, artifactGraph,
+            accountLifetime, accountManifest: targetDefinition.manifest, occurrenceId: selected.custodyId,
+            accountHandler: async () => { throw new PluginError({
                 code: 'source_temporarily_unavailable', message: 'Try again after reconnecting', retryable: true,
             }); } });
         const parent = createClientActionActivation({ accountPlacement: true, accountLifetime, accountHandler: async (_input, context) => {
@@ -3536,10 +3559,19 @@ describe('Account Action placement through the executable dispatcher', () => {
             }
             throw new Error('The nested Action must fail');
         } });
-        const projection = { ...parent.projection,
+        const projection = mounted ? { ...parent.projection,
             actionsById: { ...parent.projection.actionsById, ...target.projection.actionsById },
             reactNativeBundlesById: { ...parent.projection.reactNativeBundlesById, ...target.projection.reactNativeBundlesById },
-        };
+        } : parent.projection;
+        const availabilityModule = await import('@/sync/domains/plugins/availability/projection');
+        let declarationReads = 0;
+        const availabilitySpy = vi.spyOn(availabilityModule, 'readPluginAccountAvailability').mockImplementation(scope => {
+            const owner = readPluginAccountAvailability(scope);
+            return { ...owner, ensureCurrentAccountExecution(id) {
+                if (id === pluginId) declarationReads++;
+                return owner.ensureCurrentAccountExecution(id);
+            } };
+        });
         await parent.composition.unload();
         try {
             expect((await parent.composition.reconcile([parent.activation, target.activation])).map(attempt => attempt.result))
@@ -3549,7 +3581,12 @@ describe('Account Action placement through the executable dispatcher', () => {
                 pluginUiProjection: projection,
                 resolveContributedAction: identity => projection.actionsById[`${identity.pluginId}/${identity.localId}`] ?? null,
             })).toEqual({ ok: true, result: { code: 'source_temporarily_unavailable', retryable: true, message: 'Try again after reconnecting' } });
-        } finally { await parent.composition.unload(); accountLifetime.retire(); }
+            expect(declarationReads).toBe(mounted ? 0 : 1);
+        } finally {
+            availabilitySpy.mockRestore();
+            await parent.composition.unload();
+            accountLifetime.retire();
+        }
     });
 
     it.each([
