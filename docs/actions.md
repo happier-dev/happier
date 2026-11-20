@@ -5273,10 +5273,10 @@ The keyboard reference is generated from the same command registry.
 
 `execution.run.permission.respond` answers an exact detached Run request with
 either a permission decision or structured question answers. The Run screen and
-Action share the existing daemon request writer; the Action does not replace its
-request-identity validation or result observation. It requires present-user
-authority. Agents and MCP can discover it, but automation-authority invocations
-receive `present_user_required` without dispatching a response.
+Action share the daemon request writer, including request-identity validation
+and result observation. Agent and MCP requests default to Ask, which the user
+can change. The daemon checks that the Run belongs to the authenticated requester’s
+Account before applying the answer.
 
 ### Notification webhooks and this app’s updates (development)
 

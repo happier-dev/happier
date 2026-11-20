@@ -34,27 +34,34 @@ describe('detached Run raw ingress Account isolation', () => {
     vi.restoreAllMocks(); vi.unstubAllEnvs(); reloadConfiguration();
     await rm(directory, { recursive: true, force: true });
   });
-  function requester(accountId: string): RpcHandlerContext {
-    return { signal: new AbortController().signal, callerAuthority: 'present_user',
+  function requester(accountId: string, authority: 'present_user' | 'account_automation' = 'present_user'): RpcHandlerContext {
+    return { signal: new AbortController().signal, callerAuthority: authority,
       machineAdmission: { actorAccountId: accountId, custodianAccountId: 'custodian', machineId: 'machine',
         installationId: 'installation', role: accountId === 'custodian' ? 'manage' : 'use', encryptionMode: 'plain' } };
   }
 
-  it('refuses a foreign Use permission response before the real permission owner', async () => {
+  it.each(['present_user', 'account_automation'] as const)(
+    'keeps detached permission responses in the requester Account under %s authority', async (authority) => {
     const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });
     const registration = registerMachineRpcHandlers({ rpcHandlerManager: rpc,
       handlers: { spawnSession: async () => ({ type: 'success', sessionId: 'unused' }), stopSession: async () => true, requestShutdown() {} },
       deps: { currentMachineId: 'machine', currentServerId: 'home', workingDirectory: directory },
     });
     disposers.push(() => registration.dispose());
-    const owner = requester('grantee');
+    const owner = requester('grantee', authority);
     // Recover through the real Machine Action entry, not a second manager.
     expect(await rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: 'grantee-run' }, { rpcContext: owner }))
       .toMatchObject({ run: { runId: 'grantee-run' } });
     const complete = vi.spyOn(ExecutionRunHostBridge.prototype, 'completePermissionRequest');
     const input = { runId: 'grantee-run', requestId: 'exact-request', approved: true };
-    expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND, input, { rpcContext: requester('other-use-grantee') }))
+    expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND, input))
       .toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
+    // Team-granted Use and Machine custody each convey Machine access, never the other member's Run.
+    for (const accountId of ['other-use-grantee', 'custodian']) {
+      expect(await rpc.invokeLocal(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND, input,
+        { rpcContext: requester(accountId, authority) }))
+        .toMatchObject({ ok: false, errorCode: 'execution_run_not_found' });
+    }
     expect(complete).not.toHaveBeenCalled();
     // Retained stopped work cannot accept a tool answer, but its owner reaches
     // the real permission lifecycle. Call-through observations never replace it.

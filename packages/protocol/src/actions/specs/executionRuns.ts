@@ -793,7 +793,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
   {
     id: 'execution.run.permission.respond', executionPlacement: 'machine', approval: {result: 'optional',flow: 'deferred'},
     title: 'Answer detached run request',
-    description: 'Approve or deny a permission request, or answer a structured question, on an exact detached execution run. Only a present user may answer; autonomous callers can discover this operation but cannot execute it.',
+    description: 'Approve or deny a permission request, or answer a structured question, on an exact detached execution run. Agent and MCP requests follow the user’s Action approval policy. The Run must belong to the requester’s Account.',
     safety: 'safe',
     requiredAuthority: 'present_user',
     placements: [],

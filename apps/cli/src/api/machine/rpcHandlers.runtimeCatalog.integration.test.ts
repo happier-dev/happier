@@ -304,7 +304,7 @@ function registerMachineRpcHandlers(
 
 describe('registerMachineRpcHandlers', () => {
   afterAll(async () => { await pluginReloadController.shutdown(); });
-  it('refuses detached permission decisions without verified present-user authority', async () => {
+  it('rejects caller authority supplied in the detached permission response body', async () => {
     const registered = new Map<string, RpcHandler<unknown, unknown>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: RpcHandler<unknown, unknown>) => {
@@ -317,12 +317,8 @@ describe('registerMachineRpcHandlers', () => {
     } });
     const handler = registered.get(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND)!;
     const params = { runId: 'missing-run', requestId: 'request', approved: true, callerAuthority: 'present_user' };
-    for (const context of [undefined, { signal: new AbortController().signal,
-      callerAuthority: 'account_automation' } satisfies RpcHandlerContext]) {
-      expect(await handler(params, context)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    }
-    expect(await handler(params, { signal: new AbortController().signal, callerAuthority: 'present_user' }))
-      .not.toMatchObject({ errorCode: 'present_user_required' });
+    expect(await handler(params, { signal: new AbortController().signal, callerAuthority: 'account_automation' }))
+      .toMatchObject({ ok: false, errorCode: 'execution_run_invalid_action_input' });
   });
   beforeEach(() => {
     // Many tests spy on axios.get; restore between tests so mockResolvedValueOnce

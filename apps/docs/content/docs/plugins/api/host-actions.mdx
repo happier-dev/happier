@@ -7352,7 +7352,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `execution.run.permission.respond`
 
-**Answer detached run request** — Approve or deny a permission request, or answer a structured question, on an exact detached execution run. Only a present user may answer; autonomous callers can discover this operation but cannot execute it.
+**Answer detached run request** — Approve or deny a permission request, or answer a structured question, on an exact detached execution run. Agent and MCP requests follow the user’s Action approval policy. The Run must belong to the requester’s Account.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `optional` result; `deferred` flow.

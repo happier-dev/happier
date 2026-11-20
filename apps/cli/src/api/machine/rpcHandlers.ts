@@ -725,9 +725,6 @@ function registerMachineRpcHandlersOnce(params: Readonly<{
     },
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND, async (raw: unknown, context) => {
-    if (context?.callerAuthority !== 'present_user') {
-      return { ok: false, errorCode: 'present_user_required', error: 'Present-user authority required' };
-    }
     const parsed = ExecutionRunPermissionRespondInputSchema.safeParse(raw);
     if (!parsed.success) {
       return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Invalid params' };
