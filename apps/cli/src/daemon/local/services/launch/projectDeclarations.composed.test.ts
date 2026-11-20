@@ -200,12 +200,16 @@ describe('accepted Project Service declaration starter', () => {
             await expect(handlers.get(RPC_METHODS.DAEMON_TERMINAL_STREAM_READ_BYTES)!({ terminalId: shell.terminalId, byteOffset: 0 }, h.ingress))
                 .resolves.toMatchObject({ ok: true });
             const review = await h.selectStart();
-            const started = await h.routes.startTarget!({ ...h.request, expectedEffectDigest: review.reviewedEffectDigest }, h.ingress, h.context);
+            const startRequest = { ...h.request, expectedEffectDigest: review.reviewedEffectDigest };
+            const started = await h.routes.startTarget!(startRequest, h.ingress, h.context);
             expect(started, JSON.stringify(started)).toMatchObject({ status: 'succeeded' });
             const service = h.owner.listProjectServices()[0]!;
             const terminalId = service.terminalView?.terminalId;
             expect(terminalId).toEqual(expect.any(String));
             expect(started).toMatchObject({ terminalView: service.terminalView });
+            const replayed = await h.routes.startTarget!(startRequest, h.ingress, h.context);
+            expect(replayed).toMatchObject({ status: 'succeeded', terminalView: service.terminalView });
+            expect(h.owner.listProjectServices()).toEqual([service]);
             const read = { terminalId, byteOffset: 0 };
             const interrupt = { terminalId, event: { t: 'key', key: 'c', modifiers: ['ctrl'] } };
             // Manage permission does not grant another Account this retained terminal.

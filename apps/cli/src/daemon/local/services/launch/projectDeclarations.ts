@@ -43,6 +43,7 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { PROJECT_SERVICE_RESTART_START_ROLE, stopProjectManagedService, type PrepareRestartProjectManagedService, type RestartProjectManagedService } from '../actions/executor';
 import { createProjectServiceDeclarationTargetIdV1, LocalServiceManagedServiceActionTargetV1Schema, type ProjectServiceDeclarationRefV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { SessionTerminalViewTargetV1Schema } from '@happier-dev/protocol/terminal';
 import type { WorkspaceSyncWorkerTargetBasis } from '@/workspaces/sync/workspaceSyncPreparation';
 import type { ProjectServiceStartChoice } from '@/workspaces/execution/projectServicePlacement';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -755,9 +756,11 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         if (uncertainError) throw uncertainError;
         if (outcome) return outcome;
         if (!observed.ok) return { status: 'failed', reasonCode: observed.errorCode };
-        const target = LocalServiceManagedServiceActionTargetV1Schema.safeParse(observed.result && typeof observed.result === 'object'
-            && 'currentTarget' in observed.result ? observed.result.currentTarget : undefined);
-        return { status: 'succeeded', ...(target.success ? { currentTarget: target.data } : {}) };
+        const result = observed.result && typeof observed.result === 'object' ? observed.result : {};
+        const target = LocalServiceManagedServiceActionTargetV1Schema.safeParse('currentTarget' in result ? result.currentTarget : undefined);
+        const terminal = SessionTerminalViewTargetV1Schema.safeParse('terminalView' in result ? result.terminalView : undefined);
+        return { status: 'succeeded', ...(target.success ? { currentTarget: target.data } : {}),
+            ...(terminal.success ? { terminalView: terminal.data } : {}) };
     }
 
     async function executeManagedDeclaration(selected: SelectedDeclaration, request: DaemonLocalServiceLauncherStartRequestV1, ingress?: RpcHandlerContext, context?: ActionContext, executeCanonicalAction?: CanonicalPoolRead): Promise<LocalServiceLauncherStartExecutionOutcome> {
