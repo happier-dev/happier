@@ -47,6 +47,8 @@ export type ManagedMachinePresetPreparationOperationInputV1 = Readonly<{
   cleanupOnly?: boolean;
   /** Canonical Machine availability established that the original cleanup host is permanently gone. */
   cleanupUnavailable?: Extract<MachineAvailabilityDiagnosticV1, { reason: 'machine_revoked' | 'machine_replaced' }>['reason'];
+  /** The incumbent image's destroy placement; a replacement on another host keeps that image and refuses. */
+  readDestroyExecution?: ManagedMachinePresetDestroyExecutionReaderV1;
   /** Only a new build needs CLI assets; recovery uses the retained native facts. */
   composeBuild?: (capturedContent: ManagedMachinePresetContentV1) => Promise<ManagedMachinePresetPreparationBuildCompositionV1>;
   custody: ManagedMachinePresetPreparationCustodyV1;
@@ -234,12 +236,13 @@ export function managedMachinePresetPreparationNeedsNativeCleanupV1(prepared: Ma
 }
 
 /** Place Archive with its native cleanup, using the Prepare host when the caller cannot execute it. */
+export type ManagedMachinePresetDestroyExecutionReaderV1 = (
+  launch: ManagedMachinePresetPreparedV1['binding']['configuration']['launch'],
+) => Promise<Readonly<{ execution: PluginActionExecutionV2 | undefined; requiresNativeHost?: boolean }>>;
+
 export async function resolveManagedMachinePresetArchiveExecutionTargetV1(input: Readonly<{
   prepared: ManagedMachinePresetPreparedV1 | undefined;
-  readDestroyExecution(launch: ManagedMachinePresetPreparedV1['binding']['configuration']['launch']): Promise<Readonly<{
-    execution: PluginActionExecutionV2 | undefined;
-    requiresNativeHost?: boolean;
-  }>>;
+  readDestroyExecution: ManagedMachinePresetDestroyExecutionReaderV1;
   readCleanupUnavailable(machineId: string): Promise<OperationInput['cleanupUnavailable']>;
 }>): Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
   const prepared = input.prepared;
@@ -384,6 +387,13 @@ export async function settleManagedMachinePresetPreparationOperationV1(
   if (!incumbent || incumbent.operationId === input.operationId
     || incumbent.status === 'cancelled' && !incumbent.artifact && !incumbent.nativeOperationRef) {
     return await follow(input);
+  }
+  if (input.readDestroyExecution && input.machineId) {
+    // Another host's native namespace cannot observe this image; its absence there
+    // must never clear the only reference. Archive or a Retry on that host cleans it.
+    const cleanupHost = await resolveManagedMachinePresetArchiveExecutionTargetV1({ prepared: incumbent,
+      readDestroyExecution: input.readDestroyExecution, readCleanupUnavailable: async () => undefined });
+    if (cleanupHost && cleanupHost.machineId !== input.machineId) return { kind: 'refused', code: 'preparation_cleanup_required' };
   }
   const capturedContent = initial.content;
   let cleanupRevision = input.expectedRevision;

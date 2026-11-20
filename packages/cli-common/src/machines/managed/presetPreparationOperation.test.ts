@@ -439,6 +439,35 @@ describe('private preset preparation operation', () => {
     expect(fixture.opened().prepared).not.toHaveProperty('code');
   });
 
+  it.each([
+    { name: 'moved controller refuses before touching the old image', execution: undefined, prepareOn: 'controller-b', expected: 'refused' },
+    { name: 'same controller replaces the old image', execution: undefined, prepareOn: 'controller-a', expected: 'ready' },
+    { name: 'account-executed cleanup replaces from the moved controller', execution: { target: 'account' } as const, prepareOn: 'controller-b', expected: 'ready' },
+  ])('Prepare on a new controller keeps an image owned elsewhere: $name', async ({ execution, prepareOn, expected }) => {
+    const fixture = storageFixture();
+    const readDestroyExecution = async () => ({ execution });
+    const original = { operationId: 'operation-one', ...identity, machineId: 'controller-a', custody: { mode: 'plain' as const },
+      composeBuild: async () => ({ input: buildInput }), storage: fixture.storage, native: nativeFixture(), readDestroyExecution };
+    await advanceManagedMachinePresetPreparationOperationV1(original);
+    const effects: string[] = [];
+    const outcome = await settleManagedMachinePresetPreparationOperationV1({ ...original, machineId: prepareOn,
+      operationId: 'operation-two', expectedRevision: fixture.row().revision,
+      native: nativeFixture({
+        inspect: async () => { effects.push('inspect'); return { kind: 'absent' }; },
+        destroy: async () => { effects.push('destroy'); return { kind: 'confirmed' }; },
+        build: async () => { effects.push('build'); return { kind: 'ready', artifact }; },
+      }) });
+    if (expected === 'refused') {
+      expect(outcome).toEqual({ kind: 'refused', code: 'preparation_cleanup_required' });
+      expect(effects).toEqual([]);
+      expect(fixture.opened().prepared).toMatchObject({ operationId: 'operation-one', status: 'ready', artifact,
+        binding: { machineId: 'controller-a' } });
+    } else {
+      expect(outcome).toMatchObject({ kind: 'ready', prepared: { operationId: 'operation-two' } });
+      expect(effects).toEqual(['destroy', 'build']);
+    }
+  });
+
   it.each(['artifact', 'nativeOperation'] as const)('reload follows retained cancelled %s cleanup through confirmed absence', async reference => {
     vi.useFakeTimers();
     try {

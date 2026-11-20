@@ -182,9 +182,17 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
         const cliIdentity = recoveryGuest ? (await resolveManagedGuestCliBuildIdentity({ homeUrl: host.serverBaseUrl,
             ...recoveryGuest, readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata,
             ...(signal ? { signal } : {}) })).identity : undefined;
+        // An incumbent image belongs to the connected configuration it was built with, as Archive cleans it.
+        const ownedConfigurations = (root: ManagedMachinePresetPreparationRootV1) => content.prepared?.operationId === root.operationId
+            ? content.prepared.binding.credentialConfigurations : credentialConfigurations;
         let firstRead = true;
         const result = await settleManagedMachinePresetPreparationOperationV1({ operationId: acceptance.operationId,
             expectedRevision: input.expectedRevision, machineId: host.machineId, custody, credentialConfigurations,
+            readDestroyExecution: async launch => {
+                const destroyId = qualify(launch).provisioner.preparation?.actions.destroy;
+                return { execution: host.registry.contributes.actions.find(candidate => candidate.pluginId === launch.provider.pluginId
+                    && candidate.definition.id === destroyId)?.definition.execution };
+            },
             onProgress: progress => context.operationOwnerUpdate?.update({ progress }),
             ...(cliIdentity === undefined ? {} : { cliIdentity }), ...(signal ? { signal } : {}),
             storage: { read: async () => { if (firstRead) { firstRead = false; return preset; } return await read(); },
@@ -207,8 +215,8 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
             },
             native: {
                 build: async (body, root) => { accept(); return MachineProvisionerPreparationBuildResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationBuild', body, credentialConfigurations)); },
-                inspect: async (body, root) => { accept(); return MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationInspect', body, credentialConfigurations)); },
-                destroy: async (body, root) => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationDestroy', body, credentialConfigurations)),
+                inspect: async (body, root) => { accept(); return MachineProvisionerPreparationInspectResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationInspect', body, ownedConfigurations(root))); },
+                destroy: async (body, root) => MachineProvisionerPreparationDestroyResultV1Schema.parse(await invoke(qualify(root.launch), 'preparationDestroy', body, ownedConfigurations(root))),
             },
         });
         if (result.kind !== 'ready') {
