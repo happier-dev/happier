@@ -91,6 +91,7 @@ import {
 } from '../../providerEvents.js';
 import {
     buildClaudeSessionRuntimeIssue,
+    projectClaudeRuntimeIssueQuotaWindows,
     mapClaudeProviderFailureToUsageDetails,
     type ClaudeSessionRuntimeIssueSource,
     type ClaudeSessionRuntimeUsageLimitDetails,
@@ -1391,6 +1392,8 @@ export function createClaudeAgentSdkTurnOperations(
 
     function publishRuntimeEvent(event: ClaudeProviderEvent | null): void {
         if (!event) return;
+        if (event.kind === 'turn-failed') event = { ...event,
+            issue: projectClaudeRuntimeIssueQuotaWindows(event.issue, runtimeAuthIdentity.readQuotaWindows()) };
         for (const listener of Array.from(listeners)) {
             listener(event);
         }
@@ -2320,7 +2323,12 @@ export function createClaudeAgentSdkTurnOperations(
                 observeProviderSessionId(message.session_id);
             }
         }
-        if (!sessionContext) return;
+        if (isReplayClaudeAgentSdkMessage(message) || (isClaudePrimaryNativeActivity(message)
+            && nativeSessionId && providerSessionId && nativeSessionId !== providerSessionId)) return;
+        if (!sessionContext) {
+            runtimeAuthIdentity.observeQuotaEvidence(message);
+            return;
+        }
         const primaryFailure = readProviderFailureEvidence(message)
             ?? (isSdkResultMessage(message)
                 && (message.subtype !== 'success' || message.is_error === true)
@@ -2328,6 +2336,7 @@ export function createClaudeAgentSdkTurnOperations(
                 ? buildResultFailureEvidence(message, null) : null);
         void recordClaudeRuntimeProviderAccountUsageSnapshot({
             ctx: sessionContext,
+            runtimeAuthIdentity,
             evidence: message,
             sessionId: readString(params.happierSessionId) ?? providerSessionId ?? 'claude-agent-sdk',
             launchEnv: params.launchEnv,

@@ -1,6 +1,8 @@
 import { z } from 'zod/mini';
 import { SessionRuntimeFailureCauseV1Schema, projectSessionRuntimeFailureCause } from '@happier-dev/plugin-sdk/sessions';
 import { ClaudeSessionRuntimeUsageLimitDetailsSchema, ClaudeSessionRuntimeTemporaryThrottleDetailsSchema } from './providerFailureDetails.js';
+import { runtimeMeterToQuotaMeter } from '../../auth/services/usage/snapshot.js';
+import { resolveClaudeRuntimeQuotaWindows, type NormalizedClaudeRuntimeRateLimitMeter } from '../../auth/services/runtime/usage.js';
 import { mapClaudeProviderFailureToUsageDetails as mapProviderFailure } from '../../auth/services/runtime/usage.js';
 
 const ClaudeSessionRuntimeIssueSourceSchema = z.enum([
@@ -161,7 +163,34 @@ export function mapClaudeProviderFailureToUsageDetails(
   evidence: unknown,
 ): ClaudeSessionRuntimeUsageLimitDetails | null {
   const usage = mapProviderFailure(evidence);
-  return usage ? { ...usage, limitCategory: usage.limitCategory ?? 'rate_limit' } : null;
+  return usage;
+}
+
+/** Projects the same request windows as the account snapshot without inventing unknown percentages. */
+export function projectClaudeRuntimeIssueQuotaWindows(
+  issue: ClaudeSessionRuntimeIssue,
+  observedWindows: readonly NormalizedClaudeRuntimeRateLimitMeter[],
+): ClaudeSessionRuntimeIssue {
+  if (!issue.usageLimit) return issue;
+  if (issue.usageLimit.limitCategory === 'rate_limit' && !issue.usageLimit.providerLimitId) {
+    return { ...issue, code: 'claude.provider.rate_limit', source: 'agent_status_error',
+      usageLimit: { ...issue.usageLimit, utilization: null, resetAtMs: null } };
+  }
+  const resolved = resolveClaudeRuntimeQuotaWindows(issue.usageLimit, observedWindows);
+  const allWindows = resolved.windows.map(runtimeMeterToQuotaMeter).flatMap(meter =>
+    typeof meter.remainingPct === 'number' ? [{
+      meterId: meter.meterId,
+      scope: meter.label,
+      remainingPct: meter.remainingPct,
+      ...(typeof meter.resetAtMs === 'number' ? { resetAtMs: meter.resetAtMs } : {}),
+      status: meter.status,
+    }] : []);
+  return { ...issue, usageLimit: {
+    ...issue.usageLimit, utilization: resolved.utilization, resetAtMs: resolved.resetAtMs,
+    ...(resolved.utilization === null ? {} : { effectiveMeterId: resolved.primaryMeterId,
+      effectiveRemainingPct: Math.max(0, Math.min(100, 100 - resolved.utilization)) }),
+    ...(allWindows.length > 0 ? { allWindows } : {}),
+  } };
 }
 
 export function buildClaudeRuntimeIssue(params: Readonly<{
@@ -180,13 +209,13 @@ export function buildClaudeRuntimeIssue(params: Readonly<{
     }, params.evidence, params.fallbackMessage);
   }
   if (usageLimit) {
-    return buildClaudeIssue({
+    return projectClaudeRuntimeIssueQuotaWindows(buildClaudeIssue({
       code: 'claude.usage_limit',
       source: 'usage_limit',
       occurredAt: params.occurredAt,
       agentId: 'claude',
       usageLimit,
-    }, params.evidence, params.fallbackMessage);
+    }, params.evidence, params.fallbackMessage), []);
   }
   return buildClaudeIssue({
     code: 'claude.provider.failure',

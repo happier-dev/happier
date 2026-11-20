@@ -1118,6 +1118,12 @@ export function createClaudeUnifiedTerminalTurnOperations(
       providerSessionId: state.providerSessionId,
       transcriptPath: statuslineTranscriptPath,
     }),
+    onQuotaEvidence: (evidence) => {
+      void recordClaudeRuntimeProviderAccountUsageSnapshot({
+        ctx: params.ctx, runtimeAuthIdentity, evidence,
+        sessionId: params.happierSessionId, launchEnv: params.launchEnv,
+      });
+    },
     onRuntimeTruth: (truth) => {
       // All actual native observations reconcile the controller's narrow verification witness.
       const controller: ClaudeUnifiedTuiControlController | null = tuiController;
@@ -4337,6 +4343,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
           await recordClaudeRuntimeProviderAccountUsageSnapshot({
             ctx: params.ctx,
             evidence: observation.evidence ?? observation.detail ?? observation.reason,
+            runtimeAuthIdentity,
             sessionId: params.happierSessionId,
             launchEnv: params.launchEnv,
           });
@@ -4366,9 +4373,11 @@ export function createClaudeUnifiedTerminalTurnOperations(
         const failureFallbackMessage = observation.source === 'hook'
           ? observation.detail ?? observation.reason
           : observation.reason;
+        const failureQuotaWindows = runtimeAuthIdentity.readQuotaWindows();
         await recordClaudeRuntimeProviderAccountUsageSnapshot({
           ctx: params.ctx,
           evidence: failureEvidence,
+          runtimeAuthIdentity,
           sessionId: params.happierSessionId,
           launchEnv: params.launchEnv,
           policyDisposition: 'evidence_only',
@@ -4386,6 +4395,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         recordPrimaryProviderUnavailableForPromptDelivery(failureEvidence, Date.now());
         state.lastTurnFailure = recordClaudeUnifiedTurnFailure({
           evidence: failureEvidence,
+          quotaWindows: failureQuotaWindows,
           fallbackMessage: failureFallbackMessage,
           handlers,
           logger: params.ctx.logger,

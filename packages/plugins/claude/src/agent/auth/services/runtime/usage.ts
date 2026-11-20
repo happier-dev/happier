@@ -11,7 +11,7 @@ export type NormalizedClaudeUsageLimitDetails = Readonly<{
   resetAtMs: number | null;
   retryAfterMs: number | null;
   limitCategory?: 'usage_limit' | 'rate_limit' | 'capacity';
-  quotaScope: 'account' | 'provider';
+  quotaScope: 'account' | 'provider' | 'unknown';
   recoverability: 'wait';
   providerLimitId?: string;
   planType: string | null;
@@ -34,6 +34,28 @@ export type NormalizedClaudeRuntimeRateLimitMeter = Readonly<{
   /** Claude extra usage observed in-band: provider credits that keep serving spent windows. */
   credits?: Readonly<{ exhausted: boolean }>;
 }>;
+
+/** One request's measured windows, reconciled with the rejected allowance. */
+export function resolveClaudeRuntimeQuotaWindows(
+  details: Readonly<{ providerLimitId?: string; limitCategory?: string; utilization?: number | null; resetAtMs: number | null }>,
+  observedWindows: readonly NormalizedClaudeRuntimeRateLimitMeter[],
+) {
+  const primaryMeterId = details.providerLimitId ?? details.limitCategory ?? 'usage_limit';
+  if (details.limitCategory === 'rate_limit' && !details.providerLimitId) {
+    return { primaryMeterId, utilization: null, resetAtMs: null, windows: [...observedWindows] };
+  }
+  const measured = observedWindows.find(meter => meter.meterId === primaryMeterId);
+  const utilization = measured?.utilizationPct ?? details.utilization ?? null;
+  const resetAtMs = details.resetAtMs ?? measured?.resetsAtMs ?? null;
+  const primary: NormalizedClaudeRuntimeRateLimitMeter = {
+    meterId: primaryMeterId, label: measured?.label ?? resolveConnectedServiceQuotaMeterLabel(primaryMeterId),
+    utilizationPct: utilization, resetsAtMs: resetAtMs, source: 'runtimeSignal',
+  };
+  const windows = measured
+    ? observedWindows.map(meter => meter.meterId === primaryMeterId ? { ...meter, ...primary } : meter)
+    : [primary, ...observedWindows];
+  return { primaryMeterId, utilization, resetAtMs, windows };
+}
 
 export type NormalizedClaudeRuntimeRateLimitsObservation =
   | Readonly<{ status: 'not_loaded' }>
@@ -86,7 +108,7 @@ function buildRuntimeRateLimitMeter(
 ): NormalizedClaudeRuntimeRateLimitMeter | null {
   const record = isRecord(raw) ? raw : null;
   if (!record) return null;
-  const utilizationPct = readUtilization(record.utilization ?? record.usedPercent ?? record.used_percent);
+  const utilizationPct = readUtilization(record.used_percentage ?? record.utilization ?? record.usedPercent ?? record.used_percent);
   const resetsAtMs = readTimestampMs(record.resetsAt ?? record.resets_at ?? record.resetAt ?? record.reset_at);
   if (utilizationPct === null && resetsAtMs === null) return null;
   return {
@@ -302,9 +324,11 @@ function mapSyntheticClaudeApiErrorToUsageDetails(
   ]));
   const hasRateLimitEvidence = records.some(containsRateLimitEvidence);
   const hasDeclaredUsageLimit = records.some((source) => source.apiError === 'usage_limit_reached');
-  const hasUsageLimitEvidence = hasDeclaredUsageLimit || records.some(containsUsageLimitEvidence);
   const hasTransientThrottleEvidence = records.some(containsTransientThrottleEvidence);
   const hasProviderCapacityEvidence = status === 529 || records.some(containsProviderCapacityEvidence);
+  const providerLimitId = hasProviderCapacityEvidence ? 'server_overloaded' : readSyntheticProviderLimitId(records);
+  const hasUsageLimitEvidence = hasDeclaredUsageLimit || records.some(containsUsageLimitEvidence)
+    || (!hasProviderCapacityEvidence && !hasTransientThrottleEvidence && providerLimitId !== undefined);
   const hasCompatibleStatus = status === null || status === 429 || status === 529;
   const isAssistantApiError =
     (record.type === 'assistant' || record.type === 'assistant_response')
@@ -333,11 +357,10 @@ function mapSyntheticClaudeApiErrorToUsageDetails(
     },
     nowMs: Date.now(),
   });
-  const resetAtMs = readSyntheticResetAtMs(records) ?? timing.resetAtMs;
+  const resetAtMs = readSyntheticResetAtMs(records)
+    ?? readClaudeAnthropicHeaderResetAtMs(readHeaders(record) ?? {})
+    ?? (hasUsageLimitEvidence ? timing.resetAtMs : null);
   const retryAfterMs = readSyntheticRetryAfterMs(records) ?? timing.retryAfterMs;
-  const providerLimitId = hasProviderCapacityEvidence
-    ? 'server_overloaded'
-    : readSyntheticProviderLimitId(records);
 
   return {
     v: 1,
@@ -350,11 +373,13 @@ function mapSyntheticClaudeApiErrorToUsageDetails(
         : hasUsageLimitEvidence
           ? { limitCategory: 'usage_limit' as const }
           : {}),
-    quotaScope: hasProviderCapacityEvidence || hasTransientThrottleEvidence ? 'provider' : 'account',
+    quotaScope: hasProviderCapacityEvidence || hasTransientThrottleEvidence
+      ? 'provider' : hasUsageLimitEvidence ? 'account' : 'unknown',
     recoverability: 'wait',
     ...(providerLimitId ? { providerLimitId } : {}),
     planType: null,
-    utilization: readUtilization(readFirstField(records, ['utilization', 'usedPercent', 'used_percent'])),
+    utilization: hasUsageLimitEvidence
+      ? readUtilization(readFirstField(records, ['utilization', 'usedPercent', 'used_percent'])) : null,
     overage: null,
     action: null,
     connectedService: null,
@@ -370,10 +395,12 @@ export function mapClaudeProviderFailureToUsageDetails(evidence: unknown): Norma
     || evidence.type === 'assistant_response'
     || evidence.type === 'result'
   )) {
-    return mapClaudeRateLimitEventToUsageDetails(evidence);
+    const usage = mapClaudeRateLimitEventToUsageDetails(evidence);
+    return usage ? { ...usage, limitCategory: usage.limitCategory ?? 'rate_limit' } : null;
   }
-  return mapSyntheticClaudeApiErrorToUsageDetails(isRecord(evidence) ? evidence : { error: evidence }, true)
+  const usage = mapSyntheticClaudeApiErrorToUsageDetails(isRecord(evidence) ? evidence : { error: evidence }, true)
     ?? mapClaudeHeadersToUsageDetails(evidence);
+  return usage ? { ...usage, limitCategory: usage.limitCategory ?? 'rate_limit' } : null;
 }
 
 function mapClaudeHeadersToUsageDetails(value: unknown): NormalizedClaudeUsageLimitDetails | null {
@@ -381,14 +408,13 @@ function mapClaudeHeadersToUsageDetails(value: unknown): NormalizedClaudeUsageLi
   if (!headers) return null;
   const timing = parseClaudeUsageLimitReset({ headers, body: value, nowMs: Date.now() });
   const resetAtMs =
-    readClaudeAnthropicHeaderResetAtMs(headers)
-    ?? timing.resetAtMs;
+    readClaudeAnthropicHeaderResetAtMs(headers);
   if (timing.retryAfterMs === null && resetAtMs === null) return null;
   return {
     v: 1,
     resetAtMs,
     retryAfterMs: timing.retryAfterMs,
-    quotaScope: 'account',
+    quotaScope: 'unknown',
     recoverability: 'wait',
     planType: null,
     utilization: null,
@@ -423,7 +449,8 @@ export function mapClaudeRateLimitEventToUsageDetails(event: unknown): Normalize
     v: 1,
     resetAtMs: readTimestampMs(info.resetsAt ?? info.resets_at) ?? limitedWindow?.resetsAtMs ?? null,
     retryAfterMs: null,
-    quotaScope: 'account',
+    limitCategory: rateLimitType ? 'usage_limit' : 'rate_limit',
+    quotaScope: rateLimitType ? 'account' : 'unknown',
     recoverability: 'wait',
     ...(rateLimitType ? { providerLimitId: rateLimitType } : {}),
     planType: null,

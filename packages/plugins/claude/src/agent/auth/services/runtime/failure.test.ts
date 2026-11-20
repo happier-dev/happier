@@ -190,7 +190,7 @@ describe('Claude runtime auth service classification', () => {
       selection: { serviceId: 'claude-subscription', activeProfileId: 'team', groupId: 'coders' },
       error: { status: 429, error: { type: 'rate_limit_error', retryAfterMs: 1500 } },
     });
-    expect(result).toMatchObject({ kind: 'usage_limit', retryAfterMs: 1500 });
+    expect(result).toMatchObject({ kind: 'rate_limit', limitCategory: 'rate_limit', quotaScope: 'unknown', resetsAtMs: null, retryAfterMs: 1500 });
     expect(result?.providerLimitId).toBeNull();
   });
   it('attaches source provider account identity and group generation to runtime usage-limit classifications', async () => {
@@ -662,7 +662,7 @@ describe('Claude runtime auth service classification', () => {
     });
   });
 
-  it('classifies Retry-After HTTP dates with reset and relative retry timing', async () => {
+  it('keeps Retry-After HTTP dates as retry timing without inventing a quota reset', async () => {
     const { classifyClaudeConnectedServiceRuntimeAuthFailure } = await import('./index.js');
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-17T12:00:00.000Z'));
@@ -683,15 +683,15 @@ describe('Claude runtime auth service classification', () => {
       });
 
       expect(result).toMatchObject({
-        kind: 'usage_limit',
-        limitCategory: 'usage_limit',
+        kind: 'rate_limit',
+        limitCategory: 'rate_limit',
         serviceId: 'claude-subscription',
         profileId: 'work',
         groupId: 'main',
-        resetsAtMs: resetAtMs,
+        resetsAtMs: null,
         retryAfterMs: 30_000,
         rateLimits: expect.objectContaining({
-          resetAtMs,
+          resetAtMs: null,
           retryAfterMs: 30_000,
         }),
       });

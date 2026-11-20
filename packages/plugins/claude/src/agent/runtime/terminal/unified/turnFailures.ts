@@ -5,6 +5,7 @@ import {
   buildClaudeSessionRuntimeIssue,
   buildClaudeProcessExitRuntimeIssue,
   buildClaudeRuntimeIssue,
+  projectClaudeRuntimeIssueQuotaWindows,
   type ClaudeSessionRuntimeIssue,
 } from '../../issues/runtimeIssues.js';
 import {
@@ -13,6 +14,7 @@ import {
   publishClaudeUnifiedTurnStart,
   type ClaudeUnifiedRuntimeEventHandler,
 } from './runtimeEvents.js';
+import type { NormalizedClaudeRuntimeRateLimitMeter } from '../../../auth/services/runtime/usage.js';
 import type { ClaudeRuntimeLogger } from '../../dependencies.js';
 
 /**
@@ -108,14 +110,15 @@ function publishRecordedFailure(
 
 export function recordClaudeUnifiedTurnFailure(params: ClaudeUnifiedFailurePublicationParams & Readonly<{
   evidence: unknown;
+  quotaWindows?: readonly NormalizedClaudeRuntimeRateLimitMeter[];
   fallbackMessage: string;
 }>): Error {
-  return publishRecordedFailure(params, buildClaudeRuntimeIssue({
+  return publishRecordedFailure(params, projectClaudeRuntimeIssueQuotaWindows(buildClaudeRuntimeIssue({
     evidence: params.evidence,
     occurredAt: params.evidence !== null && typeof params.evidence === 'object' && !Array.isArray(params.evidence)
       ? readClaudeJsonlRowTimestampMs(params.evidence as Readonly<Record<string, unknown>>) ?? Date.now() : Date.now(),
     fallbackMessage: params.fallbackMessage,
-  }), params.fallbackMessage);
+  }), params.quotaWindows ?? []), params.fallbackMessage);
 }
 
 export function recordClaudeUnifiedHookActivationFailure(

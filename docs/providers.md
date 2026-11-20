@@ -1791,6 +1791,12 @@ remains usable. When admission excludes the current member, a replacement with
 fresh positive quota can restore admission even below that threshold. The quota
 precheck and switch pipeline use the same selector. Outside an incomplete probe,
 failure-driven usage-limit recovery still allows unknown quota evidence.
+In 0.3 development source, Claude captures account identity and measured quota
+windows for each request. A rejection naming an allowance is `usage_limit`;
+an unclassified 429 is `rate_limit` with unknown scope. Its retry delay does not
+establish an exhausted allowance or a window reset. The shared recovery policy
+retries that unknown-scope failure without excluding or switching a pool member,
+and the runtime issue does not offer allowance recovery or a reset credit.
 In 0.3 development source, a Voice turn consumes the daemon's existing
 usage-limit recovery waiting fact and retry date. The Voice stream emits a
 short spoken waiting notice and its normal terminal result, allowing listening

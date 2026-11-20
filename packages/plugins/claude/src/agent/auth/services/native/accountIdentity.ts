@@ -1,3 +1,4 @@
+import { computeConnectedAccountAccessTokenFingerprint } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readClaudeCodeNativeCredentialPayload, type ClaudeCodeNativeCredentialPayload } from './credentials.js';
 
 export type ClaudeNativeAccountIdentity = Readonly<{
@@ -28,6 +29,16 @@ export function readClaudeNativeAccountIdentity(rootConfig: unknown): ClaudeNati
     ?? readString(oauthAccount.name);
   if (!providerAccountId && !providerEmail && !accountLabel) return null;
   return { providerAccountId, providerEmail, providerOrganizationId: readString(oauthAccount.organizationUuid), accountLabel };
+}
+
+/** Capture native account qualification once for the provider request that used it. */
+export function readClaudeNativeUsageIdentity(rootConfig: unknown, nativeCredential: unknown) {
+  const identity = readClaudeNativeAccountIdentity(rootConfig);
+  const credential = readClaudeCodeNativeCredentialPayload(nativeCredential);
+  return { identity, credentialProof: identity?.providerAccountId && credential ? {
+    providerAccountId: identity.providerAccountId,
+    credentialFingerprint: computeConnectedAccountAccessTokenFingerprint(credential.claudeAiOauth.accessToken),
+  } : null };
 }
 
 /** Reconcile only the selected native home's account context; workspace trust stays intact. */

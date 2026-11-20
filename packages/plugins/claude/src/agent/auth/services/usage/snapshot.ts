@@ -40,6 +40,7 @@ export type MapClaudeProviderHttpUsageSnapshotInput = Readonly<{
 export type MapClaudeUsageLimitDetailsToProviderAccountUsageSnapshotInput = Readonly<{
     subject: ClaudeUsageSubjectRef;
     details: NormalizedClaudeUsageLimitDetails;
+    quotaWindows?: readonly NormalizedClaudeRuntimeRateLimitMeter[];
     observedAtMs: number;
     fetchedAtMs: number;
     staleAfterMs?: number;
@@ -78,7 +79,7 @@ function readRuntimeMeterScope(meterId: string): ClaudeRuntimeMeterScope {
     return 'unknown';
 }
 
-function runtimeMeterToQuotaMeter(meter: NormalizedClaudeRuntimeRateLimitMeter): AgentAccountUsageMeter {
+export function runtimeMeterToQuotaMeter(meter: NormalizedClaudeRuntimeRateLimitMeter): AgentAccountUsageMeter {
     if (meter.credits) {
         return {
             meterId: meter.meterId,
@@ -241,7 +242,9 @@ export function mapClaudeProviderHttpUsageSnapshot(
 
 export function mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot(
     params: MapClaudeUsageLimitDetailsToProviderAccountUsageSnapshotInput,
-): AgentAccountUsageSnapshot {
+): AgentAccountUsageSnapshot | null {
+    // A request rejection without an allowance witness cannot replace measured account quota.
+    if (params.details.limitCategory === 'rate_limit' && !params.details.providerLimitId) return null;
     return buildSnapshot({
         subject: params.subject,
         quotaScope: normalizeQuotaScope(params.details.quotaScope),
@@ -250,7 +253,11 @@ export function mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot(
         observedAtMs: params.observedAtMs,
         fetchedAtMs: params.fetchedAtMs,
         staleAfterMs: params.staleAfterMs ?? CLAUDE_RUNTIME_RATE_LIMITS_STALE_AFTER_MS,
-        meters: [usageLimitDetailsToQuotaMeter(params.details)],
+        meters: params.quotaWindows
+            ? params.quotaWindows.map(meter => meter.meterId === readUsageLimitMeterId(params.details)
+                ? usageLimitDetailsToQuotaMeter({ ...params.details, utilization: meter.utilizationPct, resetAtMs: meter.resetsAtMs })
+                : runtimeMeterToQuotaMeter(meter))
+            : [usageLimitDetailsToQuotaMeter(params.details)],
         accountLabel: params.accountLabel,
         planLabel: params.planLabel,
     });

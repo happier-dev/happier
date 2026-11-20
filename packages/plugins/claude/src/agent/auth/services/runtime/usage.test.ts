@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   mapClaudeRateLimitEventToUsageDetails,
   mapClaudeRuntimeRateLimitsToUsageObservation,
+  mapClaudeProviderFailureToUsageDetails,
+  resolveClaudeRuntimeQuotaWindows,
 } from './usage.js';
 import { classifyClaudeConnectedServiceRuntimeAuthFailure } from './failure.js';
 
@@ -100,6 +102,17 @@ describe('mapClaudeRuntimeRateLimitsToUsageObservation', () => {
 });
 
 describe('mapClaudeRateLimitEventToUsageDetails', () => {
+  it('recognizes a named allowance in a synthetic provider rejection', () => {
+    expect(mapClaudeProviderFailureToUsageDetails({ status: 429, error: 'rate_limit_error', providerLimitId: 'five_hour', utilization: 95 }))
+      .toMatchObject({ limitCategory: 'usage_limit', quotaScope: 'account', providerLimitId: 'five_hour', utilization: 95 });
+  });
+  it('keeps an unnamed rejection unknown to account quota and preserves only its retry delay', () => {
+    const details = mapClaudeProviderFailureToUsageDetails({ status: 429, headers: { 'Retry-After': '2' }, utilization: 100 });
+    expect(details).toMatchObject({ limitCategory: 'rate_limit', quotaScope: 'unknown', resetAtMs: null, retryAfterMs: 2000, utilization: null });
+    expect(details?.providerLimitId).toBeUndefined();
+    if (!details) throw new Error('Expected a typed rate-limit failure');
+    expect(resolveClaudeRuntimeQuotaWindows(details, []).windows).toEqual([]);
+  });
   it.each([
     { apiErrorParams: { rate_limit_info: { resetsAt: 1_793_444_400, rateLimitType: 'seven_day', utilization: 0.95 } } },
     { quotaLimits: { resetsAt: 1_793_444_400, rateLimitType: 'seven_day', utilization: 0.95 } },
@@ -152,7 +165,7 @@ describe('mapClaudeRateLimitEventToUsageDetails', () => {
       v: 1,
       resetAtMs: Date.parse('2026-05-17T12:00:00.000Z'),
       retryAfterMs: null,
-      quotaScope: 'account',
+      quotaScope: 'unknown',
       recoverability: 'wait',
     });
   });

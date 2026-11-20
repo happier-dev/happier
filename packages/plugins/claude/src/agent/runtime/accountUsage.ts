@@ -3,17 +3,19 @@ import type {
   AgentAccountUsageSourceContextInput,
   AgentSessionNativeHomeService,
 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { computeConnectedAccountAccessTokenFingerprint, HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
-import { readClaudeCodeNativeCredentialPayload } from '../auth/services/native/credentials.js';
+import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
+import { isClaudeSidechainRuntimeEvidence, isSidechainSessionHook } from '../hooks/sidechain.js';
+import type { ClaudeRuntimeAuthIdentity } from '../auth/services/runtime/requestIdentity.js';
 import type { ClaudeRuntimeLogger } from './dependencies.js';
 
 import { resolveClaudeConfigDirOverride } from '../environment.js';
 import {
   mapClaudeProviderFailureToUsageDetails,
   mapClaudeRuntimeRateLimitsToUsageObservation,
+  resolveClaudeRuntimeQuotaWindows,
 } from '../auth/services/runtime/usage.js';
 import { resolveClaudeUsageSubjectRef } from '../auth/services/usage/identity.js';
-import { readClaudeNativeAccountIdentity } from '../auth/services/native/accountIdentity.js';
+import { readClaudeNativeUsageIdentity } from '../auth/services/native/accountIdentity.js';
 import {
   mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot,
   mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot,
@@ -67,6 +69,7 @@ type ClaudeRuntimeAccountUsageParams = Readonly<{
   launchEnv?: Readonly<Record<string, string>> | null;
   observedAtMs?: number;
   policyDisposition?: 'evidence_only';
+  runtimeAuthIdentity?: ClaudeRuntimeAuthIdentity;
 }>;
 
 function readString(value: unknown): string | null {
@@ -133,6 +136,23 @@ function buildProvisionalDiscriminator(params: Readonly<{
 export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
   params: ClaudeRuntimeAccountUsageParams,
 ): Promise<void> {
+  let observation = params.runtimeAuthIdentity ? params.runtimeAuthIdentity.observeQuotaEvidence(params.evidence)
+    : mapClaudeRuntimeRateLimitsToUsageObservation(params.evidence);
+  if (observation === null) return;
+  const evidenceRecord = params.evidence && typeof params.evidence === 'object' && !Array.isArray(params.evidence)
+    ? params.evidence as Readonly<Record<string, unknown>> : null;
+  const sidechain = isClaudeSidechainRuntimeEvidence(params.evidence) || isSidechainSessionHook(evidenceRecord);
+  const details = observation.status === 'not_loaded' || sidechain
+    ? mapClaudeProviderFailureToUsageDetails(params.evidence) : null;
+  if (sidechain && observation.status === 'loaded_data' && details) {
+    const parentWindows = params.runtimeAuthIdentity?.readQuotaWindows() ?? [];
+    const childWindows = observation.meters.filter(meter => meter.meterId !== details.providerLimitId
+      || !parentWindows.some(parent => parent.meterId === meter.meterId));
+    const combined = new Map([...parentWindows, ...childWindows].map(meter => [meter.meterId, meter]));
+    observation = { status: 'loaded_data', meters: resolveClaudeRuntimeQuotaWindows(details, [...combined.values()]).windows };
+  }
+  if (observation.status === 'not_loaded' && !details) return;
+  const quota = details ? resolveClaudeRuntimeQuotaWindows(details, params.runtimeAuthIdentity?.readQuotaWindows() ?? []) : null;
   const service = params.ctx.agentRuntime.accountUsage;
   const recordSnapshot = service?.recordSnapshot;
   if (typeof recordSnapshot !== 'function') return;
@@ -143,7 +163,8 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
     launchEnv: params.launchEnv,
   });
   const claudeConfigDir = readClaudeConfigDir(params.launchEnv);
-  const nativeContext = await (async () => {
+  const requestIdentity = params.runtimeAuthIdentity?.readUsageIdentity();
+  const nativeContext = requestIdentity ?? await (async () => {
     try {
       const files = await params.ctx.agentRuntime.nativeHome?.readFiles(['.claude.json', '.credentials.json']);
       const parseFile = (bytes: Uint8Array | undefined): unknown => {
@@ -151,19 +172,13 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
         try { return JSON.parse(new TextDecoder().decode(bytes)) as unknown; }
         catch { return null; }
       };
-      return {
-        identity: readClaudeNativeAccountIdentity(parseFile(files?.['.claude.json'])),
-        credential: readClaudeCodeNativeCredentialPayload(parseFile(files?.['.credentials.json'])),
-      };
+      return readClaudeNativeUsageIdentity(parseFile(files?.['.claude.json']), parseFile(files?.['.credentials.json']));
     } catch {
       return null;
     }
   })();
   const liveAccountIdentity = nativeContext?.identity ?? null;
-  const credentialProof = liveAccountIdentity?.providerAccountId && nativeContext?.credential
-    ? { providerAccountId: liveAccountIdentity.providerAccountId,
-        credentialFingerprint: computeConnectedAccountAccessTokenFingerprint(nativeContext.credential.claudeAiOauth.accessToken) }
-    : null;
+  const credentialProof = nativeContext?.credentialProof ?? null;
   const serializedConnectedServiceSelection = params.launchEnv?.[
     HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV
   ];
@@ -195,11 +210,10 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
       identity,
       sessionId: params.sessionId,
       launchEnv: params.launchEnv,
-      sourceContext,
+      sourceContext: requestIdentity === undefined ? sourceContext : null,
     }),
   });
 
-  const observation = mapClaudeRuntimeRateLimitsToUsageObservation(params.evidence);
   const snapshot = observation.status !== 'not_loaded'
     ? mapClaudeRuntimeRateLimitsToProviderAccountUsageSnapshot({
       subject,
@@ -209,11 +223,11 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
       accountLabel: liveAccountIdentity?.accountLabel ?? null,
     })
     : (() => {
-      const details = mapClaudeProviderFailureToUsageDetails(params.evidence);
-      if (!details) return null;
+      if (!details || !quota) return null;
       return mapClaudeUsageLimitDetailsToProviderAccountUsageSnapshot({
         subject,
         details,
+        quotaWindows: quota.windows,
         observedAtMs,
         fetchedAtMs: observedAtMs,
         accountLabel: liveAccountIdentity?.accountLabel ?? null,
@@ -231,7 +245,7 @@ export async function recordClaudeRuntimeProviderAccountUsageSnapshot(
         snapshot,
         ...(params.policyDisposition ? { policyDisposition: params.policyDisposition } : {}),
         ...(sourceContext && credentialProof ? { credentialProof } : {}),
-        ...(sourceContext && (subject.kind === 'providerSubject' || credentialProof)
+        ...(sourceContext && (credentialProof || (requestIdentity === undefined && subject.kind === 'providerSubject'))
           ? { source: sourceAddress }
           : {}),
       });

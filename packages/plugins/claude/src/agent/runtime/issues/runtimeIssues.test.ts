@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { buildClaudeRuntimeIssue, mapClaudeProviderFailureToUsageDetails } from './runtimeIssues.js';
 
 describe('mapClaudeProviderFailureToUsageDetails', () => {
+  it('presents an unnamed rate rejection as retryable without an allowance failure', () => {
+    const issue = buildClaudeRuntimeIssue({ evidence: { status: 429, headers: { 'Retry-After': '2' } }, occurredAt: 100 });
+    expect(issue.source).toBe('agent_status_error');
+    expect(issue.usageLimit).toMatchObject({ limitCategory: 'rate_limit', quotaScope: 'unknown',
+      utilization: null, resetAtMs: null, retryAfterMs: 2000 });
+    expect(issue.usageLimit?.allWindows).toBeUndefined();
+  });
   it('retains an existing Provider Action cause in a terminal Turn issue', () => {
     const actionCause = { phase: 'providers.launch', errorClass: 'TypeError', errorCode: null, httpStatus: 503 } as const;
     const evidence = Object.assign(new Error('Native failure'), { code: 'provider_endpoint_unavailable', failureCause: actionCause });
@@ -24,16 +31,16 @@ describe('mapClaudeProviderFailureToUsageDetails', () => {
   });
 
   it('preserves StopFailure classification and provider retry timing through the canonical parser', () => {
-    expect(mapClaudeProviderFailureToUsageDetails({ error_type: 'rate_limit' })).toMatchObject({ quotaScope: 'account' });
+    expect(mapClaudeProviderFailureToUsageDetails({ error_type: 'rate_limit' })).toMatchObject({ quotaScope: 'unknown' });
     expect(mapClaudeProviderFailureToUsageDetails({ status: 429, error: { retry_after: 2 } }))
       .toMatchObject({ retryAfterMs: 2000 });
     expect(mapClaudeProviderFailureToUsageDetails({ type: 'rate_limit_error' }))
-      .toMatchObject({ quotaScope: 'account' });
+      .toMatchObject({ quotaScope: 'unknown' });
   });
   it('uses native allowance evidence rather than the rate-limit error category', () => {
     const error = { status: 429, code: 'rate_limit_error', retryAfterMs: 1500 };
     expect(mapClaudeProviderFailureToUsageDetails(error)).toMatchObject({
-      quotaScope: 'account', retryAfterMs: 1500,
+      quotaScope: 'unknown', retryAfterMs: 1500,
     });
     expect(mapClaudeProviderFailureToUsageDetails(error)?.providerLimitId).toBeUndefined();
     expect(mapClaudeProviderFailureToUsageDetails({ ...error, providerLimitId: 'seven_day_opus' })?.providerLimitId)

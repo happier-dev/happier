@@ -13,6 +13,31 @@ import type { ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { PluginProtocolClientHandle } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 describe('Claude SDK turn failure diagnostics', () => {
+    it('keeps an unnamed SDK rate rejection out of account quota and allowance recovery', async () => {
+        const exec = createSdkExecFixture();
+        const snapshots: unknown[] = [];
+        const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+            exec: exec.service,
+            accountUsage: { async recordSnapshot(input) { snapshots.push(input.snapshot); return { status: 'recorded' }; } },
+        });
+        const operations = createClaudeAgentSdkTurnOperations({
+            ctx, directory: '/tmp/claude-unnamed-rejection', launchEnv: {}, happierSessionId: 'rate-rejection', permissionMode: 'default',
+        });
+        const issues: unknown[] = [];
+        operations.subscribeProviderEvents(event => { if (event.kind === 'turn-failed') issues.push(event.issue); });
+        try {
+            operations.beginProviderTurn('rate-rejection-turn');
+            await operations.sendProviderTurnPrompt('prompt');
+            const completion = expect(operations.waitForProviderTurnCompletion()).rejects.toThrow();
+            await exec.emit({ type: 'assistant', error: 'rate_limit_error', isApiErrorMessage: true, apiErrorStatus: 429,
+                headers: { 'Retry-After': '2' }, message: { role: 'assistant', content: [{ type: 'text', text: 'Too many requests' }] } });
+            await completion;
+            expect(snapshots).toEqual([]);
+            expect(issues).toEqual([expect.objectContaining({ source: 'agent_status_error',
+                usageLimit: expect.objectContaining({ limitCategory: 'rate_limit', quotaScope: 'unknown', utilization: null, resetAtMs: null, retryAfterMs: 2000 }) })]);
+            expect(issues[0]).not.toHaveProperty('usageLimit.allWindows');
+        } finally { await operations.disposeProviderSession(); }
+    });
     it.each([true, false])('publishes a safe MCP startup failure when the process exits (prompt acknowledged: %s)', async acknowledgePrompts => {
         const exec = createSdkExecFixture({ acknowledgePrompts });
         const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
@@ -38,6 +63,69 @@ describe('Claude SDK turn failure diagnostics', () => {
         } finally {
             await operations.disposeProviderSession();
         }
+    });
+
+    it.each(['assistant', 'result'] as const)('retains measured request windows through %s and sidechain failures, then clears them on the next request', async (kind) => {
+        const exec = createSdkExecFixture();
+        const snapshots: unknown[] = [];
+        const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+            exec: exec.service,
+            accountUsage: { async recordSnapshot(input) { snapshots.push(input.snapshot); return { status: 'recorded' }; } },
+        });
+        const operations = createClaudeAgentSdkTurnOperations({
+            ctx, directory: '/tmp/claude-window-evidence', launchEnv: {}, happierSessionId: 'window-session', permissionMode: 'default',
+        });
+        const issues: unknown[] = [];
+        operations.subscribeProviderEvents(event => { if (event.kind === 'turn-failed') issues.push(event.issue); });
+        const failure = (sidechain = false) => ({
+            ...(kind === 'assistant' || sidechain
+                ? { type: 'assistant', error: 'rate_limit_error', isApiErrorMessage: true,
+                    message: { role: 'assistant', content: [{ type: 'text', text: 'Usage limit reached' }] } }
+                : { type: 'result', subtype: 'error_during_execution', is_error: true, apiErrorStatus: 429,
+                    error: 'rate_limit_error', errors: ['Usage limit reached'] }),
+            ...(sidechain ? { parent_tool_use_id: 'quota-child' } : {}),
+            quotaLimits: { providerLimitId: 'five_hour', utilization: 95, resetAtMs: 1_790_378_600_000 },
+        });
+        try {
+            operations.beginProviderTurn('window-turn');
+            await operations.sendProviderTurnPrompt('prompt');
+            await exec.emit({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour',
+                unifiedWindows: { five_hour: { utilization: 1 }, seven_day: { utilization: 0.2, resetsAt: 1_790_378_500 }, seven_day_fable: { utilization: 0.612 } } } });
+            await exec.emit({ type: 'rate_limit_event', isReplay: true, rate_limit_info: { status: 'rejected', rateLimitType: 'five_hour',
+                unifiedWindows: { five_hour: { utilization: 0.12 }, seven_day: { utilization: 0.99 } } } });
+            await exec.emit(failure(true));
+            await vi.waitFor(() => expect(snapshots).toHaveLength(2));
+            expect(issues).toEqual([]);
+            const completion = expect(operations.waitForProviderTurnCompletion()).rejects.toThrow();
+            await exec.emit(failure());
+            await completion;
+            await vi.waitFor(() => expect(snapshots).toHaveLength(3));
+            expect(snapshots.slice(1)).toEqual([expect.objectContaining({ meters: [
+                expect.objectContaining({ meterId: 'five_hour', utilizationPct: 100, resetAtMs: 1_790_378_600_000 }),
+                expect.objectContaining({ meterId: 'seven_day', utilizationPct: 20, resetAtMs: 1_790_378_500_000 }),
+                expect.objectContaining({ meterId: 'seven_day_fable', utilizationPct: 61.2 }),
+            ] }), expect.objectContaining({ meters: [
+                expect.objectContaining({ meterId: 'five_hour', utilizationPct: 100, resetAtMs: 1_790_378_600_000 }),
+                expect.objectContaining({ meterId: 'seven_day', utilizationPct: 20, resetAtMs: 1_790_378_500_000 }),
+                expect.objectContaining({ meterId: 'seven_day_fable', utilizationPct: 61.2 }),
+            ] })]);
+            expect(issues).toEqual([expect.objectContaining({ usageLimit: expect.objectContaining({
+                utilization: 100, resetAtMs: 1_790_378_600_000,
+                allWindows: [
+                    expect.objectContaining({ meterId: 'five_hour', scope: '5-hour', remainingPct: 0, resetAtMs: 1_790_378_600_000 }),
+                    expect.objectContaining({ meterId: 'seven_day', scope: 'Weekly', remainingPct: 80, resetAtMs: 1_790_378_500_000 }),
+                    expect.objectContaining({ meterId: 'seven_day_fable', scope: 'Weekly (Fable)', remainingPct: 38.8 }),
+                ],
+            }) })]);
+            operations.beginProviderTurn('next-window-turn');
+            await operations.sendProviderTurnPrompt('next prompt');
+            const nextCompletion = expect(operations.waitForProviderTurnCompletion()).rejects.toThrow();
+            await exec.processes.at(-1)!.emit(failure());
+            await nextCompletion;
+            expect(issues.at(-1)).toMatchObject({ usageLimit: { utilization: 95, allWindows: [
+                expect.objectContaining({ meterId: 'five_hour', remainingPct: 5 }),
+            ] } });
+        } finally { await operations.disposeProviderSession(); }
     });
 
     it.each(['primary-assistant', 'primary-result', 'availability', 'sidechain'] as const)(
@@ -168,9 +256,9 @@ describe('Claude SDK turn failure diagnostics', () => {
 
     it.each([
         { category: 'capacity', status: 529, error: 'overloaded_error', quotaScope: 'provider', serviceId: 'happier.agent.claude/claude-subscription' },
-        { category: 'rate_limit', status: 429, error: 'rate_limit_error', quotaScope: 'account', serviceId: 'happier.agent.claude/claude-subscription' },
+        { category: 'rate_limit', status: 429, error: 'rate_limit_error', quotaScope: 'unknown', serviceId: 'happier.agent.claude/claude-subscription' },
         { category: 'capacity', status: 529, error: 'overloaded_error', quotaScope: 'provider', serviceId: 'happier.agent.claude/anthropic' },
-        { category: 'rate_limit', status: 429, error: 'rate_limit_error', quotaScope: 'account', serviceId: 'happier.agent.claude/anthropic' },
+        { category: 'rate_limit', status: 429, error: 'rate_limit_error', quotaScope: 'unknown', serviceId: 'happier.agent.claude/anthropic' },
     ] as const)('retains sanitized $category evidence for $serviceId through the SDK and native runtime', async ({ category, status, error, quotaScope, serviceId }) => {
         const exec = createSdkExecFixture();
         const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, { exec: exec.service });
@@ -326,7 +414,7 @@ it.each(['proven', 'unavailable', 'profile', 'rekey'] as const)('retains the dis
     expect(readFiles).not.toHaveBeenCalled();
     await native.send({inputIds: ['issued-input'], input: {text: 'prompt'}, delivery: {kind: 'newTurn', turnId: 'issued-turn'}});
     await vi.waitFor(() => expect(exec.spawnClient).toHaveBeenCalledOnce());
-    expect(readFiles).toHaveBeenCalledWith(['.claude.json', '.happier-claude-connected-service-home.json']);
+    expect(readFiles).toHaveBeenCalledWith(['.claude.json', '.credentials.json', '.happier-claude-connected-service-home.json']);
     accountId = 'later-account'; profileId = 'later-profile'; generation = 5;
     await observe('future-org', 3000);
     await observe('foreign-org', 1500, undefined, {sessionId: 'foreign'});

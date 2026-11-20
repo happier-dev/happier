@@ -65,6 +65,7 @@ function matchesSession(identity: ClaudeStatuslineIdentity, payload: ClaudeStatu
 export function createClaudeStatuslineApplier(params: Readonly<{
     logger: ClaudeStatuslineApplierLogger;
     readIdentity: () => ClaudeStatuslineIdentity;
+    onQuotaEvidence?: (payload: ClaudeStatuslinePayload) => void;
     onRuntimeTruth?: (truth: ClaudeStatuslineRuntimeTruth) => void;
     onEffectiveModel?: (evidence: ClaudeEffectiveModelEvidence) => void;
     onModelChanged?: (change: ClaudeEffectiveModelChange) => void | Promise<void>;
@@ -170,6 +171,7 @@ export function createClaudeStatuslineApplier(params: Readonly<{
                 });
                 return;
             }
+            params.onQuotaEvidence?.(payload);
             if (readString(payload.model?.id)) hasStatuslineModel = true;
             await maybeAdoptModelAndWindow({
                 modelId: payload.model?.id ?? null,
