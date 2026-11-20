@@ -9,14 +9,17 @@ import {
 } from './nativeSession.js';
 import { getClaudeProjectPath, resolveClaudeProjectId } from '../../../surfaces/sessions/handoff/path.js';
 import { createClaudeNativeAgentSdkContext } from '../../nativeServices.js';
+import { withPermissionDecisionApplication } from '../../engine.testkit.js';
+import { buildClaudePermissionChoices } from '../../../permissions/permissionChoices.js';
 
-function createContext(): AgentSessionRuntimeContext {
+function createContext(requestDecision?: SessionPermissionsService['requestDecision']): AgentSessionRuntimeContext {
   return {
     services: {
       settings: { forScope: vi.fn(() => ({ get: vi.fn(async () => null), snapshot: async () => ({ values: {} }) })) },
       storage: { daemonSession: { get: vi.fn(), set: vi.fn() } },
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       exec: { readEnvironment: () => ({}) },
+      sessions: { current: { permissions: { requestDecision } } },
       interactions: {
         requestApproval: vi.fn(async () => ({ status: 'approved' as const })),
         askQuestions: vi.fn(),
@@ -61,19 +64,22 @@ describe('openClaudeNativeUnifiedTerminalSession', () => {
   });
 
   it('acknowledges an accepted native permission decision before resolving it', async () => {
-    const requestDecision = createClaudeNativeAgentSdkContext(createContext())
+    const hostDecision = withPermissionDecisionApplication(async () => ({ decision: 'approved' }));
+    const requestDecision = createClaudeNativeAgentSdkContext(createContext(hostDecision))
       .sessions.current.permissions.requestDecision as SessionPermissionsService['requestDecision'];
     let releaseAcknowledgement!: () => void;
     const acknowledgement = new Promise<void>(resolve => { releaseAcknowledgement = resolve; });
     const acknowledgeDecisionApplication = vi.fn(() => acknowledgement);
     let settled = false;
 
+    const input = { file_path: '/tmp/example' };
     const pendingDecision = requestDecision({
       provider: 'claude',
       requestId: 'dialog-1',
       toolCallId: 'dialog-1',
       toolName: 'Read',
-      input: { file_path: '/tmp/example' },
+      input,
+      nativeChoices: buildClaudePermissionChoices({ requestId: 'dialog-1', toolName: 'Read', toolInput: input }),
     }, { acknowledgeDecisionApplication }).then(result => {
       settled = true;
       return result;

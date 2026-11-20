@@ -11,8 +11,9 @@ describe('createClaudeNativeAgentSdkContext', () => {
   it('keeps external MCP catalog consent on its incumbent host permission path', async () => {
     // The host interaction transport is the external SDK boundary.
     const requestApproval: AgentSessionRuntimeContext['services']['interactions']['requestApproval'] = async (request) => {
-      expect(request.nativeChoices).toBeUndefined();
       expect(request.allowSessionPersistence).toBe(true);
+      expect(request.nativeChoices).toMatchObject({ requirementId: 'mcp-call', source: 'claude',
+        choices: expect.arrayContaining([expect.objectContaining({ id: 'always_allow', scope: 'session' })]) });
       return { requestId: 'mcp-session', kind: 'approval', status: 'approved', persistence: 'session' };
     };
     const context = {
@@ -90,7 +91,7 @@ describe('createClaudeNativeAgentSdkContext', () => {
     expect(response.hookSpecificOutput?.decision).toEqual({ behavior: 'allow' });
     expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
       subject: expect.objectContaining({ kind: 'tool', name: 'Bash', input: { command: 'ls -d /usr/bin' } }),
-    }), undefined);
+    }), expect.objectContaining({ buildNativeChoices: expect.any(Function) }));
   });
 
   it('retains app-prompt question identity and canonical structured answers at the existing Session permission owner', async () => {

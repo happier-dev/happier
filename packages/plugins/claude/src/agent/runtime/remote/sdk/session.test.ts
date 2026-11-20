@@ -386,7 +386,7 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       expect(response.hookSpecificOutput.permissionDecision).toBe('deny');
       expect(requestApproval).toHaveBeenCalledWith(expect.objectContaining({
         subject: { kind: 'tool', name: 'Read', input: { file_path: '/tmp/protected-canary' } },
-      }), undefined);
+      }), expect.objectContaining({ buildNativeChoices: expect.any(Function) }));
       const args = exec.spawnClient.mock.calls[0]?.[0].launch.args ?? [];
       expect(args).toContain('--plugin-dir');
       expect(args[args.indexOf('--tools') + 1]).toBe('Read');
