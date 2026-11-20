@@ -139,7 +139,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         }
     }, [accountContinuationIntent, accountServiceEntry]);
 
-    const continueWithHomeAuthentication = React.useCallback(async (request: WelcomeAuthenticationMethod, context: WelcomeAuthenticationActionContext) => {
+    const continueWithHomeAuthentication = React.useCallback(async function continueWithHomeAuthentication(request: WelcomeAuthenticationMethod, context: WelcomeAuthenticationActionContext) {
         const outcome = await executeHomeAuthentication({
             request,
             loginWithCredentials: auth.loginWithCredentials,
@@ -158,6 +158,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         const resolvedTarget = resolveHomeAuthenticationTarget(request.authority.target);
         if (!resolvedTarget || context.signal.aborted) return;
         const execution = request.execution;
+        const { emailProvision } = context;
         context.presentEmailPassword({
             target: {
                 ...resolvedTarget,
@@ -175,6 +176,12 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
             ...(execution.passwordReset ? { passwordReset: execution.passwordReset } : {}),
             ...(authEntryOptions.homeLabel ? { homeLabel: authEntryOptions.homeLabel } : {}),
             signal: context.signal,
+            ...(emailProvision ? {
+                onOpenEmailProvision: () => continueWithHomeAuthentication(emailProvision, {
+                    signal: context.signal,
+                    presentEmailPassword: context.presentEmailPassword,
+                }),
+            } : {}),
             // Welcome has no other mounted step behind this one, so a Connect
             // whose exact-Home activation is blocked has nowhere to report it.
             // The step owns that arrival: it stays with the shared focus-only

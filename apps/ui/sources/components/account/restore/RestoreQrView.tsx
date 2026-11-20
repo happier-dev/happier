@@ -201,10 +201,11 @@ export type RestoreQrViewProps = Readonly<{
     embedded?: boolean;
     onBack?: () => void;
     onOpenSecretKeyLogin?: () => void;
-    /** The welcome model's ways for this step; `leading` goes first on their row (Back, then the recovery key). */
-    renderAdditionalSignInWays?: (onLeave: () => void, leading?: React.ReactNode) => React.ReactNode;
+    /** The welcome model's ways for this step, following the controls for the active pairing. */
+    renderAdditionalSignInWays?: (onLeave?: () => void, leading?: React.ReactNode, onOpenTerminalLink?: () => void) => React.ReactNode;
     onOpenScanQr?: () => void;
     onOpenPairingLinkEntry?: () => void;
+    onOpenTerminalLink?: () => void;
     onNavigationLockChange?: (locked: boolean) => void;
 }>;
 
@@ -449,7 +450,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                                 ) : null}
                             </>;
                             return props.renderAdditionalSignInWays
-                                ? props.renderAdditionalSignInWays(() => { void reversePairing.cancel(); }, leading)
+                                ? props.renderAdditionalSignInWays(() => { void reversePairing.cancel(); }, leading, props.onOpenTerminalLink)
                                 : <View style={styles.embeddedWays}>
                                     <StepOrDivider label={t('common.or')} />
                                     <View style={styles.embeddedWaysRow}>{leading}</View>

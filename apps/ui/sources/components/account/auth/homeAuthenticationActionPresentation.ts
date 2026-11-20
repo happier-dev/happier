@@ -58,6 +58,6 @@ export function describeHomeAuthenticationAction(input: Readonly<{
     return {
         slug: `provider-${execution.providerId}`,
         title: t('welcome.signUpWithProvider', { provider: input.providerName }),
-        iconName: 'sign-in',
+        iconName: execution.providerId === 'github' ? 'github-logo' : 'sign-in',
     };
 }

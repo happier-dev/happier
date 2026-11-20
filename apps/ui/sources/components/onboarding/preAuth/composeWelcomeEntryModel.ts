@@ -29,11 +29,12 @@ export type WelcomeAuthenticationMethod =
  * device signed in last time (`lastUsed`), or the Home's first way in when that is no longer offered.
  */
 export type WelcomeAction =
-    | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'new_here' | 'new_account' | 'method' }>
+    | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'new_here' | 'new_account' | 'method'; emailProvision?: WelcomeAuthenticationMethod }>
     | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'login'; lastUsed: boolean }>
     | Readonly<{ kind: 'scan_or_paste_home'; labelRole: 'login' | 'method' }>
     | Readonly<{ kind: 'choose_home' }>
     | Readonly<{ kind: 'choose_sign_in_service' }>
+    | Readonly<{ kind: 'open_terminal_link' }>
     | Readonly<{ kind: 'use_service_as_home'; name: string; url: string }>
     | Readonly<{ kind: 'create_personal_home' }>;
 
@@ -47,7 +48,7 @@ export type WelcomeEntryModel = Readonly<{
     restore: Readonly<{
         title: 'welcome.welcomeSecondaryButton' | 'welcome.welcomeReturningLoginButton' | 'connect.scanExistingHomeQrTitle' | 'connect.usePairingLinkTitle';
         subtitle: 'welcome.loginSubtitleKeyFirst' | 'welcome.loginSubtitleLinkFirst' | 'welcome.welcomeSecondarySubtitle' | 'connect.pairingLinkRequired';
-        icon: 'key' | 'link' | 'qr-code';
+        icon: 'link' | 'qr-code';
     }>;
     /** Only notices about the effective Home target belong in this entry. */
     showHomeStatus: boolean;
@@ -84,6 +85,7 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
         changeHome: boolean;
         selectService: boolean;
         scanOrPasteHome: boolean;
+        openTerminalLink?: boolean;
         createPersonalHome: boolean;
     }>;
     serviceCatalogState:
@@ -233,13 +235,21 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     ];
 
     if (isRestore) {
-        actions.push(...homeDirect.filter((row) => row.execution.kind !== 'key_entry').map((row) => methodAction(row)));
-        actions.push(...withoutProvision(serviceMethods).map((row) => methodAction(row)));
-        actions.push(...remainingProvision.map((row) => methodAction(row)));
-        if (oneTapProvision && pairingDoor && input.target.kind !== 'none') actions.push(...changeHome);
+        const directWays = homeDirect.filter((row) => row.execution.kind !== 'key_entry');
+        const provider = (row: WelcomeAuthenticationMethod) => row.execution.kind === 'oauth' ? row.execution.providerId : null;
+        const ways = [...directWays, ...remainingProvision.filter((row) =>
+            provider(row) !== null && !directWays.some((direct) => provider(direct) === provider(row)))];
+        const github = ways.find((row) => provider(row) === 'github');
+        if (github) actions.push(methodAction(github));
+        const emailLogin = directWays.find((row) => row.execution.kind === 'email_password');
+        const emailProvision = homeProvision.find((row) => row.execution.kind === 'email_password');
+        if (emailLogin) actions.push({ kind: 'authenticate', request: emailLogin, labelRole: 'method', ...(emailProvision ? { emailProvision } : {}) });
+        else if (emailProvision && emailProvision !== primaryProvision) actions.push(methodAction(emailProvision));
+        actions.push(...ways.filter((row) => row.execution.kind !== 'email_password' && provider(row) !== 'github').map((row) => methodAction(row)));
+        if (!input.allowedNavigation.openTerminalLink && oneTapProvision && pairingDoor && input.target.kind !== 'none') actions.push(...changeHome);
         if (input.allowedNavigation.selectService) actions.push({ kind: 'choose_sign_in_service' });
-        const newAccount = primaryProvision ?? newHereService;
-        if (newAccount) actions.push({ kind: 'authenticate', request: newAccount, labelRole: 'new_account' });
+        if (input.allowedNavigation.openTerminalLink) actions.push({ kind: 'open_terminal_link' });
+        if (primaryProvision) actions.push({ kind: 'authenticate', request: primaryProvision, labelRole: 'new_account' });
     } else if (oneTapProvision && pairingDoor) {
         actions.push(methodAction(oneTapProvision, 'new_here'), pairingLogin);
     } else if (firstTime) {
@@ -351,7 +361,7 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
             subtitle: !leadWithLink
                 ? 'welcome.loginSubtitleKeyFirst'
                 : qrAvailable ? 'welcome.welcomeSecondarySubtitle' : 'welcome.loginSubtitleLinkFirst',
-            icon: !leadWithLink ? 'key' : qrAvailable ? 'qr-code' : 'link',
+            icon: 'qr-code',
         },
         showHomeStatus: !isRestore && showHomeStatus,
         ...(input.target.kind === 'none'

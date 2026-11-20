@@ -90,6 +90,8 @@ export type EmailPasswordAuthPanelProps = Readonly<{
     onAuthenticated: (outcome: EmailPasswordAuthOutcome) => void | EmailPasswordAuthenticationCompletion | Promise<void | EmailPasswordAuthenticationCompletion>;
     /** Leaves this controller for the surrounding auth-entry surface. */
     onBack?: () => void;
+    /** Offered by a host that admitted a separate create-account action on this Home. */
+    onOpenEmailProvision?: () => Promise<void> | void;
     /**
      * Draw the Back link. A surrounding step that already carries its own way back sets this false;
      * `onBack` still serves the flows that leave the surface (recovery key).
@@ -664,6 +666,14 @@ const EmailPasswordAuthPanelBody = React.memo(function EmailPasswordAuthPanelBod
                     title={t('settingsAccount.nativePassword.forgotPassword')}
                     iconName="lifebuoy"
                     onPress={() => setView({ kind: 'forgot' })}
+                />
+            ) : null}
+            {!provisioning && props.onOpenEmailProvision ? (
+                <WelcomeActionCard
+                    testID="email-password-open-provision"
+                    presentation="link"
+                    title={t('settingsAccount.nativePassword.signUpWithEmail')}
+                    onPress={props.onOpenEmailProvision}
                 />
             ) : null}
             {backAction}

@@ -668,7 +668,7 @@ describe('WelcomeDecisionPanel', () => {
         });
     });
 
-    it('keeps QR entry on Welcome and offers the selected service methods in Login', async () => {
+    it('keeps the Home GitHub way on Login and opens the service selector for external providers', async () => {
         const options: Partial<AuthEntryOptions> = {
             authenticationActions: [...baseOptions.authenticationActions!, { method: { id: 'github', enabledActions: [{ id: 'provision', mode: 'keyed' }] }, action: { id: 'provision', mode: 'keyed' }, execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } }],
         };
@@ -684,27 +684,26 @@ describe('WelcomeDecisionPanel', () => {
         const { callbacks, screenPromise } = renderPanel(options, service, true, true);
         const screen = await screenPromise;
 
-        expect(screen.findByTestId('welcome-account-service-provider-github')?.props.accessibilityLabel)
+        expect(screen.findByTestId('welcome-provider-primary')?.props.accessibilityLabel)
             .toBe('Continue with GitHub');
-        expect(screen.findByTestId('welcome-account-service-provider-google')).toBeTruthy();
-        expect(screen.findByTestId('welcome-login-provider')).toBeTruthy();
+        expect(screen.findByTestId('welcome-account-service-provider-github')).toBeNull();
+        expect(screen.findByTestId('welcome-account-service-provider-google')).toBeNull();
         expect(screen.findByTestId('restore-new-account')).toBeTruthy();
         expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
 
-        await screen.pressByTestIdAsync('welcome-account-service-provider-google');
-
-        expect(callbacks.onContinueWithAccountServiceProvider).toHaveBeenCalledWith(expect.objectContaining({
-            method: expect.objectContaining({ id: 'google' }),
-            authority: expect.objectContaining({ purpose: 'account_service' }),
+        await screen.pressByTestIdAsync('welcome-provider-primary');
+        expect(callbacks.onContinueWithHomeAuthentication).toHaveBeenCalledWith(expect.objectContaining({
+            method: expect.objectContaining({ id: 'github' }),
+            authority: expect.objectContaining({ purpose: 'home' }),
         }));
+        await screen.pressByTestIdAsync('welcome-account-service-choose');
+        expect(callbacks.onChooseAccountService).toHaveBeenCalledTimes(1);
     });
 
     it('uses exact verified method presentation ahead of the local provider fallback', async () => {
         const { callbacks, screenPromise } = renderPanel(
-            {},
-            readyAccountServiceEntry(['github'], { oauthPresentationName: 'Company Identity' }),
-            true,
-            true,
+            { requestedHomeTarget: undefined },
+            chosenAccountServiceEntry(readyAccountServiceEntry(['github'], { oauthPresentationName: 'Company Identity' })),
         );
         const screen = await screenPromise;
         const action = screen.findByTestId('welcome-account-service-provider-github');
@@ -739,17 +738,13 @@ describe('WelcomeDecisionPanel', () => {
 
     it('offers the advertised key method for a key-only selected sign-in service', async () => {
         const { callbacks, screenPromise } = renderPanel(
-            {},
-            readyAccountServiceEntry([], { keyLoginAvailable: true }),
-            true,
-            true,
+            { requestedHomeTarget: undefined },
+            chosenAccountServiceEntry(readyAccountServiceEntry([], { keyLoginAvailable: true })),
         );
         const screen = await screenPromise;
 
         expect(screen.findByTestId('welcome-account-service-key')?.props.accessibilityLabel)
             .toBe('Use a key');
-        expect(screen.findByTestId('restore-new-account')).toBeTruthy();
-        expect(screen.findByTestId('welcome-use-different-home')).toBeTruthy();
 
         await screen.pressByTestIdAsync('welcome-account-service-key');
 

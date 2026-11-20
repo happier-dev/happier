@@ -113,6 +113,31 @@ describe('RestoreIndexEmbedded', () => {
         }
     });
 
+    it('hands a terminal URL from Approve to the same embedded link processor', async () => {
+        lastScanProps = null;
+        const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');
+        const terminalLink = 'happier://terminal?example';
+        let tree!: renderer.ReactTestRenderer;
+        try {
+            await act(async () => {
+                tree = renderer.create(
+                    <RestoreIndexEmbedded entryIntent="enter_home" initialView="qr" reverseTargetProfileId="home-b" onBack={vi.fn()} />,
+                );
+            });
+
+            await act(async () => lastQrProps.onOpenTerminalLink());
+            const input = tree.root.findAllByProps({ testID: 'restore-pairing-link-input' })
+                .find((node) => typeof node.props.onChangeText === 'function');
+            expect(input).toBeDefined();
+            await act(async () => input?.props.onChangeText(terminalLink));
+
+            expect(tree.root.findByType('scan')).toBeTruthy();
+            expect(lastScanProps?.initialPairingLink).toBe(terminalLink);
+        } finally {
+            act(() => tree?.unmount());
+        }
+    });
+
     it('hands a pasted link to the embedded scanner instead of routing away', async () => {
         lastScanProps = null;
         const { RestoreIndexEmbedded } = await import('./RestoreIndexEmbedded');

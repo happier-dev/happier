@@ -5,6 +5,7 @@ import type { VerifiedAccountServiceAuthority } from '@/auth/accountDirectory/ac
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 
 import { composeWelcomeEntryModel, type WelcomeAuthenticationMethod } from './composeWelcomeEntryModel';
+import { describeHomeAuthenticationAction } from '@/components/account/auth/homeAuthenticationActionPresentation';
 
 const target = { kind: 'saved_profile', profileRef: 'home-a' } as const;
 const method = (id: string, actionId: 'login' | 'provision', mode: 'keyed' | 'keyless'): WelcomeAuthenticationMethod => ({
@@ -43,7 +44,7 @@ describe('composeWelcomeEntryModel', () => {
             homeMethods: [method('key_challenge', 'login', 'keyed')],
             placement: { ...input.placement, hasHome: true, platform: 'computer' },
         });
-        expect(returning.restore).toEqual({ title: 'welcome.welcomeReturningLoginButton', subtitle: 'welcome.loginSubtitleKeyFirst', icon: 'key' });
+        expect(returning.restore).toEqual({ title: 'welcome.welcomeReturningLoginButton', subtitle: 'welcome.loginSubtitleKeyFirst', icon: 'qr-code' });
         expect(returning.showSelfHostingFooter).toBe(true);
     });
 
@@ -128,6 +129,33 @@ describe('composeWelcomeEntryModel', () => {
             ]);
         });
 
+        it('orders Approve ways by Home method and keeps service-only providers behind the service choice', () => {
+            const github = method('github', 'login', 'keyless');
+            const email = method('email', 'login', 'keyless');
+            const emailProvision = method('email', 'provision', 'keyless');
+            const keyProvision = method('key_challenge', 'provision', 'keyed');
+            const model = composeWelcomeEntryModel({
+                target: { kind: 'selected_home', home: target, label: 'Home A' },
+                homeMethods: [emailProvision, email, method('email', 'login', 'keyed'), github, keyProvision],
+                context: { kind: 'restore' },
+                allowedNavigation: { ...navigation, openTerminalLink: true },
+                serviceCatalogState: {
+                    kind: 'ready', authority: serviceAuthority, name: 'Acme',
+                    methods: [serviceMethod('github', 'login', 'keyless'), serviceMethod('google', 'login', 'keyless')],
+                },
+                userHistory: 'first_time',
+            });
+
+            expect(model.actions.map(({ action }) => action)).toEqual([
+                { kind: 'authenticate', request: github, labelRole: 'method' },
+                { kind: 'authenticate', request: email, labelRole: 'method', emailProvision },
+                { kind: 'choose_sign_in_service' },
+                { kind: 'open_terminal_link' },
+                { kind: 'authenticate', request: keyProvision, labelRole: 'new_account' },
+            ]);
+            expect(describeHomeAuthenticationAction({ execution: github.execution, providerName: 'GitHub' }).iconName).toBe('github-logo');
+        });
+
         it('leads with connecting to a Home when no Personal Home can be created', () => {
             const model = composeWelcomeEntryModel({
                 target: { kind: 'none' },
@@ -203,11 +231,11 @@ describe('composeWelcomeEntryModel', () => {
                 ['login:scan_or_paste_home', 'secondary'],
             ]);
             expect(entry.actions[0]?.action).toMatchObject({ request: { execution: { kind: 'generated_key' } } });
+            expect(entry.restore.icon).toBe('qr-code');
 
             expect(shape(compose({ ...input, context: { kind: 'restore' } }))).toEqual([
-                ['email:login', 'tertiary'],
                 ['github:login', 'tertiary'],
-                ['email:provision', 'tertiary'],
+                ['email:login', 'tertiary'],
                 ['choose_home', 'tertiary'],
                 ['choose_sign_in_service', 'tertiary'],
                 ['key_challenge:provision', 'tertiary'],

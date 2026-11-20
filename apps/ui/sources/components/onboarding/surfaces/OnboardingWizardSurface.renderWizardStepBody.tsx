@@ -132,7 +132,7 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onAccountDirectoryKeyResult: (result: AccountDirectoryKeyLoginOutcome) => Promise<void> | void;
     onAccountServiceReauthenticate: (input: AccountPostAuthInput) => Promise<void> | void;
     onChooseAccountService?: () => Promise<void> | void;
-    onContinueWithHomeAuthentication?: (request: WelcomeAuthenticationMethod) => Promise<void> | void;
+    onContinueWithHomeAuthentication?: (request: WelcomeAuthenticationMethod, emailProvision?: WelcomeAuthenticationMethod) => Promise<void> | void;
     onSelectAccountService: AccountServiceSelectionFormProps['onSelect'];
     onAccountServiceSelectionBack: () => void;
     onAccountDirectoryKeyBack: () => void;
@@ -436,11 +436,12 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                     reverseTargetProfileId={params.restoreTargetProfileId}
                     onNavigationLockChange={params.onRestoreNavigationLockChange}
                     onOpenLostAccess={params.onOpenLostAccess}
-                    renderAdditionalSignInWays={(onLeave, leading) => <WelcomeDecisionPanel
+                    renderAdditionalSignInWays={(onLeave, leading, onOpenTerminalLink) => <WelcomeDecisionPanel
                         showGreeting={false}
                         restoreWays
                         waysLeading={leading}
                         onLeaveRestore={onLeave}
+                        onOpenTerminalLink={onOpenTerminalLink}
                         authEntryOptions={params.authEntryOptions}
                         accountServiceEntry={params.accountServiceEntry}
                         onContinueWithAccountServiceProvider={params.onContinueWithAccountServiceProvider}

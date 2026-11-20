@@ -74,6 +74,8 @@ function describeAction(
         case 'choose_sign_in_service':
             return { ...frame, testID: 'welcome-account-service-choose', title: t('welcome.chooseSignInService'),
                 subtitle: t('welcome.signInServiceUrlPrompt'), iconName: 'globe' };
+        case 'open_terminal_link':
+            return { ...frame, testID: 'restore-open-terminal-link', title: t('terminal.connectTerminal'), iconName: 'terminal' };
         case 'use_service_as_home':
             return { ...frame, testID: 'welcome-use-service-as-home', title: t('homesJourneys.noComputerYet'),
                 subtitle: t('homesJourneys.serviceAsHomeTitle', { service: action.name }), iconName: 'house' };

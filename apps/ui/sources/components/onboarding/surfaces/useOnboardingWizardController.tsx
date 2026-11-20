@@ -108,6 +108,7 @@ export type OnboardingWizardSurfaceProps = Readonly<{
 
 export type WelcomeAuthenticationActionContext = Readonly<{
     signal: AbortSignal;
+    emailProvision?: WelcomeAuthenticationMethod;
     /** Opens the shared email/password controller as the next step of this workflow. */
     presentEmailPassword: (request: EmailPasswordAuthStepRequest) => void;
 }>;
@@ -339,6 +340,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     const runWelcomeAuthenticationAction = React.useCallback(async (
         request: WelcomeAuthenticationMethod,
         action: ((request: WelcomeAuthenticationMethod, context: WelcomeAuthenticationActionContext) => Promise<void> | void) | undefined,
+        emailProvision?: WelcomeAuthenticationMethod,
     ) => {
         if (!action || welcomeAuthenticationAbortControllerRef.current) return;
         const controller = new AbortController();
@@ -346,6 +348,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         try {
             await action(request, {
                 signal: controller.signal,
+                ...(emailProvision ? { emailProvision } : {}),
                 presentEmailPassword: (emailPassword) => {
                     setEmailPasswordRequest(emailPassword);
                     dispatch({ type: 'wizard/goToStep', stepId: 'auth_email_password' });
@@ -1088,14 +1091,14 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         dispatch({ type: 'wizard/goToStep', stepId: 'auth_secret_key' });
     }, [props.accountContinuationIntent]);
 
-    const handleContinueWithHomeAuthentication = React.useCallback(async (request: WelcomeAuthenticationMethod) => {
+    const handleContinueWithHomeAuthentication = React.useCallback(async (request: WelcomeAuthenticationMethod, emailProvision?: WelcomeAuthenticationMethod) => {
         if (request.authority.purpose !== 'home') return;
         if (request.execution.kind === 'key_entry') {
             setAccountDirectoryKeyRequest(request);
             dispatch({ type: 'wizard/goToStep', stepId: 'auth_secret_key' });
             return;
         }
-        await runWelcomeAuthenticationAction(request, props.onContinueWithHomeAuthentication);
+        await runWelcomeAuthenticationAction(request, props.onContinueWithHomeAuthentication, emailProvision);
     }, [dispatch, props.onContinueWithHomeAuthentication, runWelcomeAuthenticationAction]);
 
     const handleContinueWithAccountServiceProvider = React.useCallback(async (request: WelcomeAuthenticationMethod) => {

@@ -75,16 +75,14 @@ function renderPanel(overrides: Partial<AuthEntryOptions> = {}, restoreWays = fa
 }
 
 describe('WelcomeDecisionPanel native email/password entry', () => {
-    it('labels each native action by its own journey instead of an OAuth provider badge', async () => {
+    it('offers one native Email way with the exact admitted account-creation alternative', async () => {
         const { callbacks, screenPromise } = renderPanel({}, true);
         const screen = await screenPromise;
 
         // The login action must reach its own controller with sign-in wording.
         expect(screen.findByTestId('welcome-email-password-login')?.props.accessibilityLabel)
             .toBe('Email and password');
-        // The extra provision action must not repeat the generic "New here?" card.
-        expect(screen.findByTestId('welcome-email-password-provision')?.props.accessibilityLabel)
-            .toBe(t('settingsAccount.nativePassword.signUpWithEmail'));
+        expect(screen.findByTestId('welcome-email-password-provision')).toBeNull();
         expect(screen.findAllHostsByTestId('restore-new-account')).toHaveLength(1);
 
         await screen.pressByTestIdAsync('welcome-email-password-login');
@@ -92,6 +90,9 @@ describe('WelcomeDecisionPanel native email/password entry', () => {
             action: { id: 'login', mode: 'either' },
             execution: { kind: 'email_password', action: 'login', mode: 'either' },
             method: expect.objectContaining({ id: 'email_password' }),
+        }), expect.objectContaining({
+            action: { id: 'provision', mode: 'either' },
+            execution: { kind: 'email_password', action: 'provision', mode: 'either' },
         }));
     });
 

@@ -37,6 +37,7 @@ export type PairingLinkEntryFormProps = Readonly<{
      * without a second entry surface.
      */
     title?: string;
+    fieldLabel?: string;
     description?: string;
     placeholder?: string;
     submitLabel?: string;
@@ -116,6 +117,7 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
     const submit = React.useCallback(() => submitLink(link), [link, submitLink]);
 
     const description = props.description ?? t('connect.pairingLinkSecurityWarning');
+    const fieldLabel = props.fieldLabel ?? t('connect.pairingLinkFieldLabel');
     const embedded = props.embedded === true;
     const submitButton = (
         <RoundButton
@@ -131,7 +133,7 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
         <FieldTextInput
             ref={inputRef}
             testID="restore-pairing-link-input"
-            accessibilityLabel={t('connect.pairingLinkFieldLabel')}
+            accessibilityLabel={fieldLabel}
             accessibilityLabelledBy={LABEL_ID}
             accessibilityHint={description}
             placeholder={props.placeholder ?? t('connect.pairingLinkPlaceholder')}
@@ -163,7 +165,7 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
     if (embedded) {
         return (
             <StepFieldGroup testID="pairing-link-entry-form">
-                <StepFieldLabel nativeID={LABEL_ID}>{t('connect.pairingLinkFieldLabel')}</StepFieldLabel>
+                <StepFieldLabel nativeID={LABEL_ID}>{fieldLabel}</StepFieldLabel>
                 <View style={styles.fieldRow}>
                     {field}
                     {props.emptyAction && link.trim().length === 0 ? props.emptyAction : submitButton}
@@ -187,7 +189,7 @@ export const PairingLinkEntryForm = React.memo(function PairingLinkEntryForm(pro
             <Text style={styles.title}>{props.title ?? t('connect.enterUrlManually')}</Text>
             <Text style={styles.description}>{description}</Text>
             <StepFieldGroup>
-                <StepFieldLabel nativeID={LABEL_ID}>{t('connect.pairingLinkFieldLabel')}</StepFieldLabel>
+                <StepFieldLabel nativeID={LABEL_ID}>{fieldLabel}</StepFieldLabel>
                 {field}
                 {help}
             </StepFieldGroup>

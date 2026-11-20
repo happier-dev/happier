@@ -30,6 +30,7 @@ export type WelcomeDecisionPanelProps = Readonly<{
     /** The Approve step uses the same admitted catalog for its alternative ways in. */
     restoreWays?: boolean;
     onLeaveRestore?: () => void;
+    onOpenTerminalLink?: () => void;
     /** Marks Approve puts first on the ways row (Back on a computer, the recovery key). */
     waysLeading?: React.ReactNode;
     /**
@@ -41,7 +42,7 @@ export type WelcomeDecisionPanelProps = Readonly<{
     /** Key sign-in on the selected sign-in service. Never touches the focused Home. */
     onContinueWithAccountServiceKey?: (request: WelcomeAuthenticationMethod) => Promise<void> | void;
     onChooseAccountService?: () => Promise<void> | void;
-    onContinueWithHomeAuthentication?: (request: WelcomeAuthenticationMethod) => Promise<void> | void;
+    onContinueWithHomeAuthentication?: (request: WelcomeAuthenticationMethod, emailProvision?: WelcomeAuthenticationMethod) => Promise<void> | void;
     onOpenRestore: () => void;
     onOpenSecretKeyLogin?: () => void;
     onChangeRelay: () => void;
@@ -157,6 +158,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             // Camera support controls how the restore surface starts, not
             // whether it exists: every client can paste a Home link.
             scanOrPasteHome: !homePolicy.disabled,
+            openTerminalLink: props.onOpenTerminalLink != null,
             createPersonalHome: props.canCreatePersonalHome === true && props.onCreatePersonalHome != null,
         },
         serviceCatalogState,
@@ -191,13 +193,16 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             case 'choose_home': return model.chooseHomeDestination === 'picker'
                 ? props.onChangeRelay() : props.onConnectHomeDirectly?.();
             case 'choose_sign_in_service': return props.onChooseAccountService?.();
+            case 'open_terminal_link': return props.onOpenTerminalLink?.();
             case 'create_personal_home': return props.onCreatePersonalHome?.();
             case 'use_service_as_home':
                 presentUseServiceAsHomeSheet({ serviceName: action.name, serviceUrl: action.url });
                 return;
             case 'authenticate': {
                 const request = action.request;
-                if (request.authority.purpose === 'home') return props.onContinueWithHomeAuthentication?.(request);
+                if (request.authority.purpose === 'home') return 'emailProvision' in action && action.emailProvision
+                    ? props.onContinueWithHomeAuthentication?.(request, action.emailProvision)
+                    : props.onContinueWithHomeAuthentication?.(request);
                 return request.execution.kind === 'oauth'
                     ? props.onContinueWithAccountServiceProvider?.(request)
                     : props.onContinueWithAccountServiceKey?.(request);
