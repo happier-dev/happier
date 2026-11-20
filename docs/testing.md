@@ -737,7 +737,9 @@ focused runs are served in arrival order and later focused runs cannot starve it
 exact-worker package typechecks and the controller declaration comparison as
 `gate-entry-loads`, `gate-package-typecheck` and
 `gate-declaration-comparison`. The broker learns each class and selected-project
-identity in the ordinary queue. Syntax, eager cycles, manifests and ordinary
+identity in the ordinary queue. A packet that has passed retains its original
+arrival for post-loss requests in all three classes. The broker uses that arrival
+in its existing queue order. Syntax, eager cycles, manifests and ordinary
 CAS need no admission slot. Report-mode entry loads queue under the same owner.
 After two lost attempts, the final replay reserves its entry and declaration
 admission before taking the commit lock and retains the grants through the

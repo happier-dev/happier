@@ -100,6 +100,7 @@ if [ '{kind}' = signal ]; then
  exec sleep 120
 fi
 l=unlocked; flock -n "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" true || l=locked
+if [ '{kind}' = requeue ]; then echo "${{HAPPIER_COMMIT_GATE_ARRIVED_AT:-}}" >> '{d}/arrivals'; fi
 if [[ '{kind}' != cas-loss && '{kind}' != cas-final-entry && '{kind}' != cas-final-declarations && '{kind}' != declaration-admission-refused && '{kind}' != declaration-admission-stall && '{kind}' != entry-admission-refused && '{kind}' != cas-churn && '{kind}' != cas-stale && '{kind}' != cas-worker-down && '{kind}' != incomplete ]] && [ ! -e '{d}/moved' ]; then
  touch '{d}/moved'
  flock -x "$(git rev-parse --git-common-dir)/p03-commit-partial.lock" '{REAL_GIT}' update-ref refs/heads/main '{b}' '{base}' || exit 99
@@ -245,6 +246,10 @@ exec "$@"
             'requeue': fallback + [cheap],
         }
         assert gates == [pk + '||unlocked'] + full.get(kind, [cheap]), gates
+        if kind == 'requeue':
+            arrivals = (d/'arrivals').read_text().splitlines()
+            assert arrivals[0] == '' and arrivals[1].isdigit(), arrivals
+            assert arrivals[1:] == [arrivals[1]] * (len(gates) - 1), arrivals
         assert not (d/'fasts').exists(), 'unnecessary fast gate'
         if kind in ('manifest', 'cheapmiss', 'requeue'):
             assert 'resumed the frozen packet' in run.stdout, run.stdout

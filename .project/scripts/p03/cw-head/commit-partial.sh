@@ -5,6 +5,16 @@ set -euo pipefail
 # OVERBUILT-HUNT-5's pre-fix copy cycled 2 h 38 min through 27 passing gates; the current one landed in 6 min).
 SELF=$(readlink -f "$0"); SELF_ID=$(stat -c '%d:%i' "$SELF" 2>/dev/null || true); ARGS=("$@")
 msg=$1; list=$2; shift 2; patches=("$@")
+# Keep the packet's first arrival across wrapper re-exec. A pre-upgrade Linux
+# writer already carrying a frozen packet retains the original process start.
+if [ -z "${P03_CP_ARRIVED_AT:-}" ]; then
+  if [ -n "${P03_CP_FROZEN:-}" ] && started=$(stat -c '%Y' "/proc/$$" 2>/dev/null); then
+    P03_CP_ARRIVED_AT=$((started * 1000))
+  else
+    P03_CP_ARRIVED_AT=$(node -p 'Date.now()')
+  fi
+fi
+export P03_CP_ARRIVED_AT
 # Context-free patches cannot safely be replayed onto moving HEAD.
 case " ${APPLY_FLAGS:-} " in *--unidiff-zero*) echo "commit-partial: context patches (-U3) required; --unidiff-zero is forbidden"; exit 1;; esac
 files=(); [ "$list" = "-" ] || mapfile -t files < "$list"
@@ -208,6 +218,8 @@ check_gate() {
   }
 }
 [ -n "$resumed" ] || check_gate "$head"
+# Only a passed packet carries its seniority into new requests.
+export HAPPIER_COMMIT_GATE_ARRIVED_AT=$P03_CP_ARRIVED_AT
 [ -z "${DRY:-}" ] || { echo "DRY candidate $commit"; exit 0; }
 # HEAD moved after this packet's gate (P03-GATE-FIX 2026-11-17). The packet is replayed exactly; then only what
 # the landed commits can change for it is re-verified, against the real new HEAD (whose bundle/scan results are

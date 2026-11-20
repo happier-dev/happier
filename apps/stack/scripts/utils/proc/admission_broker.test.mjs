@@ -233,6 +233,32 @@ test('real clients waiting across a broker succession re-register with their arr
   assert.deepEqual(order, ['older', 'younger']);
 });
 
+test('a replayed commit retains its original arrival in each gate class', { ...linux, timeout: 6000 }, async t => {
+  for (const className of ['gate-entry-loads', 'gate-package-typecheck', 'gate-declaration-comparison']) {
+    await t.test(className, async t => {
+      let availableMemoryKiB = 100;
+      const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }) });
+      const order = [];
+      const arrivedAt = String(Date.now() - 1);
+      const signal = AbortSignal.timeout(4000);
+      const submit = (name, env = {}) => runAdmittedTask({ root, className, floorKiB: 60, repoDir: root, env, signal },
+        async () => { order.push(name); return 0; });
+      const packetEnv = { HAPPIER_COMMIT_GATE_ARRIVED_AT: arrivedAt };
+      await submit('initial pass');
+      availableMemoryKiB = 0;
+      await requestAdmissionSample(root);
+      const newcomer = submit('newcomer');
+      while (broker.status().waitingCount !== 1 && !signal.aborted) await new Promise(resolve => setImmediate(resolve));
+      const replay = submit('post-loss recheck', packetEnv);
+      while (broker.status().waitingCount !== 2 && !signal.aborted) await new Promise(resolve => setImmediate(resolve));
+      availableMemoryKiB = 70;
+      await requestAdmissionSample(root);
+      await Promise.all([newcomer, replay]);
+      assert.deepEqual(order, ['initial pass', 'post-loss recheck', 'newcomer']);
+    });
+  }
+});
+
 test('an overdue head keeps its held memory across a broker succession (nl1/controller 2026-11-18)', linux, async t => {
   // The successor restarted the head's 18 GiB (nl1) and 8 GiB (controller) holds at 0 and
   // admitted work ahead of it. The waiting client re-registers with the hold it was told.

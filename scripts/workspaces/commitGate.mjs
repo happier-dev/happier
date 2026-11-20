@@ -230,6 +230,7 @@ export async function withCommitLock({ repo, ref = 'HEAD' }, run) {
 export async function finalizeGatedCommit({ repo, ref, label, packet, replay, createCommit }) {
   const git = gitIn(repo);
   const headAt = () => git(['rev-parse', 'HEAD']).trim();
+  const recheckEnv = { ...process.env, HAPPIER_COMMIT_GATE_ARRIVED_AT: String(Date.now()) };
   let accepted;
   let commit;
   let losses = 0;
@@ -242,7 +243,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
   const entryBlocking = commitTreeGateMode() === 'block';
   const check = async (cheapOnly, compareAdmittedEntryLoads) => {
     const gate = await runCommitGate({ repo, base: packet.base, tree: packet.tree, prior: accepted?.tree,
-      priorBase: accepted?.base, cheapOnly, compareAdmittedEntryLoads, label });
+      priorBase: accepted?.base, cheapOnly, compareAdmittedEntryLoads, label, env: accepted ? recheckEnv : process.env });
     for (const note of gate.notes) console.error(`commit gate: ${note}`);
     if (gate.verdict === 'pass') {
       commit = createCommit(packet);
@@ -294,7 +295,7 @@ export async function finalizeGatedCommit({ repo, ref, label, packet, replay, cr
     let result;
     try {
       result = finalEntryPhase && headAt() !== packet.base
-        ? await withAdmittedCommitEntryPhase({ repo, base: packet.base, tree: packet.tree },
+        ? await withAdmittedCommitEntryPhase({ repo, base: packet.base, tree: packet.tree, env: recheckEnv },
           compare => locked(compare, true))
         : await locked();
     } catch (error) {

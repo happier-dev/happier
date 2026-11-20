@@ -1010,6 +1010,7 @@ async function runGitTypecheckWorker({ ssh, remoteRepo, controllerTree, entry, a
   const target = { ...ssh, ssh: ssh.alias, platform: 'posix' };
   const execution = `commit-typecheck-${randomUUID()}`;
   const pidFile = `${ssh.cliHomeDir}/remote-exec/${execution}.pid`;
+  const gateArrival = env.HAPPIER_COMMIT_GATE_ARRIVED_AT;
   const command = wrapRemoteScript(target, [
     'set -euo pipefail',
     `repository="$HOME/"${posixQuote(remoteRepo)}`,
@@ -1018,6 +1019,7 @@ async function runGitTypecheckWorker({ ssh, remoteRepo, controllerTree, entry, a
     `git --git-dir "$repository" archive ${posixQuote(controllerTree)} -- ${GIT_WORKER_TOOL_PATHS.map(posixQuote).join(' ')} | tar -xf - -C "$runner"`,
     'cd "$runner"',
     'export HAPPIER_DEV_TARGET_EXECUTION=1',
+    ...(gateArrival ? [`export HAPPIER_COMMIT_GATE_ARRIVED_AT=${posixQuote(gateArrival)}`] : []),
     `export HAPPIER_STACK_PM_CACHE_BASE_DIR=${posixQuote(`${ssh.cliHomeDir}/cache`)}`,
     `HAPPIER_REMOTE_EXEC_LIFELINE=1 bash apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh run ${[pidFile, execution].map(posixQuote).join(' ')} node "$runner/"${posixQuote(entry)} ${args.map(posixQuote).join(' ')}`,
   ].join('\n'));

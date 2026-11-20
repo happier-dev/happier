@@ -219,12 +219,17 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     let admittedDuration;
     const judgment = await admissionJudgment({ repoDir, component, commandArgs, selectedFiles, treeIds, projects,
       env, signal: cancellation.signal });
+    const now = Date.now();
+    // Gate writers provide the original arrival only after a passed packet replays.
+    const gateArrival = className?.startsWith('gate-') ? Number(env.HAPPIER_COMMIT_GATE_ARRIVED_AT) : NaN;
+    const arrivedAt = Number.isSafeInteger(gateArrival) && gateArrival > 0
+      ? Math.min(now, gateArrival) : now;
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost,
       requestedCpuCores: className === SOURCE_WEB_EXPORT_ADMISSION_CLASS ? 0
         : requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
-      pid: process.pid, arrivedAt: Date.now(),
+      pid: process.pid, arrivedAt,
       repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
       // The routed run this preparation step belongs to; the broker ranks a preparation class by it.
