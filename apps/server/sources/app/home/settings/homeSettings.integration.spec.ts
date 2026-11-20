@@ -49,11 +49,23 @@ afterEach(async () => {
 describe("Home settings owner", () => {
     it("publishes an owner-set Home name to other devices without borrowing the Account Service name", async () => {
         const owner = await createAccount("owner");
+        const viewer = await createAccount("admin");
+        const readViewerSeq = async () => (await db.account.findUniqueOrThrow({
+            where: { id: viewer }, select: { seq: true },
+        })).seq;
+        const before = await readViewerSeq();
+        const values = { HAPPIER_HOME_DISPLAY_NAME: "Studio" };
         const applied = await setHomeSettings({
             actorAccountId: owner,
-            write: { expectedRevision: 0, values: { HAPPIER_HOME_DISPLAY_NAME: "Studio" } },
+            write: { expectedRevision: 0, values },
         });
-        expect(applied.status).toBe("applied");
+        expect(applied).toMatchObject({ status: "applied", projection: { revision: 1 } });
+        expect(await readViewerSeq() - before).toBe(1);
+        for (let i = 0; i < 3; i++) {
+            await expect(setHomeSettings({ actorAccountId: owner, write: { expectedRevision: 1, values } }))
+                .resolves.toMatchObject({ status: "applied", projection: { revision: 1 } });
+        }
+        expect(await readViewerSeq() - before).toBe(1);
         const features = resolveFeaturesFromEnv(await readHomeConfigEnv({}));
         expect(features.homePresentation).toEqual({ v: 1, displayName: "Studio" });
         expect(features.accountServicePresentation).toBeUndefined();

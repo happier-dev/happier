@@ -6,7 +6,7 @@ import { type ServerConfigEntry, type ServerConfigRegistry, type ServerConfigVal
 import { type ServerConfigEnv } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
 
 import { resolveFeatureDecisionsFromEnv } from "@/app/features/registry";
-import { beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
+import { acquireAccountChangePublicationLocksInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 import { recordHomeAdministrationEventInTx, type HomeAdministrationActor } from "@/app/home/audit/homeAdministrationEvents";
 import { homeAuthenticationPolicyConfigValues } from "@/app/home/governance/homeAuthenticationPolicyEnv";
 import { findRetentionPolicyEnvProblem } from "@/app/retention/config/readRetentionPolicyFromEnv";
@@ -429,7 +429,11 @@ export async function setHomeSettingsInTx(
         if (currentAuthorization.status === "rejected") throw new HomeSettingsMutationAbortError("forbidden");
     });
 
-    if (changes.length === 0) return { status: "applied", projection: await projectRecordInTx(tx, current, registry) };
+    if (changes.length === 0) {
+        // The final owner check still needs the actor's publication lock when there is no wake.
+        await acquireAccountChangePublicationLocksInTx(tx, [input.actorAccountId], { intent: "serializing" });
+        return { status: "applied", projection: await projectRecordInTx(tx, current, registry) };
+    }
 
     // The retention reader is strict (a deleting mode needs its days): refuse a write that would
     // leave the Home's retention policy unreadable, rather than break every sweep and `/v1/features`.
@@ -467,7 +471,9 @@ export async function setHomeSettingsInTx(
             detail: { action: discard ? "home.settings.discard" : "home.settings.set", summary: change },
         });
     }
-    return { status: "applied", projection: await projectRecordInTx(tx, await readHomeSettingsInTx(tx), registry) };
+    const projection = await projectRecordInTx(tx, await readHomeSettingsInTx(tx), registry);
+    await publishHomeGovernanceChangedInTx(tx);
+    return { status: "applied", projection };
 }
 
 /**
@@ -480,11 +486,7 @@ export async function setHomeSettings(
 ): Promise<HomeSettingsSetResult> {
     const attempt = async (): Promise<HomeSettingsSetResult> => {
         try {
-            return await inTx(async (tx) => {
-                const result = await setHomeSettingsInTx(tx, input);
-                if (result.status === "applied") await publishHomeGovernanceChangedInTx(tx);
-                return result;
-            }, { isolationLevel: "ReadCommitted" });
+            return await inTx((tx) => setHomeSettingsInTx(tx, input), { isolationLevel: "ReadCommitted" });
         } catch (error) {
             if (error instanceof HomeSettingsMutationAbortError && error.status === "forbidden") return { status: "forbidden" };
             throw error;
@@ -498,7 +500,7 @@ export async function setHomeSettings(
             return await attempt();
         }
     })();
-    // This instance wrote the row, so it updates its in-process diagnostics flag now (see authDiagnosticsFlag).
+    // Refresh the in-process diagnostics flag after a successful settings request.
     if (result.status === "applied") await refreshAuthDiagnosticsLogsFlag();
     return result;
 }

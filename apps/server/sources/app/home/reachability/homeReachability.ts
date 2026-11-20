@@ -4,7 +4,6 @@ import { type HomeIrohModeV1, type HomeReachabilityV1 } from '@happier-dev/proto
 import { getRelayAccessProviderDescriptor } from "@happier-dev/cli-common/relayAccess";
 
 import { readHomeConnectionDescriptor } from "@/app/features/homeConnectionDescriptorPublication";
-import { publishHomeGovernanceChangedInTx } from "@/app/home/governance/governanceChanges";
 import { authorizeHomeGovernanceMutationInTx } from "@/app/home/governance/homeCapabilities";
 import { readHomeConfigValueSource } from "@/app/home/settings/homeConfigProvenance";
 import {
@@ -151,7 +150,6 @@ export async function setHomeIrohMode(params: Readonly<{
         });
         switch (result.status) {
             case "applied":
-                await publishHomeGovernanceChangedInTx(tx);
                 return { status: "applied" } as const;
             case "forbidden":
                 return { status: "forbidden" } as const;
