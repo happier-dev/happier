@@ -154,6 +154,11 @@ export type HappierSurfaceStateProps = Readonly<{
    * choice). Drawn through `bindings.renderRoundAction`; a line that offers Details keeps its words.
    */
   lineActionGlyph?: 'retry' | 'forward';
+  /**
+   * `after`: the line's way forward follows its sentence ("3 viewed files hidden · Show"), on the same line while both
+   * fit and beneath the words only when the sentence needs the row. Default: the recovery on the line's trailing edge.
+   */
+  lineActionPlacement?: 'after';
   /** The glyph for this size step (a spinner while loading), already themed by the adapter. */
   glyph?: ReactNode;
   /** A line that replaces a body sits in the middle of the room it holds. */
@@ -648,7 +653,7 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
           action={lineActions}
           // One line (OWNER-UI-1115B A2): the recoveries stay beside the sentence where they fit and wrap under it,
           // on its words, where they don't. A failure that carries its code is the small block (owner 11-08).
-          actionPlacement={details ? 'below' : roundAction ? 'end' : 'trailing'}
+          actionPlacement={details ? 'below' : roundAction ? 'end' : props.lineActionPlacement ?? 'trailing'}
           textLineHeightPx={textMetrics.lineHeight}
           density={props.lineDensity}
           below={details && detailsOpen ? bindings.renderDetailsCode?.(details, 'start') ?? (

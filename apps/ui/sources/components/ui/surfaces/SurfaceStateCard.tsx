@@ -151,9 +151,10 @@ export function SurfaceStateCard(props: Readonly<{
     lineDensity?: 'menu' | 'catalog';
     /**
      * `notice`: a door-width notice in a centred column (first-open welcome): the title over the reason on its own quiet
-     * line, the action as a round icon button flush on the line's end (`actionGlyph`). Line size only.
+     * line, the action as a round icon button flush on the line's end (`actionGlyph`). `after`: the action follows its
+     * sentence on one line while both fit ("3 viewed files hidden · Show"). Line size only.
      */
-    lineLayout?: 'sentence' | 'notice';
+    lineLayout?: 'sentence' | 'notice' | 'after';
     /** A notice's round action: `retry` for Try again, `forward` for the alternative choice. */
     actionGlyph?: 'retry' | 'forward';
     /** Already-translated title: what is here, or what failed, in the person's words. */
@@ -281,6 +282,7 @@ export function SurfaceStateCard(props: Readonly<{
                     : <>{props.titleContent ?? props.title}{props.reason ? (props.reasonContent != null ? <>{' · '}{props.reasonContent}</> : ` · ${props.reason}`) : null}</>}
                 lineSubtitle={props.lineLayout === 'notice' ? props.reasonContent ?? props.reason : undefined}
                 lineActionGlyph={props.lineLayout === 'notice' ? props.actionGlyph : undefined}
+                lineActionPlacement={props.lineLayout === 'after' ? 'after' : undefined}
             />
         );
         // Among a bare page section's rows the line stands on the rows' own text edge (`BareSectionLineEdge`).

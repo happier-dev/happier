@@ -627,7 +627,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     // Hide viewed says what it hid, with Show, so a list it emptied never reads as "no changes".
     const onShowViewed = props.onShowViewed;
     const hiddenViewedLine = React.useMemo(() => hiddenViewedCount > 0 ? <SurfaceStateCard testID="scm-review-viewed-hidden"
-        kind="empty" size="line" iconName="eye-slash" title={t('hunkReview.viewedHidden', { count: hiddenViewedCount })}
+        kind="empty" size="line" lineLayout="after" iconName="eye-slash" title={t('hunkReview.viewedHidden', { count: hiddenViewedCount })}
         action={onShowViewed ? { label: t('hunkReview.viewedShow'), onPress: onShowViewed, testID: 'scm-review-viewed-show' } : undefined} />
         : null, [hiddenViewedCount, onShowViewed]);
 
