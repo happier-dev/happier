@@ -2376,8 +2376,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
      * The release-less arm of the intent owner. A daemon-selected plugin
      * (bundled, trusted development, drop-in) has no portable release, so its
      * host claims the Account intent with its own admitted manifest. The server
-     * rebuilds every Collection contract and digest from that manifest and
-     * stores each authenticated Machine/installation's declaration separately.
+     * digests that manifest at ingestion and stores the body by digest. Later
+     * claims can resolve that digest in the Account without admitting the body
+     * again. Each authenticated Machine/installation retains its own reference.
      * Collections retain their Account-scoped schema merge; declarations have
      * no competing version heuristic. An equal claim is an idempotent rejoin,
      * same-Machine development edits replace its entry, and a present-user
@@ -2397,6 +2398,9 @@ export function createPluginAvailabilityOperations(options: Readonly<{
         const carriesBody = 'manifest' in input;
         if (carriesBody) manifestClaimsInFlight += 1;
         try {
+            // The admitted request is stable across database attempts. Compute its
+            // digest here so a rollback never repeats the manifest walk.
+            const ingested = carriesBody ? createReleaseLessDeclarationV1(input.manifest) : null;
             return await inTx(async (tx) => {
                 // Reuse the list reader's body-free identities for rejoins. The
                 // canonical merge decides equality; its projected store is never
@@ -2413,13 +2417,14 @@ export function createPluginAvailabilityOperations(options: Readonly<{
                 // Reuse the same declaration/Collection admission below; it is not
                 // an authorization grant and never reads another Account's row.
                 // Its identity and accountCollections are read without the body.
-                const held = 'manifest' in input ? null
+                const held = carriesBody ? null
                     : findReleaseLessDeclarationByDigest(current?.releaseLessDeclaration, pluginId, input.manifestDigestSha256);
-                if (!('manifest' in input) && !held) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
-                let claimedDeclaration = 'manifest' in input ? createReleaseLessDeclarationV1(input.manifest) : held!.declaration;
+                const initialDeclaration = ingested ?? held?.declaration;
+                if (!initialDeclaration) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
+                let claimedDeclaration = initialDeclaration;
                 const claimedDigest = claimedDeclaration.manifestDigestSha256;
                 const readClaimedBody = async (stored: StoredIntentRow | null) => {
-                    if ('manifest' in input) return claimedDeclaration;
+                    if (ingested) return ingested;
                     const body = findReleaseLessDeclarationByDigest(stored?.releaseLessDeclaration, pluginId, claimedDigest);
                     if (!body) throw new PluginAvailabilityOperationError('plugin_declaration_not_found');
                     // A changed digest-only claim reuses the held row. Only preparation consumes its full manifest.

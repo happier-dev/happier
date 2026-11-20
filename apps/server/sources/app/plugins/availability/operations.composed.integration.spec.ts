@@ -8,6 +8,7 @@ import { CORPUS_ACCOUNT_COLLECTIONS } from "../../../../../../packages/plugins/t
 import historicalUiGraphPublication from "./historicalUiGraphPublication.fixture.json";
 import historicalTriageCollections from "./historicalTriageCollections.fixture.json";
 import { createReleaseLessDeclarationV1, readStoredPluginManifestV2 } from "./currentDeclaration";
+import * as manifestDigest from "@happier-dev/protocol/plugins/manifest/digest";
 
 import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER,
@@ -41,7 +42,7 @@ import {
 import { createPluginEventAutomationSetupResultV1JsonSchema } from "@happier-dev/protocol/automations/event-setup-result";
 import { db } from "@/storage/db";
 import * as prismaStorage from "@/storage/prisma";
-import { inTx } from "@/storage/inTx";
+import { inTx, TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { withAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
@@ -2391,13 +2392,39 @@ describe("plugin Availability operations", () => {
                 const missing = await claim(identity);
                 expect(missing.statusCode, missing.body).toBe(404);
                 expect(missing.json()).toEqual({ error: 'plugin_declaration_not_found' });
-                const admitted = await claim({ manifest: full });
-                expect(admitted.statusCode, admitted.body).toBe(200);
-                const revision = admitted.json().intent.revision;
-                for (let restart = 0; restart < 3; restart++) {
-                    const response = await claim(identity);
-                    expect(response.statusCode, response.body).toBe(200);
-                    expect(response.json().intent.revision).toBe(revision);
+                const digestManifest = vi.spyOn(manifestDigest, 'computePluginManifestDigestV2');
+                const validateManifest = vi.spyOn(PluginManifestV2Schema._zod, 'run');
+                const originalTransaction = db.$transaction;
+                let replayRequested = false;
+                // Simulate a rolled-back first write at the database adapter.
+                // The real transaction owner and claim admission run both attempts.
+                db.$transaction = new Proxy(originalTransaction, { apply(target, receiver, args: unknown[]) {
+                    const callback = args[0];
+                    if (replayRequested || typeof callback !== 'function') return Reflect.apply(target, receiver, args);
+                    return Reflect.apply(target, receiver, [async (tx: Tx) => {
+                        await callback(tx);
+                        replayRequested = true;
+                        throw new TransactionReplayRequiredError('plugin-intent-changed');
+                    }, args[1]]);
+                } });
+                try {
+                    const admitted = await claim({ manifest: full });
+                    expect(admitted.statusCode, admitted.body).toBe(200);
+                    expect(replayRequested).toBe(true);
+                    expect(validateManifest).toHaveBeenCalledTimes(1);
+                    expect(digestManifest).toHaveBeenCalledTimes(1);
+                    const revision = admitted.json().intent.revision;
+                    for (let restart = 0; restart < 3; restart++) {
+                        const response = await claim(identity);
+                        expect(response.statusCode, response.body).toBe(200);
+                        expect(response.json().intent.revision).toBe(revision);
+                    }
+                    expect(validateManifest).toHaveBeenCalledTimes(1);
+                    expect(digestManifest).toHaveBeenCalledTimes(1);
+                } finally {
+                    db.$transaction = originalTransaction;
+                    validateManifest.mockRestore();
+                    digestManifest.mockRestore();
                 }
                 const changed = PluginManifestV2Schema.parse({ ...full, displayName: 'Same-version declaration edit' });
                 const changedIdentity = { pluginId: PLUGIN_ID, manifestDigestSha256: createReleaseLessDeclarationV1(changed).manifestDigestSha256 };
