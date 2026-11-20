@@ -61,6 +61,17 @@ the renderer omits redundant `meta nfproto` selectors that nft removes from
 its effective listing. The native owner's exact foreign-table refusal remains
 in place.
 
+Network review can widen a saved SSH source range. The first native stage
+keeps the observed SSH rules. The final stage replaces the source range on
+the reviewed external listeners for the selected port. Other listeners keep
+their observed rules.
+
+Setup and Network read the Firewall footprint through the same protected
+check. Setup records first absence when the check confirms all owned state
+is absent. An item with that origin can remove the exact rules it installed,
+including the effective table and boot service. A conflicting footprint or
+unknown first origin leaves removal unavailable.
+
 Domain setup requires a saved Network posture before it starts a firewall
 transition. A clean Machine with no posture also needs its first reviewed
 posture; a previous failed SSH close is not required to produce this refusal.

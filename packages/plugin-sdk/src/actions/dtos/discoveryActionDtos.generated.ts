@@ -2053,6 +2053,7 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
+                    operation?: 'remove' | undefined;
                     review?: undefined | {
                         title: string | {
                             key: string;
@@ -4021,6 +4022,7 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username' | 'invocation.credentialFile' | 'os.automaticUpdatesPackage' | 'os.automaticUpdatesTimer' | 'os.packageManager' | 'os.securityOrigins';
                         }>;
                     };
+                    operation?: 'remove' | undefined;
                     review?: undefined | {
                         title: string | {
                             key: string;

@@ -16,6 +16,8 @@ import { readMachineSetupStepImpact } from './machineSetupImpacts';
 import { resolveMachineSetupRecipeProgramV1 } from './prepareMachineSetupPreparation';
 import { prepareMachineRecipeProgramV1 } from './prepareMachineRecipeProgram';
 import { prepareMachineSetupRemovalsV1 } from './prepareMachineSetupRemovals';
+import { readProtectedMachineFirewall } from './readProtectedMachineFirewall';
+import type { MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import { readMachineSetupSessionRefreshRequirement, type DaemonGroupRefreshNative } from '@/daemon/service/userManagerGroups';
 
 // Native planning consumes locally opened copies. The Action owner projects
@@ -43,6 +45,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
   executionSources?: readonly MachineSetupV1[];
   readRecipes?: () => Promise<readonly PluginProjectedMachineRecipeEntryV1[] | undefined>;
   readAdminAccessObservation?: () => Promise<MachineAdminAccessObservationV1>;
+  firewallObservation?: Readonly<{ requestId: string; elevation: () => MachineElevationDependencies }>;
   signal?: AbortSignal;
   runNative?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult>;
   groupRefreshNative?: DaemonGroupRefreshNative;
@@ -109,8 +112,21 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     return { 'daemon.primaryGroup': observation?.daemonPrimaryGroup ?? null,
       'daemon.username': observation?.daemonUsername ?? null };
   })();
-  const backend = createMachineSetupNativeBackend({ ...(params.signal ? { signal: params.signal } : {}),
+  const nativeBackend = createMachineSetupNativeBackend({ ...(params.signal ? { signal: params.signal } : {}),
     ...(params.runNative ? { run: params.runNative } : {}) });
+  const firewall = params.firewallObservation;
+  const backend: typeof nativeBackend = { ...nativeBackend, async observe(step) {
+    if (step.kind !== 'firewall') return nativeBackend.observe(step);
+    if (!firewall) return { stepId: step.id, status: 'unavailable', reason: 'needs_admin_to_check', facts: {} };
+    const result = await readProtectedMachineFirewall({ machineId: input.machineId, requestId: firewall.requestId,
+      signal: params.signal, basis: { kind: 'setup', machineId: input.machineId, desiredRevision: current.policy.revision },
+      step, allowPrompt: false }, firewall.elevation());
+    params.signal?.throwIfAborted();
+    if (result.outcome === 'checked' && result.plan.nativeFacts[0]?.stepId === step.id) return result.plan.nativeFacts[0];
+    const needsAdministrator = result.outcome === 'not_applied'
+      && (result.reasonCode === 'not_preauthorized' || result.reasonCode === 'mode_none');
+    return { stepId: step.id, status: 'unavailable', reason: needsAdministrator ? 'needs_admin_to_check' : 'required_fact_unavailable', facts: {} };
+  } };
   let recipes: readonly PluginProjectedMachineRecipeEntryV1[] | undefined;
   if (selected.length || change?.detached.some(entry => entry.initialPresence === 'absent'
     && (entry.selected || !isMachineSetupRecipeExcludedV1(entry.item.selection.ref, exclusions)))) {

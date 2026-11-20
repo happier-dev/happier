@@ -142,9 +142,7 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
       const selected = providers.resolve(ingress.selection, 'domainRoute');
       if (!selected.ok) return { ...selected, effectAttempted: false };
     }
-    if (state.posture && change.posture.management.publicSsh.kind === 'open'
-        && !sameStrictJsonValue(change.posture.management.publicSsh, state.posture.management.publicSsh)
-      || state.posture && !sameStrictJsonValue(change.posture.management.providers, state.posture.management.providers))
+    if (state.posture && !sameStrictJsonValue(change.posture.management.providers, state.posture.management.providers))
       return refuse('machine_reachability_closure_unsupported');
     if (state.posture ? change.posture.revision !== state.posture.revision + 1
       && !sameStrictJsonValue(change.posture, state.posture) : change.posture.revision !== 0) return refuse('plan_changed');
@@ -216,10 +214,12 @@ async function prepare(input: MachineReachabilityInspectInputV1, deps: MachineRe
       }
       if (items.length) {
         const credentialObservation = credentialPreparation?.observation;
+        const requestId = deps.context.actionRequestId;
         const planned = await prepareMachineSetupPlanV1({ input: { homeId: deps.target.serverId, machineId: deps.target.machineId,
           mode: 'effects', sources: [{ kind: 'direct',
             setup: { items } }] },
           current: desired, signal: deps.context.signal, ...(deps.runNative ? { runNative: deps.runNative } : {}),
+          ...(requestId ? { firewallObservation: { requestId, elevation: () => ({ ...deps.elevation, verifyCurrent: deps.isCurrent }) } } : {}),
           ...(credentialObservation ? { readAdminAccessObservation: async () => credentialObservation } : {}),
           readRecipes: async () => [...(inlineEntry ? [inlineEntry] : []), ...Object.values(buildPluginProjectionFamilyV2({ registry: deps.runtimeRegistry.contributes,
             generation: deps.runtimeRegistry.generation }, machineRecipesProjectionFamily).entriesById)],

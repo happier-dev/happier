@@ -549,6 +549,7 @@ export type MachineReachabilityActionInputById = {
                             protocol: 'tcp' | 'udp';
                             containerPort?: number | undefined;
                         })[] | undefined;
+                        operation?: 'remove' | undefined;
                         caddyObservation?: undefined | {
                             privateNetworks: {
                                 provider: {
@@ -2273,6 +2274,7 @@ export type MachineReachabilityActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            operation?: 'remove' | undefined;
                             caddyObservation?: undefined | {
                                 privateNetworks: {
                                     provider: {

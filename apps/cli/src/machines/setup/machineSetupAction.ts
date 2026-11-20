@@ -148,7 +148,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
     const withAdministratorPrerequisite = async (plan: MachineSetupPlanResultV1 | ActionExecuteFailure): Promise<MachineSetupPlanResultV1 | ActionExecuteFailure> => {
       if ('errorCode' in plan || plan.review?.administratorRequired !== true) return plan;
       // The same captured policy consumed by elevation owns None. Ask remains
-      // usable with attendance; a review never prompts or probes sudo itself.
+      // usable with attendance. Setup observes protected firewall facts without prompting.
       const access = params.apiMachine.captureMachineAdminAccess?.();
       if (!access || (await access.readPolicy()).mode !== 'none') return plan;
       return { ...plan, review: { ...plan.review, administratorUnavailable: { reasonCode: 'mode_none' } } };
@@ -279,12 +279,20 @@ export function createMachineSetupPlanAction(params: Readonly<{
     }
     let recipeLease: PluginRuntimeRegistryLease | undefined;
     let result: Awaited<ReturnType<typeof prepareMachineSetupPlanV1>>;
+    const administrator = params.apiMachine.captureMachineAdminAccess?.();
+    const installationId = params.installation?.installationId;
+    const requestId = context.actionRequestId;
+    const lifetime = signal ?? context.signal;
     try {
       result = await prepareMachineSetupPlanV1({ input: localInput, current,
         observation: params.apiMachine.getMachineSetupObservationSnapshot?.(),
-        ...(params.installation ? { installationId: params.installation.installationId } : {}),
-        ...(params.apiMachine.captureMachineAdminAccess ? { readAdminAccessObservation: params.apiMachine.captureMachineAdminAccess().observe } : {}),
-        ...(signal ?? context.signal ? { signal: signal ?? context.signal } : {}),
+        ...(installationId ? { installationId } : {}),
+        ...(administrator ? { readAdminAccessObservation: administrator.observe } : {}),
+        ...(administrator && installationId && requestId ? { firewallObservation: { requestId,
+          elevation: () => ({ ...administrator, installationId, ...resolveMachineEffectCli(),
+            verifyCurrent: async () => !lifetime?.aborted }),
+        } } : {}),
+        ...(lifetime ? { signal: lifetime } : {}),
         ...(params.runNative ? { runNative: params.runNative } : {}), readRecipes: async () => {
         const acquire = params.acquirePluginRuntimeRegistryLease
           ?? (await import('@/plugins/runtime/reload/runtimeLease')).acquireAuthoritativePluginRuntimeRegistryLease;
@@ -478,6 +486,8 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         }
         if (cancellationSignal.aborted) return fail('cancelled');
         const administrator = params.apiMachine.captureMachineAdminAccess();
+        const readElevation = () => ({ ...administrator, installationId: params.installation.installationId,
+          ...resolveMachineEffectCli(), verifyCurrent: isActive });
         const setups = sources.map(source => source.setup);
         const sourceChange = { currentSources: current.policy.sources, currentSourceFacts: current.policy.sourceFacts,
           currentExclusions: current.policy.exclusions, sources,
@@ -487,6 +497,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         let credentialSelection: AccessProviderSelectionV1 | undefined;
         const planned = await prepareMachineSetupPlanV1({ readAdminAccessObservation: administrator.observe,
           installationId: params.installation.installationId,
+          firewallObservation: { requestId: operationId, elevation: readElevation },
           onCredentialSelection: selection => {
             if (credentialSelection && !sameStrictJsonValue(credentialSelection, selection)) {
               throw Object.assign(new Error('invalid_machine_recipe_inputs'), { code: 'invalid_machine_recipe_inputs' });
@@ -528,11 +539,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         const secretEnvironment = secrets.environment;
         if (cancellationSignal.aborted) return fail('cancelled');
         const io = createProjectNativeIo({ ownerRemainder: params.ownerRemainder }).environmentIo.createInvocation({ signal: cancellationSignal, retainCapture: custody.retain });
-        let elevation: Parameters<typeof applyMachineSetup>[0]['elevation'];
-        if (reviewedRecipePlans.length || input.removalPlans?.length) {
-          elevation = { ...administrator, installationId: params.installation.installationId, ...resolveMachineEffectCli(),
-            verifyCurrent: isActive };
-        }
+        const elevation = reviewedRecipePlans.length || input.removalPlans?.length ? readElevation() : undefined;
         const completedScripts = new Set<number>();
         const nativeInput = { homeId: input.homeId, machineId: input.machineId,
           produceProcessEnvironment: async (environment: Readonly<Record<string, string>>, processSignal: AbortSignal) => {

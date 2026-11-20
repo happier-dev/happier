@@ -5,7 +5,7 @@ import { MachineRecipeStepV1Schema, MachineFirewallTransitionIntentV1Schema } fr
 import { MachineReachabilityInspectResultV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { applyMachineSetupEffectPlan, applyMachineSetupEffectPlans, checkMachineSetupEffectPlan,
     createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1,
-    materializeMachineFirewallTransitionV1, type MachineSetupStepObservationV1 } from './index.js';
+    materializeMachineFirewallTransitionV1, readMachineSetupInitialPresenceV1, type MachineSetupStepObservationV1 } from './index.js';
 import { MachineFirewallRecoveryV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { MachineEffectInternalRecordSchema } from './effectInternalProtocol.js';
 import { createMachineSetupNativeBackend, type MachineSetupNativeCommand } from './nativeBackend.js';
@@ -45,6 +45,41 @@ const unitPath = '/etc/systemd/system/happier-firewall.service';
 const rules = 'table inet happier\ndelete table inet happier\ntable inet happier {\n  chain input {\n    type filter hook input priority filter - 10; policy accept;\n    ct state established,related accept\n    iifname "lo" accept\n    ct state new drop\n  }\n  chain forward {\n    type filter hook forward priority filter - 10; policy accept;\n    ct state established,related accept\n    ct direction original ct state new drop\n  }\n}\n';
 const basis = { kind: 'bootstrap' as const, managedId: 'managed', operationId: 'operation', admittedInputDigest: 'a'.repeat(64) };
 const roots: string[] = [];
+
+it('distinguishes a fresh Firewall footprint from an installed Firewall for Setup provenance', async () => {
+    const f = await fixture();
+    const check = () => checkMachineSetupEffectPlan({ basis, steps: [f.step], backend: f.backend });
+    expect(readMachineSetupInitialPresenceV1(await check())).toBe('absent');
+    await f.backend.apply(f.step);
+    expect(readMachineSetupInitialPresenceV1(await check())).toBe('present');
+});
+
+it('removes the reviewed Firewall table, rules and boot unit through the native Setup effect', async () => {
+    const f = await fixture();
+    await f.backend.apply(f.step);
+    const removal = { ...f.step, operation: 'remove' as const };
+    const plan = await checkMachineSetupEffectPlan({ basis, steps: [removal], backend: f.backend });
+    expect(plan.nativeFacts[0]?.status).toBe('drifted');
+    const staged = await stage(f, removal);
+    expect(await staged.verify()).toBe(true);
+    await staged.undo();
+    expect(f.readEffectiveTable()).toContain('table inet happier');
+    expect(await applyMachineSetupEffectPlans({ plans: [{ plan }], backend: f.backend })).toMatchObject({ status: 'applied' });
+    expect(f.readEffectiveTable()).toBeUndefined();
+    expect((await checkMachineSetupEffectPlan({ basis, steps: [removal], backend: f.backend })).nativeFacts[0]?.status).toBe('satisfied');
+});
+
+it('refuses removal when the installed Firewall no longer matches the recipe', async () => {
+    const f = await fixture();
+    const newer = f.step.rules.replace('    iifname "lo" accept', '    iifname "lo" accept\n    tcp dport 443 accept');
+    await f.backend.apply({ ...f.step, rules: newer });
+    const removal = { ...f.step, operation: 'remove' as const };
+    const plan = await checkMachineSetupEffectPlan({ basis, steps: [removal], backend: f.backend });
+    expect(await applyMachineSetupEffectPlans({ plans: [{ plan }], backend: f.backend }))
+        .toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict' });
+    expect(f.readEffectiveTable()).toContain('tcp dport 443 accept');
+});
+
 function nativeInterface(address: string): NetworkInterfaceInfo {
     const common = { address, netmask: address.includes(':') ? 'ffff:ffff:ffff:ffff::' : '255.255.255.0',
         mac: '00:11:22:33:44:55', internal: false, cidr: null };
@@ -1063,6 +1098,42 @@ describe('native firewall bounded transition owner', () => {
       expect(table).not.toContain('tcp dport 2299 accept');
       expect(table).not.toContain('ip saddr 0.0.0.0/0 tcp dport 2205 accept');
       expect(table).not.toContain('ip6 saddr ::/0 tcp dport 2206 accept');
+      return staged.planIndex === 0 ? 'continue' : 'commit';
+    } });
+    expect(result.status).toBe('applied');
+  });
+
+  it('replaces an owned narrow SSH scope in FINAL and retains it during the first stage', async () => {
+    const f = await fixture();
+    f.setNetwork({ interfaces: { ens18: [nativeInterface('10.0.2.4')] } });
+    await f.listenSsh('LISTEN 0 128 10.0.2.4:22 0.0.0.0:* users:(("sshd",pid=412,fd=3))\n');
+    const narrow = 'iifname "ens18" ip daddr 10.0.2.4 ip saddr 10.0.2.0/24 tcp dport 22 accept';
+    const widened = 'iifname "ens18" ip daddr 10.0.2.4 ip saddr 0.0.0.0/0 tcp dport 22 accept';
+    await f.backend.apply({ ...f.step, rules: rules.replace('    ct state new drop', `    ${narrow}\n    ct state new drop`) });
+    const match = (left: unknown, right: unknown) => ({ match: { op: '==', left, right } });
+    f.setNativePolicy({ nftables: [
+      { chain: { family: 'inet', table: 'happier', name: 'input', type: 'filter', hook: 'input', policy: 'drop' } },
+      { rule: { family: 'inet', table: 'happier', chain: 'input', expr: [
+        match({ meta: { key: 'iifname' } }, 'ens18'),
+        match({ payload: { protocol: 'ip', field: 'daddr' } }, '10.0.2.4'),
+        match({ payload: { protocol: 'ip', field: 'saddr' } }, { prefix: { addr: '10.0.2.0', len: 24 } }),
+        match({ payload: { protocol: 'tcp', field: 'dport' } }, 22), { accept: null },
+      ] } },
+    ] });
+    const intent = { ...boundedTransitionIntent({ kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0'] }), caddy: {} };
+    const native = readMachineFirewallTransitionFactsV1(await f.backend.observe(createMachineFirewallTransitionObservationStepV1(intent)));
+    expect(native).toMatchObject({ status: 'available', ownedTable: 'present', retainedSshEndpoints: [
+      { interfaceName: 'ens18', hostAddress: '10.0.2.4', port: 22, sourceCidrs: ['10.0.2.0/24'] },
+    ] });
+    const materialized = materializeMachineFirewallTransitionV1(intent, native);
+    if (materialized.status !== 'ready') throw new Error(`Unexpected native materialization ${materialized.reason}`);
+    expect(materialized.steps[0].rules).toContain(narrow);
+    expect(materialized.steps[1].rules).toContain(widened);
+    const plans = await Promise.all(materialized.steps.map(async step => ({ plan: await checkMachineSetupEffectPlan({ basis, steps: [step], backend: f.backend }) })));
+    const result = await applyMachineSetupEffectPlans({ plans, backend: f.backend, onStaged: async staged => {
+      expect(await staged.verifyNative()).toBe(true);
+      expect(f.readEffectiveTable()?.includes(narrow)).toBe(staged.planIndex === 0);
+      expect(f.readEffectiveTable()?.includes(widened)).toBe(staged.planIndex === 1);
       return staged.planIndex === 0 ? 'continue' : 'commit';
     } });
     expect(result.status).toBe('applied');

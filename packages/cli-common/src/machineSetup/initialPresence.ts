@@ -37,6 +37,12 @@ export function readMachineSetupInitialPresenceV1(plan: MachineSetupEffectPlanV1
           return match && typeof match.present === 'boolean' ? match.present : undefined;
         });
       }
+      if (step.kind === 'firewall') {
+        const digests = [facts.rulesDigest, facts.unitDigest, facts.ownedTableDigest];
+        if (digests.some(digest => typeof digest === 'string') || facts.bootEnabled === true || facts.bootActive === true) return [true];
+        return [digests.every(digest => digest === null) && facts.bootEnabled === false && facts.bootActive === false
+          ? false : undefined];
+      }
       return [(['file', 'directory', 'user', 'group'].includes(step.kind) && typeof facts.present === 'boolean')
         ? facts.present : undefined];
     });

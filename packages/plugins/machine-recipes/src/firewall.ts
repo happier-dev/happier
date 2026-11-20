@@ -14,4 +14,6 @@ export const firewall: Omit<MachineRecipeV1, 'id'> = {
   ] },
   steps: [{ id: 'owned-firewall', kind: 'firewall', requiredFacts: [{ kind: 'init', system: 'systemd' }],
     rules: { kind: 'input', path: 'rules' }, exposures: { kind: 'input', path: 'exposures' } }],
+  removeSteps: [{ id: 'owned-firewall', kind: 'firewall', operation: 'remove',
+    requiredFacts: [{ kind: 'init', system: 'systemd' }], rules: { kind: 'input', path: 'rules' } }],
 };

@@ -277,6 +277,30 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
     } finally { await api.dispose(); }
   });
 
+  it('reviews a Machine owner widening a saved public SSH posture', async () => {
+    const { f, api } = prepared;
+    try {
+      await f.hostNative.setNativeSshPort(22);
+      const snapshot = api.client.getMachineMetadataSnapshot();
+      if (snapshot.status !== 'ready') throw new Error('The public Machine metadata is unavailable');
+      const saved = MachineReachabilityPostureV1Schema.parse({ revision: 0,
+        management: { providers: [], publicSsh: { kind: 'open', port: 22, sourceCidrs: ['10.0.2.0/24'] },
+          independentRecovery: { kind: 'providerConsole', evidence: 'userAttested', confirmedAtMs: 1_793_610_000_000 } },
+        defaultServiceIngress: { kind: 'none' } });
+      expect(await api.client.compareAndSwapMachineMetadata({ expectedMetadataVersion: snapshot.metadataVersion,
+        metadata: { ...snapshot.metadata, reachabilityPosture: saved } })).toMatchObject({ status: 'applied' });
+      const publicSsh = { kind: 'open' as const, port: 22, sourceCidrs: ['0.0.0.0/0', '::/0'] };
+      const posture = { ...saved, revision: 1, management: { ...saved.management, publicSsh } };
+      const raw = await api.inspectOriginalCli({ serverId: f.home.serverIdentityId, machineId, change: { kind: 'posture', posture } });
+      expect(raw.ok, JSON.stringify(raw)).toBe(true);
+      if (!raw.ok) throw new Error(raw.errorCode);
+      const review = parseReachabilityInspectResult(raw.result);
+      expect(review).toMatchObject({ plan: { basis: { firewallTransition: { intent: { kind: 'retainSsh', publicSsh } } } } });
+      expect(api.client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadata: { reachabilityPosture: saved } });
+      expect(f.hostNative.firewallStages).toEqual([]);
+    } finally { await api.dispose(); }
+  });
+
   it.each([false, true])('reviews and configures the first posture against native SSH facts, refusing changed facts (socket activation: %s)', async socketActivated => {
     const { f, api } = prepared;
     try {

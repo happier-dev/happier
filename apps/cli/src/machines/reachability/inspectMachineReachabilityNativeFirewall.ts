@@ -1,8 +1,9 @@
 import { createMachineFirewallTransitionObservationStepV1, readMachineFirewallTransitionFactsV1 } from '@happier-dev/cli-common/machineSetup';
 import type { MachineSetupEffectPlanV1, MachineFirewallTransitionFactsV1, MachineFirewallTransitionIntentV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { checkElevatedMachineSetupPlanResult, type MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
+import type { MachineElevationDependencies } from '../adminAccess/runElevatedEffect';
 import type { MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import { readProtectedMachineFirewall } from '../setup/readProtectedMachineFirewall';
 
 /** Read the native owner's protected facts through its existing root CHECK.
  * No posture, APPLY frame or native admission is needed; Ask uses the elevation owner’s password prompt. */
@@ -14,8 +15,7 @@ export async function inspectMachineReachabilityNativeFirewall(input: Readonly<{
 }>, elevation: MachineElevationDependencies): Promise<ActionExecuteFailure | Readonly<{ ok: true; facts: MachineFirewallTransitionFactsV1 }>> {
   const step = createMachineFirewallTransitionObservationStepV1({ caddy: input.caddy ?? {},
     ...(input.caddyObservation ? { caddyObservation: { privateNetworks: [...input.caddyObservation.privateNetworks] } } : {}) });
-  const result = await checkElevatedMachineSetupPlanResult({ machineId: input.machineId,
-    operationId: input.requestId, signal: input.signal, basis: input.basis, steps: [step] }, elevation);
+  const result = await readProtectedMachineFirewall({ ...input, step }, elevation);
   if (result.outcome !== 'checked') {
     const code = result.outcome === 'not_applied' ? result.reasonCode
       : result.outcome === 'needs_attendance' ? 'machine_admin_access_required' : 'machine_recipe_native_unavailable';

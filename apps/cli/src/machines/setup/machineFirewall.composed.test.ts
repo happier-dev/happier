@@ -7,7 +7,7 @@ import { checkMachineSetupEffectPlan, createMachineSetupNativeBackend,
     type MachineSetupEffectPlanV1, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import type { MachineAdminAccessObservationV1, MachineRecipeStepV1 } from '@happier-dev/protocol';
 import { MachineElevatedResultV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
-import { runElevatedMachineFirewallPlans, type MachineElevationDependencies, type MachineElevationSpawn } from '../adminAccess/runElevatedEffect';
+import { runElevatedEffect, runElevatedMachineFirewallPlans, type MachineElevationDependencies, type MachineElevationSpawn } from '../adminAccess/runElevatedEffect';
 import { runMachineSetupEffectInternal } from './effectInternal';
 import { MachineEffectInternalRecordSchema, MachineEffectInternalRequestSchema } from './effectInternalProtocol';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
@@ -17,6 +17,10 @@ import { settleMachineCaddyFirewallForHost, settleMachinePrivateWorkloadFirewall
 import { nativeCaddyImage } from '@happier-dev/cli-common/machineSetup';
 import { observeOwnDaemonReachability } from '../reachability/observeOwnDaemonReachability';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import { PLUGIN_MANIFEST } from '@happier-dev/plugins-machine-recipes/manifest';
+import { createEmptyMachineSetupDesiredV1, machineSetupItemKeyV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
+import { observeMachineSetupInitialPresence } from './initialPresence';
 
 // Genuine OS boundary only. All file bytes, native backend, schema/digest,
 // elevation framing, root entry and undo execution remain real.
@@ -174,6 +178,58 @@ async function fixture(mode: 'ask' | 'preauthorized', delayProgress = false) {
 }
 
 describe('firewall through the same P10 installed root invocation', () => {
+    it('records the privileged first absence and offers removal of the installed Firewall recipe', async () => {
+        const f = await fixture('preauthorized');
+        await f.setFirewallFacts({ interfaces: {
+            ens18: [{ address: '10.0.2.4', netmask: '255.255.255.0', family: 'IPv4',
+                mac: '00:00:00:00:00:01', internal: false, cidr: '10.0.2.4/24' }],
+        } });
+        const definition = PLUGIN_MANIFEST.contributes?.machineRecipes?.find(recipe => recipe.id === 'firewall');
+        if (!definition) throw new Error('Expected the built-in Firewall recipe');
+        const pluginId = PLUGIN_MANIFEST.id;
+        const rules = 'table inet happier\ndelete table inet happier\ntable inet happier {\n  chain input {\n    type filter hook input priority filter - 10; policy accept;\n  }\n}\n';
+        const item = { kind: 'softwareRecipe' as const, selection: {
+            ref: { pluginId, recipeId: definition.id, revision: definition.revision }, inputs: { rules, exposures: [] },
+        } };
+        const sources = [{ kind: 'direct' as const, setup: { items: [item] } }];
+        const input = { homeId: 'home', machineId: 'machine', mode: 'effects' as const };
+        const options = {
+            firewallObservation: { requestId: 'setup-firewall', elevation: () => f.deps },
+            readRecipes: async () => [{ id: `${pluginId}/${definition.id}`, pluginId, pluginVersion: PLUGIN_MANIFEST.version, definition }],
+            runNative: async (command: MachineSetupNativeCommand) => {
+                if (command.executable === '/usr/sbin/nft' && command.args.includes('--version')) {
+                    return { code: 0, stdout: 'nftables v1.0.9', stderr: '' };
+                }
+                return { code: 1, stdout: '', stderr: 'Operation not permitted' };
+            },
+        };
+        expect(await inspectMachineReachabilityNativeFirewall({ machineId: 'machine', requestId: 'network-firewall',
+            basis: { kind: 'setup', machineId: 'machine', desiredRevision: 0 } }, f.deps))
+            .toMatchObject({ ok: true, facts: { status: 'available', ownedTable: 'absent' } });
+        const policy = createEmptyMachineSetupDesiredV1();
+        const install = await prepareMachineSetupPlanV1({ ...options, input: { ...input, sources },
+            current: { status: 'ready', policy, metadataVersion: 0 } });
+        if ('errorCode' in install) throw new Error(install.errorCode);
+        const itemKey = machineSetupItemKeyV1(item);
+        const sourceFacts = observeMachineSetupInitialPresence(sources, install.recipePlans ?? []);
+        expect(sourceFacts).toMatchObject({ direct: { firstPresence: { [itemKey]: 'absent' } } });
+        const step = install.recipePlans?.[0]?.plan.steps[0];
+        if (step?.kind !== 'firewall') throw new Error('Expected a Firewall setup effect');
+        await f.backend.apply(step);
+        const removal = await prepareMachineSetupPlanV1({ ...options, input: {
+            ...input, sources: policy.sources, removeItemKeys: [itemKey],
+        }, current: { status: 'ready', policy: { ...policy, revision: 1, sources, sourceFacts }, metadataVersion: 1 } });
+        expect(removal).toMatchObject({ removalOffers: [{ itemKey, status: 'eligible', selected: true }],
+            removalPlans: [{ itemKey, plan: { steps: [{ kind: 'firewall', operation: 'remove' }] } }] });
+        if ('errorCode' in removal || !removal.removalPlans?.length) throw new Error('Expected a Firewall removal review');
+        expect(f.readTable()).toContain('table inet happier');
+        expect(await runElevatedEffect({ machineId: 'machine', operationId: 'remove-firewall',
+            effect: { kind: 'setupOperation', plans: removal.removalPlans.map(({ plan }) => ({ plan })) } }, f.deps))
+            .toMatchObject({ outcome: 'applied' });
+        expect(f.readTable()).toBeUndefined();
+        expect(f.prompt).not.toHaveBeenCalled();
+    });
+
     it('retains a workload through the Domain host and its real root CHECK/APPLY reconciliation', async () => {
         const f = await fixture('preauthorized');
         await f.setFirewallFacts({ interfaces: {
@@ -360,7 +416,7 @@ describe('firewall through the same P10 installed root invocation', () => {
                 expect(f.readTable()).toContain('tcp dport 2205 accept');
                 expect(f.readTable()).toContain('ip daddr 10.10.0.4 ip saddr 0.0.0.0/0 tcp dport 2222 accept');
                 if (stage.planIndex === 0) {
-                    expect(stage.recovery).toEqual({ rules: { kind: 'absent' }, unit: { kind: 'absent' },
+                    expect(stage.recovery).toMatchObject({ rules: { kind: 'absent' }, unit: { kind: 'absent' },
                         table: null, boot: { present: false, enabled: false, running: false } });
                     expect(f.readTable()).not.toContain('tcp dport 22 accept');
                     return 'continue';
@@ -512,7 +568,7 @@ table inet happier {
         if (decision === 'cancel') expect(f.lateProgressAfterCancel()).toBe(true);
         expect(MachineElevatedResultV1Schema.parse(result)).toEqual(result);
         expect(stages).toEqual([0, 1]);
-        expect(recovery).toEqual([
+        expect(recovery).toMatchObject([
             { rules: { kind: 'file', content: originalBytes }, unit: { kind: 'file', content: originalUnit },
                 table: originalTable, boot: { present: true, enabled: true, running: true } },
             { rules: { kind: 'file', content: first.rules }, unit: { kind: 'file', content: originalUnit },

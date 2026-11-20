@@ -205,6 +205,8 @@ export const MachineRecipeServiceUnitStepV1Schema =
     z.object({ ...Step, kind: z.literal('serviceUnit'), unit: ServiceUnitName, enabled: z.boolean().optional(), running: z.boolean() }).strict();
 export const MachineRecipeFirewallStepV1Schema =
     z.object({ ...Step, kind: z.literal('firewall'), rules: z.string().min(1), exposures: z.array(FirewallExposure).optional(),
+        /** Remove only the owned footprint matching these reviewed rules. */
+        operation: z.literal('remove').optional(),
         /** Host-built CHECK operand; authored firewall recipes do not select this observation. */
         caddyObservation: MachineCaddyFirewallObservationInputV1Schema.optional(),
     }).strict();

@@ -81,6 +81,13 @@ function equivalentTable(left: string, right: string) {
 }
 type Boot = Readonly<{ present: boolean; enabled: boolean; running: boolean }>;
 type Snapshot = Readonly<{ rules: NativeFileState; unit: NativeFileState; table: string | null; boot: Boot }>;
+const absentFirewall: Snapshot = {
+    rules: { kind: 'absent' }, unit: { kind: 'absent' }, table: null,
+    boot: { present: false, enabled: false, running: false },
+};
+function firewallAbsent(state: Snapshot): boolean {
+    return state.rules.kind === 'absent' && state.unit.kind === 'absent' && state.table === null && !state.boot.present;
+}
 type PrivateInterface = { providerId: string; networkIdentity: string; hostAddress: string; interfaceName: string };
 type SshEndpoint = { interfaceName: string; hostAddress: string; port: number; sourceCidrs: string[] };
 /** An optional observation, not another native readiness or admission gate. */
@@ -247,10 +254,15 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
             inspectNativePath(rulesPath, false, true), inspectNativePath(unitPath, false, true), table(invoke), boot(invoke),
         ]);
         if (rules.kind === 'file') candidateRules(rules.bytes!.toString('utf8'));
-        if (definition.kind === 'file' && definition.bytes!.toString('utf8') !== nativeFirewallUnit) throw new MachineSetupEffectError('foreign_effect_conflict');
+        if (definition.kind === 'file' ? definition.bytes!.toString('utf8') !== nativeFirewallUnit : service.present) {
+            throw new MachineSetupEffectError('foreign_effect_conflict');
+        }
         if (nativeTable && (rules.kind !== 'file' || !equivalentTable(nativeTable, rules.bytes!.toString('utf8')))) {
             throw new MachineSetupEffectError('foreign_effect_conflict');
         }
+        if (step.operation === 'remove' && (rules.kind === 'file'
+            ? rules.bytes!.toString('utf8') !== step.rules
+            : definition.kind !== 'absent' || service.present)) throw new MachineSetupEffectError('foreign_effect_conflict');
         return { rules, unit: definition, table: nativeTable, boot: service };
     };
     const available = async () => {
@@ -260,7 +272,8 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
         if (version.code !== 0) throw new MachineSetupEffectError('required_fact_unavailable');
         return true;
     };
-    const satisfied = (step: Firewall, state: Snapshot) => state.rules.kind === 'file' && state.rules.bytes!.toString('utf8') === step.rules
+    const satisfied = (step: Firewall, state: Snapshot) => step.operation === 'remove' ? firewallAbsent(state)
+        : state.rules.kind === 'file' && state.rules.bytes!.toString('utf8') === step.rules
         && state.unit.kind === 'file' && state.unit.bytes!.toString('utf8') === nativeFirewallUnit
         && state.table !== null && equivalentTable(state.table, step.rules) && state.boot.enabled && state.boot.running;
     const transitionFacts = async (step: Firewall, state: Snapshot): Promise<{
@@ -403,6 +416,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
             const observedStep = caddy?.status === 'ready' ? { ...step,
                 exposures: [...(step.exposures ?? []), ...readCaddyContainerFirewallExposures(caddy.bindings)] } : step;
             const state = await inspect(observedStep);
+            if (step.operation === 'remove') return { stepId: step.id, status: satisfied(step, state) ? 'satisfied' : 'drifted', facts: {} };
             const transition = await transitionFacts(observedStep, state);
             return { stepId: step.id, status: transition.privateScopeAvailable ? satisfied(step, state) ? 'satisfied' : 'drifted' : 'unavailable',
                 ...(!transition.privateScopeAvailable ? { reason: 'required_fact_unavailable' as const } : {}), facts: {
@@ -457,6 +471,19 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                 previous: current, protectedTarget: true });
             else throw new MachineSetupEffectError('foreign_effect_conflict');
         };
+        const runRestoration = async (target: Snapshot, operations: readonly RestoreStep[], invoke: typeof run) => {
+            const currentUnit = await inspectNativePath(unitPath, false, true);
+            const unitCreated = target.unit.kind === 'absent' && currentUnit.kind === 'file';
+            if (unitCreated && currentUnit.bytes!.toString('utf8') !== nativeFirewallUnit) throw new MachineSetupEffectError('foreign_effect_conflict');
+            for (const operation of operations) {
+                if (operation.kind === 'file') await restore(operation.path, operation.state, operation.mode);
+                else {
+                    if (operation.when === 'unitCreated' && !unitCreated) continue;
+                    if (operation.when === 'tablePresent' && !await table(invoke)) continue;
+                    await effect(invoke, operation.executable, operation.args);
+                }
+            }
+        };
         const undo = async () => {
             if (settled) return;
             if (!mutationPossible) {
@@ -472,17 +499,7 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
                 && (previous.table === null || !equivalentTable(currentTable, previous.table))) {
                 throw new MachineSetupEffectError('foreign_effect_conflict');
             }
-            const currentUnit = await inspectNativePath(unitPath, false, true);
-            const unitCreated = previous.unit.kind === 'absent' && currentUnit.kind === 'file';
-            if (unitCreated && currentUnit.bytes!.toString('utf8') !== nativeFirewallUnit) throw new MachineSetupEffectError('foreign_effect_conflict');
-            for (const operation of restoration) {
-                if (operation.kind === 'file') await restore(operation.path, operation.state, operation.mode);
-                else {
-                    if (operation.when === 'unitCreated' && !unitCreated) continue;
-                    if (operation.when === 'tablePresent' && !await table(recover)) continue;
-                    await effect(recover, operation.executable, operation.args);
-                }
-            }
+            await runRestoration(previous, restoration, recover);
             const restoredTable = await table(recover), restoredBoot = await boot(recover);
             if ((previous.table === null) !== (restoredTable === null) || previous.table !== null && restoredTable !== null && !equivalentTable(previous.table, restoredTable)
                 || restoredBoot.enabled !== previous.boot.enabled || restoredBoot.running !== previous.boot.running) throw new MachineSetupEffectError('required_fact_unavailable');
@@ -490,17 +507,22 @@ export function createNativeFirewallBackend(run: NativeRun, recover: NativeRun, 
             settled = true;
         };
         try {
-            await ensureDirectory(dirname(rulesPath)); await ensureDirectory(dirname(unitPath));
-            await activateNativeFile({ path: rulesPath, bytes: step.rules, mode: 0o600, owner: rootOwner, previous: previous.rules,
-                protectedTarget: true, signal, validate: async candidate => {
-                    if ((await run(nft, ['-c', '-f', candidate], locale)).code !== 0) throw new MachineSetupEffectError('validation_failed');
-                    mutationPossible = true;
-                    await effect(run, nft, ['-f', candidate]);
-                } });
-            await activateNativeFile({ path: unitPath, bytes: nativeFirewallUnit, mode: 0o644, owner: rootOwner, previous: previous.unit,
-                protectedTarget: true, signal });
-            await effect(run, 'systemctl', ['daemon-reload']); await effect(run, 'systemctl', ['enable', '--', unit]);
-            await effect(run, 'systemctl', ['start', '--', unit]);
+            if (step.operation === 'remove') {
+                mutationPossible = true;
+                await runRestoration(absentFirewall, restoreSteps(absentFirewall), run);
+            } else {
+                await ensureDirectory(dirname(rulesPath)); await ensureDirectory(dirname(unitPath));
+                await activateNativeFile({ path: rulesPath, bytes: step.rules, mode: 0o600, owner: rootOwner, previous: previous.rules,
+                    protectedTarget: true, signal, validate: async candidate => {
+                        if ((await run(nft, ['-c', '-f', candidate], locale)).code !== 0) throw new MachineSetupEffectError('validation_failed');
+                        mutationPossible = true;
+                        await effect(run, nft, ['-f', candidate]);
+                    } });
+                await activateNativeFile({ path: unitPath, bytes: nativeFirewallUnit, mode: 0o644, owner: rootOwner, previous: previous.unit,
+                    protectedTarget: true, signal });
+                await effect(run, 'systemctl', ['daemon-reload']); await effect(run, 'systemctl', ['enable', '--', unit]);
+                await effect(run, 'systemctl', ['start', '--', unit]);
+            }
             const verify = async () => !signal?.aborted && satisfied(step, await inspect(step));
             if (!await verify()) throw new MachineSetupEffectError('required_fact_unavailable');
             return { recovery, verify, commit() {

@@ -89,16 +89,25 @@ export function materializeMachineFirewallTransitionV1(intent: MachineFirewallTr
     ...privateBindings.map(binding => ({ exposure: binding.exposure, interfaces: [binding.interfaceName] })),
   ];
   const retained = native.retainedSshEndpoints;
-  // Domain reconciliation is not approval to close a live management socket.
-  // Only an explicit posture transition may replace the observed SSH policy.
-  const final: SshEndpoint[] = intent.kind === 'retainSsh' && intent.publicSsh.kind === 'closed' ? [] : [...retained];
-  if (intent.kind === 'retainSsh' && intent.publicSsh.kind === 'open' && native.ownedTable === 'absent') {
-    for (const interfaceName of native.externalInterfaces) for (const family of [4, 6]) {
-      const sourceCidrs = intent.publicSsh.sourceCidrs.filter(source => isIP(source.split('/')[0]!) === family);
-      if (sourceCidrs.length) final.push({ interfaceName, hostAddress: family === 4 ? '0.0.0.0' : '::', port: intent.publicSsh.port, sourceCidrs });
+  const { publicSsh } = intent;
+  let final = retained;
+  if (intent.kind === 'retainSsh') {
+    if (publicSsh.kind === 'closed') final = [];
+    else {
+      const sourceCidrsFor = (family: number) => publicSsh.sourceCidrs.filter(source => isIP(source.split('/')[0]!) === family);
+      final = retained.map(endpoint => endpoint.port === publicSsh.port && native.externalInterfaces.includes(endpoint.interfaceName)
+        ? { ...endpoint, sourceCidrs: sourceCidrsFor(isIP(endpoint.hostAddress)) } : endpoint);
+      if (native.ownedTable === 'absent') {
+        for (const interfaceName of native.externalInterfaces) for (const family of [4, 6]) {
+          if (final.some(endpoint => endpoint.interfaceName === interfaceName && endpoint.port === publicSsh.port
+            && isIP(endpoint.hostAddress) === family)) continue;
+          const sourceCidrs = sourceCidrsFor(family);
+          if (sourceCidrs.length) final.push({ interfaceName, hostAddress: family === 4 ? '0.0.0.0' : '::', port: publicSsh.port, sourceCidrs });
+        }
+      }
     }
   }
-  const sshScopes = intent.publicSsh.kind === 'open' ? final : retained;
+  const sshScopes = publicSsh.kind === 'open' ? final : retained;
   if (bindings.some(binding => binding.exposure.protocol === 'tcp' && sshScopes.some(endpoint =>
     binding.exposure.hostPort === endpoint.port && (!binding.interfaces || binding.interfaces.includes(endpoint.interfaceName))
       && overlapsAddress(binding.exposure.hostAddress, endpoint.hostAddress))))

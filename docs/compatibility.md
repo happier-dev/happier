@@ -479,6 +479,13 @@ interpreted by the UI. Matching Protocol, native CLI and UI reload together unde
 the unpublished 0.3 direct cut: older strict development readers reject the new
 field. No wire epoch, compatibility adapter or database migration is added.
 
+The concrete Firewall step also accepts the optional `operation: 'remove'`
+operand. An omitted operation still installs the declared rules. The native
+owner checks the exact reviewed rules before removing the owned footprint.
+Matching Protocol, CLI and bundled Machine recipes reload together in 0.3
+development. Earlier readers can refuse the new operand, and earlier
+records with unknown first presence keep that origin.
+
 ## Home guest CLI source (unreleased 0.3)
 
 `/v1/features` advertises optional `capabilities.guestCli` with the closed identity

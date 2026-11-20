@@ -8612,6 +8612,7 @@ export type ManagedMachinesActionInputById = {
                             protocol: 'tcp' | 'udp';
                             containerPort?: number | undefined;
                         })[] | undefined;
+                        operation?: 'remove' | undefined;
                         caddyObservation?: undefined | {
                             privateNetworks: {
                                 provider: {
@@ -9580,6 +9581,7 @@ export type ManagedMachinesActionInputById = {
                             protocol: 'tcp' | 'udp';
                             containerPort?: number | undefined;
                         })[] | undefined;
+                        operation?: 'remove' | undefined;
                         caddyObservation?: undefined | {
                             privateNetworks: {
                                 provider: {
@@ -11178,6 +11180,7 @@ export type ManagedMachinesActionInputById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    operation?: 'remove' | undefined;
                     caddyObservation?: undefined | {
                         privateNetworks: {
                             provider: {
@@ -12143,6 +12146,7 @@ export type ManagedMachinesActionInputById = {
                     protocol: 'tcp' | 'udp';
                     containerPort?: number | undefined;
                 })[] | undefined;
+                operation?: 'remove' | undefined;
                 caddyObservation?: undefined | {
                     privateNetworks: {
                         provider: {
@@ -13102,6 +13106,7 @@ export type ManagedMachinesActionInputById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    operation?: 'remove' | undefined;
                     caddyObservation?: undefined | {
                         privateNetworks: {
                             provider: {
@@ -36098,6 +36103,7 @@ export type ManagedMachinesActionResultById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    operation?: 'remove' | undefined;
                     caddyObservation?: undefined | {
                         privateNetworks: {
                             provider: {
@@ -37065,6 +37071,7 @@ export type ManagedMachinesActionResultById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    operation?: 'remove' | undefined;
                     caddyObservation?: undefined | {
                         privateNetworks: {
                             provider: {
@@ -38959,6 +38966,7 @@ export type ManagedMachinesActionResultById = {
                         protocol: 'tcp' | 'udp';
                         containerPort?: number | undefined;
                     })[] | undefined;
+                    operation?: 'remove' | undefined;
                     caddyObservation?: undefined | {
                         privateNetworks: {
                             provider: {
@@ -40038,6 +40046,7 @@ export type ManagedMachinesActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            operation?: 'remove' | undefined;
                             caddyObservation?: undefined | {
                                 privateNetworks: {
                                     provider: {
@@ -41005,6 +41014,7 @@ export type ManagedMachinesActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            operation?: 'remove' | undefined;
                             caddyObservation?: undefined | {
                                 privateNetworks: {
                                     provider: {
@@ -42899,6 +42909,7 @@ export type ManagedMachinesActionResultById = {
                                 protocol: 'tcp' | 'udp';
                                 containerPort?: number | undefined;
                             })[] | undefined;
+                            operation?: 'remove' | undefined;
                             caddyObservation?: undefined | {
                                 privateNetworks: {
                                     provider: {
