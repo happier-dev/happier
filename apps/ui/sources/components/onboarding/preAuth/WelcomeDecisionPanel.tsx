@@ -138,11 +138,13 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                     ? { kind: 'unsupported' as const, hintName: serviceName ?? undefined }
                     : { kind: 'not_offered' as const };
     const model = composeWelcomeEntryModel({
-        target: requestedHomeTarget
-            ? { kind: 'selected_home', home: requestedHomeTarget, label: options.homeLabel ?? t('settingsAccount.thisHomeTitle') }
-            : accountServiceEntry?.endpoint.source === 'user'
-                ? { kind: 'selected_service', label: serviceName ?? formatAccountServiceHost(accountServiceEntry.endpoint.url) }
-                : { kind: 'none' },
+        target: accountServiceEntry?.selectedInWelcome
+            ? { kind: 'selected_service', label: serviceName ?? t('welcome.yourSignInService') }
+            : requestedHomeTarget
+                ? { kind: 'selected_home', home: requestedHomeTarget, label: options.homeLabel ?? t('settingsAccount.thisHomeTitle') }
+                : accountServiceEntry?.endpoint.source === 'user'
+                    ? { kind: 'selected_service', label: serviceName ?? formatAccountServiceHost(accountServiceEntry.endpoint.url) }
+                    : { kind: 'none' },
         homeMethods,
         ...(homeTarget && homeMethods.length > 0 && accountServiceEntry
             && createServerUrlComparableKey(accountServiceEntry.endpoint.url) === createServerUrlComparableKey(options.serverUrlForCopy)

@@ -85,10 +85,12 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
     }, [suppliedHomeAddress]);
     const isLandscape = useIsLandscape();
     const isDesktopShell = React.useMemo(() => isDesktopHost(), []);
-    const { authEntryOptions, accountServiceEntry } = useWelcomeAuthEntryOptions();
+    const { authEntryOptions, accountServiceEntry, showSelectedSignInService } = useWelcomeAuthEntryOptions();
     const selectAccountService = React.useCallback<AccountServiceSelectionFormProps['onSelect']>(async (entered, options) => {
-        return await selectAccountServiceEndpoint(entered, options);
-    }, []);
+        const result = await selectAccountServiceEndpoint(entered, options);
+        if (result.kind === 'selected') showSelectedSignInService();
+        return result;
+    }, [showSelectedSignInService]);
     const accountContinuationIntent = React.useMemo<AccountContinuationIntent>(() => (
         authEntryOptions.requestedHomeTarget && authEntryOptions.observedHomeServerIdentityId
             ? { kind: 'enter', target: { kind: 'explicit', homeServerIdentityId: authEntryOptions.observedHomeServerIdentityId } }

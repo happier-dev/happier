@@ -67,9 +67,14 @@ export type AuthEntryOptions = Readonly<{
 export function useWelcomeAuthEntryOptions(): Readonly<{
     authEntryOptions: AuthEntryOptions;
     accountServiceEntry: AccountServiceEntryOptions;
+    showSelectedSignInService: () => void;
 }> {
     const authEntryOptions = useAuthEntryOptions();
-    const accountServiceEntry = useAccountServiceEntryOptions(authEntryOptions.requestedHomeTarget
+    const requestedHomeUrl = authEntryOptions.requestedHomeTarget ? authEntryOptions.serverUrlForCopy : null;
+    const [serviceSelectionHome, setServiceSelectionHome] = React.useState<string | null>();
+    const selectedInWelcome = serviceSelectionHome === requestedHomeUrl;
+    const showSelectedSignInService = React.useCallback(() => setServiceSelectionHome(requestedHomeUrl), [requestedHomeUrl]);
+    const accountServiceEntry = useAccountServiceEntryOptions(!selectedInWelcome && authEntryOptions.requestedHomeTarget
         ? {
             kind: 'home',
             target: authEntryOptions.requestedHomeTarget,
@@ -81,7 +86,11 @@ export function useWelcomeAuthEntryOptions(): Readonly<{
             },
         }
         : { kind: 'none' });
-    return { authEntryOptions, accountServiceEntry };
+    return {
+        authEntryOptions,
+        accountServiceEntry: selectedInWelcome ? { ...accountServiceEntry, selectedInWelcome: true } : accountServiceEntry,
+        showSelectedSignInService,
+    };
 }
 
 type ObservedAuthEntryOptions = Pick<

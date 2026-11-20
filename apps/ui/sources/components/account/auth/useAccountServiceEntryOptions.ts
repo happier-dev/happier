@@ -19,6 +19,8 @@ import {
 
 export type AccountServiceEntryOptions = Readonly<{
     effectiveSignInService: EffectiveSignInService;
+    /** Welcome entered through the person's explicit service selection for its current Home. */
+    selectedInWelcome?: true;
     /** The selected sign-in service. Exists before any Home profile, focused Home, or Sync runtime. */
     endpoint: AccountServiceEndpointV1;
     /**

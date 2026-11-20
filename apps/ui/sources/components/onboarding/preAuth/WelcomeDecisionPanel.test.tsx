@@ -700,6 +700,20 @@ describe('WelcomeDecisionPanel', () => {
         expect(callbacks.onChooseAccountService).toHaveBeenCalledTimes(1);
     });
 
+    it('opens the chosen service methods while retaining the exact Home as the sign-in destination', async () => {
+        const { screenPromise, callbacks } = renderPanel({}, {
+            ...readyAccountServiceEntry(['gitlab']),
+            selectedInWelcome: true,
+        });
+        const screen = await screenPromise;
+        expect(screen.findByTestId('welcome-primary-start')).toBeNull();
+        await screen.pressByTestIdAsync('welcome-account-service-provider-gitlab');
+        expect(callbacks.onContinueWithAccountServiceProvider).toHaveBeenCalledWith(expect.objectContaining({
+            authority: expect.objectContaining({ purpose: 'account_service' }),
+            intendedHome: baseOptions.requestedHomeTarget,
+        }));
+    });
+
     it('uses exact verified method presentation ahead of the local provider fallback', async () => {
         const { callbacks, screenPromise } = renderPanel(
             { requestedHomeTarget: undefined },
