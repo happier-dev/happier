@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
+import { createTriageIssueEventSourceSetupV1, TRIAGE_ISSUE_WATCH_SOURCES_V1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
 
 import { createTestkitAccountKv } from '../settings/testkit/accountKv.test-support.js';
+import { TRIAGE_ISSUE_INPUT_TYPES, TRIAGE_ISSUE_OPTIONS_RESOURCES } from './issueOptions.js';
 import {
     readTriageActionLaunchModeV1,
     TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1,
@@ -29,6 +34,55 @@ import type { TriageDataActionContext } from './dataContext.js';
 const NO_AGENT_ACTIONS = { observeForSelf: () => ({ readCurrent: async () => ({ contributions: [] }), dispose: () => {} }) };
 
 describe('the configured-action Actions', () => {
+    it('offers an issue source only Actions startable for its declared subject', async () => {
+        const source = TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry;
+        const sourceInstanceId = '00000001-1111-4111-8111-111111111111';
+        const testkit = createTestkitAccountKv();
+        const context = { surface: 'plugin', signal: new AbortController().signal,
+            services: { storage: { account: { kv: testkit.kv } }, targetedContributions: {
+                observeForSelf: (point: { id: string }) => ({
+                    readCurrent: async () => ({ contributions: point.id === TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1 ? [{
+                        contributor: { pluginId: source.pluginId, contributionId: source.localId },
+                        descriptor: { purpose: 'triage-source', kinds: [{ workflowSubject: 'errorIssue' }] },
+                    }] : [] }),
+                    dispose() {},
+                }),
+            } } } as unknown as TriageDataActionContext;
+        const handler = createTriageReadActionsActionHandler();
+        const readCatalog = (input: unknown) => handler(TriageReadActionsActionInputV1Schema.parse(input), context);
+        const inputType = TRIAGE_ISSUE_INPUT_TYPES[triageIssueWatchOptionIdsV1(source).investigation]!;
+        const options = TRIAGE_ISSUE_OPTIONS_RESOURCES[inputType.options.resource]!;
+        const optionContext = (draftInput: Record<string, string>) => createTestResourceInvocationContext({
+            query: { fieldPath: 'investigation.configuredActionId', draftInput },
+            readAction: async (_ref, input) => ({ ok: true, result: await readCatalog(input) }),
+        });
+        await expect(options.runtime.read(optionContext({}))).rejects.toMatchObject({ code: 'missing_option_dependency' });
+        expect(JSON.parse(String(await options.runtime.read(optionContext({ sourceInstanceId }))))).toEqual({
+            options: [{ value: 'fix', label: 'Fix' }, { value: 'investigate', label: 'Investigate' }],
+        });
+
+        const setup = createTriageIssueEventSourceSetupV1({ pluginId: source.pluginId, sourceLocalId: source.localId, displayName: 'Sentry' });
+        const setupContext = {
+            signal: context.signal,
+            services: { actions: { execute: async (ref: { localId: string }, input: unknown) =>
+                ref.localId === TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1.localId
+                    ? { kind: 'read', status: 'complete', instances: [{ v: 1, lifecycle: 'active', configured: {
+                        v: 1, instance: { source, sourceInstanceId },
+                        binding: { purpose: 'triage-source', account: {
+                            service: { pluginId: source.pluginId, localId: 'accounts' }, accountId: 'account-a',
+                        } },
+                        localInstanceKey: 'sentry/project', configuration: { v: 1, token: 'routing-token' },
+                    } }] }
+                    : readCatalog(input),
+            } },
+        } as unknown as PluginInvocationContext;
+        const submit = (configuredActionId: string) => setup({
+            sourceInstanceId, investigation: { mode: 'auto_start', configuredActionId },
+        }, setupContext);
+        await expect(submit('investigate')).resolves.toMatchObject({ sourceInstanceId });
+        await expect(submit('ask')).rejects.toMatchObject({ code: 'triage_issue_investigation_unavailable' });
+    });
+
     it('keeps the explicit code review target and pull-request workspace when renamed', async () => {
         const testkit = createTestkitAccountKv();
         const deps = { catalog: testkit.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'inspect-pr' };

@@ -228,7 +228,7 @@ export function createTriageIssueEventSourceAdapterV1(provider: TriageIssueObser
           }
         }
       }
-      const choices = createTriageIssueInvestigationChoiceReaderV1(input.context);
+      const choices = createTriageIssueInvestigationChoiceReaderV1(input.context, input.source.instance.instance.source);
       const investigation = input.source.investigation;
       for (const change of input.checkpoint.changes) {
         input.context.signal.throwIfAborted();

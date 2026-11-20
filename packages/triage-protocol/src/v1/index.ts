@@ -245,6 +245,7 @@ export {
     TriageConfiguredSourceInstanceRecordV1Schema,
     TriageReadConfiguredSourceInstancesInputV1Schema,
     TriageReadConfiguredSourceInstancesResultV1Schema,
+    readTriageConfiguredSourceDisplayLabelV1,
 } from './configuredInstances.js';
 export type {
     TriageConfiguredSourceInstanceRecordV1,

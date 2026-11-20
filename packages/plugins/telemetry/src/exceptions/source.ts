@@ -17,12 +17,10 @@ import {
   TELEMETRY_EXCEPTION_ISSUES_COLLECTION_V1,
   type ExceptionIssueRecord,
 } from './issueRecord.js';
+import { TRIAGE_ISSUE_WATCH_SOURCES_V1 } from '@happier-dev/triage-sources/runtime';
 import type { ExceptionDetailDataV1 } from './contracts.js';
 
-export const TELEMETRY_EXCEPTION_SOURCE_V1 = Object.freeze({
-  pluginId: 'happier.telemetry',
-  localId: 'exceptions',
-});
+export const TELEMETRY_EXCEPTION_SOURCE_V1 = TRIAGE_ISSUE_WATCH_SOURCES_V1.telemetry;
 export const TELEMETRY_EXCEPTION_KIND_ID_V1 = 'exception';
 const LABEL = 'Happier exceptions';
 

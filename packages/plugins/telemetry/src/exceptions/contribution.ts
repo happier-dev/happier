@@ -10,7 +10,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import {
   createTriageIssueEventSourceSetupV1,
-  TRIAGE_ISSUE_COMMIT_EVENT_SETUP_INPUT_HINTS_V1,
+  createTriageIssueEventSetupInputHintsV1,
   TRIAGE_ISSUE_EVENT_LOCAL_ID_V1,
   TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1,
   TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1,
@@ -93,7 +93,7 @@ export const telemetryExceptionManifestParts = {
       description:
         'Prepares the configured Happier exceptions source for issue alerts without changing it.',
       inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
-      inputHints: TRIAGE_ISSUE_COMMIT_EVENT_SETUP_INPUT_HINTS_V1,
+      inputHints: createTriageIssueEventSetupInputHintsV1(TELEMETRY_EXCEPTION_SOURCE_V1, { publication: 'commit' }),
       resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(
         1,
         TriageIssueCommitPublishedEventSourceConfigV1Schema.jsonSchema,

@@ -1,4 +1,5 @@
 {
+  "plugins.posthog.watch.sourceDescription": "ソースが表示されない場合は、「PRs & Issues」→「接続」でソースを接続してください。",
   "plugins.triage.sourceSettings.failure.authentication": "この接続済みアカウントは認可されていません。「接続済みアカウント」で再接続してください。",
   "plugins.triage.sourceSettings.failure.permission": "この接続済みアカウントはこのスコープを参照できません。プロバイダー側でアクセスを許可してください。",
   "plugins.triage.sourceSettings.failure.rateLimit": "プロバイダーがこのアカウントのレートを制限しています。しばらくしてからもう一度お試しください。",

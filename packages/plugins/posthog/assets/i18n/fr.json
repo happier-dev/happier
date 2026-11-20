@@ -1,4 +1,5 @@
 {
+  "plugins.posthog.watch.sourceDescription": "Si aucune source ne s’affiche, connecte-en une dans PRs & Issues → Connecter.",
   "plugins.triage.sourceSettings.failure.authentication": "Le compte connecté n’est plus autorisé. Reconnecte-le dans Comptes connectés.",
   "plugins.triage.sourceSettings.failure.permission": "Le compte connecté ne voit pas cette portée. Accorde-lui l’accès chez le fournisseur.",
   "plugins.triage.sourceSettings.failure.rateLimit": "Le fournisseur limite le débit de ce compte. Réessaie dans un instant.",

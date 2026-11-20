@@ -1,4 +1,5 @@
 {
+  "plugins.posthog.watch.sourceDescription": "Wenn keine Quelle angezeigt wird, verbinde eine unter PRs & Issues → Verbinden.",
   "plugins.triage.sourceSettings.failure.authentication": "Das verbundene Konto ist nicht mehr autorisiert. Verbinde es unter „Verbundene Konten“ erneut.",
   "plugins.triage.sourceSettings.failure.permission": "Das verbundene Konto hat keinen Zugriff auf diesen Bereich. Gewähre ihm beim Anbieter Zugriff.",
   "plugins.triage.sourceSettings.failure.rateLimit": "Der Anbieter begrenzt Anfragen dieses Kontos. Versuche es gleich noch einmal.",

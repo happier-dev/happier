@@ -1,4 +1,5 @@
 {
+  "plugins.posthog.watch.sourceDescription": "Se non vedi nessuna fonte, collegane una in PRs & Issues → Collega.",
   "plugins.triage.sourceSettings.failure.authentication": "L’account collegato non è più autorizzato. Ricollegalo in Account collegati.",
   "plugins.triage.sourceSettings.failure.permission": "L’account collegato non vede questo ambito. Concedigli l’accesso presso il provider.",
   "plugins.triage.sourceSettings.failure.rateLimit": "Il provider sta limitando le richieste di questo account. Riprova tra poco.",

@@ -3,11 +3,11 @@
  * Shared Triage projection bounds stay at their protocol owner.
  */
 
-import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
+import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1, TRIAGE_ISSUE_WATCH_SOURCES_V1 } from '@happier-dev/triage-sources/runtime';
 
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
-export const SENTRY_PLUGIN_ID = 'happier.sentry';
+export const SENTRY_PLUGIN_ID = TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry.pluginId;
 export const SENTRY_CONNECTED_ACCOUNT_ID = 'sentry-account';
 export const SENTRY_CONNECTED_ACCOUNT_PURPOSE = 'sentry-account-use';
 /**
@@ -27,7 +27,7 @@ export const SENTRY_CONNECTED_ACCOUNT_PURPOSE = 'sentry-account-use';
  */
 export const SENTRY_CLOUD_NETWORK_HOST_ACCESS_ID = 'sentry-cloud-api';
 export const SENTRY_ACCOUNT_NETWORK_HOST_ACCESS_ID = 'sentry-account-api';
-export const SENTRY_CONTRIBUTION_ID = 'sentry-issues';
+export const SENTRY_CONTRIBUTION_ID = TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry.localId;
 export const SENTRY_ENTRY_KIND_ID = 'error-issue';
 /** Reserved evidence identity pending the approved projection-size amendment. */
 export const SENTRY_EVIDENCE_REFERENCE_ID = 'sentry-evidence';

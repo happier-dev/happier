@@ -1,5 +1,6 @@
 import { TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1, TELEMETRY_EXCEPTION_SOURCE_V1 } from '../../../telemetry/src/exceptions/source.js';
-import type { PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import type { DefinePluginInput, PluginInvocationCaller, PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import type { PluginAccountCollectionDefinition } from '@happier-dev/plugin-sdk/collections';
 import {
     EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
@@ -17,6 +18,10 @@ import {
     type TriageConfiguredSourceInstanceV1,
 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it, vi } from 'vitest';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
+import { TRIAGE_ISSUE_WATCH_SOURCES_V1, triageIssueWatchOptionIdsV1 } from '@happier-dev/triage-sources/runtime';
+import { TRIAGE_ACCOUNT_RESOURCES } from '../accountDefinition.js';
+import { PLUGIN_MANIFEST } from '../manifest.js';
 
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
 import {
@@ -165,6 +170,40 @@ function createContext(input: Readonly<{
 const INPUT = TriageReadConfiguredSourceInstancesInputV1Schema.parse({ v: 1 });
 
 describe('the caller-scoped configured-instance read', () => {
+    it.each([
+        [TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry, TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog],
+        [TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog, TRIAGE_ISSUE_WATCH_SOURCES_V1.sentry],
+    ])('offers only the selected source kind in the invoking Account (%j)', async (source, other) => {
+        const current = createTestkitCorpusCollections();
+        const foreign = createTestkitCorpusCollections();
+        current.control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source, seed: 1 })));
+        current.control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source: other, seed: 2 })));
+        foreign.control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source, seed: 3 })));
+        const handler = createTriageReadConfiguredSourceInstancesActionHandler();
+        expect(parsePluginManifest(PLUGIN_MANIFEST)).toMatchObject({ ok: true });
+        const { source: inputTypeId } = triageIssueWatchOptionIdsV1(source);
+        const optionsId = PLUGIN_MANIFEST.contributes.inputTypes.find(type => type.id === inputTypeId)?.options?.resource;
+        if (typeof optionsId !== 'string') throw new Error('Expected a local options Resource reference');
+        const resources: NonNullable<DefinePluginInput['resources']> = TRIAGE_ACCOUNT_RESOURCES;
+        const options = resources[optionsId];
+        if (options?.source !== 'dynamic') throw new Error('Expected the declared source options Resource');
+        const read = (collections: CorpusCollectionsV1, failed = false) =>
+            options.runtime.read(createTestResourceInvocationContext({
+                readAction: async (_ref, input) => failed
+                    ? { ok: false, errorCode: 'read_failed', error: 'read failed' }
+                    : { ok: true, result: await handler(TriageReadConfiguredSourceInstancesInputV1Schema.parse(input),
+                        createContext({ collections, admitted: [admittedSource(source), admittedSource(other)] })) },
+            }));
+        expect(JSON.parse(String(await read(current.collections)))).toEqual({
+            options: [{ value: instanceId(1), label: `${source.localId} scope 1` }],
+        });
+        expect(JSON.parse(String(await read(foreign.collections)))).toEqual({
+            options: [{ value: instanceId(3), label: `${source.localId} scope 3` }],
+        });
+        expect(JSON.parse(String(await read(createTestkitCorpusCollections().collections)))).toEqual({ options: [] });
+        await expect(read(current.collections, true)).rejects.toMatchObject({ code: 'read_failed' });
+    });
+
     it('reads the admitted exceptions instance in a fresh Account without a setup write', async () => {
         const { collections } = createTestkitCorpusCollections();
         const source = { ...admittedSource(TELEMETRY_EXCEPTION_SOURCE_V1), descriptor: TELEMETRY_EXCEPTION_SOURCE_DESCRIPTOR_V1 };

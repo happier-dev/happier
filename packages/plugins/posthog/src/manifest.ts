@@ -19,7 +19,7 @@ import { POSTHOG_ACCOUNT_ACTIONS } from './accountActions.js';
 import { defineComposerReference, definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { createPluginEventAutomationSetupResultV1JsonSchema, PluginEventAutomationHistoryGapResetActionInputV1JsonSchema, PluginEventAutomationHistoryGapResetActionResultV1JsonSchema } from '@happier-dev/plugin-sdk/events';
-import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
+import { createTriageIssueEventSourceSetupV1, TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema, TriageIssueTransitionV1Schema, createTriageIssueEventSetupInputHintsV1, TRIAGE_ISSUE_WATCH_SOURCES_V1, TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from '@happier-dev/triage-sources/runtime';
 import { runPosthogIssueObserver, resetPosthogIssueHistoryGap } from './source/issueObserver.js';
 
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
@@ -300,7 +300,9 @@ export const POSTHOG_PLUGIN = definePlugin({
             description: 'Prepares an existing configured source for issue alerts without changing it.',
             surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'safe',
             inputSchema: TriageIssueEventSetupInputV1Schema.jsonSchema,
-            inputHints: TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1,
+            inputHints: createTriageIssueEventSetupInputHintsV1(TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog, {
+                sourceDescription: { key: 'plugins.posthog.watch.sourceDescription', fallback: 'If no source is listed, connect one under PRs & Issues → Connect.' },
+            }),
             resultSchema: createPluginEventAutomationSetupResultV1JsonSchema(1, TriageIssueEventSourceConfigV1Schema.jsonSchema),
             run: createTriageIssueEventSourceSetupV1({ pluginId: POSTHOG_PLUGIN_ID, sourceLocalId: POSTHOG_SOURCE_CONTRIBUTION_ID, displayName: 'PostHog' }),
         }

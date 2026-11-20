@@ -26,10 +26,11 @@ export type TriageSessionHandoffChoicesReadOutcomeV1 =
 /** Reads the catalog owner's offered selections once; no selection or delivery is performed here. */
 export async function readTriageSessionHandoffChoicesV1(
   host: TriageSessionHandoffHostV1,
-  options: Readonly<{ signal?: AbortSignal; task?: TriageReadSessionHandoffChoicesInputV1['task'] }> = {},
+  options: Readonly<Pick<TriageReadSessionHandoffChoicesInputV1, 'task' | 'source'> & { signal?: AbortSignal }> = {},
 ): Promise<TriageSessionHandoffChoicesReadOutcomeV1> {
   const input = TriageReadSessionHandoffChoicesInputV1Schema.parse({ v: 1, projection: 'sessionHandoff',
-    ...(options.task === undefined ? {} : { task: options.task }) });
+    ...(options.task === undefined ? {} : { task: options.task }),
+    ...(options.source === undefined ? {} : { source: options.source }) });
   const response = await host.executeAction(TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1, input,
     options.signal === undefined ? {} : { signal: options.signal });
   if (response === undefined) return { kind: 'actionOutcome', outcome: response };

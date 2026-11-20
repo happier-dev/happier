@@ -505,6 +505,14 @@ Event setup states its default of 300 seconds (five minutes) and saves the
 person's explicit period in sourceConfig. Provider retry deadlines can delay
 the next check. Off, unconsumed and wrong-host sources perform no provider work.
 
+The shared Event setup form lists active configured sources by name. Its typed
+options Resource calls the Account's configured-source read for the Event's
+source kind. The saved source ID selects the current label when an Event is
+reopened. Automatic investigation options come from the same Action catalog read
+that Watch uses on submission. The catalog uses the source contribution's
+workflow subjects and offers Actions it can start. An empty source list points
+the person to **PRs & Issues → Connect**. The form displays failed reads separately.
+
 Event authoring uses Administration's current source-custody choices as well as
 portable installations. A machine-local source does not need a portable Account
 release, but its descriptive Availability census alone grants no execution.

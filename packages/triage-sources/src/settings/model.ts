@@ -31,6 +31,7 @@ import {
   triageSourceBindingComponentsV1,
   TRIAGE_SOURCE_FAILURE_COPY_V1,
   type TriageConfiguredSourceInstanceRecordV1,
+  readTriageConfiguredSourceDisplayLabelV1,
   type TriageSourceAccountBindingV1,
   type TriageSourceAdministrationActionInputV1,
   type TriageSourceFailureV1,
@@ -162,9 +163,7 @@ function projectConfiguredInstance(
       configuration: configured.configuration,
       locator: configured.locator,
     } }),
-    // A stored locator is optional on the configured record, and the source's
-    // own instance key is the only other thing in it a person can recognize.
-    label: configured.locator?.displayLabel ?? configured.localInstanceKey,
+    label: readTriageConfiguredSourceDisplayLabelV1(configured),
     locator: configured.locator?.displayPath ?? ('account' in configured.binding
       ? configured.binding.account.accountId
       : configured.locator?.displayLabel ?? configured.localInstanceKey),

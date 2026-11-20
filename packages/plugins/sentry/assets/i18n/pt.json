@@ -1,4 +1,5 @@
 {
+  "plugins.sentry.watch.sourceDescription": "Se nenhuma fonte aparecer, conecte uma em PRs & Issues → Conectar.",
   "plugins.triage.sourceSettings.failure.authentication": "A conta conectada já não está autorizada. Reconecte-a em Contas conectadas.",
   "plugins.triage.sourceSettings.failure.permission": "A conta conectada não consegue ver este âmbito. Conceda-lhe acesso no fornecedor.",
   "plugins.triage.sourceSettings.failure.rateLimit": "O fornecedor está a limitar os pedidos desta conta. Tente novamente daqui a pouco.",

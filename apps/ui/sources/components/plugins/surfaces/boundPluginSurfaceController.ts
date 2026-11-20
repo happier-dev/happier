@@ -47,7 +47,7 @@ import type {
     PluginUiResourceBindingCapabilityV1,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import {
     PLUGIN_UI_HOST_METHODS_V1,
     PluginUiExecuteActionRequestV1Schema,
@@ -1694,7 +1694,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
         }
         if (selected.kind === 'form') {
             presentActionInputForm({ form: selected.form, signal: mountLifetime.signal, anchor,
-                actionId: buildQualifiedPluginContributionKey(action),
+                actionId: formatQualifiedPluginActionId(action),
                 pickerContext: { machineId: actionInputHost.machineId, serverId: actionInputHost.serverId,
                     sessionId: actionInputHost.sessionId, ...(accountLifetime ? { accountLifetime } : {}) } });
         }

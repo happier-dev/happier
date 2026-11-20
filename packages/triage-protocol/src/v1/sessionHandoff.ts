@@ -13,6 +13,7 @@ import {
     SessionInputHandoffSendResultV1Schema, SessionInputHandoffCompositionResultV1Schema,
 } from '@happier-dev/plugin-sdk/sessions';
 import { AgentTargetKeyV2Schema } from '@happier-dev/plugin-sdk/agents';
+import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 import { ForgeCiFailureSummaryV1Schema } from '../ci/v1/failureSummary.js';
 import { ForgeReleaseNotesContextV1Schema } from '../releases/v1/operations.js';
 import { TriageActionIdV1Schema, TriageActionSubjectV1Schema, TriageEntryRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';
@@ -81,6 +82,8 @@ export const TriageReadSessionHandoffChoicesInputV1Schema = defineProtocolObject
     task: handoffTask.optional(),
     /** The page's own native subject: its records are added to the shared choices and marked `forSubject`. */
     subject: TriageActionSubjectV1Schema.optional(),
+    /** An issue Watch uses its admitted source's subjects for automatic delivery. */
+    source: PluginContributionIdentityV1Schema.optional(),
 }, closed);
 export type TriageReadSessionHandoffChoicesInputV1 = ReturnType<typeof TriageReadSessionHandoffChoicesInputV1Schema.parse>;
 
@@ -98,7 +101,7 @@ export const TriageSessionHandoffChoicesV1Schema = defineProtocolUnion([
         defaultActionId: TriageActionIdV1Schema.nullable(),
     }, closed),
     defineProtocolObject({ v: defineProtocolLiteral(1), kind: defineProtocolLiteral('unavailable'),
-        reason: defineProtocolLiteral('catalogUnavailable'),
+        reason: defineProtocolUnion([defineProtocolLiteral('catalogUnavailable'), defineProtocolLiteral('sourceUnavailable')]),
     }, closed),
 ]);
 export type TriageSessionHandoffChoicesV1 = ReturnType<typeof TriageSessionHandoffChoicesV1Schema.parse>;

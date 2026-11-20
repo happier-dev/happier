@@ -1,4 +1,5 @@
 {
+  "plugins.sentry.watch.sourceDescription": "Если список источников пуст, подключите источник в разделе PRs & Issues → Подключить.",
   "plugins.triage.sourceSettings.failure.authentication": "Подключенный аккаунт больше не авторизован. Переподключите его в разделе «Подключенные аккаунты».",
   "plugins.triage.sourceSettings.failure.permission": "Подключенный аккаунт не видит эту область. Предоставьте ему доступ на стороне провайдера.",
   "plugins.triage.sourceSettings.failure.rateLimit": "Провайдер ограничивает частоту запросов этого аккаунта. Повторите попытку чуть позже.",

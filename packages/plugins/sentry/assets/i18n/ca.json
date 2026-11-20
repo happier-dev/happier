@@ -1,4 +1,5 @@
 {
+  "plugins.sentry.watch.sourceDescription": "Si no hi ha cap font a la llista, connecta’n una a PRs & Issues → Connecta.",
   "plugins.triage.sourceSettings.failure.authentication": "El compte connectat ja no està autoritzat. Torna’l a connectar a Comptes connectats.",
   "plugins.triage.sourceSettings.failure.permission": "El compte connectat no pot veure aquest àmbit. Concedeix-li accés al proveïdor.",
   "plugins.triage.sourceSettings.failure.rateLimit": "El proveïdor està limitant les peticions d’aquest compte. Torna-ho a provar d’aquí a poc.",

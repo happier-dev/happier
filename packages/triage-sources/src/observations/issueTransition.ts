@@ -35,6 +35,7 @@ export type TriageIssueInvestigationChoiceReaderV1 = (
 /** One finite publication pass reads each configured investigation choice once. */
 export function createTriageIssueInvestigationChoiceReaderV1(
   context: Pick<PluginInvocationContext, 'services' | 'signal'>,
+  source: TriageEntryRefV1['source'],
 ): {
   host: ChoiceHost;
   read: TriageIssueInvestigationChoiceReaderV1;
@@ -60,7 +61,7 @@ export function createTriageIssueInvestigationChoiceReaderV1(
           (choice = readTriageIssueAutomaticInvestigationChoiceV1(
             host,
             configuredActionId,
-            { signal: context.signal },
+            { signal: context.signal, source },
           )),
         );
       return choice;

@@ -1,4 +1,5 @@
 {
+  "plugins.posthog.watch.sourceDescription": "如果列表中没有来源，请在「PRs & Issues」→「连接」中连接一个来源。",
   "plugins.triage.sourceSettings.failure.authentication": "该已连接账户不再获得授权。请在“已连接账户”中重新连接。",
   "plugins.triage.sourceSettings.failure.permission": "该已连接账户无法访问此范围。请在提供方处为其授予访问权限。",
   "plugins.triage.sourceSettings.failure.rateLimit": "提供方正在限制此账户的请求频率。请稍后重试。",

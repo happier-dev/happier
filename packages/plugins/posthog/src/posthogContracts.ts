@@ -12,13 +12,13 @@
  * an Action `hostAccess` reference, which would leave the grant unreferenceable.
  */
 
-import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/triage-sources/runtime';
+import { TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1, TRIAGE_ISSUE_WATCH_SOURCES_V1 } from '@happier-dev/triage-sources/runtime';
 
 /** The plugin id of this source. */
-export const POSTHOG_PLUGIN_ID = 'happier.posthog';
+export const POSTHOG_PLUGIN_ID = TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog.pluginId;
 
 /** The Triage source contribution id inside the target's `sources` point. */
-export const POSTHOG_SOURCE_CONTRIBUTION_ID = 'posthog-error-tracking';
+export const POSTHOG_SOURCE_CONTRIBUTION_ID = TRIAGE_ISSUE_WATCH_SOURCES_V1.posthog.localId;
 
 /** The declared Connected Account purpose, contribution id, and host-access grant id. */
 export const POSTHOG_CONNECTED_ACCOUNT_PURPOSE = 'posthog-api';

@@ -8,6 +8,7 @@ import {
   TriageReadConfiguredSourceInstancesResultV1Schema,
   TriageIssueEventSetupInputV1Schema, TriageIssueEventSourceConfigV1Schema,
   TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
+  TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
 } from '@happier-dev/triage-protocol/v1';
 
 export {
@@ -23,11 +24,30 @@ export const TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 = 'automation/setup-issue-tra
 export const TRIAGE_ISSUE_BACKGROUND_LOCAL_ID_V1 = 'issue-observer';
 export const TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1 = 'issue-alerts';
 
-/** The existing shared Action Fields renders these inputs; no source-local form. */
-export const TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1 = {
-  fields: [{
+/** Source identities shared by the declaring plugins and Triage's typed options. */
+export const TRIAGE_ISSUE_WATCH_SOURCES_V1 = {
+  sentry: { pluginId: 'happier.sentry', localId: 'sentry-issues' },
+  posthog: { pluginId: 'happier.posthog', localId: 'posthog-error-tracking' },
+  telemetry: { pluginId: 'happier.telemetry', localId: 'exceptions' },
+} as const;
+
+type WatchSource = typeof TRIAGE_ISSUE_WATCH_SOURCES_V1[keyof typeof TRIAGE_ISSUE_WATCH_SOURCES_V1];
+
+export function triageIssueWatchOptionIdsV1(source: WatchSource) {
+  return { source: `issue-source/${source.localId}`, investigation: `issue-investigation/${source.localId}` } as const;
+}
+
+/** The commit-published setup uses the same fields without the polling interval. */
+export function createTriageIssueEventSetupInputHintsV1(
+  source: WatchSource,
+  options?: Readonly<{ publication?: 'commit'; sourceDescription?: { key: string; fallback: string } }>,
+) {
+  const ids = triageIssueWatchOptionIdsV1(source);
+  const fields = [{
     path: 'sourceInstanceId', title: 'Source',
-    description: 'The configured PRs & Issues source to watch.', widget: 'text' as const, required: true,
+    description: options?.sourceDescription ?? 'The configured PRs & Issues source to watch.',
+    widget: 'select' as const, required: true,
+    inputType: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: ids.source },
   }, {
     path: 'checkPeriodSeconds', title: 'Check every (seconds)',
     description: 'Default: 300 seconds (5 minutes). Provider rate limits may delay a check.',
@@ -37,17 +57,14 @@ export const TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1 = {
     defaultValue: 'inbox', options: [{ value: 'inbox', label: 'Show in Inbox' },
       { value: 'auto_start', label: 'Start an investigation' }],
   }, {
-    path: 'investigation.configuredActionId', title: 'Configured investigation', widget: 'text' as const,
+    path: 'investigation.configuredActionId', title: 'Configured investigation', widget: 'select' as const,
+    inputType: { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: ids.investigation },
     description: 'Choose an existing investigate Action configured in PRs & Issues.',
     visibleWhen: { op: 'eq' as const, path: 'investigation.mode', value: 'auto_start' },
     requiredWhen: { op: 'eq' as const, path: 'investigation.mode', value: 'auto_start' },
-  }],
-};
-
-/** A commit-published source has no polling period, so its setup asks no check interval. */
-export const TRIAGE_ISSUE_COMMIT_EVENT_SETUP_INPUT_HINTS_V1 = {
-  fields: TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1.fields.filter(field => field.path !== 'checkPeriodSeconds'),
-};
+  }];
+  return { fields: options?.publication === 'commit' ? fields.filter(field => field.path !== 'checkPeriodSeconds') : fields };
+}
 
 /**
  * Resolve the source through its current target-owned row; opening setup writes nothing.
@@ -59,8 +76,9 @@ export function createTriageIssueEventSourceSetupV1(input: Readonly<{ pluginId: 
   (raw: unknown, context: PluginInvocationContext) => Promise<JsonValue> {
   return async (raw: unknown, context: PluginInvocationContext) => {
     const selected = TriageIssueEventSetupInputV1Schema.parse(raw);
+    const source = { pluginId: input.pluginId, localId: input.sourceLocalId };
     const listing = TriageReadConfiguredSourceInstancesResultV1Schema.parse(await context.services.actions.execute(
-      TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1, { v: 1 }, { signal: context.signal },
+      TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1, { v: 1, source }, { signal: context.signal },
     ));
     context.signal.throwIfAborted();
     const candidates = listing.kind === 'read' && listing.status === 'complete'
@@ -80,7 +98,7 @@ export function createTriageIssueEventSourceSetupV1(input: Readonly<{ pluginId: 
     }
     if (selected.investigation?.mode === 'auto_start') {
       const choices = await readTriageSessionHandoffChoicesV1({ executeAction: (ref, args, options) =>
-        context.services.actions.execute(ref, args, options) }, { task: 'investigate', signal: context.signal });
+        context.services.actions.execute(ref, args, options) }, { task: 'investigate', source, signal: context.signal });
       context.signal.throwIfAborted();
       const configuredActionId = selected.investigation.configuredActionId;
       if (choices.kind !== 'choices' || !choices.actions.some(action => action.selection.configuredActionId === configuredActionId)) {

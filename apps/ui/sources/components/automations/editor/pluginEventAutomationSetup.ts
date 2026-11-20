@@ -4,6 +4,8 @@ import type { PluginEventAutomationSetupResultV1 } from '@happier-dev/protocol/a
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { PluginUiJsonValueV1Schema, reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
+import { readInputPath, writeInputPath } from '@happier-dev/protocol/inputs';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import type { MutableRefObject } from 'react';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -233,7 +235,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  */
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
-    /** The plugin's saved source configuration is input to its own setup renderer. */
+    /** The saved source is the initial draft when editing an existing Event. */
     initialSource?: PluginEventAutomationSetupResultV1;
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
     /**
@@ -373,9 +375,34 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                         }
                         return await selection.result;
                     }
+                    const saved = params.initialSource;
+                    if (saved) {
+                        const sourceConfig: Readonly<Record<string, unknown>> =
+                            isSetupSurfaceObjectInput(saved.sourceConfig) ? saved.sourceConfig : {};
+                        const retainedInput = { ...sourceConfig, sourceInstanceId: saved.sourceInstanceId };
+                        let draft = selection.form.getInput();
+                        for (const field of selection.form.presentation.inputHints.fields) {
+                            if (readInputPath(seed?.setupInput, field.path) !== undefined
+                                || (seed?.connectedAccount && field.connectedAccountOptions)) continue;
+                            let value = readInputPath(retainedInput, field.path);
+                            // Watch stores the sampling period in milliseconds and edits it in whole seconds.
+                            if (value === undefined && field.path === 'checkPeriodSeconds'
+                                && typeof sourceConfig.checkPeriodMs === 'number' && Number.isInteger(sourceConfig.checkPeriodMs / 1_000)) {
+                                value = sourceConfig.checkPeriodMs / 1_000;
+                            }
+                            if (value !== undefined) draft = writeInputPath(draft, field.path, value);
+                        }
+                        selection.form.replaceInput(draft);
+                    }
                     (params.present ?? presentActionInputForm)({
                         form: selection.form,
                         signal: operationScope.signal,
+                        actionId: formatQualifiedPluginActionId(initial.event.setupAction.identity),
+                        pickerContext: {
+                            machineId: initial.actionSnapshot.host.machineId,
+                            serverId: initial.actionSnapshot.host.serverId,
+                            accountLifetime: params.accountLifetime,
+                        },
                     });
                     return await selection.result;
                 } finally {

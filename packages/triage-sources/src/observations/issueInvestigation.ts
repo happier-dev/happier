@@ -1,6 +1,6 @@
 import { isPluginError, readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
-import { TriageSourceFailureV1Schema, type TriageSessionHandoffInputV1, type TriageSessionHandoffSelectionV1 } from '@happier-dev/triage-protocol/v1';
+import { TriageSourceFailureV1Schema, type TriageReadSessionHandoffChoicesInputV1, type TriageSessionHandoffInputV1, type TriageSessionHandoffSelectionV1 } from '@happier-dev/triage-protocol/v1';
 import {
   readTriageSessionHandoffChoicesV1, requestTriageSessionHandoffV1, type TriageSessionHandoffHostV1,
 } from '../sessionHandoff.js';
@@ -68,11 +68,11 @@ function noticeOutcome(response: unknown, attempted = true): string | null {
 export async function readTriageIssueAutomaticInvestigationChoiceV1(
   host: TriageSessionHandoffHostV1,
   configuredActionId: string,
-  options: Readonly<{ signal: AbortSignal }>,
+  options: Readonly<{ signal: AbortSignal; source?: TriageReadSessionHandoffChoicesInputV1['source'] }>,
 ): Promise<TriageSessionHandoffSelectionV1 | string> {
   try {
     options.signal.throwIfAborted();
-    const choices = await readTriageSessionHandoffChoicesV1(host, { task: 'investigate', signal: options.signal });
+    const choices = await readTriageSessionHandoffChoicesV1(host, { task: 'investigate', ...options });
     options.signal.throwIfAborted();
     if (choices.kind === 'actionOutcome') return noticeOutcome(choices.outcome, false) ?? failure(undefined, false);
     const selection = choices.kind === 'choices'

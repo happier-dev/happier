@@ -13,7 +13,8 @@ export {
   TriageIssueInvestigationV1Schema,
   TRIAGE_ISSUE_DEFAULT_CHECK_PERIOD_MS_V1, TRIAGE_ISSUE_EVENT_LOCAL_ID_V1,
   TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1, TRIAGE_ISSUE_BACKGROUND_LOCAL_ID_V1,
-  TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1, TRIAGE_ISSUE_EVENT_SETUP_INPUT_HINTS_V1, TRIAGE_ISSUE_COMMIT_EVENT_SETUP_INPUT_HINTS_V1,
+  TRIAGE_ISSUE_NOTIFICATION_CATEGORY_ID_V1, TRIAGE_ISSUE_WATCH_SOURCES_V1,
+  createTriageIssueEventSetupInputHintsV1, triageIssueWatchOptionIdsV1,
 } from './observations/issueSource.js';
 export type { TriageIssueEventSourceConfigV1, TriageIssueTransitionV1 } from './observations/issueSource.js';
 export { createTriageIssueEventSourceAdapterV1, createTriageIssueHistoryGapResetV1 } from './observations/issueObserver.js';

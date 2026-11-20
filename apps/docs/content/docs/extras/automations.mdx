@@ -142,6 +142,11 @@ new Sentry issues. Selecting one opens a workflow draft. For GitHub and Sentry,
 choose a source in the Event setup. For the weekly check, choose a project and
 turn on the schedule when ready.
 
+Sentry and PostHog issue workflows list the sources connected to your Account.
+If the Source list is empty, open **PRs & Issues → Connect** and add a source.
+To start an agent automatically when an issue opens, choose **Start an investigation**
+and select a configured Action for that source.
+
 Between ordered steps, **Run when** chooses **Success** (the default), **Failure**,
 or **Always**, relative to the preceding step in that sequence. You set it in the
 step's **Step options**; the editor names a step's edge above it only when it is not

@@ -5,6 +5,8 @@ import {
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     PluginMachineMaterializationV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
+import { projectInputOptionsDependencies } from '@happier-dev/protocol/inputs';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 import type {
     PluginProjectionAction,
@@ -421,6 +423,47 @@ function durablePushSetupParams(
 }
 
 describe('Plugin Event Automation setup orchestration', () => {
+    it('reopens a saved source and gives the shared presenter the bound Action and Account', async () => {
+        const fixture = eligibleEvent();
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...fixture,
+            setupAction: {
+                ...fixture.setupAction,
+                inputHints: { fields: [
+                    { path: 'sourceInstanceId', title: 'Source', widget: 'select', required: true,
+                        inputType: { pluginId: PLUGIN_ID, localId: 'sources' } },
+                    { path: 'investigation.configuredActionId', title: 'Investigation', widget: 'select',
+                        inputType: { pluginId: PLUGIN_ID, localId: 'investigations' } },
+                    { path: 'checkPeriodSeconds', title: 'Check every (seconds)', widget: 'number', defaultValue: 300 },
+                ] },
+                inputSchema: { type: 'object', properties: {
+                    sourceInstanceId: { type: 'string' },
+                    investigation: { type: 'object', properties: { configuredActionId: { type: 'string' } } },
+                    checkPeriodSeconds: { type: 'number' },
+                }, required: ['sourceInstanceId'], additionalProperties: false },
+            },
+        });
+        setupSchemas.set(event.setupAction.id, event.setupAction.inputSchema);
+        const observed = vi.fn();
+        await configurePluginEventAutomationSetup({
+            ...durablePushSetupParams(event),
+            observationTransport: 'checkpointedPull',
+            initialSource: { v: 1, sourceInstanceId: 'source-42', sourceContractVersion: 3,
+                displayLabel: 'Old name', sourceConfig: {
+                    checkPeriodMs: 90_000, investigation: { configuredActionId: 'investigate' }, privateOperand: 'internal',
+                } },
+            present: ({ form, actionId, pickerContext }) => {
+                observed({ actionId, pickerContext, draft: projectInputOptionsDependencies(form.getInput(), undefined, actionId) });
+                form.cancel();
+            },
+        });
+        expect(observed).toHaveBeenCalledWith({
+            actionId: formatQualifiedPluginActionId(event.setupAction.identity),
+            pickerContext: { machineId: MACHINE_ID, serverId: SERVER_ID, accountLifetime: ACCOUNT_LIFETIME },
+            draft: { sourceInstanceId: 'source-42', checkPeriodSeconds: 90, investigation: { configuredActionId: 'investigate' } },
+        });
+    });
+
     it.each([
         ['disabled', SETTINGS_ROUTES.plugins, false], ['revoked', SETTINGS_ROUTES.plugins, false], ['untrusted', SETTINGS_ROUTES.plugins, false],
         ['non_portable', SETTINGS_ROUTES.plugins, false], ['machine_local', SETTINGS_ROUTES.plugins, false],

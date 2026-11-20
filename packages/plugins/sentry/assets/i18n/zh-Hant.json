@@ -1,4 +1,5 @@
 {
+  "plugins.sentry.watch.sourceDescription": "如果清單中沒有來源，請在「PRs & Issues」→「連接」中連接一個來源。",
   "plugins.triage.sourceSettings.failure.authentication": "此已連結帳戶不再獲得授權。請在「已連結帳戶」中重新連結。",
   "plugins.triage.sourceSettings.failure.permission": "此已連結帳戶無法存取此範圍。請在提供方為其授予存取權。",
   "plugins.triage.sourceSettings.failure.rateLimit": "提供方正在限制此帳戶的請求頻率。請稍後再試。",

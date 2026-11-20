@@ -1,4 +1,5 @@
 {
+  "plugins.sentry.watch.sourceDescription": "If no source is listed, connect one under PRs & Issues → Connect.",
   "plugins.triage.sourceSettings.failure.authentication": "The connected account is no longer authorized. Reconnect it in Connected Accounts.",
   "plugins.triage.sourceSettings.failure.permission": "The connected account cannot see this scope. Grant it access at the provider.",
   "plugins.triage.sourceSettings.failure.rateLimit": "The provider is rate limiting this account. Try again shortly.",

@@ -1,4 +1,5 @@
 {
+  "plugins.posthog.watch.sourceDescription": "Jeśli lista źródeł jest pusta, połącz źródło w PRs & Issues → Połącz.",
   "plugins.triage.sourceSettings.failure.authentication": "Połączone konto nie jest już autoryzowane. Połącz je ponownie w sekcji Połączone konta.",
   "plugins.triage.sourceSettings.failure.permission": "Połączone konto nie widzi tego zakresu. Przyznaj mu dostęp u dostawcy.",
   "plugins.triage.sourceSettings.failure.rateLimit": "Dostawca ogranicza liczbę żądań tego konta. Spróbuj ponownie za chwilę.",

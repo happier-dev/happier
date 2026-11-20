@@ -28,6 +28,7 @@ import type {
 } from './actionsCatalogProtocol.js';
 import { createTriageAccountKvCatalogStore } from '../settings/accountKvCatalogStore.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
+import { resolveTriageCallerSources } from './callerSource.js';
 
 /**
  * The two action-catalog Actions: the mounted editor's daemon path to the one
@@ -204,23 +205,31 @@ export function createTriageReadActionsActionHandler(): TriageDataActionHandler<
         if (!('projection' in input)) return await readTriageActionsForSurface(input, deps);
         const read = await readTriageActions(deps);
         if (read.kind === 'unreadable') return { v: 1, kind: 'unavailable', reason: 'catalogUnavailable' };
+        const source = input.source === undefined ? null
+            : await resolveTriageCallerSources(context, { signal: context.signal }, input.source);
+        if (source?.kind === 'invalidCaller') return { v: 1, kind: 'unavailable', reason: 'sourceUnavailable' };
         // A handoff without an entry addresses a native record, whose declared source workflow subject is `other`
         // (triage-protocol investigationSubjects.ts). The one planner decides, so a pull-request-only or
         // subject-owned record (a deployment Environment's "Set it up") is never offered on an unrelated failure.
         // A page that names its own native subject also gets that subject's records, marked so it draws them.
-        const shared = planTriageOfferedActionsV1(read.value.actions, 'other');
-        const own = input.subject === undefined ? [] : planTriageOfferedActionsV1(read.value.actions, input.subject);
+        const shared = source === null ? planTriageOfferedActionsV1(read.value.actions, 'other') : [];
+        const own = source === null
+            ? input.subject === undefined ? [] : planTriageOfferedActionsV1(read.value.actions, input.subject)
+            : [...new Set(source.callers.flatMap(caller => caller.contribution.descriptor.kinds.map(kind => kind.workflowSubject)))]
+                .flatMap(subject => planTriageOfferedActionsV1(read.value.actions, subject));
         const actions: Extract<TriageSessionHandoffChoicesV1, { kind: 'choices' }>['actions'] = read.value.actions
             .filter(action => action.target.kind === 'agent' && (shared.includes(action) || own.includes(action)))
-            .map(action => {
+            .flatMap(action => {
+                const startable = applyTriageActionLaunchModeV1(action, 'start') !== null;
+                if (source !== null && !startable) return [];
                 const titleKey = readTriageActionTitleKeyV1(action);
-                return { label: action.label, selection: {
+                return [{ label: action.label, selection: {
                     configuredActionId: action.actionId,
                     sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured',
                 }, launchMode: readTriageActionLaunchModeV1(action),
-                startable: applyTriageActionLaunchModeV1(action, 'start') !== null,
+                startable,
                 ...(titleKey === null ? {} : { titleKey }),
-                ...(own.includes(action) ? { forSubject: true as const } : {}) };
+                ...(own.includes(action) ? { forSubject: true as const } : {}) }];
             });
         const defaultActionId = input.task === 'investigate' ? TRIAGE_DEFAULT_INVESTIGATE_ACTION_ID_V1 : TRIAGE_DEFAULT_FIX_ACTION_ID_V1;
         return { v: 1, kind: 'choices', actions,

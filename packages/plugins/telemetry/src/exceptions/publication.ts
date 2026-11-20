@@ -120,7 +120,7 @@ export function createExceptionIssuePublisher(
           : {
               autoStart: {
                 configuredActionId,
-                choices: createTriageIssueInvestigationChoiceReaderV1(context),
+                choices: createTriageIssueInvestigationChoiceReaderV1(context, TELEMETRY_EXCEPTION_SOURCE_V1),
               },
             }),
       });

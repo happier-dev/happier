@@ -9,6 +9,13 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/mani
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
 
+/** The person's configured name, with the recognizable key for older rows. */
+export function readTriageConfiguredSourceDisplayLabelV1(
+    configured: ReturnType<typeof TriageConfiguredSourceInstanceV1Schema.parse>,
+): string {
+    return configured.locator?.displayLabel ?? configured.localInstanceKey;
+}
+
 /** The Action's target-local id. */
 export const TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1 = 'sources/read-configured-v1';
 /** The Action's stable registration/descriptive id. */
