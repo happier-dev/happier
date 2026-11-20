@@ -154,23 +154,29 @@ it('preserves a transient caller custody refusal through nested Account Actions 
             serverId: 'action_availability', serverIdentityId: 'srv_action_availability' });
     };
     try {
-        expect(await invoke()).toMatchObject({ ok: true });
+        const control = await executor.execute('action.invoke', {
+            action: { pluginId, localId: 'echo' }, input: { key: 'account-runtime-control' },
+        }, { surface: 'cli', runtimeAccountId: accountId,
+            serverId: 'action_availability', serverIdentityId: 'srv_action_availability' });
+        expect(control, JSON.stringify(control)).toMatchObject({ ok: true, result: { key: 'account-runtime-control' } });
+        const initial = await invoke();
+        expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, result: { value: 'nested-effect' } });
         expect(writes).toBe(1);
         callerReads = 0;
         failCallerRead = true;
         const result = await invoke();
         expect(refusedCallerRead).toBe(true);
-        expect(result).toMatchObject({ ok: false, errorCode: 'plugin_account_execution_unavailable',
-            details: { details: { requestId: 'account-availability-query-2' } },
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'plugin_account_execution_unavailable',
+            requestId: 'account-availability-query-2',
             failureCause: { phase: 'plugin.account_execution.revalidate', errorClass: 'AxiosError',
-                errorCode: 'ERR_BAD_RESPONSE', httpStatus: 503 } });
+                httpStatus: 503 } });
         expect(writes).toBe(1);
-        expect(await invoke()).toMatchObject({ ok: true });
+        expect(await invoke()).toMatchObject({ ok: true, result: { value: 'nested-effect' } });
         expect(writes).toBe(2);
         callerReads = 0;
         retireCallerRead = true;
         expect(await invoke()).toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired',
-            error: expect.any(String), details: { details: { requestId: 'account-availability-query-4' } } });
+            error: expect.any(String), requestId: 'account-availability-query-4' });
         expect(writes).toBe(2);
     } finally { restore(); await app.close(); }
 });

@@ -103,6 +103,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
             // Account registry, independently of the held credential source.
             runtimeRegistryController: {
                 acquireRuntimeRegistry: async () => borrowAccountRegistry(),
+                acquireExecutableRuntimeRegistry: async () => borrowAccountRegistry(),
                 tryAcquireRuntimeRegistry: borrowAccountRegistry,
                 isRuntimeRegistryCurrent: candidate => candidate === registry,
                 subscribe: pluginReloadController.subscribe,
