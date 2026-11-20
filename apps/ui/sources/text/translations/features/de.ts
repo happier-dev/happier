@@ -18770,6 +18770,8 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         sessionDailySummaryDescription: "Jeden Tag um 09:00 eine Zusammenfassung hier.",
         sessionTestDescription: "Führt nach jedem abgeschlossenen, fehlgeschlagenen oder abgebrochenen Turn einen bearbeitbaren Testbefehl aus.",
         newTag: "Neu",
+        searchPlaceholder: "Beispiele durchsuchen",
+        noMatch: ({ query }) => `Keine Beispiele passen zu „${query}“`,
         notifyWhenAgentWaits: { title: "Benachrichtige mich, wenn ein Agent wartet", description: "Wähle eine Sitzung und erhalte eine Benachrichtigung, sobald ihr Agent deine Eingabe braucht." },
         dailySummaryInSession: { title: "Tägliche Zusammenfassung in dieser Sitzung", description: "Wähle eine Sitzung für eine Zusammenfassung jeden Tag um 09:00 Uhr." },
         memoryUpkeepInSession: { title: 'Erinnerungen pflegen', description: 'Prüfe die Erinnerungen dieser Sitzung jeden Sonntag um 09:00 Uhr und halte nützliche Fakten aktuell.' },

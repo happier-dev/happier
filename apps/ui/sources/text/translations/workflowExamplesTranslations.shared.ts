@@ -22,6 +22,9 @@ export type Copy = Readonly<{
     sessionNotifyDescription: string; sessionDailySummaryDescription: string; sessionTestDescription: string;
     /** The quiet mark beside an example the catalog added recently (lab `b-habit T`, Memory upkeep). */
     newTag: string;
+    /** The full picker's search: its placeholder and what it says when nothing matches. */
+    searchPlaceholder: string;
+    noMatch: (params: { query: string }) => string;
 }>;
 
 
@@ -34,6 +37,8 @@ export const workflowExamplesTranslationsEnglish: Pick<Record<'en'|'de'|'es'|'fr
         sessionDailySummaryDescription: "A summary here every day at 09:00.",
         sessionTestDescription: "Run an editable test command after every completed, failed or cancelled turn.",
         newTag: 'New',
+        searchPlaceholder: "Search examples",
+        noMatch: ({ query }: { query: string }) => `No examples match “${query}”`,
         notifyWhenAgentWaits: { title: 'Notify me when an agent waits', description: 'Choose a session and get a notification whenever its agent needs your input.' },
         dailySummaryInSession: { title: 'Daily summary in this session', description: 'Choose a session for a summary every day at 09:00.' },
         memoryUpkeepInSession: { title: 'Memory upkeep', description: 'Review this session’s memory every Sunday at 09:00 and keep useful facts current.' },

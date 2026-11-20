@@ -19301,6 +19301,8 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         sessionDailySummaryDescription: "Сводка здесь каждый день в 09:00.",
         sessionTestDescription: "Запускает редактируемую тестовую команду после каждого завершённого, неудачного или отменённого хода.",
         newTag: "Новое",
+        searchPlaceholder: "Поиск примеров",
+        noMatch: ({ query }) => `Нет примеров по запросу «${query}»`,
         notifyWhenAgentWaits: { title: "Уведомить меня, когда агент ждёт", description: "Выберите сессию и получайте уведомление каждый раз, когда её агенту нужно ваше участие." },
         dailySummaryInSession: { title: "Ежедневная сводка в этой сессии", description: "Выберите сессию для сводки каждый день в 09:00." },
         memoryUpkeepInSession: { title: 'Обновление памяти', description: 'Проверяйте память этой сессии каждое воскресенье в 09:00 и поддерживайте полезные факты в актуальном состоянии.' },

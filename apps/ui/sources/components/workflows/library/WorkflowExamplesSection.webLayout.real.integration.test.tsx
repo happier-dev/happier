@@ -117,14 +117,26 @@ describe('example tiles, as a browser lays them out', () => {
         expect(header?.querySelector('[data-testid="workflow-examples:ask-once:use"]')).not.toBeNull();
         expect(host.querySelector('[data-testid="workflow-examples:ask-once:chrome.footer"]')?.querySelector('[data-testid$=":use"]')).toBeNull();
     });
-    it('draw each example as the small map on the card\'s paper: whole labels in the regular face, lanes wrap, no empty well (DESIGN-7/9 P5)', async () => {
+    it('keeps the full picker to compact cards: no map stretches a row into blank paper (#184 F5, UI refinements 23:55Z)', async () => {
+        host = document.createElement('div');
+        document.body.appendChild(host);
+        root = createRoot(host);
+        await act(async () => {
+            root!.render(React.createElement(View, { style: { width: 900 } }, React.createElement(WorkflowExamplesSection, { onUse: () => {} })));
+        });
+        await measureWebLayout(host, { viewport: { width: 900, height: 2400 }, texts: [], settle: (replay) => act(replay) });
+        expect(host.querySelector('[data-testid="workflow-examples:ask-once"]')).not.toBeNull();
+        expect(host.querySelectorAll('[data-testid$=":preview"]').length).toBe(0);
+    });
+    // The first visit's few featured cards draw their maps (lab nav-N3); the full picker is for choosing.
+    it('draw each featured example as the small map on the card\'s paper: whole labels in the regular face, lanes wrap, no empty well (DESIGN-7/9 P5)', async () => {
         const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol/workflows/builtins/examples');
         const { t, tLoose } = await import('@/text');
         host = document.createElement('div');
         document.body.appendChild(host);
         root = createRoot(host);
         await act(async () => {
-            root!.render(React.createElement(View, { style: { width: 900 } }, React.createElement(WorkflowExamplesSection, { onUse: () => {} })));
+            root!.render(React.createElement(View, { style: { width: 900 } }, React.createElement(WorkflowExamplesSection, { presentation: 'featured' })));
         });
         // Collection mounts previews after its browser layout is known. Settle that boundary before
         // inventorying the text whose geometry and typography this case must actually inspect.
@@ -200,9 +212,12 @@ describe('example tiles, as a browser lays them out', () => {
                 else expect(rect.fontFamily, text).not.toMatch(/SemiBold|Bold/u);
             }
         }
-        // The fork's title is its own bold word, its lane count a separate regular one.
-        expect(expectedFace.get(forkTitle)).toBe('bold');
-        expect([...expectedFace].some(([text, face]) => face === 'regular' && /\u00b7/u.test(text))).toBe(true);
+        // The fork's title is its own bold word, its lane count a separate regular one, where a featured example
+        // draws a fork (the featured four may have none: the face rule above already holds for every map text).
+        if (expectedFace.has(forkTitle)) {
+            expect(expectedFace.get(forkTitle)).toBe('bold');
+            expect([...expectedFace].some(([text, face]) => face === 'regular' && /\u00b7/u.test(text))).toBe(true);
+        }
         // A one-step example sits in the middle of the paper its taller neighbour gives it, not on top of an
         // empty well (DESIGN-9 P5 "Ask once").
         const description = layout.textRects(askDescription)[0]!;

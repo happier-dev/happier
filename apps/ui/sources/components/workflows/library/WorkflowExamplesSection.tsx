@@ -9,8 +9,11 @@ import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDe
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
+import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -127,8 +130,53 @@ export function WorkflowExamplesSection(props: Readonly<{
         onCloseChoice={() => setChoice(null)} onUse={useExample} />;
     return <ItemGroup title={props.hideTitle ? undefined : t('workflows.examples.title')} surface="none"
         {...(props.opensDraft === false ? {} : { description: t('workflows.examples.description') })}>
-        <ExampleCards examples={examples} choose={choose} choice={choice} onCloseChoice={() => setChoice(null)} onUse={useExample} />
+        <ExamplesPicker examples={examples} choose={choose} choice={choice} onCloseChoice={() => setChoice(null)} onUse={useExample} />
     </ItemGroup>;
+}
+
+type ExampleStart = 'runNow' | 'schedule' | 'event';
+/** How an example starts: the one fact the whole catalog divides by (#184 F2: an event starter was last of 28). */
+function readExampleStart(example: WorkflowStarterExampleV1): ExampleStart {
+    if (example.eventSeed !== undefined || example.triggerSeed?.kind === 'sessionLifecycle') return 'event';
+    return example.triggerSeed?.kind === 'schedule' ? 'schedule' : 'runNow';
+}
+const EXAMPLE_START_GROUPS = {
+    get axis() {
+        return [
+            { key: 'runNow', title: t('workflows.triggers.card.manualSentence') },
+            { key: 'schedule', title: t('workflows.triggers.guided.whenSchedule') },
+            { key: 'event', title: t('workflows.triggers.guided.whenEvent') },
+        ];
+    },
+    groupOf: readExampleStart,
+};
+
+/**
+ * The full catalog (the library's "More", the editor and a trigger's examples): a search over names and what each
+ * does, then the examples grouped by how they start (#184 F2: an event starter was the last of 28, with no search),
+ * as compact cards. Maps stay on the first visit's featured cards: in the picker a deep example's map stretched its
+ * row into tall blank paper (#184 F5, UI refinements 23:55Z).
+ */
+function ExamplesPicker(props: Readonly<{
+    examples: readonly WorkflowStarterExampleV1[];
+    choose: (example: WorkflowStarterExampleV1) => void;
+    choice: Readonly<{ key: string; lifetime: ActiveServerAccountScopeLifetime | null }> | null;
+    onCloseChoice: () => void;
+    onUse: (example: WorkflowStarterExampleSelection) => void;
+}>) {
+    const [query, setQuery] = React.useState('');
+    const needle = query.trim().toLocaleLowerCase();
+    const filter = React.useMemo(() => needle.length === 0 ? undefined : (example: WorkflowStarterExampleV1) =>
+        `${tLoose(example.titleKey)}\n${tLoose(example.descriptionKey)}`.toLocaleLowerCase().includes(needle), [needle]);
+    return <View style={styles.picker}>
+        {/* Free content in the section: the field stands on the section's text edge, with the cards and labels below. */}
+        <BareSectionContent><CompactSearchField testID="workflow-examples:search" value={query} onChangeText={setQuery}
+            placeholder={t('workflows.examples.searchPlaceholder')} accessibilityLabel={t('workflows.examples.searchPlaceholder')} /></BareSectionContent>
+        <ExampleCards examples={props.examples} compact groups={EXAMPLE_START_GROUPS} filter={filter}
+            empty={<EmptyState testID="workflow-examples:noMatch" layout="inline" iconName="magnifying-glass"
+                title={t('workflows.examples.noMatch', { query: query.trim() })} />}
+            choose={props.choose} choice={props.choice} onCloseChoice={props.onCloseChoice} onUse={props.onUse} />
+    </View>;
 }
 
 /** How many examples the returning library shows before "more": one row of the two-column grid. */
@@ -216,12 +264,15 @@ const readExampleKey = (example: WorkflowStarterExampleV1) => example.key;
 function ExampleCards(props: Readonly<{
     examples: readonly WorkflowStarterExampleV1[];
     compact?: boolean;
+    groups?: typeof EXAMPLE_START_GROUPS;
+    filter?: (example: WorkflowStarterExampleV1) => boolean;
+    empty?: React.ReactNode;
     choose: (example: WorkflowStarterExampleV1) => void;
     choice: Readonly<{ key: string; lifetime: ActiveServerAccountScopeLifetime | null }> | null;
     onCloseChoice: () => void;
     onUse: (example: WorkflowStarterExampleSelection) => void;
 }>) {
-    const { examples, compact, choose, choice, onCloseChoice, onUse } = props;
+    const { examples, compact, choose, choice, onCloseChoice, onUse, groups, filter } = props;
     const { theme } = useUnistyles();
     const language = getPreferredLanguage();
     const projections = React.useMemo(() => {
@@ -233,7 +284,8 @@ function ExampleCards(props: Readonly<{
         const example = examples.find(candidate => candidate.key === key);
         if (example) choose(example);
     }, [choose, examples]);
-    const model = useHappierCollection<WorkflowStarterExampleV1>({ items: examples, keyOf: readExampleKey, openKey: null, onOpenChange });
+    const model = useHappierCollection<WorkflowStarterExampleV1>({ items: examples, keyOf: readExampleKey, openKey: null, onOpenChange,
+        ...(groups === undefined ? {} : { groups }), ...(filter === undefined ? {} : { filter }) });
     const glyphColor = theme.colors.text.secondary;
     const anatomy = React.useMemo((): CollectionAnatomy<WorkflowStarterExampleV1> => ({
         glyph: () => <Icon name="tree-structure" size={20} color={glyphColor} />,
@@ -279,6 +331,7 @@ function ExampleCards(props: Readonly<{
                 minDetailWidth={EXAMPLE_CARD_MIN_WIDTH_PX}
                 preferredListRatio={1}
                 minCardWidth={EXAMPLE_CARD_MIN_WIDTH_PX}
+                {...(props.empty === undefined ? {} : { empty: props.empty })}
             />
         </CoreCollectionScope>
     </View>;
@@ -286,6 +339,7 @@ function ExampleCards(props: Readonly<{
 
 const styles = StyleSheet.create((theme) => ({
     listHeaderUntitled: { paddingTop: 0 },
+    picker: { gap: theme.space.s12 },
     cards: { marginHorizontal: -HAPPIER_PAGE_METRICS.sheetInsetPx },
     // A short map beside a taller neighbour sits in the middle of the paper it is given, not on top of an
     // empty well (DESIGN-9 P5 "Ask once").

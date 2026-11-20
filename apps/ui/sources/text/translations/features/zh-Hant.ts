@@ -19150,6 +19150,8 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         sessionDailySummaryDescription: "每天 09:00 在這裡產生摘要。",
         sessionTestDescription: "在每個完成、失敗或取消的回合後執行可編輯的測試命令。",
         newTag: "新",
+        searchPlaceholder: "搜尋範例",
+        noMatch: ({ query }) => `沒有符合「${query}」的範例`,
         notifyWhenAgentWaits: { title: "在代理等待時通知我", description: "選擇一個工作階段，每當其中的代理需要你的輸入時，就會收到通知。" },
         dailySummaryInSession: { title: "在此工作階段中每日摘要", description: "選擇一個工作階段，每天09:00產生摘要。" },
         memoryUpkeepInSession: { title: '記憶維護', description: '每週日09:00檢查此工作階段的記憶，並更新有用的資訊。' },

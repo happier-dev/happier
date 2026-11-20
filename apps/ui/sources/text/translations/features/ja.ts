@@ -19210,6 +19210,8 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         sessionDailySummaryDescription: "毎日09:00にここで要約します。",
         sessionTestDescription: "ターンが完了・失敗・キャンセルされるたびに、編集可能なテストコマンドを実行します。",
         newTag: "新着",
+        searchPlaceholder: "例を検索",
+        noMatch: ({ query }) => `「${query}」に一致する例はありません`,
         notifyWhenAgentWaits: { title: "エージェントが待機したら通知する", description: "セッションを選ぶと、エージェントがあなたの入力を必要とするたびに通知されます。" },
         dailySummaryInSession: { title: "このセッションで毎日の要約", description: "毎日09:00に要約を受け取るセッションを選びます。" },
         memoryUpkeepInSession: { title: 'メモリの整理', description: '毎週日曜日09:00にこのセッションのメモリを確認し、役立つ情報を最新に保ちます。' },

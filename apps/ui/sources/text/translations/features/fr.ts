@@ -19333,6 +19333,8 @@ const workflowExamplesTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'c
         sessionDailySummaryDescription: "Un résumé ici chaque jour à 09:00.",
         sessionTestDescription: "Exécute une commande de test modifiable après chaque tour terminé, échoué ou annulé.",
         newTag: "Nouveau",
+        searchPlaceholder: "Rechercher des exemples",
+        noMatch: ({ query }) => `Aucun exemple ne correspond à « ${query} »`,
         notifyWhenAgentWaits: { title: "Me prévenir quand un agent attend", description: "Choisis une session et reçois une notification dès que son agent a besoin de ton intervention." },
         dailySummaryInSession: { title: "Résumé quotidien dans cette session", description: "Choisis une session pour recevoir un résumé chaque jour à 09:00." },
         memoryUpkeepInSession: { title: 'Entretien de la mémoire', description: 'Examine la mémoire de cette session chaque dimanche à 09:00 et garde les faits utiles à jour.' },
