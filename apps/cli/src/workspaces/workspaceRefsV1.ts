@@ -1,6 +1,6 @@
 import type { WorkspaceRefResolutionContextV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { WorkspaceRefV1WriteSchema, ManagedWorkspaceRefV2WriteSchema, isManagedWorkspaceRefV2, type MachineWorkspaceRefV1, type ManagedWorkspaceRefV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { WorkspaceRefV1WriteSchema, ManagedWorkspaceRefV2WriteSchema, isManagedWorkspaceRefV2, type MachineWorkspaceRefV1, type ManagedWorkspaceRefV2, type WorkspaceAddressV2, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceRefV1, enrichWorkspaceRefV1, resolveWorkspaceProjectKeyV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 function normalizeIdentifier(value: string): string {
     return value.trim();
@@ -39,7 +39,7 @@ export function materializeWorkspaceRefForMachineRoot(
         rootPath: string;
         label?: string;
         /** Host-proven native parent or copy source; only a new ref may inherit its current anchor. */
-        parentWorkspace?: WorkspaceAddressV1;
+        parentWorkspace?: WorkspaceAddressV2;
         /** Main checkout root proven by the selected host SCM backend. */
         parentRootPath?: string;
         nowMs: number;
@@ -77,7 +77,7 @@ export function materializeWorkspaceRefForMachineRoot(
             nowMs: input.nowMs, createId: input.createId,
         });
         currentRefs = parent.workspaceRefs;
-        parentWorkspace = workspaceAddressFromRefV1(parent.workspaceRef);
+        parentWorkspace = workspaceAddressFromRefV2(parent.workspaceRef);
     }
     const id = input.createId();
     let parentProjectKey: string | undefined;
@@ -114,7 +114,7 @@ export function materializeWorkspaceRefForManagedRoot(
         managedId: string;
         controller: ManagedWorkspaceRefV2['controller'];
         rootPath: string;
-        parentWorkspace?: WorkspaceAddressV1;
+        parentWorkspace?: WorkspaceAddressV2;
         nowMs: number;
         createId: () => string;
     }>,

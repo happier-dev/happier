@@ -7,7 +7,9 @@ import type { WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncPersistentM
 import type { WorkspaceSyncCommittedCopyTargetV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 
 import { materializeWorkspaceRefForMachineRoot, materializeWorkspaceRefForManagedRoot, resolveWorkspaceRefById, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
-import type { ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2, ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import type { ProjectAccountSnapshotMutation, ProjectAccountSnapshotMutationResult } from '@/workspaces/projectAccountRows';
 import type { ProjectWorkerDependency } from '@/workspaces/execution/projectWorkerAdmission';
 import { deriveWorkspaceSyncRelationshipId } from './workspaceSyncRelationshipIdentity';
@@ -23,6 +25,7 @@ export type MaterializeWorkspaceSyncEndpointsInput = Readonly<{
   sourceRootPath: string;
   targetRootPath: string;
   sourceWorkspaceRefId?: string;
+  sourceAddress?: WorkspaceAddressV2;
   targetWorkspaceRefId?: string;
   purpose?: 'worker_clean_copy' | 'project_files';
   signal?: AbortSignal;
@@ -246,20 +249,26 @@ export function createWorkspaceSyncRelationshipOwner(
     let sourceRef!: WorkspaceRefV1;
     let targetRef!: WorkspaceRefV1;
     const result = await mutateProjectSnapshot((settings) => {
-      const first = materializeWorkspaceRefForMachineRoot(parseRefs(settings), {
-        serverId: input.serverId,
-        machineId: input.sourceMachineId,
-        rootPath: input.sourceRootPath,
-        nowMs: nowMs(),
-        createId: () => input.sourceWorkspaceRefId ?? createId(),
-      });
+      const refs = parseRefs(settings);
+      const first = input.sourceAddress
+        ? (() => {
+            const source = resolveWorkspaceRefV1(refs, input.sourceAddress);
+            if (source.kind !== 'resolved') {
+              throw ownerError('workspace_ref_not_ready', 'Prepared managed source is no longer current');
+            }
+            return { workspaceRef: source.ref, workspaceRefs: refs };
+          })()
+        : materializeWorkspaceRefForMachineRoot(refs, {
+            serverId: input.serverId,
+            machineId: input.sourceMachineId,
+            rootPath: input.sourceRootPath,
+            nowMs: nowMs(),
+            createId: () => input.sourceWorkspaceRefId ?? createId(),
+          });
       const targetInput = {
         serverId: input.serverId,
         rootPath: input.targetRootPath,
-        ...(input.purpose === 'worker_clean_copy' || input.purpose === 'project_files' ? { parentWorkspace: {
-          serverId: first.workspaceRef.serverId, workspaceId: first.workspaceRef.id,
-          machineId: first.workspaceRef.machineId, rootPath: first.workspaceRef.rootPath,
-        } } : {}),
+        ...(input.purpose === 'worker_clean_copy' || input.purpose === 'project_files' ? { parentWorkspace: workspaceAddressFromRefV2(first.workspaceRef) } : {}),
         nowMs: nowMs(),
         createId: () => input.targetWorkspaceRefId ?? createId(),
       };
@@ -679,7 +688,7 @@ export function createWorkspaceSyncRelationshipOwner(
       if (input.actionInput.purpose !== 'worker_clean_copy') return { outcome: 'unknown' };
       const snapshot = parseProjectAccountSnapshotV1(await options.readProjectSnapshot());
       const source = resolveWorkspaceRefById(snapshot.workspaceRefs, input.actionInput.sourceWorkspaceRefId, input.serverId);
-      if (!source || source.machineId !== options.localMachineId) {
+      if (!source || resolveWorkspaceSyncExecutionMachineIdV1(source) !== options.localMachineId) {
         throw ownerError('workspace_sync_controller_mismatch', 'Creation read-back must run on its source controller');
       }
       const target = resolveWorkspaceRefForMachineRoot(snapshot.workspaceRefs, { serverId: input.serverId,

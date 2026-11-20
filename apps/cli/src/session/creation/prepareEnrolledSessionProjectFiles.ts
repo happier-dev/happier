@@ -8,7 +8,7 @@ import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/cr
 import { readSessionPlacementProjectFilesV1, type SessionPlacementSelectionV1, type SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import { createDefaultWorkspaceContentPolicyV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { buildWorkspaceSyncMaterializationOpenInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
-import type { ManagedWorkspaceRefV2, WorkspaceAddressV1, WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { ManagedWorkspaceRefV2, WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { SessionProjectFilesOriginV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 
 import type { ScmRepositoryCloneSourceV1 } from '@happier-dev/protocol/scm/repositoryClone';
@@ -19,7 +19,7 @@ export type EnrolledSessionProjectFiles = Readonly<{
   directory: string;
   projectFiles?: ResolvedSessionProjectFilesV1;
   workspace?: WorkspaceAddressV2;
-  sourceWorkspace?: WorkspaceAddressV1;
+  sourceWorkspace?: WorkspaceAddressV2;
   projectFilesOrigin?: SessionProjectFilesOriginV1;
 }> | ActionExecuteFailure;
 
@@ -28,15 +28,12 @@ export async function prepareSessionProjectFilesSource(input: Readonly<{
   cloneSource?: true;
   invokeReviewedChild?: HostReviewedChildPortV1['invoke'];
   signal?: AbortSignal;
-}>): Promise<Readonly<{ ok: true; sourceWorkspace: WorkspaceAddressV1; directory: string; cloneSource?: ScmRepositoryCloneSourceV1 }> | ActionExecuteFailure> {
+}>): Promise<Readonly<{ ok: true; sourceWorkspace: WorkspaceAddressV2; directory: string; cloneSource?: ScmRepositoryCloneSourceV1 }> | ActionExecuteFailure> {
   const request = input.placement ? buildSessionProjectFilesSourceOpenInputV1(input.placement) : null;
   if (!request) return { ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' };
   const result = await invokeReviewedProjectOpen({ request: { ...request, ...(input.cloneSource ? { cloneSource: true as const } : {}) }, role: SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source.role,
     invokeReviewedChild: input.invokeReviewedChild, signal: input.signal });
   if (!result.ok) return result;
-  if (result.opened.workspace.kind === 'managed') {
-    return { ok: false, errorCode: 'workspace_managed_target_required', error: 'workspace_managed_target_required' };
-  }
   return { ok: true, sourceWorkspace: result.opened.workspace, directory: result.opened.directory,
     ...(result.opened.cloneSource ? { cloneSource: result.opened.cloneSource } : {}) };
 }
@@ -61,7 +58,7 @@ export async function resolveSessionProjectFiles(input: Readonly<{
 
 /** Enrolled and retained native destinations use the same admitted Project Open child. */
 export async function prepareSessionProjectFilesTarget(input: Readonly<{
-  sourceWorkspace: WorkspaceAddressV1;
+  sourceWorkspace: WorkspaceAddressV2;
   executionTarget: SessionExecutionTargetV1;
   targetDirectory: string;
   projectFiles?: Exclude<SessionProjectFilesV1, { kind: 'git_clone' }>;

@@ -10,6 +10,7 @@ import type {
   WorkspaceSyncStatusV1,
   WorkspaceRefV1,
 } from '@happier-dev/protocol';
+import type { WorkspaceSyncLocalAgentStreamOpen } from './workspaceSyncController';
 import type { WorkspaceRootOwnershipHandle } from './workspaceSyncRootOwnership';
 import type {
   PreparedWorkspaceSyncRelationship,
@@ -37,6 +38,7 @@ import type { ActiveProjectAccountRowsSnapshot, ProjectAccountSessionCustody } f
 import type { HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { PrivateProjectNativeSync, PrivateProjectSyncEffectConfiguration, PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { WorkspaceSyncTargetPhaseDescriptor } from './workspaceSyncTargetAuthority';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceRefById } from '@/workspaces/workspaceRefsV1';
 import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
@@ -119,6 +121,8 @@ export type PrepareWorkspaceSyncHandoffInput = Readonly<{
   /** Native destination namespace; targetMachineId remains its actual routing controller. */
   targetManaged?: Pick<ManagedWorkspaceRefV2, 'managedId' | 'controller'>;
   sourceWorkspaceRefId?: string;
+  /** Host-only managed Copy once source selected at Project admission. */
+  managedCopySource?: ManagedWorkspaceRefV2;
   targetWorkspaceRefId?: string;
   sourceRootPath: string;
   targetRootPath: string;
@@ -152,6 +156,12 @@ export type AbortWorkspaceSyncHandoffInput = Readonly<{
   signal?: AbortSignal;
 }>;
 
+export type WorkspaceSyncManagedCopySource = Readonly<{
+  workspace: ManagedWorkspaceRefV2;
+  ownership: WorkspaceRootOwnershipHandle;
+  openAgent: WorkspaceSyncLocalAgentStreamOpen;
+}>;
+
 export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
   sync: ManagedWorkspaceSync;
   preparePrivateExecution?: (input: PrepareWorkspaceSyncPrivateExecutionInput) => Promise<WorkspaceSyncPrivateExecution>;
@@ -177,6 +187,7 @@ export type WorkspaceSyncHandoffAdapterDeps = Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
     targetWorkspace?: WorkspaceRefV1;
+    managedCopySource?: WorkspaceSyncManagedCopySource;
     copyOnceBaseline?: WorkspaceManifest;
     copyOnceExcludedPaths?: readonly string[];
   }>>;
@@ -194,6 +205,7 @@ export interface WorkspaceSyncHandoffAdapter {
   releaseAllPrivateExecutions?(): Promise<void>;
   /** Exact accepted copy endpoint in the incumbent prepared operation only. */
   resolvePreparedCopyTarget?(operationId: string, workspaceRefId: string): WorkspaceRefV1 | null;
+  resolvePreparedManagedCopySource?(operationId: string, workspaceRefId: string): WorkspaceSyncManagedCopySource | null;
   applySourcePhase?(request: WorkspaceSyncHandoffSourcePhaseRequestV1, signal?: AbortSignal,
     authority?: WorkspaceSyncHandoffSourcePhaseAuthority, context?: RpcHandlerContext): Promise<WorkspaceSyncHandoffSourcePhaseResultV1>;
   prepareBetween(
@@ -229,6 +241,7 @@ type PreparedOperation = Readonly<{
     release(reason: 'abort' | 'commit'): Promise<void>;
     ownershipHandles?: readonly WorkspaceRootOwnershipHandle[];
     targetWorkspace?: WorkspaceRefV1;
+    managedCopySource?: WorkspaceSyncManagedCopySource;
     copyOnceBaseline?: WorkspaceManifest;
     copyOnceExcludedPaths?: readonly string[];
   }>;
@@ -248,6 +261,7 @@ function sameAdmittedInput(left: PrepareWorkspaceSyncHandoffInput, right: Prepar
     'sourceWorkspaceRefId', 'targetWorkspaceRefId', 'sourceRootPath', 'targetRootPath',
     'targetReplacementApprovalReceiptId'] as const).every(field => left[field] === right[field])
     && isDeepStrictEqual(left.action, right.action)
+    && isDeepStrictEqual(left.managedCopySource, right.managedCopySource)
     && isDeepStrictEqual(left.targetManaged, right.targetManaged)
     && isDeepStrictEqual(left.targetReplacementApproval, right.targetReplacementApproval)
     && isDeepStrictEqual(left.targetReplacementApprovalActionInput, right.targetReplacementApprovalActionInput);
@@ -425,6 +439,10 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
       const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
       if (failures.length) throw new AggregateError(failures, 'Private Sync cleanup failed');
     },
+    resolvePreparedManagedCopySource(operationId, workspaceRefId) {
+      const source = getPrepared(operationId)?.fence?.managedCopySource;
+      return source?.workspace.id === workspaceRefId ? source : null;
+    },
     resolvePreparedCopyTarget(operationId, workspaceRefId) {
       const operation = getPrepared(operationId);
       const target = operation?.fence?.targetWorkspace;
@@ -579,6 +597,7 @@ export function createWorkspaceSyncHandoffAdapter(deps: WorkspaceSyncHandoffAdap
           serverId: accountServerId,
           sourceMachineId: input.sourceMachineId,
           sourceRootPath: input.sourceRootPath,
+          ...(input.managedCopySource ? { sourceAddress: workspaceAddressFromRefV2(input.managedCopySource), purpose: 'project_files' as const } : {}),
           ...(input.targetManaged ? { targetManaged: input.targetManaged, purpose: 'project_files' as const }
             : { targetMachineId: input.targetMachineId }),
           targetRootPath: input.targetRootPath,

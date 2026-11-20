@@ -3594,6 +3594,11 @@ export async function startDaemon(
     markRequesterRuntimeCreatable();
     // Retained Sessions recover requester custody through the factory installed above.
     await initializeReattachedSessions();
+    const openManagedProjectWorkspace: NonNullable<ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace']> =
+      request => managedMachinePolicyAdapter.openProjectWorkspaceTarget({
+        ...request, lifetime: AbortSignal.any([request.lifetime, homeTransportCancellation.signal]),
+        holder: { version: configuration.currentCliVersion, resolveArtifacts: readSessionTargetHolderArtifacts },
+      });
     const runtimeBootstrap = await startDaemonRuntimeBootstrap({
       publishConnectedServiceObservation: observation => {
         const target = machineResourceTarget();
@@ -3740,11 +3745,6 @@ export async function startDaemon(
     connectedServiceQuotasLoopHandle = runtimeBootstrap.connectedServiceQuotasLoopHandle;
     publicProfileRefreshHandle = runtimeBootstrap.publicProfileRefreshHandle;
     daemonServerWorkScheduler = runtimeBootstrap.daemonServerWorkScheduler;
-    const openManagedProjectWorkspace: NonNullable<ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace']> =
-      request => managedMachinePolicyAdapter.openProjectWorkspaceTarget({
-        ...request, lifetime: AbortSignal.any([request.lifetime, homeTransportCancellation.signal]),
-        holder: { version: configuration.currentCliVersion, resolveArtifacts: readSessionTargetHolderArtifacts },
-      });
     const machineRegistrationRuntime = startDaemonMachineRegistrationRuntime({
       api,
       credentials,
@@ -4221,6 +4221,7 @@ export async function startDaemon(
               localMachineId: registeredMachineId,
               releaseChannel: configuration.publicReleaseRing,
               credentials,
+              openManagedProjectWorkspace,
               openManagedWorkspaceTarget: ({ workspace, relationshipId, requesterAccountId, lifetime }) =>
                 managedMachinePolicyAdapter.openWorkspaceSyncTarget({ managedId: workspace.managedId,
                   workspace, relationshipId, requesterAccountId, lifetime,

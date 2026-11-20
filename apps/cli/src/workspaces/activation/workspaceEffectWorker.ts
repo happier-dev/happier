@@ -8,6 +8,8 @@ import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
 import { executePrivateProjectSyncEffect, privateSyncEffectError, type PrivateProjectNativeSyncProcessPort,
   type PrivateProjectSyncEffectConfiguration, type PrivateProjectSyncNetwork, type WorkspaceNativeSyncEffect, type WorkspaceNativeCopyBaselineEffect } from './privateProjectSyncEffect';
 import { readWorkspaceSyncNativeCopyOnceBaseline } from '@/workspaces/sync/workspaceSyncTargetBootstrap';
+import { createManagedWorkspaceReturnEffectApply,
+  type ManagedWorkspaceReturnEffect, type ManagedWorkspaceReturnEffectApply } from '@/workspaces/sync/managedWorkspaceReturnTarget';
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { executeMemberScmRead, type MemberScmReadEffect, type MemberScmRemovalService } from '@/scm/rpc/memberScmRead';
 import { executeMemberSessionImport, type MemberSessionImportEffect, type MemberSessionImportRecord } from '@/session/handoff/agentBundle/memberImportEffect';
@@ -23,6 +25,7 @@ export type WorkspaceEffectServices = Partial<MemberScmComparisonServices> & Rea
   readNativeSyncConfiguration?(): Promise<Readonly<{ configuration: PrivateProjectSyncEffectConfiguration; network: PrivateProjectSyncNetwork }>>;
   completeNativeSync?(result: PrivateProjectNativeSyncProcessPort): Promise<void>;
   completeNativeCopyBaseline?(result: WorkspaceManifest | null): Promise<void>;
+  applyManagedWorkspaceReturn?(apply: ManagedWorkspaceReturnEffectApply): Promise<void>;
   /** A local repository operation run as the member: its whole SCM response. */
   completeScmRead?(response: unknown): Promise<void>;
   /** Existing Project removal owner; child supplies filesystem facts and the destructive effect. */
@@ -58,7 +61,7 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         if (message.kind !== 'run' || running) throw new Error('workspace_effect_protocol_invalid');
         // Admission/source descriptors are inherited solely from the parent
         // owner, exactly as in the existing background-process bootstrap.
-        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | WorkspaceNativeCopyBaselineEffect | MemberScmReadEffect | MemberScmComparisonEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect;
+        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | WorkspaceNativeCopyBaselineEffect | ManagedWorkspaceReturnEffect | MemberScmReadEffect | MemberScmComparisonEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect;
         const effect = 'kind' in dispatched && dispatched.kind === 'native_sync' ? dispatched.checkout : dispatched;
         if (effect.workspaceRoot !== (io.currentDirectory ?? process.cwd)()) {
           throw privateProjectCheckoutRefusal();
@@ -105,6 +108,12 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
                 connectedAccounts: services.connectedAccounts,
                 onEffectsIssued: () => { effectsIssued = true; void services.onEffectsIssued().catch(() => {}); } });
               await services.completeNativeSync(nativeSync);
+              send({ kind: 'settled', id: runId });
+              return;
+            }
+            if ('kind' in dispatched && dispatched.kind === 'native_workspace_return') {
+              if (!services.applyManagedWorkspaceReturn) throw privateProjectCheckoutRefusal();
+              await services.applyManagedWorkspaceReturn(createManagedWorkspaceReturnEffectApply(dispatched, signal, () => { effectsIssued = true; }));
               send({ kind: 'settled', id: runId });
               return;
             }

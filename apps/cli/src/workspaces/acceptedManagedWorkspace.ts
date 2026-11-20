@@ -4,7 +4,7 @@ import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2, type WorkspaceAddr
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectRuntimeAccountAccess } from './projectAccountRows';
+import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectAccountRowsInput, type ProjectRuntimeAccountAccess } from './projectAccountRows';
 
 /** A managed ref admits only its exact Home, controller installation, resource and root. */
 export function matchesAcceptedManagedWorkspaceRef(
@@ -21,8 +21,19 @@ export async function readManagedWorkspaceRefForAddress(
     signal: AbortSignal,
     scope: 'workspace' | 'project' = 'workspace',
 ) {
-    const { workspaceRefs } = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
+    return await readAcceptedManagedWorkspaceRefFromRows({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, signal,
+    }, runtime.serverHttpBaseUrl, workspace, scope);
+}
+
+export async function readAcceptedManagedWorkspaceRefFromRows(
+    rows: ProjectAccountRowsInput,
+    serverHttpBaseUrl: string,
+    workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>,
+    scope: 'workspace' | 'project' = 'workspace',
+) {
+    const { workspaceRefs } = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => readProjectAccountRows({
+        ...rows,
         selection: scope === 'project'
             ? { kinds: ['workspace-ref'], serverId: workspace.serverId }
             : { key: { kind: 'workspace-ref', serverId: workspace.serverId, id: workspace.workspaceId } },

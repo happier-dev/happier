@@ -7,6 +7,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { ScmComparisonSchema, ScmComparisonFileSchema } from '@happier-dev/protocol/scm/comparison';
 import type { ScmComparisonFile } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryMetadataSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { ManagedWorkspaceAddressV2Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
 import { projectCapturedComparisonFileIndex } from './projectCapturedComparison';
@@ -32,6 +33,7 @@ export const StoredScmComparisonSchema = z.strictObject({
   retainedRefs: z.array(z.strictObject({ ref: z.string(), oid: z.string() })),
   workspaceReturn: z.optional(z.strictObject({
     baselineAvailable: z.boolean(),
+    destination: z.optional(ManagedWorkspaceAddressV2Schema),
     entries: z.array(z.strictObject({ path: z.string(),
       expectedDestination: WorkspaceSyncEntryExpectationV1Schema,
       selectedExpectation: WorkspaceSyncEntryExpectationV1Schema,

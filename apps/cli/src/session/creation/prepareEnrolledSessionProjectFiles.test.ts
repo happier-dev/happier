@@ -89,6 +89,51 @@ describe('enrolled remote Session Project files', () => {
         workspaceAction: { kind: 'copy_once', contentPolicy: { selection: 'git_worktree' } } } });
   });
 
+  it('materializes a guest copy on its controller and retains the guest for Bring changes back', async () => {
+    const workspace = {
+      v: 2, kind: 'managed', serverId: target.serverId, workspaceId: 'guest-ref', managedId: 'guest-id',
+      controller: { machineId: target.machineId, installationId: 'guest-controller' },
+      rootPath: targetWorkspace.rootPath,
+    } as const;
+    const input = SessionSpawnNewInputV2Schema.parse({
+      executionTarget: target,
+      directory: { kind: 'path', path: targetWorkspace.rootPath },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      sessionPlacement: {
+        kind: 'machine', target, projectFilesSource: { kind: 'managed', workspace },
+        projectFiles: { kind: 'copy_once' },
+      },
+    });
+    const requests: OpenProjectInputV1[] = [];
+    const executor = createActionExecutor({
+      projectsOpen: async request => {
+        requests.push(request);
+        return {
+          kind: 'opened', workspace: request.materialization.kind === 'attach' ? workspace : targetWorkspace,
+          directory: targetWorkspace.rootPath, setup: 'notRequired',
+        };
+      },
+      sessionSpawnNew: async args => {
+        const prepared = await prepareEnrolledSessionProjectFiles({
+          placement: args.sessionPlacement, executionTarget: args.executionTarget,
+          targetDirectory: targetWorkspace.rootPath, invokeReviewedChild: args.context?.hostReviewedChild?.invoke,
+        });
+        if (!prepared.ok) return prepared;
+        expect(prepared.projectFilesOrigin).toMatchObject({ sourceWorkspace: workspace, targetWorkspace });
+        return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' };
+      },
+    });
+    await expect(executor.execute('session.spawn_new', input, context)).resolves.toMatchObject({
+      ok: true, result: { type: 'pending' },
+    });
+    expect(requests).toMatchObject([
+      { ...target, source: { kind: 'workspace', workspaceId: workspace.workspaceId, checkout: workspace },
+        materialization: { kind: 'attach' } },
+      { ...target, source: { kind: 'workspace', workspaceId: workspace.workspaceId, checkout: workspace },
+        materialization: { kind: 'sync', workspaceAction: { kind: 'copy_once' } } },
+    ]);
+  });
+
   it('stops before target materialization when the source Machine refuses admission', async () => {
     const { result, requests } = await run(undefined, 'machine_access_denied');
     expect(result).toMatchObject({ ok: false, errorCode: 'machine_access_denied' });

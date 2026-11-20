@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readlink, readdir, rm, symlink } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
+import type { WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { WorkspaceSyncEntryExpectationV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { withConfinedWorkspaceSyncParent } from './workspaceSyncConfinedFileSystem';
 import { observeWorkspaceSyncEntryAtRoot } from './workspaceSyncFileRead';
@@ -47,39 +48,7 @@ async function copyConfinedLinuxEntry(sourcePath: string, destinationPath: strin
     return;
   }
   if (before.isFile()) {
-    const source = await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try {
-      const admitted = await source.stat();
-      if (!admitted.isFile() || !hasSameObjectIdentity(before, admitted)) {
-        throw conflictError('conflict_changed', 'Reviewed workspace source file changed during capture');
-      }
-      const destination = await open(destinationPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
-      try {
-        const buffer = Buffer.allocUnsafe(64 * 1024);
-        let offset = 0;
-        while (true) {
-          const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, offset);
-          if (bytesRead === 0) break;
-          let written = 0;
-          while (written < bytesRead) {
-            const result = await destination.write(buffer, written, bytesRead - written, offset + written);
-            if (result.bytesWritten === 0) throw new Error('Reviewed workspace capture could not write staged material');
-            written += result.bytesWritten;
-          }
-          offset += bytesRead;
-        }
-        const after = await source.stat();
-        if (!hasSameObjectIdentity(admitted, after) || admitted.size !== after.size
-          || admitted.mtimeMs !== after.mtimeMs || admitted.mode !== after.mode || offset !== after.size) {
-          throw conflictError('conflict_changed', 'Reviewed workspace source file changed during capture');
-        }
-        await destination.chmod(admitted.mode & 0o777);
-      } finally {
-        await destination.close();
-      }
-    } finally {
-      await source.close();
-    }
+    await copyConfinedWorkspaceSyncFile(await open(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW), before, destinationPath);
     return;
   }
   if (!before.isDirectory()) {
@@ -104,6 +73,68 @@ async function copyConfinedLinuxEntry(sourcePath: string, destinationPath: strin
     await chmod(destinationPath, admitted.mode & 0o777);
   } finally {
     await directory.close();
+  }
+}
+
+/** Capture one selected leaf from an already admitted workspace into the review shelf. */
+export async function captureWorkspaceSyncLeafFromTarget(input: Readonly<{
+  source: WorkspaceSource;
+  sourcePath: string;
+  entry: WorkspaceEntryStats;
+  destinationPath: string;
+}>): Promise<void> {
+  const { source, sourcePath, entry, destinationPath } = input;
+  if (!source.observeSyncEntry) throw Object.assign(new Error('Native workspace capture is unavailable'), { code: 'workspace_source_operation_unavailable' });
+  const expected = await source.observeSyncEntry(sourcePath);
+  if (expected.kind === 'symlink' && entry.isSymbolicLink()) {
+    await symlink(expected.target, destinationPath);
+  } else if (expected.kind === 'file' && entry.isFile()) {
+    const file = await source.open(sourcePath, { noFollow: true });
+    await copyConfinedWorkspaceSyncFile(file, entry, destinationPath);
+  } else {
+    throw conflictError('conflict_changed', 'Selected workspace leaf changed before capture');
+  }
+  const [current, captured] = await Promise.all([
+    source.observeSyncEntry(sourcePath),
+    observeWorkspaceSyncEntryAtRoot({ rootPath: dirname(destinationPath), relativePath: basename(destinationPath) }),
+  ]);
+  if (JSON.stringify(current) !== JSON.stringify(expected) || JSON.stringify(captured) !== JSON.stringify(expected)) {
+    throw conflictError('conflict_changed', 'Reviewed workspace source changed during capture');
+  }
+}
+
+async function copyConfinedWorkspaceSyncFile(source: WorkspaceReadHandle, expected: WorkspaceEntryStats, destinationPath: string): Promise<void> {
+  try {
+    const admitted = await source.stat();
+    if (!admitted.isFile() || !hasSameObjectIdentity(expected, admitted)) {
+      throw conflictError('conflict_changed', 'Reviewed workspace source file changed during capture');
+    }
+    const destination = await open(destinationPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    try {
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      let offset = 0;
+      while (true) {
+        const { bytesRead } = await source.read(buffer, 0, buffer.byteLength, offset);
+        if (bytesRead === 0) break;
+        let written = 0;
+        while (written < bytesRead) {
+          const result = await destination.write(buffer, written, bytesRead - written, offset + written);
+          if (result.bytesWritten === 0) throw new Error('Reviewed workspace capture could not write staged material');
+          written += result.bytesWritten;
+        }
+        offset += bytesRead;
+      }
+      const after = await source.stat();
+      if (!hasSameObjectIdentity(admitted, after) || admitted.size !== after.size
+        || admitted.mtimeMs !== after.mtimeMs || admitted.mode !== after.mode || offset !== after.size) {
+        throw conflictError('conflict_changed', 'Reviewed workspace source file changed during capture');
+      }
+      await destination.chmod(admitted.mode & 0o777);
+    } finally {
+      await destination.close();
+    }
+  } finally {
+    await source.close();
   }
 }
 
@@ -188,8 +219,8 @@ function conflictError(code: 'conflict_changed' | 'conflict_resolution_unsupport
 }
 
 function hasSameObjectIdentity(
-  left: Awaited<ReturnType<typeof lstat>>,
-  right: Awaited<ReturnType<typeof lstat>>,
+  left: Pick<WorkspaceEntryStats, 'dev' | 'ino'>,
+  right: Pick<WorkspaceEntryStats, 'dev' | 'ino'>,
 ): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }

@@ -360,6 +360,25 @@ describe.skipIf(process.platform !== 'linux' || !holderPath || !helperPath)('man
     expect(await readFile(join(hostRoot, 'tree', 'user.txt'), 'utf8')).toBe('sandbox user file');
   });
 
+  it('reviews a directory replacing a link without capturing files through that link', async () => {
+    const protectedDirectory = join(hostRoot, 'person-files');
+    await mkdir(protectedDirectory);
+    await writeFile(join(protectedDirectory, 'notes.txt'), 'person notes\n');
+    await symlink('person-files', join(hostRoot, 'link'));
+    await mkdir(join(targetRoot, 'link'));
+    await writeFile(join(targetRoot, 'link', 'notes.txt'), 'Session notes\n');
+
+    const baseline = await scanWorkspaceManifest({ workspaceRoot: hostRoot, safeFilterPolicy: { excludeAdministrativePaths: false } });
+    const preview = await prepareManagedWorkspaceReturnFromStage({
+      sessionId, activeServerDir: directory, hostRoot, stageRoot: targetRoot, registry, baseline,
+    });
+    expect(preview.paths.find(group => group.path === 'link')?.files).toContainEqual(expect.objectContaining({
+      path: 'link/notes.txt', changeKind: 'added',
+      evidence: { state: 'available', unifiedDiff: expect.stringContaining('+Session notes\n') },
+    }));
+    await expect(readFile(join(protectedDirectory, 'notes.txt'), 'utf8')).resolves.toBe('person notes\n');
+  });
+
   it('reports files already applied if retaining the remaining review fails', async () => {
     await writeFile(join(hostRoot, 'file.txt'), 'copied');
     await recordBaseline();

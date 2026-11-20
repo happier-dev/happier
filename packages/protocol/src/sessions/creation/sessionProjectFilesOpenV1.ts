@@ -26,15 +26,24 @@ export function needsEnrolledSessionProjectFilesOpenV1(input: Readonly<{
 }>): boolean {
   const { projectFiles, projectFilesSource: source } = readSessionPlacementProjectFilesV1(input.placement, input.projectFiles);
   if (projectFiles?.kind === 'git_clone') return true;
-  return source !== undefined && (source.target.machineId !== input.executionTarget.machineId
+  return source !== undefined && ('workspace' in source || source.target.machineId !== input.executionTarget.machineId
     || source.target.serverId !== input.executionTarget.serverId);
 }
 
 export function buildSessionProjectFilesSourceOpenInputV1(placement: SessionPlacementSelectionV1): OpenProjectInputV1 | null {
   const { projectFilesSource: source } = readSessionPlacementProjectFilesV1(placement);
-  return source ? OpenProjectInputV1Schema.parse({
+  if (!source) return null;
+  if ('workspace' in source) {
+    const { workspace } = source;
+    return OpenProjectInputV1Schema.parse({
+      serverId: workspace.serverId, machineId: workspace.controller.machineId,
+      source: { kind: 'workspace', workspaceId: workspace.workspaceId, checkout: workspace },
+      materialization: { kind: 'attach' },
+    });
+  }
+  return OpenProjectInputV1Schema.parse({
     ...source.target, source: { kind: 'folder', path: source.directory }, materialization: { kind: 'attach' },
-  }) : null;
+  });
 }
 
 /** Source attachment has its own Machine admission; destination spawn grants no source reads. */

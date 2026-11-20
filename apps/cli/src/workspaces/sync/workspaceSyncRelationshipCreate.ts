@@ -1,5 +1,7 @@
 import { WorkspaceSyncRelationshipCreateResultV1Schema, WorkspaceSyncRelationshipCreateRpcRequestV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceRefV1, WorkspaceSyncRelationshipCreateResultV1, WorkspaceSyncRelationshipCreateRpcRequestV1 } from '@happier-dev/protocol';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import type { WorkspaceSyncRelationshipOwner } from './workspaceSyncRelationshipOwner';
@@ -46,15 +48,13 @@ export async function createWorkspaceSyncRelationshipForProject(
   if (!source) {
     throw createError('workspace_ref_not_ready', 'The selected workspace is not available in current settings');
   }
-  if (isManagedWorkspaceRefV2(source)) {
-    throw createError('workspace_ref_not_ready', 'Managed workspaces are not supported as relationship sources');
-  }
   if (source.serverId.trim() !== dependencies.localServerId.trim()) {
     throw createError('workspace_ref_not_ready', 'The selected workspace belongs to another Account Home');
   }
   // Creation runs on the source controller. A rebound or stale selection is
   // refused here, before any file is read, rather than silently retargeted.
-  if (source.machineId.trim() !== dependencies.localMachineId.trim()) {
+  const sourceMachineId = resolveWorkspaceSyncExecutionMachineIdV1(source).trim();
+  if (sourceMachineId !== dependencies.localMachineId.trim()) {
     throw createError(
       'workspace_sync_controller_mismatch',
       'Workspace linking must run on the machine that hosts the selected workspace',
@@ -68,7 +68,8 @@ export async function createWorkspaceSyncRelationshipForProject(
     operationId: request.operationId,
     ...('replaceRelationshipId' in input ? { replaceRelationshipId: input.replaceRelationshipId } : {}),
     serverId: source.serverId.trim(),
-    sourceMachineId: source.machineId.trim(),
+    sourceMachineId,
+    ...(isManagedWorkspaceRefV2(source) ? { sourceAddress: workspaceAddressFromRefV2(source) } : {}),
     sourceRootPath: source.rootPath,
     sourceWorkspaceRefId: input.sourceWorkspaceRefId,
     ...(dependencies.targetWorkspaceRefId ? { targetWorkspaceRefId: dependencies.targetWorkspaceRefId } : {}),

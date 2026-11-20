@@ -192,9 +192,10 @@ export function createHolderWorkspaceSource(input: Readonly<{
     }
     return Buffer.from(outcome.content);
   };
+  const observeSyncEntry = (target: string) => runNativeConfinedWorkspaceSyncObserve({ rootPath: guestRoot, relativePath: relative(target) }, helper);
   const remove = async (target: string, options?: Readonly<{ recursive?: boolean; force?: boolean }>) => {
     const relativePath = relative(target);
-    const expectation = await runNativeConfinedWorkspaceSyncObserve({ rootPath: guestRoot, relativePath }, helper);
+    const expectation = await observeSyncEntry(target);
     if (expectation.kind === 'missing') {
       if (options?.force) return;
       throw errno('ENOENT', `No such file or directory: ${target}`);
@@ -271,6 +272,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
       return inside !== null && inside !== '..' && !inside.startsWith('../') ? path.posix.join(root, inside) : linkTarget;
     },
     readFile,
+    observeSyncEntry,
     open: async (target) => {
       const bytes = await readFile(target);
       const stats = await source.lstat(target);

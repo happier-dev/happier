@@ -12,6 +12,7 @@ import { WorkspaceSyncHandoffSourcePhaseRequestV1Schema, WorkspaceSyncHandoffSou
 import type { DirectPeerOnDemandTransferScope } from '@/machines/transfer/directPeerTransport';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
 import type { WorkspaceSyncRelationshipOwner } from '@/workspaces/sync/workspaceSyncRelationshipOwner';
+import type { ManagedWorkspaceReturnTarget } from '@/workspaces/sync/managedWorkspaceReturn';
 import type { WorkspaceSyncHandoffAdapter } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import type { WorkspaceSyncTargetAuthority } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { deriveWorkspaceSyncRelationshipId } from '@/workspaces/sync/workspaceSyncRelationshipIdentity';
@@ -44,6 +45,7 @@ export type WorkspaceSyncRpcController = Readonly<{
 }>;
 
 export type MachineWorkspaceSyncRpcService = Readonly<{
+  withManagedReturnTarget?(context: RpcHandlerContext, ...request: Parameters<ManagedWorkspaceReturnTarget>): Promise<void>;
   captureSessionWorkspaceReturn?(input: Readonly<{ sessionId: string }>, context?: RpcHandlerContext): Promise<import('@happier-dev/protocol/actions/specs/session/projectFilesReturn').SessionWorkspaceReturnCaptureResultV1>;
   /** Project Open executes an admitted native destination in its retained namespace. */
   materializeManagedProjectTarget?(input: import('@happier-dev/protocol/projects/openProjectV1').OpenProjectInputV1,

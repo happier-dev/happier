@@ -23,6 +23,10 @@ import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { WorkspaceManifest } from '@happier-dev/protocol/workspaces/manifestSchema';
 import { captureManagedWorkspaceReturnStage } from '@/workspaces/sync/managedWorkspaceReturn';
+import { runManagedWorkspaceReturnTarget } from '@/workspaces/sync/managedWorkspaceReturnTarget';
+import { workspaceTargetUnavailable } from '@/workspaces/source/workspaceSource';
+import { readAcceptedManagedWorkspaceRefFromRows } from '@/workspaces/acceptedManagedWorkspace';
+import type { ManagedProjectWorkspaceTargetRequest, ManagedSessionTarget } from '@/machines/managed/acquire';
 import { reconcileManagedWorkspacePostMaterialization } from '@/scm/workspace/workspacePostMaterialization';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { runWithHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
@@ -120,11 +124,12 @@ import { areWorkspaceSyncRelationshipDefinitionsEqual, areWorkspaceSyncWorkerCop
 import { prepareWorkspaceSyncBetween, resolveWorkspaceSyncRelationshipDependencyMachines } from '@/workspaces/sync/workspaceSyncPreparation';
 import { createMemberWorkspaceSyncSeedExport, createWorkspaceSyncSeedExport, materializeLocalWorkspaceSyncSeed, materializeWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer as resolveSeedWorkspaceTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { materializeWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceExportMaterialization';
+import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
 import { createWorkspaceSyncPeerIdentityValidator } from '@/workspaces/sync/transport/workspaceSyncPeerIdentity';
 import { inspectRetiredWorkspaceReplicationState } from '@/workspaces/sync/workspaceSyncLegacyState';
 import { sameExecutionWorkspace, type WorkspaceSyncHandoffAdapter, type WorkspaceSyncPrivateExecution, type PrepareWorkspaceSyncHandoffInput,
-  type RetainedWorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
+  type RetainedWorkspaceSyncPrivateExecution, type WorkspaceSyncManagedCopySource } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import type { SessionHandoffWorkspaceCaptureRequestV3, SessionHandoffWorkspaceCaptureResultV3 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { requesterWorkspaceCaptureRequired, requiresRequesterWorkspaceCapture } from '@/api/machine/machineRpcAuthorization';
 import {
@@ -559,6 +564,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     privateCheckout?: PrivateProjectCheckoutOpenRuntime;
     openManagedWorkspaceTarget?(request: Readonly<{ workspace: ManagedWorkspaceRefV2; relationshipId: string;
       requesterAccountId: string; lifetime: AbortSignal }>): Promise<ManagedWorkspaceSyncTarget>;
+    openManagedProjectWorkspace?: (request: Omit<ManagedProjectWorkspaceTargetRequest, 'holder'>) =>
+      Promise<Pick<ManagedSessionTarget, 'home' | 'ensureWorkspaceRuntime' | 'openChannel'>>;
     agentIsolation?: HostAgentIsolationLaunchContext;
     requesterMachineAdmissionBoundary?: RequesterSessionMachineAdmissionBoundary;
     requestDirectTransferPayloadFile?: (input: Readonly<{
@@ -889,100 +896,121 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         targetFence,
         workspaceTransfer: resolveSeedWorkspaceTransfer(contentPolicy, exclusionCandidates),
       }),
-      ...(input.openMachineCarrierTunnel && input.requestDirectTransferPayloadFile
-        ? { materializeRemoteSeed: async (request) => {
-            const seedRequest = {
-              t: 'workspace_sync_seed_v1' as const,
-              operationId: request.operationId,
-              sourceWorkspaceRefId: request.sourceWorkspaceRefId,
-              targetMachineId: input.localMachineId,
-              contentPolicy: request.contentPolicy,
-              ...(request.exclusionCandidates ? { exclusionCandidates: request.exclusionCandidates } : {}),
-            };
-            const seedActionId = request.context?.callerInputAuthorization?.binding.actionId;
-            const seedContext = (seedActionId === 'projects.open' || isWorkspaceSyncRelationshipWriteActionId(seedActionId ?? ''))
-              && request.context?.workspaceSyncSourceWriterTargetRouting !== undefined ? request.context : undefined;
-            const { result: preparedRaw, tunnel: issuedTunnel } = seedContext
-              ? input.callWorkspaceSeedExport
-                ? await prepareSignedWorkspaceSyncSeed({ sourceMachineId: request.sourceMachineId,
-                    request: seedRequest, context: seedContext,
-                    callExport: input.callWorkspaceSeedExport, openTunnel: input.openMachineCarrierTunnel,
-                    ...(request.signal ? { signal: request.signal } : {}) })
-                : await Promise.reject(compositionError('workspace_sync_update_required', 'The installed SOURCE seed transport is unavailable'))
-              : { result: await factories.callMachineRpc({
-                  credentials: input.credentials,
-                  machineId: request.sourceMachineId,
-                  method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
-                  request: seedRequest,
-                  timeoutMs: null,
-                  ...(request.signal ? { signal: request.signal } : {}),
-                }), tunnel: undefined };
-            try {
-              assertWorkspaceSyncSeedExportSucceeded(preparedRaw);
-              if (!preparedRaw || typeof preparedRaw !== 'object' || (preparedRaw as { success?: unknown }).success !== true) {
-                throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
-              }
-              const prepared = preparedRaw as Readonly<Record<string, unknown>>;
-              if (typeof prepared.transferId !== 'string' || prepared.transferId !== request.operationId
-                || typeof prepared.sizeBytes !== 'number' || !Number.isSafeInteger(prepared.sizeBytes) || prepared.sizeBytes < 1
-                || typeof prepared.manifestHash !== 'string' || !Array.isArray(prepared.endpointCandidates)) {
-                throw compositionError('target_bootstrap_offline', 'Workspace sync source seed response is invalid');
-              }
-              const sourceCandidates = prepared.endpointCandidates.map((candidate) => TransferEndpointCandidateSchema.parse(candidate));
-              const sourceCandidate = sourceCandidates[0];
-              if (!sourceCandidate) {
-                throw compositionError('target_bootstrap_offline', 'Workspace sync source seed has no finite transfer endpoint');
-              }
-              return await factories.materializeSeedExport({
-                operationId: request.operationId,
-                targetPath: request.canonicalRoot,
-                ...(request.signal ? { signal: request.signal } : {}),
-                materializationReceiptPath: request.materializationReceiptPath,
-                originalTargetExists: request.originalTargetExists,
-                targetFence: request.targetFence,
-                requestPayload: async ({ transferId, destinationPath, expectedSizeBytes, expectedManifestHash }) => {
-                  const sizeBytes = transferId === request.operationId ? prepared.sizeBytes as number : expectedSizeBytes;
-                  const manifestHash = transferId === request.operationId ? prepared.manifestHash as string : expectedManifestHash;
-                  if (typeof sizeBytes !== 'number' || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !manifestHash) {
-                    throw compositionError('target_bootstrap_offline', 'Workspace sync seed payload commitment is invalid');
-                  }
-                  const tunnel = issuedTunnel ?? await input.openMachineCarrierTunnel!({
-                    sourceMachineId: input.localMachineId,
-                    targetMachineId: request.sourceMachineId,
-                    flow: 'file_transfer',
-                    ...(request.signal ? { signal: request.signal } : {}),
-                  });
-                  try {
-                    const url = new URL(sourceCandidate.url);
-                    url.protocol = 'http:';
-                    url.hostname = '127.0.0.1';
-                    url.port = String(tunnel.localPort);
-                    url.pathname = buildDirectPeerTransferEndpointPath(transferId);
-                    const endpointCandidates: readonly TransferEndpointCandidate[] = [{
-                      ...sourceCandidate,
-                      kind: 'http' as const,
-                      url: url.toString(),
-                    }];
-                    await input.requestDirectTransferPayloadFile!({
-                      transferId,
-                      endpointCandidates,
-                      destinationPath,
-                      expectedSizeBytes: sizeBytes,
-                      expectedManifestHash: manifestHash,
-                      ...(request.signal ? { signal: request.signal } : {}),
-                    });
-                  } finally {
-                    if (!issuedTunnel) await tunnel.close();
-                  }
+      materializeRemoteSeed: async (request) => {
+        if (request.managedSourceOnController) {
+          const sync = runtime?.managedWorkspaceSync;
+          if (!sync) throw compositionError('workspace_sync_unavailable', 'Workspace sync runtime is unavailable');
+          return await sync.withAuthorizedSourceSeedExport({ ...request, targetMachineId: input.localMachineId },
+            async (sourcePath, managedSource) => {
+              const reader = managedSource?.reader;
+              if (!reader) throw compositionError('target_bootstrap_offline', 'The admitted guest seed is unavailable');
+              const exported = createMemberWorkspaceSyncSeedExport({ operationId: request.operationId,
+                envelope: await reader.prepareSourceSeedExport({ operationId: request.operationId, sourcePath,
+                  contentPolicy: request.contentPolicy, exclusionCandidates: request.exclusionCandidates }),
+                readBlob: chunk => reader.readSourceSeedBlob({ operationId: request.operationId, ...chunk }) });
+              return await factories.materializeSeedExport({ ...request, targetPath: request.canonicalRoot,
+                requestPayload: async ({ transferId, destinationPath }) => {
+                  request.signal?.throwIfAborted();
+                  const source = transferId === request.operationId ? exported.payloadSource
+                    : await exported.onDemandScope.resolvePayloadSourceOnOpen({ transferId, requestBody: undefined });
+                  await writeTransferPayloadSourceToFile({ source, destinationPath });
                 },
-                materializeWorkspaceExportArtifacts: materializeWorkspaceExportArtifactsWithScmWorkspace,
-              });
-            } finally {
-              await issuedTunnel?.close();
-            }
-          },
+                materializeWorkspaceExportArtifacts: materializeWorkspaceExportArtifactsWithScmWorkspace });
+            });
         }
-        : {}),
+        if (!input.openMachineCarrierTunnel || !input.requestDirectTransferPayloadFile) {
+          throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
+        }
+        const seedRequest = {
+          t: 'workspace_sync_seed_v1' as const,
+          operationId: request.operationId,
+          sourceWorkspaceRefId: request.sourceWorkspaceRefId,
+          targetMachineId: input.localMachineId,
+          contentPolicy: request.contentPolicy,
+          ...(request.exclusionCandidates ? { exclusionCandidates: request.exclusionCandidates } : {}),
+        };
+        const seedActionId = request.context?.callerInputAuthorization?.binding.actionId;
+        const seedContext = (seedActionId === 'projects.open' || isWorkspaceSyncRelationshipWriteActionId(seedActionId ?? ''))
+          && request.context?.workspaceSyncSourceWriterTargetRouting !== undefined ? request.context : undefined;
+        const { result: preparedRaw, tunnel: issuedTunnel } = seedContext
+          ? input.callWorkspaceSeedExport
+            ? await prepareSignedWorkspaceSyncSeed({ sourceMachineId: request.sourceMachineId,
+                request: seedRequest, context: seedContext,
+                callExport: input.callWorkspaceSeedExport, openTunnel: input.openMachineCarrierTunnel,
+                ...(request.signal ? { signal: request.signal } : {}) })
+            : await Promise.reject(compositionError('workspace_sync_update_required', 'The installed SOURCE seed transport is unavailable'))
+          : { result: await factories.callMachineRpc({
+              credentials: input.credentials,
+              machineId: request.sourceMachineId,
+              method: RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
+              request: seedRequest,
+              timeoutMs: null,
+              ...(request.signal ? { signal: request.signal } : {}),
+            }), tunnel: undefined };
+        try {
+          assertWorkspaceSyncSeedExportSucceeded(preparedRaw);
+          if (!preparedRaw || typeof preparedRaw !== 'object' || (preparedRaw as { success?: unknown }).success !== true) {
+            throw compositionError('target_bootstrap_offline', 'Workspace sync source seed is unavailable');
+          }
+          const prepared = preparedRaw as Readonly<Record<string, unknown>>;
+          if (typeof prepared.transferId !== 'string' || prepared.transferId !== request.operationId
+            || typeof prepared.sizeBytes !== 'number' || !Number.isSafeInteger(prepared.sizeBytes) || prepared.sizeBytes < 1
+            || typeof prepared.manifestHash !== 'string' || !Array.isArray(prepared.endpointCandidates)) {
+            throw compositionError('target_bootstrap_offline', 'Workspace sync source seed response is invalid');
+          }
+          const sourceCandidates = prepared.endpointCandidates.map((candidate) => TransferEndpointCandidateSchema.parse(candidate));
+          const sourceCandidate = sourceCandidates[0];
+          if (!sourceCandidate) {
+            throw compositionError('target_bootstrap_offline', 'Workspace sync source seed has no finite transfer endpoint');
+          }
+          return await factories.materializeSeedExport({
+            operationId: request.operationId,
+            targetPath: request.canonicalRoot,
+            ...(request.signal ? { signal: request.signal } : {}),
+            materializationReceiptPath: request.materializationReceiptPath,
+            originalTargetExists: request.originalTargetExists,
+            targetFence: request.targetFence,
+            requestPayload: async ({ transferId, destinationPath, expectedSizeBytes, expectedManifestHash }) => {
+              const sizeBytes = transferId === request.operationId ? prepared.sizeBytes as number : expectedSizeBytes;
+              const manifestHash = transferId === request.operationId ? prepared.manifestHash as string : expectedManifestHash;
+              if (typeof sizeBytes !== 'number' || !Number.isSafeInteger(sizeBytes) || sizeBytes < 0 || !manifestHash) {
+                throw compositionError('target_bootstrap_offline', 'Workspace sync seed payload commitment is invalid');
+              }
+              const tunnel = issuedTunnel ?? await input.openMachineCarrierTunnel!({
+                sourceMachineId: input.localMachineId,
+                targetMachineId: request.sourceMachineId,
+                flow: 'file_transfer',
+                ...(request.signal ? { signal: request.signal } : {}),
+              });
+              try {
+                const url = new URL(sourceCandidate.url);
+                url.protocol = 'http:';
+                url.hostname = '127.0.0.1';
+                url.port = String(tunnel.localPort);
+                url.pathname = buildDirectPeerTransferEndpointPath(transferId);
+                const endpointCandidates: readonly TransferEndpointCandidate[] = [{
+                  ...sourceCandidate,
+                  kind: 'http' as const,
+                  url: url.toString(),
+                }];
+                await input.requestDirectTransferPayloadFile!({
+                  transferId,
+                  endpointCandidates,
+                  destinationPath,
+                  expectedSizeBytes: sizeBytes,
+                  expectedManifestHash: manifestHash,
+                  ...(request.signal ? { signal: request.signal } : {}),
+                });
+              } finally {
+                if (!issuedTunnel) await tunnel.close();
+              }
+            },
+            materializeWorkspaceExportArtifacts: materializeWorkspaceExportArtifactsWithScmWorkspace,
+          });
+        } finally {
+          await issuedTunnel?.close();
+        }
+      },
     },
     openRootedAgent: async (request) => {
       if (!runtime) {
@@ -1019,6 +1047,42 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     }
     return null;
   };
+  const startManagedSyncWorker = async (request: Readonly<{
+    target: ManagedWorkspaceSyncTarget;
+    workspace: ManagedWorkspaceRefV2;
+    counterpartWorkspaceRefId: string;
+    operationId: string;
+    accountId: string;
+    snapshot: ActiveProjectAccountRowsSnapshot;
+    signal: AbortSignal;
+    network: PrivateProjectSyncNetwork;
+    createParent: boolean;
+  }>) => {
+    const installed = await request.target.ensureWorkspaceRuntime();
+    const root = dirname(request.workspace.rootPath);
+    // The admitted managed platform is POSIX. Paths remain argv operands.
+    const launch = request.createParent ? 'mkdir -p -- "$1" && cd "$1" && exec "$2" workspace-effect'
+      : 'cd "$1" && exec "$2" workspace-effect';
+    const channel = request.target.openChannel(['sh', '-c', launch, 'workspace-sync', root, installed.binaryPath], request.signal);
+    return await factories.startManagedSyncChannel({ channel, signal: request.signal, memberHome: request.target.home,
+      effect: { request: { serverId: semanticServerId, machineId: input.localMachineId,
+        source: { kind: 'workspace', workspaceId: request.counterpartWorkspaceRefId },
+        materialization: { kind: 'sync', targetPath: request.workspace.rootPath,
+          workspaceAction: { kind: 'relationship', relationshipId: request.operationId, flushBeforeCommit: false } } },
+        workspaceRefId: request.workspace.id, workspaceRoot: root, existingRootPath: request.workspace.rootPath,
+        generation: 0, plugins: [], contributions: {} },
+      configuration: { serverId: semanticServerId, machineId: input.localMachineId, accountId: request.accountId,
+        snapshot: request.snapshot, localManagedTarget: { managedId: request.workspace.managedId, controller: request.workspace.controller },
+        agent: { releaseChannel: input.releaseChannel } }, network: request.network, onEffectsIssued() {} });
+  };
+
+  const openManagedSyncAgent = (target: ManagedWorkspaceSyncTarget, native: PrivateProjectNativeSync, rootPath: string,
+    lifetime: AbortSignal, signal?: AbortSignal) => {
+    const stream = target.openChannel([native.agentExecutablePath, 'synchronizer', '--external', '--root', rootPath],
+      signal ? AbortSignal.any([lifetime, signal]) : lifetime);
+    return { stream, stop: async () => { stream.destroy(); await finished(stream).catch(() => undefined); } };
+  };
+
   const retainManagedExecution = (request: Readonly<{
     operationId: string; source: WorkspaceRefV1; target: ManagedWorkspaceRefV2;
     snapshot: ActiveProjectAccountRowsSnapshot; credentials: StoredCredentials; custody: ProjectAccountSessionCustody;
@@ -1082,11 +1146,6 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         await capture.assertTransferCurrent();
         const target = await input.openManagedWorkspaceTarget!({ workspace: request.target,
           relationshipId: request.operationId, requesterAccountId: request.custody.accountId, lifetime: lifetime.signal });
-        const installed = await target.ensureWorkspaceRuntime();
-        const root = dirname(request.target.rootPath);
-        // The managed guest platform owner supports POSIX guests; argv operands
-        // keep paths out of shell source, including spaces and quote characters.
-        const channel = target.openChannel(['sh', '-c', 'mkdir -p -- "$1" && cd "$1" && exec "$2" workspace-effect', 'workspace-sync', root, installed.binaryPath], lifetime.signal);
         const nativeScmTarget = () => {
           if (typeof target.holderPath !== 'string' || typeof target.helperPath !== 'string') {
             throw compositionError('workspace_sync_unavailable', 'Native SCM target transport is unavailable');
@@ -1164,15 +1223,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
               snapshot, agent: await runtime!.resolveNativeAgent() }, network), release: prepared.release };
           } catch (error) { await prepared.release(); throw error; }
         }
-        native = await factories.startManagedSyncChannel({ channel, signal: lifetime.signal, memberHome: target.home,
-          effect: { request: { serverId: semanticServerId, machineId: input.localMachineId, source: { kind: 'workspace', workspaceId: request.source.id },
-            materialization: { kind: 'sync', targetPath: request.target.rootPath,
-              workspaceAction: { kind: 'relationship', relationshipId: request.operationId, flushBeforeCommit: false } } },
-            workspaceRefId: request.target.id, workspaceRoot: root, existingRootPath: request.target.rootPath,
-            generation: 0, plugins: [], contributions: {} },
-          configuration: { serverId: semanticServerId, machineId: input.localMachineId, accountId: request.custody.accountId,
-            snapshot, localManagedTarget: { managedId: request.target.managedId, controller: request.target.controller },
-            agent: { releaseChannel: input.releaseChannel } }, network, onEffectsIssued() {} });
+        native = await startManagedSyncWorker({ target, workspace: request.target, counterpartWorkspaceRefId: request.source.id,
+          operationId: request.operationId, accountId: request.custody.accountId, snapshot,
+          signal: lifetime.signal, network, createParent: true });
         return { target, native, signal: lifetime.signal };
       })().catch(async error => {
         lifetime.abort();
@@ -1466,7 +1519,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       ?.execution.getSnapshot?.() ?? await readHandoffProjectSnapshot(request.signal, context);
     if (authorization) {
       for (const endpoint of [
-        { workspaceId: request.sourceWorkspaceRefId, machineId: request.sourceMachineId, rootPath: request.sourceRootPath, managed: undefined },
+        { workspaceId: request.sourceWorkspaceRefId, machineId: request.sourceMachineId, rootPath: request.sourceRootPath,
+          managed: request.managedCopySource ? { managedId: request.managedCopySource.managedId, controller: request.managedCopySource.controller } : undefined },
         { workspaceId: request.targetWorkspaceRefId, machineId: request.targetMachineId, rootPath: request.targetRootPath,
           managed: request.targetManaged },
       ]) {
@@ -1489,7 +1543,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       if (!resolved.ok) throw compositionError('workspace_sync_child_unavailable', 'Child Sync endpoint is unavailable');
       return resolved.endpoint;
     };
-    const sourceEndpoint = childEndpoint(request.sourceMachineId, request.sourceRootPath, request.sourceWorkspaceRefId);
+    const sourceEndpoint = request.managedCopySource ? null : childEndpoint(request.sourceMachineId, request.sourceRootPath, request.sourceWorkspaceRefId);
     const targetEndpoint = request.targetManaged ? null : childEndpoint(request.targetMachineId, request.targetRootPath, request.targetWorkspaceRefId);
     if (request.action.kind === 'create_relationship'
       && (sourceEndpoint?.id ?? request.sourceWorkspaceRefId) !== undefined
@@ -1869,6 +1923,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     localMachineId: input.localMachineId,
     releaseChannel: input.releaseChannel,
     resolveWorkspaceRef: async (workspaceRefId, copyOperationId) => {
+      const copySource = copyOperationId ? runtime?.handoffAdapter.resolvePreparedManagedCopySource?.(copyOperationId, workspaceRefId) : null;
+      if (copySource) return copySource.workspace;
       const privateResolution = runtime?.handoffAdapter.resolvePrivateWorkspaceRef?.(workspaceRefId, semanticServerId);
       const ref = (copyOperationId ? runtime?.handoffAdapter.resolvePreparedCopyTarget?.(copyOperationId, workspaceRefId) : null)
         ?? (privateResolution && privateResolution.kind !== 'unowned'
@@ -1881,6 +1937,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     },
     rootOwnershipManager,
     borrowLinkedSourceRoot: async (operationId, workspaceRefId) => {
+      const copySource = runtime?.handoffAdapter.resolvePreparedManagedCopySource?.(operationId, workspaceRefId);
+      // The prepared handoff remains the root owner through READY settlement.
+      if (copySource) return { handle: copySource.ownership, release: async () => undefined };
       const current = runtime?.handoffAdapter.resolvePrivateExecution?.({ operationId });
       if (!current) return targetAuthority.borrowSourceRootForCopy({ operationId, workspaceRefId });
       if (current.execution.managedTarget) {
@@ -1924,14 +1983,14 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         observedPath: 'direct', close: ingress.close }, request.signal);
     },
     openManagedWorkspaceAgentStream: async (request, endpoint, transferAdmission) => {
+      const copySource = runtime?.handoffAdapter.resolvePreparedManagedCopySource?.(request.operationId, endpoint.id);
+      if (copySource) return await copySource.openAgent(request);
       const execution = managedExecution(request.operationId, endpoint.id);
       if (!execution?.managedTarget) throw compositionError('relationship_not_ready', 'The managed Sync relationship is unavailable');
       if (transferAdmission) await transferAdmission;
       else await admitPrivateTransfer(request.operationId, request.signal);
       const { target, native, signal } = await execution.managedTarget.open();
-      const stream = target.openChannel([native.agentExecutablePath, 'synchronizer', '--external', '--root', request.canonicalRoot],
-        request.signal ? AbortSignal.any([signal, request.signal]) : signal);
-      return { stream, stop: async () => { stream.destroy(); await finished(stream).catch(() => undefined); } };
+      return openManagedSyncAgent(target, native, request.canonicalRoot, signal, request.signal);
     },
     prepareRelationshipTarget,
     recoverCopyOnceTarget: async (operation) => {
@@ -2025,6 +2084,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       );
       let sourceOwnership: WorkspaceRootOwnershipHandle | null = null;
       let releaseSourceOwnership: (() => Promise<void>) | null = null;
+      let managedCopySource: WorkspaceSyncManagedCopySource | undefined;
+      let managedSeedReader: PrivateProjectNativeSync | undefined;
       let copySourceWorkspaceRefId: string | null = null;
       let copyTargetWorkspaceRefId: string | null = null;
       if (bootstrapInput.action.kind === 'copy_once') {
@@ -2040,26 +2101,68 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           sourceWorkspaceRefId,
           semanticServerId,
         );
-        if (!sourceRef || isManagedWorkspaceRefV2(sourceRef) || sourceRef.machineId !== input.localMachineId) {
+        if (!sourceRef || resolveWorkspaceSyncExecutionMachineIdV1(sourceRef) !== input.localMachineId) {
           throw compositionError('peer_unavailable', 'Workspace sync source endpoint is unavailable on this daemon');
         }
-        const loan = await runtime?.managedWorkspaceSync.borrowSourceRootForCopy(
-          bootstrapInput.operationId, sourceWorkspaceRefId,
-        ) ?? null;
-        if (loan) {
-          sourceOwnership = loan.handle;
-          releaseSourceOwnership = loan.release;
-        } else {
-          const acquired = await rootOwnershipManager.tryAcquire({
-            ownerId: bootstrapInput.operationId,
-            canonicalRoot: sourceRef.rootPath,
-            operation: 'handoff',
-          });
-          if ('kind' in acquired) {
-            throw compositionError('workspace_root_in_use', 'Workspace sync source root overlaps an active operation');
+        if (isManagedWorkspaceRefV2(sourceRef)) {
+          const accepted = bootstrapInput.managedCopySource;
+          const openTarget = input.openManagedWorkspaceTarget;
+          const requesterAccountId = context?.machineAdmission?.actorAccountId;
+          if (!accepted || !openTarget || requesterAccountId !== installedAccountId || !requesterAccountId
+            || bootstrapInput.targetMachineId !== input.localMachineId || bootstrapInput.targetManaged
+            || !isDeepStrictEqual(workspaceAddressFromRefV2(accepted), workspaceAddressFromRefV2(sourceRef))) {
+            throw compositionError('peer_unavailable', 'The exact managed copy source was not admitted');
           }
-          sourceOwnership = acquired;
-          releaseSourceOwnership = async () => await acquired.release();
+          const lifetime = new AbortController();
+          const signal = bootstrapInput.signal ? AbortSignal.any([lifetime.signal, bootstrapInput.signal]) : lifetime.signal;
+          let native: PrivateProjectNativeSync | undefined;
+          try {
+            const target = await openTarget({ workspace: sourceRef, relationshipId: bootstrapInput.operationId,
+              requesterAccountId, lifetime: signal });
+            native = await startManagedSyncWorker({ target, workspace: sourceRef, counterpartWorkspaceRefId: targetWorkspaceRefId,
+              operationId: bootstrapInput.operationId, accountId: requesterAccountId, snapshot: basis.snapshot,
+              signal, createParent: false, network: {
+                callMachineRpc: async () => { throw compositionError('peer_unavailable', 'A finite copy source cannot call another Machine'); },
+                prepareSourceSeed: async () => { throw compositionError('target_bootstrap_offline', 'A finite copy source cannot receive a seed'); },
+              } });
+            const ownership = await native.acquireLocalRoot({ ownerId: bootstrapInput.operationId,
+              canonicalRoot: sourceRef.rootPath, operation: 'handoff' });
+            if ('kind' in ownership) throw compositionError('workspace_root_in_use', 'Workspace sync source root overlaps an active operation');
+            const reader = native;
+            managedSeedReader = reader;
+            managedCopySource = { workspace: sourceRef, ownership, openAgent: async request => {
+              await ownership.bindCurrentRootIdentity();
+              return openManagedSyncAgent(target, reader, ownership.owner.canonicalRoot, signal, request.signal);
+            } };
+            sourceOwnership = ownership;
+            releaseSourceOwnership = async () => {
+              try { await ownership.release(); } finally {
+                try { await reader.dispose(); } finally { lifetime.abort(); }
+              }
+            };
+          } catch (error) {
+            try { await native?.dispose(); } finally { lifetime.abort(); }
+            throw error;
+          }
+        } else {
+          const loan = await runtime?.managedWorkspaceSync.borrowSourceRootForCopy(
+            bootstrapInput.operationId, sourceWorkspaceRefId,
+          ) ?? null;
+          if (loan) {
+            sourceOwnership = loan.handle;
+            releaseSourceOwnership = loan.release;
+          } else {
+            const acquired = await rootOwnershipManager.tryAcquire({
+              ownerId: bootstrapInput.operationId,
+              canonicalRoot: sourceRef.rootPath,
+              operation: 'handoff',
+            });
+            if ('kind' in acquired) {
+              throw compositionError('workspace_root_in_use', 'Workspace sync source root overlaps an active operation');
+            }
+            sourceOwnership = acquired;
+            releaseSourceOwnership = async () => await acquired.release();
+          }
         }
       }
       let targetOwnershipHandles: readonly WorkspaceRootOwnershipHandle[] = [];
@@ -2149,7 +2252,11 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
               alphaWorkspaceRefId: copySourceWorkspaceRefId,
               betaWorkspaceRefId: copyTargetWorkspaceRefId,
               contentPolicy: bootstrapInput.action.contentPolicy,
-            }, [sourceOwnership], prepareTarget, sourceSeedTargetWorkspace)
+            }, [sourceOwnership], prepareTarget, {
+              ...(sourceSeedTargetWorkspace ? { acceptedTarget: sourceSeedTargetWorkspace } : {}),
+              ...(managedCopySource && managedSeedReader ? { managedSource: { workspace: managedCopySource.workspace,
+                ownership: managedCopySource.ownership, reader: managedSeedReader } } : {}),
+            })
           : await prepareTarget();
         copyOnceBaseline = preparedTarget.copyOnceBaseline;
         copyOnceExcludedPaths = preparedTarget.copyOnceExcludedPaths;
@@ -2192,8 +2299,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         ...(acceptedTargetWorkspace ? { targetWorkspace: acceptedTargetWorkspace } : {}),
         ...(copyOnceBaseline ? { copyOnceBaseline } : {}),
         ...(copyOnceExcludedPaths ? { copyOnceExcludedPaths } : {}),
-        ...((sourceOwnership || targetOwnershipHandles.length > 0)
-          ? { ownershipHandles: [...(sourceOwnership ? [sourceOwnership] : []), ...targetOwnershipHandles] }
+        ...(managedCopySource ? { managedCopySource } : {}),
+        ...((sourceOwnership && !managedCopySource || targetOwnershipHandles.length > 0)
+          ? { ownershipHandles: [...(sourceOwnership && !managedCopySource ? [sourceOwnership] : []), ...targetOwnershipHandles] }
           : {}),
         release: async (reason) => {
           if (released) return;
@@ -2980,6 +3088,27 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   };
   const workspaceSync: MachineWorkspaceSyncRpcService = {
     captureSessionWorkspaceReturn,
+    withManagedReturnTarget: async (context, workspace, apply) => {
+      const requester = readRequesterAccountActionContext(context.callerInputAuthorization);
+      const binding = context.callerInputAuthorization?.binding;
+      const accountId = context.machineAdmission?.actorAccountId;
+      const openTarget = input.openManagedProjectWorkspace;
+      if (!requester || !binding || !accountId || binding.accountId !== accountId || !openTarget) {
+        throw workspaceTargetUnavailable();
+      }
+      const lifetime = new AbortController();
+      const signal = AbortSignal.any([context.signal, lifetime.signal]);
+      try {
+        const accepted = await readAcceptedManagedWorkspaceRefFromRows({ credentials: requester.credentials,
+          sessionCustody: { serverId: semanticServerId, accountId, serverHttpBaseUrl: requester.serverHttpBaseUrl,
+            isCurrent: requester.isCustodyCurrent ?? requester.isCurrent },
+          serverId: semanticServerId, signal,
+        }, requester.serverHttpBaseUrl, workspace);
+        if (!accepted) throw workspaceTargetUnavailable();
+        const target = await openTarget({ workspace, requesterAccountId: accountId, lifetime: signal });
+        await runManagedWorkspaceReturnTarget({ target, rootPath: workspace.rootPath, operationId: binding.requestId, signal, apply });
+      } finally { lifetime.abort(); }
+    },
     materializeManagedProjectTarget,
     captureHandoffWorkspace,
     readRequesterWorkspaceScope: requesterAvailability,

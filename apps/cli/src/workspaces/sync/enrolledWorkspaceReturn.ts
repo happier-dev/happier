@@ -7,10 +7,14 @@ import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/se
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRequesterAvailabilityV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { SESSION_WORKSPACE_RETURN_CAPTURE_CHILD_V1 } from '@happier-dev/protocol/actions/sessionWorkspaceReturnActionIdsV1';
 import { SessionWorkspaceReturnCaptureResultV1Schema } from '@happier-dev/protocol/actions/specs/session/projectFilesReturn';
-import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { buildWorkspaceSyncMaterializationOpenInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { createManagedSessionDirectories, predictManagedSessionCreationDirectory } from '@/session/creation/managedSessionDirectories';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import { readScmAccountScope } from '@/scm/accountScope';
+import { resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
+import { selectWorkspaceSource, type WorkspaceTargetSourceResolver } from '@/workspaces/source/workspaceSource';
 import { invokeReviewedProjectOpen } from '@/workspaces/activation/invokeReviewedProjectOpen';
 import { prepareManagedWorkspaceReturnFromStage, projectManagedWorkspaceReturnFailure, readManagedWorkspaceReturnErrorDetails,
   type ManagedWorkspaceReturnPreview } from './managedWorkspaceReturn';
@@ -33,7 +37,8 @@ export async function prepareEnrolledWorkspaceReturnChildren(input: Readonly<{
   if (!parsed.success) throw Object.assign(new Error('Session creation origin is unavailable'), { code: 'project_files_origin_unavailable' });
   const origin = parsed.data.recipe.projectFilesOrigin;
   if (!origin) return null;
-  if (origin.sourceWorkspace.machineId !== input.machineId
+  const originalMachineId = resolveWorkspaceSyncExecutionMachineIdV1(origin.sourceWorkspace);
+  if (originalMachineId !== input.machineId
     || origin.sourceWorkspace.serverId !== origin.targetWorkspace.serverId) {
     throw Object.assign(new Error('The return must run on the original Machine'), { code: 'target_mismatch' });
   }
@@ -50,7 +55,7 @@ export async function prepareEnrolledWorkspaceReturnChildren(input: Readonly<{
     ? predictManagedSessionCreationDirectory({ root: scope.workspaceRoot, sessionCreationTag })
     : createManagedSessionDirectories({ activeServerDir: input.activeServerDir }).prepareForCreation({ sessionCreationTag })).directory;
   const source = OpenProjectInputV1Schema.parse({ serverId: origin.sourceWorkspace.serverId,
-    machineId: origin.sourceWorkspace.machineId,
+    machineId: originalMachineId,
     source: { kind: 'workspace', workspaceId: origin.sourceWorkspace.workspaceId, checkout: origin.sourceWorkspace },
     materialization: { kind: 'attach' } });
   const target = origin.targetWorkspace.kind === 'managed'
@@ -59,7 +64,7 @@ export async function prepareEnrolledWorkspaceReturnChildren(input: Readonly<{
         sessionId: input.sessionId, machineId: origin.targetWorkspace.controller.machineId,
       }) },
       { ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target,
-        scopeInput: { serverId: origin.sourceWorkspace.serverId, machineId: origin.sourceWorkspace.machineId } },
+        scopeInput: { serverId: origin.sourceWorkspace.serverId, machineId: originalMachineId } },
     ]
     : [{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.target,
       input: projectNativeJsonValueForTransport(buildReturnCopy(origin.sourceWorkspace, origin.targetWorkspace, targetPath, origin.baseline)) }];
@@ -69,11 +74,11 @@ export async function prepareEnrolledWorkspaceReturnChildren(input: Readonly<{
   ] };
 }
 
-function buildReturnCopy(original: WorkspaceAddressV1, source: WorkspaceAddressV1, targetPath: string, baseline?: SessionProjectFilesOriginV1['baseline']) {
+function buildReturnCopy(original: WorkspaceAddressV2, source: WorkspaceAddressV2, targetPath: string, baseline?: SessionProjectFilesOriginV1['baseline']) {
   const policy = { v: 1 as const, selection: 'git_worktree' as const,
     extraIgnorePatterns: [], extraIncludePatterns: [], contentOnly: true as const };
   return buildWorkspaceSyncMaterializationOpenInputV1({ serverId: original.serverId,
-    source, targetMachineId: original.machineId, targetPath,
+    source, targetMachineId: resolveWorkspaceSyncExecutionMachineIdV1(original), targetPath,
     workspaceAction: { kind: 'copy_once', contentPolicy: { ...policy, policyDigest: computeWorkspaceSyncPolicyDigest(policy) },
       ...(baseline ? { exclusionCandidates: baseline.entries.filter(entry => entry.kind !== 'directory').map(entry => entry.relativePath) } : {}) } });
 }
@@ -82,6 +87,7 @@ function buildReturnCopy(original: WorkspaceAddressV1, source: WorkspaceAddressV
 export async function prepareEnrolledWorkspaceReturn(input: Readonly<{
   sessionId: string; activeServerDir: string; prepared: PreparedEnrolledWorkspaceReturn;
   invokeReviewedChild?: HostReviewedChildPortV1['invoke']; registry?: ScmBackendRegistry; signal?: AbortSignal;
+  resolveWorkspaceTarget?: WorkspaceTargetSourceResolver;
 }>): Promise<ManagedWorkspaceReturnPreview | ActionExecuteFailure> {
   if (!input.invokeReviewedChild) return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
   const open = (child: HostReviewedChildrenPlanV1['children'][number]) => invokeReviewedProjectOpen({
@@ -91,6 +97,10 @@ export async function prepareEnrolledWorkspaceReturn(input: Readonly<{
   if (!source.ok) return source;
   let stageRoot = input.prepared.targetPath;
   try {
+    const workspace = source.opened.workspace;
+    const original = workspace?.kind === 'managed' ? { workspace, source: await selectWorkspaceSource({
+      workspace, requesterAccountId: readScmAccountScope(),
+    }, input.resolveWorkspaceTarget ?? resolveSessionTargetWorkspace) } : undefined;
     let baseline = input.prepared.origin.baseline;
     let excludedPaths: readonly string[] | undefined;
     let copied: Awaited<ReturnType<typeof open>>;
@@ -114,6 +124,7 @@ export async function prepareEnrolledWorkspaceReturn(input: Readonly<{
     excludedPaths ??= copied.opened.copyOnceExcludedPaths;
     return await prepareManagedWorkspaceReturnFromStage({ sessionId: input.sessionId, activeServerDir: input.activeServerDir,
       hostRoot: source.opened.directory, stageRoot,
+      ...(original ? { original } : {}),
       ...(input.registry ? { registry: input.registry } : {}),
       ...(baseline ? { baseline } : {}),
       ...(excludedPaths ? { excludedPaths } : {}),

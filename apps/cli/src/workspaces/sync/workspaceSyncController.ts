@@ -33,6 +33,12 @@ export type WorkspaceSyncResolvedRef = Readonly<{
   machineId: string;
   rootPath: string;
 }> | ManagedWorkspaceRefV2;
+type ManagedSourceSeedReader = Pick<import('@/workspaces/activation/privateProjectSyncEffect').PrivateProjectNativeSync,
+  'prepareSourceSeedExport' | 'readSourceSeedBlob'>;
+type WorkspaceSyncSourceSeedEndpoints = Readonly<{
+  acceptedTarget?: WorkspaceRefV1;
+  managedSource?: Readonly<{ workspace: ManagedWorkspaceRefV2; ownership: WorkspaceRootOwnershipHandle; reader?: ManagedSourceSeedReader }>;
+}>;
 export type WorkspaceSyncConflictResolutionAuthorizationAssert = (
   actionReceiptId: string,
   actionInput: WorkspaceSyncConflictResolveActionInputV1,
@@ -382,7 +388,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
   private readonly sourceSeedAuthorizations = new Map<string, Readonly<{
     operation: WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1;
     ownershipHandles: readonly WorkspaceRootOwnershipHandle[];
-    acceptedTargetWorkspace?: WorkspaceRefV1;
+    endpoints: WorkspaceSyncSourceSeedEndpoints;
   }>>();
   private readonly queues = new Map<string, { task: Promise<unknown>; material: boolean; transfer: {
     admission?: Promise<void>;
@@ -1034,6 +1040,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     }
   }
   private async releaseCopyOperation(id: string): Promise<void> {
+    await this.closeActiveIngress(id);
     const handles = this.copyOwnedFences.get(id) ?? [];
     await this.releaseRootHandles(handles);
     const releaseSource = this.copySourceReleases.get(id);
@@ -1291,6 +1298,28 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       return await this.ensureWithinQueue(valid, signal, preparation);
     });
   }
+  private async borrowManagedCopySource(
+    operation: WorkspaceSyncCopyOnceV1,
+    source: ManagedWorkspaceRefV2,
+    retained: boolean,
+  ): Promise<WorkspaceSyncSourceRootLoan | null> {
+    if (source.serverId === this.localServerId && source.controller.machineId === this.localMachineId) {
+      if (retained) return null;
+      const loan = await this.borrowLinkedSourceRoot?.(operation.operationId, source.id);
+      if (loan) return loan;
+    }
+    throw Object.assign(new Error('Workspace copy source was not admitted on this controller'), {
+      code: 'workspace_machine_not_enrolled',
+    });
+  }
+  private async borrowEnrolledCopySource(
+    operation: WorkspaceSyncCopyOnceV1,
+    source: WorkspaceSyncResolvedRef | null,
+    custodyRetained: boolean,
+  ): Promise<WorkspaceSyncSourceRootLoan | null> {
+    this.assertLocalSourcePlacement(source);
+    return custodyRetained ? null : await this.borrowSourceRootForCopy(operation.operationId, operation.alphaWorkspaceRefId);
+  }
   async copyOnce(input: WorkspaceSyncCopyOnceV1, signal?: AbortSignal, ownershipHandles?: readonly WorkspaceRootOwnershipHandle[]): Promise<WorkspaceSyncStatusV1> {
     const valid = WorkspaceSyncCopyOnceV1Schema.parse(input);
     return this.enqueue(valid.operationId, signal, async () => {
@@ -1303,13 +1332,14 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       }
       await this.assertContentSelectionRuntimeDependencies(valid.contentPolicy, signal);
       const source = await this.resolveRef(valid.alphaWorkspaceRefId, valid.operationId);
-      this.assertLocalSourcePlacement(source);
-      const sourceLoan = retained || ownershipHandles?.length
-        ? null
-        : await this.borrowSourceRootForCopy(valid.operationId, valid.alphaWorkspaceRefId);
-      const borrowedHubHandles = sourceLoan ? [sourceLoan.handle] : [];
+      const managedSource = source && isManagedWorkspaceRefV2(source) ? source : null;
+      const sourceLoan = managedSource
+        ? await this.borrowManagedCopySource(valid, managedSource, retained !== undefined)
+        : await this.borrowEnrolledCopySource(valid, source, retained !== undefined || Boolean(ownershipHandles?.length));
       if (sourceLoan) this.copySourceReleases.set(valid.operationId, sourceLoan.release);
-      const carriedOwnershipHandles = [...(ownershipHandles ?? []), ...borrowedHubHandles];
+      // Path equality is meaningful only within one filesystem. A guest loan
+      // must never satisfy the controller target's local root acquisition.
+      const carriedOwnershipHandles = [...(ownershipHandles ?? []), ...(sourceLoan && !managedSource ? [sourceLoan.handle] : [])];
       let acquiredHandles: WorkspaceRootOwnershipHandle[];
       try {
         acquiredHandles = retained ? [] : await this.acquireRoots({
@@ -1330,7 +1360,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       }
       const handles = retained
         ? this.copyFences.get(valid.operationId) ?? []
-        : [...carriedOwnershipHandles, ...acquiredHandles];
+        : [...carriedOwnershipHandles, ...acquiredHandles, ...(managedSource && sourceLoan ? [sourceLoan.handle] : [])];
       if (!retained) {
         this.copyOperations.set(valid.operationId, valid);
         this.copyFences.set(valid.operationId, handles);
@@ -2350,7 +2380,7 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       targetMachineId: string;
       contentPolicy: WorkspaceContentPolicyV1;
     }>,
-    exportSource: (canonicalSourcePath: string) => Promise<T>,
+    exportSource: (canonicalSourcePath: string, managedSource?: WorkspaceSyncSourceSeedEndpoints['managedSource']) => Promise<T>,
   ): Promise<T> {
     const authorization = this.sourceSeedAuthorizations.get(request.operationId);
     if (!authorization) {
@@ -2360,10 +2390,10 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     if (!areContentPoliciesEqual(operation.contentPolicy, request.contentPolicy)) {
       throw Object.assign(new Error('Workspace sync source seed policy does not match the active operation'), { code: 'relationship_definition_conflict' });
     }
+    const { managedSource, acceptedTarget } = authorization.endpoints;
     const [alpha, beta] = await Promise.all([
-      this.resolveRef(operation.alphaWorkspaceRefId, 'operationId' in operation ? operation.operationId : undefined),
-      authorization.acceptedTargetWorkspace
-        ?? this.resolveRef(operation.betaWorkspaceRefId, 'operationId' in operation ? operation.operationId : undefined),
+      managedSource?.workspace ?? this.resolveRef(operation.alphaWorkspaceRefId, 'operationId' in operation ? operation.operationId : undefined),
+      acceptedTarget ?? this.resolveRef(operation.betaWorkspaceRefId, 'operationId' in operation ? operation.operationId : undefined),
     ]);
     if (!alpha || !beta) {
       throw Object.assign(new Error('Workspace sync source seed endpoint is unavailable'), { code: 'peer_unavailable' });
@@ -2382,15 +2412,17 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
       : operation.betaWorkspaceRefId;
     const source = roles.sourceEndpointRole === 'alpha' ? alpha : beta;
     const target = roles.targetEndpointRole === 'alpha' ? alpha : beta;
-    this.assertLocalSourcePlacement(source);
+    const admittedManagedSource = source === managedSource?.workspace ? managedSource : undefined;
+    if (!admittedManagedSource) this.assertLocalSourcePlacement(source);
     if (sourceWorkspaceRefId !== request.sourceWorkspaceRefId
       || executionMachineId(target) !== request.targetMachineId) {
       throw Object.assign(new Error('Workspace sync source seed request does not match the active operation'), { code: 'target_unavailable' });
     }
-    const canonicalSourcePath = await this.resolvePrivateRoot?.(source.rootPath) ?? await realpath(source.rootPath).catch(() => {
-      throw Object.assign(new Error('Workspace sync source seed root is unavailable'), { code: 'root_changed' });
-    });
-    const sourceFence = authorization.ownershipHandles.find((handle) => (
+    const canonicalSourcePath = admittedManagedSource?.ownership.owner.canonicalRoot
+      ?? await this.resolvePrivateRoot?.(source.rootPath) ?? await realpath(source.rootPath).catch(() => {
+        throw Object.assign(new Error('Workspace sync source seed root is unavailable'), { code: 'root_changed' });
+      });
+    const sourceFence = admittedManagedSource?.ownership ?? authorization.ownershipHandles.find((handle) => (
       getPathRemainderWithinBase(handle.owner.canonicalRoot, canonicalSourcePath) === ''
       && getPathRemainderWithinBase(canonicalSourcePath, handle.owner.canonicalRoot) === ''
     ));
@@ -2402,25 +2434,34 @@ export class WorkspaceSyncController implements ManagedWorkspaceSync {
     } catch {
       throw Object.assign(new Error('Workspace sync source seed root changed after admission'), { code: 'root_changed' });
     }
-    return await exportSource(canonicalSourcePath);
+    return await exportSource(canonicalSourcePath, admittedManagedSource);
   }
   async withSourceSeedAuthorization<T>(
     operation: WorkspaceSyncRelationshipV1 | WorkspaceSyncCopyOnceV1,
     ownershipHandles: readonly WorkspaceRootOwnershipHandle[],
     action: () => Promise<T>,
-    acceptedTargetWorkspace?: WorkspaceRefV1,
+    endpoints: WorkspaceSyncSourceSeedEndpoints = {},
   ): Promise<T> {
     const operationId = 'relationshipId' in operation ? operation.relationshipId : operation.operationId;
     if (this.sourceSeedAuthorizations.has(operationId)) {
       throw Object.assign(new Error('Workspace sync source seed operation is already active'), { code: 'relationship_definition_conflict' });
     }
-    const target = acceptedTargetWorkspace ? WorkspaceRefV1Schema.parse(acceptedTargetWorkspace) : undefined;
+    const { managedSource } = endpoints;
+    const target = endpoints.acceptedTarget ? WorkspaceRefV1Schema.parse(endpoints.acceptedTarget) : undefined;
     if (target && (!('operationId' in operation) || target.id !== operation.betaWorkspaceRefId
       || !this.localServerId || target.serverId !== this.localServerId)) {
       throw Object.assign(new Error('Workspace sync source seed target does not match the active copy'), { code: 'target_unavailable' });
     }
-    this.sourceSeedAuthorizations.set(operationId, { operation, ownershipHandles,
-      ...(target ? { acceptedTargetWorkspace: target } : {}) });
+    if (managedSource && (!('operationId' in operation) || managedSource.workspace.id !== operation.alphaWorkspaceRefId
+      || !this.localServerId || managedSource.workspace.serverId !== this.localServerId
+      || managedSource.workspace.controller.machineId !== this.localMachineId
+      || !ownershipHandles.includes(managedSource.ownership))) {
+      throw Object.assign(new Error('Workspace sync managed source does not match the active copy'), { code: 'workspace_machine_not_enrolled' });
+    }
+    this.sourceSeedAuthorizations.set(operationId, { operation, ownershipHandles, endpoints: {
+      ...(target ? { acceptedTarget: target } : {}),
+      ...(managedSource ? { managedSource } : {}),
+    } });
     this.notifyActivity();
     try {
       return await action();

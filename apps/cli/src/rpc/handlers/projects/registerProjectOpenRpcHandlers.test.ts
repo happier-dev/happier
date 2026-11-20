@@ -269,7 +269,7 @@ describe('Project Open RPC', () => {
       } } : {}), });
     const input = { serverId: homeId, machineId: 'machine', source: { kind: 'folder', path: root },
       materialization: { kind: 'attach', ...(managed ? { targetManaged: destination } : {}) } };
-    const opened = await handler(input, context);
+    const opened = OpenProjectResultV1Schema.parse(await handler(input, context));
     expect(opened, JSON.stringify(opened)).toMatchObject({ kind: 'opened', directory: root, setup: 'notRequired',
       ...(managed ? { workspace: { kind: 'managed', ...destination, serverId: homeId, rootPath: root } } : {}) });
     const accepted = rows.find(row => row.key.kind === 'workspace-ref');
@@ -278,6 +278,16 @@ describe('Project Open RPC', () => {
       const payload = cipher.open(accepted.key, accepted.content);
       expect(payload.value).toMatchObject({ v: 2, kind: 'managed', ...destination, serverId: homeId, rootPath: root });
       expect(payload.value).not.toHaveProperty('machineId');
+      if (opened.kind !== 'opened' || opened.workspace.kind !== 'managed') throw new Error('Expected an exact managed checkout');
+      const checkout = opened.workspace;
+      const retained = { ...input, source: { kind: 'workspace', workspaceId: checkout.workspaceId, checkout },
+        materialization: { kind: 'attach' } };
+      const wrongInstallation = { ...checkout, controller: { ...checkout.controller, installationId: 'other-installation' } };
+      expect(await handler({ ...retained, source: { ...retained.source, checkout: wrongInstallation } }, context))
+        .toMatchObject({ kind: 'refused', effectAttempted: false });
+      const reopened = await handler(retained, context);
+      expect(reopened, JSON.stringify(reopened)).toMatchObject({ kind: 'opened', workspace: checkout, directory: root });
+      expect(rows.filter(row => row.key.kind === 'workspace-ref')).toHaveLength(1);
     }
     current = false;
     post.mockClear();
@@ -1935,16 +1945,24 @@ describe('Project Open RPC', () => {
     expect(native.commands.some(command => command.t === 'terminate')).toBe(true);
   });
 
-  it.each(['source-checkout', 'workspace-only'] as const)('finishes an admitted Source copy to a new destination after revocation and refuses the next Open before effects (%s)', async sourceShape => {
+  it.each(['source-checkout', 'workspace-only', 'managed-workspace'] as const)('finishes an admitted Source copy to a new destination after revocation and refuses the next Open before effects (%s)', async sourceShape => {
     const diagnostic = vi.spyOn(logger, 'warnLocalFile');
     const fixture = await mkdtemp(join(tmpdir(), 'OPEN-TESTS-source-copy-'));
     const root = join(fixture, 'source');
     const targetPath = join(fixture, 'target');
     await mkdir(root);
-    await writeFile(join(root, 'content.txt'), 'admitted Source bytes');
+    await writeFile(join(root, 'content.txt'), 'controller Source bytes');
+    const guestDisk = join(fixture, 'guest');
+    await mkdir(guestDisk);
+    await writeFile(join(guestDisk, 'content.txt'), 'admitted guest bytes');
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
     const workspace = { id: 'checkout', serverId: 'srv_test_home', machineId: 'machine', rootPath: root, createdAtMs: 1 };
     const key = { kind: 'workspace-ref' as const, serverId: 'srv_test_home', id: workspace.id };
+    const managedAddress = { v: 2 as const, kind: 'managed' as const, serverId: workspace.serverId,
+      workspaceId: 'guest-workspace', managedId: 'guest-resource', rootPath: root,
+      controller: { machineId: workspace.machineId, installationId: 'installation' } };
+    const managedRowKey = { ...key, id: managedAddress.workspaceId };
+    const { workspaceId: managedIdInRows, ...managedLocator } = managedAddress;
     const source = { id: 'source', revision: 9, name: 'Repository', createdByAccountId: 'account', audience: [],
       repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.example' },
         repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } } satisfies ProjectSourceV1;
@@ -1959,6 +1977,9 @@ describe('Project Open RPC', () => {
       return response;
     });
     const rows: ProjectAccountRowV1[] = [{ key, revision: 0, content: { t: 'plain', v: { key, value: workspace } } }];
+    rows.push({ key: managedRowKey, revision: 0, content: { t: 'plain', v: {
+      key: managedRowKey, value: { ...managedLocator, id: managedIdInRows, createdAtMs: 1 },
+    } } });
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       if (url.endsWith('/list')) return { status: 200, data: { status: 'listed', coverage: 'complete', rows } };
       if (url.endsWith('/read')) return projectAccountRowReadResponse(rows, body);
@@ -1983,19 +2004,24 @@ describe('Project Open RPC', () => {
     };
     const rootOwnershipManager = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'locks') });
     let native: MutagenSessionSummaryV1 | null = null;
+    const guestRoots = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'guest-locks') });
+    let sourceDisk = root;
     // Only the external Mutagen command transport is simulated. The adapter,
     // controller, endpoint writer and physical target bootstrap remain real.
     const adapter = createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async command => {
       if (command.t === 'list') return { sessions: native ? [native] : [], nextCursor: null };
       if (command.t === 'create') {
         const state = { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 };
+        if (sourceShape === 'managed-workspace') {
+          await sync.openExternalStream({ endpointId: new URL(command.session.alpha).hostname });
+        }
         native = { identifier: 'OPEN-TESTS-native-copy', name: command.session.name, labels: command.session.labels,
           alpha: { protocol: 'external', host: new URL(command.session.alpha).hostname, path: '', state },
           beta: { protocol: 'external', host: new URL(command.session.beta).hostname, path: '', state },
           mode: command.session.mode, paused: true, status: 'watching', successfulCycles: 0, conflictCount: 0 };
       } else if (command.t === 'resume' && native) native = { ...native, paused: false };
       else if (command.t === 'flush' && native) {
-        await copyFile(join(root, 'content.txt'), join(targetPath, 'content.txt'));
+        await copyFile(join(sourceDisk, 'content.txt'), join(targetPath, 'content.txt'));
         copies += 1;
         native = { ...native, successfulCycles: 1 };
       } else if (command.t === 'terminate') { native = null; return null; }
@@ -2004,6 +2030,15 @@ describe('Project Open RPC', () => {
     } });
     const sync = new WorkspaceSyncController({ localServerId: 'srv_test_home', localMachineId: 'machine',
       resolveWorkspaceRef, rootOwnershipManager, adapter,
+      borrowLinkedSourceRoot: async (operationId, workspaceRefId) => {
+        const source = handoff.resolvePreparedManagedCopySource?.(operationId, workspaceRefId);
+        return source ? { handle: source.ownership, release: async () => undefined } : null;
+      },
+      openManagedWorkspaceAgentStream: async request => {
+        const source = handoff.resolvePreparedManagedCopySource?.(request.operationId, request.workspaceRefId);
+        if (!source) throw new Error('Guest source is not retained by the copy');
+        return await source.openAgent(request);
+      },
       lifecycle: { start: async () => undefined, stop: async () => undefined } });
     const unusedRelationshipOperation = async (): Promise<never> => { throw new Error('Copy must not create a relationship'); };
     const relationshipOwner = createWorkspaceSyncRelationshipOwner({ localMachineId: 'machine',
@@ -2021,10 +2056,29 @@ describe('Project Open RPC', () => {
         policyDigest: input.action.contentPolicy.policyDigest, contentSelection: 'all_files',
         materializationDirectory: join(fixture, 'materialization'), rootOwnershipManager,
         createIfMissing: true, targetBootstrap: 'materialize_from_source_workspace' });
-      return { ownershipHandles: target.ownershipHandles, release: async reason => {
-        if (reason === 'commit') await target.publishReady();
-        await target.release();
-      } };
+      const workspace = input.managedCopySource;
+      const custody = workspace ? await guestRoots.tryAcquire({
+        ownerId: input.operationId, canonicalRoot: guestDisk, operation: 'handoff',
+      }) : null;
+      if (custody && 'kind' in custody) throw new Error('Guest source fixture could not acquire custody');
+      return {
+        ownershipHandles: target.ownershipHandles,
+        ...(workspace && custody ? { managedCopySource: {
+          workspace,
+          ownership: { ...custody, owner: { ...custody.owner, canonicalRoot: workspace.rootPath } },
+          openAgent: async () => {
+            sourceDisk = guestDisk;
+            const stream = new Duplex({ read() {}, write(_chunk, _encoding, done) { done(); } });
+            return { stream, stop: async () => { stream.destroy(); } };
+          },
+        } } : {}),
+        release: async reason => {
+          try {
+            if (reason === 'commit') await target.publishReady();
+            await target.release();
+          } finally { await custody?.release(); }
+        },
+      };
     } });
     const runtime: ProjectOpenRuntime = { serverId: 'srv_test_home', serverHttpBaseUrl: 'https://home.example', machineId: 'machine', accountId: 'account',
       readCredentials: async () => credentials, workspaceSyncAdapter: handoff };
@@ -2033,7 +2087,8 @@ describe('Project Open RPC', () => {
       verifyMachineAdmissionCurrent: async () => { admissionReads += 1; return current; } };
     const fields = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const input = { serverId: 'srv_test_home', machineId: 'machine',
-      source: sourceShape === 'workspace-only' ? { kind: 'workspace' as const, workspaceId: workspace.id }
+      source: sourceShape === 'managed-workspace' ? { kind: 'workspace' as const, workspaceId: managedAddress.workspaceId, checkout: managedAddress }
+        : sourceShape === 'workspace-only' ? { kind: 'workspace' as const, workspaceId: workspace.id }
         : { kind: 'source' as const, id: source.id, revision: 9, selector: source.repository,
         checkout: { serverId: 'srv_test_home', workspaceId: workspace.id, machineId: 'machine', rootPath: root } },
       materialization: { kind: 'sync' as const, targetPath, workspaceAction: { kind: 'copy_once' as const,
@@ -2041,7 +2096,8 @@ describe('Project Open RPC', () => {
     const handler = register(RPC_METHODS.PROJECTS_OPEN, runtime);
     try {
       expect(projectWorkspaceSyncAdmissionInputV1('projects.open', input)).toEqual({
-        sourceMachineId: workspace.machineId, sourceWorkspaceRefId: workspace.id,
+        sourceMachineId: workspace.machineId,
+        sourceWorkspaceRefId: sourceShape === 'managed-workspace' ? managedAddress.workspaceId : workspace.id,
       });
       const opened = await handler(input, context);
       expect(opened, JSON.stringify(diagnostic.mock.calls)).toMatchObject({ kind: 'opened', directory: targetPath,
@@ -2049,7 +2105,8 @@ describe('Project Open RPC', () => {
       expect(current).toBe(false);
       expect(admissionReads).toBe(1);
       expect(copies).toBe(1);
-      expect(await readFile(join(targetPath, 'content.txt'), 'utf8')).toBe('admitted Source bytes');
+      expect(await readFile(join(targetPath, 'content.txt'), 'utf8')).toBe(
+        sourceShape === 'managed-workspace' ? 'admitted guest bytes' : 'controller Source bytes');
       const writesBeforeRefusal = mutations;
       post.mockClear();
       expect(await handler(input, context)).toEqual({ kind: 'refused', code: 'machine_access_denied', effectAttempted: false });

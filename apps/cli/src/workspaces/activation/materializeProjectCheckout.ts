@@ -166,7 +166,10 @@ export async function materializeProjectCheckout(input: MaterializeProjectChecko
     const copyFacts = await materializeWorkspaceSyncForOpen(input.sync.adapter, request, input.sync.context);
     const rootPath = await existingDirectory(choice.targetPath);
     const sourceDirectory = input.sourceDirectory ?? request.sourceRootPath;
-    const mapped = await resolveDirectoryInCheckout({ sourceDirectory, sourceRootPath: request.sourceRootPath, checkoutRootPath: rootPath });
+    // Managed Project Copy once starts from the accepted source root. Its
+    // pathname is meaningful in the guest only; resolve any subdir on the copy.
+    const mapped = request.managedCopySource ? rootPath
+      : await resolveDirectoryInCheckout({ sourceDirectory, sourceRootPath: request.sourceRootPath, checkoutRootPath: rootPath });
     return { rootPath, directory: await containedDirectory(rootPath, input.subdir ? await explicitSubdirectory(rootPath, input.subdir) : mapped),
       ...copyFacts };
   }

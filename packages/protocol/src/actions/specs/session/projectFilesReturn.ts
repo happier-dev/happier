@@ -51,6 +51,7 @@ export const SESSION_WORKSPACE_RETURN_OUTPUT_SCHEMAS_V1 = {
 const common = {
   executionPlacement: 'machine', sessionTarget: { field: 'sessionId', cardinality: 'one' },
   originalExecution: { accountRoot: 'allowed' },
+  requesterAccountContentDemandForInput: () => true,
   machineRuntimeDemandForInput: (input, context) => {
     const machineId = readNonEmptyString(readRecord(input).machineId);
     return machineId ? { target: { kind: 'machine', machineId }, ...(context.serverId ? { serverId: context.serverId } : {}) } : null;
@@ -62,16 +63,14 @@ const common = {
     { path: 'machineId', title: 'Original project Machine', widget: 'text', required: true },
   ] },
 } as const satisfies Pick<PreNormalizedActionSpec, 'executionPlacement' | 'sessionTarget' | 'machineRuntimeDemandForInput'
-  | 'originalExecution' | 'requiredAuthority' | 'placements' | 'surfaces' | 'inputHints'>;
+  | 'originalExecution' | 'requesterAccountContentDemandForInput' | 'requiredAuthority' | 'placements' | 'surfaces' | 'inputHints'>;
 export const SESSION_WORKSPACE_RETURN_ACTION_SPECS_V1 = [
   { ...common, id: SESSION_WORKSPACE_RETURN_CAPTURE_ACTION_ID_V1, title: 'Capture copied Session files',
-    requesterAccountContentDemandForInput: () => true,
     description: 'Export this admitted Session project into its requester private finite transfer stage.',
     sideEffectClass: 'read', safety: 'safe', approval: { result: 'none' },
     bindings: { rpcMethod: SESSION_WORKSPACE_RETURN_CAPTURE_ACTION_ID_V1, mcpToolName: 'session_workspace_return_capture' },
     inputSchema: SessionWorkspaceReturnCaptureInputV1Schema, outputSchema: SessionWorkspaceReturnCaptureResultV1Schema },
   { ...common, id: SESSION_WORKSPACE_RETURN_PREPARE_ACTION_ID_V1, title: 'Review changes to bring back',
-    requesterAccountContentDemandForInput: () => true,
     description: 'Capture the copied Session project and review every changed file before choosing what returns to the host.',
     sideEffectClass: 'read', safety: 'safe', approval: { result: 'none' },
     bindings: { rpcMethod: SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[0], mcpToolName: 'session_workspace_return_prepare' },

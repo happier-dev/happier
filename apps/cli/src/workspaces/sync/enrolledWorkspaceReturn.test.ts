@@ -3,6 +3,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { prepareEnrolledWorkspaceReturn as unscopedPrepareEnrolledWorkspaceReturn, prepareEnrolledWorkspaceReturnChildren } from './enrolledWorkspaceReturn';
 import { scanWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/scanWorkspaceManifest';
@@ -45,6 +46,34 @@ it.each([false, true])('declares original-root admission and requester-private r
       source: { kind: 'workspace', checkout: targetWorkspace }, materialization: { kind: 'sync',
         workspaceAction: { kind: 'copy_once', contentPolicy: { contentOnly: true, selection: 'git_worktree' } } } } });
   expect(prepared!.targetPath).toContain('/requester/workspaces/');
+});
+
+it('admits Bring changes back to the original managed Project address', async () => {
+  const controller = { machineId: 'controller', installationId: 'installation' };
+  const sourceWorkspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'original',
+    managedId: 'guest', rootPath: '/project', controller };
+  const targetWorkspace = { serverId: 'home', machineId: controller.machineId, workspaceId: 'copy', rootPath: '/copies/project' };
+  const metadata = { sessionCreationCorrespondenceV1: { v: 1,
+    sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'created' }), recipe: {
+      execution: { machineId: controller.machineId, directory: { kind: 'path', path: targetWorkspace.rootPath } },
+      organization: { folderId: null, tagIds: [] }, agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      modelSelection: null, profileId: null, requestedPermissionMode: null, agentModeId: null, configuration: null,
+      connectedServices: null, capabilitySelection: null, transcriptStorage: null, terminal: null,
+      agentSessionStartupInstructionsMarkerV1: null, checkout: null, projectFilesOrigin: { sourceWorkspace, targetWorkspace },
+    } } };
+  const prepare = (machineId: string) => prepareEnrolledWorkspaceReturnChildren({ sessionId: 'session', machineId, metadata,
+    activeServerDir: '/private/daemon', actionRequestId: 'return-request',
+    readRequesterWorkspaceScope: async () => ({ kind: 'available', homeDir: '/requester', workspaceRoot: '/requester/workspaces' }) });
+  await expect(prepare('another-controller')).rejects.toMatchObject({ code: 'target_mismatch' });
+  await expect(prepare(controller.machineId)).resolves.toMatchObject({
+    origin: { sourceWorkspace },
+    children: expect.arrayContaining([{ ...SESSION_PROJECT_FILES_OPEN_CHILDREN_V1.source,
+      input: expect.objectContaining({ machineId: controller.machineId,
+        source: { kind: 'workspace', workspaceId: sourceWorkspace.workspaceId, checkout: sourceWorkspace },
+        materialization: { kind: 'attach' },
+      }),
+    }]),
+  });
 });
 
 it.each([false, true])('reviews enrolled changes against the copied base and keeps host edits (native=%s)', async native => {

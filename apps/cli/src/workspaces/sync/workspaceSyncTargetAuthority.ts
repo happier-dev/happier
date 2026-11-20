@@ -172,6 +172,7 @@ export type WorkspaceSyncTargetBootstrapAuthorityDependencies = Readonly<{
     operationId: string;
     sourceMachineId: string;
     sourceWorkspaceRefId: string;
+    managedSourceOnController?: true;
     canonicalRoot: string;
     /** Complete bounded selection policy: a seed that drops it loses explicitly included ignored paths. */
     contentPolicy: WorkspaceContentPolicyV1;
@@ -3486,6 +3487,8 @@ export function createWorkspaceSyncTargetAuthority(
                 operationId: owner.operationId,
                 sourceMachineId: owner.sourceMachineId,
                 sourceWorkspaceRefId: owner.sourceWorkspaceRefId,
+                ...(owner.sourceWorkspace && isManagedWorkspaceRefV2(owner.sourceWorkspace)
+                  && owner.sourceMachineId === localMachineId ? { managedSourceOnController: true as const } : {}),
                 canonicalRoot,
                 contentPolicy: owner.contentPolicy,
                 ...(owner.exclusionCandidates ? { exclusionCandidates: owner.exclusionCandidates } : {}),

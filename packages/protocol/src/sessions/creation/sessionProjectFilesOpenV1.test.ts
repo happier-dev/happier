@@ -45,6 +45,32 @@ describe('Session Project files source admission', () => {
     ]);
   });
 
+  it('opens the exact managed workspace when copying to its own controller', () => {
+    const workspace = {
+      v: 2, kind: 'managed', serverId: 'home', workspaceId: 'guest-ref', managedId: 'guest-id',
+      controller: { machineId: 'remote', installationId: 'controller-installation' }, rootPath: '/guest/project',
+    } as const;
+    const spawn = SessionSpawnNewInputV2Schema.parse({
+      ...input, directory: { kind: 'path', path: '/controller/copy' },
+      sessionPlacement: {
+        kind: 'machine', target: input.executionTarget,
+        projectFilesSource: { kind: 'managed', workspace },
+        projectFiles: { kind: 'copy_once' },
+      },
+    });
+    expect(needsEnrolledSessionProjectFilesOpenV1({
+      executionTarget: spawn.executionTarget, placement: spawn.sessionPlacement,
+    })).toBe(true);
+    expect(sessionProjectFilesOpenChildrenV1(spawn)).toEqual([
+      { action: 'projects.open', role: 'session_project_files_source', input: {
+        ...input.executionTarget,
+        source: { kind: 'workspace', workspaceId: workspace.workspaceId, checkout: workspace },
+        materialization: { kind: 'attach' },
+      } },
+      { action: 'projects.open', role: 'session_project_files_target', scopeInput: input.executionTarget },
+    ]);
+  });
+
   it('admits the target Project owner when policy selects a native sandbox on the source controller', () => {
     const declare = getActionSpec('session.spawn_new').hostReviewedChildren;
     const direct = { ...input, sessionPlacement: { ...input.sessionPlacement!, projectFilesSource: {

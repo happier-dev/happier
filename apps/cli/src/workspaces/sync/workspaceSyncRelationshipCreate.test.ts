@@ -394,19 +394,22 @@ describe('createWorkspaceSyncRelationshipForProject', () => {
     expect(harness.readRelationships()).toEqual([]);
   });
 
-  it('refuses a managed source on its own controller without aliasing its guest root to the host', async () => {
+  it('links a managed source to a controller folder while retaining its guest namespace', async () => {
     const harness = createHarness({ managedSource: true });
     const refs = harness.readRefs();
 
     await expect(createWorkspaceSyncRelationshipForProject(
       harness.dependencies,
       request(),
-    )).rejects.toMatchObject({ code: 'workspace_ref_not_ready' });
+    )).resolves.toMatchObject({ created: true, sourceWorkspaceRefId: 'source_ref', targetWorkspaceRefId: 'target_ref' });
 
-    expect(harness.readRelationships()).toEqual([]);
-    expect(harness.readRefs()).toEqual(refs);
-    expect(harness.ensureRelationship).not.toHaveBeenCalled();
-    expect(harness.commitRelationshipTarget).not.toHaveBeenCalled();
+    expect(harness.readRelationships()).toEqual([expect.objectContaining({
+      alphaWorkspaceRefId: 'source_ref', betaWorkspaceRefId: 'target_ref',
+    })]);
+    expect(harness.readRefs()).toEqual([
+      refs[0],
+      expect.objectContaining({ id: 'target_ref', machineId: 'machine_target', rootPath: '/target' }),
+    ]);
   });
 
   it('refuses a selection that is not present in current settings', async () => {

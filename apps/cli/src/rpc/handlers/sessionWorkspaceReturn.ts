@@ -8,11 +8,11 @@ import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { readActionPrincipalAccountId } from '@/session/actions/actionPrincipalAccount';
 import { readScmAccountScope, runWithScmAccountScope } from '@/scm/accountScope';
 import type { MachineWorkspaceSyncRpcService } from '@/api/machine/rpcHandlers.workspaceSync';
-import { prepareManagedWorkspaceReturn, applyManagedWorkspaceReturn, projectManagedWorkspaceReturnFailure } from '@/workspaces/sync/managedWorkspaceReturn';
+import { prepareManagedWorkspaceReturn, applyManagedWorkspaceReturn, projectManagedWorkspaceReturnFailure, type ManagedWorkspaceReturnTarget } from '@/workspaces/sync/managedWorkspaceReturn';
 
 /** Home ingress owns Session authorization; the return owner alone selects the host and guest paths. */
 export function registerSessionWorkspaceReturnRpcHandlers(rpc: RpcHandlerRegistrar,
-  service?: Pick<MachineWorkspaceSyncRpcService, 'captureSessionWorkspaceReturn'>): void {
+  service?: Pick<MachineWorkspaceSyncRpcService, 'captureSessionWorkspaceReturn' | 'withManagedReturnTarget'>): void {
   const scopedRpc: RpcHandlerRegistrar = { registerHandler: (method, handler) => {
     rpc.registerHandler(method, (input, ingress) => {
       const context = buildActionExecutorContextForRpc({ ...ingress });
@@ -46,10 +46,15 @@ export function registerSessionWorkspaceReturnRpcHandlers(rpc: RpcHandlerRegistr
   scopedRpc.registerHandler(SESSION_WORKSPACE_RETURN_ACTION_IDS_V1[1], async (raw: unknown, context) => {
     const parsed = SessionWorkspaceReturnApplyInputV1Schema.safeParse(raw);
     if (!parsed.success) return { ok: false, errorCode: 'invalid_request', error: 'invalid_request' };
+    const run = service?.withManagedReturnTarget;
+    const withManagedTarget: ManagedWorkspaceReturnTarget | undefined = context && run
+      ? (workspace, apply) => run(context, workspace, apply)
+      : undefined;
     try {
       return SessionWorkspaceReturnApplyResultV1Schema.parse(await applyManagedWorkspaceReturn({
         sessionId: parsed.data.sessionId, returnId: parsed.data.returnId, paths: parsed.data.paths,
         activeServerDir: configuration.activeServerDir,
+        ...(withManagedTarget ? { withManagedTarget } : {}),
         ...(parsed.data.replaceConflictPaths ? { replaceConflictPaths: parsed.data.replaceConflictPaths } : {}),
         ...(context?.signal ? { signal: context.signal } : {}),
       }));

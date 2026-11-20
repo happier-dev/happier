@@ -737,7 +737,7 @@ describe('bind-child replacement approval at the physical target owner', () => {
       const preparation = sourceLoan && !('kind' in sourceLoan)
         ? fixture.parentManagedWorkspaceSync.withSourceSeedAuthorization({ v: 1, operationId,
             controllerMachineId: fixture.sourceRef.machineId, alphaWorkspaceRefId: fixture.sourceRef.id,
-            betaWorkspaceRefId: fixture.targetRef.id, contentPolicy }, [sourceLoan], prepareTarget, fixture.targetRef)
+            betaWorkspaceRefId: fixture.targetRef.id, contentPolicy }, [sourceLoan], prepareTarget, { acceptedTarget: fixture.targetRef })
             .finally(() => sourceLoan.release())
         : prepareTarget();
       if (lostAcknowledgement) {

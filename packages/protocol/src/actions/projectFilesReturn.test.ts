@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { SessionWorkspaceReturnPreviewV1Schema } from './specs/session/projectFilesReturn.js';
-import { getActionSpec } from './actionSpecs.js';
-import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1 } from './sessionWorkspaceReturnActionIdsV1.js';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec } from './actionSpecs.js';
+import { SESSION_WORKSPACE_RETURN_ACTION_IDS_V1, SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1 } from './sessionWorkspaceReturnActionIdsV1.js';
 import type { ActionId } from './actionIds.js';
 
 describe('reviewed Project files return', () => {
@@ -21,6 +21,14 @@ describe('reviewed Project files return', () => {
     expect(getActionSpec(actionId).machineRuntimeDemandForInput?.({ sessionId: 'running-sandbox', machineId: 'host' },
       { serverId: 'home', defaultSessionId: 'running-sandbox' }))
       .toEqual({ target: { kind: 'machine', machineId: 'host' }, serverId: 'home' });
+  });
+  it('requests Account custody for a fresh reviewed Apply without accepting a caller-selected destination', () => {
+    const actionId = SESSION_WORKSPACE_RETURN_APPLY_ACTION_ID_V1;
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const input = { sessionId: 'sandbox', machineId: target.machineId, returnId: 'review', paths: ['file.txt'] };
+    expect(doesExternalActionConsumeRequesterAccountContentV1({ actionId, target, input })).toBe(true);
+    expect(doesExternalActionConsumeRequesterAccountContentV1({ actionId, target,
+      input: { ...input, destination: '/controller' } })).toBe(false);
   });
   it('returns complete review evidence and preserves changed-host refusal without writing', async () => {
     const review = SessionWorkspaceReturnPreviewV1Schema.parse({ returnId: 'return-1', sessionId: 'session-1', repositoryRootPath: '/repo', paths: [{

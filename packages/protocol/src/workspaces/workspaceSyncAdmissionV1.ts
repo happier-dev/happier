@@ -13,7 +13,8 @@ import type { ExternalActionExecutionAuthorizationBindingV1 } from '../actions/e
 import type { OpenProjectInputV1 } from '../projects/openProjectV1.js';
 import type { WorkspaceSyncRelationshipCreateActionInputV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
 import type { HandoffWorkspaceActionV1 } from '../sessions/control/handoff/workspaceSyncSchemas.js';
-import type { ManagedWorkspaceRefV2, WorkspaceAddressV1 } from './workspaceRefV1.js';
+import type { ManagedWorkspaceRefV2, WorkspaceAddressV2 } from './workspaceRefV1.js';
+import { resolveWorkspaceSyncExecutionMachineIdV1 } from './workspaceSyncTopology.js';
 
 /** The incumbent relationship identity, shared by its issuer and both endpoints. */
 export function deriveWorkspaceSyncRelationshipId(operationId: string): string {
@@ -54,7 +55,7 @@ export function readWorkspaceSyncSourceAdmissionV1(binding: ExternalActionExecut
  */
 export function buildWorkspaceSyncDestinationOpenInputV1(input: Readonly<{
   serverId: string;
-  source: WorkspaceAddressV1;
+  source: WorkspaceAddressV2;
   link: Pick<WorkspaceSyncRelationshipCreateActionInputV1, 'targetMachineId' | 'targetPath' | 'mode' | 'contentPolicy'>;
 }>): OpenProjectInputV1 {
   return buildWorkspaceSyncMaterializationOpenInputV1({ serverId: input.serverId, source: input.source,
@@ -66,7 +67,7 @@ export function buildWorkspaceSyncDestinationOpenInputV1(input: Readonly<{
 /** The same source-checkout envelope admits finite Session copies and persistent Project links. */
 export function buildWorkspaceSyncMaterializationOpenInputV1(input: Readonly<{
   serverId: string;
-  source: WorkspaceAddressV1;
+  source: WorkspaceAddressV2;
   targetMachineId: string;
   targetManaged?: Pick<ManagedWorkspaceRefV2, 'managedId' | 'controller'>;
   targetPath: string;
@@ -101,7 +102,7 @@ export function projectWorkspaceSyncAdmissionInputV1(actionId: string, input: un
   if (source.kind === 'workspace') {
     // Workspace-only names a source on the opening Machine (released same-Machine worker copy,
     // a0ef8b30543); a source on another Machine carries its checkout.
-    return { sourceMachineId: source.checkout?.machineId ?? parsed.data.machineId,
+    return { sourceMachineId: source.checkout ? resolveWorkspaceSyncExecutionMachineIdV1(source.checkout) : parsed.data.machineId,
       sourceWorkspaceRefId: source.checkout?.workspaceId ?? source.workspaceId,
       ...(action.kind === 'relationship' ? { relationshipId: action.relationshipId } : {}) };
   }

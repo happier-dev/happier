@@ -46,7 +46,7 @@ export const OpenProjectInputV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: IdSchema,
   machineId: IdSchema,
   source: z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('workspace'), workspaceId: IdSchema, checkout: z.optional(WorkspaceAddressV1Schema) }),
+    z.strictObject({ kind: z.literal('workspace'), workspaceId: IdSchema, checkout: z.optional(WorkspaceAddressV2Schema) }),
     z.strictObject({ kind: z.literal('folder'), path: PathSchema }),
     z.strictObject({
       kind: z.literal('source'), id: IdSchema, revision: z.number().check(z.int(), z.positive()),

@@ -18,9 +18,12 @@ import { scanWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/
 import { compareWorkspaceManifests } from '@/scm/workspace/workspaceExportPackaging/compareWorkspaceManifests';
 import { writeTransferPayloadSourceToFile } from '@/machines/transfer/transferPayloadFileSink';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
-import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { runWithWorkspaceSource, runWithWorkspaceSourceDemand, workspaceTargetUnavailable, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createWorkspaceSyncSeedExport, materializeWorkspaceSyncSeedExport } from './workspaceSyncSeedTransfer';
-import { captureWorkspaceSyncEntryAtRoot, applyCapturedWorkspaceSyncEntryAtRoot } from './workspaceSyncConflicts';
+import { captureWorkspaceSyncEntryAtRoot, captureWorkspaceSyncLeafFromTarget, applyCapturedWorkspaceSyncEntryAtRoot,
+  type ApplyCapturedWorkspaceSyncEntryAtRootInput } from './workspaceSyncConflicts';
+import type { NativeConfinedApplyOutcome } from './workspaceSyncNativeConfinedFileSystem';
 import { observeWorkspaceSyncEntryAtRoot } from './workspaceSyncFileRead';
 
 export type ManagedWorkspaceReturnPreview = Readonly<{
@@ -64,6 +67,11 @@ export function projectManagedWorkspaceReturnFailure(error: unknown,
     failureCause: projectActionFailureCauseV1(error, phase) };
 }
 
+export type ManagedWorkspaceReturnApplyEntry = Omit<ApplyCapturedWorkspaceSyncEntryAtRootInput,
+  'rootPath' | 'recoveryDirectory' | 'assertCurrentAuthority'>;
+export type ManagedWorkspaceReturnTarget = (workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>,
+  use: (apply: (entry: ManagedWorkspaceReturnApplyEntry) => Promise<NativeConfinedApplyOutcome>) => Promise<void>) => Promise<void>;
+
 type PreparedEntry = NonNullable<StoredScmComparison['workspaceReturn']>['entries'][number];
 
 const withoutAdministrativeMetadata = (manifest: WorkspaceManifest, registry: ScmBackendRegistry): WorkspaceManifest => ({
@@ -99,13 +107,18 @@ async function snapshotRoot(root: string, destination: string, registry: ScmBack
 }
 
 async function snapshotSelectedHostRoot(root: string, destination: string, paths: ReadonlySet<string>,
-  registry: ScmBackendRegistry, signal?: AbortSignal) {
+  source: WorkspaceSource, registry: ScmBackendRegistry, signal?: AbortSignal) {
   await mkdir(destination, { mode: 0o700 });
   const topology = new Map<string, Readonly<{ kind: WorkspaceManifestEntry['kind'] }>>();
   for (const path of [...paths].sort((left, right) => left.split('/').length - right.split('/').length || left.localeCompare(right))) {
     if (isAdministrativeWorkspacePathWithScmWorkspace({ relativePath: path, registry })) continue;
     signal?.throwIfAborted();
-    const stats = await localWorkspaceSource.lstat(join(root, path)).catch((error: NodeJS.ErrnoException) => {
+    // Paths include their ancestors and are visited parent first. A link or missing
+    // parent has no child in this snapshot, even when lstat could follow that link.
+    const parent = posix.dirname(path);
+    if (parent !== '.' && topology.get(parent)?.kind !== 'directory') continue;
+    const sourcePath = join(root, path);
+    const stats = await source.lstat(sourcePath).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return null;
       throw error;
     });
@@ -118,13 +131,18 @@ async function snapshotSelectedHostRoot(root: string, destination: string, paths
     if (!stats.isFile() && !stats.isSymbolicLink()) throw new ManagedWorkspaceReturnError('workspace_file_unsupported',
       'The selected host entry is not a regular file or symlink', { appliedPaths: [], path });
     topology.set(path, { kind: stats.isSymbolicLink() ? 'symlink' : 'file' });
-    await mkdir(dirname(join(destination, path)), { recursive: true, mode: 0o700 });
+    const destinationPath = join(destination, path);
+    await mkdir(dirname(destinationPath), { recursive: true, mode: 0o700 });
+    if (source.kind === 'target') {
+      await captureWorkspaceSyncLeafFromTarget({ source, sourcePath, entry: stats, destinationPath });
+      continue;
+    }
     const expected = await observeWorkspaceSyncEntryAtRoot({ rootPath: root, relativePath: path });
     if (expected.kind === 'directory') throw new ManagedWorkspaceReturnError('conflict_changed',
       'The host entry changed while capturing its review', { appliedPaths: [], path });
     const captured = await captureWorkspaceSyncEntryAtRoot({ rootPath: root, relativePath: path, expected,
       captureDirectory: destination, operationId: randomUUID() });
-    if (captured.materialPath) await rename(captured.materialPath, join(destination, path));
+    if (captured.materialPath) await rename(captured.materialPath, destinationPath);
   }
   return topology;
 }
@@ -240,6 +258,7 @@ export async function prepareManagedWorkspaceReturn(input: Readonly<{
 export async function applyManagedWorkspaceReturn(input: Readonly<{
   sessionId: string; returnId: string; paths: readonly string[]; signal?: AbortSignal;
   activeServerDir?: string; replaceConflictPaths?: readonly string[];
+  withManagedTarget?: ManagedWorkspaceReturnTarget;
 }>): Promise<ManagedWorkspaceReturnApplyResult> {
   input.signal?.throwIfAborted();
   let storagePath: string;
@@ -268,16 +287,16 @@ export async function applyManagedWorkspaceReturn(input: Readonly<{
   const appliedPaths: string[] = [];
   const conflicts: ManagedWorkspaceReturnConflict[] = [];
   let applicationFailure: unknown;
-  try {
+  const applyEntries = async (apply: Parameters<Parameters<ManagedWorkspaceReturnTarget>[1]>[0]) => {
     for (const [path, entry] of entries) {
       if (!selectedEntry(path)) continue;
       if (entry.conflicts.length && !replacements.has(path)) { conflicts.push(...entry.conflicts); continue; }
       try {
         input.signal?.throwIfAborted();
-        const outcome = await applyCapturedWorkspaceSyncEntryAtRoot({ rootPath: stored.comparison.repository.rootPath, relativePath: path,
-          expectedDestination: entry.expectedDestination, selectedExpectation: entry.selectedExpectation,
+        const outcome = await apply({ relativePath: path, expectedDestination: entry.expectedDestination,
+          selectedExpectation: entry.selectedExpectation,
           materialPath: entry.selectedExpectation.kind === 'missing' ? null : join(directory, 'after', path),
-          recoveryDirectory: join(directory, 'recovery'), operationId: randomUUID() });
+          operationId: randomUUID() });
         if (outcome.status !== 'installed') throw new ManagedWorkspaceReturnError('conflict_resolution_unsupported',
           outcome.status === 'restored' ? 'The host entry was restored without applying changes' : 'The host entry needs recovery',
           { appliedPaths, path, ...(outcome.status === 'recovery_needed' ? { recoveryPath: outcome.recoveryPath } : {}) });
@@ -288,6 +307,15 @@ export async function applyManagedWorkspaceReturn(input: Readonly<{
           error instanceof Error ? error.message : 'The reviewed return failed',
           { ...readManagedWorkspaceReturnErrorDetails(error), appliedPaths: [...appliedPaths], path }, error);
       }
+    }
+  };
+  try {
+    if (prepared.destination) {
+      if (!input.withManagedTarget) throw workspaceTargetUnavailable();
+      await input.withManagedTarget(prepared.destination, applyEntries);
+    } else {
+      await applyEntries(entry => applyCapturedWorkspaceSyncEntryAtRoot({ ...entry, rootPath: stored.comparison.repository.rootPath,
+        recoveryDirectory: join(directory, 'recovery') }));
     }
   } catch (error) { applicationFailure = error; throw error; }
   finally {
@@ -307,14 +335,18 @@ export async function applyManagedWorkspaceReturn(input: Readonly<{
 export async function prepareManagedWorkspaceReturnFromStage(input: Readonly<{
   sessionId: string; hostRoot: string; stageRoot: string; activeServerDir: string;
   baseline?: WorkspaceManifest; excludedPaths?: readonly string[]; registry?: ScmBackendRegistry; signal?: AbortSignal;
+  original?: Readonly<{ workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>; source: WorkspaceSource }>;
 }>): Promise<ManagedWorkspaceReturnPreview> {
-  return runWithScmBackendRegistryLease(input.registry, registry => runWithWorkspaceSource(localWorkspaceSource, async () => {
+  const original = input.original;
+  if (original && original.source.kind !== 'target') throw workspaceTargetUnavailable();
+  const hostSource = original?.source ?? localWorkspaceSource;
+  return runWithWorkspaceSourceDemand(hostSource, () => runWithScmBackendRegistryLease(input.registry, registry => runWithWorkspaceSource(localWorkspaceSource, async () => {
     const returnId = buildScmComparisonIdentity({ source: { kind: 'workingTree' }, repositoryRootPath: input.hostRoot, evidenceIdentity: randomUUID() });
     const directory = await privateDirectory(input.activeServerDir);
     try {
       const beforeRoot = join(directory, 'before'); const afterRoot = join(directory, 'after');
-      const hostSelection = await resolveWorkspaceReplicationSourceInputsWithScmWorkspace({ sourcePath: input.hostRoot,
-        workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], contentOnly: true }, registry });
+      const hostSelection = await runWithWorkspaceSource(hostSource, () => resolveWorkspaceReplicationSourceInputsWithScmWorkspace({
+        sourcePath: input.hostRoot, workspaceTransfer: { includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [], contentOnly: true }, registry }));
       const excludedPaths = new Set(input.excludedPaths);
       const selectedHostPaths = new Set(hostSelection.entries.filter(entry => !excludedPaths.has(entry.relativePath))
         .flatMap(entry => ancestors(entry.relativePath)));
@@ -327,7 +359,7 @@ export async function prepareManagedWorkspaceReturnFromStage(input: Readonly<{
       // An admitted sandbox file can collide with an ignored host file. Retain
       // that host version as a conflict rather than presenting an empty preimage.
       const captureHostPaths = new Set([...selectedHostPaths, ...after.entries.flatMap(entry => ancestors(entry.relativePath))]);
-      const rawBeforeEntries = await snapshotSelectedHostRoot(input.hostRoot, beforeRoot, captureHostPaths, registry, input.signal);
+      const rawBeforeEntries = await snapshotSelectedHostRoot(input.hostRoot, beforeRoot, captureHostPaths, hostSource, registry, input.signal);
       const before = await scanWorkspaceManifest({ workspaceRoot: beforeRoot,
         safeFilterPolicy: { excludeAdministrativePaths: false }, assertCanContinue: () => input.signal?.throwIfAborted() });
       const beforeEntries = new Map(before.entries.map(entry => [entry.relativePath, entry]));
@@ -351,7 +383,7 @@ export async function prepareManagedWorkspaceReturnFromStage(input: Readonly<{
         const known = protectedHostPaths.get(path);
         if (known !== undefined) return known;
         input.signal?.throwIfAborted();
-        const children = await localWorkspaceSource.readdir(join(input.hostRoot, path));
+        const children = await hostSource.readdir(join(input.hostRoot, path));
         children.sort((left, right) => left.name.localeCompare(right.name));
         for (const child of children) {
           const childPath = `${path}/${child.name}`;
@@ -388,8 +420,12 @@ export async function prepareManagedWorkspaceReturnFromStage(input: Readonly<{
           'This new subtree contains Git metadata; return its files manually', { appliedPaths: [], path: metadata });
         const conflicts: ManagedWorkspaceReturnConflict[] = conflictAncestors.has(path)
           ? [{ path, code: 'both_changed' }] : [];
-        const expectedDestination = await observeWorkspaceSyncEntryAtRoot({ rootPath: beforeRoot, relativePath: path });
-        const selectedExpectation = await observeWorkspaceSyncEntryAtRoot({ rootPath: afterRoot, relativePath: path });
+        const expectedDestination = beforeEntries.has(path)
+          ? await observeWorkspaceSyncEntryAtRoot({ rootPath: beforeRoot, relativePath: path })
+          : { kind: 'missing' as const };
+        const selectedExpectation = afterEntries.has(path)
+          ? await observeWorkspaceSyncEntryAtRoot({ rootPath: afterRoot, relativePath: path })
+          : { kind: 'missing' as const };
         entries.set(path, { path, expectedDestination, selectedExpectation, conflicts });
       }
       const paths: Array<ManagedWorkspaceReturnPreview['paths'][number]> = [];
@@ -421,10 +457,11 @@ export async function prepareManagedWorkspaceReturnFromStage(input: Readonly<{
           metadata: { source: { kind: 'workingTree' }, sourceKey: returnId, contentConfidence: 'exact', attributionScope: 'unknown' },
           comparison: { id: returnId, source: { kind: 'workingTree' }, repository: { rootPath: input.hostRoot }, endpoints: {},
             inventory: { state: 'complete', files: paths.flatMap(group => [...group.files]), reasons: [] }, freshness: 'current', attributionScope: 'unknown' },
-          retainedRefs: [], workspaceReturn: { baselineAvailable: input.baseline !== undefined, entries: [...entries.values()] } });
+          retainedRefs: [], workspaceReturn: { baselineAvailable: input.baseline !== undefined, entries: [...entries.values()],
+              ...(original ? { destination: original.workspace } : {}) } });
       } catch (error) { await rm(endpointDirectory, { recursive: true, force: true }); throw error; }
       return { returnId, sessionId: input.sessionId, repositoryRootPath: input.hostRoot, paths,
         ...(!input.baseline ? { applyUnavailableReason: 'baseline_unavailable' as const } : {}) };
     } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
-  }));
+  })));
 }

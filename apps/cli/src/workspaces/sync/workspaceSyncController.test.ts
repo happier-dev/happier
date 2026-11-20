@@ -3,7 +3,7 @@ import { WorkspaceSyncController } from './workspaceSyncController';
 import { deriveWorkspaceSyncConflictAsidePaths } from '@happier-dev/protocol';
 import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1, type WorkspaceSyncStatusV1 } from './workspaceSyncTypes';
 import { deriveWorkspaceSyncEndpointId, type MutagenControlCommandV1, type MutagenSessionSummaryV1 } from './transport/workspaceSyncBrokerProtocol';
-import { access, mkdir, mkdtemp, open, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, open, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -1537,6 +1537,120 @@ describe('WorkspaceSyncController', () => {
         contentPolicy: definition.contentPolicy,
       }, exportSource)).rejects.toMatchObject({ code: 'relationship_not_ready' });
       expect(exportSource).toHaveBeenCalledOnce();
+    } finally {
+      await controller.shutdown();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('exports the admitted managed seed even when the same path exists on the controller', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-managed-seed-'));
+    const visibleRoot = join(fixture, 'project');
+    const guestRoot = join(fixture, 'guest', 'project');
+    const controllerPayload = join(visibleRoot, 'seed.txt');
+    const guestPayload = join(guestRoot, 'seed.txt');
+    const source = { id: 'a', v: 2 as const, kind: 'managed' as const, serverId: 'home-a', managedId: 'sandbox',
+      controller: { machineId: 'm1', installationId: 'installation' }, rootPath: visibleRoot, createdAtMs: 1 };
+    const target = { serverId: 'home-a', machineId: 'm1', rootPath: join(fixture, 'copy') };
+    const operation = { v: 1 as const, operationId: 'managed-seed', controllerMachineId: 'm1',
+      alphaWorkspaceRefId: 'a', betaWorkspaceRefId: 'b', contentPolicy: definition.contentPolicy };
+    const hostRootOwnership = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'host-locks') });
+    const guestRootOwnership = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'guest-locks') });
+    const controller = new WorkspaceSyncController({
+      adapter: completeAdapter(), lifecycle: lifecycle(), localServerId: 'home-a', localMachineId: 'm1',
+      resolveWorkspaceRef: id => id === source.id ? source : target,
+      rootOwnershipManager: hostRootOwnership,
+    });
+    try {
+      await mkdir(visibleRoot);
+      await mkdir(guestRoot, { recursive: true });
+      await Promise.all([writeFile(controllerPayload, 'controller bytes'), writeFile(guestPayload, 'guest bytes')]);
+      const guest = await guestRootOwnership.tryAcquire({ ownerId: operation.operationId, canonicalRoot: guestRoot, operation: 'handoff' });
+      if ('kind' in guest) throw new Error('Guest fixture could not acquire its source root');
+      const request = { operationId: operation.operationId, sourceWorkspaceRefId: source.id,
+        targetMachineId: target.machineId, contentPolicy: operation.contentPolicy };
+      try {
+        await controller.withSourceSeedAuthorization(operation, [guest], async () => {
+          const exportSource = (canonicalRoot: string) => readFile(join(canonicalRoot, 'seed.txt'), 'utf8');
+          await expect(controller.withAuthorizedSourceSeedExport(request, exportSource)).resolves.toBe('guest bytes');
+          await expect(controller.withAuthorizedSourceSeedExport({ ...request, sourceWorkspaceRefId: 'b' }, exportSource))
+            .rejects.toMatchObject({ code: 'target_unavailable' });
+        }, { managedSource: { workspace: source, ownership: guest } });
+      } finally {
+        await guest.release();
+      }
+      expect(await readFile(controllerPayload, 'utf8')).toBe('controller bytes');
+    } finally {
+      await controller.shutdown();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the managed copy source and a same-path controller target under their own root custody', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-managed-copy-'));
+    const root = join(fixture, 'project');
+    const guestDisk = join(fixture, 'guest');
+    const source = { id: 'a', v: 2 as const, kind: 'managed' as const, serverId: 'home-a', managedId: 'sandbox',
+      controller: { machineId: 'm1', installationId: 'installation' }, rootPath: root, createdAtMs: 1 };
+    const target = { serverId: 'home-a', machineId: 'm1', rootPath: root };
+    const operation = { v: 1 as const, operationId: 'managed-copy', controllerMachineId: 'm1',
+      alphaWorkspaceRefId: 'a', betaWorkspaceRefId: 'b', contentPolicy: definition.contentPolicy };
+    const hostRoots = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'host-locks') });
+    const guestRoots = createWorkspaceRootOwnershipManager({ lockDirectory: join(fixture, 'guest-locks') });
+    const resolveWorkspaceRef = (id: string) => id === source.id ? source : target;
+    let admission = true;
+    let controller!: WorkspaceSyncController;
+    let session: MutagenSessionSummaryV1 | null = null;
+    let guestStream: PassThrough | undefined;
+    const adapter = createWorkspaceSyncMutagenAdapter({ resolveWorkspaceRef, send: async command => {
+      if (command.t === 'list') return { sessions: session ? [session] : [], nextCursor: null };
+      if (command.t === 'terminate') { session = null; return null; }
+      if (command.t === 'create') {
+        const fromGuest = await controller.openExternalStream({ endpointId: new URL(command.session.alpha).hostname });
+        expect(fromGuest).toBe(guestStream);
+        const destination = await controller.openExternalStream({ endpointId: new URL(command.session.beta).hostname });
+        expect(destination).not.toBe(guestStream);
+        session = { identifier: 'native-managed-copy', name: command.session.name, labels: command.session.labels,
+          alpha: { protocol: 'external', host: new URL(command.session.alpha).hostname, path: '', state: status.endpointStates.alpha },
+          beta: { protocol: 'external', host: new URL(command.session.beta).hostname, path: '', state: status.endpointStates.beta },
+          mode: command.session.mode, paused: true, status: 'watching', successfulCycles: 0, conflictCount: 0 };
+      } else if (command.t === 'resume' && session) session = { ...session, paused: false };
+      else if (command.t === 'flush' && session) session = { ...session, successfulCycles: 1 };
+      else throw new Error(`Unexpected engine command ${command.t}`);
+      return session;
+    } });
+    await mkdir(root);
+    await mkdir(guestDisk);
+    controller = new WorkspaceSyncController({
+      adapter, lifecycle: lifecycle(), localServerId: 'home-a', localMachineId: 'm1',
+      resolveWorkspaceRef, rootOwnershipManager: hostRoots,
+      borrowLinkedSourceRoot: async (operationId, workspaceRefId) => {
+        if (!admission || operationId !== operation.operationId || workspaceRefId !== source.id) return null;
+        const custody = await guestRoots.tryAcquire({ ownerId: operationId, canonicalRoot: guestDisk, operation: 'handoff' });
+        if ('kind' in custody) throw new Error('Guest fixture could not fence its root');
+        return { handle: { ...custody, owner: { ...custody.owner, canonicalRoot: root } }, release: custody.release };
+      },
+      openManagedWorkspaceAgentStream: async (request, endpoint) => {
+        expect(endpoint).toEqual(source);
+        expect(request).toMatchObject({ operationId: operation.operationId, role: 'alpha', workspaceRefId: source.id });
+        guestStream = new PassThrough();
+        return ownedLocalAgent(guestStream, vi.fn(async () => { guestStream!.destroy(); }));
+      },
+      openLocalWorkspaceAgentStream: async request => {
+        expect(request).toMatchObject({ operationId: operation.operationId, role: 'beta', workspaceRefId: 'b' });
+        expect(await hostRoots.tryAcquire({ ownerId: 'contender', canonicalRoot: root, operation: 'sync' })).toMatchObject({ kind: 'overlap' });
+        const stream = new PassThrough();
+        return ownedLocalAgent(stream, vi.fn(async () => { stream.destroy(); }));
+      },
+    });
+    try {
+      await expect(controller.copyOnce(operation)).resolves.toMatchObject({ relationshipId: operation.operationId, conflictCount: 0 });
+      expect(guestStream?.destroyed).toBe(true);
+      const guestAfterCopy = await guestRoots.tryAcquire({ ownerId: 'after-copy', canonicalRoot: guestDisk, operation: 'handoff' });
+      expect(guestAfterCopy).not.toHaveProperty('kind');
+      if (!('kind' in guestAfterCopy)) await guestAfterCopy.release();
+      admission = false;
+      await expect(controller.copyOnce(operation)).rejects.toMatchObject({ code: 'workspace_machine_not_enrolled' });
     } finally {
       await controller.shutdown();
       await rm(fixture, { recursive: true, force: true });

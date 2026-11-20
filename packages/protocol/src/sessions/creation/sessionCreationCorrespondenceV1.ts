@@ -19,7 +19,7 @@ import { SessionPromptStackV1Schema } from '../context/sessionContextV1.js';
 import { ManagedControllerV1Schema } from '../../machines/managed/managedMachineV1.js';
 import { SessionDiscussionParticipantV1Schema } from './sessionDiscussionParticipantV1.js';
 import { SessionAuthoringSelectionFieldsV1 } from '../authoring/selectionFieldsV1.js';
-import { ManagedWorkspaceAddressV2Schema, WorkspaceAddressV1Schema, WorkspaceAddressV2Schema } from '../../workspaces/workspaceRefV1.js';
+import { ManagedWorkspaceAddressV2Schema, WorkspaceAddressV2Schema } from '../../workspaces/workspaceRefV1.js';
 import { ResolvedSessionProjectFilesV1Schema } from '../../machines/machineIsolationV1.js';
 import { SessionProjectFilesSourceV1Schema } from './sessionProjectFilesSourceV1.js';
 import { WorkspaceManifestSchema } from '../../workspaces/manifestSchema.js';
@@ -27,7 +27,7 @@ import { WorkspaceContentPolicyV1Schema } from '../control/handoff/workspaceSync
 
 /** Exact materialized copy endpoints; Session metadata already owns this private origin. */
 export const SessionProjectFilesOriginV1Schema = lazyZodSchema(() => z.strictObject({
-  sourceWorkspace: WorkspaceAddressV1Schema,
+  sourceWorkspace: WorkspaceAddressV2Schema,
   targetWorkspace: WorkspaceAddressV2Schema,
   baseline: z.optional(WorkspaceManifestSchema),
   contentPolicyDigest: z.optional(WorkspaceContentPolicyV1Schema.shape.policyDigest),

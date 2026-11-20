@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Dirent, Stats } from 'node:fs';
 import type { FileHandle } from 'node:fs/promises';
 
+import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { ManagedWorkspaceAddressV2Schema, type WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -65,6 +66,8 @@ export interface WorkspaceSource {
   hold?(): () => void;
   /** Translate absolute paths passed to or reported by a command whose root has another name in its OS. */
   readonly commandPaths?: Readonly<{ toCommandPath(path: string): string; fromCommandPath(path: string): string }>;
+  /** Native Sync capture compares this target preimage with the staged material. */
+  observeSyncEntry?(path: string): Promise<WorkspaceSyncEntryExpectationV1>;
   /** Publication effects. Read-only sources omit these operations. */
   readonly filePublication?: Readonly<{
     copyFileExclusive(from: string, to: string): Promise<Readonly<{ atime: Date; mtime: Date }>>;

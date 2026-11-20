@@ -9,10 +9,10 @@ import { OpenProjectResultV1Schema, ProjectOpenSyncMaterializationResultV1Schema
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { resolveCanonicalAbsolutePathComparisonIdentity } from '@/utils/path/expandHomeDirPath';
-import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncExecutionMachineIdV1, resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { isManagedWorkspaceRefV2, type ManagedWorkspaceLocatorV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2, type ManagedWorkspaceLocatorV2, type WorkspaceAddressV1, type WorkspaceProjectFactsV1, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveWorkspaceRefV1, workspaceAddressFromRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { StoredCredentials } from '@/persistence';
@@ -22,6 +22,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readProjectAccountRows, createProjectAccountSnapshotMutation, mutateProjectAccountOrganization, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { materializeWorkspaceRefForMachineRoot, materializeWorkspaceRefForManagedRoot, resolveWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
+import { readAcceptedManagedWorkspaceRefFromRows } from '@/workspaces/acceptedManagedWorkspace';
 import { registerManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import { openSessionHolderWorkspaceChannel } from '@/subprocess/supervision/sessionHolder';
 import { createHolderWorkspaceSource } from '@/workspaces/source/holderWorkspaceSource';
@@ -212,18 +213,28 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       return await runtime.materializeManagedProjectTarget({ ...input, serverId: homeId }, context);
     }
     const requester = await resolveProjectRequester(authorityRuntime, context);
-    if (input.materialization.kind === 'attach' && input.materialization.targetManaged) {
-      const destination = input.materialization.targetManaged;
-      if (!runtime.openManagedProjectWorkspace || input.source.kind !== 'folder'
-        || !posix.isAbsolute(input.source.path)) return refused('workspace_target_unavailable');
-      const rootPath = posix.normalize(input.source.path);
+    const sourceAddress = input.materialization.kind === 'attach' && input.source.kind === 'workspace'
+      && input.source.checkout && isManagedWorkspaceRefV2(input.source.checkout)
+      ? { ...input.source.checkout, serverId: homeId } : undefined;
+    const targetManaged = input.materialization.kind === 'attach' ? input.materialization.targetManaged : undefined;
+    const destination = targetManaged ?? sourceAddress;
+    if (destination) {
+      if (!runtime.openManagedProjectWorkspace) return refused('workspace_target_unavailable');
+      if (destination.controller.machineId !== runtime.machineId) return refused('source_machine_mismatch');
+      const acceptedSource = sourceAddress
+        ? await readAcceptedManagedWorkspaceRefFromRows(requester.rows, runtime.serverHttpBaseUrl, sourceAddress) : undefined;
+      if (sourceAddress && !acceptedSource) return refused('workspace_unavailable');
+      const selectedPath = acceptedSource?.ref.rootPath ?? (input.source.kind === 'folder' ? input.source.path : undefined);
+      if (!selectedPath || !posix.isAbsolute(selectedPath)) return refused('workspace_target_unavailable');
+      const rootPath = posix.normalize(selectedPath);
       const directory = mapHolderWorkspacePath(rootPath, rootPath, input.subdir ?? '');
       managedTargetLifetime = new AbortController();
       const cancel = () => managedTargetLifetime?.abort(context.signal.reason);
       context.signal.addEventListener('abort', cancel, { once: true });
       try {
         context.signal.throwIfAborted();
-        const target = await runtime.openManagedProjectWorkspace({ workspace: { ...destination, serverId: homeId, rootPath },
+        const locator = { managedId: destination.managedId, controller: destination.controller, serverId: homeId, rootPath };
+        const target = await runtime.openManagedProjectWorkspace({ workspace: locator,
           requesterAccountId: admission.actorAccountId, lifetime: managedTargetLifetime.signal });
         const signal = AbortSignal.any([target.lifetime, context.signal]);
         const argv = [target.holderPath, 'workspace', '--root', rootPath];
@@ -235,12 +246,22 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         } finally { channel.end(); }
         signal.throwIfAborted();
         return await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, async () => {
+          if (acceptedSource && sourceAddress) {
+            const ref = acceptedSource.ref;
+            managedTargetRetained = registerManagedWorkspaceTarget({ workspace: sourceAddress,
+              requesterAccountId: admission.actorAccountId, target });
+            await listOpenedProject(requester, ref, signal);
+            return { kind: 'opened', workspace: sourceAddress, directory, setup: 'notRequired',
+              facts: { projectKey: ref.projectKey ?? ref.id,
+                ...(ref.repositoryIdentity ? { repositoryIdentity: ref.repositoryIdentity } : {}),
+                ...(ref.source ? { source: ref.source } : {}) } };
+          }
           let acceptedRefId: string | undefined;
           effectsIssued = true;
           const accepted = await createProjectAccountSnapshotMutation(requester.rows)(current => {
             signal.throwIfAborted();
             const materialized = materializeWorkspaceRefForManagedRoot(current.workspaceRefs, {
-              ...destination, serverId: homeId, rootPath, nowMs: Date.now(), createId: randomUUID,
+              ...locator, nowMs: Date.now(), createId: randomUUID,
             });
             acceptedRefId = materialized.workspaceRef.id;
             return { ...current, workspaceRefs: materialized.workspaceRefs };
@@ -285,6 +306,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
       let sourceRootPath: string | undefined;
       let sourceMachineId = runtime.machineId;
       let sourceWorkspaceRefId: string | undefined;
+      let managedCopySource: ManagedWorkspaceRefV2 | undefined;
       let facts: WorkspaceProjectFactsV1 = {};
       let parentWorkspace: WorkspaceAddressV1 | undefined;
       if (input.source.kind === 'workspace' || input.source.kind === 'source' && input.materialization.kind !== 'clone') {
@@ -295,10 +317,16 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           ? { ...selected, serverId: runtime.serverId } : selected);
         if (source.kind === 'ambiguous') return { kind: 'ambiguous', candidates: [...source.candidates] };
         if (source.kind !== 'resolved') return refused('workspace_unavailable');
-        if (isManagedWorkspaceRefV2(source.ref)) return refused('workspace_managed_target_required');
-        if (input.materialization.kind !== 'sync' && source.ref.machineId !== runtime.machineId) return refused('source_machine_mismatch');
+        if (isManagedWorkspaceRefV2(source.ref)) {
+          if (input.materialization.kind !== 'sync' || input.materialization.workspaceAction.kind !== 'copy_once'
+            || privateSync || source.ref.controller.machineId !== runtime.machineId) {
+            return refused('workspace_managed_target_required');
+          }
+          managedCopySource = source.ref;
+        }
+        sourceMachineId = resolveWorkspaceSyncExecutionMachineIdV1(source.ref);
+        if (input.materialization.kind !== 'sync' && sourceMachineId !== runtime.machineId) return refused('source_machine_mismatch');
         sourceDirectory = sourceRootPath = source.ref.rootPath;
-        sourceMachineId = source.ref.machineId;
         sourceWorkspaceRefId = source.ref.id;
         if (input.materialization.kind === 'worktree') parentWorkspace = workspaceAddressFromRefV1(source.ref);
         facts = { ...(source.ref.repositoryIdentity ? { repositoryIdentity: source.ref.repositoryIdentity } : {}),
@@ -375,7 +403,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         let syncSourceWorkspaceRefId = sourceWorkspaceRefId;
         let syncSourceRootPath = sourceRootPath;
         let syncTarget = target;
-        if (action.kind === 'copy_once' || action.kind === 'create_relationship') {
+        if (!managedCopySource && (action.kind === 'copy_once' || action.kind === 'create_relationship')) {
           const mappingPurpose = requester.rows.authorization ? 'admitted_mapping' as const : 'physical_sync' as const;
           const childMachines = await readWorkspaceSyncChildMachineFacts({ serverId: runtime.serverId,
             relationshipId: requester.rows.authorization?.binding.workspaceSyncAdmission?.relationshipId,
@@ -421,6 +449,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
             ? requester.rows.authorization.binding.requestId : randomUUID(), accountServerId: runtime.serverId,
           sourceMachineId: syncSourceMachineId, targetMachineId: syncTarget?.machineId ?? runtime.machineId, sourceRootPath: syncSourceRootPath,
           ...(syncSourceWorkspaceRefId ? { sourceWorkspaceRefId: syncSourceWorkspaceRefId } : {}),
+          ...(managedCopySource ? { managedCopySource } : {}),
           ...(syncTarget ? { targetWorkspaceRefId: syncTarget.id } : {}),
         } };
       }
