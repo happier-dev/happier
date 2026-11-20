@@ -262,7 +262,8 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       const source = 'workflow' in input
         ? await resolveWorkflowDefinitionRefV1(input.workflow, { readPluginWorkflows, ...(signal ? { signal } : {}) })
         : null;
-      const definition = 'draft' in input ? normalize(input.draft, context) : saved?.definition ?? source?.definition;
+      const definition = 'draft' in input ? normalize(input.draft, context) : saved?.definition
+        ?? (source?.kind === 'catalog' ? source.definition : undefined);
       if (!definition) throw contentUnavailable('not_found');
       const document = { kind: 'happier.workflow' as const, version: 1 as const, definition };
       const portable = { document, json: serializeWorkflowDocumentJsonV1(document) };
