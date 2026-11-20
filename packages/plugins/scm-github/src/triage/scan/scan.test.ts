@@ -826,7 +826,7 @@ describe('GitHub triage scan', () => {
     let releasePage!: () => void;
     const pageStarted = new Promise<void>(resolve => { pageRequested = resolve; });
     const pageHeld = new Promise<void>(resolve => { releasePage = resolve; });
-    const transport = createStubGithubTransport({ async respond(request) {
+    const transport = createStubGithubTransport({ respond(request) {
       const url = new URL(request.url);
       if (url.pathname === '/graphql') return githubChecksBatchResponse(request);
       if (url.pathname.endsWith('/pulls/1284')) {
@@ -835,8 +835,7 @@ describe('GitHub triage scan', () => {
       if (url.pathname !== '/search/issues') return undefined;
       if (request.url === nextUrl) {
         pageRequested();
-        await pageHeld;
-        return { status: 200, body: githubSearchResponse({ items: pullRequestItems(1) }) };
+        return pageHeld.then(() => ({ status: 200, body: githubSearchResponse({ items: pullRequestItems(1) }) }));
       }
       if (laneOf(request) !== lane) return emptyPage();
       return { status: 200, headers: { link: nextLink },
