@@ -18,8 +18,6 @@ export type PluginUiScrollActivityTracker = Readonly<{
   scrollToOffset?(offset: number): void;
 }>;
 
-const ScrollActivityContext = createContext<PluginUiScrollActivityTracker | null>(null);
-
 /** The enclosing physical scroller owns offset reads and restoration. A retained panel owns the saved value. */
 export type HappierRetainedScrollInternal = Readonly<{
   readOffset(): number;
@@ -27,10 +25,14 @@ export type HappierRetainedScrollInternal = Readonly<{
 }>;
 
 // A targeted source and its frame share React, but each bundles its own Plugin UI modules.
+const scrollActivityKey = Symbol.for('happier.pluginUi.scrollActivityContext.v1');
 const retainedScrollKey = Symbol.for('happier.pluginUi.retainedScrollContext.v1');
 const privateContexts = globalThis as typeof globalThis & {
+  [scrollActivityKey]?: Context<PluginUiScrollActivityTracker | null>;
   [retainedScrollKey]?: Context<HappierRetainedScrollInternal | null>;
 };
+const ScrollActivityContext =
+  (privateContexts[scrollActivityKey] ??= createContext<PluginUiScrollActivityTracker | null>(null));
 export const HappierRetainedScrollContextInternal =
   (privateContexts[retainedScrollKey] ??= createContext<HappierRetainedScrollInternal | null>(null));
 

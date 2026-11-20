@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { Button, defineUiSurface, Stack, Text } from '@happier-dev/plugin-ui';
+import { Button, defineUiSurface, Stack, Text, usePluginTheme } from '@happier-dev/plugin-ui';
+import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
@@ -331,6 +332,55 @@ describe('the shared story of a change request', () => {
     await expect(page.getByText('src/a.ts')).resolves.toBeDefined();
     await expect(page.getByText('edit')).resolves.toBeDefined();
     expect(document.querySelector('[role="img"]')).toBeNull();
+  });
+
+  it('keeps disclosed file links in page order and mounts only the visible window as the page scrolls', async () => {
+    // The frame and targeted provider can each load Plugin UI. Share the frame's physical viewport across those copies.
+    vi.resetModules();
+    const { PluginUiScrollActivityProvider } = await import('@happier-dev/plugin-ui/advanced');
+    const rows = Array.from({ length: 120 }, (_, index) =>
+      file(`qa-large-pr/row-${String(index).padStart(3, '0')}.txt`, 120 - index, 1));
+    const viewportHeight = 715;
+    let viewport = { top: 0, bottom: viewportHeight };
+    const listeners = new Set<() => void>();
+    // JSDOM has no physical scroll layout. Supply the measurements made by the existing page scroller.
+    const tracker: PluginUiScrollActivityTracker = {
+      onScroll() {}, onLayout() {}, onContentSizeChange() {},
+      subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      getWindow: () => viewport,
+      measureSpan: async () => ({ top: 0 }),
+      invalidateLayout() {}, getLayoutRevision: () => 0,
+    };
+    const opened: string[] = [];
+    let rowPitch = 0;
+    const page = await mount(() => {
+      const theme = usePluginTheme();
+      rowPitch = (theme.typography.code ?? theme.typography.reading).lineHeight + theme.spacing.small;
+      return (
+        <PluginUiScrollActivityProvider tracker={tracker}>
+          <TriageDetailChangeSummary rows={rows} more={false} onOpenFile={path => opened.push(path)} />
+        </PluginUiScrollActivityProvider>
+      );
+    });
+    const fileLinks = () => [...document.querySelectorAll<HTMLElement>('[role="link"][aria-label^="qa-large-pr/"]')];
+    expect(fileLinks()).toHaveLength(4);
+    await act(async () => { await page.press(await page.getByRole('button', { name: '116 smaller files' })); });
+    const seen = new Set<string>();
+    for (let top = 0; top < rows.length * rowPitch; top += viewportHeight / 2) {
+      await act(async () => {
+        viewport = { top, bottom: top + viewportHeight };
+        listeners.forEach(listener => listener());
+      });
+      const paths = fileLinks().map(link => link.getAttribute('aria-label')!);
+      // Two partially visible edge rows and List's retained keyboard entry may accompany the full rows.
+      expect(paths.length).toBeLessThanOrEqual(Math.floor(viewportHeight / rowPitch) + 3);
+      expect(paths).toEqual([...paths].sort());
+      paths.forEach(path => seen.add(path));
+      if (paths.includes(rows.at(-1)!.path)) break;
+    }
+    expect([...seen]).toEqual(rows.map(row => row.path));
+    await act(async () => { await page.press(await page.getByRole('link', { name: rows.at(-1)!.path })); });
+    expect(opened).toEqual([rows.at(-1)!.path]);
   });
 
   it('summarizes the checks the way the source counted them and lists what failed', async () => {

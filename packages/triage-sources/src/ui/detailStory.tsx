@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Button, Card, HappierBodyEdgeContext, Chart, Column, Columns, HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, HappierSkeletonRows, happierFocusRingStyle, Icon, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTheme, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { Button, Card, HappierBodyEdgeContext, Chart, Column, Columns, HAPPIER_PRESS_FEEDBACK_V1, HappierPressable, HappierSkeletonRows, happierFocusRingStyle, Icon, List, Metric, Progress, Row, ScrollArea, Stack, Step, Text, usePluginTheme, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { formatTriageTimestampV1 } from '@happier-dev/triage-protocol/v1';
 
 import { summarizeTriageChangesV1, type TriageChangedFileV1, type TriageChangeTotalsV1 } from './changeSummary.js';
@@ -179,6 +179,7 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const count = useStoryCount();
+  const theme = usePluginTheme();
   const [expanded, setExpanded] = React.useState(false);
   const { locale } = useSurfaceContext();
   const summary = summarizeTriageChangesV1({ rows, more, totals });
@@ -204,7 +205,14 @@ export function TriageDetailChangeSummary({ rows, more, totals, titleKey, childr
     : count('moreFiles', summary.restCount, { one: '{count} more file', other: '{count} more files' });
   return <TriageDetailChanges trailing={trailing} {...(titleKey === undefined ? {} : { titleKey })} onOpen={onOpenChanges}>
     {children}
-    {listed.files.map((file) => <TriageChangeFileRow key={file.path} file={file} scale={listed.scale} onOpen={onOpenFile} />)}
+    {expanded ? (
+      <List items={listed.files} keyForItem={file => file.path}
+        pageLayout={{
+          estimatedRowHeight: (theme.typography.code ?? theme.typography.reading).lineHeight,
+          rowGapPx: theme.spacing.small,
+        }}
+        renderItem={file => <TriageChangeFileRow file={file} scale={listed.scale} onOpen={onOpenFile} />} />
+    ) : summary.files.map(file => <TriageChangeFileRow key={file.path} file={file} scale={summary.scale} onOpen={onOpenFile} />)}
     {summary.restCount === 0 ? null : !expanded
       ? expandable
         ? <Row><Button title={rest} variant="plain" size="small" onPress={() => setExpanded(true)} /></Row>
