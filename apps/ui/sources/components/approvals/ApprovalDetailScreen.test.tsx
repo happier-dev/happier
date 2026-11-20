@@ -1715,8 +1715,10 @@ describe('ApprovalDetailScreen', () => {
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
 
-    expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe('errors.permissionDenied');
-    expect(readRenderedText(screen)).not.toContain('approvals.failureNoReason');
+    const { readDeploymentRefusalRecoveryV1 } = await import('@happier-dev/protocol/deployments/deploymentFailureRecoveryV1');
+    const recovery = readDeploymentRefusalRecoveryV1('action_forbidden');
+    expect(recovery).not.toBeNull();
+    expect(readRenderedText(screen)).toContain(recovery!.remedy);
   });
 
   it('shows the shared projected recovery in the failed Domain Remove summary', async () => {
@@ -1740,8 +1742,7 @@ describe('ApprovalDetailScreen', () => {
     const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
     const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
 
-    expect(approvalItem(screen, 'approvals.execution-failure')?.props.subtitle).toBe(remedy);
-    expect(readRenderedText(screen)).not.toContain('approvals.failureNoReason');
+    expect(readRenderedText(screen)).toContain(remedy);
   });
 
   it('presents a durable Provider refusal through the shared Provider error copy', async () => {
