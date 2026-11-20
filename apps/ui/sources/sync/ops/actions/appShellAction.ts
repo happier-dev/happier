@@ -110,6 +110,16 @@ export function createAppShellAction(accountContext?: LazyActionAccountContext):
                 account.assertCurrent();
                 if (!areServerProfileIdentifiersEquivalent(account.serverId, context.serverId)
                     || account.accountId !== context.runtimeAccountId) return { status: 'unavailable' };
+                if (actionId === 'inbox.get') {
+                    const read = AppShellActionInputSchemas['inbox.get'].parse(input);
+                    if ('projection' in read) {
+                        const { listAutomationDefinitionRuns } = await import('@/sync/api/automations/apiAutomationRuns');
+                        const page = await listAutomationDefinitionRuns({ attention: 'required', cursor: read.cursor,
+                            signal: context.signal, credentials: account.credentials, requestContext: account });
+                        account.assertCurrent();
+                        return { status: 'automation_attention', ...page };
+                    }
+                }
                 const result = await invokeMountedWorkRead({ actionId, input,
                     context: { ...context, serverId: account.serverId, runtimeAccountId: account.accountId } });
                 account.assertCurrent();

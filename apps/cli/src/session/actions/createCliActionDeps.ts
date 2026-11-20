@@ -442,8 +442,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
       return { kind: 'waiting', reason: 'runner_unreachable', cause: 'preparation_exception' };
     }
   };
-  const roleArtifactStore = params.credentials ? createCredentialedAccountArtifactStore(params.credentials) : undefined;
-  const homeAccountId = params.credentials ? readAccountIdFromToken(params.credentials.token) : null;
+  const homeCredentials = params.credentials;
+  const roleArtifactStore = homeCredentials ? createCredentialedAccountArtifactStore(homeCredentials) : undefined;
+  const homeAccountId = homeCredentials ? readAccountIdFromToken(homeCredentials.token) : null;
   // Widget surfaces are shared Home addresses, not this device's credential profile.
   const widgetHomeId = params.serverIdentityId ?? params.serverId ?? configuration.activeServerId;
   const accountCallerContext = (context: ActionExecutorContext): ActionExecutorContext =>
@@ -1609,12 +1610,16 @@ export function createCliActionDeps(params: CliActionDepsParams,
     ...widgetDeps.input,
     widgetAccountScope: widgetDeps.widgetAccountScope,
     widgetCatalog: widgetDeps.widgetCatalog,
-    ...(roleArtifactStore && homeAccountId ? { appShellAction: createCliInboxReadAction({
+    ...(roleArtifactStore && homeAccountId && homeCredentials ? { appShellAction: createCliInboxReadAction({
       store: { list: options => withProjectHome(() => roleArtifactStore.list(options)),
         readBodies: (items, signal) => withProjectHome(() => roleArtifactStore.readBodies(items, signal)),
         read: (artifactId, options) => withProjectHome(() => roleArtifactStore.read(artifactId, options)),
         update: request => withProjectHome(() => roleArtifactStore.update(request)) },
       accountId: homeAccountId, serverId: todoHomeServerId,
+      readAutomationAttention: query => withProjectHome(async () => {
+        const { listAutomationAttentionRuns } = await import('@/api/automations');
+        return listAutomationAttentionRuns({ ...query, token: homeCredentials.token });
+      }),
       isCurrent: async () => !await projectHomeAdmission() && (!params.isCredentialCurrent || await params.isCredentialCurrent()),
     }) } : {}),
     artifactAction: artifactsDeps.artifactAction,

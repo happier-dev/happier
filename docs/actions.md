@@ -8971,8 +8971,12 @@ Lead group roots likewise carry `{ kind: 'lead', serverId, sessionId }`, includi
 when the lead is unreadable. Grouping and duplicate suppression use Home + Session
 identity, so equal Session ids on different Homes remain distinct. Workflow
 origin ancestry and step folding use the Workflow attention window's Home.
-The headless adapter reads only its captured Account's owned notices and reports
-its missing app projections as partial; it does not manufacture a multi-Home census.
+The default headless snapshot reads the captured Account's owned notices and reports
+missing app projections as partial. Use `inbox.get` with `projection: "automation_attention"`
+to read one page of the invoking Home's Automation occurrences that need attention,
+including occurrences without a linked Workflow Run. Follow `nextCursor` with the
+same projection to read another page. Inbox uses this same Action and retained
+Automation query for its attention window.
 Discussion rows retain their exact message reference and Doc proposal disposition;
 `coverage.discussions` reports complete, partial or unavailable source coverage.
 An incomplete private Artifact source preserves other admitted rows in a `partial`

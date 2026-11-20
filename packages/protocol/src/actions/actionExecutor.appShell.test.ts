@@ -108,6 +108,20 @@ describe('app shell Actions', () => {
     expect(spec.outputSchema?.safeParse({ status: 'unavailable' }).success).toBe(true);
     expect(spec.outputSchema?.safeParse({ status: 'ready', rawStore: {} }).success).toBe(false);
   });
+  it('lets an own-Account agent request the Inbox Automation attention page without a mounted client', async () => {
+    const input = { projection: 'automation_attention', cursor: 'next-occurrence-page' };
+    const page = { status: 'automation_attention', runs: [], nextCursor: null };
+    const executor = createActionExecutor({
+      appShellAction: async (args: Parameters<NonNullable<ActionExecutorDeps['appShellAction']>>[0]) => {
+        expect(args.input).toEqual(input);
+        expect(args.context.expectedAccountId).toBe('owner');
+        return page;
+      },
+    } as unknown as ActionExecutorDeps);
+    await expect(executor.execute('inbox.get', input, { surface: 'agent', authority: 'account_automation',
+      runtimeAccountId: 'owner', actionCaller: { kind: 'session', sessionId: 'lead', starterDepth: 0, turnDepth: 0 },
+    })).resolves.toEqual({ ok: true, result: page });
+  });
   it('registers ordinary automated Inbox acknowledgement over exact Home addresses', () => {
     const spec = getActionSpec('inbox.mark_all_read');
     expect(spec.requiredAuthority).toBe('account_automation');

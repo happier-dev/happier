@@ -21,6 +21,7 @@ import type { ActionExecutorContext } from './executor/types.js';
 import { AccountNoticeDismissInputV1Schema, AccountNoticeDismissResultV1Schema } from '../activity/accountNoticeRecoveryV1.js';
 import { AccountNoticeReminderSetInputV1Schema, AccountNoticeReminderSetResultV1Schema } from '../activity/accountNoticeDismissalV1.js';
 import { AttentionRemindAtV1Schema } from '../activity/attentionReminderV1.js';
+import { AutomationV3RunListResponseSchema } from '../automations/automationApiV3.js';
 export { mutateAccountNoticeArtifactV1 } from '../activity/accountNoticeDismissalV1.js';
 
 /** One host-enforced Account admission for private notices and headless Inbox reads. */
@@ -155,7 +156,9 @@ export type NewSessionDraftAgentIntent = z.infer<typeof NewSessionDraftAgentInte
 
 export const AppShellActionInputSchemas = lazyActionSpecRecord(() => ({
   'session.work.get': z.strictObject({ sessionId: z.string().check(z.minLength(1)) }),
-  'inbox.get': z.strictObject({}),
+  'inbox.get': z.union([z.strictObject({}), z.strictObject({
+    projection: z.literal('automation_attention'), cursor: z.optional(z.string().check(z.minLength(1))),
+  })]),
   'inbox.mark_all_read': z.strictObject({ targets: z.array(InboxTargetSchema) }),
   'inbox.notice.dismiss': AccountNoticeDismissInputV1Schema,
   [INBOX_NOTICE_REMINDER_SET_ACTION_ID_V1]: AccountNoticeReminderSetInputV1Schema,
@@ -189,7 +192,7 @@ export const AppShellActionOutputSchemas = lazyActionSpecRecord(() => ({
     readySessions: z.array(InboxTargetSchema),
     actionOperations: z.array(z.strictObject({ serverId: z.string(), operationId: z.string(), reason: z.string() })),
     isLoading: z.boolean(), refreshFailed: z.boolean(),
-  })]),
+  }), z.strictObject({ status: z.literal('automation_attention'), ...AutomationV3RunListResponseSchema.shape })]),
   'inbox.mark_all_read': z.strictObject({ results: z.array(lazyZodSchema(() => z.extend(InboxTargetSchema, {
     status: z.enum(['succeeded', 'failed', 'skipped', 'cancelled']),
   }))) }),
@@ -275,7 +278,7 @@ function createAppShellActionSpecs() {
   },
   {
     id: 'inbox.get', approval: {result: 'required'}, title: 'Read Inbox',
-    description: 'Read the canonical Inbox for the invoking Home and own Account. Without a mounted app, reads owned notices and reports unavailable source projections as partial; never opens Inbox.',
+    description: 'Read the canonical Inbox for the invoking Home and own Account. Without a mounted app, the default snapshot reads owned notices and reports unavailable sources as partial. Set projection to automation_attention to page through Automation occurrences needing attention, even without a mounted Inbox or a linked Workflow Run. Never opens Inbox.',
     safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'client',
     placements: [], bindings: { mcpToolName: 'inbox_get', voiceClientToolName: 'inbox_get' },
     prompting: { voiceHotPath: true },
@@ -283,7 +286,10 @@ function createAppShellActionSpecs() {
     cli: { acceptsServerId: true, commands: [{ path: ['inbox', 'get'], visibility: 'canonical' }] },
     toolExposure: { agent: 'discoverable_only', mcp: 'discoverable_only' },
     inputSchema: AppShellActionInputSchemas['inbox.get'], outputSchema: AppShellActionOutputSchemas['inbox.get'],
-    inputHints: { fields: [] },
+    inputHints: { fields: [
+      { path: 'projection', title: 'Source projection (automation_attention)', widget: 'text' },
+      { path: 'cursor', title: 'Next Automation attention page cursor', widget: 'text' },
+    ] },
   },
   {
     id: 'inbox.mark_all_read', approval: {result: 'required'}, title: 'Mark Inbox as read',

@@ -6,6 +6,8 @@ import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentat
 import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, workflowDefinitionListCursorPhaseV1, type WorkflowDefinitionListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { INBOX_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/appShellActionIdsV1';
 
 import {
     resolveWorkflowProblemPresentation,
@@ -14,7 +16,8 @@ import {
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { getStorage, useActiveServerAccountScopeLifetime, useWorkflowRunRows } from '@/sync/domains/state/storage';
-import { listAutomationDefinitionRuns } from '@/sync/api/automations/apiAutomationRuns';
+import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import {
     isBeyondWorkflowRunListSpan,
     workflowRunRowFromAutomationRun,
@@ -759,7 +762,12 @@ type RunWindowPage = Omit<WorkflowRunListPage, 'nextCursor'> & Readonly<{
 /** One page at the window owner, shared by initial reads and demand-driven continuation. */
 export async function readRunWindowPage(windowId: WorkflowRunListWindowId, cursor?: string, projection?: 'membership', readMode?: 'complete', signal?: AbortSignal, accountLifetime?: ServerAccountScopeLifetime): Promise<RunWindowPage> {
     if (windowId === 'automationAttention') {
-        const page = await listAutomationDefinitionRuns({ attention: 'required', cursor, signal });
+        const page = await callWorkflowAction({ actionId: INBOX_GET_ACTION_ID_V1,
+            input: { projection: 'automation_attention', ...(cursor === undefined ? {} : { cursor }) },
+            parseResult: AppShellActionOutputSchemas[INBOX_GET_ACTION_ID_V1].parse, accountLifetime, signal });
+        if (page.status !== 'automation_attention') {
+            throw new WorkflowActionError({ message: 'Automation attention is unavailable', rawCode: 'content_unavailable' });
+        }
         return { runs: [], automationRuns: page.runs, metadataByRunId: {}, nextCursor: page.nextCursor };
     }
     // Full rows open accepted snapshots. Request at most one window-height of

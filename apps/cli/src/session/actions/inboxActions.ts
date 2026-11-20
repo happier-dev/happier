@@ -1,6 +1,7 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
-import { AppShellActionOutputSchemas, projectInboxReadItemV1, readNoticeInboxAccountIdV1,
+import { AppShellActionInputSchemas, AppShellActionOutputSchemas, projectInboxReadItemV1, readNoticeInboxAccountIdV1,
   mutateAccountNoticeArtifactV1 } from '@happier-dev/protocol/actions/appShellActionFamily';
+import type { AutomationV3RunListResponse } from '@happier-dev/protocol/automations/automationApiV3';
 import { isAccountNoticeMutationActionIdV1 } from '@happier-dev/protocol/actions/appShellActionIdsV1';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1, inboxNoticeFocusKeyV1, normalizeAccountNoticeArtifactV1,
   projectAccountNoticeInboxItemV1, projectOpenUsageNoticeHeaderV1, readOwnedNoticeArtifactAdmissionV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
@@ -10,9 +11,10 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 
 const NOTICE_ARTIFACT_KINDS = [ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1] as const;
 
-/** Finite headless source adapter over the incumbent private Artifact reader, never an Inbox store. */
+/** Finite headless reads over the existing Account sources. */
 export function createCliInboxReadAction(params: Readonly<{
   store: Pick<ReturnType<typeof createAccountArtifactStore>, 'list' | 'readBodies' | 'read' | 'update'>;
+  readAutomationAttention?: (query: Readonly<{ cursor?: string; signal?: AbortSignal }>) => Promise<AutomationV3RunListResponse>;
   accountId: string; serverId: string; isCurrent?: () => boolean | Promise<boolean>;
 }>): NonNullable<ActionExecutorDeps['appShellAction']> {
   return async ({ actionId, input, context }) => {
@@ -41,6 +43,13 @@ export function createCliInboxReadAction(params: Readonly<{
       return admitted;
     };
     if (!await current()) return { ok: false, errorCode: 'credential_scope_retired', error: 'credential_scope_retired' };
+    const read = AppShellActionInputSchemas['inbox.get'].parse(input);
+    if ('projection' in read) {
+      if (!params.readAutomationAttention) return { status: 'unavailable' };
+      const page = await params.readAutomationAttention({ cursor: read.cursor, signal: context.signal });
+      if (!await current()) return { ok: false, errorCode: 'credential_scope_retired', error: 'credential_scope_retired' };
+      return { status: 'automation_attention', ...page };
+    }
     const items: ReturnType<typeof projectInboxReadItemV1>[] = [];
     const usageNoticeIds: string[] = [];
     // The server's indexed exact-kind selection returns only owned notice rows (plus its own

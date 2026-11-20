@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createAccountArtifactStore, encodeAccountArtifactListCursor } from '@/api/artifacts/accountArtifactStore';
+import { listAutomationAttentionRuns } from '@/api/automations';
 import {
   artifactKindListResponse,
   artifactReadResponse,
@@ -195,6 +196,32 @@ describe('createCliInboxReadAction inbox.get read cost', () => {
     mockGet.mockReset();
     mockPost.mockReset();
     resetServerFeaturesClientForTests();
+  });
+
+  it('returns the scoped attention occurrence without opening an Inbox or any Artifacts', async () => {
+    const run = { id: 'skipped-occurrence', automationId: 'automation-1', revision: 1,
+      triggerId: null, triggerRetired: false, state: 'skipped', cause: { kind: 'manual', invokedAt: 1 },
+      dueAt: 1, claimedAt: null, startedAt: null, finishedAt: 1, claimedByMachineId: null, leaseExpiresAt: null,
+      attempt: 0, errorCode: 'start_unavailable', producedSessionId: null, executionDispatchState: null,
+      executionAttempt: 0, replyHandoffState: 'none', replyHandoffAttempt: 0, replyHandoffDueAt: null,
+      createdAt: 1, updatedAt: 1 };
+    mockGet.mockImplementation(async (rawUrl: string) => {
+      const url = new URL(rawUrl);
+      expect(url.pathname).toBe('/v3/automations/runs');
+      expect(Object.fromEntries(url.searchParams)).toEqual({ attention: 'required', cursor: 'later' });
+      return { status: 200, data: { runs: [run], nextCursor: null } };
+    });
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
+      getAccountEncryptionMode: async () => 'plain' });
+    const read = createCliInboxReadAction({ store, accountId: 'owner', serverId: 'home',
+      readAutomationAttention: query => listAutomationAttentionRuns({ ...query, token: 'token' }) });
+    const request = { actionId: 'inbox.get', input: { projection: 'automation_attention', cursor: 'later' } } as const;
+    await expect(read({ ...request, context: { surface: 'cli', expectedAccountId: 'foreign' } }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_retired' });
+    expect(mockGet).not.toHaveBeenCalled();
+    await expect(read({ ...request, context: { surface: 'cli', expectedAccountId: 'owner' } }))
+      .resolves.toEqual({ status: 'automation_attention', runs: [run], nextCursor: null });
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
   it("reads notice headers and bodies in proportion to notices, not to the Account's other Artifacts", async () => {

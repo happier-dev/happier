@@ -1,5 +1,5 @@
 import axios from '@/api/client/credentialAxios';
-import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema,
+import { AutomationTriggerEventDeclarationsRequestSchema, AutomationTriggerEventDeclarationsResponseSchema, AutomationV3RunListResponseSchema,
   type AutomationTriggerEventDeclarationsRequest } from '@happier-dev/protocol/automations/automationApiV3';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -56,6 +56,20 @@ function throwAutomationMutationHttpError(status: number, body: unknown): never 
   const error = automationHttpError(status, body);
   if (status >= 500) return unresolvedMutationReceipt(error);
   throw error;
+}
+
+export async function listAutomationAttentionRuns({ token, cursor, signal }: Readonly<{
+  token: string; cursor?: string; signal?: AbortSignal;
+}>) {
+  const search = new URLSearchParams({ attention: 'required' });
+  if (cursor !== undefined) search.set('cursor', cursor);
+  const response = await axios.get(`${resolveServerHttpBaseUrl()}/v3/automations/runs?${search.toString()}`, {
+    headers: { Authorization: `Bearer ${token}` }, signal,
+    timeout: AUTOMATION_HTTP_TIMEOUT_MS,
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300) throw automationHttpError(response.status, response.data);
+  return AutomationV3RunListResponseSchema.parse(response.data);
 }
 
 export async function listAutomationDefinitions(params: Readonly<Partial<AutomationDefinitionListRequest> & {

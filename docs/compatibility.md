@@ -8652,6 +8652,10 @@ List, detail, wait and summaries share the server's attention predicate: failed
 Runs, or non-cancelled Runs with actionable invocation rows. Accepted managed
 Automation Runs use this Workflow predicate and are excluded from ordinary
 Automation attention, so a failure without a Session still appears once in Inbox.
+The unreleased `inbox.get` contract also accepts the exact `automation_attention`
+projection with an optional cursor. The UI and headless adapter use the existing
+Automation occurrence list on the admitted Home. The default Inbox snapshot and
+its coverage stay unchanged. Protocol and the SDK publish the projection together.
 Linked step Session attention folds beneath the same Run. An interrupted state,
 pending physical Stop custody, failed origin delivery or a settled exhausted
 result alone does not add attention.

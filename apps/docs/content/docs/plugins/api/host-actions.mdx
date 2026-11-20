@@ -8801,7 +8801,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `inbox.get`
 
-**Read Inbox** — Read the canonical Inbox for the invoking Home and own Account. Without a mounted app, reads owned notices and reports unavailable source projections as partial; never opens Inbox.
+**Read Inbox** — Read the canonical Inbox for the invoking Home and own Account. Without a mounted app, the default snapshot reads owned notices and reports unavailable sources as partial. Set projection to automation_attention to page through Automation occurrences needing attention, even without a mounted Inbox or a linked Workflow Run. Never opens Inbox.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -8811,6 +8811,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
+- `projection` (text): Source projection (automation_attention)
+- `cursor` (text): Next Automation attention page cursor
 - `clientId` (text): Client Id
 
 ## `inbox.mark_all_read`
