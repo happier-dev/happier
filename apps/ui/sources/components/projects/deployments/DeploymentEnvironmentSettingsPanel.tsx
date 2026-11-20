@@ -1,3 +1,4 @@
+import type { VariableReferenceEnvironments } from './DeploymentVariablesPanel';
 import { DeploymentMigrationSettings } from './DeploymentMigrationSettings';
 import { DeploymentRegistryCredentials } from './DeploymentRegistryCredentials';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
@@ -119,6 +120,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       onRestore?: (() => void) | null;
       /** The captured Home/Account the template's preview list reads under; absent while it is not current. */
       lifetime?: ServerAccountScopeLifetime | null;
+      /** The Project's Environments, which Private sharing names as the places that can point at a shared service. */
+      referenceEnvironments?: VariableReferenceEnvironments;
       /** The Action owner's manager edits; absent where this viewer cannot change settings. */
       editing?: DeploymentEnvironmentEditing | null;
       previewAvailability?: ReturnType<typeof deploymentPreviewAvailability>;
@@ -455,7 +458,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
 
         {/* dSettings KEEP order: private sharing follows the registry credentials. */}
         <View ref={revealHost('sharing')} collapsable={false}>
-          <DeploymentPrivateServiceExports detail={detail} editing={editing} />
+          <DeploymentPrivateServiceExports detail={detail} editing={editing} environments={props.referenceEnvironments} />
         </View>
 
         <ItemGroup

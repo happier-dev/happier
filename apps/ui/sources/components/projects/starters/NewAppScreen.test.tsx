@@ -100,6 +100,9 @@ it('reads starters only when the gallery opens and keeps the deep-linked starter
     expect(reads).toHaveBeenCalledTimes(1);
     await screen.pressByTestIdAsync('newApp.continue');
     expect(screen.findByTestId('newApp.details')).toBeTruthy();
+    // Configure is titled with the chosen starter, not like Describe your app (PAGE-ACCEPT-176 R8-D8).
+    const { PageHeader } = await import('@/components/ui/layout/PageHeader');
+    expect(screen.findAllByType(PageHeader).map(node => node.props.title)).toEqual(['Static website']);
     await flushHookEffects({ cycles: 8 });
     expect(reads).toHaveBeenCalledTimes(1);
   } finally {

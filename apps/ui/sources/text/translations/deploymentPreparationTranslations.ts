@@ -7,7 +7,7 @@ type PreparationCopy = Readonly<{
   needsSetupLead: string; adds: string;
   recognized: string; recognizedNone: string; recognizedPartial: string; listensOn: (p: Readonly<{ port: number }>) => string;
   addsDockerfile: string; addsCompose: string; addsHealth: string; addsHealthDetail: string;
-  addsVariables: string; addsVariablesDetail: string; askAgent: string;
+  addsVariables: string; addsVariablesDetail: string; askAgent: string; askAgentBody: string;
 }>;
 
 export const deploymentPreparationTranslations: Record<SupportedLanguage, PreparationCopy> = {
@@ -29,6 +29,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Variable names',
     addsVariablesDetail: 'Names the variables the app reads, never their values',
     askAgent: 'Ask an agent to set it up',
+    askAgentBody: "No Compose file? An agent writes one from this repository and opens a pull request.",
     noRepository: "This Project needs a repository. Add one to its Source before preparing a deployment.",
     prepare: 'Prepare with an agent', import: 'Import from another tool',
     importLead: 'Choose the existing tool and configuration files, one path per line. The agent proposes an import in a pull request. Your existing deployment keeps running.',
@@ -53,6 +54,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Имена переменных',
     addsVariablesDetail: 'Перечисляет переменные, которые читает приложение, без их значений',
     askAgent: 'Попросить агента настроить',
+    askAgentBody: "Нет файла Compose? Агент напишет его по этому репозиторию и откроет pull request.",
     noRepository: "Этому проекту нужен репозиторий. Добавьте его в источник проекта перед подготовкой развёртывания.",
     prepare: 'Подготовить с агентом', import: 'Импортировать из другого инструмента',
     importLead: 'Выберите текущий инструмент и файлы конфигурации: один путь в строке. Агент предложит импорт в pull request. Текущее развёртывание продолжит работать.',
@@ -77,6 +79,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Nazwy zmiennych',
     addsVariablesDetail: 'Wymienia zmienne czytane przez aplikację, nigdy ich wartości',
     askAgent: 'Poproś agenta o konfigurację',
+    askAgentBody: "Brak pliku Compose? Agent napisze go na podstawie tego repozytorium i otworzy pull request.",
     noRepository: "Ten projekt potrzebuje repozytorium. Dodaj je do źródła projektu przed przygotowaniem wdrożenia.",
     prepare: 'Przygotuj z agentem', import: 'Importuj z innego narzędzia',
     importLead: 'Wybierz obecne narzędzie i pliki konfiguracji, po jednej ścieżce w wierszu. Agent zaproponuje import w pull requeście. Obecne wdrożenie będzie nadal działać.',
@@ -101,6 +104,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Nombres de variables',
     addsVariablesDetail: 'Nombra las variables que lee la app, nunca sus valores',
     askAgent: 'Pedir a un agente que lo prepare',
+    askAgentBody: "¿No hay archivo Compose? Un agente lo escribe a partir de este repositorio y abre una pull request.",
     noRepository: "Este proyecto necesita un repositorio. Añádelo a su origen antes de preparar un despliegue.",
     prepare: 'Preparar con un agente', import: 'Importar de otra herramienta',
     importLead: 'Elige la herramienta actual y los archivos de configuración, una ruta por línea. El agente propone la importación en una pull request. Tu despliegue actual sigue funcionando.',
@@ -125,6 +129,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Noms des variables',
     addsVariablesDetail: 'Nomme les variables lues par l’app, jamais leurs valeurs',
     askAgent: 'Demander à un agent de le configurer',
+    askAgentBody: "Pas de fichier Compose ? Un agent en écrit un à partir de ce dépôt et ouvre une pull request.",
     noRepository: "Ce projet nécessite un dépôt. Ajoutez-en un à sa source avant de préparer un déploiement.",
     prepare: 'Préparer avec un agent', import: 'Importer depuis un autre outil',
     importLead: 'Choisissez l’outil actuel et les fichiers de configuration, un chemin par ligne. L’agent propose l’import dans une pull request. Votre déploiement actuel continue de fonctionner.',
@@ -149,6 +154,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Nomi delle variabili',
     addsVariablesDetail: 'Indica le variabili lette dall’app, mai i loro valori',
     askAgent: 'Chiedi a un agente di configurarlo',
+    askAgentBody: "Nessun file Compose? Un agente ne scrive uno da questo repository e apre una pull request.",
     noRepository: "Questo progetto richiede un repository. Aggiungilo alla sua origine prima di preparare un deployment.",
     prepare: 'Prepara con un agente', import: 'Importa da un altro strumento',
     importLead: 'Scegli lo strumento attuale e i file di configurazione, un percorso per riga. L’agente propone l’importazione in una pull request. Il deployment attuale continua a funzionare.',
@@ -173,6 +179,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Nomes de variáveis',
     addsVariablesDetail: 'Nomeia as variáveis que o app lê, nunca seus valores',
     askAgent: 'Pedir a um agente para configurar',
+    askAgentBody: "Sem ficheiro Compose? Um agente escreve um a partir deste repositório e abre um pull request.",
     noRepository: "Este projeto precisa de um repositório. Adicione um à sua origem antes de preparar a implantação.",
     prepare: 'Preparar com um agente', import: 'Importar de outra ferramenta',
     importLead: 'Escolha a ferramenta atual e os arquivos de configuração, um caminho por linha. O agente propõe a importação em um pull request. Sua implantação atual continua funcionando.',
@@ -197,6 +204,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Noms de variables',
     addsVariablesDetail: 'Anomena les variables que llegeix l’app, mai els seus valors',
     askAgent: 'Demana a un agent que ho prepari',
+    askAgentBody: "No hi ha fitxer Compose? Un agent n’escriu un a partir d’aquest repositori i obre una pull request.",
     noRepository: "Aquest projecte necessita un repositori. Afegeix-ne un a la seva font abans de preparar un desplegament.",
     prepare: 'Prepara amb un agent', import: 'Importa d’una altra eina',
     importLead: 'Tria l’eina actual i els fitxers de configuració, un camí per línia. L’agent proposa la importació en una pull request. El desplegament actual continua funcionant.',
@@ -221,6 +229,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: 'Variablennamen',
     addsVariablesDetail: 'Nennt die Variablen, die die App liest, nie ihre Werte',
     askAgent: 'Einen Agenten einrichten lassen',
+    askAgentBody: "Keine Compose-Datei? Ein Agent schreibt eine aus diesem Repository und öffnet einen Pull Request.",
     noRepository: "Dieses Projekt braucht ein Repository. Füge es vor der Vorbereitung eines Deployments seiner Quelle hinzu.",
     prepare: 'Mit einem Agenten vorbereiten', import: 'Aus einem anderen Tool importieren',
     importLead: 'Wähle das bisherige Tool und die Konfigurationsdateien, einen Pfad pro Zeile. Der Agent schlägt den Import in einem Pull Request vor. Das bisherige Deployment läuft weiter.',
@@ -245,6 +254,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: '变量名称',
     addsVariablesDetail: '列出应用读取的变量，从不包含其值',
     askAgent: '让代理来配置',
+    askAgentBody: "没有 Compose 文件？代理会根据此仓库编写一个并打开 pull request。",
     noRepository: "此项目需要仓库。请先在项目来源中添加仓库，再准备部署。",
     prepare: '让代理准备部署', import: '从其他工具导入',
     importLead: '选择现有工具和配置文件，每行一个路径。代理会通过拉取请求提出导入方案。现有部署将继续运行。',
@@ -268,6 +278,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: '變數名稱',
     addsVariablesDetail: '列出應用程式讀取的變數，絕不包含其值',
     askAgent: '讓代理來設定',
+    askAgentBody: "沒有 Compose 檔案？代理會根據此儲存庫撰寫一個並開啟 pull request。",
     noRepository: "此專案需要儲存庫。請先在專案來源中新增儲存庫，再準備部署。",
     prepare: '讓代理準備部署', import: '從其他工具匯入',
     importLead: '選擇現有工具與設定檔，每行一個路徑。代理會透過提取要求提出匯入方案。現有部署將繼續執行。',
@@ -291,6 +302,7 @@ export const deploymentPreparationTranslations: Record<SupportedLanguage, Prepar
     addsVariables: '変数名',
     addsVariablesDetail: 'アプリが読む変数を名前だけ示し、値は含めません',
     askAgent: 'エージェントに設定を依頼',
+    askAgentBody: "Compose ファイルがありませんか？エージェントがこのリポジトリから作成し、pull request を開きます。",
     noRepository: "このプロジェクトにはリポジトリが必要です。デプロイの準備前にプロジェクトのソースに追加してください。",
     prepare: 'エージェントで準備', import: '別のツールからインポート',
     importLead: '現在のツールと設定ファイルを選び、パスを1行に1つ入力してください。エージェントがプルリクエストでインポートを提案します。現在のデプロイは稼働を続けます。',

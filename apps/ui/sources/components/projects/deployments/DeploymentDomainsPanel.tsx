@@ -44,7 +44,7 @@ import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
 import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, projectDeploymentDomainDraftCheckV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainsList, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { DOMAIN_ADD_OPEN, useDomainAddDraftField } from './domainAddDraft';
+import { INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
 
 type DomainActions = Pick<
   ReturnType<typeof createDeploymentActions>,
@@ -116,7 +116,7 @@ export function DeploymentDomainsPanel(
   const editing = unavailableDockerDesktop ? null : props.editing;
   // The open Add domain form survives a remount (a width change that recomposes the page), per Environment.
   const draftKey = `${props.controller.scope.serverId}:${props.environmentId}`;
-  const [adding, setAdding] = useDomainAddDraftField(draftKey, DOMAIN_ADD_OPEN, false);
+  const [adding, setAdding] = useInlineAddDraftField(draftKey, INLINE_ADD_OPEN, false);
   const [dnsFor, setDnsFor] = React.useState<DomainItem | null>(null);
   const [checkSetup, setCheckSetup] = React.useState<Readonly<{
     item: DomainItem; anchorRef: React.RefObject<View | null>;
@@ -417,7 +417,7 @@ function domainOperands(environmentId: string, editing: DeploymentDomainEditing,
  */
 function DomainAddForm(
   props: Readonly<{
-    /** Where this form keeps what was typed while it is open (`useDomainAddDraftField`). */
+    /** Where this form keeps what was typed while it is open (`useInlineAddDraftField`). */
     draftKey: string;
     phone: boolean;
     busy: boolean;
@@ -443,12 +443,12 @@ function DomainAddForm(
     onAdd: (content: DeploymentDomainContentV1) => void | Promise<void>;
   }>,
 ) {
-  const [hostname, setHostname] = useDomainAddDraftField(props.draftKey, 'hostname', '');
+  const [hostname, setHostname] = useInlineAddDraftField(props.draftKey, 'hostname', '');
   const host = hostname.trim().toLowerCase();
   const [committedHostname, setCommittedHostname] = React.useState(host);
   const initialService = props.services.length === 0 || props.services.includes(props.initialService ?? '')
     ? props.initialService ?? '' : '';
-  const [target, setTarget] = useDomainAddDraftField<Readonly<{
+  const [target, setTarget] = useInlineAddDraftField<Readonly<{
     selectedService: string | null;
     enteredPort: Readonly<{ service: string; value: string }> | null;
   }>>(props.draftKey, 'target', { selectedService: null, enteredPort: null });
@@ -464,19 +464,19 @@ function DomainAddForm(
       enteredPort: { service: current.selectedService ?? initialService, value },
     }));
   };
-  const [path, setPath] = useDomainAddDraftField(props.draftKey, 'path', '');
-  const [checkPath, setCheckPath] = useDomainAddDraftField(props.draftKey, 'checkPath', '');
-  const [checkStatus, setCheckStatus] = useDomainAddDraftField(props.draftKey, 'checkStatus', '');
-  const [advanced, setAdvanced] = useDomainAddDraftField(props.draftKey, 'advanced', false);
-  const [redirectTo, setRedirectTo] = useDomainAddDraftField(props.draftKey, 'redirectTo', '');
-  const [certificate, setCertificate] = useDomainAddDraftField<'managed' | 'custom'>(props.draftKey, 'certificate', 'managed');
-  const [basicAuthUser, setBasicAuthUser] = useDomainAddDraftField(props.draftKey, 'basicAuthUser', '');
+  const [path, setPath] = useInlineAddDraftField(props.draftKey, 'path', '');
+  const [checkPath, setCheckPath] = useInlineAddDraftField(props.draftKey, 'checkPath', '');
+  const [checkStatus, setCheckStatus] = useInlineAddDraftField(props.draftKey, 'checkStatus', '');
+  const [advanced, setAdvanced] = useInlineAddDraftField(props.draftKey, 'advanced', false);
+  const [redirectTo, setRedirectTo] = useInlineAddDraftField(props.draftKey, 'redirectTo', '');
+  const [certificate, setCertificate] = useInlineAddDraftField<'managed' | 'custom'>(props.draftKey, 'certificate', 'managed');
+  const [basicAuthUser, setBasicAuthUser] = useInlineAddDraftField(props.draftKey, 'basicAuthUser', '');
   const servicePorts = React.useMemo(() => [...new Set(props.routeExports
     .filter(item => item.service === service).map(item => item.containerPort))], [props.routeExports, service]);
   // Port is either an entry for this Service or its one declared container port.
   const port = target.enteredPort?.service === service ? target.enteredPort.value
     : servicePorts.length === 1 ? String(servicePorts[0]) : '';
-  const [ingressMode, setIngressMode] = useDomainAddDraftField<IngressMode>(props.draftKey, 'ingressMode', props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
+  const [ingressMode, setIngressMode] = useInlineAddDraftField<IngressMode>(props.draftKey, 'ingressMode', props.recordedIngress?.kind === 'cloudflareTunnel' ? 'cloudflare' : 'environment');
   const provider = props.provider !== undefined;
   const needsZone = props.provider?.providerEnvironment?.kind === 'script';
   const principal = props.provider?.credentialPrincipal;

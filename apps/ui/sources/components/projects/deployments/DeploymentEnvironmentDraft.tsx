@@ -434,21 +434,23 @@ export const DeploymentEnvironmentDraft = React.memo(
     const ownServerWhere = stepped && draftStep === 'where' && !props.copyFrom;
     const catalogProvidesCompose = ownServerWhere && props.catalogApp != null;
     const generatesComposeFromImage = ownServerWhere && definitionKind === 'image' && !catalogProvidesCompose;
-    const whereRepository = ownServerWhere && !storedDefinition && !catalogProvidesCompose
-      && !generatesComposeFromImage && source?.repository ? source : null;
+    // The repository's observed root Compose file speaks on Where (its tile) and on Configure (Ask an agent stands only
+    // while there is none, PAGE-ACCEPT-176 R8-D7); one read serves both steps.
+    const composeRepository = stepped && draftStep !== 'review' && !props.copyFrom && !storedDefinition
+      && props.catalogApp == null && definitionKind !== 'image' && source?.repository ? source : null;
     const whereProjectRefs = useProjectAccountRows(rows => areServerAccountScopesEqual(rows?.scope, whereScope)
-      ? readProjectAccountWorkspaceRefs({ projectAccountRows: rows }) : undefined, whereRepository !== null);
+      ? readProjectAccountWorkspaceRefs({ projectAccountRows: rows }) : undefined, composeRepository !== null);
     const rootCompose = React.useMemo(() => {
-      if (!whereRepository || !whereScope || !whereProjectRefs) return 'unknown';
-      const facts = projectSourceRepositoryFacts(whereScope.serverId, [whereRepository], whereProjectRefs).get(whereRepository.id);
+      if (!composeRepository || !whereScope || !whereProjectRefs) return 'unknown';
+      const facts = projectSourceRepositoryFacts(whereScope.serverId, [composeRepository], whereProjectRefs).get(composeRepository.id);
       return facts?.status === 'observed' ? facts.observation.rootFiles.compose : 'unknown';
-    }, [whereRepository, whereScope, whereProjectRefs]);
+    }, [composeRepository, whereScope, whereProjectRefs]);
 
     const targetTiles: Array<SelectionTile<string>> = [
       { id: OWN_SERVER_TARGET, icon: 'hard-drives', title: t('projects.deployments.platformLink.onMachine'),
         subtitle: t(catalogProvidesCompose ? 'newApp.deploy.whereCatalogCompose'
           : generatesComposeFromImage ? 'newApp.deploy.whereImageCompose'
-          : rootCompose === 'absent' ? 'newApp.deploy.whereNoRootCompose'
+          : ownServerWhere && rootCompose === 'absent' ? 'newApp.deploy.whereNoRootCompose'
           : 'projects.deployments.whereDescription') },
       ...offeredPlatformTargets.map((target): SelectionTile<string> => ({
         id: target.key, title: target.title, mark: <PluginMark title={target.title} pluginId={target.pluginId} />,
@@ -509,8 +511,11 @@ export const DeploymentEnvironmentDraft = React.memo(
     // Where continues only on a Machine that answers (whereErr): an away one says so in its tile instead.
     const whereReady = chosen !== null && answers(chosen) && platformDefinitionAccepted;
     // Every deploy, a platform's too, runs from an answering Machine; without one Where says so where Continue is.
-    const whereWaitingFor = draftStep === 'where' && platformDefinitionAccepted && (chosen === null || !answers(chosen))
-      ? t('newApp.deploy.waitMachine') : null;
+    // A platform with no answering Machine at all says why and leads to adding one, in place of the footer's wait
+    // line (PAGE-ACCEPT-176 R8-D6); a chosen away Machine keeps its own card's guide.
+    const platformNeedsMachine = draftStep === 'where' && onPlatform && platformDefinitionAccepted && !machines.some(answers);
+    const whereWaitingFor = draftStep === 'where' && platformDefinitionAccepted && !platformNeedsMachine
+      && (chosen === null || !answers(chosen)) ? t('newApp.deploy.waitMachine') : null;
     const pressStep = useEventCallback(() => {
       if (draftStep !== 'where') { void save(); return; }
       if (!whereReady) return;
@@ -828,6 +833,12 @@ export const DeploymentEnvironmentDraft = React.memo(
             />
             </BareSectionContent>
           </ItemGroup>
+          {platformNeedsMachine && platformTarget ? (
+            <SurfaceStateCard testID="project-deployments.draft.platformNeedsMachine" size="line" kind="unavailable"
+              title={t('newApp.deploy.platformNeedsMachine', { platform: platformTarget.title })}
+              action={{ label: t('newApp.auto.addMachine'), onPress: () => setCreatingMachine(true),
+                testID: 'project-deployments.draft.platformNeedsMachine.add', disabled: !props.lifetime }} />
+          ) : null}
           {unusablePlatforms.length > 0 ? (
             <ItemGroup testID="project-deployments.draft.cantRun"
               title={sourceTitle || appName ? t('newApp.deploy.cantRun', { name: appName ?? sourceTitle ?? '' }) : t('newApp.deploy.cantRunUnnamed')}
@@ -950,12 +961,15 @@ export const DeploymentEnvironmentDraft = React.memo(
             />
             {/* The agent entries are one row of What runs: its title says what they do, the two entries are its buttons,
                 beneath it on a phone (DESIGN-ACCEPT-2 C7: they were two centred sparkle links under Branch). */}
-            {!onPlatform && props.lifetime && source?.repository ? (
+            {/* It says what gets set up and stands only while the repository has no Compose file it can see; Prepare is
+                its action, Import a quiet second (PAGE-ACCEPT-176 R8-D7). */}
+            {!onPlatform && props.lifetime && source?.repository && rootCompose !== 'present' ? (
               <Item testID="project-deployments.draft.agent" title={t('projects.deployments.preparation.askAgent')}
+                subtitle={t('projects.deployments.preparation.askAgentBody')} subtitleLines={0}
                 showChevron={false} accessoryLayout={props.phone ? 'stacked' : 'adaptive'}
                 rightElement={<View style={styles.agentEntries}>
                   <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="prepare" emphasis="secondary" />
-                  <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="import" emphasis="secondary" />
+                  <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={source.id} mode="import" emphasis="plain" />
                 </View>} />
             ) : null}
             </>}

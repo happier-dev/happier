@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { MachinePrivateNetworkObservationV1Schema, type MachinePrivateNetworkObservationV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
@@ -24,6 +25,10 @@ import { useDeploymentChangePress } from './deploymentActionOutcome';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { Text } from '@/components/ui/text/Text';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { deploymentEnvironmentRoute } from './deploymentNavigation';
+import type { VariableReferenceEnvironments } from './DeploymentVariablesPanel';
 import { buildPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
   readPrivateServiceSharingScheme, type PrivateServiceExportAuthoring, type PrivateServiceExportReach } from './privateServiceExport';
 
@@ -43,6 +48,8 @@ export function privateServiceExportReachLabel(entry: ServiceExport): string {
 export function DeploymentPrivateServiceExports(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   editing: DeploymentEnvironmentEditing | null;
+  /** The Project's Environments (the Variables picker's list): the others are where this service is used from. */
+  environments?: VariableReferenceEnvironments;
 }>) {
   const exports = props.detail.content.ownServer?.serviceExports ?? [];
   const editing = props.editing;
@@ -51,7 +58,9 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
   const open = () => {
     if (!editing || authoring.kind !== 'ready') return;
     showDeploymentSheet({ component: PrivateServiceExportSheet,
-      props: { detail: props.detail, editing, machineIds: authoring.machineIds },
+      props: { detail: props.detail, editing, machineIds: authoring.machineIds,
+        otherEnvironments: Array.from(props.environments ?? [], ([environmentId, entry]) => ({ environmentId, name: entry.name }))
+          .filter(entry => entry.environmentId !== props.detail.environment.id) },
       title: t('projects.deployments.settingsSections.privateSharingAdd'), testID: `${id}.modal` });
   };
   return <ItemGroup testID={id} title={t('projects.deployments.settingsSections.privateSharingTitle')}
@@ -87,6 +96,7 @@ type SheetInput = Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   editing: DeploymentEnvironmentEditing;
   machineIds: readonly string[];
+  otherEnvironments: ReadonlyArray<Readonly<{ environmentId: string; name: string }>>;
 }>;
 
 function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps) {
@@ -138,6 +148,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     return [happierNetwork, ...joined];
   }, [networks]);
   const { onClose, editing, setChrome } = props;
+  const router = useRouter();
   const change = useDeploymentChangePress({ request: artifactId => { onClose(); editing.review.request(artifactId); } }, () => {
     editing.onChanged(); onClose();
   });
@@ -222,8 +233,16 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
         {selectedNetwork ? t('projects.deployments.settingsSections.privateSharingOutcomeNetwork', { service,
           network: selectedNetwork.displayName ?? selectedNetwork.networkIdentity ?? '' })
           : t('projects.deployments.settingsSections.privateSharingOutcomeHappier', { service })}
-        {' '}{t('projects.deployments.settingsSections.privateSharingWhereToUse')}
+        {/* Another Environment can point here only when the Project has one (the picker's own list). */}
+        {props.otherEnvironments.length > 0 ? <>{' '}{t('projects.deployments.settingsSections.privateSharingWhereToUse')}</> : null}
       </Text>
+      {/* The sentence leads to each Environment that can point here, at its Variables (PAGE-ACCEPT-176 R8-D2). */}
+      {props.otherEnvironments.length > 0 ? <View style={styles.links}>
+        {props.otherEnvironments.map(entry => <TextLinkButton key={entry.environmentId} testID={`${id}.openVariables:${entry.environmentId}`}
+          size="meta" label={t('projects.deployments.settingsSections.privateSharingOpenVariables', { environment: entry.name })}
+          onPress={() => { onClose(); router.push(deploymentEnvironmentRoute({ serverId: props.detail.environment.serverId,
+            projectSourceId: props.detail.environment.projectSourceId, environmentId: entry.environmentId, tab: 'variables' })); }} />)}
+      </View> : null}
       <ExpandableItem testID={`${id}.advanced`} expanded={advanced} onExpandedChange={setAdvanced}
         header={state => <Item testID={`${id}.advanced.header`} {...state.headerProps}
           title={t('projects.deployments.domainIngressAdvanced')}
@@ -250,3 +269,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     {setChrome ? null : footer}
   </View></ListPresentationProvider>;
 }
+
+const styles = StyleSheet.create((theme) => ({
+  links: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s4 },
+}));

@@ -44,7 +44,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useFirstConnection } from './useFirstConnection';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
-import { DeploymentPlatformCredentialDisclosure, DeploymentPlatformCredentialPrincipal } from './DeploymentPlatformCredentialDisclosure';
+import { DeploymentPlatformCredentialDisclosure } from './DeploymentPlatformCredentialDisclosure';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
@@ -743,9 +743,6 @@ export function DeploymentPlatformTargetEditor(
                 }}
               />
               }
-              {create && draft && !disclosedProvider ? <DeploymentPlatformCredentialPrincipal principal={draft.credentialPrincipal}
-                platform={target.title} scope={props.lifetime.scope} lifetime={props.lifetime}
-                serverId={props.lifetime.scope.serverId} testIDPrefix="project-deployments.platform.access" /> : null}
               {create && !outcomeUnknown && props.environment.controllerMachineId ? <Item mode="info" testID="project-deployments.platform.controller"
                 title={t(provisioned ? 'projects.deployments.platformLink.finishLinkingOnMachine' : 'projects.deployments.platformLink.createOnMachine')} detail={controllerLabel ?? props.environment.controllerMachineId} /> : null}
               {connectionNeeded ? null : <ConnectedAccountPurposeTargetChooser
@@ -760,6 +757,11 @@ export function DeploymentPlatformTargetEditor(
                   required: true,
                 }}
                 value={account ? { kind: 'account', account } : null}
+                // Create new says once what the connection means for deploys, as this row's description, instead of a
+                // "Deploys use this connection" row restating the same account (PAGE-ACCEPT-176 R8-D4).
+                {...(create && draft && !disclosedProvider ? { description: t(draft.credentialPrincipal.kind === 'team'
+                  ? 'projects.deployments.platformLink.connectionTeamNote'
+                  : 'projects.deployments.platformLink.connectionPersonalNote') } : {})}
                 accountsOnly
                 disabled={busy !== null || reviewingCreate}
                 onChange={(next) => {

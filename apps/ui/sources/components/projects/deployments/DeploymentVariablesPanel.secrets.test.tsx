@@ -22,6 +22,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { t } from '@/text';
 import type { VariableReferenceEnvironments } from './DeploymentVariablesPanel';
+import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import type { EnvironmentBindingsCommit } from './useEnvironmentSecretBindingsDraft';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -45,6 +46,7 @@ beforeEach(() => {
   routing.spies.push.mockClear();
 });
 afterEach(async () => {
+  (await import('./inlineAddDraft')).forgetInlineAddDraftsForTest();
   await standardCleanup();
   resetSavedSecretCatalogEngineForTests();
   await home?.dispose();
@@ -88,14 +90,18 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
       domainRead={controller ? { controller, demand: { mounted: true, visible: true, focused: true } } : undefined}
       secretRevisions={rotation?.secretRevisions as never} onDeploy={rotation?.onDeploy} />;
   }
-  const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
+  const render = () => renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
     // Test Renderer has no layout engine; this is the platform's measured anchor.
     createNodeMock: element => element.type === 'div' ? document.createElement('div')
       : ({ offsetTop: 0, offsetHeight: 44, scrollTo() {}, getBoundingClientRect: () => new DOMRect(0, 0, 320, 44) }),
   });
+  const screen = await render();
   await act(async () => refreshSavedSecretCatalog(scope, { includeMaterial: false }));
   await measureMountedCollections(screen);
-  return { screen, entry, scope, readBindings: () => readBindings(), controller, environmentId: detail.environment.id };
+  // A width change that recomposes the page remounts the panel; `remount` stands for it.
+  let current = screen;
+  const remount = async () => { await current.unmount(); current = await render(); return current; };
+  return { screen, entry, scope, readBindings: () => readBindings(), controller, environmentId: detail.environment.id, remount };
 }
 const prefix = 'project-deployments.environment.variable.API_KEY';
 
@@ -246,6 +252,10 @@ it('opens Variables with no private reads and resolves only the other Environmen
       expect(screen.findByTestId(`${prefix}.referenceNone`)).not.toBeNull();
     });
     expect(readEnvironment.mock.calls.map(([, id]) => id)).toEqual(['environment-empty']);
+    // The sentence leads to that environment's Settings › Private sharing (PAGE-ACCEPT-176 R8-D2).
+    await screen.pressByTestIdAsync(`${prefix}.referenceNone.share`);
+    expect(routing.spies.push).toHaveBeenCalledWith(deploymentEnvironmentRoute({ serverId: scope.serverId,
+      projectSourceId: base.environment.projectSourceId, environmentId: 'environment-empty', tab: 'settings', section: 'sharing' }));
 
     expect(choice('referenceEnvironment')?.props.items).toContainEqual(expect.objectContaining({
       id: 'environment-data', title: 'Data', subtitle: 'Database host',
@@ -273,6 +283,32 @@ it('opens Variables with no private reads and resolves only the other Environmen
     await screen.unmount();
     controller?.retire();
   }
+});
+
+it('labels the Point-at fields and keeps what was typed when the page recomposes (R8-D3)', async () => {
+  const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+  const { FieldItem } = await import('@/components/ui/forms/FieldItem');
+  const base = createDeploymentEnvironmentDetailV1();
+  const { screen, remount } = await mount(false, [], undefined,
+    new Map([['environment-data', { name: 'Data', machineIds: [] }], [base.environment.id, { name: 'Production', machineIds: [] }]]));
+  const prefix = 'project-deployments.environment.variables.add';
+  const menu = (current: typeof screen) => current.findAllByType(DropdownMenu).find(node => node.props.items?.some((item: { id: string }) => item.id === 'reference'));
+  await act(async () => menu(screen)!.props.onSelect('reference'));
+  await act(async () => screen.changeTextByTestId(`${prefix}.name`, 'database_url'));
+  await act(async () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${prefix}.referenceEnvironment`)!
+    .props.onSelect('environment-data'));
+  expect(screen.findAllByType(FieldItem).map(node => node.props.label)).toEqual(expect.arrayContaining([
+    t('projects.deployments.columnName'), t('projects.deployments.settingsSections.referenceEnvironment')]));
+  const again = await remount();
+  expect(again.findHostByTestId(`${prefix}.name`)?.props.value).toBe('DATABASE_URL');
+  expect(again.findAllByType(DropdownMenu).find(node => node.props.testID === `${prefix}.referenceEnvironment`)?.props.selectedId)
+    .toBe('environment-data');
+  await again.pressByTestIdAsync(`${prefix}.cancel`);
+  expect(again.findByTestId(`${prefix}.name`)).toBeNull();
+  // Cancel forgets the draft: the next mount opens no form.
+  const fresh = await remount();
+  expect(fresh.findByTestId(`${prefix}.name`)).toBeNull();
+  await fresh.unmount();
 });
 
 it('offers no service pointer when there is no declared export to point at', async () => {

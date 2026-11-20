@@ -40,6 +40,8 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   accessTitle: string;
   deploysUse: (params: { platform: string }) => string;
   personalAccessDependency: string;
+  connectionPersonalNote: string;
+  connectionTeamNote: string;
   teamAccessDependency: string;
   providerAccount: string;
   providerProject: string;
@@ -122,7 +124,7 @@ export const deploymentPlatformLinkTranslations = {
     modeExisting: "Use existing",
     modeCreate: "Create new",
     create: ({ platform }) => `Create and link ${platform}`,
-    createConsequences: `Creates a resource. Provider charges may apply. The selected controller uses the connected account shown here.`,
+    createConsequences: `Creates a resource. Provider charges may apply.`,
     provisioned: "Resource created; linking is incomplete",
     created: "Project created and linked",
     branchSet: ({ branch }) => `Production branch: ${branch}.`,
@@ -137,6 +139,8 @@ export const deploymentPlatformLinkTranslations = {
     accessTitle: "Deployment access",
     deploysUse: ({ platform }) => `Deploys use this ${platform} connection`,
     personalAccessDependency: "This personal connection must remain available for deployments to work. Removing it or losing provider access stops future deployments.",
+    connectionPersonalNote: "Yours · deploys stop if you remove it or lose access",
+    connectionTeamNote: "Your Team’s · deploys stop if the Team removes it or loses access",
     teamAccessDependency: "Deployments depend on this Team credential remaining available and retaining provider access.",
     providerAccount: "Provider account or team",
     providerProject: "Provider project",
@@ -178,7 +182,7 @@ export const deploymentPlatformLinkTranslations = {
     deploysFrom: 'Deploys from',
     onPlatformTitle: ({ platform }) => `On ${platform}`,
     // The step's description already says that linking deploys nothing (one message per state, DESIGN-ACCEPT C2).
-    onPlatformBody: 'Next, you pick the account and project.',
+    onPlatformBody: 'Pick the account, then the project.',
     platformBuilds: 'The platform builds this project’s repository at the branch you choose.',
     managersOnly: 'Only managers of this environment can link a platform.',
     refusedRemedy: 'Check the account and project you chose, then check again.',

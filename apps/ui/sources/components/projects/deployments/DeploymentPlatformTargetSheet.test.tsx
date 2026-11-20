@@ -150,7 +150,10 @@ it.each([false, true, 'git-grant', 'branch-set', 'branch-kept', 'branch-unconfir
     const disclosed = screen.findAllByType(Item);
     expect({ mode: mode()!.props.value, controller: disclosed.find(node => node.props.testID === 'project-deployments.platform.controller')?.props.detail,
       createAvailable: screen.findByTestId('project-deployments.platform.create') !== null }).toEqual({ mode: 'create', controller: environment.controllerMachineId, createAvailable: true });
-    expect(disclosed.find(node => node.props.testID === 'project-deployments.platform.access.principal')?.props.detail).toBeTruthy();
+    // The connection's caveat is said once, as the Connection row's description, not as a row of its own (PAGE-ACCEPT-176 R8-D4).
+    expect({ principalRow: disclosed.some(node => node.props.testID === 'project-deployments.platform.access.principal'),
+      connectionCaveat: chooser().props.description }).toEqual({ principalRow: false,
+      connectionCaveat: 'Yours · deploys stop if you remove it or lose access' });
     await screen.pressByTestIdAsync('project-deployments.platform.create');
     if (ambiguous === 'git-grant') {
       await waitForHomeGovernance(async () => { await act(async () => {});

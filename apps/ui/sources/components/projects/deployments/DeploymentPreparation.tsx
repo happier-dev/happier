@@ -124,7 +124,7 @@ export function DeploymentPreparationEntry(props: DeploymentPreparationContext &
      * Set where the entry stands among agent-action controls (an Environment's Ask an agent): it takes their face, at
      * this emphasis, so the row reads as one set of buttons (PAGE-ACCEPT-176 R3-D1). Absent, it is a section action.
      */
-    emphasis?: 'primary' | 'secondary';
+    emphasis?: 'primary' | 'secondary' | 'plain';
 }>) {
     const [handoff, setHandoff] = React.useState<(DeploymentPreparationContext & Readonly<{
         mode: PreparationMode; session: SessionAddress;

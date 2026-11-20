@@ -67,7 +67,7 @@ vi.mock('@/sync/ops/actions/actionAccountContext', () => ({
 }));
 afterEach(async () => {
   standardCleanup();
-  (await import('./domainAddDraft')).forgetDomainAddDraftsForTest();
+  (await import('./inlineAddDraft')).forgetInlineAddDraftsForTest();
 });
 
 const { DeploymentEnvironmentDetail } =

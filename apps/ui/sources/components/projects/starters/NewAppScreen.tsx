@@ -574,7 +574,11 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const stepIndex = deployStep ? 1 + DEPLOY_STEPS.indexOf(deployStep) : step === 'auto' ? 0 : STEPS.indexOf(step);
   // The source step already counts the deploy path's four dots, so choosing a source fills a dot instead of adding one
   // (PAGE-ACCEPT-176 R2-D5); only Describe your app, the other way in, has its own three.
-  const stepCount = step === 'describe' || step === 'create' ? STEPS.length : 1 + DEPLOY_STEPS.length;
+  // One count per path (PAGE-ACCEPT-176 R8-D8): a starter chosen on the source step already counts its own three, so
+  // Continue fills the next dot of the same stepper instead of dropping one.
+  const starterPath = step === 'describe' || step === 'create'
+    || (step === 'start' && starter !== null && codeSourceId === null && door === null && pastedRepository === null);
+  const stepCount = starterPath ? STEPS.length : 1 + DEPLOY_STEPS.length;
   // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
   // in that Project's own new-Environment draft (lab f1cfg); a starter continues here.
   const autoKind = auto.view.kind;
@@ -934,7 +938,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   } else if (step === 'describe') {
     body = (
       <>
-        {header(t('newApp.describeTitle'), t('newApp.describeDescription'))}
+        {/* A chosen starter names this step; Describe your app is the other way in, not this one (PAGE-ACCEPT-176 R8-D8). */}
+        {header(starter?.title ?? t('newApp.describeTitle'), t('newApp.describeDescription'))}
         <ItemGroup surface="none" header="none">
           <FieldTextInput
             testID="newApp.description"
@@ -1031,20 +1036,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 />
                 <Item
                   mode="info"
-                  title={t('newApp.detailBuiltWith')}
-                  detail={starter.appMetadata?.tags?.join(' · ') ?? ''}
-                  showChevron={false}
-                />
-                <Item
-                  mode="info"
                   title={t('newApp.detailBranch')}
                   detail="main"
-                  showChevron={false}
-                />
-                <Item
-                  mode="info"
-                  title={t('newApp.detailAction')}
-                  detail={CREATE_ACTION}
                   showChevron={false}
                 />
               </View>
@@ -1116,10 +1109,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             screenKey: step === 'auto' ? `auto:${autoKind}` : deployStep ? `deploy:${deployStep}` : step,
             // The source step holds the card's full bound from its first frame, so its sections settle inside it
             // rather than growing the card (PAGE-ACCEPT-176 R3-D3); every later step fits its own content.
-            scrollHost: step === 'start' ? 'body' as const : 'bounded' as const,
+            // Every step holds the card's full bound from its first frame, so the dialog keeps one height as the person
+            // moves between steps (PAGE-ACCEPT-176 R3-D3, R8-D8); sections settle inside it.
+            scrollHost: 'body' as const,
             title: headingTitle,
             subtitle: headingDescription,
-            actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,
+            // Describe your app comes before its path is known (a starter's three steps or a deploy's four): it draws no
+            // count rather than one it may have to take back.
+            actions: step === 'auto' ? null : <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,
             footer: (
               <ModalCardFooterActions note={footerNote}>
                 {step === 'start' && !addingMachine ? (

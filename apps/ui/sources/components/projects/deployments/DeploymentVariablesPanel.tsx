@@ -16,6 +16,10 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { FieldItem } from '@/components/ui/forms/FieldItem';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { deploymentEnvironmentRoute } from './deploymentNavigation';
+import { INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -179,7 +183,9 @@ export const DeploymentVariablesPanel = React.memo(
       router.push({ pathname: SETTINGS_ROUTES.secrets, params: { secret: ref } });
     }, [router]);
     const editable = draft.canEdit && !draft.saving;
-    const [adding, setAdding] = React.useState<Adding | null>(null);
+    // The open Add form and what was typed in it survive a width change that recomposes the page (PAGE-ACCEPT-176 R8-D3).
+    const draftKey = `variables:${props.scope?.serverId ?? props.controlTarget?.serverId ?? ''}:${props.environmentId}`;
+    const [adding, setAdding] = useInlineAddDraftField<Adding | null>(draftKey, INLINE_ADD_OPEN, null);
     const [fact, setFact] = React.useState<DeploymentVariableFactV1>('primaryUrl');
     const [factOpen, setFactOpen] = React.useState(false);
     const [factDomainId, setFactDomainId] = React.useState<string | null>(null);
@@ -572,6 +578,8 @@ export const DeploymentVariablesPanel = React.memo(
         ) : null}
         {mode === 'table' && adding === 'reference' ? (
           <AddReferenceVariable
+            draftKey={draftKey}
+            projectSourceId={props.projectSourceId}
             taken={rows}
             targets={props.referenceTargets ?? NO_REFERENCE_TARGETS}
             currentEnvironmentId={props.environmentId}
@@ -942,6 +950,10 @@ function AddValueVariable(
 /** Add → Point at another service (lab `variables/refpick`): a name and the service export it resolves to on deploy. */
 function AddReferenceVariable(
   props: Readonly<{
+    /** Where the open form keeps what was typed (`useInlineAddDraftField`). */
+    draftKey: string;
+    /** This Environment's Project; the "share one" link names it for this Environment's own Settings. */
+    projectSourceId?: string;
     taken: readonly VariableRow[];
     targets: readonly VariableReferenceTarget[];
     /** Two steps (DEPLOY-UI-LOGIC-B 10:25Z contract): the Environment, this one first, then the services it shares. */
@@ -954,9 +966,10 @@ function AddReferenceVariable(
     onAdd: (name: string, target: VariableReferenceTarget) => boolean;
   }>,
 ) {
-  const [name, setName] = React.useState('');
-  const [environmentId, setEnvironmentId] = React.useState(props.currentEnvironmentId);
-  const [targetKey, setTargetKey] = React.useState<string | null>(null);
+  const router = useRouter();
+  const [name, setName] = useInlineAddDraftField(props.draftKey, 'referenceName', '');
+  const [environmentId, setEnvironmentId] = useInlineAddDraftField(props.draftKey, 'referenceEnvironment', props.currentEnvironmentId);
+  const [targetKey, setTargetKey] = useInlineAddDraftField<string | null>(props.draftKey, 'referenceTarget', null);
   const [failed, setFailed] = React.useState(false);
   const other = environmentId !== props.currentEnvironmentId;
   // Another Environment's shared services come from its exact record, read only while it is the chosen one.
@@ -972,6 +985,10 @@ function AddReferenceVariable(
   const trimmed = name.trim();
   const duplicate = props.taken.some((row) => row.name === trimmed);
   const environmentTitle = props.environments.get(environmentId)?.name ?? props.environmentName(environmentId) ?? '';
+  const shareTarget = other ? otherDetail?.environment ?? null
+    : props.serverId && props.projectSourceId ? { serverId: props.serverId, projectSourceId: props.projectSourceId } : null;
+  const shareRoute = shareTarget ? deploymentEnvironmentRoute({ serverId: shareTarget.serverId,
+    projectSourceId: shareTarget.projectSourceId, environmentId, tab: 'settings', section: 'sharing' }) : null;
   const loading = other && otherDetail === null && record.snapshot.status !== 'unavailable';
   const unreadable = other && otherDetail === null && record.snapshot.status === 'unavailable';
   const machineIds = React.useMemo(() => Array.from(props.environments.values()).flatMap(entry => entry.machineIds),
@@ -999,25 +1016,31 @@ function AddReferenceVariable(
       saveTestID="project-deployments.environment.variables.add.save"
       cancelTestID="project-deployments.environment.variables.add.cancel"
     >
+      {/* Each field says what it is, one width for all (PAGE-ACCEPT-176 R8-D3). */}
       <View style={styles.addFields}>
-        <FieldTextInput
-          testID="project-deployments.environment.variables.add.name"
-          value={name}
-          onChangeText={(next) => { setFailed(false); setName(next.toUpperCase()); }}
-          monospace
-          autoCapitalize="characters"
-          accessibilityLabel={t('projects.deployments.columnName')}
-          placeholder="DATABASE_URL"
-          error={duplicate ? t('projects.deployments.variableExists') : failed ? t('projects.deployments.variableInvalid') : null}
-        />
-        {environmentItems.length > 1 ? (
-          <ValueFieldSelect
-            testID="project-deployments.environment.variables.add.referenceEnvironment"
-            label={t('projects.deployments.settingsSections.referenceEnvironment')}
-            items={environmentItems}
-            selectedId={environmentId}
-            onSelect={(next) => { setEnvironmentId(next); setTargetKey(null); }}
+        <FieldItem label={t('projects.deployments.columnName')}>
+          <FieldTextInput
+            testID="project-deployments.environment.variables.add.name"
+            value={name}
+            onChangeText={(next) => { setFailed(false); setName(next.toUpperCase()); }}
+            monospace
+            autoCapitalize="characters"
+            accessibilityLabel={t('projects.deployments.columnName')}
+            placeholder="DATABASE_URL"
+            error={duplicate ? t('projects.deployments.variableExists') : failed ? t('projects.deployments.variableInvalid') : null}
           />
+        </FieldItem>
+        {environmentItems.length > 1 ? (
+          <FieldItem label={t('projects.deployments.settingsSections.referenceEnvironment')}>
+            <ValueFieldSelect
+              testID="project-deployments.environment.variables.add.referenceEnvironment"
+              label={t('projects.deployments.settingsSections.referenceEnvironment')}
+              items={environmentItems}
+              selectedId={environmentId}
+              onSelect={(next) => { setEnvironmentId(next); setTargetKey(null); }}
+              fill
+            />
+          </FieldItem>
         ) : null}
         {loading ? (
           <SurfaceStateCard testID="project-deployments.environment.variables.add.referenceLoading" size="line" kind="loading"
@@ -1026,19 +1049,27 @@ function AddReferenceVariable(
           <SurfaceStateCard testID="project-deployments.environment.variables.add.referenceUnavailable" size="line" kind="unavailable"
             title={t('common.unavailable')} action={{ label: t('common.retry'), onPress: () => { void record.refresh(); } }} />
         ) : targets.length === 0 ? (
-          <Text testID="project-deployments.environment.variables.add.referenceNone" variant="meta" style={styles.referenceNone}>
-            {t('projects.deployments.settingsSections.referenceNone', { environment: environmentTitle })}
-          </Text>
+          <View testID="project-deployments.environment.variables.add.referenceNone">
+            <Text variant="meta" style={styles.referenceNone}>
+              {t('projects.deployments.settingsSections.referenceNone', { environment: environmentTitle })}
+            </Text>
+            {/* The sentence leads to where that Environment shares one (PAGE-ACCEPT-176 R8-D2). */}
+            {shareRoute ? <TextLinkButton testID="project-deployments.environment.variables.add.referenceNone.share" size="meta"
+              label={t('projects.deployments.settingsSections.referenceNoneShare')} onPress={() => router.push(shareRoute)} /> : null}
+          </View>
         ) : (
-          <ValueFieldSelect
-            testID="project-deployments.environment.variables.add.reference"
-            label={t('projects.deployments.editors.referenceTarget')}
-            items={targets.map(item => ({ id: keyFor(item),
-              title: `${item.service} · ${item.export}`,
-              ...(item.network ? { subtitle: item.network } : {}) }))}
-            selectedId={targetKey}
-            onSelect={setTargetKey}
-          />
+          <FieldItem label={t('projects.deployments.editors.referenceTarget')}>
+            <ValueFieldSelect
+              testID="project-deployments.environment.variables.add.reference"
+              label={t('projects.deployments.editors.referenceTarget')}
+              items={targets.map(item => ({ id: keyFor(item),
+                title: `${item.service} · ${item.export}`,
+                ...(item.network ? { subtitle: item.network } : {}) }))}
+              selectedId={targetKey}
+              onSelect={setTargetKey}
+              fill
+            />
+          </FieldItem>
         )}
       </View>
     </InlineAddExpander>

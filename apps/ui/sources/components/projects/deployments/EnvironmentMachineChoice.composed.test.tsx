@@ -68,6 +68,13 @@ it.each(['absent', 'present'] as const)('renders the inspected repository Compos
       } else {
         expect(screen.getTextContent()).not.toMatch(/no Compose file at its root/i);
       }
+      // Ask an agent says what it sets up, and only while the repository has no Compose file (PAGE-ACCEPT-176 R8-D7).
+      await act(async () => { onFrame.mock.lastCall![0].press(); });
+      await waitForHomeGovernance(() => expect(onFrame).toHaveBeenLastCalledWith(expect.objectContaining({ step: 'configure' })));
+      const { Item } = await import('@/components/ui/lists/Item');
+      const { t } = await import('@/text');
+      const agent = screen.findAllByType(Item).find(node => node.props.testID === 'project-deployments.draft.agent');
+      expect(agent ? agent.props.subtitle : 'hidden').toBe(compose === 'absent' ? t('projects.deployments.preparation.askAgentBody') : 'hidden');
     } finally { await screen.unmount(); }
   } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
 });

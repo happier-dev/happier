@@ -183,4 +183,40 @@ describe('Deploy an app reads the platforms for every source (journey-deploy whe
       storage.setState(previous);
     }
   });
+  it('says why a platform needs an online Machine and leads to adding one when none is online (PAGE-ACCEPT-176 R8-D6)', async () => {
+    const serverId = await homes.addHome({ name: 'Deploy offline', serverUrl: 'https://deploy-steps-offline.test', accountId: 'alice',
+      serverIdentityId: `srv_${'q'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    const pluginId = 'com.example.steps-offline';
+    const authoredPlugin = createDeploymentTargetsTestPlugin(pluginId, undefined, { plans: true });
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: authoredPlugin.manifest,
+      activate: (api) => authoredPlugin.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account),
+      accountLifetime: account.accountLifetime, publishProjection: true });
+    const { ProjectSourceRepositorySelectorV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+    const repository = ProjectSourceRepositorySelectorV1Schema.parse({
+      provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'alice/app', cloneUrl: 'https://github.com/alice/app.git' }, protocol: 'https' });
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [createMachineFixture({ id: 'away', installationId: 'away-installation', active: false })]);
+      const screen = await renderScreen(<NewAppDeploySteps serverId={serverId}
+        source={{ kind: 'repository', projectSourceId: 'source-app' }}
+        machineId={null} phone={false} steps={{ onFrame: () => {}, onExit: () => {} }} onLeave={() => {}} />);
+      const alpha = `project-deployments.draft.target:${pluginId}/alpha`;
+      await waitForHomeGovernance(() => expect(screen.findHostByTestId(alpha)).not.toBeNull());
+      await screen.pressByTestIdAsync(alpha);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.platformNeedsMachine')).not.toBeNull());
+      await screen.pressByTestIdAsync('project-deployments.draft.platformNeedsMachine.add');
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.createMachine')).not.toBeNull());
+      await screen.unmount();
+    } finally {
+      await installed.dispose();
+      account.dispose();
+      storage.setState(previous);
+    }
+  });
 });
