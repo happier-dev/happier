@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PageRowDensityProvider } from '@/components/ui/lists/useResolvedItemDensity';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
@@ -157,12 +158,15 @@ const LiveEventBody = React.memo(function LiveEventBody(
   const { onAdd, eventKey } = props;
   return (
     <View testID={`${props.testID}:expanded`} style={styles.body}>
-      <WorkflowEventCarries
-        presentation={presentation}
-        automatable={seed !== null}
-        surface="none"
-        testID={`${props.testID}:expanded`}
-      />
+      {/* A side pane's facts take the inspector's row size, as Session Info's do: the event's own rows stay larger. */}
+      <PageRowDensityProvider value="inspector">
+        <WorkflowEventCarries
+          presentation={presentation}
+          automatable={seed !== null}
+          surface="none"
+          testID={`${props.testID}:expanded`}
+        />
+      </PageRowDensityProvider>
       <WorkflowEventStartedRuns
         runs={presentation.runsStarted}
         scope={props.scope}
@@ -206,6 +210,8 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s8,
+    // The facts' last row and the action read as two steps, not one block.
+    paddingTop: theme.space.s8,
     // On the list's text edge, inside the expanded event's card.
     paddingHorizontal: HAPPIER_COLLECTION_LIST_METRICS.contentInset,
   },

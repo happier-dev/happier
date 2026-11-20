@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { SessionApprovalProfileSection } from './SessionApprovalProfileSection';
-import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import { SessionTemplateSection } from '@/components/sessions/bots/templates/SessionTemplateSection';
 import { View } from 'react-native';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
@@ -220,9 +219,8 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
   const exactTurn = parseExactTurnAutomationPrefillRoute(params);
   const exactTurnPrefill = exactTurn.kind === 'valid' && exactTurn.prefill.sourceSessionId === sessionId ? exactTurn.prefill : undefined;
   return (
-    // One Automations section for Info and the Work tab (owner 0936 #16). Both hosts are side panes, so it always
-    // takes Session Info's inspector anatomy, never the grouped card a bare Work scroll would give it.
-    <SidePaneInspectorSections>
+    // One Automations section for Info and the Work tab (owner 0936 #16). Its host sets the anatomy: the side panes
+    // (Info, Work) lay it flat as inspectors; the phone Info page puts it on a sheet like its other sections.
     <WorkSectionPlacementProvider value="page">
       <SessionTriggerHistoryScope>
         <View nativeID={SESSION_SETUP_TRIGGERS_ANCHOR_ID} collapsable={false}>
@@ -234,6 +232,7 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
             {props.onOpenAllAutomations ? (
               <Item
                 testID="session-habits-all-automations"
+                icon={<Icon name="tree-structure" />}
                 title={t('sessionPages.info.allAutomations')}
                 onPress={props.onOpenAllAutomations}
               />
@@ -246,6 +245,5 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
         </View>
       </SessionTriggerHistoryScope>
     </WorkSectionPlacementProvider>
-    </SidePaneInspectorSections>
   );
 }

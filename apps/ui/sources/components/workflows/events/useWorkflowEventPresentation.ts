@@ -200,10 +200,11 @@ export function useWorkflowEventPresentation(
       case 'run': {
         const workflow = executionSource === null ? workflowName ?? t('workflows.events.someWorkflow') : executionTitle!;
         const result = fact.coverage === 'live' ? formatWorkflowRunStateLabel(fact.state) : null;
-        // As a Machine event: the title says what happened, the line under it which workflow and how it ended (or where
-        // a retained native cause ran), so a long workflow name never truncates "finished" away (F3).
-        const subtitle = joinHappierFacts(workflow,
-          result ?? (executionSource === null ? null : joinHappierFacts(sessionName, machineName) || null)) || null;
+        // The row is named by its workflow (lab events-A, "Nightly dependency check"); the line under it says how it
+        // ended, or that it needs you, and where a retained native cause ran. A long name truncates; the outcome never does (F3).
+        const outcome = result ?? t(fact.event === 'needs_attention' ? 'workflows.events.needsYouLine' : 'workflows.events.finishedLine');
+        const subtitle = joinHappierFacts(outcome,
+          executionSource === null ? null : joinHappierFacts(sessionName, machineName) || null) || null;
         const href = executionSource === null ? createWorkflowRunRoute(fact.runId, serverId)
           : createMachineExecutionRunRoute(serverId ?? '', executionSource.machineId, executionSource.runId);
         return {
@@ -212,12 +213,7 @@ export function useWorkflowEventPresentation(
           glyph: 'tree-structure',
           needsYou: fact.event === 'needs_attention',
           subtitle,
-          title: t(
-            fact.event === 'needs_attention'
-              ? 'workflows.events.runNeedsYou'
-              : 'workflows.events.runFinished',
-            { workflow: t('workflows.events.someWorkflow') },
-          ),
+          title: workflow,
           lines: [
             {
               key: 'workflow',

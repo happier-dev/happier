@@ -44,7 +44,7 @@ import { useSessionTranscriptLoaded } from '@/sync/store/hooks';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { HappierWorkDisclosureLine, HAPPIER_WORK_PANE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { HappierSurfaceStateFit, HappierWorkDisclosureLine, HAPPIER_WORK_PANE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -74,6 +74,7 @@ import { SessionWorkDigest } from './SessionWorkDigest';
 import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
 import { WorkFlatSheet, WorkSection } from './WorkSection';
 import { SessionHabitsSection } from './SessionSetupSections';
+import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import { useSessionWorkTriggersReveal } from './sessionWorkTriggersReveal';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { SubjectTriggersSectionActions } from '@/components/workflows/triggers/SubjectTriggersSection';
@@ -600,6 +601,8 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     ) : null}
                     {/* With no work yet the invite stands where the list will be (lab `convo-ST`). */}
                     {nothingStarted ? (
+                        // In flow above Automations, the invite fits its content: no optical lift to fill the pane.
+                        <HappierSurfaceStateFit.Provider value="content">
                         <View style={styles.empty}>
                             {/* The invite (lab `convo-ST`, "Nothing started yet"): the Agents that can take work
                                 here, one way to start and the asks. Without a way to start, the plain empty. */}
@@ -633,6 +636,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                                 />
                             )}
                         </View>
+                        </HappierSurfaceStateFit.Provider>
                     ) : view === 'map' && workMap && projection ? (
                         <SessionWorkMapView map={workMap} projection={projection} showFacts={false} testIDPrefix="session-work-map" onOpenItem={openItem} />
                     ) : stateGroups ? (
@@ -665,8 +669,11 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     {/* The session's Triggers live with its work (07 S16, lab W9); "+" and rows open popovers in place. */}
                     {sessionServerId ? (
                         <View collapsable={false} onLayout={onTriggersLayout} style={styles.paneEdgeSection}>
-                            <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId}
-                                actionsRef={triggersActionsRef} offlineStatedAbove={machineNotices.offline} />
+                            {/* Laid flat in Session Info's inspector anatomy, so the two side panes cannot drift apart. */}
+                            <SidePaneInspectorSections>
+                                <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId}
+                                    actionsRef={triggersActionsRef} offlineStatedAbove={machineNotices.offline} />
+                            </SidePaneInspectorSections>
                         </View>
                     ) : null}
                     </>)}
