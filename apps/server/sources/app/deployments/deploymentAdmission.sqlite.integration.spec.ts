@@ -65,6 +65,7 @@ import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@hap
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { computeMachineInstallationKeyFingerprintV1 } from '@happier-dev/protocol/machines/identity/installationKeySchemas';
 import { createExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { createExternalActionDaemonDispatchResponseV1, prepareExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions';
 import { Server } from 'socket.io';
@@ -148,8 +149,20 @@ describe('current Source deployment authority', () => {
                 accountId: teammate.id, custodianAccountId: owner.id, machineId: collector.id, installationId: collector.installationId,
                 deploymentTelemetryRead: [{ environmentId: environment.id, revision: environment.revision, capabilities: { metrics: true } }],
             });
+            // The reader's Environment content pins the collector key; Home only delivers it.
+            const collectorKeyPins = [{ environmentId: environment.id, collector: { machineId: collector.id,
+                installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(collectorKey) } }];
+            if (mode === 'e2ee') {
+                const substituted = (() => {
+                    try {
+                        sealManagedControllerActionCodecV1({ authorization: signed, material, collectorKeyPins,
+                            installationPublicKey: nacl.sign.keyPair().publicKey, randomBytes: nacl.randomBytes });
+                    } catch (error) { return error; }
+                })();
+                expect(substituted).toMatchObject({ errorCode: 'telemetry_collector_key_mismatch' });
+            }
             const executionAuthorization = sealManagedControllerActionCodecV1({ authorization: signed, material,
-                installationPublicKey: collectorKey, randomBytes: nacl.randomBytes });
+                installationPublicKey: collectorKey, randomBytes: nacl.randomBytes, ...(mode === 'e2ee' ? { collectorKeyPins } : {}) });
             await post(readerToken, route, { ...body, executionAuthorization });
             expect(relayed.map(row => ({ machineId: row.machineId, installationId: row.installationId })))
                 .toEqual([{ machineId: collector.id, installationId: collector.installationId }]);

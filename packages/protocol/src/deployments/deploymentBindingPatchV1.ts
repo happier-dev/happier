@@ -5,7 +5,7 @@ import { DeploymentEnvironmentContentCasV1Schema } from './deploymentArtifactCon
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { parseSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from './deploymentIdentifiersV1.js';
-import { DeploymentTelemetryCapabilitiesV1Schema } from './deploymentTelemetryV1.js';
+import { DeploymentTelemetryCapabilitiesV1Schema, DeploymentTelemetryCollectorPinV1Schema } from './deploymentTelemetryV1.js';
 import { EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentSecretBindingV1Schema,
     EnvironmentVariableBindingGrantReferenceV1Schema, DeploymentBackupDestinationBindingIdentityV1Schema,
     environmentSecretBindingIdentityV1, type EnvironmentSecretBindingIdentityV1,
@@ -162,6 +162,7 @@ export const DeploymentBindingsPatchInputV1Schema = lazyZodSchema(() => z.strict
     expectedRevision: DeploymentRevisionV1Schema, ...bindingPatchShape(),
     telemetryMachineId: z.optional(z.nullable(DeploymentIdentifierV1Schema)),
     telemetry: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
+    telemetryCollector: z.optional(z.nullable(DeploymentTelemetryCollectorPinV1Schema)),
     providerVariables: z.optional(z.strictObject({
         useOurs: z.array(DeploymentIdentifierV1Schema), keepTheirs: z.array(DeploymentIdentifierV1Schema),
     })),

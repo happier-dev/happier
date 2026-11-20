@@ -11,6 +11,12 @@ export function resolveDeploymentTelemetryCapabilitiesV1(value?: DeploymentTelem
     return { metrics: value?.metrics === true, appLlmCost: value?.appLlmCost === true, exceptions: value?.exceptions === true };
 }
 
+/** Private Environment content: the selected collector and the fingerprint of its installation key at selection. */
+export const DeploymentTelemetryCollectorPinV1Schema = lazyZodSchema(() => z.strictObject({
+    machineId: DeploymentIdentifierV1Schema, installationKeyFingerprint: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
+}));
+export type DeploymentTelemetryCollectorPinV1 = z.infer<typeof DeploymentTelemetryCollectorPinV1Schema>;
+
 /** Host intent; placement and the owned bindings settle in the existing bindings CAS. */
 export const DeploymentEnvironmentTelemetrySetInputV1Schema = lazyZodSchema(() => z.strictObject({
     serverId: DeploymentIdentifierV1Schema,

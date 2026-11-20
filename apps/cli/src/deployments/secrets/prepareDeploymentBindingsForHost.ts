@@ -93,7 +93,8 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const child = readHostAdmittedReviewedChildV1(request.context);
             const telemetryChild = readHostAdmittedReviewedChildRoleV1(request.context,
                 DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, request.input) === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1;
-            if ((input.telemetryMachineId !== undefined || 'telemetry' in input && input.telemetry !== undefined) && !telemetryChild)
+            if ((input.telemetryMachineId !== undefined || 'telemetry' in input && input.telemetry !== undefined
+                || 'telemetryCollector' in input && input.telemetryCollector !== undefined) && !telemetryChild)
                 return refuse('action_forbidden');
             if ('set' in input && input.set.some(binding => binding.source.kind === 'secret'
                 && binding.source.ref === 'person_selects')) return refuse('client_required');
@@ -128,7 +129,9 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             ]);
             const current = readDeploymentEnvironmentArtifactV1(loaded.environment, currentArtifact);
             if (!current.ok) return refuseDeploymentArtifactRead(current);
-            const candidate = 'set' in input ? { ok: true as const, content: { ...current.content,
+            const { telemetryCollector: _previousPin, ...unpinned } = current.content;
+            const candidate = 'set' in input ? { ok: true as const, content: { ...(input.telemetryCollector === undefined ? current.content
+                : input.telemetryCollector === null ? unpinned : { ...current.content, telemetryCollector: input.telemetryCollector }),
                 ...(input.telemetry === undefined ? {} : { telemetry: input.telemetry }),
                 bindings: applyEnvironmentSecretBindingsPatchV1(current.content.bindings,
                     { set: input.set, remove: input.remove }, randomUUID) } }

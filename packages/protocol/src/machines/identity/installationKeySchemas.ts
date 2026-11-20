@@ -1,6 +1,7 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { decodeBase64 } from '../../crypto/base64.js';
+import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDigest.js';
 import { ED25519_PUBLIC_KEY_BYTES, ED25519_SECRET_KEY_BYTES, ED25519_SIGNATURE_BYTES, isValidEd25519PublicKey } from '../../crypto/ed25519.js';
 
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]+$/u;
@@ -56,3 +57,8 @@ export const MachineInstallationProofV1Schema = lazyZodSchema(() => z.object({
     version: z.literal(1), algorithm: z.literal('ed25519'), signature: MachineInstallationProofSignatureSchema,
 }));
 export type MachineInstallationProofV1 = z.infer<typeof MachineInstallationProofV1Schema>;
+
+/** Content-safe identity of one installation key, as bound in private content that pins it. */
+export function computeMachineInstallationKeyFingerprintV1(installationPublicKey: Uint8Array): string {
+    return computeCanonicalDomainSeparatedDigest('happier-machine-installation-key-fingerprint-v1', [installationPublicKey]);
+}

@@ -9,7 +9,7 @@ import { deploymentStoredContentV1Schema } from './storedDeploymentContent.js';
 import { DeploymentEnvironmentTemplateProvenanceV1Schema } from '../templates/deploymentTemplateProvenance.js';
 import { DeploymentPreviewProvenanceV1Schema, DeploymentPreviewTemplateV1Schema } from '../projection/deploymentPreviewSchemas.js';
 import { DeploymentEnvironmentBackupV1Schema } from '../backups/deploymentBackupContracts.js';
-import { DeploymentTelemetryCapabilitiesV1Schema } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
+import { DeploymentTelemetryCapabilitiesV1Schema, DeploymentTelemetryCollectorPinV1Schema } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { WorkflowRunIdV1Schema } from '@happier-dev/protocol/workflows/workflowIdsV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -91,6 +91,8 @@ const environmentContentShape = {
     cloudflareTunnels: z.optional(z.array(z.strictObject({ accountId: text, tunnelId: text }))),
     backup: z.optional(DeploymentEnvironmentBackupV1Schema),
     telemetry: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
+    /** The selected collector's installation key, pinned by the telemetry writer so readers need not trust Home for it. */
+    telemetryCollector: z.optional(DeploymentTelemetryCollectorPinV1Schema),
     template: z.optional(DeploymentEnvironmentTemplateProvenanceV1Schema),
     previewTemplate: z.optional(DeploymentPreviewTemplateV1Schema),
     previewProvenance: z.optional(DeploymentPreviewProvenanceV1Schema),
@@ -188,8 +190,8 @@ export function isDeploymentEnvironmentBindingsOnlyUpdateV1(
     previous: DeploymentEnvironmentContentV1, candidate: DeploymentEnvironmentContentV1,
     writer: 'bindings' | 'telemetry' = 'bindings',
 ): boolean {
-    return sameStrictJsonValue({ ...previous, bindings: [], ...(writer === 'telemetry' ? { telemetry: undefined } : {}) },
-        { ...candidate, bindings: [], ...(writer === 'telemetry' ? { telemetry: undefined } : {}) });
+    const telemetry = writer === 'telemetry' ? { telemetry: undefined, telemetryCollector: undefined } : {};
+    return sameStrictJsonValue({ ...previous, bindings: [], ...telemetry }, { ...candidate, bindings: [], ...telemetry });
 }
 export const DeploymentEnvironmentStoredContentV1Schema = deploymentStoredContentV1Schema(DeploymentEnvironmentContentStoredReadV1Schema);
 export type DeploymentEnvironmentStoredContentV1 = z.infer<typeof DeploymentEnvironmentStoredContentV1Schema>;

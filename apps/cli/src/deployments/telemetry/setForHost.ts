@@ -4,7 +4,9 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/action
 import { DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentEnvironmentTelemetrySetInputV1, DeploymentEnvironmentTelemetrySetSuccessV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
-import { resolveDeploymentTelemetryCapabilitiesV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
+import { resolveDeploymentTelemetryCapabilitiesV1, type DeploymentTelemetryCollectorPinV1 } from '@happier-dev/protocol/deployments/deploymentTelemetryV1';
+import { computeMachineInstallationKeyFingerprintV1 } from '@happier-dev/protocol/machines/identity/installationKeySchemas';
+import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1, isMachineRoleActiveV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -29,7 +31,7 @@ type Host = Readonly<{
     savedSecretOperationContext?: SavedSecretOperationContextV1;
     readEnvironment(request: { environmentId: string; context: ActionExecutorContext }): Promise<Environment>;
     readProject(environment: Environment, context: ActionExecutorContext, readDefault: boolean): Promise<{ name: string; telemetryMachineId?: string }>;
-    readMachine(machineId: string, context: ActionExecutorContext): Promise<{ metadata: unknown } | null>;
+    readMachine(machineId: string, context: ActionExecutorContext): Promise<{ metadata: unknown; installationPublicKey?: string | null } | null>;
 }>;
 const refuse = (code: string, details?: unknown): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
     ...(details === undefined ? {} : { details }) }); };
@@ -56,20 +58,25 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 collector: input.collector, rotate: input.rotate, projectDefaultMachineId: project?.telemetryMachineId });
             if (selection.kind === 'collector_required') return refuse('collector_required', selection);
             const machineId = selection.machineId;
+            let collectorPin: DeploymentTelemetryCollectorPinV1 | null = null;
             if (machineId !== null) {
                 const machine = await host.readMachine(machineId, context);
-                if (!machine) return refuse('machine_unavailable', { role: 'telemetry', machineId });
+                if (!machine?.installationPublicKey) return refuse('machine_unavailable', { role: 'telemetry', machineId });
                 if (!isMachineRoleActiveV1(machine.metadata, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1)) {
                     return refuse('telemetry_role_inactive', { machineId });
                 }
+                // Readers seal to the key Home delivers only when it matches this private pin.
+                collectorPin = { machineId, installationKeyFingerprint:
+                    computeMachineInstallationKeyFingerprintV1(decodeBase64(machine.installationPublicKey, 'base64')) };
             }
+            const pinChanged = !sameStrictJsonValue(current.content.telemetryCollector ?? null, collectorPin);
             if (previousMachineId !== null && previousMachineId !== machineId && !input.confirmDelete) {
                 return refuse('telemetry_deletion_confirmation_required', { machineId: previousMachineId });
             }
             const owned = current.content.bindings.filter((binding): binding is Extract<typeof binding, { purpose: 'variable' }> =>
                 binding.purpose === 'variable' && binding.managedBy === 'telemetry');
             const remove = owned.map(binding => ({ purpose: 'variable' as const, name: binding.name, phase: binding.phase }));
-            if (machineId === null && previousMachineId === null && owned.length === 0 && !capabilitiesChanged) return success(input.expectedRevision);
+            if (machineId === null && previousMachineId === null && owned.length === 0 && !capabilitiesChanged && !pinChanged) return success(input.expectedRevision);
             const set: EnvironmentSecretBindingInputV1[] = [];
             if (machineId !== null) {
                 const headers = owned.find(binding => binding.name === 'OTEL_EXPORTER_OTLP_HEADERS');
@@ -112,7 +119,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 }
                 const existing = TELEMETRY_EXPORT_ENVIRONMENT_KEYS_V1.flatMap(name => owned.filter(binding =>
                     binding.name === name && binding.phase === 'runtime'));
-                if (machineId === previousMachineId && !input.rotate && !capabilitiesChanged && owned.length === set.length
+                if (machineId === previousMachineId && !input.rotate && !capabilitiesChanged && !pinChanged && owned.length === set.length
                     && sameBindingIntent(existing, set)) return success(input.expectedRevision);
             }
             const child = context.hostReviewedChild ?? refuse('admission_unavailable');
@@ -121,6 +128,7 @@ export function createEnvironmentTelemetrySetForHost(host: Host) {
                 input: normalizeStrictJsonValue({ serverId: input.serverId, environmentId: input.environmentId,
                     expectedRevision: input.expectedRevision, telemetryMachineId: machineId, set,
                     ...(capabilitiesChanged ? { telemetry: capabilities } : {}),
+                    ...(pinChanged ? { telemetryCollector: collectorPin } : {}),
                     remove: remove.filter(binding => !replaced.has(`${binding.phase}:${binding.name}`)) }) });
             if (!result.ok) return result;
             const saved = DeploymentBindingsSetResultV1Schema.parse(result.result);

@@ -46,7 +46,13 @@ import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkf
 import { projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1, projectDeploymentPreparationAdmissionV1,
   projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
-import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, isTelemetryCollectorKeyPinRequiredV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { readTelemetryCollectorKeyPinsV1, type TelemetryCollectorKeyPinPortsV1 } from '@happier-dev/deployments/telemetry';
+import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRequesterActionOperationV1, readRequesterOperationAddressV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { randomBytes } from 'node:crypto';
 
@@ -898,6 +904,28 @@ export function dispatchOriginalAccountAction(input: OriginalAccountActionInput)
  * Session input names its existing publisher custody; Machine targets retain
  * the incumbent disclosure and signed-requester-context admission.
  */
+/** The reader's own Home header read and Artifact opener supply Environment collector pins. */
+function createTelemetryCollectorKeyPinPorts(input: Readonly<{ homeUrl: string; headers: Readonly<Record<string, string>>;
+  credentials: StoredCredentials; serverIdentityId: string; signal?: AbortSignal }>): TelemetryCollectorKeyPinPortsV1 {
+  return {
+    listEnvironments: async environmentIds => {
+      const transport = getActionSpec('deployments.environments.list').serverTransport;
+      if (!transport) return [];
+      const { path } = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentListInputV1Schema,
+        input: { serverId: input.serverIdentityId, environmentIds: [...environmentIds] } });
+      const response = await axios.get(`${input.homeUrl}${path}`, { headers: input.headers, maxRedirects: 0,
+        validateStatus: () => true, ...(input.signal ? { signal: input.signal } : {}) });
+      const page = DeploymentEnvironmentListResultV1Schema.safeParse(response.data);
+      return response.status === 200 && page.success && page.data.ok ? page.data.items : [];
+    },
+    readArtifacts: artifactIds => runWithServerHttpBaseUrl(input.homeUrl, () => {
+      const artifacts = createCredentialedAccountArtifactStore(input.credentials);
+      return Promise.all(artifactIds.map(id => artifacts.read(id, { ...(input.signal ? { signal: input.signal } : {}),
+        prepareRecipients: false, includeSharedAudience: false }).catch(() => null)));
+    }),
+  };
+}
+
 export async function dispatchOriginalAccountAction(input: OriginalAccountActionInput & Readonly<{ foreignTargetOnly?: true }>): Promise<ActionExecuteResult | null> {
   // Preparation cannot start the effect; delivery owns evidence after submission.
   const fail = (errorCode: string, issuerPhase?: string): ActionExecuteFailure => ({
@@ -1364,9 +1392,22 @@ export async function dispatchOriginalAccountAction(input: OriginalAccountAction
       if (controllerCodec) {
         const key = telemetryRead ? telemetryReadInstallationPublicKey : installed?.installationPublicKey;
         if (!key || !material || authorization.managedFiniteWake) return fail('admission_unavailable', 'dispatch.controller_codec');
-        authorization = sealManagedControllerActionCodecV1({ authorization, material,
-          ...(input.invocation ? { invocation: input.invocation } : {}),
-          installationPublicKey: decodeBase64(key, telemetryRead || scopedController ? 'base64url' : 'base64'), randomBytes });
+        try {
+          // The sealing owner refuses a Home-delivered key its Environment content does not pin.
+          const collectorKeyPins = telemetryRead && isTelemetryCollectorKeyPinRequiredV1(authorization.binding)
+            ? await readTelemetryCollectorKeyPinsV1(telemetryRead.telemetryCollector.environmentIds,
+              createTelemetryCollectorKeyPinPorts({ homeUrl, headers, credentials: input.credentials,
+                serverIdentityId: input.serverIdentityId, ...(input.signal ? { signal: input.signal } : {}) })) : undefined;
+          if (collectorKeyPins && !await isCurrent()) return fail('target_unavailable', 'dispatch.collector_key_pin.currentness');
+          authorization = sealManagedControllerActionCodecV1({ authorization, material,
+            ...(collectorKeyPins ? { collectorKeyPins } : {}),
+            ...(input.invocation ? { invocation: input.invocation } : {}),
+            installationPublicKey: decodeBase64(key, telemetryRead || scopedController ? 'base64url' : 'base64'), randomBytes });
+        } catch (error) {
+          const refused = parseActionExecuteFailure(error);
+          if (refused) return refused;
+          throw error;
+        }
       } else if (foreign || input.invocation) {
         if (!installed?.installationPublicKey) return fail('admission_unavailable', 'dispatch.requester_installation_key');
         if (foreign && !retainedRequester) {

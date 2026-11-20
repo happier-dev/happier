@@ -7,3 +7,4 @@ export {
 } from '@happier-dev/deployment-protocol/v1';
 export { resolveTelemetryCollectorSelectionV1,
     type TelemetryCollectorSelectionInputV1, type TelemetryCollectorSelectionV1 } from './collectorSelection.js';
+export { readTelemetryCollectorKeyPinsV1, type TelemetryCollectorKeyPinPortsV1 } from './collectorKeyPins.js';

@@ -183,6 +183,10 @@ new one. Redeploy afterward to start sending to the selected collector.
 In the 0.3 development flow, teammates who can view an Environment can read
 its capture from the selected collector without a Machine grant. Withdrawing
 Environment access takes effect on the next read request.
+With end-to-end encryption, a read goes only to the collector that telemetry
+setup recorded in the Environment. If that collector is reinstalled, or the
+Environment's telemetry was set up before this check existed, reads stop with
+a collector key error until you run telemetry setup again.
 
 Happier leaves the app's SDK sampling default unchanged unless you choose a
 sampling ratio. An app's authored collector configuration takes precedence at

@@ -17,6 +17,8 @@ import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { computeMachineInstallationKeyFingerprintV1 } from '@happier-dev/protocol/machines/identity/installationKeySchemas';
+import tweetnacl from 'tweetnacl';
 import { createDaemonDeploymentActionDeps } from '../createDaemonDeploymentActionDeps';
 
 afterEach(() => vi.restoreAllMocks());
@@ -54,11 +56,20 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         const originalRequest = axios.request.bind(axios);
         let roleOn = true;
         const writes: Record<string, unknown>[] = [];
+        const collectorKeys = new Map(['target', 'other'].map(id => [id, tweetnacl.sign.keyPair().publicKey]));
+        const pinOf = (machineId: string) => ({ machineId,
+            installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(collectorKeys.get(machineId)!) });
+        const persistedContent = (write: Record<string, unknown>) => {
+            const stored = decodePlainArtifactStoredContent(String(rows.get(String(write.contentArtifactId))?.body));
+            if (!stored || typeof stored !== 'object' || !('body' in stored) || typeof stored.body !== 'string') throw new Error('Missing persisted Environment body');
+            return DeploymentEnvironmentContentV1Schema.parse(JSON.parse(stored.body));
+        };
         // HTTP and persisted Artifact/Saved Secret storage are genuine boundaries;
         // Action policy, host composition, binding preparation and secret custody stay real.
         vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
             if (url.includes('/v1/machines/')) return { status: 200, data: { machine: { id: url.split('/').at(-1),
                 active: true, kind: 'persistent', installationId: identity.installationId, revokedAt: null, replacedByMachineId: null,
+                installationPublicKey: Buffer.from(collectorKeys.get(url.split('/').at(-1)!)!).toString('base64'),
                 storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadataVersion: 1, daemonStateVersion: 0,
                 daemonState: encodePlainMachineStoredContent(MachinePublishedDaemonStateV1Schema.parse({ status: 'running' })),
                 metadata: encodePlainMachineStoredContent({ host: 'collector', homeDir: '/home/collector', platform: 'linux',
@@ -159,6 +170,9 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         expect(await set({ collector: { machineId: 'other' }, confirmDelete: true })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(3);
         expect(fixture.writes).toHaveLength(2);
+        // Installing and moving the collector bind its key into the private content readers verify.
+        expect(persistedContent(writes[0]!).telemetryCollector).toEqual(pinOf('target'));
+        expect(persistedContent(writes[2]!).telemetryCollector).toEqual(pinOf('other'));
         expect(await set({ collector: undefined, rotate: true })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(4);
         expect(writes[3]).toMatchObject({ telemetryMachineId: 'other' });
@@ -168,6 +182,7 @@ it('sets, repeats, rotates, moves and turns off telemetry through the real Actio
         expect(await set({ collector: null, confirmDelete: true })).toMatchObject({ ok: true });
         expect(writes).toHaveLength(5);
         expect(writes[4]).toMatchObject({ telemetryMachineId: null });
+        expect(persistedContent(writes[4]!)).not.toHaveProperty('telemetryCollector');
         // Copy preserves chosen variables, but the new Environment has no
         // admitted collector or token identity yet.
         current.environment.id = 'copied-environment';

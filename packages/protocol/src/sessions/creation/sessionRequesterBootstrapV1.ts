@@ -1,4 +1,5 @@
-import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '../../actions/actionExecutionResult.js';
+import { computeMachineInstallationKeyFingerprintV1 } from '../../machines/identity/installationKeySchemas.js';
 import { isMachineSetupNativeCodecActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -426,17 +427,56 @@ export function isManagedControllerCodecRootV1(binding: ExternalActionExecutionA
     && ('authentication' in binding || isReviewedMachineSetupCodecV1(binding));
 }
 
+/** One admitted Environment's private collector pin, read from its content by the reader. */
+export type TelemetryCollectorKeyPinV1 = Readonly<{
+  environmentId: string;
+  collector?: Readonly<{ machineId: string; installationKeyFingerprint: string }>;
+}>;
+
+/**
+ * Home delivers the collector key for an Environment read. An E2EE reader seals
+ * only to the key its Environment's private content pins; plain content is
+ * server-readable by contract, so a plain reader keeps the delivered key.
+ */
+export function isTelemetryCollectorKeyPinRequiredV1(binding: Pick<ExternalActionExecutionAuthorizationV1['binding'],
+  'telemetryCollectorCodec' | 'accountEncryptionMode'>): boolean {
+  return binding.telemetryCollectorCodec === true && binding.accountEncryptionMode === 'e2ee';
+}
+
+function assertTelemetryCollectorKeyPinnedV1(binding: ExternalActionExecutionAuthorizationV1['binding'],
+  installationPublicKey: Uint8Array, pins: readonly TelemetryCollectorKeyPinV1[] | undefined): void {
+  const admission = binding.deploymentReadAdmission;
+  const environmentIds = admission && 'telemetryCollector' in admission ? admission.telemetryCollector.environmentIds : [];
+  const byEnvironment = new Map(pins?.map(pin => [pin.environmentId, pin.collector]));
+  const unbound = environmentIds.filter(environmentId => !byEnvironment.get(environmentId));
+  const refuse = (code: 'telemetry_collector_key_unbound' | 'telemetry_collector_key_mismatch', ids: readonly string[]) => {
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code, effectAttempted: false,
+      details: { environmentIds: [...ids], recovery: 'telemetry_setup' } });
+  };
+  if (!environmentIds.length || unbound.length) refuse('telemetry_collector_key_unbound', unbound);
+  const fingerprint = computeMachineInstallationKeyFingerprintV1(installationPublicKey);
+  const mismatched = environmentIds.filter(environmentId => {
+    const collector = byEnvironment.get(environmentId)!;
+    return collector.machineId !== binding.machineId || collector.installationKeyFingerprint !== fingerprint;
+  });
+  if (mismatched.length) refuse('telemetry_collector_key_mismatch', mismatched);
+}
+
 export function sealManagedControllerActionCodecV1(input: Readonly<{
   authorization: ExternalActionExecutionAuthorizationV1;
   material: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
   invocation?: ExternalActionRequesterInvocationV1;
   installationPublicKey: Uint8Array;
+  /** Required for an E2EE Environment collector read; see isTelemetryCollectorKeyPinRequiredV1. */
+  collectorKeyPins?: readonly TelemetryCollectorKeyPinV1[];
   randomBytes(length: number): Uint8Array;
 }>): ExternalActionExecutionAuthorizationV1 {
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
   if (!isManagedControllerCodecRootV1(authorization.binding)
     || authorization.binding.target.kind !== 'machine' || authorization.binding.target.machineId !== authorization.binding.machineId)
     throw new Error('managed_controller_codec_root_mismatch');
+  if (isTelemetryCollectorKeyPinRequiredV1(authorization.binding))
+    assertTelemetryCollectorKeyPinnedV1(authorization.binding, input.installationPublicKey, input.collectorKeyPins);
   const plaintext = ManagedControllerCodecPlaintextV1Schema.parse({ v: 1,
     authorization: { v: authorization.v, token: authorization.token, binding: authorization.binding },
     purpose: { kind: 'managed_controller_codec' }, codec: { machineKey: encodeBase64(input.material.machineKey) },

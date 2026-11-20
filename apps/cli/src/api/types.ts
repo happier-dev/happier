@@ -410,6 +410,8 @@ export type DaemonState = z.infer<typeof MachinePublishedDaemonStateV1Schema>
 type MachineCommon = {
   id: string,
   installationId?: string | null,
+  /** Home-published installation key (standard base64); a private content pin decides whether to trust it. */
+  installationPublicKey?: string | null,
   active?: boolean,
   revokedAt?: number | null,
   replacedByMachineId?: string | null,

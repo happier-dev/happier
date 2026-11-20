@@ -1045,6 +1045,7 @@ export class ApiClient {
       const common = {
         id: raw.id,
         installationId: raw.installationId,
+        ...(raw.installationPublicKey ? { installationPublicKey: raw.installationPublicKey } : {}),
         active: raw.active,
         revokedAt: raw.revokedAt,
         replacedByMachineId: raw.replacedByMachineId,

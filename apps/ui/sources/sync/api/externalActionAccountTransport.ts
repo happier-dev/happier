@@ -2,7 +2,10 @@ import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/ac
 import { isMachineTerminalStreamActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { projectExternalActionMachineRuntimeDemandV1, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, projectExternalActionMachineRuntimeDemandV1, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { readTelemetryCollectorKeyPinsV1, type TelemetryCollectorKeyPinPortsV1 } from '@happier-dev/deployments/telemetry';
 import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSchema, ExternalActionMachineBootstrapV1Schema,
     ExternalActionRequestEnvelopeV1Schema, parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1, projectExternalActionHttpFailureV1, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1,
@@ -10,11 +13,11 @@ import { ExternalActionAccountAuthenticationV1Schema, ExternalActionHttpErrorSch
     type ExternalActionExecutionAuthorizationRequestV1, type ExternalActionExecutionAuthorizationV1,
     type ExternalActionRequestEnvelopeV2, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isExternalActionAuthorizationBoundToEnvelope, encodeReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, isManagedControllerCodecActionV1, ExternalActionRequesterInvocationV1Schema,
+import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActionCodecV1, isManagedControllerCodecActionV1, isTelemetryCollectorKeyPinRequiredV1, ExternalActionRequesterInvocationV1Schema,
     type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
@@ -120,6 +123,25 @@ function projectActionMachine(source: (Pick<MachinePublishedRowV1, 'id' | 'kind'
 }
 
 /** Account discovery has content; validate the canonical identity projection. */
+/** The reader's own Home header read and Artifact opener supply Environment collector pins. */
+function createTelemetryCollectorKeyPinPorts(account: LazyActionAccountContext, signal?: AbortSignal): TelemetryCollectorKeyPinPortsV1 {
+    return {
+        listEnvironments: async environmentIds => {
+            const transport = getActionSpec('deployments.environments.list').serverTransport;
+            if (!transport || !account.serverIdentityId) return [];
+            const { path } = bindHomeDomainHttpRequestV1({ transport, inputSchema: DeploymentEnvironmentListInputV1Schema,
+                input: { serverId: account.serverIdentityId, environmentIds: [...environmentIds] } });
+            const response = await account.request(path, { method: 'GET', ...(signal ? { signal } : {}) },
+                { includeAuth: true, retry: 'none' });
+            const page = DeploymentEnvironmentListResultV1Schema.safeParse(await response.json().catch(() => undefined));
+            account.assertCurrent();
+            return response.ok && page.success && page.data.ok ? page.data.items : [];
+        },
+        readArtifacts: async artifactIds => (await account.readArtifactContents(artifactIds, { ...(signal ? { signal } : {}) }))
+            .map(read => read.status === 'fulfilled' ? read.value : null),
+    };
+}
+
 export async function readOriginalAccountActionMachine(account: LazyActionAccountContext, machineId: string, signal?: AbortSignal) {
     const readTransport = account.readTransport;
     if (!readTransport) return null;
@@ -293,9 +315,21 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
             const telemetryKey = telemetryRead ? telemetryReadInstallationPublicKey : undefined;
             const installationPublicKey = telemetryKey ? decodeBase64(telemetryKey, 'base64url') : custody?.installationPublicKey;
             if (!installationPublicKey || wake) return failure('admission_unavailable');
-            executionAuthorization = sealManagedControllerActionCodecV1({ authorization: executionAuthorization,
-                material: codecMaterial, installationPublicKey, randomBytes: getRandomBytes,
-                ...(params.invocation ? { invocation: params.invocation } : {}) });
+            try {
+                // The sealing owner refuses a Home-delivered key its Environment content does not pin.
+                const collectorKeyPins = telemetryRead && isTelemetryCollectorKeyPinRequiredV1(root)
+                    ? await readTelemetryCollectorKeyPinsV1(telemetryRead.telemetryCollector.environmentIds,
+                        createTelemetryCollectorKeyPinPorts(account, params.signal)) : undefined;
+                account.assertCurrent();
+                executionAuthorization = sealManagedControllerActionCodecV1({ authorization: executionAuthorization,
+                    material: codecMaterial, installationPublicKey, randomBytes: getRandomBytes,
+                    ...(collectorKeyPins ? { collectorKeyPins } : {}),
+                    ...(params.invocation ? { invocation: params.invocation } : {}) });
+            } catch (error) {
+                const refused = parseActionExecuteFailure(error);
+                if (refused) return refused;
+                throw error;
+            }
         } else if (custody && (foreignGuest || wake || params.invocation)) {
             account.assertCurrent();
             params.signal?.throwIfAborted();
