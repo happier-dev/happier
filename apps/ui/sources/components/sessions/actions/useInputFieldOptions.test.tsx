@@ -115,6 +115,7 @@ function MixedOptionsProbe(props: Readonly<{ serverId: string; workflow: string;
 
 function OptionsProbe(props: Readonly<{ serverId: string; workflow: string; restricted?: boolean;
     visible?: boolean; query?: string; cursor?: string;
+    requestField?: typeof field;
     observe?: (options: ReturnType<typeof useInputFieldOptions>) => void }>) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const selectedField = props.restricted ? { ...field, options: [
@@ -122,7 +123,7 @@ function OptionsProbe(props: Readonly<{ serverId: string; workflow: string; rest
         { value: { repositoryId: 'outside-resource' }, label: 'Outside Resource' },
     ] } : field;
     const options = useInputFieldOptions({ serverId: props.serverId, machineId: 'controller-a', enabled: !!binding && props.visible !== false, accountLifetime: binding,
-        requests: [{ field: selectedField, consumer: { kind: 'workflow', workflow: props.workflow }, draftInput: {},
+        requests: [{ field: props.requestField ?? selectedField, consumer: { kind: 'workflow', workflow: props.workflow }, draftInput: {},
             ...(props.query === undefined ? {} : { query: props.query }), ...(props.cursor === undefined ? {} : { cursor: props.cursor }) }] });
     const state = options.state(selectedField);
     props.observe?.(options);
@@ -407,15 +408,19 @@ describe('qualified input field options scope', () => {
                 : { ...reply('First repository'), nextCursor: 'second' };
         });
         let observed: ReturnType<typeof useInputFieldOptions> | undefined;
+        let descriptorReads = 0;
+        const requestField = { ...field, get optionsDraftDependencies() { descriptorReads += 1; return undefined; } };
         const body = (visible: boolean, cursor?: string) => <OptionsProbe serverId={target} workflow={workflow}
-            visible={visible} query="review" cursor={cursor} observe={options => { observed = options; }} />;
+            visible={visible} query="review" cursor={cursor} requestField={requestField} observe={options => { observed = options; }} />;
         const screen = await renderScreen(body(false));
         try {
             await flushHookEffects({ cycles: 10 });
             expect(rpc.read).not.toHaveBeenCalled();
+            expect.soft(descriptorReads).toBe(0);
             await screen.update(body(true));
             await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('First repository'));
             expect(observed!.state(field)).toMatchObject({ status: 'ready', nextCursor: 'second' });
+            expect(descriptorReads).toBeGreaterThan(0);
             expect(rpc.read).toHaveBeenCalledTimes(1);
             await screen.update(body(true, 'second'));
             await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Second repository'));
@@ -423,6 +428,7 @@ describe('qualified input field options scope', () => {
             expect(rpc.read).toHaveBeenCalledTimes(2);
             await screen.update(body(true, 'pending'));
             await waitForHomeGovernance(() => expect(pendingSignal).toBeDefined());
+            descriptorReads = 0;
             await screen.update(body(false, 'pending'));
             await flushHookEffects({ cycles: 10 });
             expect(pendingSignal!.aborted).toBe(true);
@@ -438,6 +444,7 @@ describe('qualified input field options scope', () => {
             await act(async () => observed!.retry());
             await flushHookEffects({ cycles: 10 });
             expect(rpc.read).toHaveBeenCalledTimes(3);
+            expect.soft(descriptorReads).toBe(0);
             expect(pendingSignal!.aborted).toBe(true);
             rpc.read.mockResolvedValue(reply('Current repository after reopen'));
             await screen.update(body(true));
