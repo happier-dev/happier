@@ -266,6 +266,8 @@ export { PluginCollectionSchemaVersionV1Schema, type PluginCollectionSchemaVersi
 /** Static, descriptor-only contribution. Runtime collection registration is intentionally absent. */
 export const PluginAccountCollectionContributionV1Schema = lazyZodSchema(() => z.strictObject({
   id: asProtocolZod(PluginContributionLocalIdSchema),
+  /** Same-plugin surface destination for a shared row outside the plugin's own UI. */
+  sharedRowDestination: z.optional(asProtocolZod(PluginContributionLocalIdSchema)),
   schemaVersion: PluginCollectionSchemaVersionV1Schema,
   schema: PluginCollectionSchemaV1Schema,
   rowIdField: z._default(PluginCollectionMemberNameV1Schema, 'id'),

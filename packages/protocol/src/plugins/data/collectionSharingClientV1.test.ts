@@ -3,6 +3,9 @@ import { randomBytes } from 'node:crypto';
 import { ed25519, x25519 } from '@noble/curves/ed25519';
 import { bytesToHex } from '@noble/hashes/utils';
 import { createPluginCollectionSharingClientV1 } from './collectionSharingClientV1.js';
+import { createActionExecutor } from '../../actions/actionExecutor.js';
+import { createPluginCollectionSharingActionExecuteV1 } from './collectionSharingActionsV1.js';
+import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 } from './collectionSharingActionIdsV1.js';
 import { normalizePluginAccountCollectionContractV1, type PluginCollectionMutationErrorV1 } from './collectionsV1.js';
 import { encodePluginCollectionLogicalValueV1 } from './collectionLogicalCodecV1.js';
 import { PluginCollectionSharingListRequestV1Schema, PluginCollectionSharingPutRequestV1Schema, PluginCollectionSharingSetGrantRequestV1Schema, type PluginCollectionSharingResourceV1 } from './collectionSharingV1.js';
@@ -71,7 +74,7 @@ describe('Collection sharing client through authenticated transport', () => {
       .rejects.toMatchObject({ code: 'collection_content_unavailable' });
   });
 
-  it.each(['plain', 'e2ee'] as const)('shares, reads, edits with revision assertions, and refuses revoked %s content', async mode => {
+  it.each(['plain', 'e2ee'] as const)('preserves Team scope while sharing, listing, editing, and revoking %s content', async mode => {
     const owner = recipient('owner'), peer = recipient('peer');
     const material = { type: 'legacy' as const, secret: randomBytes(32) };
     const value = { id: 'document', title: 'Visible title', note: 'Private note' };
@@ -120,7 +123,10 @@ describe('Collection sharing client through authenticated transport', () => {
         const projected = { ...resource, access: accountId === 'owner' ? 'owner' : 'edit', encryptedDataKey: wraps.get(accountId) ?? null };
         if (path.endsWith('/shared-with-me')) {
           const selected = PluginCollectionSharingListRequestV1Schema.parse(body);
-          return { status: 200, body: { resources: selected.sharedWithTeamId === 'selected-team' ? [projected] : [], nextCursor: null } };
+          return { status: 200, body: {
+            resources: selected.sharedWithTeamId === 'selected-team' ? [{ ...projected, sharedWithTeamScope: 'group' }] : [],
+            nextCursor: null,
+          } };
         }
         return { status: 200, body: projected };
       },
@@ -130,7 +136,18 @@ describe('Collection sharing client through authenticated transport', () => {
     await expect(ownerClient.setGrant('document', { principal: { kind: 'account', accountId: 'peer' }, accessLevel: 'edit', expectedRevision: 1 })).resolves.toEqual({ changed: true });
     const shared = await peerClient.get({ ownerAccountId: 'owner', rowId: 'document' });
     expect(shared).toMatchObject({ ownerAccountId: 'owner', access: 'edit', value });
-    expect((await peerClient.sharedWithMe({ sharedWithTeamId: 'selected-team' })).rows).toEqual([shared]);
+    const executor = createActionExecutor({ pluginCollectionSharingAction: createPluginCollectionSharingActionExecuteV1({
+      resolveClient: async () => peerClient,
+    }) });
+    const { pluginId, collectionId, schemaVersion, contractDigest } = contract;
+    const collectionRef = { pluginId, collectionId, schemaVersion, contractDigest };
+    const listId = PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1.list;
+    await expect(executor.execute(listId, { collectionRef, sharedWithTeamId: 'selected-team' },
+      { surface: 'ui', authority: 'present_user' })).resolves.toEqual({
+      ok: true, result: { rows: [{ ...shared, sharedWithTeamScope: 'group' }] },
+    });
+    await expect(executor.execute(listId, { collectionRef, sharedWithTeamId: 'another-team' },
+      { surface: 'ui', authority: 'present_user' })).resolves.toEqual({ ok: true, result: { rows: [] } });
     const edited = await peerClient.put({ ownerAccountId: 'owner', value: { ...value, note: 'Edited privately' }, expectedRevision: shared.revision });
     expect(edited.value.note).toBe('Edited privately');
     await expect(peerClient.put({ ownerAccountId: 'owner', value, expectedRevision: shared.revision })).rejects.toMatchObject({ code: 'collection_revision_conflict' });

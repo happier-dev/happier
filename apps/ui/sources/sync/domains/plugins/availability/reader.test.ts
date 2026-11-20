@@ -2491,7 +2491,7 @@ describe('Plugin Account Availability reader', () => {
         });
     });
 
-    it('projects an exact Collection ref for server admission without deciding digest compatibility', () => {
+    it('projects an exact Collection ref and its declared destination without deciding digest compatibility', () => {
         const ref = {
             pluginId: 'com.acme.fixture',
             collectionId: 'tasks',
@@ -2499,6 +2499,8 @@ describe('Plugin Account Availability reader', () => {
             contractDigest: 'A'.repeat(43),
         };
         const response = intentRead();
+        if (!response.release) throw new Error('expected a portable release');
+        const manifest = response.release.normalizedManifest;
         const reader = createPluginAccountAvailabilityReader({
             scope,
             snapshot: {
@@ -2507,9 +2509,22 @@ describe('Plugin Account Availability reader', () => {
                     pluginId: 'com.acme.fixture',
                     response: {
                         ...response,
-                        release: response.release
-                            ? { ...response.release, collectionContracts: [ref] }
-                            : null,
+                        release: {
+                            ...response.release,
+                            collectionContracts: [ref],
+                            normalizedManifest: {
+                                ...manifest,
+                                contributes: {
+                                    ...manifest.contributes,
+                                    accountCollections: [{
+                                        id: ref.collectionId, schemaVersion: ref.schemaVersion, sharedRowDestination: 'task-reader',
+                                        schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
+                                        rowIdField: 'id', serverReadable: ['title'], indexes: [], uiQueries: [], relations: [],
+                                        migrations: [], identityFields: [],
+                                    }],
+                                },
+                            },
+                        },
                     },
                 }],
             },
@@ -2522,6 +2537,7 @@ describe('Plugin Account Availability reader', () => {
             kind: 'available',
             availabilityCursor: 42,
             ref,
+            sharedRowDestination: 'task-reader',
         });
         expect(reader.readCurrentCollectionContract({
             pluginId: 'com.acme.fixture',
@@ -2530,7 +2546,7 @@ describe('Plugin Account Availability reader', () => {
         const retained = { ...ref, contractDigest: `${'B'.repeat(42)}A` };
         expect(reader.readCurrentCollectionContract({
             pluginId: ref.pluginId, collectionId: ref.collectionId, ref: retained,
-        })).toEqual({ kind: 'available', availabilityCursor: 42, ref: retained });
+        })).toEqual({ kind: 'available', availabilityCursor: 42, ref: retained, sharedRowDestination: 'task-reader' });
         expect(reader.readCurrentCollectionContract({
             pluginId: 'com.acme.fixture',
             collectionId: 'projects',

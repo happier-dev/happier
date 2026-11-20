@@ -26,7 +26,10 @@ const rowOutput = lazyZodSchema(() => z.strictObject({
   ...z.pick(PluginCollectionSharingResourceV1Schema.shape.row, { rowId: true, revision: true }).shape,
   value: AccountDataCollectionValueV1Schema,
 }));
-const listOutput = lazyZodSchema(() => z.strictObject({ rows: z.array(rowOutput), nextCursor: z.optional(z.string()) }));
+const listOutput = lazyZodSchema(() => z.strictObject({
+  rows: z.array(z.extend(rowOutput, { sharedWithTeamScope: PluginCollectionSharingResourceV1Schema.shape.sharedWithTeamScope })),
+  nextCursor: z.optional(z.string()),
+}));
 const grantsOutput = lazyZodSchema(() => z.pick(PluginCollectionSharingGrantsResponseV1Schema, { ownerAccountId: true, access: true, grants: true }));
 
 export const PluginCollectionSharingActionInputSchemasV1 = {

@@ -148,6 +148,24 @@ const retiredAccountLifetime: ActiveServerAccountScopeLifetime = Object.freeze({
 });
 
 describe('plugin surface destination navigation', () => {
+    it('opens an account-scoped shared row only in its own Account', async () => {
+        const accountLifetime = { ...retiredAccountLifetime, isCurrent: () => true };
+        const appPage = placement({ container: 'appPage' });
+        const open = vi.fn(async () => ({ ok: true as const }));
+        const binding = createPluginSurfaceDestinationNavigationBinding({ placements: [appPage], targetKind: 'app', accountLifetime });
+        binding.registerOwner({ container: 'appPage', handler: open });
+        const request = {
+            destination,
+            input: { pluginId: destination.pluginId, collectionId: 'documents', ownerAccountId: 'owner', rowId: 'doc-1' },
+        };
+
+        await expect(binding.openSurface(request, { ...accountLifetime.scope, accountId: 'other' }))
+            .resolves.toMatchObject({ ok: false, reason: 'plugin_surface_open_origin_unavailable' });
+        expect(open).not.toHaveBeenCalled();
+        await expect(binding.openSurface(request, accountLifetime.scope)).resolves.toEqual({ ok: true });
+        expect(open).toHaveBeenCalledWith(expect.objectContaining({ request }));
+    });
+
     it('registers the current owner before descendant layout navigation on mount and replacement', async () => {
         const appPage = placement({ container: 'appPage' });
         const firstOwner = vi.fn(async () => ({ ok: true as const }));

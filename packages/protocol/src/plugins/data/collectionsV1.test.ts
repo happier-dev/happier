@@ -110,6 +110,23 @@ const baseCollection = {
   }],
 } as const;
 
+it('admits a local shared-row destination without changing the Collection contract', () => {
+  const pluginId = 'example.tasks';
+  const original = PluginAccountCollectionContributionV1Schema.parse(baseCollection);
+  const withDestination = PluginAccountCollectionContributionV1Schema.parse({
+    ...baseCollection,
+    sharedRowDestination: 'task-details',
+  });
+
+  expect(withDestination.sharedRowDestination).toBe('task-details');
+  expect(normalizePluginAccountCollectionContractV1({ pluginId, contribution: withDestination }).contractDigest)
+    .toBe(normalizePluginAccountCollectionContractV1({ pluginId, contribution: original }).contractDigest);
+  expect(PluginAccountCollectionContributionV1Schema.safeParse({
+    ...baseCollection,
+    sharedRowDestination: 'https://example.com/task-details',
+  }).success).toBe(false);
+});
+
 function collectionRef(contract: Readonly<{
   pluginId: string;
   collectionId: string;

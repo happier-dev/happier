@@ -305,6 +305,7 @@ export type PluginAccountAvailabilityCollectionContractAdmission =
         kind: 'available';
         availabilityCursor: number;
         ref: PluginCollectionContractRefV1;
+        sharedRowDestination?: string;
     }>
     | Readonly<{
         kind: 'unavailable';
@@ -1707,6 +1708,7 @@ function readCurrentCollectionContractAdmission(
         availabilityCursor: number;
         enabled: boolean;
         contracts: readonly PluginCollectionContractRefV1[];
+        manifest?: PluginPortableReleaseManifestV1;
     }>;
     if (claimed) {
         current = {
@@ -1723,6 +1725,7 @@ function readCurrentCollectionContractAdmission(
             availabilityCursor: release.availabilityCursor,
             enabled: release.intent.enabled,
             contracts: release.release.collectionContracts,
+            manifest: release.release.normalizedManifest,
         };
     }
     if (!current.enabled) {
@@ -1749,12 +1752,17 @@ function readCurrentCollectionContractAdmission(
     if (ref.pluginId !== input.pluginId || ref.collectionId !== input.collectionId) {
         return Object.freeze({ kind: 'unavailable', code: 'collection_not_current' });
     }
+    const manifest = bundle ? bundle.normalizedManifest : current.manifest;
+    const sharedRowDestination = manifest?.contributes?.accountCollections?.find(
+        declaration => declaration.id === ref.collectionId,
+    )?.sharedRowDestination;
     // Data resolves compatibility and read/write access for this exact ref.
     // Availability never substitutes the current writer's digest for a caller.
     return Object.freeze({
         kind: 'available',
         availabilityCursor: current.availabilityCursor,
         ref: Object.freeze({ ...ref }),
+        ...(sharedRowDestination === undefined ? {} : { sharedRowDestination }),
     });
 }
 

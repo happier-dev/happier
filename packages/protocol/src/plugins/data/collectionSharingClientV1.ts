@@ -156,7 +156,10 @@ export function createPluginCollectionSharingClientV1<TValue extends PluginColle
       const rows = await Promise.all(result.resources.map(async resource => {
         const opened = await open(resource);
         await prepareRecipients(opened);
-        return opened.logical;
+        return {
+          ...opened.logical,
+          ...(resource.sharedWithTeamScope === undefined ? {} : { sharedWithTeamScope: resource.sharedWithTeamScope }),
+        };
       }));
       return { rows, ...(result.nextCursor === null ? {} : { nextCursor: result.nextCursor }) };
     },

@@ -37,7 +37,7 @@ import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
 } from '@/sync/domains/scope/activeServerAccountScope';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /**
  * The one normalized result of an admitted `openSurface` destination lookup.
@@ -190,7 +190,7 @@ export type PluginSurfaceDestinationNavigationBinding = Readonly<{
      */
     readonly targetKind: PluginUiTargetKindV1;
     readonly projection?: PluginUiProjectionModel | null;
-    openSurface: PluginSurfaceOpenHandler;
+    openSurface(request: PluginSurfaceOpenRequest, sourceAccount?: ServerAccountScope): ReturnType<PluginSurfaceOpenHandler>;
     /**
      * Existing route/pane/details/settings owners register their exact
      * container adapter. More than one active adapter for a container is a
@@ -441,8 +441,11 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
         };
     };
 
-    const openSurface: PluginSurfaceOpenHandler = async (request) => {
+    const openSurface: PluginSurfaceDestinationNavigationBinding['openSurface'] = async (request, sourceAccount) => {
         const input = readInput();
+        if (sourceAccount && !areServerAccountScopesEqual(sourceAccount, input.accountLifetime?.scope)) {
+            return unavailable('plugin_surface_open_origin_unavailable');
+        }
         const resolved = resolvePluginSurfaceDestinationOpen({
             placements: input.placements,
             ...(input.settingsPages === undefined ? {} : { settingsPages: input.settingsPages }),
