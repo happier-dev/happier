@@ -148,7 +148,7 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
   expect(packed.ok).toBe(true);
   if (!packed.ok) throw new Error('Collection fixture package was refused');
   const { archivePath, archiveIntegrity } = packed;
-  async function selectCollectionPlugin(account: Account, daemon: typeof machine) {
+  const selectCollectionPlugin = async (account: Account, daemon: typeof machine) => {
     const installed = await daemonControlPostJson<PluginChangeRequestResult>({ port: daemon.daemon.state.httpPort,
       controlToken: daemon.daemon.state.controlToken, path: '/plugins/change/request',
       body: { kind: 'installArchive', locator: archivePath, expectedIntegrity: archiveIntegrity } });
@@ -162,7 +162,7 @@ it('a late Team joiner opens existing encrypted shares; departed members and out
     expect(await account.executeAsPerson('plugins.account.release.select', { pluginId, version: manifest.version,
       daemon: { serverId: home.serverId, serverIdentityId: home.serverId, machineId: daemon.target.machineId } }))
       .toMatchObject({ ok: true, result: { kind: 'selected' } });
-  }
+  };
   await selectCollectionPlugin(owner, machine);
   // Every reader knows the same declared Collection contract. In particular,
   // outsider refusal must prove resource authorization, not a missing plugin.
