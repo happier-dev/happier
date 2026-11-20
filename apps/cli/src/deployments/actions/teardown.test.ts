@@ -114,12 +114,15 @@ describe('teardown operation custody', () => {
         if (!absent) expect(writes).toBe(0);
     });
     it.each([
-        { machineCount: 1, resuming: false, cancel: false },
-        { machineCount: 3, resuming: false, cancel: false },
-        { machineCount: 1, resuming: true, cancel: false },
-        { machineCount: 1, resuming: false, cancel: true },
-        { machineCount: 1, resuming: true, cancel: true },
-    ])('reads cancellation once at each effect boundary ($machineCount Machines, resuming=$resuming, cancel=$cancel)', async ({ machineCount, resuming, cancel }) => {
+        { machineCount: 1, resuming: false, change: undefined },
+        { machineCount: 3, resuming: false, change: undefined },
+        { machineCount: 1, resuming: true, change: undefined },
+        { machineCount: 1, resuming: false, change: 'cancelBeforeEffect' },
+        { machineCount: 1, resuming: true, change: 'cancelBeforeEffect' },
+        { machineCount: 1, resuming: false, change: 'cancelBetweenSteps' },
+        { machineCount: 1, resuming: false, change: 'intentBeforeEffect' },
+        { machineCount: 1, resuming: false, change: 'staleRevision' },
+    ] as const)('reads Home at each teardown effect boundary ($machineCount Machines, resuming=$resuming, change=$change)', async ({ machineCount, resuming, change }) => {
         const environment = createDeploymentEnvironmentDetailV1();
         const link = environment.targetLinks[0].targetLink;
         link.members = Array.from({ length: machineCount }, (_, index) => ({
@@ -137,23 +140,45 @@ describe('teardown operation custody', () => {
                     state: 'running', resources: [] }] : [] } } });
         let reads = 0;
         let effects = 0;
-        let cancelPending = false;
+        let updateAfterWrite = false;
+        let observations = 0;
         // Home receipt reads/writes and native effects are the system boundaries.
         const execute = createDeploymentTeardownExecutor({ serverId: 'home', machineId: link.machines[0],
             readEnvironment: async () => environment,
             readReceipt: async () => {
                 reads++;
-                if (cancelPending) receipt = { ...receipt, deployment: { ...receipt.deployment, cancelRequestedAtMs: 1000 } };
+                if (updateAfterWrite) {
+                    updateAfterWrite = false;
+                    if (change === 'intentBeforeEffect') {
+                        receipt = { ...receipt, content: { ...receipt.content,
+                            teardown: { ...receipt.content.teardown!, targetLinkRevision: link.revision + 1 } } };
+                    } else {
+                        receipt = { ...receipt, deployment: { ...receipt.deployment, cancelRequestedAtMs: 1000 } };
+                    }
+                }
                 return receipt;
             },
             writeTransition: async transition => {
+                if (transition.expectedRevision !== receipt.deployment.revision) {
+                    return { ok: false, errorCode: 'deployment_conflict', error: 'Home rejected stale revision' };
+                }
                 receipt = createDeploymentReceiptDetailV1({ deployment: { ...receipt.deployment,
                     revision: receipt.deployment.revision + 1, state: transition.state }, content: transition.content });
+                if (change === 'cancelBetweenSteps' && effects === 1) updateAfterWrite = true;
                 return { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
                     deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state };
             },
-            boundary: { observe: async () => { cancelPending = cancel; return { kind: 'needed' }; },
-                execute: async () => { effects++; return { kind: 'proved', resources: [] }; } } });
+            boundary: {
+                observe: async () => {
+                    observations++;
+                    if (change === 'cancelBeforeEffect' || change === 'intentBeforeEffect') updateAfterWrite = true;
+                    if (change === 'staleRevision') receipt = { ...receipt, deployment: {
+                        ...receipt.deployment, revision: receipt.deployment.revision + 1,
+                    } };
+                    return { kind: 'needed' };
+                },
+                execute: async () => { effects++; return { kind: 'proved', resources: [] }; },
+            } });
         const result = await execute({ actionId: 'deployments.teardown', input: { serverId: 'home',
             environmentId: environment.environment.id, targetLinkId: link.id, expectedRevision: environment.environment.revision,
             expectedTargetLinkRevision: link.revision, requestKey: receipt.deployment.requestKey, reason: 'manual',
@@ -161,11 +186,21 @@ describe('teardown operation custody', () => {
             receipt: { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: 'running' },
             context: { surface: 'cli', operationAcceptance: { operationId: 'remove-operation', accept() {} } } });
-        expect(result).toMatchObject(cancel ? { ok: false, errorCode: 'cancelled' } : { ok: true, state: 'succeeded' });
+        if (change === 'cancelBeforeEffect' || change === 'cancelBetweenSteps') {
+            expect(result).toMatchObject({ ok: false, errorCode: 'cancelled' });
+        } else if (change) {
+            expect(result).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+        } else {
+            expect(result).toMatchObject({ ok: true, state: 'succeeded' });
+        }
         const steps = machineCount * DEPLOYMENT_TEARDOWN_STEPS_V1.length;
-        expect(effects).toBe(cancel ? 0 : steps);
-        // Initial receipt, then step admission, started proof and completed proof.
-        expect(reads).toBe(cancel ? 3 : 1 + 3 * steps);
+        expect(effects).toBe(change === 'cancelBetweenSteps' ? 1 : change ? 0 : steps);
+        expect(observations).toBe(change ? 1 : steps);
+        if (!change) {
+            // Initial receipt and first step admission, then one read after
+            // each running and completed proof, including across Machines.
+            expect(reads).toBe(2 + 2 * steps);
+        }
     });
     it.each([true, false])('settles final Environment removal from the signed Home response (accepted=%s)', async accepted => {
         const environment = createDeploymentEnvironmentDetailV1();

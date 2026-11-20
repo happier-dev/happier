@@ -105,10 +105,17 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
             deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state });
         if (receipt.deployment.state === 'succeeded' || receipt.deployment.state === 'cancelled') return result();
         const resumed = await resumeDeploymentTeardownReceiptForHost({ request, receipt, writeTransition: host.writeTransition });
-        if (resumed) {
-            if (!resumed.ok) return resumed;
-            receipt = await read();
-        }
+        if (resumed && !resumed.ok) return resumed;
+        receipt = await read();
+        const intentBasis = { ...intent, proofs: [] };
+        const checkCheckpoint = () => {
+            if (receipt.deployment.cancelRequestedAtMs !== undefined || receipt.deployment.state === 'cancelled'
+                || request.context.signal?.aborted) return failure('cancelled');
+            if (!receipt.content.teardown || !isDeepStrictEqual({ ...receipt.content.teardown, proofs: [] }, intentBasis)) {
+                return failure('deployment_conflict');
+            }
+            return null;
+        };
 
         const write = async (state: OwnServerDeploymentTransition['state'], proof?: DeploymentTeardownStepProofV1,
             recordedFailure?: DeploymentReceiptDetailV1['content']['failure']) => {
@@ -157,13 +164,10 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
         };
         for (const member of intent.machines) {
             for (const step of DEPLOYMENT_TEARDOWN_STEPS_V1) {
-                const fresh = await read();
-                if (fresh.deployment.cancelRequestedAtMs !== undefined || fresh.deployment.state === 'cancelled'
-                    || request.context.signal?.aborted) return failure('cancelled');
-                if (!fresh.content.teardown || !isDeepStrictEqual({ ...fresh.content.teardown, proofs: [] }, { ...intent, proofs: [] })) {
-                    return failure('deployment_conflict');
-                }
-                receipt = fresh;
+                // Each checkpoint write refreshes the receipt. Carry that
+                // read into the next step, including across Machines.
+                const invalidCheckpoint = checkCheckpoint();
+                if (invalidCheckpoint) return invalidCheckpoint;
                 const prior = receipt.content.teardown!.proofs.find(proof => proof.machineId === member.machineId && proof.step === step);
                 const resources = selectDeploymentTeardownStepResources({ resources: intent.resources, step,
                     machineId: member.machineId, allMachines: intent.machines.length === link.machines.length });
@@ -190,8 +194,8 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
                 if (observed.kind === 'needed') {
                     const started = await write('running', { step, ...member, state: 'running', resources: [] });
                     if (started) return started;
-                    if (receipt.deployment.cancelRequestedAtMs !== undefined || receipt.deployment.state === 'cancelled'
-                        || request.context.signal?.aborted) return failure('cancelled');
+                    const interrupted = checkCheckpoint();
+                    if (interrupted) return interrupted;
                     try { observed = await boundary.execute(operation); }
                     catch (error) {
                         failureCause = normalizeActionExecutorThrownError(error, 'deployment.teardown.execute').failureCause;
