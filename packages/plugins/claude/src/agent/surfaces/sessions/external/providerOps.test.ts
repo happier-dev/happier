@@ -181,6 +181,7 @@ describe('Claude native External Sessions contribution', () => {
         });
         expect(Object.keys(contribution).sort()).toEqual([
             'listCandidates',
+            'materializeTranscriptMedia',
             'pageTranscript',
             'readAccounting',
             'readAfterTranscript',
@@ -1278,7 +1279,8 @@ describe('Claude native External Sessions contribution', () => {
         const ordinary = await contribution.readAfterTranscript(request);
         if (!ordinary.ok || ordinary.value.outcome !== 'advanced') throw new Error('expected ordinary items');
         expect(ordinary.value.items.every((item) => item.raw.role === 'user' || item.raw.role === 'agent')).toBe(true);
-        expect(ordinary.value.items).toHaveLength(5);
+        expect(ordinary.value.items).toHaveLength(4);
+        expect(JSON.stringify(ordinary.value.items)).not.toContain('compact summary');
         const page = await contribution.pageTranscript({ ...invocation(), source, remoteSessionId, direction: 'older', maxItems: 50 });
         if (!page.ok) throw new Error('expected browse items');
         expect(page.value.items.every((item) => item.raw.role === 'user' || item.raw.role === 'agent')).toBe(true);

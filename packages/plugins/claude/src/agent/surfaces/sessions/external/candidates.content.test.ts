@@ -294,20 +294,27 @@ describe('Claude candidate conversation search', () => {
             expect(page.candidates).toMatchObject([{ match: { messageIndex: 1, snippet: expect.stringContaining(query) } }]);
         }
     });
-    it('keeps peer bodies, compact summaries and shell text searchable after narrowing admission', async () => {
+    it('finds peer bodies and shell text without exposing hidden compact summaries', async () => {
         const params = await corpus();
         const path = join(params.source.configDir, 'projects', 'project', 'session.jsonl');
         for (const [query, row] of [
             // The sender is presentation provenance beside the delivered body, not body text.
             ['ordinary body', { origin: { kind: 'peer', name: 'sender' }, message: { role: 'user', content: 'ordinary body' } }],
-            ['needle', { isCompactSummary: true, message: { role: 'user', content: 'nee\u001b[31mdle' } }],
-            ['multiple words', { isCompactSummary: true, message: { role: 'user', content: 'multiple\n\twords' } }],
             ['!echo', { message: { role: 'user', content: '<bash-input>echo</bash-input>' } }],
         ] as const) {
             await writeFile(path, JSON.stringify({ type: 'user', uuid: 'visible', parentUuid: null, ...row }) + '\n');
             await expect(listClaudeExternalSessionCandidates({ ...params, searchTerm: query }))
                 .resolves.toMatchObject({ candidates: [{ match: { messageIndex: 0, snippet: expect.stringContaining(query) } }] });
         }
+        await writeFile(path, [
+            { type: 'user', uuid: 'visible', parentUuid: null, message: { role: 'user', content: 'Visible prompt' } },
+            { type: 'user', uuid: 'compact', parentUuid: 'visible', isCompactSummary: true,
+                message: { role: 'user', content: 'Hidden compact summary' } },
+        ].map(row => JSON.stringify(row)).join('\n') + '\n');
+        await expect(listClaudeExternalSessionCandidates({ ...params, searchTerm: 'Visible prompt' }))
+            .resolves.toMatchObject({ candidates: [{ match: { messageIndex: 0 } }] });
+        await expect(listClaudeExternalSessionCandidates({ ...params, searchTerm: 'Hidden compact summary' }))
+            .resolves.toMatchObject({ candidates: [] });
     });
     it('decodes generated fallback matches even when their text is absent from the native file', async () => {
         const params = await corpus();

@@ -81,7 +81,7 @@ describe('Claude JSONL projection', () => {
             match: matchedItem ? { itemIndex: matchingItemIndex, sourceItemId: matchedItem.id, snippet: expect.stringContaining(query) } : null });
         expect(summary.itemCount).toBe(full.items.length);
     });
-    it('projects image tool results without inline bytes while retaining text, tool correlation and the visible unsupported image', () => {
+    it('projects image tool results without inline bytes while retaining text, tool correlation and the image placeholder', () => {
         const bytes = 'A'.repeat(628_392);
         const projection = projectClaudeJsonlLineRecord({ fileRelPath: 'session.jsonl', lineStartOffsetBytes: 42,
             lineValue: { type: 'user', uuid: 'result', message: { role: 'user', content: [
@@ -92,17 +92,14 @@ describe('Claude JSONL projection', () => {
             ] }, toolUseResult: { type: 'image', file: { base64: bytes, type: 'image/png', width: 20, height: 10 } } },
         });
         expect(JSON.stringify(projection).includes(bytes)).toBe(false);
-        expect(projection.disposition).toBe('unsupported');
-        expect(projection.items).toEqual(expect.arrayContaining([
+        expect(projection.disposition).toBe('mapped');
+        expect(projection.items).toEqual([
             expect.objectContaining({ messageRole: 'event', raw: { role: 'agent', content: {
                 type: 'acp', agentId: 'claude', data: expect.objectContaining({ type: 'tool-result', callId: 'read-image',
-                    output: expect.objectContaining({ content: expect.arrayContaining([{ type: 'text', text: 'Image caption' }]),
+                    output: expect.objectContaining({ content: [{ type: 'text', text: 'Image caption' }, { type: 'image' }],
                         tool_use_result: { type: 'image', file: { type: 'image/png', width: 20, height: 10 } } }) }),
             } } }),
-            expect.objectContaining({ messageRole: 'agent', raw: { role: 'agent', content: {
-                type: 'acp', agentId: 'claude', data: { type: 'message', message: 'Claude emitted an unsupported image content block.' },
-            } } }),
-        ]));
+        ]);
     });
     it.each([
         { type: 'cost-state', sessionId: 'native', totalCostUSD: 0, modelUsage: {}, hasUnknownModelCost: false },
