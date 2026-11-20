@@ -1869,7 +1869,7 @@ test('queue positions advance on existing passes and unchanged waiters stay sile
   assert.equal(notices.length, 5, 'unchanged positions do not produce catch-up log spam');
 });
 
-test('each admission ahead advances a connected waiter until it reaches the head and runs', linux, async t => {
+test('later arrivals in the same reload tier never move a waiting daemon back', linux, async t => {
   const notices = [];
   const nativeWrite = Socket.prototype.write;
   // Observe broker progress at the socket boundary; ordering and admission stay real.
@@ -1883,6 +1883,7 @@ test('each admission ahead advances a connected waiter until it reaches the head
   const { root, broker } = await fixture(t);
   const holder = await (await acquire(root, 100, t)).admit();
   const admissionsAhead = 2;
+  const reload = { ...priorityIdentity(root, 'producer'), preparesClass: 'source-reload' };
   const ahead = [];
   const barrier = async () => {
     const sample = await request(root, { kind: 'sample' });
@@ -1890,15 +1891,20 @@ test('each admission ahead advances a connected waiter until it reaches the head
     sample.socket.destroy();
   };
   for (let index = 0; index < admissionsAhead; index++) {
-    ahead.push(await acquire(root, 100, t));
+    ahead.push(await acquire(root, 100, t, reload));
     await barrier();
   }
-  const waiter = await acquire(root, 100, t);
+  const waiter = await acquire(root, 100, t, reload);
   await barrier();
   const waiterSocket = notices.at(-1).socket;
   const positions = () => notices.filter(notice => notice.socket === waiterSocket)
     .map(({ response }) => response.queuePosition);
   assert.deepEqual(positions(), [admissionsAhead + 1]);
+  for (let index = 0; index < 3; index++) {
+    await acquire(root, 100, t, reload);
+    await barrier();
+  }
+  assert.deepEqual(positions(), [3], 'new ranked work never rewrites the daemon’s queue position');
   let active = holder;
   for (const [index, client] of ahead.entries()) {
     await active.release();
@@ -1910,7 +1916,8 @@ test('each admission ahead advances a connected waiter until it reaches the head
   assert.deepEqual(positions(), [3, 2, 1]);
   await active.release();
   await waiter.admit();
-  assert.equal(broker.status().waitingCount, 0);
+  assert.equal(broker.status().waitingCount, 3,
+    'the original waiter starts before later requests in the same tier');
   assert.equal(broker.status().activeCount, 1, 'the original waiter runs when the head fits');
 });
 

@@ -483,6 +483,53 @@ test('recovering dependency drift does not publish a refusal before the producer
 });
 
 
+test('repo-dev default daemon startup enters the existing reload preparation tier', { skip: process.platform !== 'linux' }, async t => {
+  const childProcess = (await import('node:child_process')).default;
+  const { syncBuiltinESMExports } = await import('node:module');
+  const { prepareDevDaemonSourceRuntime } = await import('../utils/dev/daemon.mjs');
+  const { buildSourceRuntimeBundle } = await import('./build_source_runtime.mjs');
+  const files = await createTempFixture(t, { prefix: 'repo-dev-daemon-admission-' });
+  const repoDir = files.path('repo');
+  await mkdir(repoDir, { recursive: true });
+  await writeFile(join(repoDir, 'package.json'), '{}');
+  const stackName = 'repo-dev-a1cc5e0671';
+  const stackBaseDir = files.path('stacks/' + stackName);
+  const env = { HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: stackName };
+  const admissions = [];
+  const captureAdmission = (args, options) => {
+    const startup = args.indexOf('--dev-startup');
+    if (startup === -1) return;
+    admissions.push({
+      className: args[startup + 3],
+      preparesClass: options.env.HAPPIER_ADMISSION_PREPARES_CLASS,
+    });
+    throw Object.assign(new Error('captured producer admission'), { code: 'EPROBEADMISSION' });
+  };
+  const { fork, spawn } = childProcess;
+  t.mock.method(childProcess, 'fork', (entry, args, options) => {
+    if (args[0] === '--happier-foreground-custody') captureAdmission(JSON.parse(args[1]).args, options);
+    return fork(entry, args, options);
+  });
+  t.mock.method(childProcess, 'spawn', (command, args, options) => {
+    captureAdmission(args, options);
+    return spawn(command, args, options);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(prepareDevDaemonSourceRuntime({ sourceRuntimeOptions: { repoDir, stackBaseDir }, env },
+      { logger: { log() {} } }), error => error.reason === 'EPROBEADMISSION');
+    await assert.rejects(buildSourceRuntimeBundle({ repoDir, stackBaseDir, component: 'daemon', env }),
+      error => error.reason === 'EPROBEADMISSION');
+    assert.deepEqual(admissions, [
+      { className: 'source-bundle', preparesClass: 'source-reload' },
+      { className: 'source-bundle', preparesClass: undefined },
+    ]);
+  } finally {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
 test('shared database preflight refuses missing migrations before producer build admission', async t => {
   const { DatabaseSync } = await import('node:sqlite');
   const childProcess = (await import('node:child_process')).default;

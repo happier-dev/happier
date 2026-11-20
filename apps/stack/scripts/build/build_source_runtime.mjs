@@ -985,7 +985,7 @@ async function withSourceRuntimeWorkerResult(run) {
 /** QA adopts completed products. Only this repository producer request enters
  * the compiler owner, under the execution host's shared admission locks. */
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
-  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, sourceRevision,
+  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, sourceRevision, devStartup = false,
   requestBaseArchive, logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
@@ -1027,7 +1027,9 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     revisionArchivePath = revision?.descriptorPath ? await requestRevisionInstallArchive({ repoDir,
       descriptor: await readSourceRevisionDescriptor(revision.descriptorPath), treesRoot: sourceRevisionTreesRoot(context.producerStackBaseDir),
       requestBaseArchive, env: context.env, signal }) : null;
-    const admissionEnv = buildsCheckoutServer && requireCurrentSource && isRepoStackIdentityName(context.producerStackName)
+    const startsCheckoutDaemon = !revision && devStartup && components.some(component => component.component === 'daemon');
+    const admissionEnv = (buildsCheckoutServer || startsCheckoutDaemon) && requireCurrentSource
+      && isRepoStackIdentityName(context.producerStackName)
       ? { ...context.env, HAPPIER_ADMISSION_PREPARES_CLASS: SOURCE_RELOAD_ADMISSION_CLASS }
       : context.env;
     const response = await withSingleTrailingBuildPass({ run: async () => {

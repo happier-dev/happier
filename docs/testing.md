@@ -222,6 +222,8 @@ uses `source-reload` admission at producer priority, ahead of validation, focuse
 tests and typechecks. It retains the observed 17 GiB floor, validation disk
 budget and existing capacity checks. Priority never preempts
 active work. Reload coordinators still delegate admission to finite producers.
+The repo-dev producer's own current-checkout server and default-daemon startups
+inherit that precedence with their existing `source-bundle` resource envelope.
 A queued client retains its submitted class: relaunch it to adopt a changed
 classification. A long-lived broker must adopt updated priority policy too.
 
@@ -627,7 +629,7 @@ Existing broker processes load this change only on replacement through the
 client-owned socket succession path.
 
 In current 0.3 development, the Linux host admission broker owns capacity and
-FIFO ordering with head-floor reservation and backfill. CPU reservations share
+arrival order within each priority tier, with head-floor reservation and backfill. CPU reservations share
 that queue and each slot's lifetime with memory. The broker reads the OS's
 available logical-core count once at startup. Each offer pass subtracts held
 reservations and the current Linux runnable count, excluding the sampling broker
