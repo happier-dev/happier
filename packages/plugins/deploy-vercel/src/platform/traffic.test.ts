@@ -176,23 +176,28 @@ it.each([
 });
 
 it.each(['promote', 'rollback'] as const)('settles %s from the production target when Vercel reports no alias job', async operation => {
-  // Live: COR4B-VERCEL-1115 p-upload-project3.json after a rollback — lastAliasRequest null, production
-  // target already the restored deployment with its aliases assigned; Happier settled outcome_unknown.
+  // QA-SWEEP-172 #186: the production target has two aliases and the unique
+  // deployment URL requires sign-in. Traffic has settled without an alias job.
+  const aliases = ['fixture.vercel.app', 'fixture-team.vercel.app'];
   const production = (id: string) => ({ id, readyState: 'READY', readySubstate: 'PROMOTED', target: 'production',
-    alias: ['cor4b-upload-1115.vercel.app'], aliasAssigned: 1794771640971, aliasError: null });
+    url: 'fixture-47dexh5ej-team.vercel.app', alias: aliases, aliasAssigned: 1795138010275, aliasError: null });
   for (const [current, state] of [['dpl_prior', 'succeeded'], ['dpl_current', 'outcome_unknown']] as const) {
     const http = createPluginHttpFixture({ async request(request) {
       if (new URL(request.url).pathname === '/v13/deployments/dpl_prior') return jsonResponse(200, nativeDeployment('production'));
       return { status: request.method === 'POST' ? 201 : 200, headers: {}, body: new TextEncoder().encode(request.method === 'POST' ? '' : JSON.stringify({
-        id: 'prj_exact', accountId: 'team_exact', lastAliasRequest: null, lastRollbackTarget: null,
+        id: 'prj_exact', accountId: 'team_exact', name: 'fixture', framework: null, alias: [], lastAliasRequest: null, lastRollbackTarget: null,
         targets: { production: production(current) } })) };
     } });
     const kit = await createPluginTestkit({ manifest: entry.manifest, module: { ...entry, activateAccount }, services: { http } });
     try {
       const result = await kit.invokeAction(operation, input);
       expect(result).toMatchObject({ v: 1, state, providerDeploymentId: 'dpl_prior' });
-      if (state === 'succeeded') expect(result).toHaveProperty('builtInUrls', ['https://cor4b-upload-1115.vercel.app']);
-      else expect(result).not.toHaveProperty('builtInUrls');
+      if (state === 'succeeded') {
+        expect(result).toMatchObject({ urls: aliases.map(host => `https://${host}`), builtInUrls: aliases.map(host => `https://${host}`) });
+      } else {
+        expect(result).not.toHaveProperty('urls');
+        expect(result).not.toHaveProperty('builtInUrls');
+      }
     } finally { await kit.dispose(); }
   }
 });

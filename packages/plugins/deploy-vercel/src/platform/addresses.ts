@@ -9,14 +9,17 @@ export function readVercelDeploymentUrl(value: unknown): string | undefined {
   return undefined;
 }
 
-export function readVercelBuiltInUrls(value: Readonly<Record<string, unknown>>): string[] | undefined {
-  if (value.aliasAssigned !== true && typeof value.aliasAssigned !== 'number'
-    || value.aliasError != null || !Array.isArray(value.alias)) return undefined;
+export function projectVercelDeploymentAddresses(value: Readonly<Record<string, unknown>>, production: boolean) {
   const deploymentUrl = readVercelDeploymentUrl(value.url);
-  return [...new Set(value.alias.flatMap(alias => {
+  const addresses = !production && deploymentUrl ? { urls: [deploymentUrl] } : {};
+  if ((value.aliasAssigned !== true && typeof value.aliasAssigned !== 'number')
+    || value.aliasError != null || !Array.isArray(value.alias)) return addresses;
+  const builtInUrls = [...new Set(value.alias.flatMap(alias => {
     const url = readVercelDeploymentUrl(alias);
     if (!url || url === deploymentUrl) return [];
     const hostname = new URL(url).hostname;
     return hostname.length > '.vercel.app'.length && hostname.endsWith('.vercel.app') ? [url] : [];
   }))];
+  // The unique Production URL can require sign-in while the assigned alias is public.
+  return { ...addresses, builtInUrls, ...(production && builtInUrls.length ? { urls: builtInUrls } : {}) };
 }

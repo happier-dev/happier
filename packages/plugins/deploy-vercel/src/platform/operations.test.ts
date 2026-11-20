@@ -35,25 +35,48 @@ function boundary(responses: readonly { status?: number; body?: unknown; failure
 }
 
 describe('Vercel internal platform producer', () => {
-  it('reports assigned built-in aliases without treating the unique deployment URL or custom domains as built-in domains', async () => {
-    const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', url: 'app-exact.vercel.app',
+  it.each(['production', undefined])('publishes the assigned production alias when Vercel reports target %s', async target => {
+    const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', target, url: 'app-exact.vercel.app',
       aliasAssigned: true, aliasError: null, alias: ['app.vercel.app', 'app-exact.vercel.app', 'custom.example.test',
         'app.vercel.app.evil.test', 'person@app.vercel.app', 'app.vercel.app/path'] } }]);
     const result = await provider.observeVercelDeployment({ ...selection, providerDeploymentId: 'dpl_exact' }, h.context);
     expect(DeploymentTargetRoleResultV1Schema.parse(result)).toMatchObject({
-      urls: ['https://app-exact.vercel.app'], builtInUrls: ['https://app.vercel.app'] });
+      urls: ['https://app.vercel.app'], builtInUrls: ['https://app.vercel.app'] });
     expect(h.requests).toHaveLength(1);
   });
 
   it.each([
-    { aliasAssigned: false, aliasError: null },
     { aliasAssigned: true, aliasError: { code: 'assignment_failed' } },
     {},
   ])('does not claim unconfirmed aliases as built-in domains (%j)', async aliasState => {
-    const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', url: 'app-exact.vercel.app',
+    const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', target: 'production', url: 'app-exact.vercel.app',
       alias: ['app.vercel.app'], ...aliasState } }]);
-    expect(await provider.observeVercelDeployment({ ...selection, providerDeploymentId: 'dpl_exact' }, h.context))
-      .not.toHaveProperty('builtInUrls');
+    const result = await provider.observeVercelDeployment({ ...selection, providerDeploymentId: 'dpl_exact' }, h.context);
+    expect(result).not.toHaveProperty('builtInUrls');
+    expect(result).not.toHaveProperty('urls');
+  });
+
+  it('keeps a ready Production deployment observable until Vercel finishes assigning its aliases', async () => {
+    const deployment = { id: 'dpl_exact', readyState: 'READY', target: 'production', url: 'app-exact.vercel.app' };
+    const h = boundary([
+      { body: { ...deployment, aliasAssigned: false, aliasError: null, alias: [] } },
+      { body: { ...deployment, aliasAssigned: 1001, aliasError: null, alias: ['app.vercel.app'] } },
+    ]);
+    const input = { ...selection, providerDeploymentId: deployment.id };
+    const pending = await provider.observeVercelDeployment(input, h.context);
+    expect(pending).toMatchObject({ state: 'running', providerDeploymentId: deployment.id });
+    expect(pending).not.toHaveProperty('urls');
+    expect(await provider.observeVercelDeployment(input, h.context)).toMatchObject({
+      state: 'succeeded', providerDeploymentId: deployment.id, urls: ['https://app.vercel.app'],
+    });
+  });
+
+  it('keeps the unique address on Preview', async () => {
+    const h = boundary([{ body: { id: 'dpl_exact', readyState: 'READY', target: null, url: 'app-exact.vercel.app',
+      aliasAssigned: true, alias: ['app-branch.vercel.app'] } }]);
+    const result = await provider.observeVercelDeployment({ providerDeploymentId: 'dpl_exact',
+      providerIdentity: { ...identity, providerEnvironment: 'preview' }, providerEnvironment: { kind: 'preview', gitBranch: 'feature/qa' } }, h.context);
+    expect(result).toMatchObject({ urls: ['https://app-exact.vercel.app'] });
   });
 
   it.each([
@@ -94,7 +117,7 @@ describe('Vercel internal platform producer', () => {
     if ('code' in prepared) throw new Error('Expected project preparation');
     const result = await provider.deployVercelCommit({ ...prepared, sourceIntent: source }, h.context);
     expect(DeploymentTargetRoleResultV1Schema.parse(result)).toEqual({ v: 1, state: 'queued',
-      providerDeploymentId: 'dpl_exact', observedAtMs: 1000, urls: ['https://example.vercel.app'] });
+      providerDeploymentId: 'dpl_exact', observedAtMs: 1000 });
     expect(JSON.parse(new TextDecoder().decode(h.requests[2].body))).toEqual({ name: project.name,
       project: project.id, target: 'production', gitSource: { type: 'github', repoId: '123', ref: source.sha, sha: source.sha } });
     expect(h.requests.map(r => r.method)).toEqual(['GET', 'GET', 'POST']);

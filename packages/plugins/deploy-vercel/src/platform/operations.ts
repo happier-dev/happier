@@ -7,7 +7,7 @@ import type {
   DeploymentTargetRoleFailureV1, DeploymentTargetRoleResultV1,
 } from '@happier-dev/plugin-sdk';
 import type { HttpMethod, HttpResponse, HttpService } from '@happier-dev/plugin-sdk/http';
-import { readVercelBuiltInUrls, readVercelDeploymentUrl } from './addresses.js';
+import { projectVercelDeploymentAddresses } from './addresses.js';
 
 const origin = 'https://api.vercel.com';
 export const githubAppGrantUrl = 'https://github.com/apps/vercel/installations/new';
@@ -20,7 +20,7 @@ type Selection = Readonly<{
   repository: Repository;
   sourceMethod?: (DeploymentTargetDeployInputV1 | DeploymentTargetUploadDeployInputV1)['sourceMethod'];
 }>;
-type ObservationInput = Pick<Selection, 'providerIdentity'> & Readonly<{ providerDeploymentId?: string }>;
+type ObservationInput = Readonly<{ providerIdentity: DeploymentTargetProviderIdentityV1; providerDeploymentId?: string }>;
 export type VercelPlatformContext = Readonly<{
   http: Pick<HttpService, 'request'>;
   signal: AbortSignal;
@@ -300,24 +300,26 @@ export async function prepareVercelProject(input: Selection, context: VercelPlat
 }
 
 function observation(response: HttpResponse, context: VercelPlatformContext, phase: Phase,
-  expectedId?: string, expectedProject?: string, promotion = false): Outcome {
+  expected: Readonly<{ id?: string; project?: string; environment: string; promotion?: boolean }>): Outcome {
   const denied = rejected(response, phase);
   if (denied) return denied;
   const value = body(response);
   if (!record(value) || !text(value.id)) return failure(phase === 'send' ? 'outcome_unknown' : 'provider_response_invalid', phase);
-  if (expectedId !== undefined && value.id !== expectedId
-    || expectedProject !== undefined && value.projectId !== undefined && value.projectId !== expectedProject) {
+  if (expected.id !== undefined && value.id !== expected.id
+    || expected.project !== undefined && value.projectId !== undefined && value.projectId !== expected.project) {
     return failure('provider_response_invalid', phase);
   }
+  const production = value.target === 'production' || (value.target === undefined && expected.environment === 'production');
   let state: DeploymentTargetRoleResultV1['state'];
   switch (value.readyState) {
     case 'QUEUED': state = 'queued'; break;
     case 'INITIALIZING': case 'BUILDING': state = 'running'; break;
     case 'READY':
-      if (!promotion) state = 'succeeded';
-      else if (value.target === 'production' && record(value.meta) && value.meta.action === 'promote') {
+      if (!expected.promotion) {
+        state = production && value.aliasAssigned === false && value.aliasError == null ? 'running' : 'succeeded';
+      } else if (value.target === 'production' && record(value.meta) && value.meta.action === 'promote') {
         if (value.aliasError != null) state = 'failed';
-        else if (value.projectId === expectedProject
+        else if (value.projectId === expected.project
           && (value.aliasAssigned === true || typeof value.aliasAssigned === 'number')) state = 'succeeded';
         else state = value.aliasAssigned === false ? 'running' : 'outcome_unknown';
       } else state = 'outcome_unknown';
@@ -326,10 +328,8 @@ function observation(response: HttpResponse, context: VercelPlatformContext, pha
     case 'CANCELED': state = 'cancelled'; break;
     default: state = 'outcome_unknown';
   }
-  const url = readVercelDeploymentUrl(value.url);
-  const builtInUrls = readVercelBuiltInUrls(value);
-  return { v: 1, state, providerDeploymentId: value.id, observedAtMs: context.now(), ...(url ? { urls: [url] } : {}),
-    ...(builtInUrls === undefined ? {} : { builtInUrls }) };
+  return { v: 1, state, providerDeploymentId: value.id, observedAtMs: context.now(),
+    ...projectVercelDeploymentAddresses(value, production) };
 }
 
 /** One finite exact-id read; the host operation/demand owner decides when to observe. */
@@ -339,7 +339,8 @@ export async function observeVercelDeployment(input: ObservationInput, context: 
   if (!input.providerDeploymentId) return failure('outcome_unknown', 'observe');
   try {
     return observation(await requestVercelDeployment(input.providerIdentity, input.providerDeploymentId, context),
-      context, 'observe', input.providerDeploymentId, input.providerIdentity.providerResourceId, options?.promotion);
+      context, 'observe', { id: input.providerDeploymentId, project: input.providerIdentity.providerResourceId,
+        environment: input.providerIdentity.providerEnvironment, ...options });
   } catch (error) {
     if (isPluginError(error)) throw error;
     context.signal.throwIfAborted();
@@ -409,7 +410,8 @@ export async function createVercelDeployment(input: UploadSelection, source: Rea
       ...source,
     })) }, repositoryKind);
   if ('code' in response) return response;
-  return observation(response, context, 'send', undefined, input.providerIdentity.providerResourceId);
+  return observation(response, context, 'send', { project: input.providerIdentity.providerResourceId,
+    environment: input.providerIdentity.providerEnvironment });
 }
 
 /**
@@ -434,5 +436,5 @@ export async function cancelVercelDeployment(input: ObservationInput, context: V
     return observeVercelDeployment(input, context);
   }
   if (response.status === 400) return observeVercelDeployment(input, context);
-  return observation(response, context, 'cancel', input.providerDeploymentId);
+  return observation(response, context, 'cancel', { id: input.providerDeploymentId, environment: input.providerIdentity.providerEnvironment });
 }

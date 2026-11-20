@@ -5616,9 +5616,11 @@ server-readable metadata or the root Domain Action result.
 Provider lifecycle observations separately retain optional `builtInUrls` in
 unreleased 0.3. Vercel contributes confirmed assigned `*.vercel.app` aliases,
 excluding the unique deployment URL and custom domains; Workers contributes its
-provider-enabled script `workers.dev` route. Preview deployment URLs remain only
-in `urls`. Missing built-in facts mean unobserved, while `[]` records observed
-absence. These read-only facts create no Domain artifact or removal operand.
+provider-enabled script `workers.dev` route. Vercel Production uses the confirmed
+alias for its serving URL because the unique deployment address can require sign-in.
+If alias assignment is unconfirmed, the production serving URL is absent. Preview
+deployment URLs remain in `urls`. Missing built-in facts mean unobserved, while
+`[]` records observed absence. These facts create no Domain artifact or removal operand.
 Domains consumes the already-opened serving receipt rather than making another
 provider request. Workers traffic changes reuse the same optional address reader
 after native activation; an unavailable address read preserves proven activation.
