@@ -12,6 +12,7 @@ import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openPr
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { SessionListActionResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
 import { decodeTerminalStreamBytesFrame, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
@@ -165,8 +166,10 @@ it('TS.E.projectRetry answers a live command and retries only the unconfirmed su
       .map(frame => Buffer.from(decodeTerminalStreamBytesFrame(frame)).toString('utf8')).join('');
     return output.includes('Choose setup value:');
   }, { context: 'Project setup prompt', failFast: true });
-  await action('machines.terminal.write', { ...terminal, event: { t: 'text', text: 'first' } });
-  await action('machines.terminal.write', { ...terminal, event: { t: 'key', key: 'enter' } });
+  const textInput = await action('machines.terminal.write', { ...terminal, event: { t: 'text', text: 'first' } });
+  expect(TerminalStreamInputResponseSchema.parse(textInput)).toEqual({ ok: true });
+  const enterInput = await action('machines.terminal.write', { ...terminal, event: { t: 'key', key: 'Enter' } });
+  expect(TerminalStreamInputResponseSchema.parse(enterInput)).toEqual({ ok: true });
   const failed = await settle(accepted.operationId);
   expect(failed).toMatchObject({ state: 'failed', error: { errorCode: 'project_setup_step_failed' } });
   expect(await readFile(join(root, 'first-effects'), 'utf8')).toBe('first');

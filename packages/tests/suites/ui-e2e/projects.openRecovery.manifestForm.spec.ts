@@ -264,16 +264,12 @@ test.describe('Project Open recovery and native Form authoring', () => {
 
       await gotoDomContentLoadedWithRetries(page, `${baseUrl}/inbox?view=updates`);
       await page.getByTestId(/^inbox\.action-operation\.[^.]+$/).filter({ hasText: /failed/i }).click();
-      const checklist = page.getByTestId('action-operation-detail');
-      const titles = checklist.getByTestId(/-row-.+-title$/);
+      const checklist = page.getByTestId('action-operation-detail').getByTestId('action-operation-setup-steps');
+      const titles = checklist.getByTestId(/^action-operation-setup-steps-row-\d+-title$/);
       await expect(titles).toHaveCount(2);
-      await expect(titles.nth(0)).toContainText('first-effects');
-      await expect(titles.nth(1)).toContainText('allow-second');
-      const firstRow = await titles.nth(0).getAttribute('data-testid');
-      const secondRow = await titles.nth(1).getAttribute('data-testid');
-      if (!firstRow || !secondRow) throw new Error('Project step checklist row test IDs are unavailable');
-      await expect(checklist.getByTestId(firstRow.replace(/-title$/, ''))).toContainText(/\b(done|succeeded)\b/i);
-      await expect(checklist.getByTestId(secondRow.replace(/-title$/, ''))).toContainText(/\b(error|failed)\b/i);
+      await expect(titles).toHaveText([/first-effects/, /allow-second/]);
+      await expect(checklist.getByTestId('action-operation-setup-steps-row-0')).toContainText(/\b(done|succeeded)\b/i);
+      await expect(checklist.getByTestId('action-operation-setup-steps-row-1')).toContainText(/\b(error|failed)\b/i);
 
       await writeFile(join(root, 'allow-second'), 'allow');
       await gotoDomContentLoadedWithRetries(page, scriptsUrl);

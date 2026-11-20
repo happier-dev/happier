@@ -5,32 +5,44 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { ProjectOrganizationUpdateOutputV1Schema } from '@happier-dev/protocol/projects/projectOrganizationV1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamMembershipV1Schema } from '@happier-dev/protocol/teams/membership';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { fetchJson } from '../../src/testkit/http';
+import { createIsolatedFakeClaudeControlShim, waitForFakeClaudeInvocation } from '../../src/testkit/fakeClaude';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 
 describe('Team setup F: project defaults persistence', () => {
   let fixture: TeamSetupFFixture;
   let admin: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
   let machine: Awaited<ReturnType<TeamSetupFFixture['enrollDaemon']>>;
+  let agent: Awaited<ReturnType<typeof createIsolatedFakeClaudeControlShim>>;
   const defaults = { defaultAgentTarget: { kind: 'agent', identity: {
     pluginId: 'happier.agent.claude', localId: 'claude',
   } } };
 
   beforeAll(async () => {
-    fixture = await startTeamSetupFFixture({ testDir: await mkdtemp(join(tmpdir(), 'team-setup-f-storage-')) });
+    const testDir = await mkdtemp(join(tmpdir(), 'team-setup-f-storage-'));
+    fixture = await startTeamSetupFFixture({ testDir });
+    agent = await createIsolatedFakeClaudeControlShim({
+      testDir: join(testDir, 'provider'), captureEnvironmentKeys: [], logFullStdin: false,
+    });
     admin = await fixture.createAccount('defaults-admin');
-    machine = await fixture.enrollDaemon(admin);
+    machine = await fixture.enrollDaemon(admin, { env: { HAPPIER_CLAUDE_PATH: agent.executablePath } });
     expect((await fixture.claimHomeOwner(admin)).result.status).toBe('claimed');
   });
   afterAll(async () => { await fixture?.stop(); });
 
-  it('TS.F.projectThin persists a Team-owned defaults leaf without changing Source revision or catalog shape', async () => {
+  it('TS.F.projectThin launches as a member with the model from the Team Project defaults leaf', async () => {
     await fixture.assertKnownGoodSessionControl(admin, machine);
+    const model = { source: 'native', agentTargetKey: 'agent:happier.agent.claude/claude', modelId: 'team-project-model' } as const;
+    const teamProjectDefaults = { ...defaults, modelByAgentTargetKey: {
+      [model.agentTargetKey]: { v: 2, updatedAt: Date.now(), ref: model },
+    } };
     const createdTeam = await admin.executeReviewed('teams.create', { v: 1, name: 'F Project defaults', requestKey: randomUUID(),
       initialOwnerAccountId: readAccountIdFromToken(admin.credentials.token) });
     if (!createdTeam.ok) throw new Error(`Team creation refused (${createdTeam.errorCode})`);
@@ -44,16 +56,16 @@ describe('Team setup F: project defaults persistence', () => {
     if (!initial.ok) throw new Error(`Source creation refused (${initial.error})`);
     const updated = await admin.executeReviewed('projects.sources.update', { serverId: fixture.serverId,
       sourceId: initial.source.id, expectedRevision: initial.source.revision,
-      patch: { sessionDefaults: { expectedRevision: 'absent', defaults } } });
+      patch: { sessionDefaults: { expectedRevision: 'absent', defaults: teamProjectDefaults } } });
     // Initial behavioral RED: the existing Source Action rejects this defaults edit.
     if (!updated.ok) throw new Error(`Defaults write refused (${updated.errorCode})`);
     expect(updated.ok).toBe(true);
     expect(updated.result).toMatchObject({ ok: true, source: { revision: initial.source.revision },
-      sessionDefaults: { revision: expect.any(Number), defaults } });
+      sessionDefaults: { revision: expect.any(Number), defaults: teamProjectDefaults } });
     const read = await admin.execute('projects.sources.read', { serverId: fixture.serverId, sourceId: initial.source.id });
     if (!read.ok) throw new Error(`Defaults read refused (${read.errorCode})`);
     expect(read.ok).toBe(true);
-    expect(read.result).toMatchObject({ sessionDefaults: { defaults } });
+    expect(read.result).toMatchObject({ sessionDefaults: { defaults: teamProjectDefaults } });
     const missingMachine = await admin.executeReviewed('projects.sources.update', { serverId: fixture.serverId,
       sourceId: initial.source.id, expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 1, defaults: {
@@ -83,7 +95,21 @@ describe('Team setup F: project defaults persistence', () => {
     const membershipId = TeamMembershipV1Schema.parse(membership.result).id;
     const selected = { serverId: fixture.serverId, sourceId: initial.source.id };
     const memberRead = await member.execute('projects.sources.read', selected);
-    expect(memberRead).toMatchObject({ ok: true, result: { sessionDefaults: { defaults } } });
+    expect(memberRead).toMatchObject({ ok: true, result: { sessionDefaults: { defaults: teamProjectDefaults } } });
+    const memberMachine = await fixture.enrollDaemon(member);
+    const memberControl = await fixture.assertKnownGoodSessionControl(member, memberMachine);
+    const launched = await member.executeAsPerson('session.spawn_new', {
+      executionTarget: memberMachine.target, directory: { kind: 'path', path: memberMachine.workspaceDir },
+      projectContext: { sourceRef: selected }, terminal: { mode: 'plain' },
+    });
+    if (!launched.ok) throw new Error(`Member Project launch refused (${launched.errorCode})`);
+    const createdSession = SessionSpawnNewActionResultV1Schema.parse(launched.result);
+    if (createdSession.type !== 'success') throw new Error(`Member Project launch did not create a Session (${createdSession.type})`);
+    expect(await member.readSessionMetadata(createdSession.sessionId)).toMatchObject({
+      machineId: memberMachine.target.machineId, path: memberMachine.workspaceDir,
+      modelSelectionIntentV2: { v: 2, ref: model },
+    });
+    expect(memberControl.metadata.modelSelectionIntentV2?.ref).not.toEqual(model);
     const memberWrite = await member.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: initial.source.revision,
       patch: { sessionDefaults: { expectedRevision: 'absent', defaults: null } } });
@@ -111,11 +137,11 @@ describe('Team setup F: project defaults persistence', () => {
     expect(outsiderRead.ok).toBe(true);
     // Audience Team admins manage Source metadata and read defaults, but the owner side alone writes them.
     expect(outsiderRead.result).toMatchObject({ canManage: true, canManageSessionDefaults: false,
-      sessionDefaults: { revision: 1, defaults } });
+      sessionDefaults: { revision: 1, defaults: teamProjectDefaults } });
     const outsiderDefaults = await outsider.execute('projects.sessionDefaults.get', { sourceRef: selected });
     expect(outsiderDefaults).toMatchObject({ ok: true, result: {
-      context: { projectDefaults: defaults, teamDefaults: null },
-      sourceDefaultsRow: { revision: 1, defaults }, canManageSource: false,
+      context: { projectDefaults: teamProjectDefaults, teamDefaults: null },
+      sourceDefaultsRow: { revision: 1, defaults: teamProjectDefaults }, canManageSource: false,
     } });
     const outsiderWrite = await outsider.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: grantedSource.source.revision,
@@ -129,8 +155,8 @@ describe('Team setup F: project defaults persistence', () => {
       source: { revision: grantedSource.source.revision }, sessionDefaults: { revision: 2, defaults: null } } });
     const restore = await admin.executeReviewed('projects.sources.update', { ...selected,
       expectedRevision: grantedSource.source.revision,
-      patch: { sessionDefaults: { expectedRevision: 2, defaults } } });
-    expect(restore).toMatchObject({ ok: true, result: { ok: true, sessionDefaults: { revision: 3, defaults } } });
+      patch: { sessionDefaults: { expectedRevision: 2, defaults: teamProjectDefaults } } });
+    expect(restore).toMatchObject({ ok: true, result: { ok: true, sessionDefaults: { revision: 3, defaults: teamProjectDefaults } } });
     expect(await admin.executeReviewed('teams.members.remove', { v: 1, teamId, membershipId })).toMatchObject({ ok: true });
     const revokedRead = await member.execute('projects.sources.read', selected);
     expect(revokedRead).toMatchObject({ ok: true, result: { ok: false, error: 'source_unavailable' } });
@@ -188,10 +214,12 @@ describe('Team setup F: project defaults persistence', () => {
       modelByAgentTargetKey: { [model.agentTargetKey]: { v: 2, updatedAt: Date.now(), ref: model } } };
     const saved = await admin.executeReviewed('projects.organization.update', { projectRef, expectedRevision: 'absent',
       sessionDefaults: { expectedRevision: 'absent', defaults: personalDefaults } });
-    // Initial behavioral RED: private project defaults are absent from the existing Action grammar.
     if (!saved.ok) throw new Error(`Personal defaults write refused (${saved.errorCode})`);
-    expect(saved.ok).toBe(true);
-    expect(saved.result).toMatchObject({ ok: true, sessionDefaults: { revision: expect.any(Number), defaults: personalDefaults } });
+    const savedDefaults = ProjectOrganizationUpdateOutputV1Schema.parse(saved.result);
+    if (!savedDefaults.ok || !('sessionDefaults' in savedDefaults)) {
+      throw new Error('Personal Project write did not return its defaults leaf');
+    }
+    expect(savedDefaults.sessionDefaults.defaults).toEqual(personalDefaults);
     const request = async (route: 'read' | 'list', input: unknown) => fetchJson<unknown>(
       `${fixture.server.baseUrl}/v1/account/project-rows/${route}`, { method: 'POST',
         headers: { Authorization: `Bearer ${admin.credentials.token}`, 'Content-Type': 'application/json' },
@@ -211,9 +239,26 @@ describe('Team setup F: project defaults persistence', () => {
     if (!isRecord(launched.data) || !isRecord(launched.data.session) || typeof launched.data.session.id !== 'string') {
       throw new Error('CLI did not return the personal Project Session identity');
     }
-    const inherited = await admin.readSessionMetadata(launched.data.session.id);
+    const sessionId = launched.data.session.id;
+    const inherited = await admin.readSessionMetadata(sessionId);
     expect(inherited).toMatchObject({ machineId: machine.target.machineId, path: machine.workspaceDir,
       modelSelectionIntentV2: { v: 2, ref: model } });
     expect(control.metadata.modelSelectionIntentV2?.ref).not.toEqual(model);
+
+    const sent = await admin.execute('session.message.send', { sessionId, message: 'Verify the selected Project model.' });
+    expect(sent).toMatchObject({ ok: true, result: { status: 'accepted' } });
+    await fixture.assertSessionAgentOutput(admin, sessionId);
+    const invocation = await waitForFakeClaudeInvocation(agent.logPath, item =>
+      item.cwd === machine.workspaceDir && item.argv.includes(model.modelId));
+    expect(invocation.argv[invocation.argv.indexOf('--model') + 1]).toBe(model.modelId);
+
+    const cleared = await admin.executeReviewed('projects.organization.update', { projectRef, expectedRevision: 'absent',
+      sessionDefaults: { expectedRevision: savedDefaults.sessionDefaults.revision, defaults: null } });
+    expect(cleared).toMatchObject({ ok: true, result: { ok: true, sessionDefaults: { defaults: null } } });
+    const afterClear = await admin.execute('projects.sessionDefaults.get', { projectRef });
+    expect(afterClear).toMatchObject({ ok: true, result: { context: { personalProjectDefaults: null } } });
+    expect(await admin.readSessionMetadata(sessionId)).toMatchObject({
+      modelSelectionIntentV2: { v: 2, ref: model },
+    });
   });
 });
