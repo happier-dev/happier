@@ -95,6 +95,8 @@ export type NewSessionScreenModel =
             projectFilesOverride?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
             projectFilesOutcome?: import('@/components/sessions/new/hooks/screenModel/useNewSessionProjectFilesPlacement').NewSessionProjectFilesOutcome;
             onProjectFilesChange?: (value: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1 | undefined) => void;
+            /** An explicit cloud preset chosen in the Machine picker: the outcome line names it instead of the Machine. */
+            placementPreset?: Readonly<{ presetId: string }> | null;
         }>;
     }> & (
     | Readonly<{

@@ -149,6 +149,37 @@ describe('session isolation outcome line', () => {
         expect(onChange).toHaveBeenLastCalledWith({ kind: 'git_clone' });
     });
 
+    it('offers the same Project files choice for a kept sandbox and for an explicit cloud preset, in their own words', async () => {
+        const { SessionIsolationOutcomeLine } = await import('./SessionIsolationOutcomeLine');
+        const onChange = vi.fn();
+        const source = { target: { serverId: 'home', machineId: 'devbox' }, directory: '/home/leeroy/code/happier' };
+        const line = (props: Partial<React.ComponentProps<typeof SessionIsolationOutcomeLine>>) => renderScreen(React.createElement(
+            SessionIsolationOutcomeLine, { serverId: null, machineName: 'devbox', snapshot: stored, outcome: undefined,
+                projectFiles: { source, override: undefined, onChange }, ...props } as never));
+        const menuOf = (screen: Awaited<ReturnType<typeof line>>) => screen.findAllByType(DropdownMenu)
+            .find(menu => menu.props.testID === 'session-isolation-outcome.project-files');
+        const textOf = (screen: Awaited<ReturnType<typeof line>>) =>
+            screen.findAllByType(Text as never).map(node => String(node.props.children)).join(' ');
+
+        const kept = await line({ outcome: proposeMachineIsolationOutcome(stored, 'automationsWorkflows') ?? undefined });
+        expect(textOf(kept)).toContain('machineDetailPage.projectFiles.intoKept');
+        expect(textOf(kept)).not.toContain('machineDetailPage.isolation.outcome.kept');
+        menuOf(kept)!.props.onSelect('keep_both_in_sync');
+        expect(onChange).toHaveBeenLastCalledWith({ kind: 'sync', mode: 'keep_both_in_sync' });
+        const keptTwoWay = await line({ outcome: proposeMachineIsolationOutcome(stored, 'automationsWorkflows') ?? undefined,
+            projectFiles: { source, override: { kind: 'sync', mode: 'keep_both_in_sync' }, onChange } });
+        expect(textOf(keptTwoWay)).toContain('machineDetailPage.projectFiles.withKept');
+
+        // A held cloud preset runs on a new machine from it, whatever the chosen Machine's own policy says.
+        const cloud = await line({ outcome: proposeMachineIsolationOutcome(unset, 'sessions') ?? undefined,
+            placementPreset: { presetId: 'boat-node-22' }, onOverrideChange: vi.fn() });
+        expect(textOf(cloud)).toContain('machineDetailPage.projectFiles.intoNew');
+        expect(textOf(cloud)).not.toContain('machineDetailPage.isolation.outcome.directly');
+        expect(findTestInstanceByTypeWithProps(cloud, TextLinkButton, { testID: 'session-isolation-outcome.link' })).toBeFalsy();
+        menuOf(cloud)!.props.onSelect('git_clone');
+        expect(onChange).toHaveBeenLastCalledWith({ kind: 'git_clone' });
+    });
+
     it('says the one-time override and puts the sandbox back', async () => {
         const onOverrideChange = vi.fn();
         const { text, link } = await render({ snapshot: stored, outcome: proposeMachineIsolationOutcome(stored, 'sessions', 'directly') ?? undefined,

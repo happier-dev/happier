@@ -219,6 +219,11 @@ export function SessionPlacementChips(
      * chips (`SessionIsolationOutcomeLine`), the same line New Session shows. Hosts that start no Session omit it.
      */
     isolationWorkKind?: MachineIsolationWorkKind;
+    /**
+     * The per-run Project files choice on that line (the outcome line's `projectFiles`), for a host that saves it with
+     * its placement: a sandbox or an explicit cloud preset then leads with what happens to the folder.
+     */
+    projectFiles?: React.ComponentProps<typeof SessionIsolationOutcomeLine>['projectFiles'];
   }>,
 ): React.ReactElement {
   const isolationSnapshot = React.useMemo(() => readSyncedMachineIsolationPolicy(props.machine ?? null), [props.machine]);
@@ -228,10 +233,13 @@ export function SessionPlacementChips(
   const presence = useMachinePresenceSummary(props.serverId || null, props.isolationWorkKind ? props.machine?.id ?? null : null,
     undefined, sameReachability);
   const managedPresence = useMachineManagedPresence(props.serverId || null, props.isolationWorkKind ? props.machine : null);
-  const outcomeLine = props.isolationWorkKind && props.machine ? (
+  // A held cloud preset runs the work on a new machine from it, so the line names the preset, not the Machine's policy.
+  const placementPreset = props.managedPlacementPreset ? { presetId: props.managedPlacementPreset.presetId } : null;
+  const outcomeLine = props.isolationWorkKind && (props.machine || placementPreset) ? (
     <SessionIsolationOutcomeLine serverId={props.serverId || null} machineName={props.machine ? getMachineDisplayName(props.machine) : null}
       snapshot={isolationSnapshot} outcome={isolationOutcome} offline={presence.reachability === 'unreachable'}
-      managedPresence={managedPresence}
+      managedPresence={managedPresence} placementPreset={placementPreset}
+      {...(props.projectFiles ? { projectFiles: props.projectFiles } : {})}
       testID="session-placement-isolation-outcome" />
   ) : null;
   const machineAnchor = React.useRef<View | null>(null);

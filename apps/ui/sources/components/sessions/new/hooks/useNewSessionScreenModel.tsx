@@ -4819,6 +4819,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             projectFilesOverride: projectFilesPlacement.projectFilesOverride,
             projectFilesOutcome: projectFilesPlacement.projectFilesOutcome,
             onProjectFilesChange: projectFilesPlacement.onProjectFilesChange,
+            placementPreset: managedMachineSelection?.selection.kind === 'preset' ? { presetId: managedMachineSelection.selection.id } : null,
             ...(!hostSpawnExecutor && selectedMachine && canManageMachine(selectedMachine) ? { onOverrideChange: changeIsolationOverride } : {}) },
         requesterIsolation: ownIsolation,
         instructionsCreation,

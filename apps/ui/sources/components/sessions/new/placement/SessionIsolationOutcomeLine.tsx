@@ -55,6 +55,11 @@ export function SessionIsolationOutcomeLine(
      * The per-Session Project files choice (lab F2): a fresh sandbox's line then leads with what happens to the
      * folder, and that verb phrase opens the choice. Hosts that start no Session omit it.
      */
+    /**
+     * An explicit cloud preset the host holds (New Session's or a workflow's Machine picker): the work runs on a new
+     * machine from it, not on the chosen Machine, so the line names the preset instead of the Machine's policy.
+     */
+    placementPreset?: Readonly<{ presetId: string }> | null;
     projectFiles?: Readonly<{
       /** The folder whose files go in; absent before one is chosen. */
       source: SessionProjectFilesSourceV1 | undefined;
@@ -66,12 +71,43 @@ export function SessionIsolationOutcomeLine(
 ): React.ReactElement | null {
   const { snapshot, outcome, machineName } = props;
   const testID = props.testID ?? 'session-isolation-outcome';
-  const presetId =
-    outcome?.status === 'proposed' && outcome.choice.kind === 'sandbox'
+  const presetId = props.placementPreset?.presetId
+    ?? (outcome?.status === 'proposed' && outcome.choice.kind === 'sandbox'
       ? outcome.configuredSandbox?.presetId
-      : undefined;
+      : undefined);
   const presetServerId = presetId ? props.serverId ?? '' : '';
   const { state: { value: preset } } = useMachinePreset(presetServerId, presetId ?? '');
+  const sandboxRow = (projectFiles: typeof props.projectFiles, text: (syncsBothWays: boolean) => string,
+    link: Readonly<{ label: string; onPress: () => void }> | null) => {
+    const effective = projectFiles ? projectFiles.override ?? preset?.projectFiles : undefined;
+    return (
+      <OutcomeRow
+        testID={testID}
+        lead={projectFiles ? (
+          <ProjectFilesOutcomeChoice
+            testID={`${testID}.project-files`}
+            source={projectFiles.source}
+            presetDefault={preset?.projectFiles}
+            override={projectFiles.override}
+            onChange={projectFiles.onChange}
+            preset={preset && props.serverId ? { serverId: props.serverId, id: preset.id, name: preset.name } : null}
+          />
+        ) : undefined}
+        // The sandbox's own mark, as the Isolation page draws it; a preset not read yet takes the generic one.
+        mark={preset && props.serverId ? <ManagedPresetMark serverId={props.serverId} preset={preset} size={OUTCOME_MARK_SIZE} /> : undefined}
+        glyph="cube"
+        text={text(effective?.kind === 'sync' && effective.mode === 'keep_both_in_sync')}
+        link={link}
+      />
+    );
+  };
+  const name = preset?.name ?? t('machineDetailPage.isolation.summary.unnamed');
+  // An explicit cloud preset: the folder goes to a new machine from it (lab F2 "cloud"); the Machine's policy is moot.
+  if (props.placementPreset) {
+    if (!props.projectFiles) return null;
+    return sandboxRow(props.projectFiles, (both) => t(both ? 'machineDetailPage.projectFiles.withNew'
+      : 'machineDetailPage.projectFiles.intoNew', { name }), null);
+  }
   if (!machineName) return null;
   if (props.managedPresence?.offline?.state === 'resource_absent')
     return <OutcomeRow testID={testID} glyph="cloud-slash" text={props.managedPresence.offline.word} link={null} />;
@@ -133,44 +169,19 @@ export function SessionIsolationOutcomeLine(
         link={null}
       />
     );
-  const name = preset?.name ?? t('machineDetailPage.isolation.summary.unnamed');
-  // A fresh sandbox gets the folder's files: the line says how first, and that phrase changes it for this Session.
-  const projectFiles = outcome.choice.lifecycle === 'fresh' ? props.projectFiles : undefined;
-  const effective = projectFiles ? projectFiles.override ?? preset?.projectFiles : undefined;
-  const text = projectFiles
-    ? effective?.kind === 'sync' && effective.mode === 'keep_both_in_sync'
-      ? t('machineDetailPage.projectFiles.withFresh', { name, machine })
-      : t('machineDetailPage.projectFiles.intoFresh', { name, machine })
-    : outcome.choice.lifecycle === 'fresh'
-      ? t('machineDetailPage.isolation.outcome.fresh', { name, machine })
-      : t('machineDetailPage.isolation.outcome.kept', { name, machine });
-  return (
-    <OutcomeRow
-      testID={testID}
-      lead={projectFiles ? (
-        <ProjectFilesOutcomeChoice
-          testID={`${testID}.project-files`}
-          source={projectFiles.source}
-          presetDefault={preset?.projectFiles}
-          override={projectFiles.override}
-          onChange={projectFiles.onChange}
-          preset={preset && props.serverId ? { serverId: props.serverId, id: preset.id, name: preset.name } : null}
-        />
-      ) : undefined}
-      // The sandbox's own mark, as the Isolation page draws it; a preset not read yet takes the generic one.
-      mark={preset && props.serverId ? <ManagedPresetMark serverId={props.serverId} preset={preset} size={OUTCOME_MARK_SIZE} /> : undefined}
-      glyph="cube"
-      text={text}
-      link={
-        props.onOverrideChange
-          ? {
-              label: t('machineDetailPage.isolation.outcome.runDirectlyOnce'),
-              onPress: () => props.onOverrideChange?.('directly'),
-            }
-          : null
+  // A sandbox gets the folder's files, fresh or kept: the line says how first, and that phrase changes it for this
+  // Session. Without a Project files host the line only says where it runs.
+  const fresh = outcome.choice.lifecycle === 'fresh';
+  return sandboxRow(props.projectFiles, (both) => props.projectFiles
+    ? t(fresh ? (both ? 'machineDetailPage.projectFiles.withFresh' : 'machineDetailPage.projectFiles.intoFresh')
+      : (both ? 'machineDetailPage.projectFiles.withKept' : 'machineDetailPage.projectFiles.intoKept'), { name, machine })
+    : t(fresh ? 'machineDetailPage.isolation.outcome.fresh' : 'machineDetailPage.isolation.outcome.kept', { name, machine }),
+  props.onOverrideChange
+    ? {
+        label: t('machineDetailPage.isolation.outcome.runDirectlyOnce'),
+        onPress: () => props.onOverrideChange?.('directly'),
       }
-    />
-  );
+    : null);
 }
 
 /** The meta line's mark: one step under the row mark, the size of the line's own glyphs. */

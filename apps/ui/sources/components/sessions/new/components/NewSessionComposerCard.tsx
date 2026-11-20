@@ -310,6 +310,7 @@ export function NewSessionComposerCard(input: Readonly<{
                                 snapshot={props.sessionIsolation.snapshot} outcome={props.sessionIsolation.proposedOutcome}
                                 offline={props.sessionIsolation.offline}
                                 managedPresence={props.sessionIsolation.managedPresence}
+                                placementPreset={props.sessionIsolation.placementPreset}
                                 override={props.sessionIsolation.override} onOverrideChange={props.sessionIsolation.onOverrideChange}
                                 {...(props.sessionIsolation.onProjectFilesChange ? { projectFiles: {
                                     source: props.sessionIsolation.projectFilesOutcome?.source,

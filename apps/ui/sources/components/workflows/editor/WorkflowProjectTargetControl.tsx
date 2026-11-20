@@ -8,6 +8,7 @@ import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin
 
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowWorkspaceSelection } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 
 import { AgentInputSelectionListPopover } from '@/components/sessions/agentInput/components/AgentInputSelectionListPopover';
 import { SessionPlacementChips, useSessionPlacementPopovers, type SessionPlacementChipsHandle, type SessionPlacementChipTrigger, type SessionPlacementChoiceProps } from '@/components/sessions/new/placement/SessionPlacementChips';
@@ -29,6 +30,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import {
     selectWorkflowProjectMachine,
     setWorkflowProjectDirectory,
+    setWorkflowProjectFiles,
     setWorkflowProjectSessionPlacement,
     isWorkflowProjectTarget,
     type WorkflowAuthoringTarget,
@@ -474,7 +476,16 @@ function useWorkflowWhereChoices(props: WorkflowWhereInput) {
             managedPlacementPreset: presetPlacement, onSelectManagedMachine: selectManagedMachine } : {}),
         onSelectPath: selectPath,
     };
-    return { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest };
+    // A saved cloud preset carries this workflow's Project files choice with it (P2 07), as New Session's line edits it.
+    const projectFiles = presetPlacement && onChange ? {
+        source: presetPlacement.projectFilesSource,
+        override: presetPlacement.projectFiles,
+        onChange: (value: SessionProjectFilesV1 | undefined) => {
+            const current = latest.current.target;
+            if (current !== null) latest.current.onChange?.(setWorkflowProjectFiles(current, value));
+        },
+    } : undefined;
+    return { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest, projectFiles };
 }
 
 /** The Machine and folder (New Session's), then the checkout picker, with the workflow rules. */
@@ -492,7 +503,7 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
     workspace?: WorkflowWhereWorkspace;
 }>): React.ReactElement {
     const { target } = props;
-    const { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest } = useWorkflowWhereChoices(props);
+    const { choice, serverId, machineHomeDir, machinePlatform, moveToDirectory, latest, projectFiles } = useWorkflowWhereChoices(props);
     // An agent browses folders with the Machine path browser under `${scope}.browser`, as before the chips.
     const scope = props.currentUiContextCommandScope;
     const CommandBridge = useCurrentUiContextCommandBridge();
@@ -530,6 +541,7 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
             {...(props.rowTestID === undefined ? {} : { rowTestID: props.rowTestID })}
             // A workflow's Sessions follow the Machine's row for workflows and automations (J6); no one-time override.
             isolationWorkKind="automationsWorkflows"
+            {...(projectFiles ? { projectFiles } : {})}
             {...(props.renderRow === undefined ? {} : { renderFieldRow: props.renderRow })}
             {...(props.renderChip === undefined ? {} : { renderChip: props.renderChip })}
             trailing={props.renderChip === undefined && target !== null && isWorkflowProjectTarget(target) ? (() => {

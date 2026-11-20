@@ -1,5 +1,6 @@
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
+import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 
 import { resolveWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
@@ -144,4 +145,15 @@ export function setWorkflowProjectSessionPlacement(current: WorkflowAuthoringTar
         ? { ...placement, projectFilesSource: {
             target: { serverId: sourceServerId, machineId: current.machineId }, directory: current.directory,
         } } : placement };
+}
+
+/** Changes the file method on the saved placement and keeps its exact target and source. */
+export function setWorkflowProjectFiles(
+    current: WorkflowAuthoringTarget,
+    projectFiles: SessionProjectFilesV1 | undefined,
+): WorkflowAuthoringTarget {
+    if (!isWorkflowProjectTarget(current) || !current.sessionPlacement || current.sessionPlacement.kind === 'in_place') return current;
+    const { projectFiles: previous, ...placement } = current.sessionPlacement;
+    if (previous === projectFiles) return current;
+    return setWorkflowProjectSessionPlacement(current, projectFiles === undefined ? placement : { ...placement, projectFiles });
 }

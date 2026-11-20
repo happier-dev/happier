@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { WorkflowProjectTargetV1Schema } from '@happier-dev/protocol/workflows';
 
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 
@@ -6,6 +7,7 @@ import {
     resolveWorkflowProjectWorkspaceRefId,
     selectWorkflowProjectMachine,
     setWorkflowProjectDirectory,
+    setWorkflowProjectFiles,
     setWorkflowProjectSessionPlacement,
 } from './workflowProjectTarget';
 
@@ -142,6 +144,27 @@ describe('a workflow placed on a cloud preset (J6)', () => {
         expect(setWorkflowProjectSessionPlacement(current, preset, 'source-home')).toMatchObject({
             sessionPlacement: { ...preset, projectFilesSource: {
                 target: { serverId: 'source-home', machineId: current.machineId }, directory: current.directory,
+            } },
+        });
+    });
+
+    it.each([
+        preset,
+        { kind: 'machine', target: { serverId: 'source-home', machineId: current.machineId }, configuredSandbox: {
+            kind: 'sandbox', configuredSandboxId: 'kept-config', presetId: 'kept-preset', lifecycle: 'shared-kept',
+            provisioner: { pluginId: 'example.sandboxes', localId: 'sandbox' },
+        } },
+    ] as const)('saves and clears a Project files override for $kind placement', placement => {
+        const selected = setWorkflowProjectSessionPlacement(current, placement, 'source-home');
+        const projectFiles = { kind: 'sync', mode: 'keep_both_in_sync' } as const;
+        const edited = WorkflowProjectTargetV1Schema.parse(setWorkflowProjectFiles(selected, projectFiles));
+        expect(edited).toEqual({ ...current, sessionPlacement: { ...placement, projectFiles, projectFilesSource: {
+            target: { serverId: 'source-home', machineId: current.machineId }, directory: current.directory,
+        } } });
+        const moved = setWorkflowProjectDirectory({ ...context, current: edited, directory: '/different' });
+        expect(WorkflowProjectTargetV1Schema.parse(setWorkflowProjectFiles(moved, undefined))).toEqual({
+            machineId: current.machineId, directory: '/different', sessionPlacement: { ...placement, projectFilesSource: {
+                target: { serverId: 'source-home', machineId: current.machineId }, directory: '/different',
             } },
         });
     });

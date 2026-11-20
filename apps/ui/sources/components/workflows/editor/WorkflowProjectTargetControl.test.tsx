@@ -464,6 +464,24 @@ describe('workflow project target control', () => {
         await act(async () => { recordMachineRequestFailed({ serverId: HOME_ID, accountId: 'account-a', machineId: 'machine-1' }); });
         await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineDetailPage.isolation.outcome.offline', { machine: 'Mac Studio' })));
     });
+    it('edits a saved cloud preset\'s Project files on its outcome line and saves them with the placement (P2 07)', async () => {
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const onChange = vi.fn();
+        const sessionPlacement = { kind: 'preset' as const, homeId: HOME_ID, presetId: 'boat-node-22',
+            projectFilesSource: { target: { serverId: HOME_ID, machineId: 'machine-1' }, directory: '/repo/payments' } };
+        const screen = await renderControl({
+            target: { machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main', sessionPlacement },
+            onChange,
+        });
+        const menu = () => screen.findAllByType(DropdownMenu)
+            .find(candidate => candidate.props.testID === 'session-placement-isolation-outcome.project-files');
+        await vi.waitFor(() => expect(menu()).toBeDefined());
+        expect(screen.getTextContent()).toContain(t('machineDetailPage.projectFiles.intoNew', { name: t('machineDetailPage.isolation.summary.unnamed') }));
+        await act(async () => { menu()!.props.onSelect('keep_both_in_sync'); });
+        expect(onChange).toHaveBeenLastCalledWith({ machineId: 'machine-1', directory: '/repo/payments', workspaceRefId: 'ref-main',
+            sessionPlacement: { ...sessionPlacement, projectFiles: { kind: 'sync', mode: 'keep_both_in_sync' } } });
+    });
+
     it('starts a newly selected Machine in its default folder without the previous binding', async () => {
         const onChange = vi.fn();
         const screen = await renderControl({
