@@ -67,6 +67,14 @@ describe('Railway shared project operations through Connected Account HTTP', () 
     }]);
   });
 
+  it('reads only the requested environment option page and retains Railway’s continuation', async () => {
+    const vendor = boundary({ data: { project: { environments: page([environment], 'remaining-environments') } } });
+    const client = projectOperations.createRailwayProjectOperations(vendor.request, vendor.signal);
+    expect(await client.readEnvironmentsPage(project.id, 'previous-page')).toEqual({ choices: [environment], nextCursor: 'remaining-environments' });
+    expect(vendor.documents()).toEqual([{ query: expect.stringContaining('environments(after:'),
+      variables: { projectId: project.id, after: 'previous-page' } }]);
+  });
+
   it.each([
     [{ data: { variableCollectionUpsert: false } }, 'railway_variable_upsert_unconfirmed'],
     [{ data: { variableCollectionUpsert: true }, errors: [{ message: 'vendor-private-detail' }] }, 'railway_graphql_unavailable'],
