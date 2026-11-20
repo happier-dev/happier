@@ -226,7 +226,8 @@ describe('activated Neon managed data target', () => {
       expect(h.kit.registration('connectedAccountDescriptors', 'neon')).toBeDefined();
       const target = entry.manifest.contributes.deploymentTargets?.[0];
       if (target?.role !== 'data') throw new Error('Missing Neon data target');
-      expect(target.dataV1?.query).toEqual({ readOnly: 'query-read' });
+      expect(target.dataV1?.database?.engineId).toBe('postgresql');
+      expect(h.kit.registration('deploymentTargets', target.id)).toBeDefined();
       expect(h.requests).toHaveLength(0);
     } finally { await h.kit.dispose(); }
   });

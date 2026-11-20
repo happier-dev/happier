@@ -20,6 +20,10 @@ export function createDatabaseEnginesService(input: Readonly<{
         async open(engineId, request) {
             request.signal?.throwIfAborted();
             const matches = declarations.filter(entry => entry.declaration.engineId === engineId);
+            if (matches.length === 0 && engineId === 'mysql') {
+                const { openMysqlConnection } = await import('@happier-dev/databases/connection/mysql');
+                return { engine: engineId, ...await openMysqlConnection(request.connectionString, request.signal) };
+            }
             // Ambiguous engine ids cannot silently select a different plugin's transport.
             if (matches.length !== 1) throw new PluginError({ code: 'plugin_service_unavailable' });
             const selected = matches[0]!;

@@ -968,7 +968,7 @@ PostgreSQL field metadata. Supabase's restricted management transport exposes
 read statements with unknown native field types and explicitly unproven
 completeness. Unsupported operations return typed unavailable results.
 
-Managed writes bind an existing PostgreSQL connection Saved Secret through
+Managed writes bind an existing direct connection Saved Secret through
 `deployments.bindings.set`, with `purpose: 'dataRole'`, the selected
 `targetLinkId`, and `role: 'write'`. The existing credential owner opens only
 that binding under the signed Action's write access class and checks its engine
@@ -979,7 +979,8 @@ or create a new secret. Read-class work uses the target's dedicated read role or
 restricted read-only endpoint. In 0.3 development source, a managed target
 receives the daemon's existing database engine service for both read and write
 opens. The target adapter selects its transport and supplies the credential for
-the admitted access class. The shared driver preserves native fields and
+the admitted access class. Direct managed MySQL uses the same native driver
+as Worktree and manual MySQL. The shared drivers preserve native fields and
 transaction commit and rollback for direct connections.
 
 The canonical psql input admission API has explicit query and dump modes.

@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import type { DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1 } from '@happier-dev/plugin-sdk/database';
+import { EventEmitter } from 'node:events';
+import axios from 'axios';
+import nacl from 'tweetnacl';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import * as installationStore from '@/daemon/identity/store';
+import { sealMachineSecretGrant } from '@/deployments/secrets/machineSecretGrant';
+import { createDatabaseEnginesService } from '@/plugins/runtime/lifecycle/contributions/databaseEngines';
+import type { DatabaseDescriptorV1, DatabaseManagedDeploymentTargetV1, DatabaseOperationInputV1 } from '@happier-dev/plugin-sdk/database';
 import type { DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -12,6 +20,11 @@ import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createDeploymentDatabasesServiceForHost } from './createDeploymentDatabasesServiceForHost';
 import { createDeploymentTargetRoleAdmissionFixture } from './deploymentTargetRoleAdmission.testkit';
 import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/deployment-neon/src/manifest';
+
+// Exercise the real engine and dialect, substituting only the external mysql2 connection.
+const { createConnection } = vi.hoisted(() => ({ createConnection: vi.fn() }));
+vi.mock('mysql2', () => ({ createConnection }));
+afterEach(() => { vi.restoreAllMocks(); createConnection.mockReset(); });
 
 describe('managed database attachment at the deployment owner', () => {
     it('admits telemetry by R16 even when database agent access is off, and refuses withdrawn access or another collector', async () => {
@@ -95,11 +108,14 @@ describe('managed database attachment at the deployment owner', () => {
         } finally { await owners.dispose(); }
     });
 
-    it('discovers the current data Link and opens only its exact provider, project and branch', async () => {
+    it('reads and applies a reviewed MySQL write on the exact managed Link', async () => {
         const stored = createDeploymentTargetRoleAdmissionFixture('branches.list');
         const pluginManifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
         const pluginId = pluginManifest.id;
-        const definition = pluginManifest.contributes.deploymentTargets[0]!;
+        const source = pluginManifest.contributes.deploymentTargets.find(entry => entry.role === 'data')!;
+        if (source.role !== 'data' || !source.dataV1?.database) throw new Error('Expected managed data declaration');
+        const engine = 'mysql';
+        const definition = { ...source, dataV1: { ...source.dataV1, database: { ...source.dataV1.database, engineId: engine } } };
         const selected = stored.state.environment.targetLinks[0]!;
         selected.targetLink.source = { kind: 'plugin', contribution: { pluginId, localId: definition.id } };
         selected.targetLink.targetKind = definition.targetKind;
@@ -135,9 +151,57 @@ describe('managed database attachment at the deployment owner', () => {
             targetLinkId: selected.targetLink.id, contribution: { pluginId, contributionId: definition.id },
             platformProjectId: selected.content!.providerIdentity!.providerResourceId,
             branchId: selected.content!.providerIdentity!.providerEnvironment, database: 'selected-database' };
-        let opens = 0;
+        const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(47));
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({ version: 1, createdAt: 1,
+            installationId: stored.host.installationId, publicKey: encodeBase64(keys.publicKey, 'base64url'),
+            privateKey: encodeBase64(keys.secretKey, 'base64url') });
+        const resourceId = 'fixture-managed-writer';
+        stored.state.environment.content.bindings = [{ purpose: 'dataRole', targetLinkId: target.targetLinkId, role: 'write',
+            source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 } }];
+        let writeUrl = `mysql://writer:fixture@selected/${target.database}`;
+        vi.spyOn(axios, 'request').mockImplementation(async () => ({ status: 200, data: { ok: true, grants: [
+            sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: environment.environmentId,
+                machineId: stored.host.machineId, installationId: stored.host.installationId, resourceId, resourceRevision: 1 },
+            installationPublicKey: keys.publicKey, content: { kind: 'secret', value: writeUrl } }),
+        ] } }));
+        const host = { ...stored.host, credentials: { encryption: null, token: `header.${encodeBase64(
+            new TextEncoder().encode(JSON.stringify({ sub: stored.host.credentialOwnerAccountId })), 'base64url')}.signature` },
+            readConnectedAccountPurposes: () => ({ owner: purposeOwner }) };
+
+        let committed = 'managed-row';
+        createConnection.mockImplementation(({ uri }: { uri: string }) => {
+            const address = new URL(uri);
+            let pending = committed;
+            const frame = (values: string[], names: string[]) => [
+                [values], names.map(name => ({ name, columnType: 253, characterSet: 45 })),
+            ];
+            const client = {
+                async execute(sql: string, values: readonly string[] = []) {
+                    if (sql.startsWith('SELECT VERSION()')) return frame(['8.4.7', '', address.pathname.slice(1), address.username, address.hostname, '3306'],
+                        ['version', 'sql_mode', 'database', 'current_user', 'hostname', 'port']);
+                    if (sql === 'SELECT label FROM items') return frame([committed], ['label']);
+                    if (sql === 'UPDATE items SET label=?' && address.username === 'writer') {
+                        pending = values[0]!;
+                        return [{ affectedRows: 1 }, []];
+                    }
+                    throw new Error('Unexpected MySQL statement');
+                },
+                async query(sql: string) {
+                    if (sql === 'COMMIT') committed = pending;
+                    return [[], []];
+                },
+            };
+            return Object.assign(new EventEmitter(), { connect(callback: () => void) { callback(); },
+                promise: () => client, destroy() {} });
+        });
+        const databaseEngines = createDatabaseEnginesService({ targets: [],
+            registry: { targetRegistrations: [], async activateContributionsOnDemand() { return []; } } });
+        const read = { operation: 'statement.run', target, mode: 'read',
+            statement: { sql: 'SELECT label FROM items', parameters: [] } } satisfies DatabaseOperationInputV1;
+        const write = { operation: 'statement.run', target, mode: 'write', executionMode: 'transaction',
+            statements: [{ sql: 'UPDATE items SET label=?', parameters: [{ type: 'text', value: 'reviewed' }] }] } satisfies DatabaseOperationInputV1;
         const descriptor = (target: DatabaseManagedDeploymentTargetV1): DatabaseDescriptorV1 => ({ target,
-            engine: 'postgresql', label: target.database, origin: { label: 'Linked database' }, capabilities: [],
+            engine, label: target.database, origin: { label: 'Linked database' }, capabilities: [],
             placement: { serverId: 'home', accountId: 'custody-account', machineId: 'controller', installationId: 'installation-controller' } });
         const runtime: DeploymentTargetDatabaseRuntimeV1 = {
             async listTargets(input, context) {
@@ -148,11 +212,13 @@ describe('managed database attachment at the deployment owner', () => {
                 return { targets: [descriptor({ ...input.target, database: target.database })], completeness: { complete: true } };
             },
             async open(input, context) {
-                opens++;
-                const databaseEngines = context.services.databaseEngines;
-                if (!databaseEngines) throw new Error('The admitted open did not receive the database engine service');
-                const connection = await databaseEngines.open('postgresql', {
-                    connectionString: 'postgresql://fixture/selected-database', access: input.access, signal: context.signal,
+                const { services } = context;
+                if (!services.databaseEngines || !services.secrets.readDataRole) throw new Error('Missing admitted database services');
+                const connectionString = input.access === 'write'
+                    ? await services.secrets.readDataRole({ role: 'write' })
+                    : `mysql://reader:fixture@selected/${input.target.database}`;
+                const connection = await services.databaseEngines.open(engine, {
+                    connectionString, access: input.access, signal: context.signal,
                 });
                 return { descriptor: descriptor(input.target), connection };
             },
@@ -160,16 +226,7 @@ describe('managed database attachment at the deployment owner', () => {
         const service = createDeploymentDatabasesServiceForHost({ seed: {
             plugin: { id: 'happier.database.workbench', version: '0.0.0' }, contribution: { id: 'targets-list', qualifiedId: 'happier.database.workbench/actions/targets-list' },
             occurrenceId: 'workbench', correlationId: 'host-selection', surface: 'cli', signal: new AbortController().signal,
-            databaseEngines: {
-                list: () => [],
-                async open(engine, { access }) {
-                    expect(engine).toBe('postgresql');
-                    return { engine, async execute() {
-                        return { ok: true, operation: 'describe', descriptor: { ...descriptor(target),
-                            label: access === 'read' ? 'Native reader' : 'Native writer' } };
-                    }, async close() {} };
-                },
-            },
+            databaseEngines,
             approvalContext: { ...stored.request.context, authority: 'present_user' }, isOccurrenceCurrent: () => true,
         }, contributes: { deploymentTargets: [{ pluginId, identity: { pluginId, localId: definition.id }, definition,
             provenance: 'first_party', source: { kind: 'bundled' }, manifestPath: '/fixture/neon/plugin.json', pluginVersion: pluginManifest.version }],
@@ -177,7 +234,7 @@ describe('managed database attachment at the deployment owner', () => {
                 manifestPath: '/fixture/neon/plugin.json', daemonEntryPath: null,
                 sourceSpec: { kind: 'path', locator: '/fixture/neon', trustPolicy: 'local_trusted', installPolicy: 'link' } }] },
             targetRegistrations: [{ pluginId, occurrenceId: 'provider', registration: { family: 'deploymentTargets', localId: definition.id, value: runtime } }],
-            readHost: async () => ({ ...stored.host, readConnectedAccountPurposes: () => ({ owner: purposeOwner }) }),
+            readHost: async () => host,
             readCurrentOccurrenceId: () => 'provider',
             createServices: owners.createServices, resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy,
         });
@@ -190,13 +247,14 @@ describe('managed database attachment at the deployment owner', () => {
             expect(listed.targets[0]?.automationSubject).toEqual(automationSubject);
             expect(stored.state.reads).toBe(1);
             expect(requests).toMatchObject([{ headers: { authorization: 'Bearer selected-provider-credential' } }]);
-            const resolved = await service.resolve({ operation: 'describe', target }, 'read');
+            const resolved = await service.resolve(read, 'read');
             expect(resolved.descriptor.target).toEqual(target);
             expect(resolved.descriptor.automationSubject).toEqual(automationSubject);
-            await expect(resolved.connection.execute({ operation: 'describe', target }))
-                .resolves.toMatchObject({ ok: true, descriptor: { label: 'Native reader' } });
-            await resolved.connection.close();
-            await expect(service.resolve({ operation: 'describe', target }, 'write'))
+            try {
+                await expect(resolved.connection.execute(read)).resolves.toMatchObject({ ok: true,
+                    results: [{ rows: [{ cells: [{ type: 'text', value: 'managed-row' }] }] }] });
+            } finally { await resolved.connection.close(); }
+            await expect(service.resolve(write, 'write'))
                 .rejects.toMatchObject({ code: 'database_editing_off' });
             for (const changed of [{ platformProjectId: 'neighbor-project' }, { branchId: 'neighbor-branch' },
                 { contribution: { pluginId: 'neighbor.provider', contributionId: definition.id } }]) {
@@ -205,17 +263,25 @@ describe('managed database attachment at the deployment owner', () => {
             }
             await expect(service.listTargets({ scope: { kind: 'environment', environment: { ...environment, projectSourceId: 'neighbor-source' } } }))
                 .rejects.toMatchObject({ code: 'deployment_access_denied' });
-            expect(opens).toBe(1);
             stored.state.environment = { ...stored.state.environment, environment: { ...stored.state.environment.environment,
                 dataEditorMode: 'managers', capabilities: { ...stored.state.environment.environment.capabilities, editData: true } } };
             expect(await service.listTargets({ scope: { kind: 'environment', environment } }))
                 .toMatchObject({ targets: [{ access: { canRead: true, canWrite: true } }] });
-            const writable = await service.resolve({ operation: 'describe', target }, 'write');
-            expect(writable.descriptor.access).toMatchObject({ canWrite: true });
-            await expect(writable.connection.execute({ operation: 'describe', target }))
-                .resolves.toMatchObject({ ok: true, descriptor: { label: 'Native writer' } });
-            await writable.connection.close();
-            expect(opens).toBe(2);
+            const writable = await service.resolve(write, 'write');
+            try {
+                expect(writable.descriptor.access).toMatchObject({ canWrite: true });
+                await expect(writable.connection.execute(write)).resolves.toMatchObject({ ok: true,
+                    results: [{ affectedRows: '1' }] });
+            } finally { await writable.connection.close(); }
+            expect(committed).toBe('reviewed');
+
+            for (const mismatched of [`postgresql://writer:fixture@selected/${target.database}`,
+                'mysql://writer:fixture@selected/neighbor']) {
+                writeUrl = mismatched;
+                await expect(service.resolve(write, 'write')).rejects.toMatchObject({ code: 'target_mismatch' });
+            }
+            // One data connection for each successful open; the mismatches never reach the driver.
+            expect(createConnection).toHaveBeenCalledTimes(2);
         } finally { await owners.dispose(); }
     });
 });
