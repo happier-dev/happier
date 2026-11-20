@@ -54,8 +54,12 @@ function databaseBoundary(meterCount: number) {
             operations.push('mode.read');
             return { encryptionMode: mode, publicKey: null, contentPublicKey: null, contentPublicKeySig: null };
         }) },
+        accountChange: { findMany: vi.fn(async () => {
+            operations.push('publication.read');
+            return [];
+        }) },
         providerAccountUsageRecord: { findUnique: vi.fn(async () => stored), updateMany, update: parentUpdate },
-        providerAccountUsageHistory: { create: insertHistory },
+        providerAccountUsageHistory: { findFirst: vi.fn(async () => null), create: insertHistory },
     };
     database.transaction.mockImplementation(async (callback: (client: TransactionClient) => Promise<unknown>) =>
         callback(tx as unknown as TransactionClient));
@@ -85,16 +89,19 @@ describe('provider usage write cost and Account admission', () => {
         expect(boundary.retained[0]).toMatchObject({ accountId: 'owner', payload: { snapshot: { planLabel: 'changed plan' } } });
         expect(boundary.operations.indexOf('admission')).toBeLessThan(boundary.operations.indexOf('mode.read'));
         const terminal = boundary.operations.slice(boundary.operations.indexOf('publication.lock'));
-        expect(terminal).toEqual(['publication.lock', 'publication.write', 'publication.write']);
+        expect(terminal).toEqual(['publication.lock', 'publication.read', 'publication.write', 'publication.write']);
         expect(database.transaction.mock.lastCall?.[1]).toMatchObject({ isolationLevel: 'ReadCommitted' });
     });
 
-    it.each(['freshness', 'noop'] as const)('does not invalidate daily coverage for a %s update', async kind => {
+    it.each([
+        { kind: 'freshness', outcome: 'written', observations: 1 },
+        { kind: 'noop', outcome: 'noop', observations: 0 },
+    ] as const)('retains $observations exact observations for a $kind update', async ({ kind, outcome, observations }) => {
         const boundary = databaseBoundary(8);
-        await expect(boundary.write(kind)).resolves.toBe(kind === 'noop' ? 'noop' : 'written');
-        expect(boundary.retained).toHaveLength(0);
-        expect(boundary.operations.filter(operation => operation === 'summary.invalidate')).toHaveLength(0);
-        expect(boundary.operations.filter(operation => operation === 'pending.update')).toHaveLength(0);
+        await expect(boundary.write(kind)).resolves.toBe(outcome);
+        expect(boundary.retained).toHaveLength(observations);
+        expect(boundary.operations.filter(operation => operation === 'summary.invalidate')).toHaveLength(observations);
+        expect(boundary.operations.filter(operation => operation === 'pending.update')).toHaveLength(observations);
     });
 
     it('refuses old-mode content after Account admission without writing a record, history or publication', async () => {
