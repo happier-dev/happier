@@ -32,9 +32,8 @@ export async function startAutomationsEverywhereDeploymentFixture(testDir: strin
     } });
     await fixture.assertKnownGoodMachineControl(actor, machine);
     async function invoke(actionId: ActionId, input: unknown) {
-      const result = await actor.executeAsPerson(actionId, input, {
+      const result = await actor.executeReviewed(actionId, input, {
         externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
-        presentUserConfirmation: { actionId },
       });
       if (!result.ok) throw new Error(`${actionId}: ${JSON.stringify(result)}`);
       return result.result;
