@@ -15,6 +15,9 @@ export const ShellCornerContext = React.createContext<ShellCornerSlot | null>(
   null,
 );
 
+/** Space the shell actually has above Welcome and below its header. */
+export const ShellHeaderClearanceContext = React.createContext(0);
+
 const useIsomorphicLayoutEffect =
   typeof window === 'undefined' ? React.useEffect : React.useLayoutEffect;
 

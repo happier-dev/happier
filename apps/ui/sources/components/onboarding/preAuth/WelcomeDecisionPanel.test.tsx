@@ -7,7 +7,7 @@ vi.hoisted(() => vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_DEFAULT_PROFILE_JSON', JS
     accountService: { url: 'https://api.happier.dev' },
 })));
 import { act } from 'react-test-renderer';
-import { Dimensions } from 'react-native';
+import { Dimensions, StyleSheet } from 'react-native';
 
 import { renderScreen } from '@/dev/testkit';
 import type { AccountServiceEntryOptions } from '@/components/account/auth/useAccountServiceEntryOptions';
@@ -16,9 +16,35 @@ import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUt
 import { lastSignInMethodState, onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { t } from '@/text';
 import { FirstOpenWelcomeModelContext } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
+import { ShellHeaderClearanceContext } from '@/components/onboarding/unauthShell/shellCorner';
 
 import { WelcomeDecisionPanel } from './WelcomeDecisionPanel';
 import { WelcomeEntryView, type WelcomeEntryViewModel } from './WelcomeEntryView';
+
+it('uses only the clearance below the shell header for a Welcome notice', async () => {
+    const model: WelcomeEntryViewModel = {
+        heading: { title: 'Welcome', subtitle: 'Continue here' },
+        doors: [],
+        quietWays: [],
+        notices: [{ slot: 'home', testID: 'unavailable', kind: 'unavailable', title: 'Home is unavailable' }],
+    };
+    const view = (clearance: number) => (
+        <ShellHeaderClearanceContext.Provider value={clearance}>
+            <WelcomeEntryView compact model={model} />
+        </ShellHeaderClearanceContext.Provider>
+    );
+    const screen = await renderScreen(view(24));
+    const notice = screen.findByTestId('welcome-notice-slot');
+    expect(notice).toBeTruthy();
+    await act(async () => {
+        notice?.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 358, height: 77 } } });
+    });
+    const slotStyle = () => StyleSheet.flatten(screen.findByTestId('welcome-notice-slot')?.props.style);
+    expect(slotStyle()?.position).not.toBe('absolute');
+    expect(slotStyle()?.marginTop).toBe(-24);
+    await screen.update(view(0));
+    expect(slotStyle()?.marginTop ?? 0).toBe(0);
+});
 
 it('renders the same display model live and in an inert opening replica', async () => {
     const publish = vi.fn<(model: WelcomeEntryViewModel) => void>();

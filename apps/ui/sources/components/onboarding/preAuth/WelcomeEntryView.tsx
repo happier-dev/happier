@@ -11,7 +11,7 @@ import { Typography } from '@/constants/Typography';
 
 import { STEP_DOOR_WIDTH_PX, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
 import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
-import { useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
+import { ShellHeaderClearanceContext, useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
 import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
 import { t } from '@/text';
@@ -78,12 +78,12 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
     const quietLoading = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind === 'loading') : [];
     const slotNotices = loadingInRetentionSlot ? model.notices.filter((notice) => notice.kind !== 'loading') : model.notices;
     const noticeAction = interaction?.onNoticeAction;
-    // The notices stand above the doors without taking layout from them: the doors never move when a notice arrives,
-    // is replaced or leaves, and the lines above lift by the notices' height instead (lab: the column grows upward).
-    // Without lines above to lift (the restore ways under Approve), notices stay in flow.
-    const anchoredNotices = model.heading != null || model.doors.length > 0;
-    const [noticeLift, setNoticeLift] = React.useState(0);
-    const lift = anchoredNotices ? noticeLift : 0;
+    // The column grows up into the space below the shell header. Any remaining notice height takes its place
+    // above the doors in normal layout. The restore ways under Approve have no heading to lift.
+    const anchoredNotices = model.heading != null || model.policy != null;
+    const [noticeHeight, setNoticeHeight] = React.useState(0);
+    const headerClearance = React.useContext(ShellHeaderClearanceContext);
+    const lift = anchoredNotices ? Math.min(noticeHeight, headerClearance) : 0;
     return (
         <View testID="welcome-decision-panel" style={[styles.root, compact ? styles.rootCompact : null]}
             pointerEvents={interaction ? 'auto' : 'none'} accessibilityElementsHidden={!interaction}
@@ -119,7 +119,7 @@ export const WelcomeEntryView = React.memo(function WelcomeEntryView({
                     <View style={styles.ways}>
                         {anchoredNotices ? (
                             <WelcomeNotices layer="welcome-notices" notices={slotNotices} onAction={noticeAction}
-                                onHeight={setNoticeLift} />
+                                lift={lift} onHeight={setNoticeHeight} />
                         ) : null}
                         <View testID="welcome-doors" style={styles.doors}>
                             {model.primaryDoorPending ? <PendingPrimaryDoor /> : null}
@@ -176,11 +176,12 @@ function PendingPrimaryDoor() {
     );
 }
 
-function WelcomeNotices({ layer, notices, onAction, onHeight }: Readonly<{
+function WelcomeNotices({ layer, notices, onAction, lift = 0, onHeight }: Readonly<{
     layer: string;
     notices: WelcomeEntryViewModel['notices'];
     onAction?: (testID: string) => void;
-    /** Anchors the notices above the doors and reports the height the lines above give way by. */
+    lift?: number;
+    /** Reports the notice's natural height, including the gap above the doors. */
     onHeight?: (height: number) => void;
 }>) {
     const firstRun = useFirstRunWorkflowMotion();
@@ -210,7 +211,7 @@ function WelcomeNotices({ layer, notices, onAction, onHeight }: Readonly<{
     if (!onHeight) return layerElement;
     return (
         <View ref={box} testID="welcome-notice-slot" onLayout={onLayout}
-            style={[stylesheet.noticeAnchor, empty ? null : stylesheet.noticeAnchorFilled]}>
+            style={[empty ? null : stylesheet.noticeSlotFilled, lift === 0 ? null : { marginTop: -lift }]}>
             {layerElement}
         </View>
     );
@@ -303,14 +304,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     aboveDoorsCompact: {
         gap: theme.space.s16,
     },
-    // Out of the doors' layout: it stands on the doors' top edge and grows upward.
-    noticeAnchor: {
-        position: 'absolute',
-        left: 0,
-        right: 0,
-        bottom: '100%',
-    },
-    noticeAnchorFilled: {
+    noticeSlotFilled: {
         paddingBottom: theme.space.s12,
     },
     noticeLines: {

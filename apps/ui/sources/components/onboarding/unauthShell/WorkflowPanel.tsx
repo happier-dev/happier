@@ -16,7 +16,7 @@ import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TES
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
-import { ShellCornerContext, ShellCornerNoteContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
+import { ShellCornerContext, ShellCornerNoteContext, ShellHeaderClearanceContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
 /** The wordmark's corner (lab direction A): 24 px tall, 24 px in from a phone's side and 20 px down. */
@@ -48,6 +48,7 @@ const WORKFLOW_MOBILE_BOTTOM_PADDING = 28;
  * `desktopPadding` style below.
  */
 const WORKFLOW_DESKTOP_HORIZONTAL_GUTTER = 64;
+const DESKTOP_WELCOME_TOP_PADDING_PX = 56;
 /** The desktop wordmark's corner inset, on the page's outer gutter (lab direction A). */
 const DESKTOP_WORDMARK_INSET_PX = 40;
 /** A computer's wordmark sits 52 px down, its centre on the corner pill's (lab direction A). */
@@ -176,6 +177,15 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                 paddingLeft: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left,
             }
         : props.isWelcomeStep ? styles.contentDesktopPadding : styles.contentDesktopStepPadding;
+    const headerBottom = isMobile
+        ? MOBILE_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + MOBILE_ROW_WORDMARK_CLEARANCE_PX + safeAreaInsets.top
+        : DESKTOP_WORDMARK_TOP_PX + DESKTOP_WORDMARK_HEIGHT_PX;
+    const [headerClearance, setHeaderClearance] = React.useState(0);
+    const { onColumnLayout } = props;
+    const onWelcomeColumnLayout = React.useCallback((event: LayoutChangeEvent) => {
+        setHeaderClearance(Math.max(0, Math.floor(event.nativeEvent.layout.y - headerBottom)));
+        onColumnLayout?.(event);
+    }, [headerBottom, onColumnLayout]);
 
     return (
         <View
@@ -246,6 +256,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             ) : null}
             <ShellCornerContext.Provider value={cornerSlot}>
             <ShellCornerNoteContext.Provider value={cornerNoteSlot}>
+            <ShellHeaderClearanceContext.Provider value={props.isWelcomeStep ? headerClearance : 0}>
             <StepBackContext.Provider value={backSlot}>
             <WideStepColumnContext.Provider value={isMobile ? null : claimWideColumn}>
             <ScrollView
@@ -270,7 +281,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                         <>
                             {/* As on a computer: the column stands above the planet, two parts of the free height above it. */}
                             <View style={styles.welcomeLead} />
-                            <View onLayout={props.onColumnLayout}>
+                            <View onLayout={onWelcomeColumnLayout}>
                                 <StepMotionLayer
                                     layerKey={FIRST_RUN_WORKFLOW_LAYER}
                                     webChrome={readWebChrome}
@@ -296,7 +307,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     ) : (
                         <>
                             {/* The welcome's doors stand above the planet: two parts of the free height above, three below. */}
-                            <View style={styles.welcomeLead} />
+                            <View style={[styles.welcomeLead, styles.welcomeLeadDesktop]} />
                             <StepMotionLayer
                                 layerKey={FIRST_RUN_WORKFLOW_LAYER}
                                 webChrome={readWebChrome}
@@ -306,7 +317,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 testID="unauth-shell-step-transition"
                                 stepKey={props.transitionKey}
                                 compact={isMobile}
-                                onLayout={props.onColumnLayout}
+                                onLayout={onWelcomeColumnLayout}
                                 style={[STEP_TRANSITION_NATURAL_STYLE, { maxWidth: paneMaxWidth }, styles.desktopColumn]}
                             >
                                 {props.children}
@@ -323,7 +334,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                                 // It stands over the planet's limb, so it reads on the corner pill's surface.
                                                 <View style={[styles.cornerNoteSurface, { borderColor: theme.colors.border.default }]}>
                                                     {/* An Element over the planet: glass, its exact solid paint under Reduce Transparency. */}
-                                                    <GlassSurface surfaceGroup="card" nested finishRole={null}
+                                                    <GlassSurface surfaceGroup="card" nested finishRole={null} children={null}
                                                         solidColor={theme.colors.surface.base} style={styles.cornerNoteGround} />
                                                     <RelayRetentionDisclosure testID="welcome-retention"
                                                         disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
@@ -378,6 +389,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
             </ScrollView>
             </WideStepColumnContext.Provider>
             </StepBackContext.Provider>
+            </ShellHeaderClearanceContext.Provider>
             </ShellCornerNoteContext.Provider>
             </ShellCornerContext.Provider>
         </View>
@@ -402,7 +414,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'column',
     },
     contentDesktopPadding: {
-        paddingTop: 56,
+        paddingTop: DESKTOP_WELCOME_TOP_PADDING_PX,
         paddingHorizontal: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER,
         paddingBottom: DESKTOP_PANE_BOTTOM_PADDING_PX,
     },
@@ -422,6 +434,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     welcomeLead: {
         flex: 2,
         minHeight: 0,
+    },
+    welcomeLeadDesktop: {
+        minHeight: DESKTOP_WORDMARK_TOP_PX + DESKTOP_WORDMARK_HEIGHT_PX - DESKTOP_WELCOME_TOP_PADDING_PX,
     },
     welcomeTrail: {
         flex: 3,
