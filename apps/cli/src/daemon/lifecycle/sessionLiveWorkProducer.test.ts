@@ -261,6 +261,23 @@ describe('live Session producer at the host input RPC boundary', () => {
     expect(reads).toBe(1);
   });
 
+  it('keeps a runner push through a structural passive refresh whose reread fails, but not through a confirmation', async () => {
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' };
+    const settled = { session: 'settled', input: 'settled', agents: 'settled', attention: 'settled', settledAt: 1 } as const;
+    // The reader lost the authority a runner read needs (a withdrawn requester).
+    const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () => { throw new Error('requester_session_not_current'); } });
+    source.notifySessionChanged('session', { runnerPid: 1, revision: 1, activity: settled });
+    source.notifyChanged();
+    const state = (items: readonly { category: string; state: string }[]) => items.find(item => item.category === 'session')?.state;
+    expect(state((await source.read('changed')).items)).toBe('settled');
+    expect(state((await source.read()).items)).toBe('unknown');
+    expect(state((await source.read('changed')).items)).toBe('settled');
+    // A content-free change supersedes the push.
+    source.notifySessionChanged('session', { runnerPid: 1, revision: 2, activity: settled });
+    source.notifySessionChanged('session');
+    expect(state((await source.read('changed')).items)).toBe('unknown');
+  });
+
   it('keeps unreported startup and failed live transport unknown even when activeTurnId is absent', async () => {
     const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' };
     const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () => { throw new Error('unreachable'); } });

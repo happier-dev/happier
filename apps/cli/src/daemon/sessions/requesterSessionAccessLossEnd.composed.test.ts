@@ -126,11 +126,7 @@ function fixture() {
   const endSessions = createRequesterSessionAccessLossEnd({
     serverId: 'home',
     readSessions: () => tracked.values(),
-    readLiveWork: async (session) =>
-      activity.get(session.happySessionId!) ?? {
-        session: 'unknown',
-        input: 'unknown',
-      },
+    readLiveWorkItems: async () => (await producer.read('changed')).items,
     subscribeLiveWork: (sessionId, listener) =>
       producer.subscribe(listener, sessionId),
     isRequesterAccessCurrent: async (session) =>

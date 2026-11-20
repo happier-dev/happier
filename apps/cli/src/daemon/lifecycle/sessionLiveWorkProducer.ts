@@ -71,7 +71,17 @@ export function createSessionLiveWorkProducer(params: Readonly<{
               activity = read;
               retained.set(tracked, { sessionId, activity });
             }
-          } catch { /* Missing live coverage stays unknown. */ }
+          } catch {
+            // Missing live coverage stays unknown, except that a passive refresh after a
+            // structural change keeps this runner's own latest push: nothing it reported
+            // has changed, and a reader that lost its authority (a withdrawn requester)
+            // must still see the runner settle. Explicit confirmations stay fresh.
+            const pushed = retained.get(tracked) ?? previous;
+            if (pushed?.pushed && pushed.sessionId === sessionId && !invalidated.has(sessionId)) {
+              retained.set(tracked, pushed);
+              if (scope === 'changed') activity = pushed.activity;
+            }
+          }
         }
         return { tracked, sessionId, activity };
       }));

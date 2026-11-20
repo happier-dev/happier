@@ -9386,16 +9386,19 @@ export async function startDaemonSessionControlRuntime(
       endRequesterSessions: createRequesterSessionAccessLossEnd({
         serverId: params.serverId,
         readSessions: () => params.trackedSessionsByKey.values(),
-        readLiveWork: (tracked, signal) => readSessionRunnerLiveWork(tracked, signal),
+        // The runner pushes its own live work; withdrawal retires the requester authority a
+        // fresh runner read or a requester-scoped Stop wrapper would need (live finding 11-20).
+        readLiveWorkItems: async () => (await sessionLiveWorkProducer.read('changed')).items,
         subscribeLiveWork: (sessionId, listener) => sessionLiveWorkProducer.subscribe(listener, sessionId),
         isRequesterAccessCurrent: async (tracked, signal) =>
           await tracked.requesterSessionRuntimeContext?.bootstrap.verifyRuntimeMachineAdmissionCurrent?.(signal) ?? false,
-        stopSession: (tracked, lifecycleStateReason) => withSessionStopMetadataContext(tracked.happySessionId!, async metadataContext =>
-          await stopSession(tracked.happySessionId!, { metadataContext, lifecycleStateReason, expectedTrackedRunner: {
+        // Same daemon-initiated Stop as the Machine guard: physical end is daemon-owned and the
+        // Stop borrows the requester's metadata authority itself only while it still resolves.
+        stopSession: async (tracked, lifecycleStateReason) => await stopSession(tracked.happySessionId!, {
+          lifecycleStateReason, expectedTrackedRunner: {
             tracked, sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
             processCommandHash: tracked.processCommandHash,
-          } }, undefined, undefined, metadataContext.credentials),
-        tracked.requesterWorkAttributionV1, shutdownCancellationDomains.daemonWorkSignal),
+          } }),
         lifetimeSignal: shutdownCancellationDomains.daemonWorkSignal,
       }),
       cleanupRequesterMachineResources: async ({ requesterAccountId }) => {
