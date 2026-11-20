@@ -381,14 +381,15 @@ export function createCliWorkflowFamily(
   };
 
   const createOwnedWorkflowExecutor = workflowDefinitions && params.credentials
-    ? async (args: Pick<Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], 'actionId' | 'context'>, combined?: WorkflowCombinedRunStartV1) => {
+    ? async (args: Pick<Parameters<NonNullable<ActionExecutorDeps['workflowAction']>>[0], 'actionId' | 'context'>, combined?: WorkflowCombinedRunStartV1, retainedRequesterContext?: ActionExecutorContext) => {
       // Each invocation retains its original proof; concurrent Session calls
       // must never spend another caller's authority through a shared closure.
       // A combined Run spends its retained parent's currentness purpose, not
       // the internal workflow.run.start/wait effect under that parent's proof.
-      const encryptionCaller = { actionId: combined?.parent.actionId ?? args.actionId, context: args.context };
+      const encryptionCaller = { actionId: retainedRequesterContext?.externalActionExecutionAuthorization?.binding.actionId
+        ?? combined?.parent.actionId ?? args.actionId, context: retainedRequesterContext ?? args.context };
       const workflowRunStorage = createWorkflowRunStorage(combined
-        ? { parent: combined.parent, context: args.context } : args);
+        ? { parent: combined.parent, context: args.context } : args, retainedRequesterContext);
       const [{ createWorkflowActionExecutor }, { logger }, { createWorkflowRunActionOwner }, { createCommittedInputTypeDeps }, { doesWorkflowImmediateEligibleStepTargetSession }] = await Promise.all([import("./workflowActionExecutor"), import("@/ui/logger"), import("./workflowRunActions"), import("@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps"), import("@/daemon/workflows/coordinator")]);
       const execute = createWorkflowActionExecutor({
         onFailureDiagnostic: diagnostic => logger.infoFile(JSON.stringify(diagnostic)),
@@ -764,13 +765,13 @@ export function createCliWorkflowFamily(
       } }),
       wait: async args => {
         if (!createOwnedWorkflowExecutor) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-        const owner = await createOwnedWorkflowExecutor({ actionId: 'workflow.run.wait', context: args.context });
+        const owner = await createOwnedWorkflowExecutor({ actionId: 'workflow.run.wait', context: args.context }, undefined, args.context);
         if (!owner.waitAutomaticCheck) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         return owner.waitAutomaticCheck(args);
       },
       cancel: async args => {
         if (!createOwnedWorkflowExecutor) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
-        const owner = await createOwnedWorkflowExecutor({ actionId: 'workflow.run.cancel', context: args.context });
+        const owner = await createOwnedWorkflowExecutor({ actionId: 'workflow.run.cancel', context: args.context }, undefined, args.context);
         if (!owner.cancelAutomaticCheck) throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable' });
         await owner.cancelAutomaticCheck(args);
       },

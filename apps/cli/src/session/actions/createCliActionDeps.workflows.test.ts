@@ -49,7 +49,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { prepareExternalActionRequesterAccountAuthorization, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, computeExternalActionRequestEnvelopeDigestV1, type ExternalActionTargetV1 } from '@happier-dev/protocol/actions';
-import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import { openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, sealWorkflowFinalResultStoredEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 import { WorkflowAcceptedSnapshotV1Schema } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { AutomationDefinitionCreateRequestSchema, AutomationDefinitionDetailSchema, AutomationDefinitionReconcileRequestSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
@@ -129,14 +129,14 @@ afterAll(async () => {
 
 describe('createCliActionDeps workflow boundary', () => {
   it.each((['plain', 'e2ee'] as const).flatMap(mode => (['keyless', 'session'] as const).flatMap(custody =>
-    [false, true].map(readInvocation => ({ mode, custody, readInvocation })))))(
-    'opens signed requester Workflow content only with its admitted custody ($mode, $custody, invocation=$readInvocation)', async ({ mode, custody, readInvocation }) => {
+    (['get', 'invocation', 'automatic'] as const).map(read => ({ mode, custody, readInvocation: read === 'invocation', readAutomatic: read === 'automatic' })))))(
+    'opens signed requester Workflow content only with its admitted custody ($mode, $custody, invocation=$readInvocation, automatic=$readAutomatic)', async ({ mode, custody, readInvocation, readAutomatic }) => {
     const channel = custody === 'session' ? await createRequesterCurrentnessSocketHarness() : null;
     onTestFinished(async () => { await channel?.close(); });
     const runId = '11111111-1111-4111-8111-111111111111';
     const recordId = '33333333-3333-4333-8333-333333333333';
     const rootId = '44444444-4444-4444-8444-444444444444';
-    const actionId = readInvocation ? 'workflow.run.invocations.get' : 'workflow.run.get';
+    const actionId = readAutomatic ? 'machines.command.run' : readInvocation ? 'workflow.run.invocations.get' : 'workflow.run.get';
     const machineId = 'machine-1';
     const home = 'https://keyless-workflow-requester.test';
     const identity = createMachineInstallationIdentityFixture();
@@ -145,8 +145,9 @@ describe('createCliActionDeps workflow boundary', () => {
       accountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 }, custodianAccountId: 'requester',
       serverIdentityId: 'requester-home', machineId, installationId: identity.installationId,
       actionId, requestId: 'requester-get', requestEnvelopeDigest: 'a'.repeat(43),
-      accountEncryptionMode: mode, target: { kind: 'machine', machineId },
-      ...(custody === 'session' ? { sessionActionOrigin: {
+      accountEncryptionMode: mode, target: { kind: 'machine', machineId,
+        ...(readAutomatic ? { project: { machineId, directory: '/repo' } } : {}) },
+      ...(custody === 'session' || readAutomatic ? { sessionActionOrigin: {
         v: 1, caller: { kind: 'session', sessionId: 'discussion-session', starterDepth: 0, turnDepth: 0 },
         sourceTurnId: 'discussion-turn', callerPermissionMode: 'default', causalPermissionAuthority: null,
         requestId: 'requester-get' }, sessionActionSource: { machineId, installationId: identity.installationId } } : {}),
@@ -158,7 +159,7 @@ describe('createCliActionDeps workflow boundary', () => {
     if (!authorization) throw new Error('signed_requester_projection_required');
     // A keyless request must refuse even when the foreign receiver can decrypt;
     // a Session request must use its own custody when the receiver cannot.
-    const credentials = { token: 'installed-other-account', encryption: { type: 'legacy' as const,
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: 'installed-other-account' })).toString('base64url')}.signature`, encryption: { type: 'legacy' as const,
       secret: new Uint8Array(32).fill(custody === 'keyless' ? 20 : 19) } };
     const requesterCredentials = { token: 'admitted-requester-account', encryption: mode === 'plain' ? null
       : { type: 'legacy' as const, secret: new Uint8Array(32).fill(20) } };
@@ -172,6 +173,13 @@ describe('createCliActionDeps workflow boundary', () => {
       encryption: mode === 'plain' ? { kind: 'available', witness: { mode, version: 1, contentKeyFingerprint: null } }
         : { kind: 'available', witness: { mode, version: 1, contentKeyFingerprint }, material },
       randomBytes: length => new Uint8Array(length).fill(23) });
+    const finalResult = { kind: 'happier.workflow-final-result.v1' as const,
+      result: { kind: 'text' as const, value: 'Check passed' }, producerInvocation: { recordId } };
+    const resultEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowFinalResultStoredEnvelopeV1({
+      ...(preparedKey.runCrypto.mode === 'e2ee'
+        ? { ...preparedKey.runCrypto, randomBytes: (length: number) => new Uint8Array(length).fill(26) }
+        : preparedKey.runCrypto), binding: { v: 1, purpose: 'final_result', accountId: 'requester', runId }, finalResult,
+    }));
     const definition = validateWorkflowDefinition({ version: 1, blocks: [
       { kind: 'wait', id: 'review', document: { text: 'Requester review', references: [], attachments: [] } },
     ] }).normalizedDefinition!;
@@ -188,7 +196,7 @@ describe('createCliActionDeps workflow boundary', () => {
       },
     }));
     const run = WorkflowRunSummaryV1Schema.parse({ id: runId, ownerAccountId: 'requester', sourceArtifactId: null,
-      visibleTeamId: null, origin: { kind: 'direct' }, state: 'cancelled', revision: 1, machineId,
+      visibleTeamId: null, origin: { kind: 'direct' }, state: readAutomatic ? 'succeeded' : 'cancelled', revision: 1, machineId,
       workflowCustodyState: 'settled', originDeliveryAckRevision: null, attentionRequired: false, failureUnseen: false,
       invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       availability: { pause: false, resumeBoundary: false, restoreWorkspace: false, cancel: false,
@@ -215,12 +223,28 @@ describe('createCliActionDeps workflow boundary', () => {
       }
       expect(options.headers).not.toHaveProperty('Authorization');
       expect(options.headers).toHaveProperty(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, root.token);
+      if (readAutomatic) expect(verifyExternalActionMachineRequestV1({ authorizationToken: root.token, effectActionId: actionId,
+        target: root.binding.target, installationId: identity.installationId, requestId: root.binding.requestId,
+        method: 'GET', path: '/v1/account/encryption/currentness', publicKey: Buffer.from(identity.publicKeyBase64, 'base64url'),
+        signature: options.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]! })).toBe(true);
       return { status: 200, data: { ...witness, signingKeyFingerprint: mode === 'plain' ? null : 'a'.repeat(64), updatedAt: 1 } };
     });
     http.post.mockImplementation(async (url: string, body: Record<string, unknown>, options: { headers: Record<string, string> }) => {
       expect(url).toBe(`${home}/v3/automations/runs/workflow-storage`);
-      expect(options.headers).not.toHaveProperty('Authorization');
-      expect(options.headers).toHaveProperty(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, root.token);
+      if (readAutomatic) {
+        if (options.headers.Authorization !== `Bearer ${requesterCredentials.token}`) {
+          throw Object.assign(new Error('credential_scope_denied'), { response: { status: 403, data: { error: 'credential_scope_denied' } } });
+        }
+        expect(options.headers).not.toHaveProperty(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER);
+        if (body.operation === 'cancel') {
+          run.state = 'cancelled';
+          return { data: { run, intent: 'cancel_requested' } };
+        }
+        if (body.operation === 'wait') return { data: { observation: 'terminal', run, resultEnvelope, keyCensus } };
+      } else {
+        expect(options.headers).not.toHaveProperty('Authorization');
+        expect(options.headers).toHaveProperty(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, root.token);
+      }
       if (body.operation === 'get') return { data: { run, acceptedEnvelope, checkpointEnvelope: null, resultEnvelope: null, keyCensus } };
       if (readInvocation && body.operation === 'invocations.get') {
         expect(body.invocationId).toBe(recordId);
@@ -229,7 +253,8 @@ describe('createCliActionDeps workflow boundary', () => {
       throw new Error(`unexpected_workflow_read:${String(body.operation)}`);
     });
     const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'cli-global', mode: 'plain', ctx: null,
-      serverId: 'requester-profile', serverIdentityId: 'requester-home', serverHttpBaseUrl: home,
+      serverId: 'requester-profile', serverIdentityId: 'requester-home',
+      serverHttpBaseUrl: readAutomatic ? 'https://installed-other-home.test' : home,
       externalActionMachineRequestPrivateKey: privateKey, externalActionMachineInstallationId: identity.installationId,
       resolveServerFeaturesSnapshot: () => enabledFeatures });
     if (custody === 'session') {
@@ -243,9 +268,27 @@ describe('createCliActionDeps workflow boundary', () => {
       if (!authorization) throw new Error('session_custody_projection_required');
     }
     const context = { surface: 'cli' as const, externalActionTarget: root.binding.target, externalActionExecutionAuthorization: authorization };
-    const result = readInvocation
+    const originalAuthorization = context.externalActionExecutionAuthorization;
+    const result = readAutomatic
+      ? deps.actionAutomations!.wait!({ run: { automationId: 'selected-automation', triggerId: 'selected-trigger', runId }, context })
+      : readInvocation
       ? deps.workflowAction!({ actionId: 'workflow.run.invocations.get', input: { runId, invocationId: recordId }, context })
       : deps.workflowAction!({ actionId: 'workflow.run.get', input: { runId, includeUsage: false }, context });
+    if (readAutomatic) {
+      const check = { automationId: 'selected-automation', triggerId: 'selected-trigger', runId };
+      if (custody === 'session') {
+        await expect(result).resolves.toMatchObject({ state: 'succeeded', finalResult, resultId: recordId });
+        run.state = 'running';
+        await deps.actionAutomations!.cancel!({ run: check, context });
+        expect(run.state).toBe('cancelled');
+      } else {
+        await expect(result).rejects.toMatchObject({ code: 'run_access_denied' });
+        await expect(deps.actionAutomations!.cancel!({ run: check, context })).rejects.toMatchObject({ code: 'run_access_denied' });
+      }
+      expect(context.externalActionExecutionAuthorization).toBe(originalAuthorization);
+      expect(originalAuthorization.binding.actionId).toBe('machines.command.run');
+      return;
+    }
     await expect(result).resolves.toMatchObject(mode === 'plain' || custody === 'session'
       ? readInvocation ? { invocation: { index, progress } } : { run: { id: runId, ownerAccountId: 'requester' }, definition }
       : { ok: false, errorCode: 'content_unavailable',

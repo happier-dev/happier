@@ -5,13 +5,13 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createWorkflowRunStorageClient } from '@/daemon/workflows/workflowRunStorageClient';
 import type { WorkflowAccountRunActionDeps } from '@happier-dev/protocol';
 import type { WorkflowCombinedRunStartV1 } from '@happier-dev/protocol/actions/executor/workflowRunActions';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 
 export type CliWorkflowRequestHeaders = (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
 export type CliWorkflowCurrentSessionValue = (key: 'path' | 'host' | 'machineId', signal?: AbortSignal) => Promise<string | null>;
 export type CliWorkflowRunStorageFactory = (caller?: Readonly<{ actionId: string; context: ActionExecutorContext }>
-  | Pick<WorkflowCombinedRunStartV1, 'parent' | 'context'>) => WorkflowAccountRunActionDeps['storage'];
+  | Pick<WorkflowCombinedRunStartV1, 'parent' | 'context'>, retainedRequesterContext?: ActionExecutorContext) => WorkflowAccountRunActionDeps['storage'];
 export type CliWorkflowRunStorage = Readonly<{
   workflowRunServerHttpBaseUrl: string;
   createWorkflowRunStorage: CliWorkflowRunStorageFactory;
@@ -25,12 +25,16 @@ export function createCliWorkflowRunStorage(
 ): CliWorkflowRunStorage {
 
   const workflowRunServerHttpBaseUrl = params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
-  const createWorkflowRunStorage: CliWorkflowRunStorageFactory = (caller) => {
+  const createWorkflowRunStorage: CliWorkflowRunStorageFactory = (caller, retainedRequesterContext) => {
+    // Automatic checks retain the admitted parent's private Account/Home;
+    // the internal Workflow child cannot spend the parent as a new effect.
     // Private Account custody retains ordinary Run access. HTTP-only callers
     // spend their admitted signed parent rather than the installed Account.
     const combined = caller && 'parent' in caller ? caller : undefined;
-    const requester = combined ? readRequesterAccountActionContext(combined.context.externalActionExecutionAuthorization) : null;
-    const requesterHttp = requester ? undefined : combined?.context.externalActionExecutionAuthorization?.requesterHttpProjection;
+    const requester = retainedRequesterContext
+      ? readRequesterAccountActionTransportContext(retainedRequesterContext.externalActionExecutionAuthorization)
+      : combined ? readRequesterAccountActionContext(combined.context.externalActionExecutionAuthorization) : null;
+    const requesterHttp = requester || retainedRequesterContext ? undefined : combined?.context.externalActionExecutionAuthorization?.requesterHttpProjection;
     // The existing Account socket supplies content-free wakes only; every
     // signed request below retains its original requester effect authority.
     const token = requester?.credentials.token ?? params.token;
@@ -38,15 +42,16 @@ export function createCliWorkflowRunStorage(
     // Select the admitted requester here; Home authorizes each storage request.
     // An observation gap cannot revoke the starter's already-admitted Run.
     // Content mode and keys remain the encryption owner's decision.
-    const assertCombinedRequester = () => {
-      if (combined && (combined.context.externalActionExecutionAuthorization || combined.context.externalActionCredential)
+    const assertRetainedRequester = () => {
+      const context = retainedRequesterContext ?? combined?.context;
+      if (context && (context.externalActionExecutionAuthorization || context.externalActionCredential)
         && !requester && !requesterHttp) {
         throw Object.assign(new Error('run_access_denied'), { code: 'run_access_denied' });
       }
     };
     const storage: WorkflowAccountRunActionDeps['storage'] = {
     observeChanges: (runId, onChange, onError) => {
-      if (!combined) return createWorkflowRunStorageClient({ token, serverHttpBaseUrl }).observeChanges(runId, onChange, onError);
+      if (!combined && !retainedRequesterContext) return createWorkflowRunStorageClient({ token, serverHttpBaseUrl }).observeChanges(runId, onChange, onError);
       let disposed = false;
       let observation: ReturnType<ReturnType<typeof createWorkflowRunStorageClient>['observeChanges']> | undefined;
       const failed = (error: unknown) => {
@@ -56,7 +61,7 @@ export function createCliWorkflowRunStorage(
         onError(error);
       };
       const started = (async () => {
-        assertCombinedRequester();
+        assertRetainedRequester();
         if (disposed) return;
         observation = createWorkflowRunStorageClient({ token, serverHttpBaseUrl }).observeChanges(runId, () => {
           if (!disposed) onChange();
@@ -65,7 +70,7 @@ export function createCliWorkflowRunStorage(
       return { dispose: async () => { disposed = true; await started; await observation?.dispose(); } };
     },
     execute: async (operation, options) => {
-      assertCombinedRequester();
+      assertRetainedRequester();
       let machineId: string | undefined;
       const authorizationMachineId = caller?.context.externalActionExecutionAuthorization?.binding.machineId;
       if (isWorkflowRunExecutorStorageOperationV1(operation.operation) || authorizationMachineId) {
@@ -88,7 +93,7 @@ export function createCliWorkflowRunStorage(
         token,
         ...(machineId ? { machineId } : {}),
         serverHttpBaseUrl,
-        ...(caller && 'actionId' in caller ? { resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(caller.context, caller.actionId, request) }
+        ...(caller && 'actionId' in caller && !retainedRequesterContext ? { resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(caller.context, caller.actionId, request) }
           : combined && requesterHttp ? { resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(combined.context, combined.parent.actionId, request) } : {}),
       }).execute(
         operation as Parameters<ReturnType<typeof createWorkflowRunStorageClient>['execute']>[0],
