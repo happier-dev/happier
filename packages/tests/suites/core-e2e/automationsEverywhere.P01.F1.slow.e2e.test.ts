@@ -127,9 +127,8 @@ it('P01.F1 health failure opens diagnose Session', async () => {
   };
   const addSavedSource = async (owner: Actor, observer: Machine, label: string, path: string) => {
     const invokeOwner = async (actionId: ActionId, input: unknown) => {
-      const output = await owner.executeAsPerson(actionId, input, {
+      const output = await owner.executeReviewed(actionId, input, {
         externalActionTarget: { kind: 'machine', machineId: observer.target.machineId },
-        presentUserConfirmation: { actionId },
       });
       expect(output.ok, JSON.stringify(output)).toBe(true);
       if (!output.ok) throw Error(output.errorCode);
