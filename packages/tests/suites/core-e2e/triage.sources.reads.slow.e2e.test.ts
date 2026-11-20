@@ -12,6 +12,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
 import { connectUiTriageActionClient } from '@happier-tests/ui-action-client';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as connectionOutputs } from '@happier-dev/protocol/connect/configurationActionsV1';
+import { QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import {
   TRIAGE_SOURCES_ADMINISTER_ACTION_LOCAL_ID_V1, TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1,
   TriageSourceAdministrationActionResultV1Schema, TriageReadConfiguredSourceInstancesResultV1Schema,
@@ -108,6 +110,8 @@ it('reads five external sources with exact Account bindings and pages a 500+3 so
       slug: `bounds-org-${index}`, name: `Bounds organization ${index}` }));
   let forgeIdentityMismatch: string | null = null;
   let readOnlyWindow = false;
+  const rejectedPosthogToken = 'constructed-posthog-rejected-token';
+  let confirmedRejectedPosthogToken = false;
   const readWindowWrites: Array<{ method: string; path: string }> = [];
   const listResultUtf8Bytes: number[] = [];
   try {
@@ -207,6 +211,10 @@ it('reads five external sources with exact Account bindings and pages a 500+3 so
           } };
         }
         if (host === 'eu.posthog.com') {
+          if (url.pathname === '/api/organizations/' && request.authorizationFingerprint === fingerprint(rejectedPosthogToken)) {
+            if (confirmedRejectedPosthogToken) return { statusCode: 403, body: { detail: 'Constructed credential refusal' } };
+            confirmedRejectedPosthogToken = true;
+          }
           if (url.pathname === '/api/organizations/') return { statusCode: 200, body: { ...posthogOrganizations, count: 1, next: null } };
           if (url.pathname.endsWith('/projects/')) return { statusCode: 200,
             body: { ...posthogProjects, count: 1, next: null, results: [posthogProjects.results[0]] } };
@@ -443,6 +451,27 @@ globalThis.fetch = (input, init) => external(input) ? originalUndiciFetch(input,
     const phDiscovery = TriageListInstancesResultV1Schema.parse(await invoke(POSTHOG_PLUGIN_ID, POSTHOG_ACTION_IDS.listInstances, { v: 1 }));
     expect(phDiscovery).toMatchObject({ kind: 'complete', failures: [], candidates: [{ binding: { account: ph } }] });
     if (phDiscovery.kind === 'failed') throw new Error('PostHog discovery failed');
+
+    // Connect succeeds, then PostHog refuses the same credential during the daemon's status check.
+    const rejectedPosthog = await connect(posthogService, POSTHOG_PERSONAL_API_KEY_MODE_ID,
+      { [POSTHOG_API_ORIGIN_FIELD_ID]: 'https://eu.posthog.com' }, { [POSTHOG_PERSONAL_API_KEY_FIELD_ID]: rejectedPosthogToken });
+    const query = new URLSearchParams({
+      service: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema, posthogService),
+    });
+    const readRejectedProfile = async () => {
+      const response = await fetch(`${server.baseUrl}/v4/connect/qualified/accounts?${query}`, {
+        headers: { Authorization: `Bearer ${auth.token}` },
+      });
+      expect(response.ok).toBe(true);
+      return QualifiedConnectedAccountListResponseV4Schema.parse(await response.json()).accounts
+        .find(profile => profile.ref.accountId === rejectedPosthog.accountId);
+    };
+    await waitFor(async () => (await readRejectedProfile())?.status === 'needs_reauth',
+      { context: 'PostHog status rejection published by the daemon' });
+    expect(await readRejectedProfile()).toMatchObject({
+      status: 'needs_reauth', configurationReady: true, statusReason: 'provider_403', providerHttpStatus: 403,
+    });
+    console.info('POSTHOG_REAUTH_LISTING_VERIFIED');
 
     const configure = async (pluginId: string, sourceId: string, draft: TriageSourceInstanceDraftV1) => {
       const source = { pluginId, localId: sourceId };
