@@ -42,16 +42,21 @@ export function domainHealthObserver(lifetime: ServerAccountScopeLifetime,
             for (const unsubscribe of subscriptions) unsubscribe();
         };
         options.signal.addEventListener('abort', close, { once: true });
-        void readMetadata(scope, environmentId, options).then(result => {
+        const currentEnvironment = options.environmentDetail
+            ? Promise.resolve({ ok: true as const, value: options.environmentDetail })
+            : readMetadata(scope, environmentId, options).then(result => result.ok ? { ok: true as const, value: {
+                environment: result.value.environment,
+                runtimeTargetLink: result.value.targetLinks.find(link => link.id === result.value.environment.runtimeTargetLinkId) ?? null,
+            } } : result);
+        void currentEnvironment.then(result => {
             if (closed) return;
             if (!result.ok) { unavailable(result.failure.code); return; }
-            const { environment, targetLinks } = result.value;
+            const { environment, runtimeTargetLink: link } = result.value;
             if (!environment.controllerMachineId) { unavailable('machine_unavailable'); return; }
             for (const targetLinkId of new Set(items.map(item => item.domain.targetLinkId))) {
                 const selected = items.filter(item => item.domain.targetLinkId === targetLinkId);
                 const domainIds = selected.map(item => item.domain.id);
-                const link = targetLinks.find(link => link.id === targetLinkId);
-                if (!link || link.targetKind !== 'ownServer' || environment.runtimeTargetLinkId !== link.id) {
+                if (!link || link.targetKind !== 'ownServer' || environment.runtimeTargetLinkId !== targetLinkId || link.id !== targetLinkId) {
                     items = items.map(item => domainIds.includes(item.domain.id)
                         ? { ...item, health: undefined, healthUnavailableReason: 'coverage_unavailable' } : item);
                     publish(items);

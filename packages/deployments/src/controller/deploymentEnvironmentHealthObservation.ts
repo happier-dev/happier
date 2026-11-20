@@ -55,13 +55,18 @@ export function reconcileDeploymentEnvironmentHealthObservationV1(entry: Entry, 
 
 /** The same controller demand owns Domain facts; Home metadata never waits for a Machine. */
 export function reconcileDeploymentDomainHealthObservationV1(entry: Entry, enabled: boolean,
-    scope: DeploymentReadScopeV1, environmentId: string, transport: DeploymentReadTransportV1): void {
+    scope: DeploymentReadScopeV1, environmentId: string, transport: DeploymentReadTransportV1,
+    environmentDetail?: DeploymentEnvironmentReadDetailV1 | null): void {
     const page = entry.projection.getSnapshot().value as DeploymentDomainReadPageV1 | null;
-    if (!enabled || !page?.items.length || !transport.observeDomainHealth) {
+    if (!enabled || !page?.items.length || !transport.observeDomainHealth || environmentDetail === null) {
         stopDeploymentEnvironmentHealthObservationV1(entry);
         return;
     }
-    const basis = JSON.stringify(page.items.map(({ domain }) => [domain.id, domain.revision, domain.targetLinkId]));
+    const basis = JSON.stringify([
+        environmentDetail?.environment.controllerMachineId, environmentDetail?.environment.runtimeTargetLinkId,
+        environmentDetail?.runtimeTargetLink?.targetKind,
+        page.items.map(({ domain }) => [domain.id, domain.revision, domain.targetLinkId]),
+    ]);
     if (entry.healthObservation?.basis === basis) return;
     stopDeploymentEnvironmentHealthObservationV1(entry);
     const observation: DeploymentEnvironmentHealthObservationV1 = { basis, abort: new AbortController() };
@@ -71,5 +76,5 @@ export function reconcileDeploymentDomainHealthObservationV1(entry: Entry, enabl
         const snapshot = entry.projection.getSnapshot();
         if (snapshot.value) entry.projection.publish({ ...snapshot,
             value: { ...snapshot.value as DeploymentDomainReadPageV1, items } });
-    }, { signal: observation.abort.signal });
+    }, { signal: observation.abort.signal, ...(environmentDetail ? { environmentDetail } : {}) });
 }

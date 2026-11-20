@@ -261,11 +261,13 @@ describe('Environment deletion client over the Action owner', () => {
         const deploymentId = initial.deployment.id;
         let observed = initial;
         let reads = 0;
+        let environmentReads = 0;
+        let historyReads = 0;
         const controller = createDeploymentReadControllerV1({ scope: { ...f.lifetime.scope,
             projectSourceId: f.detail.environment.projectSourceId }, transport: {
             listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
-            readEnvironment: async () => ({ ok: true, value: f.detail }),
+            listHistory: async () => { historyReads += 1; return { ok: true, value: { ok: true, items: [], nextCursor: null } }; },
+            readEnvironment: async () => { environmentReads += 1; return { ok: true, value: f.detail }; },
             // The receipt transport is the true observation boundary; the controller and hook are real.
             readReceipt: async () => { reads += 1; return { ok: true, value: observed }; },
         } });
@@ -284,6 +286,8 @@ describe('Environment deletion client over the Action owner', () => {
         await hook.rerender(shown);
         expect(hook.getCurrent().receipt.value).toBeNull();
         expect(reads).toBe(0);
+        expect(environmentReads).toBe(0);
+        expect(historyReads).toBe(0);
         controller.invalidate({ environmentId: 'unrelated', deploymentId: 'another-receipt' });
         await flushHookEffects();
         expect(reads).toBe(0);

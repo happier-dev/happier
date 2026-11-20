@@ -224,6 +224,38 @@ describe('deployment demand read controller', () => {
             expect(observations).toHaveLength(2);
         } finally { lease.release(); controller.retire(); }
     });
+    it('borrows the live Environment for Domain health and withdraws the old controller on a move', async () => {
+        const base = networkBoundary();
+        const targetLink = base.environmentDetail.targetLinks[0]!.targetLink;
+        const environment = { ...base.environment, runtimeTargetLinkId: targetLink.id, controllerMachineId: 'first-controller' };
+        let detail = { ...base.environmentDetail, environment };
+        base.transport.readEnvironment.mockImplementation(async () => ({ ok: true, value: detail }));
+        const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'observed-domain', environmentId: environment.id,
+            targetLinkId: targetLink.id, revision: 1, state: 'active', contentArtifactId: 'domain-artifact',
+            contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account', createdAtMs: 1000, updatedAtMs: 1000 });
+        const item = { domain, title: 'Application', content: DeploymentDomainContentV1Schema.parse({
+            hostname: 'app.test', target: { service: 'app', containerPort: 80 } }) };
+        const observeDomainHealth = vi.fn<NonNullable<DeploymentReadTransportV1['observeDomainHealth']>>(() => () => {});
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport,
+            listDomains: async () => ({ ok: true, value: { items: [item], nextCursor: null } }), observeDomainHealth } });
+        const selected = controller.acquireEnvironment(environment.id, active);
+        const domains = controller.acquireDomains(environment.id, {}, active);
+        try {
+            await Promise.all([selected.refresh(), domains.refresh()]);
+            expect(base.transport.readEnvironment).toHaveBeenCalledTimes(1);
+            expect(observeDomainHealth).toHaveBeenCalledTimes(1);
+            expect(observeDomainHealth.mock.calls[0]?.[4]).toMatchObject({ environmentDetail: { environment, runtimeTargetLink: targetLink } });
+            detail = { ...detail, environment: { ...environment, controllerMachineId: 'second-controller', revision: environment.revision + 1 } };
+            controller.invalidate({ environmentId: environment.id });
+            await Promise.all([selected.refresh(), domains.refresh()]);
+            expect(base.transport.readEnvironment).toHaveBeenCalledTimes(2);
+            expect(observeDomainHealth).toHaveBeenCalledTimes(2);
+            expect(observeDomainHealth.mock.calls[0]?.[4].signal.aborted).toBe(true);
+            expect(observeDomainHealth.mock.calls[1]?.[4]).toMatchObject({ environmentDetail: { environment: detail.environment, runtimeTargetLink: targetLink } });
+            observeDomainHealth.mock.calls[0]?.[3]([]);
+            expect(domains.getSnapshot().value?.items).toHaveLength(1);
+        } finally { domains.release(); selected.release(); controller.retire(); }
+    });
     it('keeps filtered history pages independent and carries filters through page navigation', async () => {
         const base = networkBoundary();
         const first = createDeploymentReceiptHeaderV1({ id: 'failed-newer', environmentId: base.environment.id, state: 'failed' });

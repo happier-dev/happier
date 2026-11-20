@@ -138,7 +138,9 @@ export type DeploymentReadTransportV1 = Readonly<{
         options: DeploymentReadOptionsV1): () => void;
     /** Current saved-check facts for this visible page, independent of its Home metadata read. */
     observeDomainHealth?(scope: DeploymentReadScopeV1, environmentId: string, items: readonly DeploymentDomainReadItemV1[],
-        publish: (items: readonly DeploymentDomainReadItemV1[]) => void, options: DeploymentReadOptionsV1): () => void;
+        publish: (items: readonly DeploymentDomainReadItemV1[]) => void, options: DeploymentReadOptionsV1 & Readonly<{
+            environmentDetail?: Pick<DeploymentEnvironmentReadDetailV1, 'environment' | 'runtimeTargetLink'>;
+        }>): () => void;
 }>;
 
 export type DeploymentReadInvalidationV1 = Readonly<{

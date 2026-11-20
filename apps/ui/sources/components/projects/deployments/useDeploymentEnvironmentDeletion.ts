@@ -7,7 +7,7 @@ import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActio
 import { randomUUID } from '@/platform/randomUUID';
 import type { createDeploymentActions } from './deploymentActions';
 import { readDeploymentActionError, readDeploymentActionResult, type DeploymentActionOutcome } from './deploymentActionOutcome';
-import { useDeploymentReceipt } from './useDeploymentReads';
+import { useReceiptRead } from './useDeploymentReads';
 import { deploymentManagedRetention, type DeploymentRetentionChoiceValue } from './DeploymentRetentionChoice';
 import type { DeploymentTeardownVolumesV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -52,7 +52,7 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
     const busy = isCurrent && state?.scope === scope && state.busy;
     const detail = isCurrent && options.snapshot.value?.environment.id === options.environmentId ? options.snapshot.value : null;
     const canDelete = options.snapshot.status === 'ready' && detail?.environment.capabilities.delete === true && options.actions !== null;
-    const receipt = useDeploymentReceipt(options.controller, isCurrent ? options.environmentId : null,
+    const receipt = useReceiptRead(options.controller, isCurrent ? options.environmentId : null,
         outcome?.kind === 'receipt' ? outcome.deploymentId : null, options.demand);
     React.useEffect(() => () => {
         if (flight.current?.scope === scope) { flight.current.controller.abort(); flight.current = null; }

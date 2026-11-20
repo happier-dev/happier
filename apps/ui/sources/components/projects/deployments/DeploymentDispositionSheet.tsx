@@ -23,7 +23,7 @@ import { t } from '@/text';
 import { Modal } from '@/modal';
 
 import type { DeploymentEnvironmentDeletionOutcome } from './useDeploymentEnvironmentDeletion';
-import { useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
+import { useDeploymentEnvironmentDomains, useReceiptRead } from './useDeploymentReads';
 import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import type { createDeploymentActions } from './deploymentActions';
@@ -126,7 +126,7 @@ function DeploymentDispositionSheet(
   const [refused, setRefused] = React.useState<Extract<DeploymentEnvironmentDeletionOutcome, { kind: 'refused' }> | null>(null);
   const blocked = DeploymentActionFailureV1Schema.safeParse(refused?.failure?.details);
   const blockedId = blocked.success && blocked.data.error === 'deployment_in_progress' ? blocked.data.deploymentId : null;
-  const blockedReceipt = useDeploymentReceipt(props.recovery?.controller ?? null,
+  const blockedReceipt = useReceiptRead(props.recovery?.controller ?? null,
     props.recovery?.environmentId ?? null, blockedId, PRESENTED);
   const cancellation = useDeploymentCancellation({ receipt: blockedId ? blockedReceipt.snapshot.value : null,
     cancel: props.recovery?.cancel ?? null, review: props.recovery?.review ?? NO_REVIEW,

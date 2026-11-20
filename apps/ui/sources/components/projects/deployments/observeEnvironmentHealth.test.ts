@@ -160,11 +160,12 @@ it.each([
     }
 });
 
-it('reads selected Domain facts through the same controller Resource while keeping metadata and prior facts on unavailability', async () => {
+it.each([true, false])('keeps selected Domain facts on unavailability, with active Environment detail: %s', async reuseDetail => {
     const base = createDeploymentEnvironmentDetailV1();
     const link = createDeploymentTargetLinkHeaderV1();
     const environment = { ...base.environment, serverId, controllerMachineId: 'controller', runtimeTargetLinkId: link.id };
-    homes.answer(serverId, `/v1/deployments/environments/${environment.id}`, { body: { ok: true, environment, targetLinks: [link] } });
+    const environmentPath = `/v1/deployments/environments/${environment.id}`;
+    homes.answer(serverId, environmentPath, { body: { ok: true, environment, targetLinks: [link] } });
     const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'selected-domain', environmentId: environment.id,
         targetLinkId: link.id, revision: 1, state: 'active', contentArtifactId: 'domain-content', contentHeaderVersion: 1,
         contentBodyVersion: 1, createdByAccountId: 'account', createdAtMs: 1, updatedAtMs: 1 });
@@ -175,9 +176,12 @@ it('reads selected Domain facts through the same controller Resource while keepi
         needsYou: { cause: 'certificate', reason: 'expiresSoon', vantage: 'outside' } } as const;
     const input = { serverId, machineId: 'controller', environmentId: environment.id, targetLinkId: link.id, domainIds: [domain.id] };
     const reference = { hostRead: 'deployments.health.edge', input };
+    let mismatch: 'environment' | 'link' | 'revision' | undefined;
     const content = () => {
-        const bytes = Buffer.from(JSON.stringify({ ok: true, environmentId: environment.id, targetLinkId: link.id,
-            observation: null, domainHealth: [{ domainId: domain.id, domainRevision: domain.revision, facts, observations: [] }] }));
+        const bytes = Buffer.from(JSON.stringify({ ok: true, environmentId: mismatch === 'environment' ? 'other-environment' : environment.id,
+            targetLinkId: mismatch === 'link' ? 'other-link' : link.id, observation: null,
+            domainHealth: [{ domainId: domain.id, domainRevision: mismatch === 'revision' ? domain.revision + 1 : domain.revision,
+                facts, observations: [] }] }));
         return { bytesBase64: bytes.toString('base64'), digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
     };
     const row = { ...createPlainMachineRowFixture({ id: 'controller', accountId: 'account' }), installationId: 'installation' };
@@ -211,8 +215,11 @@ it('reads selected Domain facts through the same controller Resource while keepi
         if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE) return reply({ ok: true, closed: true });
         const subscriptionId = continuation.params.subscriptionId;
         return new Promise<HomeDomainAnswer>(resolve => {
-            deliver = () => resolve(reply({ ok: true, status: 'event', event: { version: 1, kind: 'invalidated', subscriptionId,
-                digest: unavailable ? `sha256:${createHash('sha256').update('unavailable').digest('hex')}` : content().digest } }));
+            deliver = () => {
+                deliver = undefined;
+                resolve(reply({ ok: true, status: 'event', event: { version: 1, kind: 'invalidated', subscriptionId,
+                    digest: unavailable ? `sha256:${createHash('sha256').update('unavailable').digest('hex')}` : content().digest } }));
+            };
             const abort = () => resolve(reply({ ok: true, status: 'idle' }));
             request.signal?.addEventListener('abort', abort, { once: true });
             if (request.signal?.aborted) abort();
@@ -226,7 +233,10 @@ it('reads selected Domain facts through the same controller Resource while keepi
     const transport = createDeploymentReadTransport(lifetime);
     const abort = new AbortController();
     let items: readonly DeploymentDomainReadItemV1[] = [item];
-    const stop = transport.observeDomainHealth!(lifetime.scope, environment.id, items, next => { items = next; }, { signal: abort.signal });
+    const stop = transport.observeDomainHealth!(lifetime.scope, environment.id, items, next => { items = next; }, {
+        signal: abort.signal,
+        ...(reuseDetail ? { environmentDetail: { environment, runtimeTargetLink: link } } : {}),
+    });
     try {
         await vi.waitFor(() => expect(items[0]).toMatchObject({ title: item.title, health: facts }));
         await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
@@ -234,7 +244,22 @@ it('reads selected Domain facts through the same controller Resource while keepi
         deliver?.();
         await vi.waitFor(() => expect(items[0]).toMatchObject({ domain, health: facts, healthUnavailableReason: 'machine_unavailable' }));
         expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ)).toHaveLength(2);
+        const environmentReads = homes.requests.filter(request => new URL(request.path, request.serverUrl).pathname === environmentPath);
+        if (reuseDetail) expect(environmentReads).toHaveLength(0);
+        else expect(environmentReads.length).toBeGreaterThan(0);
         expect(homes.requests.some(request => request.path.startsWith('/v1/artifacts'))).toBe(false);
+        if (reuseDetail) {
+            unavailable = false;
+            for (const mismatchKind of ['environment', 'link', 'revision'] as const) {
+                const previousReadCount = methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ).length;
+                await vi.waitFor(() => expect(deliver).toBeTypeOf('function'));
+                mismatch = mismatchKind;
+                deliver?.();
+                await vi.waitFor(() => expect(methods.filter(method => method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ))
+                    .toHaveLength(previousReadCount + 1));
+                await vi.waitFor(() => expect(items[0]).toMatchObject({ domain, health: undefined, healthUnavailableReason: 'coverage_unavailable' }));
+            }
+        }
     } finally { abort.abort(); stop(); }
     expect(retirementCallbacks.size).toBe(0);
 });

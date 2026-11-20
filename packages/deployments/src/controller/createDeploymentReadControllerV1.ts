@@ -69,13 +69,29 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
     const observeCollectionHealth = transport.observeEnvironmentCollectionHealth;
     let retired = false;
     const active = (entry: Entry) => !retired && [...entry.demands].some(demand => isDeploymentReadDemandActiveV1(demand.current));
+    const environmentKey = (environmentId: string) => JSON.stringify(['environment', environmentId]);
+    function syncDomainHealth(entry: Entry, environmentId: string) {
+        const selected = entries.get(environmentKey(environmentId));
+        // Standalone Domain pickers keep the metadata-only read and never open the private Environment body.
+        // A presented Environment owns the routing snapshot, including while its first read is still pending.
+        const detail = selected && active(selected)
+            ? selected.projection.getSnapshot().value as DeploymentEnvironmentReadDetailV1 | null
+            : undefined;
+        reconcileDeploymentDomainHealthObservationV1(entry, active(entry), scope, environmentId, transport, detail);
+    }
     const syncHealthObservation = (entry: Entry, collectionWasActive?: boolean) => {
-        if (entry.resource.kind === 'environment') reconcileDeploymentEnvironmentHealthObservationV1(entry,
-            !retired && [...entry.demands].some(demand => demand.consumeHealth && isDeploymentReadDemandActiveV1(demand.current)), scope, transport,
-            observeCollectionHealth ? undefined : publishCollectionHealth);
+        if (entry.resource.kind === 'environment') {
+            reconcileDeploymentEnvironmentHealthObservationV1(entry,
+                !retired && [...entry.demands].some(demand => demand.consumeHealth && isDeploymentReadDemandActiveV1(demand.current)), scope, transport,
+                observeCollectionHealth ? undefined : publishCollectionHealth);
+            for (const candidate of entries.values()) {
+                if (candidate.resource.kind === 'domains' && candidate.resource.environmentId === entry.resource.environmentId) {
+                    syncDomainHealth(candidate, entry.resource.environmentId!);
+                }
+            }
+        }
         if (entry.resource.kind === 'collection' && collectionWasActive !== active(entry)) reconcileCollectionHealthObservation(entry);
-        if (entry.resource.kind === 'domains') reconcileDeploymentDomainHealthObservationV1(entry, active(entry),
-            scope, entry.resource.environmentId!, transport);
+        if (entry.resource.kind === 'domains') syncDomainHealth(entry, entry.resource.environmentId!);
     };
     const environmentMatches = (row: DeploymentEnvironmentHeaderV1) => row.serverId === scope.serverId
         && (scope.projectSourceId === undefined || row.projectSourceId === scope.projectSourceId);
@@ -83,6 +99,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         const value = failure.retryable ? entry.projection.getSnapshot().value : null;
         entry.projection.publish({ status: 'unavailable', value, failure });
         if (value === null) stopDeploymentEnvironmentHealthObservationV1(entry);
+        if (entry.resource.kind === 'environment') syncHealthObservation(entry);
         if (entry.resource.kind === 'receipt' && value === null) refreshMemberVersions(entry.resource.environmentId!);
     }
     function stopRead(entry: Entry) {
@@ -450,7 +467,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         },
         acquireEnvironment(environmentId, demand, options) {
             return acquire<DeploymentEnvironmentReadDetailV1>({
-                key: JSON.stringify(['environment', environmentId]), kind: 'environment', environmentId,
+                key: environmentKey(environmentId), kind: 'environment', environmentId,
                 read: signal => transport.readEnvironment(scope, environmentId, { signal }),
                 admit(value) {
                     const detail = DeploymentEnvironmentDetailV1Schema.parse(value);
