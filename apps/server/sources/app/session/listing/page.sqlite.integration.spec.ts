@@ -483,18 +483,15 @@ describe("Session listing predicate composition (SQLite)", () => {
             "teamMembership",
         ] as const;
         const transactionReads = new Set<string>();
-        let snapshotClient: unknown;
+        let snapshotTransactionId: string | undefined;
         const restoreObserver = observeSqliteRequests({
             before: (request) => {
-                if (request.action === "executeRaw" && request.args && typeof request.args === "object"
-                    && "query" in request.args && request.args.query === "BEGIN DEFERRED;") {
-                    snapshotClient = request.client;
-                }
                 const model = request.model && request.model[0]!.toLowerCase() + request.model.slice(1);
                 if (model && modelNames.some(name => name === model) && readMethods.has(request.action)) {
-                    if (request.client !== snapshotClient) {
+                    if (!request.transactionId || (snapshotTransactionId !== undefined && request.transactionId !== snapshotTransactionId)) {
                         throw new Error(`Strict Session listing escaped its read snapshot through ${model}.${request.action}`);
                     }
+                    snapshotTransactionId ??= request.transactionId;
                     transactionReads.add(`${model}.${request.action}`);
                 }
             },
