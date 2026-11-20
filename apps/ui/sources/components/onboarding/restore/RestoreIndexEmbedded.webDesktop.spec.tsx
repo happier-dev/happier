@@ -93,11 +93,15 @@ describe('RestoreIndexEmbedded (web desktop)', () => {
             expect((lastScanProps as { onShowQrInstead?: () => void } | null)?.onShowQrInstead).toBeInstanceOf(Function);
 
             await act(async () => {
-                (lastScanProps as { onShowQrInstead: () => void }).onShowQrInstead();
+                (lastScanProps as { onBack: () => void }).onBack();
             });
 
             expect(tree.root.findByType('qr')).toBeTruthy();
-            expect((lastQrProps as { onBack?: () => void } | null)?.onBack).toBe(onBack);
+            expect(onBack).not.toHaveBeenCalled();
+            await act(async () => {
+                (lastQrProps as { onBack: () => void }).onBack();
+            });
+            expect(onBack).toHaveBeenCalledOnce();
             expect((lastQrProps as { onOpenSecretKeyLogin?: () => void } | null)?.onOpenSecretKeyLogin).toBe(onOpenSecretKeyLogin);
         } finally {
             act(() => {

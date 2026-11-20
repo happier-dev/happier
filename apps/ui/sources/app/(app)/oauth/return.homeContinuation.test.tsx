@@ -298,7 +298,7 @@ it.each([
 
     screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthProviderReturn /></AuthProvider>);
 
-    await vi.waitFor(() => expect(screen!.getTextContent()).toContain(t('errors.oauthStateMismatch')));
+    await vi.waitFor(() => expect(screen!.findByTestId('oauth-external-failure')).toBeTruthy());
     expect(Modal.alert).not.toHaveBeenCalled();
     expect(boundary.request).not.toHaveBeenCalled();
     expect(await TokenStorage.getPendingExternalAuth()).toBeNull();

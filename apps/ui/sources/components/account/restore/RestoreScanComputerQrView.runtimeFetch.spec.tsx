@@ -47,7 +47,7 @@ function createBoundQrV2Features(overrides?: Parameters<typeof createRootLayoutF
 }
 
 describe('RestoreScanComputerQrView (real runtime fetch boundary)', () => {
-    it('renders precise retry guidance when the pairing session already has a requested device', async () => {
+    it('asks for a new code when the pairing session already has a requested device', async () => {
         const targetUrl = 'https://stack.example.test';
         const invite = {
             v: 2, intent: 'home_device', direction: 'trusted_home_displays', pairId: 'pair_123',
@@ -82,7 +82,7 @@ describe('RestoreScanComputerQrView (real runtime fetch boundary)', () => {
             <RestoreScanComputerQrView entryIntent="add_home" initialPairingLink={buildHomeQrInviteDeepLink({ invite })} />
         </InjectedAuthProvider>);
 
-        await vi.waitFor(() => expect(screen.findByTestId('restore-enrollment-retry')).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('restore-enrollment-scan-new')).not.toBeNull());
         expect(screen.getTextContent()).toContain('connect.pairingAlreadyRequestedBody');
         expect(modalAlertAsyncSpy).not.toHaveBeenCalled();
         expect(pairingRequests).toHaveLength(1);
@@ -124,19 +124,14 @@ describe('RestoreScanComputerQrView (real runtime fetch boundary)', () => {
         const profilesBefore = listServerProfiles();
         requests.length = 0;
         modalAlertAsyncSpy.mockClear();
-        await renderScreen(<InjectedAuthProvider credentials={null}>
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
             <RestoreScanComputerQrView entryIntent="add_home"
                 initialPairingLink="happier:///pair?v=1&pairId=p&secret=s&server=http%3A%2F%2Flocalhost%3A53288" />
         </InjectedAuthProvider>);
 
-        await vi.waitFor(() => expect(modalAlertAsyncSpy).toHaveBeenCalledWith(
-            'connect.updateRequiredTitle',
-            'connect.legacyPairingUpdateRequiredBody',
-            [
-                expect.objectContaining({ text: 'connect.scanNewQr' }),
-                expect.objectContaining({ text: 'common.cancel', style: 'cancel' }),
-            ],
-        ));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('connect.legacyPairingUpdateRequiredBody'));
+        expect(screen.findByTestId('restore-enrollment-scan-new')).not.toBeNull();
+        expect(modalAlertAsyncSpy).not.toHaveBeenCalled();
         expect(getActiveServerSnapshot()).toEqual(focusBefore);
         expect(listServerProfiles()).toEqual(profilesBefore);
         expect(requests.some(url => new URL(url).origin === 'http://localhost:53288')).toBe(false);
