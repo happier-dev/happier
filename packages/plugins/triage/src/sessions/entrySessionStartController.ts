@@ -424,12 +424,14 @@ export async function authorizeTriagePreparedReviewWorkspaceV1(
         || (selected.connectedAccount.kind === 'none' && 'account' in request.instance.binding)) {
         return { status: 'unavailable' };
     }
+    const credentialRef = selected.connectedAccount.kind === 'selected' ? selected.connectedAccount.ref : undefined;
+    if (credentialRef && !('accountId' in credentialRef)) return { status: 'unavailable' };
     return {
         status: 'authorized',
         selection: {
             selection: selected.selection,
             input: selected.input,
-            ...(selected.connectedAccount.kind === 'selected' ? { credentialRef: selected.connectedAccount.ref } : {}),
+            ...(credentialRef ? { credentialRef } : {}),
         },
         // The selected source operation is consumed exactly once by the outer
         // start Action's canonical materialization owner.

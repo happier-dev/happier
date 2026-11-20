@@ -9949,6 +9949,15 @@ require matching Protocol, SDK and UI source under the development direct cut.
 The inspected `../0.2` frontier at `24731ff73c` has no New Session Host API
 request. Draft storage and the wire epoch stay the same.
 
+Unreleased 0.3 targeted plugin Action form results carry the shared Connected
+Account selection in the existing closed `connectedAccount.ref` field. Personal
+refs keep their existing shape. Actions that declare a Team-capable credential
+field can also return the selected Team resource reference. The carrier stays
+transient and the Action host owns credential admission. Earlier strict
+development readers need matching Protocol, SDK and UI source for Team results.
+There is no migration or wire epoch change. The inspected `../0.2` frontier at
+`24731ff73c` has no targeted Action selection result schema.
+
 Unreleased 0.3 Triage attention results and notification requests accept optional
 `reviewAttention` presentation facts, using the Protocol-owned Review subject
 kind and requested-verdict boolean. The existing V1 envelopes and nested fact

@@ -3,6 +3,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { createMachineFixture } from '@/dev/testkit';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { connectedAccountActionFormSelectionV1JsonSchema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { openPluginContributedAction } from './openPluginContributedAction';
 import { Modal } from '@/modal';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -66,7 +67,7 @@ import type {
     PluginUiTargetedContributionOperationV1,
     PluginUiTargetedContributionsV1,
 } from '@happier-dev/protocol/plugins/ui';
-import { reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiSelectActionInputResultV1Schema, reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
 
 import {
     createPluginContributedActionController,
@@ -960,6 +961,58 @@ describe('plugin contributed Action controller', () => {
             credentialRef: account,
         });
         expect(dispatch).not.toHaveBeenCalled();
+    });
+
+    it.each(['form', 'draft', 'Event form'] as const)('carries a brokered Team Connected Account from an exact %s to the Action input', async (entry) => {
+        const teamAccount = {
+            teamId: 'team-a',
+            selection: { source: 'team_resource', resourceId: 'github-resource-a', deliveryMode: 'brokered' },
+        } as const;
+        const repository = 'happier-dev/happier';
+        const input = { repository, credentialRef: teamAccount };
+        const controller = createPluginContributedActionController({
+            resolveCurrent: () => snapshot([action({
+                id: 'connection/prepare-v1', scopes: ['settings'], surfaces: ['plugin'], placementBindings: [],
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        repository: { type: 'string' },
+                        credentialRef: connectedAccountActionFormSelectionV1JsonSchema(),
+                    },
+                    required: ['repository', 'credentialRef'], additionalProperties: false,
+                },
+                inputHints: { fields: [
+                    { path: 'repository', title: 'Repository', widget: 'text', required: true },
+                    { path: 'credentialRef', title: 'Account', widget: 'select', connectedAccountOptions: true, required: true },
+                ] },
+            })]),
+            resolveConnectedAccountOptions: vi.fn().mockResolvedValue({
+                supported: true,
+                result: { ok: true, options: [{ value: teamAccount, label: 'Shared GitHub' }] },
+            }),
+        });
+
+        const operation = targetedOperation();
+        const selected = entry === 'Event form'
+            ? await controller.selectExactBoundActionInput({
+                action: operation.action,
+                expectedOccurrenceId: operation.contributor.occurrenceId,
+                draft: { repository },
+            })
+            : await controller.selectActionInput(selectionRequest(operation, entry === 'draft' ? input : { repository }));
+        if (entry !== 'draft') {
+            if (selected.kind !== 'form') throw new Error('expected selection form');
+            selected.form.replaceInput(input);
+            await expect(selected.form.submit()).resolves.toMatchObject({ kind: 'settled', outcome: { ok: true } });
+        } else {
+            expect(selected).toMatchObject({ kind: 'direct' });
+        }
+        if (selected.kind !== 'form' && selected.kind !== 'direct') throw new Error('expected exact selection');
+        const result = await selected.result;
+        const settlement = entry === 'Event form' ? result : PluginUiSelectActionInputResultV1Schema.parse(result);
+        expect(settlement).toMatchObject({ kind: 'submitted', presentation: { connectedAccountLabel: 'Shared GitHub' } });
+        if (settlement.kind !== 'submitted') throw new Error('expected submitted selection');
+        expect(reconstructPluginUiSelectedActionInput(settlement)).toEqual(input);
     });
 
     /**

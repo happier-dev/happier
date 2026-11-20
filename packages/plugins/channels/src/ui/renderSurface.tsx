@@ -20,7 +20,6 @@ import type {
 } from '@happier-dev/plugin-sdk/actions';
 import { readActionInputOptionValue } from '@happier-dev/plugin-sdk/actions';
 import type {
-  PluginUiActionExecutionOptions,
   SurfaceContext,
   RenderContext,
   ResourceContent,
@@ -279,9 +278,25 @@ type ParsedPairing =
 type ProviderTargetedOperation = Extract<SelectActionInputRequest, Readonly<{ operation: unknown }>>['operation'];
 type ProviderSetupOperation = ProviderTargetedOperation;
 type ProviderSetupRemediationOperation = ProviderTargetedOperation;
-type SubmittedProviderSetupSelection = Extract<SelectActionInputResult, Readonly<{ kind: 'submitted' }>>;
+type SubmittedActionSelection = Extract<SelectActionInputResult, Readonly<{ kind: 'submitted' }>>;
+type SubmittedProviderSetupSelection = SubmittedActionSelection & Readonly<{
+  connectedAccount: Readonly<{ kind: 'none' }> | Readonly<{
+    kind: 'selected';
+    fieldPath: string;
+    ref: NonNullable<ConversationConnectionCreateInputV1['credentialRef']>;
+  }>;
+}>;
+
+function isSubmittedProviderSetupSelection(selection: SelectActionInputResult): selection is SubmittedProviderSetupSelection {
+  return selection.kind === 'submitted'
+    && (selection.connectedAccount.kind === 'none' || 'accountId' in selection.connectedAccount.ref);
+}
+
 type SubmittedProviderSetupRemediationSelection = SubmittedProviderSetupSelection;
-type SelectedProviderSetupActionInput = NonNullable<PluginUiActionExecutionOptions['selectedActionInput']>;
+type SelectedProviderSetupActionInput = Readonly<{
+  operation: ProviderSetupOperation;
+  result: SubmittedProviderSetupSelection;
+}>;
 type SelectedProviderSetupRemediationActionInput = Readonly<{
   operation: ProviderSetupRemediationOperation;
   result: SubmittedProviderSetupRemediationSelection;
@@ -10933,7 +10948,7 @@ function ConnectionTransferControls(props: Readonly<{
         }
         return;
       }
-      if (selection.kind !== 'submitted' || props.signal.aborted || !mountedRef.current) {
+      if (!isSubmittedProviderSetupSelection(selection) || props.signal.aborted || !mountedRef.current) {
         retireSelectedProviderSetup();
         return;
       }
@@ -12696,7 +12711,7 @@ function ProviderSetupPicker(props: Readonly<{
         }
         return;
       }
-      if (selection.kind !== 'submitted' || props.signal.aborted || !mountedRef.current) {
+      if (!isSubmittedProviderSetupSelection(selection) || props.signal.aborted || !mountedRef.current) {
         if (selectedProviderSetupLifetimeRef.current === selectionLifetime) {
           retireSelectedProviderSetup();
         }
@@ -12761,7 +12776,7 @@ function ProviderSetupPicker(props: Readonly<{
         }
         return;
       }
-      if (selection.kind !== 'submitted' || props.signal.aborted || !mountedRef.current) return;
+      if (!isSubmittedProviderSetupSelection(selection) || props.signal.aborted || !mountedRef.current) return;
       setRemediationSelection({ operation: remediationOperation, result: selection });
     } finally {
       remediationSelectionPendingRef.current = false;

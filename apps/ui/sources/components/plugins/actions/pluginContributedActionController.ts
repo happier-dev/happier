@@ -1,12 +1,12 @@
 import { DaemonPluginHostPresentedComposerCurrentIntentV1Schema, type DaemonPluginHostPresentedComposerCurrentIntentV1 } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
 import { PluginActionPlacementV2Schema, PluginActionScopeV2Schema, type PluginActionPlacementV2, type PluginActionScopeV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import { QualifiedConnectedAccountRefSchema, sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { ConnectedAccountActionFormSelectionV1Schema } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import type { DaemonPluginActionFormConnectedAccountOption } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { InputHintsSchema as ActionInputHintsSchema, type InputHints as ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
+import { InputHintsSchema as ActionInputHintsSchema, isSameInputOptionValue, type InputHints as ActionInputHints } from '@happier-dev/protocol/inputs/inputFields';
 import { seedInputByFieldHints, writeInputPath } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { readActionSessionTargetOperands, replaceActionSessionTargetField, validateActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import type { MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
@@ -146,6 +146,15 @@ function presentResolvedCredentialFormHints(hints: ResolvedCredentialFormHints) 
         inputHints: hints.inputHints,
         ...(hints.choosesConnectedAccount ? { choosesConnectedAccount: true as const } : {}),
     };
+}
+
+function readExactConnectedAccountSelection(value: unknown, fieldPath: string, hints: ResolvedCredentialFormHints) {
+    const ref = ConnectedAccountActionFormSelectionV1Schema.safeParse(value);
+    if (!ref.success) return null;
+    const option = hints.inputHints.fields.find((field) => field.path === fieldPath)?.options?.find((candidate) => (
+        isSameInputOptionValue(candidate.value, ref.data)
+    ));
+    return { ref: ref.data, option };
 }
 
 function resolveNativeCredentialFormInput(candidate: Readonly<Record<string, unknown>>, choices: readonly NativeCredentialFormChoice[]) {
@@ -1593,16 +1602,11 @@ export function createPluginContributedActionController(params: Readonly<{
         let connectedAccount: PluginContributedActionExactSubmittedInputResult['connectedAccount'] = { kind: 'none' };
         let connectedAccountLabel: string | null = null;
         if (named !== undefined) {
-            const ref = QualifiedConnectedAccountRefSchema.safeParse(named);
-            if (!ref.success) return refused;
-            const offered = resolvedHints.inputHints.fields.find((field) => field.path === fieldPath)?.options?.find((option) => {
-                const optionRef = QualifiedConnectedAccountRefSchema.safeParse(option.value);
-                return optionRef.success && sameQualifiedConnectedAccountRef(optionRef.data, ref.data);
-            });
-            if (!offered) return refused;
+            const selected = readExactConnectedAccountSelection(named, fieldPath, resolvedHints);
+            if (!selected?.option) return refused;
             input = deletePath(draft, fieldPath);
-            connectedAccount = { kind: 'selected', fieldPath, ref: ref.data };
-            connectedAccountLabel = offered.label.trim() || null;
+            connectedAccount = { kind: 'selected', fieldPath, ref: selected.ref };
+            connectedAccountLabel = selected.option.label.trim() || null;
         } else if (!resolvedHints.nativeChoices.some((choice) => {
             const service = PluginContributionIdentityV1Schema.safeParse(readPath(draft, choice.nativeServicePath));
             return choice.fieldPath === fieldPath && service.success
@@ -1801,23 +1805,15 @@ export function createPluginContributedActionController(params: Readonly<{
                     && readPath(candidate, accountField.path) !== undefined
                     && PluginContributionIdentityV1Schema.safeParse(readPath(candidate, accountField.path)).success);
                 if (accountField && !nativeSelected) {
-                    const parsedRef = QualifiedConnectedAccountRefSchema.safeParse(
-                        readPath(normalizedCandidate, accountField.path),
-                    );
-                    if (!parsedRef.success) return { kind: 'unavailable', reason: 'invalid_input' };
+                    const selected = readExactConnectedAccountSelection(readPath(normalizedCandidate, accountField.path), accountField.path, resolvedHints);
+                    if (!selected) return { kind: 'unavailable', reason: 'invalid_input' };
                     input = deletePath(normalizedCandidate, accountField.path);
                     connectedAccount = {
                         kind: 'selected',
                         fieldPath: accountField.path,
-                        ref: parsedRef.data,
+                        ref: selected.ref,
                     };
-                    const resolvedAccountField = resolvedHints.inputHints.fields.find((field) => field.path === accountField.path);
-                    connectedAccountLabel = resolvedAccountField?.options?.flatMap((option) => {
-                        const optionRef = QualifiedConnectedAccountRefSchema.safeParse(option.value);
-                        return optionRef.success && sameQualifiedConnectedAccountRef(optionRef.data, parsedRef.data)
-                            ? [option.label.trim()]
-                            : [];
-                    }).find(Boolean) ?? null;
+                    connectedAccountLabel = selected.option?.label.trim() || null;
                 }
                 const parsedInput = PluginUiJsonValueV1Schema.safeParse(input);
                 if (!parsedInput.success || !parsedInput.data || Array.isArray(parsedInput.data) || typeof parsedInput.data !== 'object') {
