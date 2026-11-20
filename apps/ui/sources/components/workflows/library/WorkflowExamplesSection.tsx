@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, workflowStarterRequiresSession, type WorkflowStarterExampleSelection, type WorkflowStarterSessionTarget, type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { WORKFLOW_STARTER_EXAMPLES_V1, workflowStarterRequiresSession, type WorkflowStarterExampleSelection, type WorkflowStarterSessionTarget, type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -21,12 +21,16 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { Modal } from '@/modal';
 import { getPreferredLanguage, t, tLoose } from '@/text';
 import { en } from '@/text/translations/en';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
+import { resolveWorkflowStarter } from '@/sync/domains/workflows/resolveWorkflowStarter';
+import { formatWorkflowProblemMessage } from '../presentation/workflowProblemPresentation';
 import { useWorkflowExistingSessionOptions } from '../screens/useWorkflowExistingSessionOptions';
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState } from '../presentation/workflowSessionChoice';
 import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionRow';
@@ -77,15 +81,18 @@ export function WorkflowExamplesSection(props: Readonly<{
     hideTitle?: boolean;
 }>): React.ReactElement {
     const router = useRouter();
+    const mounted = useMountedRef();
     const [choice, setChoice] = React.useState<Readonly<{ key: string; lifetime: ActiveServerAccountScopeLifetime | null }> | null>(null);
     const useExample = (example: WorkflowStarterExampleSelection) => {
         if (props.onUse) props.onUse(example);
-        else if (example.trigger !== undefined || example.sessionTarget !== undefined) {
+        else {
             const definitionDraftSeedId = storeWorkflowDefinitionDraftSeed({ name: tLoose(example.titleKey),
                 description: tLoose(example.descriptionKey), definition: example.definition,
                 trigger: example.trigger, eventSeed: example.eventSeed, sessionTarget: example.sessionTarget });
-            router.push({ pathname: '/workflows/new', params: { definitionDraftSeedId } } as never);
-        } else router.push({ pathname: '/workflows/new', params: { example: example.key } } as never);
+            const keepNameFocus = example.trigger === undefined && example.sessionTarget === undefined;
+            router.push({ pathname: '/workflows/new', params: { definitionDraftSeedId,
+                ...(keepNameFocus ? { example: example.key } : {}) } } as never);
+        }
         props.onDidUse?.();
     };
     const session = props.session;
@@ -95,12 +102,15 @@ export function WorkflowExamplesSection(props: Readonly<{
         : WORKFLOW_STARTER_EXAMPLES_V1.filter(example => example.eventSeed === undefined
             && (props.opensDraft !== false || !workflowStarterRequiresSession(example)));
     const choose = (example: WorkflowStarterExampleV1) => {
-        const selection = materializeWorkflowStarterExample(example,
-            session !== undefined ? { session, timezone: readDeviceTimeZone() } : { timezone: readDeviceTimeZone() });
-        // Added into a draft, a template brings its steps and leaves that draft's triggers alone.
-        if (selection.status === 'ready') useExample(props.opensDraft === false ? withoutTrigger(selection.example) : selection.example);
-        // Only the library asks which Session: inside one, every example is already bound to it.
-        else if (session === undefined) setChoice({ key: example.key, lifetime: captureActiveServerAccountScopeLifetime() });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        void resolveWorkflowStarter({ key: example.key, session, timezone: readDeviceTimeZone(), accountLifetime: lifetime }).then(selection => {
+            if (!mounted.current || lifetime?.isCurrent() === false) return;
+            // Added into a draft, a template brings its steps and leaves that draft's triggers alone.
+            if (selection.status === 'ready') useExample(props.opensDraft === false ? withoutTrigger(selection.example) : selection.example);
+            else if (session === undefined) setChoice({ key: example.key, lifetime });
+        }, error => {
+            if (mounted.current && lifetime?.isCurrent() !== false) void Modal.alert(t('common.error'), formatWorkflowProblemMessage(error));
+        });
     };
     if (session !== undefined && props.presentation === 'list') {
         // A Session's own picker (lab `b-habit T`): the full catalog, one line each, and never a Session chooser.
@@ -219,6 +229,7 @@ function ExampleSessionChooser(props: Readonly<{
     onClose: () => void;
     onUse: (example: WorkflowStarterExampleSelection) => void;
 }>) {
+    const mounted = useMountedRef();
     const scope = useActiveServerAccountScope();
     const { existingSessions, sessionOptionsStatus, retrySessionOptions } = useWorkflowExistingSessionOptions({ serverId: scope?.serverId ?? null, machineId: null });
     const sessions = scope === null || !props.lifetime?.isCurrent() ? [] : existingSessions;
@@ -235,16 +246,20 @@ function ExampleSessionChooser(props: Readonly<{
                 accessibilityLabel={`${t('workflows.examples.chooseSession')}: ${tLoose(props.example.titleKey)}`} onPress={toggle} />}
             onSelect={(sessionId) => {
                 if (sessionId === WORKFLOW_SESSION_RETRY_ITEM_ID) { retrySessionOptions(); return; }
-                if (!props.lifetime?.isCurrent()) return;
+                const lifetime = props.lifetime;
+                if (!lifetime?.isCurrent()) return;
                 const session = sessions.find(candidate => candidate.sessionId === sessionId);
                 if (!session) return;
                 const serverId = resolvePortableServerIdentityForRoutingId(scope?.serverId);
-                const selection = materializeWorkflowStarterExample(props.example, {
+                void resolveWorkflowStarter({ key: props.example.key, accountLifetime: lifetime,
                     session: { ...session, ...(serverId === null ? {} : { serverId }) }, timezone: readDeviceTimeZone(),
+                }).then(selection => {
+                    if (!mounted.current || !lifetime.isCurrent() || selection.status !== 'ready') return;
+                    props.onClose();
+                    props.onUse(selection.example);
+                }, error => {
+                    if (mounted.current && lifetime.isCurrent()) void Modal.alert(t('common.error'), formatWorkflowProblemMessage(error));
                 });
-                if (selection.status !== 'ready') return;
-                props.onClose();
-                props.onUse(selection.example);
             }} />
         {/* Only a settled read without Sessions is "none"; loading and failure stay in the open chooser. */}
         {choice === 'empty' ? <Text style={styles.description}>{tLoose('workflows.examples.noSessions')}</Text> : null}

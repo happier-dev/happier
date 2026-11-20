@@ -32,7 +32,7 @@ import { matchesWorkflowAcceptedDefinitionV1 } from '@happier-dev/protocol/workf
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { readDeviceTimeZone, type TriggerWhenValue } from '../triggers/sessionTriggerForm';
 import { addWorkflowTriggerWhen } from '../triggers/workflowTriggerStarts';
-import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, workflowStarterRequiresSession } from '@happier-dev/protocol/workflows/builtins/examples';
+import { WORKFLOW_STARTER_EXAMPLES_V1, type WorkflowStarterExampleSelection, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { getBuiltinWorkflowCatalogV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -68,6 +68,7 @@ import { applyWorkflowDefinitionEditsV1, countWorkflowStepsV1, setWorkflowDefaul
 import { WorkflowDraftEditInputV1Schema, WorkflowMountedDraftV1Schema, type WorkflowDraftEditInputV1, type WorkflowDraftMutationResultV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { WorkflowMountedDraftActions } from '@/sync/ops/actions/workflowAuthoringAction';
 import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
+import { resolveWorkflowStarter } from '@/sync/domains/workflows/resolveWorkflowStarter';
 import { EMPTY_WORKFLOW_ANNOUNCEMENT_STATE, selectWorkflowAnnouncement } from '../accessibility/workflowAnnouncementSelection';
 import { formatWorkflowAnnouncement } from '../accessibility/useWorkflowAnnouncements';
 import { useWorkflowRunNowController } from '../run/useWorkflowRunNowController';
@@ -267,13 +268,57 @@ function workflowEditorSourceKey(source: WorkflowEditorSource): string {
 export function WorkflowEditorHostScreen(props: Readonly<{ source: WorkflowEditorSource; accountLifetime?: ServerAccountScopeLifetime | null }>): React.ReactElement {
     // Workflow definition drafts/seeds are local to this editor; its embedded
     // New Session composer admits its own repository address separately.
+    const { source } = props;
+    const starterKey = source.kind === 'new' && source.definitionDraftSeedId === undefined ? source.exampleKey : undefined;
+    const starter = starterKey === undefined ? undefined : WORKFLOW_STARTER_EXAMPLES_V1.find(entry => entry.key === starterKey);
     return <WorkflowAccountLifetimeProvider value={props.accountLifetime}><SessionDraftHydrationBoundary addresses={[]}>
-        <WorkflowEditorHostScreenReady {...props} /></SessionDraftHydrationBoundary></WorkflowAccountLifetimeProvider>;
+        {starter === undefined ? <WorkflowEditorHostScreenReady {...props} />
+            : <WorkflowStarterRoute key={starter.key} {...props} starter={starter} />}
+    </SessionDraftHydrationBoundary></WorkflowAccountLifetimeProvider>;
+}
+
+function WorkflowStarterRoute(props: React.ComponentProps<typeof WorkflowEditorHostScreenReady> & Readonly<{
+    starter: WorkflowStarterExampleV1;
+}>) {
+    const focusedLifetime = useActiveServerAccountScopeLifetime();
+    const accountLifetime = props.accountLifetime === undefined ? focusedLifetime : props.accountLifetime;
+    const [resolved, setResolved] = React.useState<Readonly<{
+        lifetime: typeof accountLifetime;
+        result: Awaited<ReturnType<typeof resolveWorkflowStarter>> | null;
+        error?: unknown;
+    }> | null>(null);
+    const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
+    const key = props.starter.key;
+    React.useEffect(() => {
+        const controller = new AbortController();
+        void resolveWorkflowStarter({ key, timezone: readDeviceTimeZone(), accountLifetime, signal: controller.signal }).then(result => {
+            if (!controller.signal.aborted) setResolved({ lifetime: accountLifetime, result });
+        }, error => {
+            if (!controller.signal.aborted) setResolved({ lifetime: accountLifetime, result: null, error });
+        });
+        return () => controller.abort();
+    }, [key, accountLifetime, attempt]);
+    const current = resolved?.lifetime === accountLifetime && accountLifetime?.isCurrent() !== false ? resolved : null;
+    if (current === null) return <SurfaceStateCard testID="workflow-editor-loading" kind="loading"
+        title={t('workflows.editor.loadingTitle')} accessibilitySemantics="status" />;
+    if (current.result === null) {
+        const problem = resolveWorkflowProblemPresentation(current.error);
+        return <SurfaceStateCard testID="workflow-editor-error" kind="error" title={problem.title} reason={problem.message}
+            action={problem.repairLabel === null ? undefined : { label: problem.repairLabel, onPress: () => { setResolved(null); retry(); } }}
+            accessibilitySemantics={problem.accessibilitySemantics} />;
+    }
+    if (current.result.status === 'requires_session') return <ScrollView style={styles.root}>
+        <SurfaceStateCard testID="workflow-editor-starter-context" kind="empty" title={t('workflows.examples.chooseSession')}
+            reason={tLoose(props.starter.descriptionKey)} accessibilitySemantics="status" />
+        <WorkflowExamplesSection />
+    </ScrollView>;
+    return <WorkflowEditorHostScreenReady source={props.source} accountLifetime={props.accountLifetime} starterExample={current.result.example} />;
 }
 
 function WorkflowEditorHostScreenReady(props: Readonly<{
     source: WorkflowEditorSource;
     accountLifetime?: ServerAccountScopeLifetime | null;
+    starterExample?: WorkflowStarterExampleSelection;
 }>): React.ReactElement {
     const mountedRef = useMountedRef();
     const router = useRouter();
@@ -352,9 +397,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const privateDraftSeedUnavailable = [reviewedRunSeedState, definitionDraftSeedState, newSessionSeedState, triggerSeedState]
         .some(({ id, seed }) => id !== null && seed === null);
     const newCatalogSource = props.source.kind === 'new' ? props.source : null;
-    const catalogExample = newCatalogSource !== null
-        ? WORKFLOW_STARTER_EXAMPLES_V1.find((entry) => entry.key === newCatalogSource.exampleKey)
-        : undefined;
+    const catalogExample = props.starterExample;
     const catalogSeed = catalogExample ?? (newCatalogSource !== null
         ? getBuiltinWorkflowCatalogV1().find((entry) => entry.id === newCatalogSource.builtinId) : undefined);
     // The trigger still to point at this workflow once it is saved; cleared when that write lands.
@@ -748,15 +791,12 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             triggers.restoreSnapshot(definitionDraftSeed.triggers);
             return;
         }
-        // A deep link to a schedule template arrives with its schedule too, like one opened from the library.
-        const catalogSelection = catalogSeed !== undefined && 'triggerSeed' in catalogSeed && !workflowStarterRequiresSession(catalogSeed)
-            ? materializeWorkflowStarterExample(catalogSeed, { timezone: readDeviceTimeZone() }) : null;
-        const trigger = definitionDraftSeed?.trigger ?? (catalogSelection?.status === 'ready' ? catalogSelection.example.trigger : undefined);
+        const trigger = definitionDraftSeed?.trigger ?? catalogExample?.trigger;
         if (trigger === undefined) return;
         triggers.setDraft(editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'add', clientId: randomUUID(), trigger,
             ...(definitionDraftSeed?.payloadSchema === undefined ? {} : { payloadSchema: definitionDraftSeed.payloadSchema }) }));
     }, [initializationKey, definitionDraftSeed?.trigger, definitionDraftSeed?.payloadSchema, definitionDraftSeed?.triggers,
-        catalogSeed, privateSeedWithdrawn, saved?.definitionId, triggers.setDraft, triggers.restoreSnapshot]);
+        catalogExample?.trigger, privateSeedWithdrawn, saved?.definitionId, triggers.setDraft, triggers.restoreSnapshot]);
     {
         const current = draftStore.get();
         snapshotRef.current = current === null ? null : { draft: current, description, projectTarget, executionTarget, triggers: triggers.captureSnapshot() };
@@ -1887,15 +1927,6 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             source={privateDraftSeedUnavailable ? 'unsaved-copy' : 'definition'}
             onOpenCollection={() => openSection('/workflows', true)} />;
     }
-    if (props.source.kind === 'new' && definitionDraftSeed === null && catalogSeed !== undefined
-        && 'triggerSeed' in catalogSeed && workflowStarterRequiresSession(catalogSeed)) {
-        return <ScrollView style={styles.root}>
-            <SurfaceStateCard testID="workflow-editor-starter-context" kind="empty"
-                title={t('workflows.examples.chooseSession')} reason={tLoose(catalogSeed.descriptionKey)}
-                accessibilitySemantics="status" />
-            <WorkflowExamplesSection />
-        </ScrollView>;
-    }
     // Preserve the owner's typed reason; a transport failure alone is not
     // proof the definition is unavailable or deleted.
     if (hydrationFailure !== null) {
@@ -1951,7 +1982,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 accountLifetime={props.accountLifetime}
                 draftStore={bodyDraftStore}
                 onBack={draftNavigation.requestBack}
-                focusNameOnMount={catalogSeed !== undefined && props.source.kind === 'new'}
+                focusNameOnMount={newCatalogSource !== null && (catalogSeed !== undefined || newCatalogSource.exampleKey !== undefined)}
                 documentPresentation={testRunPresentation}
                 authoringSessionId={canEditDefinition ? authoringSessionId : null}
                 authoringServerId={authoringServerId}

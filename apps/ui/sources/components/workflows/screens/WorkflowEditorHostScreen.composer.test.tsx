@@ -1285,6 +1285,38 @@ describe('editor workflow composer', () => {
         }
     });
 
+    it('applies the starter resolve Action policy when a person uses a Workflow example', async () => {
+        const { Modal } = await import('@/modal');
+        const { WorkflowExamplesSection } = await import('../library/WorkflowExamplesSection');
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+        const store = getStorage();
+        const settings = store.getState().settings;
+        const onUse = vi.fn();
+        const screen = await renderScreen(<AppPaneProvider>
+            <WorkflowExamplesSection presentation="list" session={{ sessionId: 'session-1', machineId: 'machine-1' }} onUse={onUse} />
+        </AppPaneProvider>);
+        try {
+            const useExample = async () => {
+                const button = screen.findByTestId('workflow-examples:ask-once:use');
+                expect(button).not.toBeNull();
+                await act(async () => button!.props.onPress());
+                await waitForHomeGovernance(() => expect(onUse.mock.calls.length + alert.mock.calls.length).toBe(1));
+            };
+            await useExample();
+            expect(onUse).toHaveBeenCalledWith(expect.objectContaining({ key: 'ask-once' }));
+            onUse.mockClear();
+
+            await act(async () => home.setActionPolicy(appliedHome.serverId, 'workflow.starters.resolve', 'ui', 'off'));
+            await useExample();
+            expect(onUse).not.toHaveBeenCalled();
+            expect(alert).toHaveBeenCalledTimes(1);
+        } finally {
+            await screen.unmount();
+            store.setState({ settings });
+            alert.mockRestore();
+        }
+    });
+
     it('reopens the catalog composer with recovery enabled and rejoins its exact unresolved admission', async () => {
         const [{ getBuiltinWorkflowCatalogV1}, { WorkflowRunStartRequestV1Schema, WorkflowRunGetResultV1Schema}] = await Promise.all([import('@happier-dev/protocol/workflows/builtins/catalog'), import('@happier-dev/protocol/workflows/actionsV1')]);
         const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
