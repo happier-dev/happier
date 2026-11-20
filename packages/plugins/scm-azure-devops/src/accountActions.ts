@@ -168,6 +168,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      confirmationWhen: { presentUserUi: false },
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.abandon.confirm.title', fallback: 'Abandon this pull request?' },
         body: {
@@ -194,6 +195,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      confirmationWhen: { presentUserUi: false },
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.reactivate.confirm.title', fallback: 'Reactivate this pull request?' },
         body: {
@@ -248,6 +250,7 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      confirmationWhen: { presentUserUi: false },
       confirmation: {
         title: { key: 'plugins.azureDevops.actions.threadStatus.confirm.title', fallback: 'Change this thread’s status?' },
         body: {

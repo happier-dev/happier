@@ -1,3 +1,5 @@
+import { PLUGIN_MANIFEST, GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../manifest.js';
+import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { TriageSourceDescriptorV1Schema, type TriageSourceScopeSelectionV1 } from '@happier-dev/triage-protocol/v1';
 import { describe, expect, it } from 'vitest';
 
@@ -119,4 +121,26 @@ describe('GitHub Triage configured-instance token', () => {
 
     expect(decoded.ok && decoded.configuration.selection).toEqual({ kind: 'selected', unitIds: ['octo-org/example-app'] });
   });
+});
+
+it.each([
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestClose,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReopen,
+])('skips only the present person UI prompt for %s', id => {
+  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
+  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  for (const surface of ['agent', 'mcp', 'cli', 'ui']) {
+    expect(pluginActionRequiresPresentUserIntent(action, surface, undefined, 'account_automation')).toBe(true);
+  }
+  expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true }, 'ui', undefined, 'present_user')).toBe(true);
+  expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(false);
+});
+
+it.each([
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMerge,
+  GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview,
+])('retains the present person UI confirmation for %s', id => {
+  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
+  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(true);
 });

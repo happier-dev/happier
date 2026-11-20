@@ -200,6 +200,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      confirmationWhen: { presentUserUi: false },
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.comment.resolve',
@@ -232,6 +233,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      confirmationWhen: { presentUserUi: false },
       confirmation: {
         title: {
           key: 'plugins.bitbucket.ui.mutations.comment.reopen',

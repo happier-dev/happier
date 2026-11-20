@@ -1683,6 +1683,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      confirmationWhen: { presentUserUi: false },
       confirmation: {
         title: {
           key: 'plugins.github.mutations.close.confirmation.title',
@@ -1712,6 +1713,7 @@ function createGithubPlugin(): GithubPlugin {
       surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'],
       placementBindings: ['detailsPanel'],
       dangerLevel: 'writesRemote',
+      confirmationWhen: { presentUserUi: false },
       confirmation: {
         title: {
           key: 'plugins.github.mutations.reopen.confirmation.title',

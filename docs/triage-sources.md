@@ -1229,8 +1229,12 @@ check; these development-source handlers do not establish released availability.
 The built-in source is called **Happier tasks** in the list, detail and draft.
 Its reversible Account-data Actions use the direct approval default, as do the
 aggregate task relays; the selected source Action owns the effect and its
-approval default. Outward source writes retain Ask, and explicit user Action
-preferences still apply. No task setup is needed. PRs & Issues decides first
+approval default. Agent, MCP and CLI callers retain the outward-write approval
+default. A person can directly close or reopen a GitHub pull request, abandon
+or reactivate an Azure DevOps pull request, change an Azure DevOps thread's
+status, or resolve or reopen a Bitbucket thread. Explicit Ask settings still
+apply. Merge, Azure completion, Bitbucket decline and review publication still
+ask by default. No task setup is needed. PRs & Issues decides first
 run from its external sources; an empty Tasks inventory offers New task.
 The PRs & Issues Collection excludes built-in personal tasks, including pins;
 Tasks retains them. The neutral corpus and Composer picker remain shared.

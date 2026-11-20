@@ -1,3 +1,4 @@
+import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { checkTriageSourceContributionV1 } from '@happier-dev/triage-protocol/testing/v1';
@@ -262,4 +263,27 @@ describe('Bitbucket Triage source contribution conformance', () => {
     expect(bindingRejections('page.continuation.token'))
       .toEqual(['contributes.actions.0.connectedAccountPurposeBindings.0.path']);
   });
+});
+
+it.each([
+  BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.resolveComment,
+  BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.unresolveComment,
+])('skips only the present person UI prompt for %s', id => {
+  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
+  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  for (const surface of ['agent', 'mcp', 'cli', 'ui']) {
+    expect(pluginActionRequiresPresentUserIntent(action, surface, undefined, 'account_automation')).toBe(true);
+  }
+  expect(pluginActionRequiresPresentUserIntent({ ...action, approvalRequiredByActionSettings: true }, 'ui', undefined, 'present_user')).toBe(true);
+  expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(false);
+});
+
+it.each([
+  BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.merge,
+  BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.decline,
+  BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.submitReview,
+])('retains the present person UI confirmation for %s', id => {
+  const action = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === id);
+  if (action === undefined) throw new Error(`Missing Action ${id}`);
+  expect(pluginActionRequiresPresentUserIntent(action, 'ui', undefined, 'present_user')).toBe(true);
 });
