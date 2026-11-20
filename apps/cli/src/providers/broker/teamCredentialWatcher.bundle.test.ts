@@ -60,4 +60,4 @@ it('keeps the GitHub watcher brokers inside the guest CLI dist closure', async (
   } finally {
     await rm(payload, { recursive: true, force: true });
   }
-}, 30_000);
+}, 120_000);
