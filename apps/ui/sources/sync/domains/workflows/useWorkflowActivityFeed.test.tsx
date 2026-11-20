@@ -173,10 +173,19 @@ it('shares the source-bound frame across two presented hosts and withdraws the l
         expect(column.getCurrent().projection).toBe(companion.getCurrent().projection);
         expect(column.getCurrent().retained).toBe(companion.getCurrent().retained);
         expect(column.getCurrent().listeningSince).not.toBeNull();
+        const stableFeed = column.getCurrent();
+        const listInputs = new Set([stableFeed]);
+        for (let render = 0; render < 3; render += 1) {
+            await column.rerender({ active: true });
+            listInputs.add(column.getCurrent());
+        }
+        // The memoized Events list receives the feed as one prop.
+        expect(listInputs.size).toBe(1);
         await act(async () => { await Promise.all([column.getCurrent().loadMore(), companion.getCurrent().loadMore()]); });
         expect(reads).toBe(2);
         expect(column.getCurrent().retained?.runs.map(run => run.id)).toEqual(['first-run', 'second-run']);
         expect(column.getCurrent().retained).toBe(companion.getCurrent().retained);
+        expect(column.getCurrent()).not.toBe(stableFeed);
         await act(async () => { storage.getState().setSocketStatus('disconnected'); });
         expect(column.getCurrent().status).toBe('offline');
         expect(column.getCurrent().retained?.runs).toHaveLength(2);

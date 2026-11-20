@@ -44,6 +44,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
     const serverId = resolveServerProfileScopeIdForIdentifier(lifetime.scope.serverId);
     let since: number | null = readPersistedListeningSince(lifetime);
     let page: WorkflowRunListResultV1 | undefined;
+    const retainedRuns = new Map<string, WorkflowRunSummaryV1>();
     let failed = false;
     let queue: ViewDemandSync | null = null;
     let controller: AbortController | null = null;
@@ -70,8 +71,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         if (batch.length === 0) return;
         for (const observer of observers) observer.onLive(batch);
     };
-    const publishPage = (retained: WorkflowRunListResultV1, recovered = false) => {
-        const nextPage = retainDeep(page, retained);
+    const publishPage = (nextPage: WorkflowRunListResultV1, recovered = false) => {
         // Recovery changes freshness even when the retained rows are identical.
         const recoveredFromFailure = recovered && failed;
         if (recovered) failed = false;
@@ -80,9 +80,10 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         for (const observer of observers) observer.onRetained(nextPage);
     };
     const mergePage = (retained: WorkflowRunListResultV1): WorkflowRunListResultV1 => {
-        const runs = new Map(page?.runs.map(run => [run.id, run]));
-        for (const run of retained.runs) runs.set(run.id, run);
-        return { ...retained, runs: [...runs.values()].sort(compareRuns) };
+        for (const run of retained.runs) {
+            retainedRuns.set(run.id, retainDeep(retainedRuns.get(run.id), run));
+        }
+        return retainDeep(page, { ...retained, runs: [...retainedRuns.values()].sort(compareRuns) });
     };
     const close = () => {
         for (const release of detach.splice(0)) release();
@@ -156,7 +157,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         detach.push(subscribeHomeAccountChange(event => {
             if (!event.workflowRunsMaterialized) return;
             const batch: WorkflowActivityLiveFact[] = [];
-            const retainedRuns = page ? new Map(page.runs.map(run => [run.id, run])) : null;
+            let membershipChanged = false;
             const frontier = page?.runs.at(-1);
             for (const entityId of event.entityIds ?? []) {
                 const id = readWorkflowRunAccountChangeRunId(entityId);
@@ -164,13 +165,18 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                 const row = storage.getState().workflowRunsById[workflowRunStoreKey(id, lifetime.scope)]?.summary;
                 if (!row) {
                     runs.delete(id);
-                    retainedRuns?.delete(id);
+                    if (retainedRuns.delete(id)) membershipChanged = true;
                     continue;
                 }
-                if (retainedRuns && (retainedRuns.has(id) || !page?.nextCursor || !frontier
+                const previousMember = retainedRuns.get(id);
+                if (page && (previousMember || !page.nextCursor || !frontier
                     || !isBeyondWorkflowRunListSpan({ id, createdAt: Date.parse(row.createdAt) },
                         { id: frontier.id, createdAt: Date.parse(frontier.createdAt) }))) {
-                    retainedRuns.set(id, projectWorkflowRunMembershipV1(row));
+                    const member = retainDeep(previousMember, projectWorkflowRunMembershipV1(row));
+                    if (member !== previousMember) {
+                        retainedRuns.set(id, member);
+                        membershipChanged = true;
+                    }
                 }
                 const previous = runs.get(id);
                 runs.set(id, { state: row.state, attentionRequired: row.attentionRequired });
@@ -184,7 +190,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                     event: 'needs_attention', state: row.state, sourceRevision: row.revision, occurredAt: updatedAt,
                     coverage: 'live', key: workflowActivityRunEventKey({ kind: 'workflow_run', runId: id }, 'needs_attention', row.revision) });
             }
-            if (page && retainedRuns) {
+            if (page && membershipChanged) {
                 publishPage({ ...page, runs: [...retainedRuns.values()].sort(compareRuns) });
             }
             publish(batch);
@@ -224,7 +230,7 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
         }));
     };
     // Requested membership follows the Account across view handoffs; live listeners follow demand.
-    lifetime.onRetire(() => { close(); page = undefined; observers.clear(); });
+    lifetime.onRetire(() => { close(); page = undefined; retainedRuns.clear(); observers.clear(); });
     return {
         acquire(observer) {
             if (!lifetime.isCurrent()) return () => {};

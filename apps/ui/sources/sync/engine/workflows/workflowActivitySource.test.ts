@@ -184,7 +184,15 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, null)], scope);
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
     const notify = () => publishHomeAccountChange(scope.serverId, [`workflow-run:${run.id}`], { workflowRunsMaterialized: true });
-    notify(); notify();
+    notify();
+    const parseDate = vi.spyOn(Date, 'parse');
+    try {
+        notify(); notify(); notify();
+        // Repeated materializations of one Run must not revisit unrelated retained rows.
+        expect(parseDate.mock.calls.filter(([value]) => value === baselineRun.createdAt)).toHaveLength(0);
+    } finally {
+        parseDate.mockRestore();
+    }
     expect(pages).toHaveLength(4);
     expect(pages[2]).toBe(pages[3]);
     expect(pages[2]?.runs.map(row => row.id)).toEqual([run.id, baselineRun.id]);

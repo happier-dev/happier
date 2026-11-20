@@ -127,9 +127,9 @@ export function useWorkflowActivityFeed(input: Readonly<{ lifetime: ServerAccoun
     const keys = React.useSyncExternalStore(owner?.projection.subscribeKeys ?? subscribeInactive,
         owner?.projection.getKeys ?? readEmptyKeys, owner?.projection.getKeys ?? readEmptyKeys);
     const projection = owner?.projection ?? EMPTY_PROJECTION;
-    return { ...state, keys, projection, getKeys: projection.getKeys, getRow: projection.getRow, subscribeRow: projection.subscribeRow,
+    return React.useMemo(() => ({ ...state, keys, projection, getKeys: projection.getKeys, getRow: projection.getRow, subscribeRow: projection.subscribeRow,
         retry: owner?.retry ?? doNothing, readPage: owner?.readPage ?? readNoPage,
-        loadMore: owner?.loadMore ?? doNothing };
+        loadMore: owner?.loadMore ?? doNothing }), [state, keys, projection, owner]);
 }
 
 const EMPTY_PROJECTION = createWorkflowActivityProjection();
