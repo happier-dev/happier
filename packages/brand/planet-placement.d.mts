@@ -11,6 +11,7 @@ export type GlyphPlanetGeometry = Readonly<{
 export type WelcomePlanetState = 'welcome' | 'welcomeDim' | 'deep' | 'deeper' | 'night' | 'place' | 'placeDeep' | 'team' | 'sheet';
 export type WelcomePlanetGeometry = GlyphPlanetGeometry & Readonly<{ limb: number; spin: number }>;
 export function horizonPlanetGeometry(pane: HomePane, options?: Readonly<{ phone?: boolean; composerTop?: number; limb?: number; radius?: number }>): GlyphPlanetGeometry & { limb: number };
+export function projectPlanetGeometry(pane: HomePane, options?: Readonly<{ phone?: boolean }>): GlyphPlanetGeometry;
 export function welcomePlanetPose(state: WelcomePlanetState, pane: HomePane, options?: Readonly<{ phone?: boolean }>): WelcomePlanetGeometry;
 /** The two poses belong to the same pane. Progress is eased by the step timeline. */
 export function interpolateWelcomePlanetPose(from: WelcomePlanetGeometry, to: WelcomePlanetGeometry, progress: number): WelcomePlanetGeometry;

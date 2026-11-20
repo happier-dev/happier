@@ -28,6 +28,15 @@ export function horizonPlanetGeometry(pane, { phone = false, composerTop, limb, 
   return { R, cx: pane.width / 2, cy: horizon + R, rotate: -1.5, halo: HORIZON_HALO, limb: horizon };
 }
 
+/** The Project's Corner pose, composed in the full frame before the header crops it. */
+export function projectPlanetGeometry(pane, { phone = false } = {}) {
+  const R = phone ? 0.38 * pane.width : 0.34 * Math.min(pane.height, HOME_HERO_FULL_PANE_HEIGHT);
+  return {
+    R, cx: pane.width - (phone ? 0.36 : 0.25) * R, cy: (phone ? 0.38 : 0.5) * R, rotate: -1.5,
+    halo: { top: 1, left: 1, right: 1, bottom: phone ? 0.6 : 0.8 },
+  };
+}
+
 export function welcomePlanetPose(state, pane, { phone = false } = {}) {
   const [phoneLimb, desktopLimb, spin] = WELCOME_POSES[state];
   const R = phone ? 0.95 * pane.width : Math.min(0.42 * pane.width, 0.7 * pane.height);

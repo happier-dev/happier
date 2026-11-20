@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Animated, View } from 'react-native';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { DEFAULT_HOME_ATMOSPHERE } from '@happier-dev/protocol/account/settings/accountSettings';
+import { glyphFrame } from '@happier-dev/brand/glyph-scene';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import Color from 'color';
@@ -28,27 +29,14 @@ import { pictureStore } from './pictureStore.web';
 
 vi.mock('./pictureStore', () => import('./pictureStore.web'));
 
-const planetPaints = vi.hoisted(() => ({ count: 0, font: {} }));
-vi.mock('./glyph/glyphAtlas.native', () => ({
-    // The Expo asset and native worker rasterize the shipped typeface outside this process.
-    glyphAtlas: async ({ w, h, chars }: { w: number; h: number; chars: string }, dpr: number) => {
-        const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
-        return { cw, ch, chars, masks: new Uint8Array(cw * ch * chars.length) };
-    },
+const planetPaints = vi.hoisted(() => ({ count: 0 }));
+vi.mock('./glyph/glyphAtlas.native', async () => ({
+    glyphAtlas: (await import('@/dev/testkit/mocks/reactNativeSkia')).createGlyphAtlasRasterMock,
 }));
 vi.mock('@shopify/react-native-skia', async () => {
-    const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock();
-    const dispose = () => undefined;
-    return { ...boundary, BlendMode: { Modulate: 1, DstIn: 2 }, ClipOp: { Intersect: 1 },
-        TileMode: { Repeat: 1, Clamp: 2 },
-        Skia: { ...boundary.Skia,
-            Data: { fromBytes: () => ({ dispose }) },
-            Image: { MakeImage: () => ({ dispose, makeShaderOptions: () => ({ dispose }) }) },
-            Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {} }),
-            Path: { Make: () => ({ dispose }) },
-        },
-        createPicture: () => { planetPaints.count++; return { dispose }; },
-    };
+    return (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaGlyphMock({
+        onPicture: () => { planetPaints.count++; },
+    });
 });
 
 vi.mock('react-native', async () => {
@@ -69,6 +57,11 @@ function Composer(props: { sending: boolean }) {
     return <View testID="composer" ref={boundary?.ref} onLayout={boundary?.onLayout}>
         <SessionComposer sending={props.sending} onCreate={async () => {}} />
     </View>;
+}
+
+function ProjectHeader() {
+    const boundary = useAtmosphereBandBoundary();
+    return <View testID="project-header" ref={boundary?.ref} onLayout={boundary?.onLayout} />;
 }
 
 function SessionComposer(props: { sending: boolean; onCreate: () => Promise<void>; panel?: boolean; topContent?: React.ReactNode }) {
@@ -202,15 +195,17 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
                 tabId: 'retained-project', ref: { kind: 'home', params: {} }, pathname: '/', visible, focused, isFocused: () => currentFocus,
             }}>
                 <AtmosphereSurfaceFrame surface={{ project: { serverId: 'srv', projectKey: 'p1' } }}>
+                    <ProjectHeader />
                     <Draft />
                 </AtmosphereSurfaceFrame>
             </DestinationInstanceContext.Provider>;
         };
-        const screen = await renderScreen(scene(true), { createNodeMock: () => ({
-            measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(0, 0, 390, 844),
+        const screen = await renderScreen(scene(true), { createNodeMock: (element: { props: { testID?: string } }) => ({
+            measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) =>
+                done(0, 0, 390, element.props.testID === 'project-header' ? 88 : 844),
         }) });
         try {
-            expect(planetPaints.count).toBeGreaterThan(0);
+            await vi.waitFor(() => expect(planetPaints.count).toBeGreaterThan(0));
             expect(atmosphereStageStore.get().panes).toHaveLength(1);
             await screen.update(scene(false));
             const hiddenPaints = planetPaints.count;
@@ -227,7 +222,7 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
             expect(vi.getTimerCount()).toBe(0);
             // A visible split pane still paints without keyboard focus.
             await screen.update(scene(true, false));
-            expect(planetPaints.count).toBeGreaterThan(hiddenPaints);
+            await vi.waitFor(() => expect(planetPaints.count).toBeGreaterThan(hiddenPaints));
             expect(screen.findAllByType(GlyphSurface)).toHaveLength(1);
             expect(atmosphereStageStore.get().panes).toHaveLength(1);
             expect(mounts).toBe(1);
@@ -358,35 +353,43 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
         function Scene() {
             const column = React.useRef<View>(null);
             return <AtmosphereSurfaceFrame surface={{ project: { serverId: 'srv', projectKey: 'p1' } }} column={column} focused visible>
-                <View testID="project-column" ref={column} />
+                <View testID="project-column" ref={column}><ProjectHeader /><View testID="project-page-content" /></View>
             </AtmosphereSurfaceFrame>;
         }
         // The Browser pane is open beside the Project: the column is 460 of the frame's 1060.
         const mock = { createNodeMock: (element: { props: { testID?: string } }) => ({
-            measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) =>
-                element.props.testID === 'project-column' ? done(328, 40, 460, 852) : done(328, 40, 1060, 852),
+            measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => {
+                if (element.props.testID === 'project-header') return done(928, 40, 460, 88);
+                if (element.props.testID === 'project-column') return done(928, 40, 460, 852);
+                return done(328, 40, 1060, 852);
+            },
         }) };
         it('keeps its composition when the column narrows: composed at the frame and clipped to the column', async () => {
             const screen = await renderScreen(<Scene />, mock);
             try {
                 await vi.waitFor(() => expect(screen.findByTestId('surface-planet')).not.toBeNull());
                 const planet = screen.findByType(GlyphSurface);
-                expect(planet.props).toMatchObject({ width: 1060, height: 852 });
+                expect(planet.props.width).toBe(1060);
                 expect(flattenTestStyle(screen.findByTestId('surface-planet')!.props.style)).toMatchObject({ width: 460, overflow: 'hidden' });
             } finally {
                 await screen.unmount();
             }
         });
-        it('lays a calm coat between the planet and the page below its band, in the page colour', async () => {
+        it('draws glyph ink in the Project header and leaves the running tab body clear', async () => {
             const screen = await renderScreen(<Scene />, mock);
             try {
-                await vi.waitFor(() => expect(screen.findByTestId('surface-planet-coat')).not.toBeNull());
-                const coat = flattenTestStyle(screen.findByTestId('surface-planet-coat')!.props.style) as Record<string, unknown>;
-                const band = atmosphereStageStore.get().panes[0]?.geometry?.band ?? 0;
-                expect(coat).toMatchObject({ position: 'absolute', top: band, left: 0, right: 0, bottom: 0 });
-                const paint = Color(String(coat.backgroundColor));
-                expect(paint.alpha()).toBeGreaterThanOrEqual(0.5);
-                expect(paint.alpha()).toBeLessThan(1);
+                await vi.waitFor(() => expect(screen.findByTestId('surface-planet')).not.toBeNull());
+                const { width, height, scene } = screen.findByType(GlyphSurface).props;
+                const frame = glyphFrame({ view: { w: width, h: height }, theme: 'light', dpr: 1,
+                    layers: typeof scene === 'function' ? scene(0) : scene });
+                // The open Browser crops the left part of the composition. The sampler can emit
+                // overscan sprites outside the backing store, so count only rows the canvas can paint.
+                const visibleRows = Array.from(frame.sprites.at).flatMap((x, index, positions) =>
+                    index % 2 === 0 && x >= 600 && frame.sprites.rgba[2 * index + 3]! > 0 ? [positions[index + 1]!] : []);
+                const headerBottom = 88;
+                expect(visibleRows.filter(y => y >= headerBottom && y < frame.height)).toHaveLength(0);
+                expect(visibleRows.some(y => y < headerBottom)).toBe(true);
+                expect(frame.height).toBe(headerBottom);
             } finally {
                 await screen.unmount();
             }
@@ -459,24 +462,22 @@ describe('New Session atmosphere at the real stage and focus boundary', () => {
         } finally { fades.mockRestore(); await screen.unmount(); }
     });
 
-    it.each(['quiet', 'calm', 'full'] as const)('renders Project Horizon with inherited %s intensity', async (intensity) => {
+    it.each(['quiet', 'calm', 'full'] as const)('renders the Project Corner with inherited %s intensity', async (intensity) => {
         storage.setState(state => ({ ...state, settings: { ...state.settings, homeAtmosphere: {
             ...state.settings.homeAtmosphere, planet: { ...state.settings.homeAtmosphere.planet, intensity },
         } } }));
         const screen = await renderScreen(<AtmosphereSurfaceFrame surface={{ project: { serverId: 'srv', projectKey: 'p1' } }} focused visible>
-            <Composer sending={false} />
+            <ProjectHeader />
         </AtmosphereSurfaceFrame>, { createNodeMock: element => ({
             measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) =>
-                element.props.testID === 'composer' ? done(0, 40, 900, 50) : done(0, 0, 900, 800),
+                element.props.testID === 'project-header' ? done(0, 40, 900, 50) : done(0, 0, 900, 800),
         }) });
         try {
             const canvas = screen.findByType(GlyphSurface);
-            const pane = { width: 900, height: 800 };
-            expect(canvas.props.height).toBe(pane.height);
-            expect(canvas.props.scene(0)).toEqual([expect.objectContaining({
-                kind: 'planet', intensity, digits: false,
-                geometry: expect.objectContaining({ cx: pane.width / 2, rotate: -1.5 }),
-            })]);
+            const [planet] = canvas.props.scene(0);
+            expect(canvas.props.height).toBe(90);
+            expect(planet).toMatchObject({ kind: 'planet', intensity, digits: false });
+            expect(planet.geometry.cx).toBeGreaterThan(900 * 0.75);
         } finally {
             await screen.unmount();
         }

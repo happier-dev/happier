@@ -1,15 +1,16 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { planetGlyphLayer, type PlanetIntensity } from '@happier-dev/brand/glyph-scene';
+import { projectPlanetGeometry, type HomePane } from '@happier-dev/brand/planet-placement';
 import { useDestinationFocus, useDestinationInstanceKey, useDestinationVisibility } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
-import { GlassEnvironmentHold, useGlassRuntimeEnvironment } from '@/components/ui/glass/glassRuntimeEnvironment';
-import { resolveGlassReadingCoatOpacity } from '@/components/ui/glass/glassMaterial';
-import { useGlassMaterialSettings } from '@/components/ui/glass/useGlassMaterialSettings';
-import Color from 'color';
+import { GlassEnvironmentHold } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { useSetting } from '@/sync/store/hooks';
 import { HomePlanet } from './HomePlanet';
+import { AtmosphereDissolve } from './AtmosphereDissolve';
+import { GlyphSurface } from './glyph/GlyphSurface';
 import { LookChip } from './look/LookChip';
 import { useAtmosphere } from './useAtmosphere';
 import { useAtmosphereStage, useAtmosphereSendDissolving, atmosphereStageStore, type AtmosphereRect, type AtmosphereStageGeometry } from './atmosphereStage';
@@ -133,30 +134,40 @@ export function AtmosphereSurfaceFrame(props: Readonly<{
 function SurfacePlanet(props: Readonly<{ surface: AtmosphereSurface; atmosphere: ReturnType<typeof useAtmosphere>; geometry: AtmosphereStageGeometry; origin: AtmosphereOrigin; radius: number; sending: boolean }>) {
     const { theme } = useUnistyles();
     const phone = useDeviceType() === 'phone';
-    const { atmosphere, geometry, sending } = props;
-    // On a Project the planet stays an object (DIRECTION: "never a wallpaper"): Home's Corner, clipped to
-    // the project pane, rather than a strip of dots squeezed into the header band.
-    const project = typeof props.surface === 'object';
-    // A Project composes its planet once for the whole frame and the column only crops it: a pane opening beside the
-    // Project (the Browser) narrows the view instead of re-composing the planet into the narrow column (RU2 F-3).
-    const composed = project && props.origin.frame ? props.origin.frame : { width: geometry.rect.width, height: geometry.rect.height };
-    const offset = project && props.origin.frame ? { left: -props.origin.x, top: -props.origin.y } : { left: 0, top: 0 };
-    // Its tab pages stand on the same calm coat a picture gets, so the planet's dither never runs under their ink;
-    // the band above keeps the planet clear.
-    const settings = useGlassMaterialSettings();
-    const environment = useGlassRuntimeEnvironment();
-    const coat = project ? resolveGlassReadingCoatOpacity(settings, { ...environment, atmosphereBehind: 'band' }, theme.dark) : 0;
-    // The pane crops the planet: it is clipped to the page column, wherever that sits inside the frame.
+    const { atmosphere, geometry, origin, sending } = props;
+    const project = typeof props.surface === 'object' && 'project' in props.surface;
+    const { width, height } = geometry.rect;
+    const drawHeight = project ? Math.min(geometry.band, height) : height;
+    if (drawHeight <= 0 || width <= 0) return null;
+    const pane = { width, height };
+    const look = {
+        intensity: atmosphere.planet.intensity, digits: atmosphere.planet.digits, phone,
+        theme: theme.dark ? 'dark' as const : 'light' as const, reducedMotion: atmosphere.reducedMotion,
+    };
     return <View testID="surface-planet" pointerEvents="none"
-        style={{ position: 'absolute', left: props.origin.x, top: props.origin.y, width: geometry.rect.width, height: geometry.rect.height, borderRadius: props.radius, overflow: 'hidden' }}>
-        <View style={{ position: 'absolute', ...offset, width: composed.width, height: composed.height }}>
-        <HomePlanet
-            pane={composed} intensity={atmosphere.planet.intensity}
-            digits={atmosphere.planet.digits} theme={theme.dark ? 'dark' : 'light'} phone={phone}
-            hero={geometry.band > 0 ? { composerTop: 2 * geometry.focus.y - geometry.band, aboveBottom: geometry.band, nextTop: null } : null}
-            hidden={sending} onHidden={sending ? atmosphereStageStore.finishSendDissolve : undefined} leave={sending ? 'climb' : 'fade'} reducedMotion={atmosphere.reducedMotion} />
-        </View>
-        {coat > 0 ? <View testID="surface-planet-coat" pointerEvents="none" style={{ position: 'absolute', top: geometry.band, left: 0, right: 0, bottom: 0,
-            backgroundColor: Color(theme.colors.surface.base).alpha(coat).rgb().string() }} /> : null}
+        style={{ position: 'absolute', left: origin.x, top: origin.y, width, height: drawHeight, borderRadius: props.radius, overflow: 'hidden' }}>
+        {project ? <ProjectBandPlanet {...look} pane={origin.frame ?? pane} origin={origin} height={drawHeight} sending={sending} /> : (
+            <HomePlanet {...look} pane={pane}
+                hero={geometry.band > 0 ? { composerTop: 2 * geometry.focus.y - geometry.band, aboveBottom: geometry.band, nextTop: null } : null}
+                hidden={sending} onHidden={sending ? atmosphereStageStore.finishSendDissolve : undefined} leave={sending ? 'climb' : 'fade'} />
+        )}
     </View>;
+}
+
+function ProjectBandPlanet({ pane, origin, height, phone, intensity, digits, theme, sending, reducedMotion }: Readonly<{
+    pane: HomePane; origin: AtmosphereOrigin; height: number; phone: boolean; intensity: PlanetIntensity; digits: boolean;
+    theme: 'light' | 'dark'; sending: boolean; reducedMotion: boolean;
+}>) {
+    const scene = React.useMemo(() => {
+        // The full frame owns the pose, so opening the Browser only changes the crop. The measured
+        // header owns the canvas height, so there is no glyph ink behind the tab body.
+        const pose = projectPlanetGeometry({ width: pane.width, height: pane.height }, { phone });
+        const layer = planetGlyphLayer({ geometry: { ...pose, cy: pose.cy - origin.y }, intensity, digits, soft: phone });
+        return () => [layer];
+    }, [digits, intensity, origin.y, pane.height, pane.width, phone]);
+    return <AtmosphereDissolve visible={!sending} leave={sending ? 'climb' : 'fade'} height={height} reducedMotion={reducedMotion}
+        onHidden={sending ? atmosphereStageStore.finishSendDissolve : undefined}
+        style={{ position: 'absolute', left: -origin.x, top: 0, width: pane.width, height }}>
+        <GlyphSurface width={pane.width} height={height} scene={scene} theme={theme} testID="project-band-planet" />
+    </AtmosphereDissolve>;
 }
