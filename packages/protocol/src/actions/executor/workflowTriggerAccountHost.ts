@@ -101,7 +101,7 @@ export type WorkflowTriggerAccountHostParams = Readonly<{
   resolveRetainedSession?: (sessionId: string) => Promise<AutomationTemplateRetainedSessionV1 | null>;
   randomBytes: (length: number) => Uint8Array;
   newId: () => string;
-}> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveWorkflow' | 'resolveWorkflowContent' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests' | 'listContributedActionDefinitions'>;
+}> & Pick<WorkflowTriggerActionsDependencies, 'nativeAccount' | 'deploymentAction' | 'sessionList' | 'sessionRead' | 'resolveAgentStartContext' | 'resolveWorkflow' | 'resolveWorkflowContent' | 'resolveWorkflowTeamIds' | 'resolveSession' | 'resolveRunTrigger' | 'resolveRunSource' | 'resolveManagedMachine' | 'resolveMaterializer' | 'pullRequests' | 'listContributedActionDefinitions'>;
 
 type WorkflowCodecParams = Pick<WorkflowTriggerAccountHostParams, 'resolveEncryption' | 'randomBytes' | 'deploymentAction'>;
 
@@ -991,6 +991,7 @@ if (trigger.kind === 'sessionLifecycle') {
     ...(params.deploymentAction ? { deploymentAction: params.deploymentAction } : {}),
     ...(params.sessionList ? { sessionList: params.sessionList } : {}),
     ...(params.sessionRead ? { sessionRead: params.sessionRead } : {}),
+    ...(params.resolveAgentStartContext ? { resolveAgentStartContext: params.resolveAgentStartContext } : {}),
     ...(params.resolveSession ? { resolveSession: params.resolveSession } : {}),
     ...(params.resolveRunTrigger ? { resolveRunTrigger: params.resolveRunTrigger } : {}),
     ...(params.resolveRunSource ? { resolveRunSource: params.resolveRunSource } : {}),

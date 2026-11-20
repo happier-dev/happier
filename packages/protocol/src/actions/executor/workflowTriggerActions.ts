@@ -151,6 +151,7 @@ export type WorkflowTriggerActionsDependencies = Readonly<{
   /** Existing Home-bound Session-list transport; the shared resolver owns current led access. */
   sessionList?: ActionExecutorDeps['sessionList'];
   sessionRead?: ActionExecutorDeps['sessionRead'];
+  resolveAgentStartContext?: ActionExecutorDeps['resolveAgentStartContext'];
   resolveServerProfileScopeId?: ActionExecutorDeps['resolveServerProfileScopeId'];
   openContext: (automation: AutomationDefinitionDetail) => Promise<unknown>;
   sealContext: (input: Readonly<{ automationId: string; templateVersion: number; context: WorkflowTriggerContextV1;

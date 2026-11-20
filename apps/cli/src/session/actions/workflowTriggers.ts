@@ -70,6 +70,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
   resolveWorkflowTeamIds?: WorkflowTriggerActionsDependencies['resolveWorkflowTeamIds'];
   sessionList?: WorkflowTriggerActionsDependencies['sessionList'];
   sessionRead?: WorkflowTriggerActionsDependencies['sessionRead'];
+  resolveAgentStartContext?: WorkflowTriggerActionsDependencies['resolveAgentStartContext'];
   resolveSession?: WorkflowTriggerActionsDependencies['resolveSession'];
   resolveRunTrigger?: WorkflowTriggerActionsDependencies['resolveRunTrigger'];
   resolveRunSource?: WorkflowTriggerActionsDependencies['resolveRunSource'];
@@ -107,6 +108,7 @@ export function createCliWorkflowTriggerActions(params: Readonly<{
     newId: () => randomUUID(),
     ...(params.sessionList ? { sessionList: params.sessionList } : {}),
     ...(params.sessionRead ? { sessionRead: params.sessionRead } : {}),
+    ...(params.resolveAgentStartContext ? { resolveAgentStartContext: params.resolveAgentStartContext } : {}),
     ...(params.resolveSession ? { resolveSession: params.resolveSession } : {}),
     ...(params.resolveRunTrigger ? { resolveRunTrigger: params.resolveRunTrigger } : {}),
     ...(params.resolveRunSource ? { resolveRunSource: params.resolveRunSource } : {}),

@@ -205,6 +205,7 @@ export function createCliWorkflowFamily(
       deploymentAction: host.deploymentAction,
       sessionList,
       sessionRead,
+      resolveAgentStartContext,
       pullRequests: {
         listLinks: async (sessionId, caller) => {
           const result = await invokeSessionPullRequestBinding({ kind: 'list', sessionId }, caller);
