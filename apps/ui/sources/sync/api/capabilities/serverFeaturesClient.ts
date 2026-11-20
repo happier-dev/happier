@@ -784,9 +784,10 @@ async function waitForServerFeaturesSnapshot(
     read?: Readonly<{ projection: ActiveFeatureProjection; serverId?: string; force?: boolean }>,
 ): Promise<ServerFeaturesSnapshot> {
     if (signal?.aborted) return { status: 'error', reason: 'network' };
-    return await new Promise<ServerFeaturesSnapshot>((resolve, reject) => {
+    // A known fresh answer needs no wait, observer, deadline or shared-request demand.
     const known = read ? readKnownServerFeaturesSnapshotForProjection(read) : null;
     if (known) return known;
+    return await new Promise<ServerFeaturesSnapshot>((resolve, reject) => {
         const observer = new AbortController();
         let settled = false;
         let cancelTimer: (() => void) | null = null;
