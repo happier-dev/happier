@@ -20,7 +20,6 @@ type AnimatedGrammar = Exclude<StepGrammar, 'fade'>;
 type StepMotionPresentation = typeof import('./stepMotionPresentation');
 type StepEndpoints = Readonly<{ source?: StepAnchor['rect']; target?: StepAnchor['rect'] }>;
 type PendingMove = {
-    outgoing: StepMotionLayerHandle;
     destination: string;
     kind: StepMove['kind'];
     grammar: StepGrammar;
@@ -480,16 +479,6 @@ function createStepMotionStage(
                 }
                 : undefined;
             const outgoing = findLayer(move.layer);
-            // Approval can request navigation while auth publishes the same Home in its mounted route.
-            // Both commits matter, but the one outgoing layer only needs one capture and one presentation.
-            if (move.kind === 'home' && pending?.kind === 'home' && pending.outgoing === outgoing) {
-                const { onSettled } = move;
-                if (onSettled) {
-                    const complete = pending.complete;
-                    pending.complete = outcome => { complete?.(outcome); onSettled(outcome); };
-                }
-                return move.commit();
-            }
             const outgoingFocal = move.kind === 'back' && outgoing ? targetRect(outgoing.focal()) : undefined;
             const anchor = outgoingFocal ? { rect: outgoingFocal } : pressed ?? undefined;
             pressed = null;
@@ -519,7 +508,6 @@ function createStepMotionStage(
                 ?? 'fade';
             const grid = gridForWindow();
             const next: PendingMove = {
-                outgoing,
                 kind: move.kind, grammar, grid, anchor, returnTo, reverse, complete: move.onSettled,
                 cancelled: false, layoutReady: false,
                 destination: move.kind === 'home' ? 'home' : move.layer,

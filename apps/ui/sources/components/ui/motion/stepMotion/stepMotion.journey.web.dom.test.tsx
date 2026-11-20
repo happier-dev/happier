@@ -7,7 +7,9 @@ import { glyphFrame } from '@happier-dev/brand/glyph-scene';
 
 import type { GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import { HomePlanet } from '@/components/atmosphere/HomePlanet';
+import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
+import { isShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
 
 import { StepMotionLayer } from './StepMotionLayer';
 import { playBuild, runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
@@ -355,7 +357,7 @@ it('moves between retained standalone routes and restores the opener through the
     }
 });
 
-it('captures the approved step once when routing and auth both commit Home, then releases it at the dissolve', async () => {
+it('captures the approved step for one Home landing and holds the tour until the move settles', async () => {
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
     setReducedMotionPreferenceOverride(false);
     const previousAnimate = HTMLElement.prototype.animate;
@@ -384,16 +386,17 @@ it('captures the approved step once when routing and auth both commit Home, then
         }
     });
     observer.observe(document.body, { childList: true });
-    const settled = vi.fn();
-    const routeSettled = vi.fn();
+    const applyHome = vi.fn();
     function Journey() {
         const [home, setHome] = React.useState(false);
         return <StepMotionStage>{home ? (
             <StepMotionLayer key="home" layerKey="home" warmOnMount={false}><h1>Home</h1></StepMotionLayer>
         ) : (
             <StepMotionLayer key="workflow" layerKey="workflow"><button onClick={() => {
-                runStepMove({ layer: 'workflow', kind: 'home', commit: () => undefined, onSettled: routeSettled });
-                runStepMove({ layer: 'workflow', kind: 'home', commit: () => setHome(true), onSettled: settled });
+                resolvePostAuthLanding({ replace: href => {
+                    applyHome(href);
+                    setHome(true);
+                } });
             }}>Approved</button></StepMotionLayer>
         )}</StepMotionStage>;
     }
@@ -404,8 +407,8 @@ it('captures the approved step once when routing and auth both commit Home, then
         const copy = document.body.querySelector<HTMLElement>('[aria-hidden="true"][style*="position: fixed"]');
         expect(copy?.isConnected).toBe(true);
         expect(copies).toEqual([copy]);
-        expect(settled).not.toHaveBeenCalled();
-        expect(routeSettled).not.toHaveBeenCalled();
+        expect(applyHome).toHaveBeenCalledExactlyOnceWith('/');
+        expect(isShowcaseHomeLandingPending()).toBe(true);
         expect(container.querySelector('button')).toBeNull();
         expect(frozenEffects).toHaveLength(1);
         const [dissolve] = frozenEffects;
@@ -414,9 +417,9 @@ it('captures the approved step once when routing and auth both commit Home, then
         expect(dissolve.duration).toBeLessThan(1_050);
         dissolve.animation.onfinish?.();
         expect(copy?.isConnected).toBe(false);
+        expect(isShowcaseHomeLandingPending()).toBe(true);
         await act(async () => skipStepMotion());
-        expect(routeSettled).toHaveBeenCalledExactlyOnceWith('skipped');
-        expect(settled).toHaveBeenCalledExactlyOnceWith('skipped');
+        expect(isShowcaseHomeLandingPending()).toBe(false);
     } finally {
         observer.disconnect();
         await act(async () => root.unmount());
