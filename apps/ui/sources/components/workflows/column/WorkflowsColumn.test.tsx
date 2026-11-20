@@ -623,12 +623,22 @@ describe('WorkflowsColumn', () => {
         const text = screen.findHostByTestId('workflows-column:library:stepped')!.findAll((node) => typeof node.props.children === 'string')
             .map((node) => node.props.children).join('\n');
         expect(text).toContain('workflows.examples.stepCount');
+        // Lines 3 is its own line under line 2 (lab scene 8 "Lines × details", F-AUDIT row 39), not more of line 2.
+        // The shared column row the workflow row draws (the node that receives its lines).
+        const row = screen.findAll((node) => node.props?.testID === 'workflows-column:library:stepped' && 'lines' in node.props)[0]!;
+        expect(String(row.props.subtitle ?? '')).not.toContain('workflows.examples.stepCount');
+        expect(row.props.lines?.[0]?.start).toContain('workflows.examples.stepCount');
     });
     // B1 list review 2: Run rows read the Run display projection (Lines and Row details).
     it('draws a sidebar Run row at the Run Lines, with its Started by detail on Lines 3', async () => {
         answerLists();
-        const subtitleOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAll((node) =>
-            node.props?.testID === 'workflows-column:runs:row:run-live' && 'title' in node.props)[0]?.props.subtitle as string | undefined;
+        // What the row says under its name: line 2 (its subtitle) and, at Lines 3, its own third line.
+        const subtitleOf = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+            const row = screen.findAll((node) => node.props?.testID === 'workflows-column:runs:row:run-live' && 'title' in node.props
+                && 'accessibilityLabel' in node.props)[0];
+            const said = [row?.props.subtitle, ...(row?.props.lines ?? []).map((line: { start?: string }) => line.start)].filter(Boolean);
+            return said.length === 0 ? undefined : said.join(' | ');
+        };
         const render = async (workflowRun: Readonly<Record<string, unknown>>) => {
             const { settings } = storage.getState();
             storage.setState({ settings: { ...settings, collectionDisplayPreferencesV1: { ...settings.collectionDisplayPreferencesV1, workflowRun } } });
@@ -761,6 +771,10 @@ describe('WorkflowsColumn', () => {
             })) } });
             if (actionId === 'workflow.run.summaries') return Promise.resolve({ ok: true, result: { remainingSourceArtifactIds: [],
                 summaries: ids.map(sourceArtifactId => ({ sourceArtifactId, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null })) } });
+        // One cause, one message: the column says what the library home says, from the same copy.
+        const failedText = screen.getTextContent();
+        expect(failedText).toContain('workflows.loadFailedTitle');
+        expect(failedText).toContain('workflows.loadFailedBody');
             return answer(actionId, input);
         });
         const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
@@ -771,10 +785,6 @@ describe('WorkflowsColumn', () => {
             && rowIds.has(String(node.props.testID ?? ''))).map(node => [String(node.props.testID), node.props]));
         await vi.waitFor(() => expect(rowProps().size).toBe(ids.length));
         await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 50)); });
-        // One cause, one message: the column says what the library home says, from the same copy.
-        const failedText = screen.getTextContent();
-        expect(failedText).toContain('workflows.loadFailedTitle');
-        expect(failedText).toContain('workflows.loadFailedBody');
         const before = rowProps();
         const changed = ids[3]!;
         const { encodePlainArtifactStoredContent } = await import('@happier-dev/protocol/storage/artifactStoredContent');

@@ -46,7 +46,6 @@ import {
     exportSavedWorkflowDocument,
 } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { createWorkflowDefinitionRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import { confirmWorkflowDocumentExport } from '../actions/confirmWorkflowDocumentExport';
@@ -59,7 +58,7 @@ import {
 } from './workflowLibraryReads';
 import { WorkflowRunStripView } from './WorkflowRunStripView';
 import { readCollectionPluginDetails, useCollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
-import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, readWorkflowRowStrip, resolveWorkflowRowDetails, workflowLibraryExtensionFacts, workflowRowDetailChoices,
+import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, readWorkflowLineThree, readWorkflowRowStrip, resolveWorkflowRowDetails, workflowLibraryExtensionFacts, workflowRowDetailChoices,
     WorkflowLibraryStateWord, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
 import { WorkflowsViewGroupBy, WorkflowsViewNewSection, WorkflowsViewRowDetails } from './WorkflowsViewMenu';
@@ -494,14 +493,8 @@ function useLibraryAnatomy(
         },
         // Lines 3 (scene 8 "Lines × details"): the row's opt-in details on their own line.
         description: lines === 3 && !table ? (row) => {
-            const facts = readFacts(row);
-            const nextRunAt = !isAccountRow(row) && row.group !== 'fromPlugins' ? row.definition.nextRunAt : null;
-            return [
-                rowDetails.steps && facts.stepCount !== null ? t('workflows.examples.stepCount', { count: facts.stepCount }) : null,
-                rowDetails.nextRun && nextRunAt !== null ? formatNextScheduledRun(nextRunAt) : null,
-                rowDetails.lastRun && facts.lastRunAt !== null
-                    ? t('workflows.destination.lastRun', { age: formatRelativeTimeShort(facts.lastRunAt, Date.now()) }) : null,
-            ].filter(Boolean).join(' · ') || null;
+            const { start, end } = readWorkflowLineThree(row, readFacts(row), rowDetails, Date.now());
+            return [start, end].filter(Boolean).join(' · ') || null;
         } : undefined,
         bylineLead: lines === 1 ? undefined : (row) => {
             const facts = readFacts(row);

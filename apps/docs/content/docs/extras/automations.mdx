@@ -662,6 +662,32 @@ be enabled independently. Pausing the Workflow keeps its recipe and every
 trigger but prevents all automatic admission. Disabling one trigger leaves its
 siblings active.
 
+## Find your Workflows and Runs (development source)
+
+The Workflows page lists your Workflows as a **Table** or as **Cards**. The
+sidebar beside it and the phone page list them as rows. **Runs** lists every Run
+you started, grouped by date, project or Workflow.
+
+Each list has one **View** menu:
+
+- **Group by** sorts the list into groups: Source or Project for Workflows;
+  Date, Project or Workflow for Runs.
+- **Columns** (the Table) chooses which columns show. A column a plugin adds can
+  be turned on here.
+- **Lines** (rows) sets how much each row says: 1 line is the name; 2 lines add
+  the trigger (a Workflow) or the subject (a Run); 3 lines add a third line with
+  the details you turn on.
+- **Row details** (rows and Cards) turns those details on or off: for a
+  Workflow, its icons, trigger, steps, last run, next run and last eight runs;
+  for a Run, who started it and how long it took. Details a plugin adds appear in
+  the same list. A Workflow's next run reads as a time, as "Runs when it
+  happens" when it starts on an event, or as "No next run" when it is off or
+  its schedule has none left.
+
+On a phone, View opens as a sheet with the same choices, and **Filter** at the
+top. The full examples picker has a search field and groups the examples by how
+they start: when you press Run now, on a schedule, or when something happens.
+
 ## Running one now
 
 For a Workflow, **Run now** starts the reviewed definition directly, without

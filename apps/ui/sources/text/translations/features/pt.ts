@@ -19456,7 +19456,8 @@ const pt: WorkflowsDestinationTranslations = {
         history: 'Histórico',
     },
     allRuns: 'Todas as execuções',
-    lastRun: ({ age }) => `última execução ${age}`,
+    ranAgo: ({ age }) => `Executado ${age}`,
+    runsWhenItHappens: 'Executa quando acontece',
     lastRunStandalone: ({ age }) => `Última execução ${age}`,
     neverRan: 'Nunca executado',
     strip: {

@@ -5,12 +5,12 @@ import { StyleSheet } from 'react-native-unistyles';
 import { CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
 import { StatusWord } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
-import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
 import {
   readWorkflowLibraryRowFacts,
   readWorkflowLibraryRowMarks,
+  readWorkflowLineThree,
   resolveWorkflowRowDetails,
   type WorkflowLibraryItem,
   type WorkflowRowDetails,
@@ -18,7 +18,6 @@ import {
 import { WorkflowRunStripView } from '../library/WorkflowRunStripView';
 import { readCollectionPluginDetails, type CollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
-import { formatNextScheduledRun } from '../triggers/formatTriggerSummary';
 
 /**
  * The sidebar's Lines and Row details, from the one display owner (scene 8 View menu): the built-ins resolved, the
@@ -33,13 +32,14 @@ export type WorkflowColumnRowDisplay = Readonly<{
 const DEFAULT_DISPLAY: WorkflowColumnRowDisplay = Object.freeze({ lines: 2, details: resolveWorkflowRowDetails(undefined),
   stored: undefined, pluginDetails: Object.freeze([]) });
 export const WorkflowColumnRowDisplayContext = React.createContext<WorkflowColumnRowDisplay>(DEFAULT_DISPLAY);
+const NO_LINE_THREE = Object.freeze({ start: null, end: null });
 
 /**
  * A workflow's sidebar row (scene 8 "Lines × details"): navigation only, no switch. Lines 1 is the name with what it
  * uses and, at its end, the state word in place of the run strip when it speaks. Lines 2 adds the state word leading
- * the trigger sentence, with the strip at the end. Lines 3 adds the next run to that line and the last run under the
- * strip. Each part shows only while its Row detail is on. The facts come from the one row reading the library page
- * draws (`readWorkflowLibraryRowFacts`).
+ * the trigger sentence, with the strip at the end. Lines 3 adds its own third line, read by `readWorkflowLineThree`.
+ * Each part shows only while its Row detail is on. The facts come from the one row reading the library page draws
+ * (`readWorkflowLibraryRowFacts`).
  */
 export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
   props: Readonly<{
@@ -60,14 +60,9 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
   const trigger = !details.trigger ? null
     : facts.state === 'unavailable' ? (props.fallbackLine ?? facts.triggerLine)
       : (facts.triggerLine ?? props.fallbackLine ?? null);
-  const nextRunAt = 'definition' in props.row ? props.row.definition.nextRunAt : null;
-  const nextRun = lines === 3 && details.nextRun && nextRunAt !== null ? formatNextScheduledRun(nextRunAt) : null;
-  const steps = lines === 3 && details.steps && facts.stepCount !== null ? t('workflows.examples.stepCount', { count: facts.stepCount }) : null;
   const pluginContext = lines === 1 ? null : readCollectionPluginDetails(pluginDetails, stored, props.row, 'context');
   const pluginMark = readCollectionPluginDetails(pluginDetails, stored, props.row, 'mark');
-  const line = lines === 1 ? null : [trigger, steps, nextRun, pluginContext].filter(Boolean).join(' · ') || null;
-  const lastRun = lines === 3 && details.lastRun && facts.lastRunAt !== null
-    ? t('workflows.destination.lastRun', { age: formatRelativeTimeShort(facts.lastRunAt, Date.now()) }) : null;
+  const line = lines === 1 ? null : [trigger, pluginContext].filter(Boolean).join(' · ') || null;
   const stateWord =
     facts.state === 'needsYou'
       ? t('workflows.destination.sections.needsYou')
@@ -84,7 +79,12 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
   const strip = details.recentRuns && facts.strip !== null && !(lines === 1 && stateText !== null)
     ? <WorkflowRunStripView strip={facts.strip} /> : null;
   const endState = lines === 1 && stateText !== null ? <Text variant="meta" numberOfLines={1}>{stateText}</Text> : null;
-  const end = marks.length > 0 || strip !== null || endState !== null || lastRun !== null || pluginMark !== null ? (
+  // Lines 3 (lab "Lines × details"): its own line under line 2, the next run (and steps) at its start, the last run at
+  // its end, as the index's list rows draw it.
+  const { start: lineThreeStart, end: lastRun } = lines === 3 ? readWorkflowLineThree(props.row, facts, details, Date.now()) : NO_LINE_THREE;
+  const detailLines = lines === 3 && (lineThreeStart !== null || lastRun !== null)
+    ? [{ key: 'line-3', start: lineThreeStart, end: lastRun }] : undefined;
+  const end = marks.length > 0 || strip !== null || endState !== null || pluginMark !== null ? (
     <View style={lines === 1 ? styles.endOneLine : styles.end}>
       {marks.length > 0 || endState !== null || pluginMark !== null ? (
         <View style={styles.endLine}>
@@ -94,7 +94,6 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
         </View>
       ) : null}
       {strip}
-      {lastRun === null ? null : <Text variant="meta" numberOfLines={1} style={styles.quiet}>{lastRun}</Text>}
     </View>
   ) : undefined;
   const lead = lines === 1 || stateText === null ? undefined : (
@@ -112,7 +111,8 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
       {...(line ? { subtitle: line } : {})}
       {...(lead === undefined ? {} : { subtitleLeading: lead })}
       {...(end === undefined ? {} : { status: end })}
-      accessibilityLabel={stateWord === null ? props.title : `${props.title}, ${stateWord}`}
+      {...(detailLines === undefined ? {} : { lines: detailLines })}
+      accessibilityLabel={[props.title, stateWord, lineThreeStart, lines === 3 ? lastRun : null].filter(Boolean).join(', ')}
       selected={props.selected}
       needsYou={facts.state === 'needsYou'}
       {...(props.dimmed ? { dimmed: true } : {})}

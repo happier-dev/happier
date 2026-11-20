@@ -19527,7 +19527,8 @@ const fr: WorkflowsDestinationTranslations = {
         history: 'Historique',
     },
     allRuns: 'Toutes les exécutions',
-    lastRun: ({ age }) => `dernière exécution ${age}`,
+    ranAgo: ({ age }) => `Exécuté ${age}`,
+    runsWhenItHappens: 'S’exécute quand cela se produit',
     lastRunStandalone: ({ age }) => `Dernière exécution ${age}`,
     neverRan: 'Jamais exécuté',
     strip: {

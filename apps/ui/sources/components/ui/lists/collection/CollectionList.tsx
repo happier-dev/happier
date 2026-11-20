@@ -102,6 +102,10 @@ const styles = StyleSheet.create((theme) => ({
         flexShrink: 1,
         color: theme.colors.text.secondary,
     },
+    // A row's further lines (Lines 3): the description's step, its text at the start and one quiet fact at the end.
+    detailLine: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8, minWidth: 0 },
+    detailLineStart: { ...listText('subtitle'), flex: 1, minWidth: 0, color: theme.colors.text.secondary },
+    detailLineEnd: { ...listText('subtitle'), flexShrink: 0, color: theme.colors.text.tertiary },
     groupTitle: {
         ...listText('groupTitle'),
         flexShrink: 1,
@@ -596,6 +600,12 @@ export type CollectionNavigationRowProps = Readonly<{
      * of `detail` while the state speaks. It is part of the row's press; the row's name says the state.
      */
     status?: React.ReactNode;
+    /**
+     * Lines under the description, each on its own line (a list's Lines 3, lab ideas-1118-shell scene 8 "Lines ×
+     * details"): its text at the start, at most one quiet fact at the end. The row grows by one line per entry; the
+     * row's accessible name says their facts.
+     */
+    lines?: readonly Readonly<{ key: string; start?: string | null; end?: string | null }>[];
     selected: boolean;
     /**
      * Whether the selected row paints its own fill (default true). A host that draws the selection around the row and
@@ -810,6 +820,13 @@ const CollectionColumnRow = React.memo(function CollectionColumnRow(props: Colle
             dimmed={props.dimmed === true && !(props.selected && onPlane)}
             style={resolveHappierCollectionListRowPadding(indentPx)}
             showDivider={false}
+            // Further lines stand right under the description, on its edge and at its pitch.
+            {...(props.lines && props.lines.length > 0 ? { subtitleAccessory: <View>
+                {props.lines.map(line => <View key={line.key} style={styles.detailLine}>
+                    <Text style={styles.detailLineStart} numberOfLines={1}>{line.start ?? ''}</Text>
+                    {line.end ? <Text style={styles.detailLineEnd} numberOfLines={1}>{line.end}</Text> : null}
+                </View>)}
+            </View> } : null)}
             onPress={props.onPress}
         />
     );

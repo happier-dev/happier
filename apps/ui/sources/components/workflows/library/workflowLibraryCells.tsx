@@ -20,7 +20,7 @@ import {
   type WorkflowMark,
 } from '../presentation/WorkflowMarks';
 import { WorkflowSentencePreview } from '../sentence/WorkflowSentencePreview';
-import { formatTriggerSetSummary, type TriggerSummarySource } from '../triggers/formatTriggerSummary';
+import { formatNextScheduledRun, formatTriggerSetSummary, type TriggerSummarySource } from '../triggers/formatTriggerSummary';
 import { isWorkflowTriggerSourceGone } from '../triggers/sessionTriggerGroups';
 import {
   isAccountWorkflowOff,
@@ -175,6 +175,41 @@ export function readWorkflowLibraryRowFacts(
           : null,
     needsYouRunId: summary?.needsYouRunId ?? null,
   };
+}
+
+/**
+ * Lines 3 of a workflow row (scene 8 "Lines × details"): its steps and when it runs next at the start, when it last ran
+ * at the end. The index's list rows and the sidebar's rows both say it from here.
+ */
+export function readWorkflowLineThree(
+  row: WorkflowLibraryItem,
+  facts: WorkflowLibraryRowFacts,
+  details: Readonly<{ steps: boolean; nextRun: boolean; lastRun: boolean }>,
+  nowMs: number,
+): Readonly<{ start: string | null; end: string | null }> {
+  const steps = details.steps && facts.stepCount !== null ? t('workflows.examples.stepCount', { count: facts.stepCount }) : null;
+  const next = details.nextRun ? readWorkflowNextRunPhrase(row, facts, nowMs) : null;
+  return {
+    start: [steps, next].filter(Boolean).join(' · ') || null,
+    end: details.lastRun && facts.lastRunAt !== null
+      ? t('workflows.destination.ranAgo', { age: formatRelativeTimeShort(facts.lastRunAt, nowMs) }) : null,
+  };
+}
+
+/**
+ * When the Workflow runs next (scene 8 "Lines × details"): the scheduler's next time; "No next run" when it is Off (an
+ * Account set can be off with its triggers on); "Runs when it happens" while an event trigger is on; "No next run" for a
+ * schedule with none. Only a saved definition carries the scheduler's time, so only it can say a schedule has none.
+ */
+function readWorkflowNextRunPhrase(row: WorkflowLibraryItem, facts: WorkflowLibraryRowFacts, nowMs: number): string | null {
+  const nextRunAt = isAccountItem(row) || row.group === 'fromPlugins' ? undefined : row.definition.nextRunAt;
+  if (nextRunAt != null) return formatNextScheduledRun(nextRunAt, true, nowMs);
+  if (facts.triggers.length === 0) return null;
+  if (facts.state === 'off') return t('automations.list.noNextRun');
+  if (facts.triggers.some((trigger) => trigger.kind !== 'schedule' && trigger.enabled !== false)) {
+    return t('workflows.destination.runsWhenItHappens');
+  }
+  return nextRunAt === null ? t('automations.list.noNextRun') : null;
 }
 
 /**

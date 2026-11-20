@@ -19484,7 +19484,8 @@ const ca: WorkflowsDestinationTranslations = {
         history: 'Historial',
     },
     allRuns: 'Totes les execucions',
-    lastRun: ({ age }) => `darrera execució ${age}`,
+    ranAgo: ({ age }) => `Executat ${age}`,
+    runsWhenItHappens: 'S’executa quan passa',
     lastRunStandalone: ({ age }) => `Darrera execució ${age}`,
     neverRan: 'Mai executat',
     strip: {

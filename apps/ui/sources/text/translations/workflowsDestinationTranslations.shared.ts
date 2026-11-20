@@ -26,7 +26,8 @@ export const en = {
     display: { groupBy: 'Group by', source: 'Source', project: 'Project', rowDetails: 'Row details', runSpaces: 'Run spaces', date: 'Date', workflow: 'Workflow', result: 'Result', startedBy: 'Started by',
         noWorkflow: 'No saved workflow', unknownDate: 'Unknown date', searchRuns: 'Search runs',
         starter: { user: 'User', agent: 'Agent', trigger: 'Trigger' } },
-    lastRun: ({ age }: { age: string }) => `last run ${age}`,
+    ranAgo: ({ age }: { age: string }) => `Ran ${age}`,
+    runsWhenItHappens: 'Runs when it happens',
     lastRunStandalone: ({ age }: { age: string }) => `Last run ${age}`,
     neverRan: 'Never ran',
     strip: {

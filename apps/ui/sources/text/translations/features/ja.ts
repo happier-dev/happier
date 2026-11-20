@@ -19404,7 +19404,8 @@ const ja: WorkflowsDestinationTranslations = {
         history: '履歴',
     },
     allRuns: 'すべての実行',
-    lastRun: ({ age }) => `最終実行 ${age}`,
+    ranAgo: ({ age }) => `最終実行 ${age}`,
+    runsWhenItHappens: '発生時に実行',
     lastRunStandalone: ({ age }) => `最終実行 ${age}`,
     neverRan: '未実行',
     strip: {

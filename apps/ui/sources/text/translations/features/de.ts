@@ -18964,7 +18964,8 @@ const de: WorkflowsDestinationTranslations = {
         history: 'Verlauf',
     },
     allRuns: 'Alle Läufe',
-    lastRun: ({ age }) => `zuletzt gelaufen ${age}`,
+    ranAgo: ({ age }) => `Zuletzt gelaufen ${age}`,
+    runsWhenItHappens: 'Läuft, wenn es passiert',
     lastRunStandalone: ({ age }) => `Zuletzt gelaufen ${age}`,
     neverRan: 'Noch nie gelaufen',
     strip: {
