@@ -1,5 +1,6 @@
 import { randomBytes } from 'tweetnacl';
-import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { getAgentCore, resolveBundledAgentIdFromContributionIdentity } from '@happier-dev/agents';
 import { buildCommittedLaunchMetadata, generateConnectedServiceMaterializationIdentityV1 } from '@happier-dev/agents/session/state/metadataWriters';
 import { sealSessionStoredContent } from '@happier-dev/sync-client';
 import { buildSessionCreationCorrespondence, buildSessionHostOnboardingInputV1, commitPreparedSessionBirthV1,
@@ -12,9 +13,16 @@ import { SessionPendingEnqueueByMachineResponseV1Schema, SessionPendingTemplateO
 import { serializeSessionInputRequestEqualityIntentV1, SESSION_INPUT_REQUEST_META_KEY,
     SESSION_MESSAGE_PROVENANCE_META_KEY } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import type { MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { readMachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
+import { readMachineIsolationSnapshotFromMetadataV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
+import { decodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { sessionModelSelectionV2TeamBindingIntent } from '@happier-dev/protocol/providers/selection/v2';
 import { mergeSessionTeamCredentialBindingIntents, readAuthoredSessionModelSelection } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
+import { resolveManagedAgentSandbox } from '@happier-dev/protocol/teams/managedDefaults';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
+import { readDaemonMergedProjectionSummary } from '@/agents/backendCatalog/daemonMergedProjectionCache';
+import { readAccountE2eeCustody } from '@/auth/storage/tokenStorage';
 import { createSessionCreateOrLoad } from '@/sync/domains/session/hostedSystemSession';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { createEnvelopeTransport } from '@/sync/api/session/sessionDataKeyEnvelopeTransport';
@@ -22,11 +30,67 @@ import { prepareCurrentSessionDataKeyEnvelopes } from '@/sync/encryption/prepare
 import { readTransferableSessionDataKey } from '@/sync/encryption/readTransferableSessionDataKey';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { readMachineInstallationPublicKey } from '@/sync/domains/machines/machineInstallationPublicKey';
+import { resolveRunnerMachineContentKeyTrustV1 } from '@/sync/domains/machines/runnerMachineContentKeyTrust';
+import { resolveScopedMachineTransport } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { sealSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { buildRequesterSessionCreationContext } from './requesterSessionSpawnPreparation';
 import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 
 type SpawnArgs = Parameters<NonNullable<ActionExecutorDeps['sessionSpawnNew']>>[0];
+
+async function resolvePreparedBirthNativeSandbox(
+    account: LazyActionAccountContext,
+    input: NonNullable<SpawnArgs['admittedInput']>,
+    machine: MachinePublishedRowV1,
+    { accountMode, encryption }: Awaited<ReturnType<LazyActionAccountContext['resolveAccountEncryption']>>,
+    signal?: AbortSignal,
+) {
+    const explicitAgentSandbox = input.configuration?.nativeSandbox;
+    if (explicitAgentSandbox || input.configuration?.providerSessionResume || !machine.metadata) return explicitAgentSandbox;
+    const stored = machine.metadata;
+    return withActionAccountRequestSignal(account, signal, async scopedSignal => {
+        const trust = encryption ? await resolveRunnerMachineContentKeyTrustV1({ credentials: account.credentials,
+            homeServerIdentityId: account.serverIdentityId, machineId: machine.id }) : null;
+        const cryptoScope = { accountId: account.accountId, serverId: account.serverId, signal: scopedSignal,
+            shouldContinue: account.accountLifetime.isCurrent };
+        const transport = await resolveScopedMachineTransport({ machineId: machine.id, accountId: account.accountId,
+            serverId: account.serverId, serverUrl: account.endpointUrl, token: account.credentials.token,
+            accountE2eeCustody: readAccountE2eeCustody(account.credentials), expectedAccountMode: accountMode,
+            expectedRunnerBinding: trust?.expectedRunnerBinding, trustedMachineKind: trust?.trustedMachineKind,
+            observedMachine: machine, signal: scopedSignal,
+            ...(encryption ? { encryption,
+                decryptEncryptionKey: (value: string) => encryption.decryptEncryptionKey(value, cryptoScope) } : {}) });
+        let metadata: unknown;
+        try {
+            if (transport?.mode === 'plain') {
+                metadata = decodePlainMachineStoredContent(stored);
+            } else if (transport?.mode === 'e2ee' && encryption) {
+                const codec = await encryption.openEncryption(transport.dataKey, cryptoScope, transport.context?.isCurrent);
+                [metadata] = await codec.decrypt([decodeBase64(stored)], { signal: scopedSignal });
+            }
+        } catch {
+            throwIfAborted(scopedSignal);
+            return undefined;
+        }
+        account.assertCurrent();
+        if (transport?.context?.isCurrent() === false) return undefined;
+        const machineIsolation = readMachineIsolationV1(metadata);
+        if (!machineIsolation) return undefined;
+        const snapshot = readMachineIsolationSnapshotFromMetadataV1({ metadata, metadataVersion: machine.metadataVersion });
+        if (snapshot.status !== 'ready') return undefined;
+        const identity = input.agentTarget.identity;
+        const projection = readDaemonMergedProjectionSummary({ machineId: machine.id, serverId: account.serverId });
+        const declaration = projection.current && projection.inputs?.agentDeclarationsById
+            ? Object.values(projection.inputs.agentDeclarationsById).find(agent =>
+                agent.identity?.pluginId === identity.pluginId && agent.identity.localId === identity.localId)
+            : undefined;
+        const bundledAgentId = resolveBundledAgentIdFromContributionIdentity(identity);
+        return resolveManagedAgentSandbox({ machineIsolation, machineIsolationPolicy: snapshot.policy,
+            nativeSandboxAvailable: declaration?.capabilities?.nativeSandbox?.off
+                ?? (bundledAgentId ? getAgentCore(bundledAgentId).nativeSandbox?.off : undefined) }).value;
+    });
+}
 
 /** Browser adapters for the same committed birth lifecycle consumed by the CLI. */
 export async function createUiPreparedSessionBirthV1(
@@ -39,7 +103,8 @@ export async function createUiPreparedSessionBirthV1(
         return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
     }
     account.assertCurrent();
-    const { accountMode, encryption } = await account.resolveAccountEncryption(args.signal);
+    const accountEncryption = await account.resolveAccountEncryption(args.signal);
+    const { accountMode, encryption } = accountEncryption;
     account.assertCurrent();
     const readTransport = account.readTransport;
     if (!readTransport) return { type: 'error', code: 'target_unavailable', retryable: true };
@@ -48,7 +113,8 @@ export async function createUiPreparedSessionBirthV1(
     account.assertCurrent();
     const installationId = machine?.installationId;
     const installationPublicKey = readMachineInstallationPublicKey(machine?.installationPublicKey);
-    if (!installationId || !installationPublicKey) return { type: 'error', code: 'target_unavailable', retryable: true };
+    if (!machine || !installationId || !installationPublicKey) return { type: 'error', code: 'target_unavailable', retryable: true };
+    const nativeSandbox = await resolvePreparedBirthNativeSandbox(account, input, machine, accountEncryption, args.signal);
     const modelSelection = readAuthoredSessionModelSelection(input) ?? undefined;
     const modelBinding = modelSelection?.v === 2 && modelSelection.ref.source === 'team_resource'
         ? sessionModelSelectionV2TeamBindingIntent(modelSelection)
@@ -77,7 +143,7 @@ export async function createUiPreparedSessionBirthV1(
         promptStack: input.promptStack, initialTitle: input.title, initialSessionRolesV1: args.initialSessionRolesV1,
         modelSelection, connectedServices: input.connectedServices,
         capabilitySelection: input.capabilitySelection, allowedTools: input.allowedTools,
-        unlistedTools: input.unlistedTools, workspaceWrites: args.context?.workspaceWrites,
+        unlistedTools: input.unlistedTools, workspaceWrites: args.context?.workspaceWrites, nativeSandbox,
         authoringOrigin: input.authoringOrigin, teamCredentialBindings,
     }, ...(input.directory.kind === 'path' ? { directory: input.directory.path } : {}),
         agentModeId: input.agentModeId, accountSettings,

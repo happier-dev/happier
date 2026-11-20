@@ -21,16 +21,18 @@ import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/proto
 import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/connectedServiceMaterializationIdentityV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineMetadataFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import tweetnacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from '@/encryption/base64';
 
 const homes = createHomeGovernanceHarness();
 const birthInstallation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(23));
-function answerBirthMachineRead(serverId: string) {
+function answerBirthMachineRead(serverId: string, isolationV1?: { environment: 'managed-guest'; provisionerId: string }) {
     homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async raw => {
         const response = createMachineReadBatchResponseFixture(raw, id => ({
-            ...createPlainMachineRowFixture({ id, accountId: 'recipient' }),
+            ...createPlainMachineRowFixture({ id, accountId: 'recipient', ...(isolationV1 ? {
+                machine: createMachineFixture({ id, metadata: createMachineMetadataFixture({ isolationV1 }) }),
+            } : {}) }),
             installationPublicKey: encodeBase64(birthInstallation.publicKey, 'base64'),
         }));
         return { body: await response.json() };
@@ -59,18 +61,26 @@ afterEach(() => {
     standardCleanup();
 });
 
-it.each(['binding', 'selection'] as const)('commits the browser Bot model and its Team binding from a %s', async source => {
+it.each([
+    { source: 'binding', target: 'host', explicit: undefined, expected: undefined },
+    { source: 'selection', target: 'host', explicit: undefined, expected: undefined },
+    { source: 'selection', target: 'guest', explicit: undefined, expected: 'off' },
+    { source: 'selection', target: 'guest', explicit: 'on', expected: 'on' },
+] as const)('commits the browser Bot Team model and Codex sandbox ($source/$target/$explicit)', async ({ source, target, explicit, expected }) => {
     const serverId = await homes.addHome({ name: 'Birth Home', serverUrl: 'https://browser-birth.test',
         serverIdentityId: 'srv_birth', accountId: 'recipient', currentAccount: true, accountEncryptionMode: 'plain' });
-    answerBirthMachineRead(serverId);
+    answerBirthMachineRead(serverId, target === 'guest' ? { environment: 'managed-guest', provisionerId: 'happier.machine.lima/lima' } : undefined);
     const team = { teamId: 'team', resourceId: 'team-provider', expectedResourceRevision: 0, deliveryMode: 'brokered' };
     const model = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'team-bot-model' };
     const selection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...team, ...model } };
     const binding = { v: 1, slot: { kind: 'provider_model' }, ...team, providerModelSelection: model };
     const creationKey = 'browser-bot-copy';
     const input = SessionSpawnNewInputV2Schema.parse({ creationKey,
-        executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' },
+        executionTarget: { serverId, machineId: 'asleep-machine' }, directory: { kind: 'managed' }, permissionMode: 'read-only',
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+        ...(explicit ? { configuration: { mode: { value: null, updatedAtMs: 0 },
+            model: { value: null, updatedAtMs: 0, selectionSource: 'inherited' },
+            permissionIntent: { value: null, updatedAtMs: 0 }, options: {}, nativeSandbox: explicit } } : {}),
         ...(source === 'binding' ? { teamCredentialBindings: [binding] } : { modelSelection: selection }),
     });
     const boundary = createSessionMetadataHttpBoundary(() => ({}));
@@ -97,6 +107,11 @@ it.each(['binding', 'selection'] as const)('commits the browser Bot model and it
         expect(birthRequest).toHaveProperty('teamCredentialBindings', [binding]);
         expect(birthRequest).toHaveProperty('ownerMetadata.v.system.sessionCreationCorrespondenceV1.recipe.modelSelection', selection);
         expect(birthRequest).toHaveProperty('ownerMetadata.v.runtime.modelSelectionIntentV2', selection);
+        if (expected) {
+            expect(birthRequest).toHaveProperty('ownerMetadata.v.runtime.nativeSandbox', expected);
+        } else {
+            expect(birthRequest).not.toHaveProperty('ownerMetadata.v.runtime.nativeSandbox');
+        }
     } finally {
         account.dispose();
     }
@@ -108,6 +123,7 @@ it.each([
     { mode: 'e2ee', outcome: 'accepted' }, { mode: 'e2ee', outcome: 'team' },
 ] as const)('commits prepared browser birth before content and host onboarding without Machine RPC ($mode/$outcome)', async ({ mode, outcome }) => {
     const ordinarySetupBirth = mode === 'plain' && outcome === 'accepted';
+    const encryptedGuest = mode === 'e2ee' && outcome === 'accepted';
     const serverId = await homes.addHome({ name: 'Birth Home', serverUrl: 'https://browser-birth.test',
         serverIdentityId: 'srv_birth', accountId: 'recipient', currentAccount: true, accountEncryptionMode: mode });
     answerBirthMachineRead(serverId);
@@ -115,6 +131,24 @@ it.each([
     if (!storedCredentials) throw new Error('Missing credentials');
     const credentials = mode === 'e2ee' ? { token: storedCredentials.token, secret: encodeBase64(new Uint8Array(32).fill(9), 'base64url') } : storedCredentials;
     if (mode === 'e2ee') await homes.switchAccount(serverId, 'recipient', credentials);
+    if (encryptedGuest) {
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+        const machineKey = new Uint8Array(32).fill(15);
+        const codec = await encryption.openEncryption(machineKey);
+        const [metadata] = await codec.encrypt([createMachineMetadataFixture({ isolationV1: {
+            environment: 'managed-guest', provisionerId: 'happier.machine.lima/lima',
+        } })]);
+        const dataEncryptionKey = encodeBase64(await encryption.encryptEncryptionKey(machineKey), 'base64');
+        homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async raw => {
+            const response = createMachineReadBatchResponseFixture(raw, id => {
+                const row = createPlainMachineRowFixture({ id, accountId: 'recipient' });
+                return { ...row, metadata: encodeBase64(metadata!, 'base64'), dataEncryptionKey,
+                    access: { ...row.access, resourceMode: 'e2ee' },
+                    installationPublicKey: encodeBase64(birthInstallation.publicKey, 'base64') };
+            });
+            return { body: await response.json() };
+        } });
+    }
     homes.answer(serverId, 'GET /v1/account/encryption/currentness', {
         body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials),
     });
@@ -173,6 +207,11 @@ it.each([
             expect(raw).not.toHaveProperty('ownerMetadata.v.system.sessionCreationCorrespondenceV1.recipe.machineSetupExecution');
         }
         if (!raw || typeof raw !== 'object') throw new Error('Missing birth');
+        if (encryptedGuest) {
+            const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: mode, envelope: Reflect.get(raw, 'ownerMetadata'),
+                material: resolveAccountScopedCryptoMaterialFromCredentials(credentials) });
+            expect(opened).toMatchObject({ ok: true, ownerMetadata: { runtime: { nativeSandbox: 'off' } } });
+        }
         sessionDataEncryptionKey = typeof Reflect.get(raw, 'dataEncryptionKey') === 'string' ? Reflect.get(raw, 'dataEncryptionKey') : null;
         if (!http.init) throw new Error('Expected the Session birth request');
         const response = boundary.createSessionFromPost('browser-bot', http.init);

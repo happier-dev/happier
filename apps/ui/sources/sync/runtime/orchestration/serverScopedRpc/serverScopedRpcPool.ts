@@ -1,7 +1,7 @@
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import type { Encryption, MachineEncryptionContext, MachineEncryptionContextInput } from '@/sync/encryption/encryption';
 import { areMachineEncryptionContextInputsEqual, readMachineEncryptionContextInput } from '@/sync/encryption/machineEncryption';
-import { MachineKeyBasisStoredReadV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { MachineKeyBasisStoredReadV1Schema, type MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import {
     isTerminalAuthError,
 } from '@/sync/runtime/connectivity/authErrors';
@@ -75,6 +75,7 @@ async function fetchMachineTransport(params: Readonly<{
     timeoutMs: number;
     readTransport?: CapturedServerReadTransport;
     preparedMachineRows?: PreparedMachineRows;
+    observedMachine?: MachinePublishedRowV1;
     signal?: AbortSignal;
 }>): Promise<MachineTransportEvidence | null> {
     const incumbentContext = params.encryption?.getMachineEncryptionContext(params.machineId);
@@ -85,7 +86,7 @@ async function fetchMachineTransport(params: Readonly<{
     const cancellation = mergeAbortSignals([params.signal, controller?.signal]);
 
     try {
-        const payload = params.readTransport
+        const payload = params.observedMachine ? { machine: params.observedMachine } : params.readTransport
             ? { machine: (await (params.preparedMachineRows
                 ? params.preparedMachineRows.read([params.machineId], cancellation.signal)
                 : readMachineRows({ readTransport: params.readTransport, machineIds: [params.machineId],
@@ -190,6 +191,8 @@ export async function resolveScopedMachineTransport(params: Readonly<{
     timeoutMs?: number;
     readTransport?: CapturedServerReadTransport;
     preparedMachineRows?: PreparedMachineRows;
+    /** Exact row already read by this invocation under its captured Account. */
+    observedMachine?: MachinePublishedRowV1;
     signal?: AbortSignal;
 }>): Promise<ScopedMachineTransport | null> {
     const machineId = normalizeId(params.machineId);
@@ -198,7 +201,7 @@ export async function resolveScopedMachineTransport(params: Readonly<{
     const timeoutMs = typeof params.timeoutMs === 'number' && params.timeoutMs > 0 ? params.timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
     const keyCacheKey = toMachineTransportCacheKey(serverId, machineId, token);
     const incumbentContext = params.encryption?.getMachineEncryptionContext(machineId);
-    // Refresh the Home row each call to confirm the exact envelope and authenticated access identity.
+    // Use the invocation's exact Home observation to confirm envelope and authenticated access identity.
     // Only physical row work is shared. Every caller still selects and fences
     // its own crypto context; settled observations never authorize another read.
     const evidence = await fetchMachineTransport({
@@ -215,6 +218,7 @@ export async function resolveScopedMachineTransport(params: Readonly<{
             timeoutMs,
             readTransport: params.readTransport,
             preparedMachineRows: params.preparedMachineRows,
+            observedMachine: params.observedMachine,
             signal: params.signal,
         });
     if (!evidence) return null;
