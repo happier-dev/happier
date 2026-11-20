@@ -141,6 +141,7 @@ export function createTargetActionCurrentIntentAdapter(deps: Readonly<{
       await liveDecision.cancelCreation();
       return { status: 'deferred', artifactId };
     }
+    currentIntent.onLiveApprovalRequested?.(artifactId);
     const result = await liveDecision.waitForDecision({ artifactId, request });
     const decidedRequest = StoredTargetActionApprovalRequestV1Schema.safeParse(result.request);
     if (!decidedRequest.success

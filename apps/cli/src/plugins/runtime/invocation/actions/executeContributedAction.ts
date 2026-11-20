@@ -807,6 +807,13 @@ export async function executeContributedAction(params: Readonly<{
       : params.context.caller;
     const replayPlacement = params.expectedApprovalReplayPlacement;
     const sharedRequester = params.approvalContext !== undefined && isSharedRequesterActionV1(params.approvalContext);
+    // Agent and MCP callers get the operation receipt at admission. A live-only Ask
+    // then waits inside that operation, held by this daemon (F10, ruling B).
+    const admissionResponse = actionSurface !== 'plugin' && (invocationSurface === 'agent' || invocationSurface === 'mcp')
+      && !params.approvalContext?.approvedActionReplay && !params.expectedApprovalReplayPlacement;
+    let announceLiveAsk: ((artifactId: string) => void) | undefined;
+    const liveAsk = observeOperation && trackedOperation && admissionResponse && params.daemonHoldsApprovalWaiter
+      ? new Promise<string>(resolve => { announceLiveAsk = resolve; }) : undefined;
     // The pressing person reviews in their own UI: the parent carries its review
     // back for a digest-bound re-press. Never a self-approval Artifact.
     const requestCurrentIntent = ownPressChild
@@ -926,6 +933,7 @@ export async function executeContributedAction(params: Readonly<{
           const result = await params.requestCurrentIntent!({
             ...request,
             ...(liveOnly ? { approvalInputCustody: 'live_only' } : {}),
+            ...(liveOnly && announceLiveAsk ? { onLiveApprovalRequested: announceLiveAsk } : {}),
             ...(placement ? { replayPlacement: placement } : {}),
             ...(executionOriginV1 ? { executionOriginV1 } : {}),
             ...(requesterConfirmation ? { requesterConfirmation } : {}),
@@ -1126,18 +1134,26 @@ export async function executeContributedAction(params: Readonly<{
     };
     if (observeOperation && trackedOperation) {
       params.context.signal?.throwIfAborted();
-      const prepared = await targetActionInvocations.prepare(targetInvocation);
-      if (prepared.kind === 'settled') return { matched: true, result: await projectTargetResult(prepared.result) };
+      // The held Ask's lifetime is the operation's, not the admitting call's.
+      const heldAskLifetime = liveAsk ? new AbortController() : undefined;
+      const preparing = targetActionInvocations.prepare(heldAskLifetime
+        ? { ...targetInvocation, signal: heldAskLifetime.signal } : targetInvocation);
+      const admitted = liveAsk
+        ? await Promise.race([preparing.then(prepared => ({ prepared })), liveAsk.then(artifactId => ({ artifactId }))])
+        : { prepared: await preparing };
+      if ('prepared' in admitted && admitted.prepared.kind === 'settled') {
+        return { matched: true, result: await projectTargetResult(admitted.prepared.result) };
+      }
       const rawTitle = action.definition.title;
-      const observed = await observeOperation({ actionId, title: resolvePluginLocalizedStringV2Text(rawTitle),
+      const admittedReady = 'prepared' in admitted && admitted.prepared.kind === 'ready' ? admitted.prepared : undefined;
+      const heldArtifactId = 'artifactId' in admitted ? admitted.artifactId : undefined;
+      const observing = observeOperation({ actionId, title: resolvePluginLocalizedStringV2Text(rawTitle),
         operation: trackedOperation, input: targetInvocation.input,
         // An admitted SDK child consumes its handler result; its approval stays
         // visible through the retained operation while the caller waits.
         ...(actionSurface === 'plugin'
           ? { response: 'terminal' as const }
-          : (invocationSurface === 'agent' || invocationSurface === 'mcp')
-          && !params.approvalContext?.approvedActionReplay && !params.expectedApprovalReplayPlacement
-          ? { response: 'admission' as const } : {}),
+          : admissionResponse ? { response: 'admission' as const } : {}),
         failureResult: contributedActionFailureResult,
         ...(params.context.operationRpcContext ?? params.approvalContext
           ? { rpcContext: params.context.operationRpcContext ?? params.approvalContext } : {}),
@@ -1150,12 +1166,33 @@ export async function executeContributedAction(params: Readonly<{
             ?? params.context.operationRpcContext?.externalActionExecutionAuthorization
             ?? params.context.operationRpcContext?.callerInputAuthorization;
           const release = readRequesterAccountActionContext(authorization)?.retain();
-          try { return await projectTargetResult(await prepared.run({
-            signal, operationProgress, operationAcceptance, operationOwnerUpdate,
-          })); }
+          try {
+            let prepared: Awaited<typeof preparing>;
+            if (admittedReady) prepared = admittedReady;
+            else {
+              // The person decides in the Inbox; cancelling the operation withdraws the Ask.
+              const withdraw = () => heldAskLifetime?.abort();
+              signal.addEventListener('abort', withdraw, { once: true });
+              if (signal.aborted) withdraw();
+              if (heldArtifactId) operationOwnerUpdate?.update({ progress: { phase: 'waiting_for_approval', label: 'Waiting for approval',
+                approval: { kind: 'approval_request_created', artifactId: heldArtifactId, actionId: 'action.invoke' } } });
+              try { prepared = await preparing; }
+              finally {
+                signal.removeEventListener('abort', withdraw);
+                operationOwnerUpdate?.update({ progress: { label: 'Continuing' } });
+              }
+            }
+            if (prepared.kind === 'settled') return await projectTargetResult(prepared.result);
+            return await projectTargetResult(await prepared.run({
+              signal, operationProgress, operationAcceptance, operationOwnerUpdate,
+            }));
+          }
           finally { await release?.(); }
         },
       });
+      // An operation that was never admitted cannot hold the Ask; withdraw it.
+      const observed = await observing.catch((error: unknown) => { heldAskLifetime?.abort(); throw error; });
+      if (!observed.ok) heldAskLifetime?.abort();
       return { matched: true, result: observed.ok ? { ok: true, result: AgentRuntimeJsonValueV1Schema.parse(observed.result) } : observed };
     }
     const targetResult = await runTracedExternalActionStage('action.invoke', params.approvalContext?.actionRequestId,

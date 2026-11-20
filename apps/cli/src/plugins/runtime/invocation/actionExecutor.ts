@@ -120,6 +120,8 @@ export type TargetActionCurrentIntentRequest = Readonly<{
   requesterConfirmation?: ApprovalRequesterConfirmationV1;
   signal?: AbortSignal;
   reportUnavailable?: (reason: TargetActionCurrentIntentUnavailableReason) => void;
+  /** Host-private: a daemon-held operation reports its live-only Ask before the person decides. */
+  onLiveApprovalRequested?: (artifactId: string) => void;
 }>;
 
 export type TargetActionCurrentIntentResult = Pick<ActionExecuteResult, 'automationNotices'> & Readonly<
