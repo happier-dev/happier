@@ -3162,6 +3162,8 @@ export const ru: TranslationStructure = {
     requestingDeviceLabel: "Новое устройство",
     approveNewDeviceTitle: "Подтвердите новое устройство",
     approveNewDeviceSubtitle: "Добавьте новое устройство в свой Home",
+    confirmDeviceApproval: ({ device, home }: { device: string; home: string }) => `Добавить устройство ${device} в ваш аккаунт на ${home}?`,
+    deviceApprovalExpiresIn: ({ time }: { time: string }) => `Срок действия кода истекает через ${time}`,
     thisDevice: "Это устройство",
     startAgain: "Начать заново",
     pairingRejectedBody: "Доверенное устройство отклонило этот запрос. Создайте новый запрос, когда будете готовы.",

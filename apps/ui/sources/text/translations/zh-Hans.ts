@@ -3242,6 +3242,8 @@ export const zhHans: TranslationStructure = {
     requestingDeviceLabel: "新设备",
     approveNewDeviceTitle: "批准新设备",
     approveNewDeviceSubtitle: "将新设备添加到你的 Home",
+    confirmDeviceApproval: ({ device, home }: { device: string; home: string }) => `要将 ${device} 添加到你在 ${home} 上的账户吗？`,
+    deviceApprovalExpiresIn: ({ time }: { time: string }) => `验证码将在 ${time} 后过期`,
     thisDevice: "此设备",
     startAgain: "重新开始",
     pairingRejectedBody: "受信任设备拒绝了此请求。准备好后请发起新请求。",

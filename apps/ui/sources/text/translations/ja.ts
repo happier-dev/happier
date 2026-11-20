@@ -3793,6 +3793,8 @@ export const ja: TranslationStructure = {
     requestingDeviceLabel: "新しいデバイス",
     approveNewDeviceTitle: "新しいデバイスを承認",
     approveNewDeviceSubtitle: "新しいデバイスをあなたのHomeに追加します",
+    confirmDeviceApproval: ({ device, home }: { device: string; home: string }) => `${device} を ${home} のアカウントに追加しますか？`,
+    deviceApprovalExpiresIn: ({ time }: { time: string }) => `コードの有効期限まであと ${time}`,
     thisDevice: "このデバイス",
     startAgain: "最初からやり直す",
     pairingRejectedBody: "信頼済みデバイスがこのリクエストを拒否しました。準備ができたら新しいリクエストを開始してください。",
