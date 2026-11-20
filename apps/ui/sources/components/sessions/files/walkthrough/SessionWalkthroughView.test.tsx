@@ -574,8 +574,11 @@ describe('SessionWalkthroughView retained offline reading through real Account m
         const comparison = { id: `retry-${output}`, source: { kind: 'workingTree' }, repository: { rootPath: '/repo/exact' },
             endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } };
         boundary.savedSessionId = `retry-producer-${output}`;
+        const sessionConfigOptionOverrides = { v: 1 as const, updatedAt: 1,
+            overrides: { reasoning_effort: { updatedAt: 1, value: 'minimal' } } };
         boundary.savedResult = ScmDiffSummaryResultSchema.parse({ resultId: `retry-result-${output}`, revision: 1, canUndo: false,
             generator: { backendTarget: { kind: 'backend', backendId: 'codex' }, modelId: 'gpt-6-luna',
+                sessionConfigOptionOverrides,
                 connectedServices: { v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'codex-pool' } } } },
             output: { success: true, resultId: `retry-result-${output}`, revision: 1, sourceKey: comparison.id, comparison,
                 producer: { kind: 'generation', modelId: 'gpt-6-luna' },
@@ -590,11 +593,12 @@ describe('SessionWalkthroughView retained offline reading through real Account m
             wrapper: ({ children }) => <InjectedAuthProvider credentials={accountCredentials}>{children}</InjectedAuthProvider>,
         });
         await vi.waitFor(() => expect(hook.getCurrent().viewModel?.resultId).toBe(boundary.savedResult!.resultId));
+        expect(hook.getCurrent().model).toMatchObject({ sessionConfigOptionOverrides });
         await act(async () => { await hook.getCurrent().onStart(); });
         expect(generationCalls()).toHaveLength(1);
         expect(ScmDiffSummaryGenerateInputSchema.parse(generationCalls()[0]!.payload)).toMatchObject({
             outputs: [output], modelSelector: { backendTargetKey: buildBackendTargetKeyV2({ kind: 'backend', backendId: 'codex' }), modelId: 'gpt-6-luna',
-                connectedServices: boundary.savedResult!.generator!.connectedServices },
+                connectedServices: boundary.savedResult!.generator!.connectedServices, sessionConfigOptionOverrides },
             cachePolicy: { mode: 'bypass' },
         });
         if (output === 'summary') {

@@ -14402,6 +14402,16 @@ at `9d13311c372a320c3fb82ea83981612cf1fa0102` has none of these three owners
 `sessions/creation/sessionProjectFilesOpenV1.ts`), and no scoped dirty changes,
 so it supplies no predecessor reader for this unreleased choice.
 
+## Saved SCM generator options (unreleased 0.3)
+
+Saved diff-summary generators retain optional `sessionConfigOptionOverrides`,
+using the request selector's existing schema, including after a refused Start
+with no Run. Cold readers restore the options into the shared Task runner choice
+for Retry and its model picker. Earlier generators without the field remain
+readable; readers do not invent previously dropped configuration. Matching
+development Protocol, daemon and UI readers update together because the saved
+generator schema is closed. No wire epoch or data migration changes.
+
 ## Session access-withdrawal end reason (unreleased 0.3)
 
 The existing Session lifecycle carries optional `lifecycleStateReason` with the

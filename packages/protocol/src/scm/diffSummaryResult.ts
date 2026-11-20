@@ -12,6 +12,7 @@ import {
   ScmDiffSummarySourceSchema,
   ScmReviewExplanationTargetsSchema,
   ScmDiffSummaryOutputLanguageSchema,
+  ScmDiffSummaryModelSelectorSchema,
 } from './diffSummary.js';
 
 export const ScmDiffSummaryGeneratorSelectionSchema = lazyZodSchema(() => z.strictObject({ backendTarget: BackendTargetRefV2Schema,
@@ -20,6 +21,7 @@ export const ScmDiffSummaryGeneratorSelectionSchema = lazyZodSchema(() => z.stri
   modelId: z.optional(z.string().check(z.minLength(1))), profileId: z.optional(z.string().check(z.minLength(1))),
   modelSelection: z.optional(SessionModelRefSchema),
   connectedServices: z.optional(z.nullable(ConnectedServiceBindingsV2Schema)),
+  sessionConfigOptionOverrides: ScmDiffSummaryModelSelectorSchema.shape.sessionConfigOptionOverrides,
 }));
 export type ScmDiffSummaryGeneratorSelection = z.infer<typeof ScmDiffSummaryGeneratorSelectionSchema>;
 /** Presentation facts stamped by the revisioned result owner, never by the model. */

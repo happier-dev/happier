@@ -107,11 +107,13 @@ export function useScmDiffSummaryBinding(params: Readonly<{
     // displayed producer with its recorded authentication rather than turning a saved retry into fresh Auto.
     // A model-only observation may label the reading, but cannot reconstruct its authentication.
     const hasRecordedSelection = producer.modelSelection !== null;
+    const savedConfigOptions = viewModel?.savedResult?.generator?.sessionConfigOptionOverrides;
     const recordedChoice = React.useMemo<LlmTaskRunnerChoiceV1 | null>(() => observedSelection.success
         && (hasRecordedSelection || producer.selection?.connectedServices !== undefined)
         ? { v: 1, modelSelection: observedSelection.data,
-            ...(producer.selection?.connectedServices !== undefined ? { connectedServices: producer.selection.connectedServices } : {}) } : null,
-    [hasRecordedSelection, observedSelection.success ? JSON.stringify(observedSelection.data) : null, JSON.stringify(producer.selection?.connectedServices)]);
+            ...(producer.selection?.connectedServices !== undefined ? { connectedServices: producer.selection.connectedServices } : {}),
+            ...(savedConfigOptions !== undefined ? { sessionConfigOptionOverrides: savedConfigOptions } : {}) } : null,
+    [hasRecordedSelection, observedSelection.success ? JSON.stringify(observedSelection.data) : null, JSON.stringify(producer.selection?.connectedServices), JSON.stringify(savedConfigOptions)]);
     const model: LlmTaskRunnerChoiceV1 = chosenModel ?? (storedChoice && !isLlmTaskRunnerAutoV1(storedChoice) ? storedChoice : recordedChoice ?? storedChoice ?? AUTO_CHOICE);
     const generationFailure = viewModel?.error && !(viewModel.error.reason === 'disabled' && explainEnabled) ? viewModel.error : null;
     const capturedComparison = viewModel?.comparison ?? null;

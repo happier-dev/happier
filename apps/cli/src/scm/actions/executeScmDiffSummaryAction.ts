@@ -174,6 +174,7 @@ async function executeScmDiffSummaryActionInAccountScope(
                 ...(selector?.profileId ? { profileId: selector.profileId } : {}),
                 ...(selector?.modelSelection ? { modelSelection: selector.modelSelection } : {}),
                 ...(selector?.connectedServices !== undefined ? { connectedServices: selector.connectedServices } : {}),
+                ...(selector?.sessionConfigOptionOverrides !== undefined ? { sessionConfigOptionOverrides: selector.sessionConfigOptionOverrides } : {}),
                 ...(selector?.modelId ? { modelId: selector.modelId } : {}) } } : {}),
         });
         const scope = { cwd: params.request.cwd, resultId: saved.resultId, ...(sessionId ? { sessionId } : {}) };

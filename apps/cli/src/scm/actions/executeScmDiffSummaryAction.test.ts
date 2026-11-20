@@ -1,3 +1,4 @@
+import { runWithScmAccountScope } from '@/scm/accountScope';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -144,27 +145,31 @@ describe('executeScmDiffSummaryAction', () => {
         expect(resolved).toMatchObject({ modelId: 'gpt-6-luna', connectedServices: null });
     });
 
-    it('retains a selected Team source while lowering generation to the Run Team carrier', async () => runWithScmAccountScope('scm-diff-summary-action-test', async () => {
+    it.each([false, true])('retains a selected Team source while lowering generation to the Run Team carrier (refused: %s)', async refused => runWithScmAccountScope('scm-diff-summary-action-test', async () => {
         const fixture = await changedRepository();
         const modelSelection = { source: 'team_resource' as const, agentTargetKey: buildBackendTargetKeyV2(BACKEND_TARGET),
             modelId: 'team-model', resourceId: 'selected-resource', teamId: 'selected-team',
             expectedResourceRevision: 3, deliveryMode: 'brokered' as const };
+        const sessionConfigOptionOverrides = { v: 1 as const, updatedAt: 1,
+            overrides: { reasoning_effort: { updatedAt: 1, value: 'minimal' } } };
         let admitted: ReturnType<typeof ExecutionRunStartRequestSchema.parse> | undefined;
         const output = await executeScmDiffSummaryAction({ request: { cwd: fixture.rootPath,
-            source: { kind: 'workingTree' }, modelSelector: { modelSelection } },
+            source: { kind: 'workingTree' }, modelSelector: { modelSelection, sessionConfigOptionOverrides } },
             sessionId: 'team-summary-parent', backendTarget: BACKEND_TARGET,
             executeCanonicalAction: async (_actionId, input) => {
                 admitted = ExecutionRunStartRequestSchema.parse(input);
                 const resolved = resolveExecutionRunChildSelection({ ...admitted, lifecycle: 'attached' });
                 expect(resolved.teamCredentialModel).toMatchObject({ resourceId: 'selected-resource', modelId: 'team-model' });
+                if (refused) return { ok: false, errorCode: 'model_structured_output_unsupported', error: 'Refused Start fixture',
+                    details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') };
                 return { ok: true, result: { runId: 'team-summary-run', callId: 'call', sidechainId: 'sidechain' } };
             } });
-        expect(output).toMatchObject({ success: true, runId: 'team-summary-run' });
+        expect(output).toMatchObject(refused ? { success: false, errorCode: 'SUMMARY_FAILED' } : { success: true, runId: 'team-summary-run' });
         expect(admitted).toMatchObject({ teamCredentialModel: { resourceId: 'selected-resource', teamId: 'selected-team',
             expectedResourceRevision: 3, deliveryMode: 'brokered', modelId: 'team-model' } });
         expect(admitted).not.toHaveProperty('modelSelection');
         const saved = await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath, sessionId: 'team-summary-parent', resultId: output.resultId! });
-        expect(saved).toMatchObject({ success: true, result: { generator: { modelSelection } } });
+        expect(saved).toMatchObject({ success: true, result: { generator: { modelSelection, sessionConfigOptionOverrides } } });
     }));
 
     function savedSummaryOutput(captured: Awaited<ReturnType<typeof captureScmComparison>>, summaryMarkdown: string) {
