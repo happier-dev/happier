@@ -4,7 +4,7 @@ import { derivePluginAccountContributionRegistrationRights } from '@happier-dev/
 import { readPluginActionInputParser, readPluginActionReadObserver } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { createPluginRegistrationScope } from '@/sync/domains/plugins/registrationScope';
 import { evaluatePluginUiCommonJsBundle } from './commonJsEvaluator';
-import { createLazyAccountExecutable } from './lazyAccountExecutable';
+import { createLazyPluginUiExecutable } from './lazyAccountExecutable';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -52,7 +52,7 @@ function fixture(held = false) {
             return () => { fixture.cleanups++; };
         };
     `);
-    const lazy = createLazyAccountExecutable({ pluginId: 'acme.lazy', contributes, target, isCurrent: () => true,
+    const lazy = createLazyPluginUiExecutable({ pluginId: 'acme.lazy', contributes, target, isCurrent: () => true,
         async load() {
             if (boundary.unavailable) return { ok: false, code: 'loader_backend_unavailable', diagnostics: ['commonjs_evaluator_unavailable'] };
             return { ok: true, exported: evaluatePluginUiCommonJsBundle({ bytes,
