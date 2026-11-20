@@ -10969,25 +10969,16 @@ Metro reads explicit authored workspace exports, preferring nested `browser` or
 `react-native` source targets before the portable `happier-source` target. It
 preserves platform implementations without inferring source paths from dist.
 
-Noninteractive finite Expo exports in current development source take their
-default transform concurrency from the executor's `GOMAXPROCS` CPU allowance,
-capped at the measured eight-thread Metro knee. The shared export-worker policy
-owns that cap; native admission can fit fewer threads to available memory.
-Without an executor allowance, it leaves Metro's default in effect, as it does
-for interactive commands. An explicit `HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS`
-or caller `--max-workers` retains precedence, including the existing `0` opt-out.
-Transform concurrency is execution policy and does not invalidate an otherwise
-identical completed source export.
-Finite web exports use the admission owner's separately measured
-`source-web-export` envelope. On Linux, that owner fits the executor's thread
-allowance to currently admissible memory and reserves the fitted thread count's
-measured tree estimate plus the existing headroom, rounded up to whole GiB.
-The estimate interpolates piecewise through the measured one-, eight-, and
-47-thread points; the eight-thread knot retains the larger observed cold/warm
-tree RSS. It is a measured admission estimate, not a process memory limit.
-Peers and nested export processes consume the count recorded by that owner.
-Explicit worker overrides keep their precedence and reserve their requested
-count; opting out of injection retains the prior conservative envelope.
+Finite web exports on Linux use the `source-web-export` admission class.
+The destination broker sizes the worker range from completed export CPU history,
+using the catalog's eight-core cold charge when history is unavailable. It fits
+the range against available cores and the export's memory model, which uses the
+measured one-, eight-, and 47-worker points plus the broker's recorded working
+set when available. The reservation charges the same number of cores that the
+export passes to Expo as `--max-workers`. The grant controls admitted exports,
+including nested producers. Outside admission, Expo retains its caller worker
+options and the executor default. Transform concurrency does not invalidate
+an otherwise identical completed source export.
 Runtime source bundles retain their smaller `source-bundle` envelope.
 Re-measure the export tree when changing its workload or concurrency model.
 

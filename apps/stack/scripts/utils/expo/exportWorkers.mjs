@@ -1,3 +1,5 @@
+import { SOURCE_WEB_EXPORT_MEMORY } from '../dev_targets/command_resources.mjs';
+
 // One argument policy for Expo and the admission owner that reserves its tree.
 // 2026-10-23 nl1 cold Metro exports with the installed serializer correction:
 // 47 threads took 199,741 ms at 32,907,788 KiB whole-tree RSS; eight took
@@ -6,7 +8,7 @@
 // 9,993,744 KiB RSS (zero hits / 20,642 misses). Its serializer/source basis
 // differs; it does not qualify for the observed eight/47-thread plateau.
 // More default threads add measured memory pressure without useful speedup.
-const EXPORT_DEFAULT_THREAD_KNEE = 8;
+const EXPORT_DEFAULT_THREAD_KNEE = SOURCE_WEB_EXPORT_MEMORY.intermediateThreads;
 
 export function resolveExpoExportWorkers(args, env, { interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY) } = {}) {
   // Expo's scalar argument parser uses the last occurrence.

@@ -372,7 +372,6 @@ if [ "${1-}" = --heavyweight-admission ] || [ "${1-}" = --heavyweight-admission-
   fi
   if [ "$heavyweight_check_only" -eq 1 ]; then
     ensure_native_job_cpu_budget
-    heavyweight_prepare_export_request "$@"
     check_heavyweight_admission
     exit $?
   fi
@@ -1311,10 +1310,7 @@ heavyweight_placement_class=${policy_placementHeavyClass:-$policy_heavyClass}
 minimum_memory_capacity_kib=0
 if [ -n "$heavyweight_placement_class" ]; then
   if [ "$heavyweight_placement_class" = source-web-export ]; then
-    heavyweight_admission_class=$heavyweight_placement_class
-    heavyweight_prepare_export_request "$@"
     heavyweight_placement_workers=1
-    if [ "$heavyweight_export_worker_mode" = explicit ]; then heavyweight_placement_workers=$heavyweight_export_requested_workers; fi
     minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$heavyweight_placement_class" worker "$heavyweight_placement_workers")
   else
     minimum_memory_capacity_kib=$(heavyweight_memory_floor_kib "$heavyweight_placement_class")

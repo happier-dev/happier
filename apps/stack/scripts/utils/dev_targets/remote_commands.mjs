@@ -20,7 +20,6 @@ import { resolveCliPublicationBuildSteps } from '../../../../cli/scripts/buildPu
 import { isCliTestBuildSkipped } from '../../../../cli/scripts/vitestPreparation.mjs';
 import { readVitestSourcePreparation } from './vitest_config_preparation.mjs';
 import { sourceWebExportDiagnosticEnv } from '../../build/sourceWebExportArgs.mjs';
-import { resolveExpoExportWorkers } from '../expo/exportWorkers.mjs';
 import { parseEnvToObject } from '../env/dotenv.mjs';
 import { buildRuntimeSnapshotObservationExpression } from './runtime_snapshot_observation.mjs';
 import { LONG_LIVED_SSH_SERVER_ALIVE } from './ssh_liveness.mjs';
@@ -30,7 +29,7 @@ import { resolveRemoteValidationPlacementClass } from './validation_preparation_
 import { readShellCommandPrefix, workspaceBuildCommands, workspaceBuildSequence } from './shell_command_sequence.mjs';
 import { HOST_ADMISSION_OBSERVATION, HOST_OBSERVATION_PROGRAMS } from './host_observation.mjs';
 import { COMPILER_NATIVE_TEST_FILES, COMPILER_TEST_SUITES, refineCompilerSuiteSelection } from './compiler_test_suites.mjs';
-import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY, resolveColdAdmissionCpuCost } from './command_resources.mjs';
+import { ADMISSION_CPU_WORKER_ENV_NAMES, ADMISSION_CPU_WORKER_FLAGS, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, SOURCE_WEB_EXPORT_MEMORY as EXPORT_MEMORY, SOURCE_WEB_EXPORT_MEMORY_SEGMENTS as EXPORT_MEMORY_SEGMENTS, resolveSourceWebExportMemoryFloorKiB, resolveColdAdmissionCpuCost } from './command_resources.mjs';
 export { HEAVYWEIGHT_COMMAND_RESOURCES, LEGACY_VALIDATION_ADMISSION_CLASSES, SOURCE_RELOAD_ADMISSION_CLASS } from './command_resources.mjs';
 
 // Both dispatchers evaluate this policy. The native artifact is generated once,
@@ -152,23 +151,11 @@ const validation = { validation: '1', bootstrap: '1', heavyClass: 'validation' }
 const HEAVYWEIGHT_MEMORY_KIB = Object.freeze(Object.fromEntries(
   Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES).map(([name, resource]) => [name, resource.memoryKiB])));
 const HEAVYWEIGHT_COMPILE_CLASSES = ['compilation', 'compilation-ui', 'compilation-ui-tsrs', 'compilation-cli', 'compilation-server', 'package-dist', 'runtime-build', 'native-custody'];
-export const SOURCE_WEB_EXPORT_ADMISSION_CLASS = 'source-web-export';
-
-function exportMemorySegment(startThreads, startKiB, endThreads, endKiB) {
-  const denominator = endThreads - startThreads;
-  const numerator = endKiB - startKiB;
-  return { numerator, denominator, baseNumerator: startKiB * denominator - startThreads * numerator };
-}
-const EXPORT_MEMORY_SEGMENTS = [
-  exportMemorySegment(1, EXPORT_MEMORY.serialKiB, EXPORT_MEMORY.intermediateThreads, EXPORT_MEMORY.intermediateKiB),
-  exportMemorySegment(EXPORT_MEMORY.intermediateThreads, EXPORT_MEMORY.intermediateKiB, EXPORT_MEMORY.parallelThreads, EXPORT_MEMORY.parallelKiB),
-];
+export { SOURCE_WEB_EXPORT_ADMISSION_CLASS };
 
 export function resolveHeavyweightMemoryFloorKiB(className, { workers } = {}) {
-  const segment = EXPORT_MEMORY_SEGMENTS[workers <= EXPORT_MEMORY.intermediateThreads ? 0 : 1];
   const floor = className === SOURCE_WEB_EXPORT_ADMISSION_CLASS && Number.isSafeInteger(workers) && workers > 0
-    ? Math.ceil((segment.baseNumerator + segment.numerator * workers)
-      / (segment.denominator * EXPORT_MEMORY.gibKiB)) * EXPORT_MEMORY.gibKiB
+    ? resolveSourceWebExportMemoryFloorKiB(workers)
     : HEAVYWEIGHT_MEMORY_KIB[className] ?? HEAVYWEIGHT_MEMORY_KIB.compilation;
   return floor;
 }
@@ -1337,12 +1324,13 @@ function renderNativeCpuPolicy() {
     '  case "$1" in',
     ...Object.keys(HEAVYWEIGHT_COMMAND_RESOURCES).map(name => {
       const cost = resolveColdAdmissionCpuCost(name);
-      const value = cost === 'workers' ? '${3:-$2}' : String(cost);
+      const value = name === SOURCE_WEB_EXPORT_ADMISSION_CLASS ? `\${3:-${cost}}` : cost;
       return `    ${name}) heavyweight_cpu_cost=${value} ;;`;
     }),
     `    *) heavyweight_cpu_cost=${resolveColdAdmissionCpuCost(undefined)} ;;`,
     '  esac',
-    '  if [ "${1-}" != source-web-export ] && [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi',
+    '  if [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi',
+    '  if [ "$1" = source-web-export ]; then printf \'%s\' "$heavyweight_cpu_cost"; return; fi',
     '  heavyweight_cpu_requested=${4:-0}',
     '  [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2',
     '  if { [ "${1-}" = validation ] && [ "$heavyweight_cpu_requested" -gt 0 ]; } || [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi',
@@ -3157,13 +3145,6 @@ export async function runRemoteCommandPolicyCli(argv = process.argv.slice(2)) {
   if (args[0]?.startsWith('--output-fd=')) {
     const fd = Number(args.shift().slice('--output-fd='.length));
     output = text => writeSync(fd, text);
-  }
-  if (args[0] === '--source-web-export-workers') {
-    const { explicit, workers } = resolveExpoExportWorkers(args.slice(2), process.env, { interactive: args[1] === '1' });
-    // Opt-outs and interactive/default-Metro commands do not consume a fitted
-    // injected count. Keep their prior conservative reservation instead.
-    output(`${explicit || workers === null ? 'explicit' : 'managed'} ${workers ?? 0}\n`);
-    return 0;
   }
   if (args[0] === '--local-test-selection') {
     const selection = await resolveLocalTestSelection(args.slice(3), { repoRoot: args[1], cwd: args[2] });

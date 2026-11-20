@@ -11,7 +11,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
-import { resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
+import { SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveRequestedAdmissionCpuCores } from '../dev_targets/command_resources.mjs';
 
 export const DECLARATION_COMPARISON_STALL_MARKER = 'HAPPIER_DECLARATION_COMPARISON_INCOMPLETE ';
 const execFileAsync = promisify(execFile);
@@ -138,7 +138,7 @@ async function runPayload({ command, args, env, signal }) {
  */
 export async function runAdmittedTask({ root, className, floorKiB, machine,
   locks = [], noWait = false, requireInherited = false, failureId, repoDir = process.cwd(),
-  exportMode, exportWorkers, requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, readJobPeakKiB,
+  requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, readJobPeakKiB,
   treeIds = [], selectedFiles = [], commandArgs = process.argv,
   cacheBaseDir = process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, env = process.env, signal } = {}, action) {
   if (typeof action !== 'function') throw new TypeError('Admission requires a task callback');
@@ -211,12 +211,6 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       const { hasInheritedPackageBuildCustody } = await import('./workspace_build_admission.mjs');
       noWait ||= await hasInheritedPackageBuildCustody(env);
     }
-    let floorOptions;
-    if (className === 'source-web-export' && exportMode === 'managed' && exportWorkers > 0) {
-      const { resolveHeavyweightMemoryFloorKiB } = await import('../dev_targets/remote_commands.mjs');
-      floorOptions = Array.from({ length: exportWorkers }, (_, index) => ({ workers: index + 1,
-        floorKiB: resolveHeavyweightMemoryFloorKiB(className, { machine: 'worker', workers: index + 1 }) }));
-    }
     // Reuse the first arrival when this same waiter reconnects after broker loss.
     // Resolve policy from the current catalog, rather than a retained broker's
     // older module. The broker alone owns host capacity and reservations.
@@ -228,13 +222,13 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost,
-      requestedCpuCores: requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
+      requestedCpuCores: className === SOURCE_WEB_EXPORT_ADMISSION_CLASS ? 0
+        : requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt: Date.now(),
       repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
       // The routed run this preparation step belongs to; the broker ranks a preparation class by it.
-      ...(env.HAPPIER_ADMISSION_PREPARES_CLASS ? { preparesClass: env.HAPPIER_ADMISSION_PREPARES_CLASS } : {}),
-      ...(floorOptions ? { floorOptions } : {}) };
+      ...(env.HAPPIER_ADMISSION_PREPARES_CLASS ? { preparesClass: env.HAPPIER_ADMISSION_PREPARES_CLASS } : {}) };
     if (locks.length) {
       const { createWorkspaceBuildResourcePriorityScope } = await import('./workspace_build_admission.mjs');
       priorityScope = createWorkspaceBuildResourcePriorityScope({ locks, env, signal: cancellation.signal });
@@ -273,6 +267,10 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             }
             selectedFloorKiB = response.floorKiB;
             selectedWorkers = response.workers;
+            if (className === SOURCE_WEB_EXPORT_ADMISSION_CLASS
+              && (!Number.isSafeInteger(selectedWorkers) || selectedWorkers < 1 || selectedWorkers !== response.cpuCores)) {
+              throw new Error('Source web export admission requires matching worker and CPU grants');
+            }
             // Retained pre-CPU brokers cannot enforce CPU capacity. Keep their
             // payload defaults at the existing minimum worker unit rather than
             // restoring unrestricted tool fan-out while succession is pending.
@@ -327,7 +325,12 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: String(process.pid),
               HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB: String(selectedFloorKiB),
               HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' };
-            if (selectedWorkers !== undefined) acquiredEnv.GOMAXPROCS = String(selectedWorkers);
+            if (selectedWorkers !== undefined) {
+              acquiredEnv.GOMAXPROCS = String(selectedWorkers);
+              if (className === SOURCE_WEB_EXPORT_ADMISSION_CLASS) {
+                acquiredEnv.HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS = String(selectedWorkers);
+              }
+            }
             if (selectedCpuCores !== undefined) {
               if (!acquiredEnv.GOMAXPROCS) acquiredEnv.GOMAXPROCS = String(selectedCpuCores);
               if (!acquiredEnv.HAPPIER_VITEST_GOVERNOR_MAX_WORKERS) {
@@ -621,7 +624,6 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
     floorKiB: Number(value('floor-kib')), machine: value('machine'),
     projects, treeIds: value('judged-trees')?.split(','),
     selectedFiles: options.filter(item => item.startsWith('--judged-file=')).map(item => item.slice('--judged-file='.length)),
-    exportMode: value('export-mode'), exportWorkers: Number(value('export-workers')),
     requestedCpuCores: value('cpu-cores') === undefined ? undefined
       : value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores')),
     repoDir, locks: JSON.parse(value('workspace-locks') ?? '[]'),

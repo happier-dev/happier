@@ -1799,21 +1799,65 @@ test('broker observations preserve an in-flight working-set peak above the termi
     resourceClass: identity.className, floorKiB: 10 * gib } })).identityFloorKiB, 4 * gib);
 });
 
-test('a web export reserves the recorded working set with a fitting worker count', linux, async t => {
+test('finite Expo exports charge exactly their worker bound alongside nl3 reservations', linux, async t => {
+  const gib = 1024 * 1024;
+  const { sourceWebExportArgs } = await import('../../build/sourceWebExportArgs.mjs');
+  const identity = { className: 'source-web-export', component: '.', projects: ['.'],
+    entry: 'node apps/stack/scripts/build/build_source_web_ui.mjs' };
+  for (const { name, cpuPeak, memoryPeak, expectedWorkers, override } of [
+    { name: 'cold', expectedWorkers: 8 },
+    { name: 'learned CPU', cpuPeak: 6000, expectedWorkers: 9, override: '0' },
+    { name: 'learned CPU and 9 GiB working set', cpuPeak: 6000, memoryPeak: 9 * gib, expectedWorkers: 2, override: '47' },
+  ]) {
+    await t.test(name, async t => {
+      const { root } = await fixture(t, { cpuCores: 128, readCpuPressure: () => 20,
+        readMemory: () => ({ availableMemoryKiB: 70 * gib, totalMemoryKiB: 200 * gib }) });
+      const history = {};
+      const key = className => JSON.stringify([className, identity.component, identity.entry, identity.projects]);
+      if (cpuPeak) history[key('cpu-millicores/source-web-export')] = [cpuPeak];
+      if (memoryPeak) history[key('source-web-export')] = [memoryPeak];
+      await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify(history));
+
+      await (await acquire(root, 10 * gib, t, { cpuCost: 35 })).admit();
+      await (await acquire(root, 10 * gib, t, { cpuCost: 34 })).admit();
+      const before = await requestAdmissionSample(root);
+      assert.equal(before.unreservedCpuCores, 39);
+      assert.equal(before.reservedCpuCores, 69);
+      const env = override === undefined ? {} : { HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS: override };
+      let passedBound;
+      let chargedCores;
+      let activeCount;
+      const result = await runAdmittedTask({ ...identity, root, floorKiB: 32 * gib, machine: 'fixture',
+        repoDir: root, cacheBaseDir: root, env, noWait: true }, async acquiredEnv => {
+        const args = sourceWebExportArgs(acquiredEnv);
+        passedBound = Number(args[args.indexOf('--max-workers') + 1]);
+        const during = await requestAdmissionSample(root);
+        chargedCores = during.reservedCpuCores - before.reservedCpuCores;
+        activeCount = during.activeCount;
+        return 0;
+      });
+      assert.equal(result, 0);
+      assert.equal(activeCount, 3);
+      assert.equal(passedBound, expectedWorkers);
+      assert.equal(chargedCores, passedBound);
+    });
+  }
+});
+
+test('an unrecorded web export identity uses the class history for its worker and memory grant', linux, async t => {
   const gib = 1024 * 1024;
   const { root, broker } = await fixture(t, { readMemory: () => ({ availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib }) });
-  const identity = { className: 'source-web-export', resourceClass: 'source-web-export', component: '.',
+  const identity = { className: 'source-web-export', component: '.',
     entry: 'node apps/stack/scripts/build/build_source_web_ui.mjs', projects: ['apps/stack'] };
-  // The persisted working-set history of this export identity (broker record).
+  const key = className => JSON.stringify([className, identity.component, identity.entry, identity.projects]);
   await writeFile(join(root, 'identity-kernel-peaks.json'), JSON.stringify({
-    [JSON.stringify([identity.resourceClass, identity.component, identity.entry, identity.projects])]: [Math.round(16.25 * gib)] }));
-  const floorOptions = [{ floorKiB: 32 * gib, workers: 47 }, { floorKiB: 16 * gib, workers: 20 }, { floorKiB: 8 * gib, workers: 1 }];
-  const held = await (await acquire(root, 32 * gib, t, { ...identity, commandClass: 'source-web-export', floorOptions })).admit();
-  assert.equal(broker.status().reservedMemoryKiB, 16.5 * gib, 'reserves the recorded peak (rounded), not the 32 GiB maximum');
-  assert.equal(held.admitted.workers, 20, 'runs the most workers whose modelled floor fits inside the recorded peak');
-  const fresh = await (await acquire(root, 32 * gib, t, { ...identity, entry: 'node other-export.mjs', commandClass: 'source-web-export',
-    floorOptions })).admit();
-  assert.equal(fresh.admitted.workers, 20, 'an unrecorded export identity takes the class median');
+    [key('source-web-export')]: [Math.round(16.25 * gib)],
+    [key('cpu-millicores/source-web-export')]: [6000],
+  }));
+  const held = await (await acquire(root, 32 * gib, t, { ...identity, entry: 'node other-export.mjs' })).admit();
+  assert.equal(broker.status().reservedMemoryKiB, 16.5 * gib);
+  assert.equal(held.admitted.workers, 9);
+  assert.equal(held.admitted.cpuCores, 9);
 });
 
 for (const resourceClass of ['focused-validation-ui', 'entry-loads']) {

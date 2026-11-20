@@ -1,8 +1,27 @@
 // Admission resource metadata shared by command policy and pre-bootstrap disk checks.
 export const LEGACY_VALIDATION_ADMISSION_CLASSES = Object.freeze(['targeted-validation', 'full-validation']);
+export const SOURCE_WEB_EXPORT_ADMISSION_CLASS = 'source-web-export';
 export const SOURCE_WEB_EXPORT_MEMORY = Object.freeze({ serialKiB: 8236000, parallelKiB: 32907788,
   intermediateKiB: 12711296, intermediateThreads: 8, parallelThreads: 47,
   gibKiB: 1024 * 1024 });
+export const SOURCE_WEB_EXPORT_MEMORY_SEGMENTS = [
+  exportMemorySegment(1, SOURCE_WEB_EXPORT_MEMORY.serialKiB, SOURCE_WEB_EXPORT_MEMORY.intermediateThreads, SOURCE_WEB_EXPORT_MEMORY.intermediateKiB),
+  exportMemorySegment(SOURCE_WEB_EXPORT_MEMORY.intermediateThreads, SOURCE_WEB_EXPORT_MEMORY.intermediateKiB,
+    SOURCE_WEB_EXPORT_MEMORY.parallelThreads, SOURCE_WEB_EXPORT_MEMORY.parallelKiB),
+];
+
+function exportMemorySegment(startThreads, startKiB, endThreads, endKiB) {
+  const denominator = endThreads - startThreads;
+  const numerator = endKiB - startKiB;
+  return { numerator, denominator, baseNumerator: startKiB * denominator - startThreads * numerator };
+}
+
+export function resolveSourceWebExportMemoryFloorKiB(workers) {
+  const { gibKiB, intermediateThreads } = SOURCE_WEB_EXPORT_MEMORY;
+  const { baseNumerator, numerator, denominator } = SOURCE_WEB_EXPORT_MEMORY_SEGMENTS[workers <= intermediateThreads ? 0 : 1];
+  return Math.ceil((baseNumerator + numerator * workers) / (denominator * gibKiB)) * gibKiB;
+}
+
 // 2026-11-04 validation-floor-sizing-1104/measurements.json: successful
 // cli-file, server-file and package-file runs (six each, two Linux workers).
 // Nearest-rank p95 of per-run sampled tree RSS peaks; no additional margin.
@@ -67,7 +86,7 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // sampled tree RSS 11,856,864 KiB, rounded up without a blanket margin.
   // admission-floor-classes-1108/c2-isolated-source-server-measurement.json.
   'source-bundle': { memoryKiB: 12 * 1024 * 1024, cpuCores: 'host', diskClass: 'source-bundle' },
-  'source-web-export': { memoryKiB: Math.ceil(SOURCE_WEB_EXPORT_MEMORY.parallelKiB / SOURCE_WEB_EXPORT_MEMORY.gibKiB) * SOURCE_WEB_EXPORT_MEMORY.gibKiB, cpuCores: 'workers', diskClass: 'source-web-export' },
+  [SOURCE_WEB_EXPORT_ADMISSION_CLASS]: { memoryKiB: Math.ceil(SOURCE_WEB_EXPORT_MEMORY.parallelKiB / SOURCE_WEB_EXPORT_MEMORY.gibKiB) * SOURCE_WEB_EXPORT_MEMORY.gibKiB, cpuCores: 'workers', diskClass: 'source-web-export' },
   // Two fresh isolated canonical dependency installs succeeded; larger live
   // tree VmHWM sum 2,374,684 KiB rounds to 3 GiB. Retained raw evidence:
   // SYSTEMIC-DELETE/step10-dependency-install{,-topological-setup}-measurement.log.
@@ -143,6 +162,8 @@ const TYPESCRIPT_CPU_CORES = 6;
 const ENTRY_LOAD_CPU_CORES = 3;
 export const COLD_ADMISSION_CPU_CORES = Object.freeze({
   [SOURCE_RELOAD_ADMISSION_CLASS]: 3,
+  // Existing default Metro knee measured at eight workers (see exportWorkers.mjs).
+  [SOURCE_WEB_EXPORT_ADMISSION_CLASS]: SOURCE_WEB_EXPORT_MEMORY.intermediateThreads,
   validation: 3,
   'entry-loads': ENTRY_LOAD_CPU_CORES,
   'gate-entry-loads': ENTRY_LOAD_CPU_CORES,
@@ -181,11 +202,13 @@ export function resolveAdmissionCpuCost(className, args = []) {
 
 export function resolveColdAdmissionCpuCost(className) {
   const declared = resolveAdmissionCpuCost(className);
-  return declared !== 'host' ? declared : Object.hasOwn(COLD_ADMISSION_CPU_CORES, className)
+  return typeof declared === 'number' ? declared : Object.hasOwn(COLD_ADMISSION_CPU_CORES, className)
     ? COLD_ADMISSION_CPU_CORES[className] : UNKNOWN_ADMISSION_CPU_CORES;
 }
 
 export function resolveAdmissionCpuCores(cost, { totalCpuCores, workers, requestedCpuCores = 0, className } = {}) {
+  if (className === SOURCE_WEB_EXPORT_ADMISSION_CLASS) return Math.min(totalCpuCores,
+    workers ?? COLD_ADMISSION_CPU_CORES[SOURCE_WEB_EXPORT_ADMISSION_CLASS]);
   // An explicit count sizes ordinary Vitest runs more directly than a class sample.
   if (className === 'validation' && Number.isSafeInteger(requestedCpuCores) && requestedCpuCores > 0) return requestedCpuCores;
   const base = cost === 'workers' ? workers ?? totalCpuCores : cost === 'host' ? totalCpuCores : cost;

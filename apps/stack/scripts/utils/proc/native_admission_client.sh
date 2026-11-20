@@ -75,16 +75,6 @@ read_host_memory_kib() {
   printf '%s\n' "$host_memory"
 }
 
-heavyweight_prepare_export_request() {
-  [ "$heavyweight_admission_class" = source-web-export ] || return 0
-  heavyweight_export_interactive=0
-  if [ -t 0 ] && [ -t 1 ]; then heavyweight_export_interactive=1; fi
-  heavyweight_export_request=$(node "$projection_command_policy" --source-web-export-workers "$heavyweight_export_interactive" "$@") || exit 1
-  IFS=' ' read -r heavyweight_export_worker_mode heavyweight_export_requested_workers <<EOF
-$heavyweight_export_request
-EOF
-}
-
 heavyweight_report_pre_dispatch_failure() {
   heavyweight_exit_status=$1
   if [ "$heavyweight_exit_status" -ne 0 ] && [ "$heavyweight_exit_status" -ne 130 ] \
@@ -111,7 +101,6 @@ run_heavyweight_admission() {
   shift 3
   [ "$#" -gt 0 ] || { printf '%s\n' '[preferred-execution] heavyweight admission requires a command' >&2; exit 1; }
   ensure_native_job_cpu_budget || exit 1
-  heavyweight_prepare_export_request "$@"
   heavyweight_requested_cpu=$(heavyweight_requested_cpu_cores "$@") || exit 1
   case "${heavyweight_admission_requested_cpu-0}" in
     ''|0) ;;
@@ -127,15 +116,12 @@ run_heavyweight_admission() {
       fi
       exec "$@" ;;
   esac
-  heavyweight_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-worker}" "${heavyweight_export_requested_workers-}") || exit 1
+  heavyweight_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-worker}") || exit 1
   # The payload's reentry performs only jobs-slice placement, never capacity
   # admission. Its parent client retains the connection and filesystem leases.
   set -- -- "$launcher_path" --heavyweight-admitted-exec -- "$@"
   [ "${heavyweight_no_wait-0}" != 1 ] || set -- --no-wait "$@"
   [ "${heavyweight_require_inherited-0}" != 1 ] || set -- --require-inherited "$@"
-  if [ "$heavyweight_admission_class" = source-web-export ]; then
-    set -- "--export-mode=$heavyweight_export_worker_mode" "--export-workers=$heavyweight_export_requested_workers" "$@"
-  fi
   [ -z "${heavyweight_forwarded_options-}" ] || eval "set -- $heavyweight_forwarded_options \"\$@\""
   # The client's own dispatch scope makes its payload's kernel peak readable at
   # completion, which sizes this identity's next reservation (native_process_priority.sh).
@@ -147,8 +133,9 @@ run_heavyweight_admission() {
 
 check_heavyweight_admission() {
   [ "$(uname -s 2>/dev/null || true)" = Linux ] || return 0
-  heavyweight_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-worker}" "${heavyweight_export_requested_workers-}") || return 1
-  node "$admission_client" --check "--root=$heavyweight_admission_root" "--floor-kib=$heavyweight_floor"
+  heavyweight_floor=$(heavyweight_memory_floor_kib "$heavyweight_admission_class" "${heavyweight_admission_placement-worker}") || return 1
+  if [ "$heavyweight_admission_class" = source-web-export ]; then set -- "--class=$heavyweight_admission_class"; else set --; fi
+  node "$admission_client" --check "--root=$heavyweight_admission_root" "--floor-kib=$heavyweight_floor" "$@"
 }
 
 if [ "${1-}" = --heavyweight-admitted-exec ]; then

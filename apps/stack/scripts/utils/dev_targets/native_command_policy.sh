@@ -21,7 +21,7 @@ heavyweight_cpu_cores() {
     native-custody) heavyweight_cpu_cost=1 ;;
     source-asset) heavyweight_cpu_cost=1 ;;
     source-bundle) heavyweight_cpu_cost=2 ;;
-    source-web-export) heavyweight_cpu_cost=${3:-$2} ;;
+    source-web-export) heavyweight_cpu_cost=${3:-8} ;;
     dependency-install) heavyweight_cpu_cost=3 ;;
     package-dist) heavyweight_cpu_cost=3 ;;
     runtime-build) heavyweight_cpu_cost=4 ;;
@@ -34,7 +34,8 @@ heavyweight_cpu_cores() {
     compilation-server) heavyweight_cpu_cost=6 ;;
     *) heavyweight_cpu_cost=3 ;;
   esac
-  if [ "${1-}" != source-web-export ] && [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi
+  if [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi
+  if [ "$1" = source-web-export ]; then printf '%s' "$heavyweight_cpu_cost"; return; fi
   heavyweight_cpu_requested=${4:-0}
   [ "$heavyweight_cpu_requested" != host ] || heavyweight_cpu_requested=$2
   if { [ "${1-}" = validation ] && [ "$heavyweight_cpu_requested" -gt 0 ]; } || [ "$heavyweight_cpu_requested" -gt "$heavyweight_cpu_cost" ]; then heavyweight_cpu_cost=$heavyweight_cpu_requested; fi

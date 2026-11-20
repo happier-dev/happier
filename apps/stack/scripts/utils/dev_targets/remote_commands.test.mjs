@@ -979,23 +979,6 @@ test('composed CLI typecheck admission includes its referenced UI producer befor
   }
 });
 
-test('export admission preserves Metro-owned interactive concurrency', () => {
-  const entry = fileURLToPath(new URL('./remote_commands.mjs', import.meta.url));
-  for (const [interactive, override, flags, expected] of [
-    ['1', '', [], 'explicit 0\n'],
-    ['0', '', [], 'managed 1\n'],
-    ['1', '8', [], 'explicit 8\n'],
-    ['0', '0', [], 'explicit 0\n'],
-    ['0', '8', ['--max-workers=4', '--max-workers', '47'], 'explicit 47\n'],
-  ]) {
-    const result = spawnSync(process.execPath, [entry, '--source-web-export-workers', interactive, ...flags], {
-      encoding: 'utf8', env: { ...process.env, GOMAXPROCS: '1', HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS: override },
-    });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout, expected);
-  }
-});
-
 test('measured native workload reservations round the recorded peak without a blanket margin', async t => {
   // SYSTEMIC-DELETE owner Q1 (2026-10-29): measured peak, rounded up.
   // Retained evidence: SYSTEMIC-DELETE/step10-native-source-test-measurement.log
@@ -1045,6 +1028,9 @@ test('native CPU projection preserves canonical cold and declared demand with ex
       }), className);
     }
   }
+  const exportWithoutWorkerCount = spawnSync('/bin/sh', ['-c', [policy, 'heavyweight_cpu_cores source-web-export 128 "" host'].join('\n')], { encoding: 'utf8' });
+  assert.equal(exportWithoutWorkerCount.status, 0, exportWithoutWorkerCount.stderr);
+  assert.equal(Number(exportWithoutWorkerCount.stdout), resources.COLD_ADMISSION_CPU_CORES['source-web-export']);
   const neutralEnv = { ...process.env, ...Object.fromEntries(resources.ADMISSION_CPU_WORKER_ENV_NAMES.map(name => [name, ''])) };
   for (const { args, env } of [
     { args: [], env: {} },
