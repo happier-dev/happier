@@ -41,7 +41,7 @@ export async function browseManagedWorkspaceDirectory(input: Readonly<{
     const source = createHolderWorkspaceSource({ id: workspace.managedId, rootPath: workspace.rootPath, helperPath: target.helperPath, holder });
     const response = await runWithWorkspaceSource(source, () => listMachineDirectoryAt(path, result.data,
       input.limits ?? resolveMachineFileBrowserConfig()));
-    return response;
+    return response.ok ? response : { ...response, errorCode: response.errorCode ?? 'workspace_target_unavailable' };
   } catch (error) {
     const errorCode = readRpcErrorCode(error) ?? 'workspace_target_unavailable';
     return { ok: false as const, errorCode, error: errorCode };

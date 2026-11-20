@@ -19,9 +19,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { createCliActionDeps } from './createCliActionDeps';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { executeFilesystemMutationAction } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
-import { FILESYSTEM_MUTATION_ACTION_IDS, FilesystemCopyOutputSchema, FilesystemDownloadOutputSchema, FilesystemReadFileOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1, FILESYSTEM_MUTATION_ACTION_IDS, FilesystemCopyOutputSchema, FilesystemDownloadOutputSchema, FilesystemReadFileOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { createCliActionExecutor } from './createCliActionExecutor';
 import { createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { createCliActionExecutorFromCredentials } from './createCliActionExecutorFromCredentials';
@@ -183,6 +183,37 @@ describe('exact-machine filesystem Actions', () => {
     });
   });
   afterEach(() => { vi.restoreAllMocks(); });
+
+  it('settles the attached folder chooser through the Action output boundary', async () => {
+    const actionId = FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory;
+    const rootPath = '/home/coder';
+    const serverIdentityId = await serverProfiles.resolveServerProfileHomeIdentityId(configuration.activeServerId);
+    if (!serverIdentityId) throw new Error('Missing filesystem fixture Home');
+    const input = { path: { directory: rootPath, workspace: {
+      v: 2, kind: 'managed', rootPath, serverId: serverIdentityId, managedId: 'attached-guest',
+      controller: { machineId: 'machine-test', installationId: readOrCreateInstallationIdentitySync().installationId },
+    } }, includeFiles: false } as const;
+    const accountId = 'daemon-owner';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const client = await createBoundFilesystemMachineClient(token, { id: 'machine-test', encryptionMode: 'plain',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 }, undefined, {
+      openManagedProjectWorkspace: async () => { throw new RpcError('The guest is stopped', 'managed_power_required'); },
+    });
+    try {
+      const owner = createCliActionExecutor({ token, sessionId: '', mode: 'plain', ctx: null,
+        serverId: 'home', serverHttpBaseUrl: configuration.serverUrl, pluginActionExecutionOwner: 'current_process',
+        actionsSettingsProvider: createActionSettingsProvider({ accountSettings: accountSettingsParse({
+          actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { [actionId]: ['rpc'] } },
+        }) }),
+        filesystemActionExecute: client.createFilesystemActionExecutor('home') });
+      bindCurrentFilesystemOwner(client, owner);
+      const context = await verifiedFilesystemPersonContext(actionId, input, { accountId, serverIdentityId });
+      await expect(owner.execute(actionId, input, context)).resolves.toMatchObject({ ok: false, errorCode: 'managed_power_required' });
+    } finally {
+      await client.shutdown();
+    }
+  });
+
   it('selects filesystem Action identity once while preserving owner bytes and foreign refusal', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-filesystem-single-identity-'));
     const homeIdentityId = await serverProfiles.resolveServerProfileHomeIdentityId(configuration.activeServerId);

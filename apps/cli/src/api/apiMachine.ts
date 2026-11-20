@@ -3114,9 +3114,8 @@ export class ApiMachineClient {
         });
         return async (request) => {
             if (request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory && addressesManagedBrowseDirectory(request.input)) {
-                const result = await browseManagedWorkspaceDirectory({ raw: request.input, context: request.context,
+                return await browseManagedWorkspaceDirectory({ raw: request.input, context: request.context,
                     openTarget: this.lifecycleDependencies.openManagedProjectWorkspace });
-                return { ok: true, result };
             }
             return executeOnSelectedSource(request);
         };

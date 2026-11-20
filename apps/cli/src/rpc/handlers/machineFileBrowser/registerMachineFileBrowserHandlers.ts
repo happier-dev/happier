@@ -54,7 +54,7 @@ export function registerMachineFileBrowserHandlers(params: RegisterMachineFileBr
         if (addressesManagedBrowseDirectory(input)) {
           const result = await browseManagedWorkspaceDirectory({ raw: input, context,
             openTarget: params.deps?.openManagedProjectWorkspace, limits: { maxEntries, statConcurrency } })
-          return { ok: true, result }
+          return result.ok ? { ok: true, result } : result
         }
         const roots = await resolveRoots({ platform, workingDirectory, accessPolicy })
         await assertFilesystemEffectCurrent(context)
