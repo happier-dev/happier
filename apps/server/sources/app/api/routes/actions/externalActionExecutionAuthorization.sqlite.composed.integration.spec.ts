@@ -8803,7 +8803,7 @@ describe("external Action execution authorization", () => {
                 sourceContext: { machineAdmission: context, callerAuthority: 'account_automation', callerInputConstraints } });
             const currentPrincipal = await verifyCurrentExternalActionPrincipal(root.binding);
             if (!currentPrincipal || !('grant' in currentPrincipal)) throw new Error('Current PAT principal required');
-            const sourceProof = await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing, resolvePublisher);
+            const sourceProof = await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing);
             expect(sourceProof?.principal).toMatchObject({
                 expiresAt: currentPrincipal.expiresAt,
                 parentTokenId: currentPrincipal.parentTokenId,
@@ -9846,7 +9846,7 @@ describe("external Action execution authorization", () => {
             const boundFacts = { ...current, grant: authorization.binding.grant };
             const admittedSource = await verifyWorkspaceSyncHandoffSourceAuthorization(authorization,
                 WorkspaceSyncSourceRoutingV1Schema.parse({ ...workspaceSyncSourceRouting,
-                    operationId: authorization.binding.requestId }), resolvePublisher);
+                    operationId: authorization.binding.requestId }));
             expect(admittedSource).not.toBeNull();
             expect(admittedSource?.principal).toEqual(boundFacts);
             expect(admittedSource).toMatchObject({ effectiveAuthority: 'account_automation' });
@@ -10750,8 +10750,23 @@ describe("external Action execution authorization", () => {
                     purpose: selectedPurpose, proof: signMachineInstallationProof({ payload, privateKey: keys.secretKey }) } });
         };
         try {
-            const current = await verify();
-            expect(current.statusCode, current.body).toBe(200);
+            const { observeSqliteRequests } = await import('@/testkit/observeSqliteRequests');
+            const admissionTransactions: Array<string | undefined> = [];
+            const keyTransactions: Array<string | undefined> = [];
+            const stop = observeSqliteRequests({ before: request => {
+                const args = JSON.stringify(request.args);
+                if ((request.model === 'Machine' || request.model === 'AccessKey')
+                    && args.includes(machine.id) && args.includes('operationProtocolCapabilities')) {
+                    admissionTransactions.push(request.transactionId);
+                }
+                if (request.model === 'AccessKey' && args.includes(session.id)) keyTransactions.push(request.transactionId);
+            } });
+            try {
+                const current = await verify();
+                expect(current.statusCode, current.body).toBe(200);
+            } finally { stop(); }
+            expect(admissionTransactions).toEqual([keyTransactions[0]]);
+            expect(keyTransactions).toEqual([expect.any(String)]);
             const method = `${machine.id}:${RPC_METHODS.SPAWN_HAPPY_SESSION}`;
             const raw = await app.inject({ method: 'POST', url: `/v1/machines/${machine.id}/admission/verify`,
                 headers: { authorization: `Bearer ${daemonToken}` }, payload: { v: 1, context, method,
@@ -10761,7 +10776,20 @@ describe("external Action execution authorization", () => {
             expect(raw.statusCode).toBe(403);
             expect((await verify({ ...purpose, sessionId: 'another-session' })).statusCode).toBe(403);
             expect((await verify(purpose, { ...context, actorAccountId: custodian.id })).statusCode).toBe(403);
-            expect((await verify(purpose, { ...context, role: 'manage' })).statusCode).toBe(403);
+            const manage = { ...context, role: 'manage' as const };
+            expect((await verify(purpose, manage)).statusCode).toBe(403);
+            await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: machine.id,
+                principal: { kind: 'account', accountId: fixture.account.id }, level: 'admin' }));
+            expect((await verify(purpose, manage)).statusCode).toBe(200);
+            const ownerSession = await db.session.create({ data: { accountId: custodian.id, tag: crypto.randomUUID(),
+                metadata: '{}', encryptionMode: 'plain' } });
+            await db.accessKey.create({ data: { accountId: custodian.id, machineId: machine.id,
+                sessionId: ownerSession.id, data: 'owner-custody' } });
+            expect((await verify({ ...purpose, sessionId: ownerSession.id }, { ...manage, actorAccountId: custodian.id })).statusCode).toBe(200);
+            const capabilities = { requesterExecutionIsolation: { protocolVersions: [1] } };
+            await db.machine.update({ where: { id: machine.id }, data: { operationProtocolCapabilities: {} } });
+            expect((await verify(purpose, manage)).statusCode).toBe(403);
+            await db.machine.update({ where: { id: machine.id }, data: { operationProtocolCapabilities: capabilities } });
             await db.machine.update({ where: { id: machine.id }, data: { installationId: 'replacement' } });
             expect((await verify()).statusCode).toBe(403);
             await db.machine.update({ where: { id: machine.id }, data: { installationId: machine.installationId } });
@@ -10898,11 +10926,11 @@ describe("external Action execution authorization", () => {
             const routing = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: origin.requestId,
                 accountServerId: homeId, sourceMachineId: source.machineId, sourceSessionId: session.id,
                 sourceRootPath: '/workspace/project', sourceContext });
-            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing, resolvePublisher)).not.toBeNull();
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing)).not.toBeNull();
             if (workspaceWrites === 'deny') {
                 const { workspaceWrites: _redundantCeiling, ...originOnlyContext } = sourceContext;
                 expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root,
-                    { ...routing, sourceContext: WorkspaceSyncSourceContextV1Schema.parse(originOnlyContext) }, resolvePublisher)).toBeNull();
+                    { ...routing, sourceContext: WorkspaceSyncSourceContextV1Schema.parse(originOnlyContext) })).toBeNull();
             }
             publisherVisible = false;
             expect(await resolvePublisher({ accountId: fixture.account.id, sessionId: session.id })).toBeNull();
@@ -10989,6 +11017,7 @@ describe("external Action execution authorization", () => {
             expect(unavailableChild.json()).toEqual({ error: 'credential_scope_denied' });
             await db.machine.update({ where: { id: destination.id }, data: { installationId: destination.installationId } });
             await db.machine.update({ where: { id: fixture.machine.id }, data: { installationId: 'replacement-source-installation' } });
+            expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing)).toBeNull();
             expect((await issueChild()).statusCode).toBe(401);
             await db.machine.update({ where: { id: fixture.machine.id }, data: { installationId: fixture.machine.installationId } });
             await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: destination.id,
@@ -11006,7 +11035,20 @@ describe("external Action execution authorization", () => {
                 } }) });
             try {
                 expect((await issueChild()).statusCode).toBe(200);
-                expect(await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing, resolvePublisher)).not.toBeNull();
+                const { observeSqliteRequests } = await import('@/testkit/observeSqliteRequests');
+                let admittedSourceReads = 0;
+                const stop = observeSqliteRequests({ before: request => {
+                    const args = JSON.stringify(request.args);
+                    if (request.model === 'Machine' && args.includes(source.machineId) && args.includes('dataEncryptionKey')) {
+                        admittedSourceReads++;
+                    }
+                } });
+                try {
+                    const verified = await verifyWorkspaceSyncHandoffSourceAuthorization(root, routing);
+                    expect(verified).not.toBeNull();
+                    expect(admittedSourceReads).toBe(1);
+                    expect(verified).toMatchObject({ sourceMachineAdmission: machineAdmission });
+                } finally { stop(); }
                 expect(permissionGraphReads).toBe(0);
             } finally {
                 Object.defineProperty(db.machine, 'findMany', { configurable: true, writable: true, value: originalFindMany });

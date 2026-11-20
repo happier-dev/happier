@@ -146,7 +146,7 @@ import { SessionCreateRequestSchema } from '@/app/session/create/sessionCreateRe
 import { SessionMachineAccessKeyCreateBodySchema } from '@/app/accessKeys/sessionMachineAccessKeyRequest';
 import { SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2, SessionPendingExecutionRunEnqueueByMachineRequestV2Schema } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
-import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
+import type { MachineAdmission, SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
     ManagedActivityReadRequestV1Schema, ManagedAdmissionDrainConfirmRequestV1Schema,
     type ManagedActivityRpcRequestV1 } from '@happier-dev/protocol/machines/managed/managedIntentV1';
@@ -972,6 +972,23 @@ export async function hasCurrentExternalActionWorkflowOriginInTx(reader: Tx, inp
     return run !== null && run.originSessionId === (origin.sessionAuthority.runOriginSessionId ?? null);
 }
 
+function projectAdmittedHandoffPrincipal(binding: ExternalActionExecutionAuthorizationBindingV1): VerifiedExternalActionPrincipal {
+    // The signed root owns bounded work. Credential/grant withdrawal is
+    // observed by the next admission; the daemon owns Stop and cancellation.
+    if (!('authentication' in binding)) return { accountId: binding.accountId, principalId: binding.principalId,
+        credentialId: binding.credentialId, authority: 'account_automation', grant: binding.grant,
+        // These live-bearer fields do not govern a retained signed admission.
+        expiresAt: null, parentTokenId: null, embedConfig: null };
+    const evidence = binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {};
+    // Session-origin and terminal bindings are automation by the binding-authority owner's rule.
+    if (binding.sessionActionOrigin) return { accountId: binding.accountId, authentication: binding.authentication,
+        authority: 'account_automation', sessionActionOrigin: binding.sessionActionOrigin, ...evidence };
+    return binding.authentication.kind === 'terminal'
+        ? { accountId: binding.accountId, authentication: binding.authentication, authority: 'account_automation', ...evidence }
+        : { accountId: binding.accountId, authentication: binding.authentication,
+            authority: readExternalActionBindingAuthority(binding), ...evidence };
+}
+
 async function readCurrentExternalActionPrincipal(
     binding: ExternalActionExecutionAuthorizationBindingV1,
     reader: Tx,
@@ -994,20 +1011,7 @@ async function readCurrentExternalActionPrincipal(
     }
     if (binding.handoffAdmission) {
         if (!await readAdmittedExternalActionHandoffMachineInTx(reader, binding)) return null;
-        // The signed root owns bounded work. Credential/grant withdrawal is
-        // observed by the next admission; the daemon owns Stop and cancellation.
-        if (!('authentication' in binding)) return { accountId: binding.accountId, principalId: binding.principalId,
-            credentialId: binding.credentialId, authority: 'account_automation', grant: binding.grant,
-            // These live-bearer fields do not govern a retained signed admission.
-            expiresAt: null, parentTokenId: null, embedConfig: null };
-        const evidence = binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {};
-        // Session-origin and terminal bindings are automation by the binding-authority owner's rule.
-        if (binding.sessionActionOrigin) return { accountId: binding.accountId, authentication: binding.authentication,
-            authority: 'account_automation', sessionActionOrigin: binding.sessionActionOrigin, ...evidence };
-        return binding.authentication.kind === 'terminal'
-            ? { accountId: binding.accountId, authentication: binding.authentication, authority: 'account_automation', ...evidence }
-            : { accountId: binding.accountId, authentication: binding.authentication,
-                authority: readExternalActionBindingAuthority(binding), ...evidence };
+        return projectAdmittedHandoffPrincipal(binding);
     }
     if (binding.accountEncryptionMode !== undefined) {
         const account = await reader.account.findUnique({ where: { id: binding.accountId }, select: { encryptionMode: true } });
@@ -4800,12 +4804,15 @@ export async function verifyExternalActionMachinePublicationRequester(input: Rea
     return binding.accountId;
 }
 
+type VerifiedWorkspaceSyncSource = VerifiedExternalActionExecutionRequest & Readonly<{
+    sourceMachineAdmission: Extract<MachineAdmission, { kind: 'admitted' }>;
+}>;
+
 /** The installed writer proves transport; only this issuer/currentness owner proves the retained handoff root. */
 export async function verifyWorkspaceSyncHandoffSourceAuthorization(
     authorization: ExternalActionExecutionAuthorizationV1,
     routing: WorkspaceSyncSourceRoutingV1,
-    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
-): Promise<VerifiedExternalActionExecutionRequest | null> {
+): Promise<VerifiedWorkspaceSyncSource | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(authorization.token);
     const context = routing.sourceContext;
     const claimed = context?.machineAdmission;
@@ -4819,18 +4826,15 @@ export async function verifyWorkspaceSyncHandoffSourceAuthorization(
         || routing.sourceSessionId !== binding.handoffAdmission.sessionId
         || binding.machineId !== routing.sourceMachineId
         || binding.installationId !== binding.handoffAdmission.sourceInstallationId
-        || claimed.machineId !== binding.machineId || claimed.installationId !== binding.installationId
-        || claimed.actorAccountId !== binding.accountId || claimed.custodianAccountId !== binding.custodianAccountId
-        || !sameManagedInput(context.sessionActionOrigin, binding.sessionActionOrigin)
-        || ('grant' in binding && !sameManagedInput(context.callerInputConstraints,
-            { models: binding.grant.models, permissionModes: binding.grant.permissionModes }))) return null;
-    return readCurrentWorkspaceSyncSourceAuthorization(binding, routing, resolveCurrentSessionMachine);
+        || claimed.installationId !== binding.installationId
+        || claimed.custodianAccountId !== binding.custodianAccountId) return null;
+    return readCurrentWorkspaceSyncSourceAuthorization(binding, routing);
 }
 
 /** Project and handoff retain their admission; normal writes use current Machine admission. */
 async function readCurrentWorkspaceSyncSourceAuthorization(binding: ExternalActionExecutionAuthorizationBindingV1,
     routing: WorkspaceSyncSourceRoutingV1,
-    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine']): Promise<VerifiedExternalActionExecutionRequest | null> {
+    resolveCurrentSessionMachine?: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine']): Promise<VerifiedWorkspaceSyncSource | null> {
     const context = routing.sourceContext;
     const claimed = context?.machineAdmission;
     const action = PublicActionIdSchema.safeParse(binding.actionId);
@@ -4838,12 +4842,16 @@ async function readCurrentWorkspaceSyncSourceAuthorization(binding: ExternalActi
         || !sameManagedInput(context.sessionActionOrigin, binding.sessionActionOrigin)
         || ('grant' in binding && !sameManagedInput(context.callerInputConstraints,
             { models: binding.grant.models, permissionModes: binding.grant.permissionModes }))) return null;
-    const current = await verifyCurrentExternalActionPrincipal(binding);
+    const handoffSource = binding.handoffAdmission
+        ? await readAdmittedExternalActionHandoffMachineInTx(db, binding, routing.sourceMachineId, claimed) : null;
+    if (binding.handoffAdmission && !handoffSource) return null;
+    const current = handoffSource && !binding.workflowActionOrigin
+        ? projectAdmittedHandoffPrincipal(binding) : await verifyCurrentExternalActionPrincipal(binding);
     const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
     const relationshipWrite = isWorkspaceSyncRelationshipWriteActionId(binding.actionId);
     if (!principal || narrowCredentialAuthority(principal.authority, context.callerAuthority) !== context.callerAuthority
-        || !relationshipWrite && !await hasCurrentExecutionMachineAdmission(binding)
-        || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(action.data), authority: context.callerAuthority,
+        || !handoffSource && !relationshipWrite && !await hasCurrentExecutionMachineAdmission(binding)
+        || !handoffSource && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(action.data), authority: context.callerAuthority,
             grant: 'grant' in binding ? binding.grant : null }).ok) return null;
     if (binding.sessionActionOrigin && ((context.callerPermissionMode != null
         && context.callerPermissionMode !== binding.sessionActionOrigin.callerPermissionMode)
@@ -4853,19 +4861,19 @@ async function readCurrentWorkspaceSyncSourceAuthorization(binding: ExternalActi
     const projectSource = !binding.handoffAdmission && binding.workspaceSyncAdmission
         ? readWorkspaceSyncSourceAdmissionV1(binding, { serverId: routing.accountServerId,
             relationshipId: binding.workspaceSyncAdmission.relationshipId, machineId: routing.sourceMachineId }) : null;
-    const source = binding.handoffAdmission
-        ? await readAdmittedExternalActionHandoffMachineInTx(db, binding, routing.sourceMachineId, claimed)
-        : projectSource ? { kind: 'admitted' as const, ...projectSource.source }
+    const source = handoffSource ?? (projectSource ? { kind: 'admitted' as const, ...projectSource.source }
         : relationshipWrite ? await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: binding.accountId,
             machineId: binding.machineId, actionId: binding.actionId, executionBinding: binding,
-            callerAuthority: context.callerAuthority, sessionActionOrigin: binding.sessionActionOrigin }) : null;
-    if (!source || source.kind !== 'admitted' || (projectSource || relationshipWrite) && source.role !== claimed.role || source.custodianAccountId !== claimed.custodianAccountId
-        || source.installationId !== claimed.installationId || source.encryptionMode !== claimed.encryptionMode) return null;
+            callerAuthority: context.callerAuthority, sessionActionOrigin: binding.sessionActionOrigin }) : null);
+    if (!source || source.kind !== 'admitted' || !handoffSource && (source.role !== claimed.role
+        || source.custodianAccountId !== claimed.custodianAccountId || source.installationId !== claimed.installationId
+        || source.encryptionMode !== claimed.encryptionMode)) return null;
     if (relationshipWrite && (source.machineId !== binding.machineId || source.installationId !== binding.installationId
         || source.custodianAccountId !== binding.custodianAccountId
         || binding.admittedMachineRole === 'manage' && source.role !== 'manage')) return null;
-    if (!await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine)) return null;
-    return { binding, principal, effectiveAuthority: context.callerAuthority, effectActionId: binding.actionId, target: binding.target };
+    if (!handoffSource && !await hasCurrentExternalActionSessionSource(binding, resolveCurrentSessionMachine)) return null;
+    return { binding, principal, effectiveAuthority: context.callerAuthority, effectActionId: binding.actionId,
+        target: binding.target, sourceMachineAdmission: source };
 }
 
 /** Capture the distinct physical role once at routed ingress, never from the child's role. */
@@ -5100,7 +5108,7 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
             resolveCurrentSessionMachine) : null;
     const verified = project ? projectSource?.verified
         : relationshipWrite ? relationshipSource?.verified
-        : !sourceExecution && await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source, resolveCurrentSessionMachine);
+        : !sourceExecution && await verifyWorkspaceSyncHandoffSourceAuthorization(authorization, routing.source);
     if (!verified || !relationshipWrite && (project ? verified.binding.machineId : verified.binding.handoffAdmission?.targetMachineId) !== routing.target.targetMachineId) return null;
     if (!matchesWorkspaceSyncWriterTargetOperands(verified.binding, routing, sourceExecution)) return null;
     const writer = await resolveMachineAdmission({ actorAccountId: routing.source.sourceContext.machineAdmission.custodianAccountId,

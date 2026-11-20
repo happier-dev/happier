@@ -16,7 +16,7 @@ import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSync
     resolveReceivingMachineRpcAdmission } from '@/app/auth/externalActionExecutionAuthorization';
 import { classifyMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { buildMachineAdmissionFactsSelect, resolveMachineAdmission, resolveMachineAdmissionFromFactsInTx, resolveMachineAdmissionInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
+import { buildMachineAdmissionFactsSelect, resolveMachineAdmission, resolveMachineAdmissionFromFactsInTx, resolveEffectiveMachineRoleInTx } from '@/app/machines/machineAccess';
 import { hasCurrentMachineWorkspaceSyncStorageInTx, readMachineDevcontainerWorkspaceSyncRouteInTx } from '@/app/machines/managed/managedRows';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
@@ -25,8 +25,7 @@ import { readSessionAgentReadinessChildActionV1 } from '@happier-dev/protocol/ma
 import { inTx } from '@/storage/inTx';
 import { db } from '@/storage/db';
 import { RequesterSessionCurrentnessPurposeV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
-import { hasCurrentSessionScopedMachineAccessInTx } from '@/app/api/socket/sessionScopedBinding';
-import { readAdmittedExternalActionHandoffMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
+import { readCurrentSessionScopedMachineAccessFactsInTx } from '@/app/api/socket/sessionScopedBinding';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import type { Fastify } from '../../types';
 
@@ -309,7 +308,8 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             const destination = await db.machine.findUnique({ where: { id: destinationId } }).then(decodeMachineStoredContent);
             if (!destination?.installationId || destination.installationId !== destinationInstallationId || !destination.installationPublicKey
                 || classifyMachineAvailabilityState(destination) !== 'available'
-                || !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {
+                || !admitted.verified.binding.handoffAdmission
+                    && !await hasCurrentExternalActionSessionSource(admitted.verified.binding, app.resolveCurrentSessionMachine)) {
                 return reply.code(403).send({ error: 'access_denied' });
             }
             return reply.send({ v: 1, ok: true, destinationInstallation: { machineId: destination.id,
@@ -373,39 +373,34 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
             })) {
             return refuse('installation_proof');
         }
-        if (callerInputAuthorization && (!workspaceSyncSourceRouting
-            || !await verifyWorkspaceSyncHandoffSourceAuthorization(callerInputAuthorization, workspaceSyncSourceRouting, app.resolveCurrentSessionMachine))) {
-            return reply.code(403).send({ error: 'access_denied' });
-        }
-        const current = callerInputAuthorization?.binding.handoffAdmission
-            ? await readAdmittedExternalActionHandoffMachineInTx(db, callerInputAuthorization.binding, context.machineId, context)
-            : await resolveMachineAdmission({ actorAccountId: isWorkspaceSyncChildRelease
-            ? context.custodianAccountId : context.actorAccountId,
+        const verifiedSource = callerInputAuthorization && workspaceSyncSourceRouting
+            ? await verifyWorkspaceSyncHandoffSourceAuthorization(callerInputAuthorization, workspaceSyncSourceRouting) : null;
+        if (callerInputAuthorization && !verifiedSource) return reply.code(403).send({ error: 'access_denied' });
+        const operation = {
+            actorAccountId: isWorkspaceSyncChildRelease ? context.custodianAccountId : context.actorAccountId,
             ...requester,
             machineId: context.machineId,
             operationRpcMethod: method.slice(prefix.length),
-            ...(isRequesterSessionCurrentness ? { actionId: 'session.open' } : {}),
-            ...(isWorkspaceSyncChild || isRequesterSessionCurrentness ? { requiredRole: 'use' as const } : { rpcMethod: method.slice(prefix.length) }) });
-        if (!current || current.kind !== 'admitted'
-            || current.custodianAccountId !== context.custodianAccountId
+        };
+        const current = purpose ? await inTx(async tx => {
+            const access = await readCurrentSessionScopedMachineAccessFactsInTx({
+                tx, accountId: context.actorAccountId, machineId: context.machineId, sessionId: purpose.sessionId,
+            });
+            if (!access || access.session.accountId !== context.actorAccountId) return null;
+            return resolveMachineAdmissionFromFactsInTx(tx, access.machine, {
+                ...operation, requiredRole: context.role, actionId: 'session.open',
+            });
+        }) : verifiedSource?.sourceMachineAdmission ?? await resolveMachineAdmission({
+            ...operation,
+            ...(isWorkspaceSyncChild ? { requiredRole: 'use' as const } : { rpcMethod: operation.operationRpcMethod }),
+        });
+        if (!current) return refuse('session_binding');
+        if (current.kind !== 'admitted' || !verifiedSource && (
+            current.custodianAccountId !== context.custodianAccountId
             || current.installationId !== context.installationId
             || current.encryptionMode !== context.encryptionMode
-            || ((isRequesterSessionCurrentness || isWorkspaceSyncChild && !isWorkspaceSyncChildRelease)
-                && context.role === 'manage' && current.role !== 'manage')) {
-            return refuse('machine_admission');
-        }
-        if (purpose) {
-            const sessionCurrent = await inTx(async tx => {
-                if (!await hasCurrentSessionScopedMachineAccessInTx({ tx,
-                    accountId: context.actorAccountId, machineId: context.machineId, sessionId: purpose.sessionId })) return false;
-                const final = await resolveMachineAdmissionInTx(tx, { actorAccountId: context.actorAccountId,
-                    ...requester,
-                    machineId: context.machineId, requiredRole: context.role, actionId: 'session.open' });
-                return final.kind === 'admitted' && final.custodianAccountId === context.custodianAccountId
-                    && final.installationId === context.installationId && final.encryptionMode === context.encryptionMode;
-            });
-            if (!sessionCurrent) return refuse('session_binding');
-        }
+            || (isWorkspaceSyncChild && !isWorkspaceSyncChildRelease && context.role === 'manage' && current.role !== 'manage')
+        )) return refuse('machine_admission');
         if (workspaceSyncRouting && childMachineId && childRootPath) {
             const route = await readMachineDevcontainerWorkspaceSyncRouteInTx(db, {
                 accountServerId: workspaceSyncRouting.accountServerId,
@@ -424,8 +419,6 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
         if (custodySubjectAccountId && await inTx(tx => resolveEffectiveMachineRoleInTx(tx, {
             actorAccountId: custodySubjectAccountId, machineId: context.machineId,
         })) !== null) return reply.code(403).send({ error: 'access_denied' });
-        if (callerInputAuthorization && !await hasCurrentExternalActionSessionSource(callerInputAuthorization.binding,
-            app.resolveCurrentSessionMachine)) return reply.code(403).send({ error: 'access_denied' });
         return reply.send({ v: 1, ok: true });
     });
 }

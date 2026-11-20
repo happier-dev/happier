@@ -4,6 +4,7 @@ import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { observeSessionScopedBindingStage } from "@/app/monitoring/metrics/sessionBindingMetrics";
 import { db } from "@/storage/db";
+import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Tx } from "@/storage/inTx";
 import { readSessionMachineBindingStateInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { getDbProviderFromEnv } from '@/storage/prisma';
@@ -17,15 +18,16 @@ import { warn } from "@/utils/logging/log";
 export async function readCurrentSessionScopedMachineAccessFactsInTx(params: Readonly<{
     tx: Tx; accountId: string; machineId: string; sessionId: string;
 }>) {
-    return params.tx.accessKey.findUnique({
+    const access = await params.tx.accessKey.findUnique({
         where: { accountId_machineId_sessionId: {
             accountId: params.accountId, machineId: params.machineId, sessionId: params.sessionId,
         } },
         select: {
-            machine: { select: buildMachineAdmissionFactsSelect(params.accountId) },
+            machine: { select: withMachineContentSelect(buildMachineAdmissionFactsSelect(params.accountId)) },
             session: { select: { accountId: true, originKind: true, originRunId: true } },
         },
     });
+    return access && { ...access, machine: decodeMachineStoredContent(access.machine) };
 }
 
 type CurrentSessionScopedMachineAccessFacts = Awaited<ReturnType<typeof readCurrentSessionScopedMachineAccessFactsInTx>>;
