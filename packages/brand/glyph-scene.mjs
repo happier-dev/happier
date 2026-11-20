@@ -103,26 +103,37 @@ function glyphInk(rgb, theme, background, into) {
     return into;
 }
 
+// The intensity's `dim` and a moment's `gain` are the planet's opacity: applied when cells are written, so a
+// settle or a ripple never re-shades the planet.
 function planetBody(out, grid, planet, fade, palette, previous, theme, soft) {
-    const { cx, cy, R, spin, rotate, light, reveal, dim, glow, gain, assembly, halo } = planet;
+    const shaded = shadePlanetCells(out, grid, planet, fade, palette, previous, theme, soft);
+    const opacity = clamp(planet.dim * planet.gain);
+    if (shaded.opacity === opacity) return shaded;
+    const { rgba } = shaded.body, { wash } = shaded.cells;
+    for (let n = 0; n < wash.length; n++) rgba[n * 4 + 3] = Math.round(255 * wash[n] * opacity);
+    return { ...shaded, opacity, body: { ...shaded.body } };
+}
+
+function shadePlanetCells(out, grid, planet, fade, palette, previous, theme, soft) {
+    const { cx, cy, R, spin, rotate, light, reveal, glow, assembly, halo } = planet;
     const { dpr } = out;
     const { cols, rows, cell } = grid;
-    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, dim, glow, gain, assembly, planet.decode, palette, fade?.from, fade?.to, dpr, out.height, theme, soft];
+    const key = [cols, rows, ...cell, cx, cy, R, spin, rotate, ...light, reveal, glow, assembly, planet.decode, palette, fade?.from, fade?.to, dpr, out.height, theme, soft];
     if (previous && key.every((value, index) => previous.key[index] === value)) return previous;
     const size = cols * rows;
     const reuse = previous?.body.rgba.length === size * 4;
     const rgba = reuse ? previous.body.rgba : new Uint8Array(size * 4);
     const perCell = 1 + Math.ceil(cell[0] / dpr / latticePitch) * Math.ceil(cell[1] / dpr / latticePitch);
     const reuseCells = reuse && previous.cells.rampGlyph.length === size * perCell;
-    const cells = reuseCells ? previous.cells : { light: new Float32Array(size), ink: new Uint8Array(size * 3), base: new Float32Array(size),
+    const cells = reuseCells ? previous.cells : { light: new Float32Array(size), ink: new Uint8Array(size * 3), base: new Float32Array(size), wash: new Float32Array(size),
         inside: new Uint8Array(size), rampAt: new Uint16Array(size * perCell * 2), rampGlyph: new Uint8Array(size * perCell), rampRgba: new Uint8Array(size * perCell * 4), ramp: 0 };
     rgba.fill(0);
     cells.light.fill(0);
+    cells.wash.fill(0);
     cells.ramp = 0;
     const sine = Math.sin(-rotate), cosine = Math.cos(-rotate);
     const sample = { palette, light, reveal, spin, glow, breath: 0, reach: 7, bandStrength: 0.35, detail: 1.4 };
     const edge = Math.hypot(...cell) / (R * dpr);
-    const opacity = clamp(dim * gain);
     const ink = [0, 0, 0], dot = [0, 0, 0];
     const faint = soft ? 0.85 : 0.3;
     const add = (x, y, glyph, colour, alpha) => {
@@ -153,13 +164,13 @@ function planetBody(out, grid, planet, fade, palette, previous, theme, soft) {
                 rgba[n * 4] = shade.rgb[0];
                 rgba[n * 4 + 1] = shade.rgb[1];
                 rgba[n * 4 + 2] = shade.rgb[2];
-                rgba[n * 4 + 3] = Math.round(255 * glyphWash * opacity * decoded * appearance);
+                cells.wash[n] = glyphWash * decoded * appearance;
             }
             const sides = inside ? 1 : ((fx < 0 ? halo.left : halo.right) * fx * fx + (fy < 0 ? halo.top : halo.bottom) * fy * fy) / (distance * distance || 1);
             const amount = shade.light * sides;
             if (amount < 0.04) continue;
             glyphInk(shade.rgb, theme, palette.background, ink);
-            const base = opacity * decoded * appearance * foot;
+            const base = decoded * appearance * foot;
             cells.light[n] = amount;
             cells.inside[n] = inside ? 1 : 0;
             cells.base[n] = base;
@@ -196,6 +207,7 @@ function planetBody(out, grid, planet, fade, palette, previous, theme, soft) {
     return {
         key,
         cells,
+        opacity: NaN,
         body: { rgba, cols, rows, disc: { cx: cx * dpr, cy: cy * dpr, R: R * dpr }, fade: fade && { from: fade.from * dpr, to: fade.to * dpr }, fadeMask },
     };
 }
@@ -211,14 +223,18 @@ function makeFadeMask(out, fade) {
 function samplePlanet(out, grid, layer, time, theme, palette, previous) {
     const planet = planetPresentation(layer, time);
     const body = planetBody(out, grid, planet, layer.fade, palette, previous, theme, layer.soft === true);
-    const { cells } = body;
+    const { cells, opacity } = body;
     for (let r = 0; r < cells.ramp; r++) {
-        if (out.count >= out.glyph.length) break;
+        const alpha = Math.round(cells.rampRgba[r * 4 + 3] * opacity);
+        if (alpha <= 0 || out.count >= out.glyph.length) continue;
         const at = out.count++;
         out.at[at * 2] = cells.rampAt[r * 2];
         out.at[at * 2 + 1] = cells.rampAt[r * 2 + 1];
         out.glyph[at] = cells.rampGlyph[r];
-        out.rgba.set(cells.rampRgba.subarray(r * 4, r * 4 + 4), at * 4);
+        out.rgba[at * 4] = cells.rampRgba[r * 4];
+        out.rgba[at * 4 + 1] = cells.rampRgba[r * 4 + 1];
+        out.rgba[at * 4 + 2] = cells.rampRgba[r * 4 + 2];
+        out.rgba[at * 4 + 3] = alpha;
     }
     if (planet.ring) samplePlanetRing(out, grid, planet, palette, layer.fade);
     if (!layer.digits) return body;
@@ -233,7 +249,7 @@ function samplePlanet(out, grid, layer, time, theme, palette, previous) {
         if (cellHash(i + 31, j + 7) >= 0.42) continue;
         const local = cellHash(i + 9, j + 2) < 0.35 ? step : 0;
         const digit = Math.floor(cellHash(i + local * 7 + 3, j - local * 13) * 10);
-        const alpha = fadeBetween(amount, 0.05, 0.35) * (cells.inside[n] ? 0.55 : 0.8) * cells.base[n];
+        const alpha = fadeBetween(amount, 0.05, 0.35) * (cells.inside[n] ? 0.55 : 0.8) * cells.base[n] * opacity;
         ink[0] = cells.ink[n * 3]; ink[1] = cells.ink[n * 3 + 1]; ink[2] = cells.ink[n * 3 + 2];
         if (alpha >= 0.012) writeSprite(out, (i + 0.5) * cell[0], (j + 0.5) * cell[1], glyphPlanetDigitFirstTile + digit, ink, alpha);
     }
