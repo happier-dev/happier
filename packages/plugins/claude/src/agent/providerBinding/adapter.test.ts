@@ -8,6 +8,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { ANTHROPIC_EFFORT_LEVELS } from '../../provider/catalog.js';
 import { CLAUDE_PROVIDER_BINDING_ADAPTER_V1 } from './adapter.js';
 import { selectProviderRuntimeCredentialTransportV1 } from '@happier-dev/protocol/providers/binding-compatibility';
 import { VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION } from '../../../../vercel-ai-gateway/src/provider/contribution.js';
@@ -291,6 +292,7 @@ describe('Claude provider-binding adapter V1', () => {
       applyPolicy: 'live',
       supportsFreeformModelIds: true,
       supportsReasoningEffort: true,
+      reasoningEffortValues: ANTHROPIC_EFFORT_LEVELS,
     });
     expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare(prepareInput())).toEqual({
       v: 1,
