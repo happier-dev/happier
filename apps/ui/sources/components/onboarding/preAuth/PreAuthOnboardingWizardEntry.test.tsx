@@ -6,6 +6,7 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { onboardingAuthHistoryState } from '@/sync/domains/state/onboardingUiState';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
+import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import type {
     DesktopWindowChromePolicy,
     DesktopWindowState,
@@ -171,11 +172,6 @@ vi.mock('@/sync/domains/pending/pendingSetupIntent', () => ({
     clearPendingSetupIntent: () => {},
 }));
 
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
-
 vi.mock('@/sync/domains/server/serverRuntime', () => ({
     subscribeActiveServer: () => () => {},
     getActiveServerSnapshot: () => ({
@@ -253,6 +249,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
             kind: 'completed',
         });
         runtimeFetchMock.mockReset();
+        setRuntimeFetch((input, init) => runtimeFetchMock(input, init));
         onboardingAuthHistoryState.set('completed', false);
         authState.isAuthenticated = false;
         wizardControllerMock.goToStep.mockReset();
@@ -282,12 +279,12 @@ describe('PreAuthOnboardingWizardEntry', () => {
         desktopWindowBridgeState.listenDesktopWindowState.mockResolvedValue(async () => {});
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         browser?.restore();
         browser = undefined;
         process.env.EXPO_PUBLIC_DEBUG = originalDebug;
         vi.unstubAllGlobals();
-        standardCleanup();
+        await standardCleanup();
     });
 
     it('renders the unauth split shell on narrow web with a bare, non-fullscreen wizard', async () => {
@@ -423,7 +420,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         }));
         expect(loginWithCredentialsMock).toHaveBeenCalledWith(
             { token: 'mtls-token' },
-            { target: { serverId: 'server-a', serverUrl: 'https://api.example.test' } },
+            { target: { serverId: 'server-a', serverUrl: 'https://api.example.test' }, signInMethodId: 'mtls' },
         );
     });
 
