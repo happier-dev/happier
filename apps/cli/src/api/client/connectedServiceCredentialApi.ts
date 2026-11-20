@@ -12,6 +12,7 @@ import type { ConnectedServiceCredentialRecordV1, ConnectedServiceCredentialRevi
 import { logger } from '@/ui/logger';
 
 import { resolveConnectedServicesServerApiTimeoutMs } from './connectedServicesServerApiTimeout';
+import { classifyServerEndpointError } from './classifyServerEndpointError';
 import { logServerEndpointFailure } from './serverEndpointFailureLog';
 import { resolveServerHttpBaseUrl } from './serverHttpBaseUrl';
 import { readAccountEncryptionModeOnce } from './accountEncryptionMode';
@@ -380,7 +381,6 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
         request: async () => await axios.get(`${serverUrl}/v1/account/encryption`, {
           headers: createHeaders(this.credential.token),
           timeout: resolveConnectedServicesServerApiTimeoutMs(),
-          validateStatus: () => true,
           ...(signal ? { signal } : {}),
         }),
       });
@@ -391,8 +391,14 @@ export class ConnectedServiceCredentialHttpClient implements ConnectedServiceCre
         throw createHttpStatusError(result.status, 'Account encryption mode is unavailable');
       }
       return result.kind === 'resolved' ? result.mode : 'unknown';
-    } catch (error: unknown) {
-      if (signal?.aborted) throw error;
+    } catch (cause: unknown) {
+      if (signal?.aborted) throw cause;
+      let error = cause;
+      if (axios.isAxiosError(cause) && cause.response) {
+        const statusError = createHttpStatusError(cause.response.status, 'Account encryption mode is unavailable');
+        const { retryAfterMs } = classifyServerEndpointError(cause);
+        error = retryAfterMs === undefined ? statusError : Object.assign(statusError, { retryAfterMs });
+      }
       logServerEndpointFailure({
         logger,
         operation: 'Failed to get account encryption mode',

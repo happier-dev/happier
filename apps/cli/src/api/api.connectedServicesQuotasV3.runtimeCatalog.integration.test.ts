@@ -153,11 +153,28 @@ describe('ApiClient connected services quotas v3', () => {
     expect(requests).toEqual([{ method: 'GET', url: encryptionPath }]);
   });
 
-  it('samples transient account encryption mode failures without error-labeled logs', async () => {
-    app.get(encryptionPath, async (_request, reply) => reply.code(503).header('retry-after', '2')
-      .send({ error: 'server_unavailable' }));
+  const retryHeaderNowMs = Date.UTC(2026, 10, 20, 12);
+  it.each([
+    { scenario: 'delta seconds', header: '2', retryAfterMs: 2_000 },
+    { scenario: 'HTTP date', header: new Date(retryHeaderNowMs + 2_000).toUTCString(), retryAfterMs: 2_000 },
+    { scenario: 'absent', header: undefined, retryAfterMs: undefined },
+    { scenario: 'malformed', header: 'not-a-valid-retry-after', retryAfterMs: undefined },
+  ])('preserves the $scenario Account-mode retry hint in the typed 503 and sampled log', async ({ header, retryAfterMs }) => {
+    app.get(encryptionPath, async (_request, reply) => {
+      if (header !== undefined) reply.header('retry-after', header);
+      return reply.code(503).send({ error: 'server_unavailable' });
+    });
     const api = await ApiClient.create(credential);
-    await expect(api.getAccountEncryptionMode()).resolves.toBe('unknown');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(retryHeaderNowMs);
+    let failure: unknown;
+    try {
+      failure = await api.getAccountEncryptionMode({ throwOnTransportError: true }).catch((error: unknown) => error);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(failure).toMatchObject({ name: 'HttpStatusError', response: { status: 503 } });
+    if (retryAfterMs === undefined) expect(failure).not.toHaveProperty('retryAfterMs');
+    else expect(failure).toHaveProperty('retryAfterMs', retryAfterMs);
     expect(requests).toEqual([{ method: 'GET', url: encryptionPath }]);
 
     expect(logger.debug).toHaveBeenCalledTimes(1);
@@ -165,7 +182,7 @@ describe('ApiClient connected services quotas v3', () => {
     expect(label).toContain('temporarily unavailable');
     expect(label).not.toContain('[ERROR]');
     expect(details).toMatchObject({
-      classification: { kind: 'server_error', retryable: true, statusCode: 503 },
+      classification: { kind: 'server_error', retryable: true, statusCode: 503, retryAfterMs },
     });
   });
 
