@@ -197,6 +197,8 @@ afterEach(standardCleanup);
 describe('Session open → settled turns and read cursor → transcript markers', () => {
   it.each([
     { showTurnDuration: true, turnsAtOpen: true },
+    // Never chosen: the Account default draws the lines.
+    { showTurnDuration: undefined, turnsAtOpen: true },
     { showTurnDuration: false, turnsAtOpen: true },
     { showTurnDuration: true, turnsAtOpen: false },
   ])(
@@ -289,7 +291,7 @@ describe('Session open → settled turns and read cursor → transcript markers'
       });
       // The person's Account preference, written after Account settings have synced.
       await act(async () => {
-        storage.getState().applySettingsLocal({ transcriptShowTurnDuration: showTurnDuration });
+        if (showTurnDuration !== undefined) storage.getState().applySettingsLocal({ transcriptShowTurnDuration: showTurnDuration });
       });
       await flushHookEffects({ cycles: 40 });
       expect(storage.getState().sessions[sessionId]?.sessionTurns).toEqual(
@@ -311,7 +313,7 @@ describe('Session open → settled turns and read cursor → transcript markers'
       expect(newIndex).toBeLessThan(at(3));
       const turnA = rows.indexOf('marker:transcript-marker:turn-end:turn-a');
       const turnB = rows.indexOf('marker:transcript-marker:turn-end:turn-b');
-      if (showTurnDuration && turnsAtOpen) {
+      if (showTurnDuration !== false && turnsAtOpen) {
         // Each line closes its own turn, ahead of the next turn's divider and prompt.
         expect(turnA).toBeGreaterThan(at(2));
         expect(turnA).toBeLessThan(newIndex);
