@@ -7,6 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
+import { openManagedNativeChannel } from '@happier-dev/cli-common/machines/managed/nativeChannel';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { registerManagedWorkspaceTarget, registerSessionTargetWorkspace, resolveSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
@@ -101,6 +103,48 @@ it('refuses an exact managed SCM request when the guest source is not registered
         controller: { machineId: 'controller', installationId: 'install' }, rootPath: process.cwd(),
     } };
     await expect(handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!(request, undefined)).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+});
+
+it('preserves a stopped guest refusal through both the SCM snapshot and observation routes', async () => {
+    const lifetime = new AbortController();
+    const workspace = { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'stopped-project', managedId: 'guest',
+        controller: { machineId: 'controller', installationId: 'install' }, rootPath: process.cwd() } as const;
+    const registration = createGitScmBackendRuntimeRegistration();
+    const registry = createScmBackendRegistry([createRegisteredScmBackendAdapter({
+        definition: { id: 'git', kind: 'git' }, qualifiedId: 'happier.scm.git/git',
+        executableDefinition: registration.runtime!, registration,
+        scmCommandRunner: createHostScmCommandRunner({ isCurrent: () => true }),
+        hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({ contributes: {}, scmHostingProvidersById: new Map() }),
+    })]);
+    const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'home',
+        resolveWorkspaceTarget: resolveSessionTargetWorkspace });
+    const handlers = new Map<string, RpcHandler>();
+    const context: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'present_user',
+        machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'controller',
+            installationId: 'install', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
+    const roles: string[] = [];
+    try {
+        registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: {
+            lifetime: lifetime.signal, holderPath: 'holder', helperPath: 'helper',
+            openChannel: (argv, signal) => openManagedNativeChannel({ resource: {
+                contributionRef: { pluginId: 'fixture.coder', localId: 'coder' }, schemaVersion: 1, value: { id: 'guest' },
+            } }, async role => {
+                roles.push(role);
+                throw new PluginError({ code: 'managed_power_required' });
+            }, { argv, signal }),
+        } });
+        registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, workspace.rootPath,
+            { registry, machineId: 'controller', selectWorkspaceSource: admission.selectWorkspaceSource, admitWorkspaceSource: admission.rpc });
+
+        const status = await handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ v: 1, kind: 'targeted_action_rpc',
+            target: workspace, input: { cwd: workspace.rootPath } }, context);
+        const watch = await handlers.get(RPC_METHODS.SCM_WORKSPACE_WATCH)!({ directory: workspace.rootPath, workspace }, context);
+        expect({ status, watch }).toMatchObject({
+            status: { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'managed_power_required' },
+            watch: { status: 'unavailable', reason: { code: 'managed_power_required' } },
+        });
+        expect(roles).toEqual(['stream', 'stream']);
+    } finally { lifetime.abort(); }
 });
 
 it('refuses an unadmitted SCM requester before opening a registered managed workspace', async () => {

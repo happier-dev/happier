@@ -294,7 +294,8 @@ export function runScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {
         if (error instanceof ScmExecutionRefusedError) throw error;
         if (isWithinScmCommandOperation() && error && typeof error === 'object'
             && (Reflect.get(error, 'execLaunch') === 'notStarted'
-                || (targetSource && code === 'agent_cli_target_unavailable')) && typeof code === 'string') {
+                || (targetSource && (code === 'agent_cli_target_unavailable' || code === 'managed_power_required')))
+            && typeof code === 'string') {
             throw new ScmExecutionRefusedError(code);
         }
         return { success: false, stdout: '', exitCode: -1,

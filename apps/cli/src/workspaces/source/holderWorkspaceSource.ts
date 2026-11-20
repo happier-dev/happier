@@ -4,6 +4,7 @@ import { readFile as readHostFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
 
+import { readRpcErrorCode } from '@happier-dev/protocol/rpc/errors';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 
 import type { SessionHolderChild, SessionHolderStreamProcess } from '@/subprocess/supervision/sessionHolder';
@@ -355,10 +356,10 @@ export function createHolderWorkspaceSource(input: Readonly<{
       if (path.posix.isAbsolute(command)) return command;
       const reply = await holder().request({ op: 'which', command });
       if (reply.ok !== true) {
-        throw new PluginError({ code: 'agent_cli_target_unavailable', retryable: false,
+        throw new PluginError({ code: readRpcErrorCode(reply) ?? 'agent_cli_target_unavailable', retryable: false,
           message: 'The Session target could not resolve a workspace executable' });
       }
-      return reply.ok === true && typeof reply.value === 'string' ? reply.value : null;
+      return typeof reply.value === 'string' ? reply.value : null;
     },
     spawn,
     // The target's own tools on its PATH; a missing tool is the consumer's typed missing-tool outcome.
