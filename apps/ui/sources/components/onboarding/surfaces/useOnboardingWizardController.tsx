@@ -326,40 +326,46 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     }, [connectAndFocusHomeAddress, dispatch, state.context.mode]);
 
     const stepId = state.currentStepId;
-    const welcomeAuthenticationAbortControllerRef = React.useRef<AbortController | null>(null);
+    const welcomeAuthenticationRef = React.useRef<{ controller: AbortController; stepId: WizardStepId } | null>(null);
     React.useEffect(() => {
-        if (stepId !== 'welcome') {
-            welcomeAuthenticationAbortControllerRef.current?.abort();
-            welcomeAuthenticationAbortControllerRef.current = null;
+        const current = welcomeAuthenticationRef.current;
+        if (current && current.stepId !== stepId) {
+            current.controller.abort();
+            welcomeAuthenticationRef.current = null;
         }
     }, [stepId]);
     React.useEffect(() => () => {
-        welcomeAuthenticationAbortControllerRef.current?.abort();
-        welcomeAuthenticationAbortControllerRef.current = null;
+        welcomeAuthenticationRef.current?.controller.abort();
+        welcomeAuthenticationRef.current = null;
     }, []);
     const runWelcomeAuthenticationAction = React.useCallback(async (
         request: WelcomeAuthenticationMethod,
         action: ((request: WelcomeAuthenticationMethod, context: WelcomeAuthenticationActionContext) => Promise<void> | void) | undefined,
         emailProvision?: WelcomeAuthenticationMethod,
     ) => {
-        if (!action || welcomeAuthenticationAbortControllerRef.current) return;
+        if (!action || welcomeAuthenticationRef.current) return;
         const controller = new AbortController();
-        welcomeAuthenticationAbortControllerRef.current = controller;
+        const active = { controller, stepId };
+        welcomeAuthenticationRef.current = active;
         try {
             await action(request, {
                 signal: controller.signal,
                 ...(emailProvision ? { emailProvision } : {}),
                 presentEmailPassword: (emailPassword) => {
+                    if (welcomeAuthenticationRef.current !== active || controller.signal.aborted) return;
                     setEmailPasswordRequest(emailPassword);
-                    dispatch({ type: 'wizard/goToStep', stepId: 'auth_email_password' });
+                    if (active.stepId !== 'auth_email_password') {
+                        active.stepId = 'auth_email_password';
+                        dispatch({ type: 'wizard/goToStep', stepId: 'auth_email_password' });
+                    }
                 },
             });
         } finally {
-            if (welcomeAuthenticationAbortControllerRef.current === controller) {
-                welcomeAuthenticationAbortControllerRef.current = null;
+            if (welcomeAuthenticationRef.current === active && active.stepId !== 'auth_email_password') {
+                welcomeAuthenticationRef.current = null;
             }
         }
-    }, []);
+    }, [stepId]);
     const [restoreNavigationLocked, setRestoreNavigationLocked] = React.useState(false);
     React.useEffect(() => {
         if (stepId !== 'auth_restore') setRestoreNavigationLocked(false);
