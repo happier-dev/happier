@@ -1571,6 +1571,42 @@ describe('opening a row into the source detail', () => {
         expect(harness.getEntryIds).toEqual(['657']);
     });
 
+    it('opens a cold location for an unsynchronized pin through the configured connection', async () => {
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '657' };
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        let releaseScan!: () => void;
+        const secondInitialScan = new Promise<void>(resolve => { releaseScan = resolve; });
+        const shell = await mountShell({ subPath, pinnedEntryIds: ['657'], noScannedEntries: true,
+            activeSurface: true, automaticDemandOnly: true, secondInstance: true, secondInitialScan });
+        try {
+            await expect(shell.getByRole('button', { name: 'Pinned change 657' })).resolves.toBeDefined();
+            expect(currentHarness?.exactReads).toEqual([]);
+        } finally {
+            await act(async () => { releaseScan(); });
+        }
+
+        await vi.waitFor(() => { expect(currentHarness?.exactReads).toHaveLength(1); });
+        await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+        expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
+        expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
+    });
+
+    it('settles a cold pin with no qualified connection once without reading through another source', async () => {
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '657' };
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        const requestedLocations: string[] = [];
+        const shell = await mountShell({ subPath, pinnedEntryIds: ['657'], activeSurface: true,
+            noActiveSource: true, otherSourceEntry: true,
+            onPageLocationRequest: location => { requestedLocations.push(location); } });
+        await expect(shell.getByRole('button', { name: 'Pinned change 657' })).resolves.toBeDefined();
+        await expect.poll(() => requestedLocations).toEqual([subPath, buildTriageRouteSubPathV1(TRIAGE_ROUTE_DEFAULT_LENS_V1)]);
+        await act(async () => { await shell.updateSurface(surfaceContext()); });
+        await expect(shell.queryByRole('group', { name: 'Details pane' })).resolves.toBeUndefined();
+        expect(currentHarness?.exactReads).toEqual([]);
+        expect(currentHarness?.readDetailInstanceIds).toEqual([]);
+        expect(requestedLocations).toEqual([subPath, buildTriageRouteSubPathV1(TRIAGE_ROUTE_DEFAULT_LENS_V1)]);
+    });
+
     it('keeps an unsynchronized pin open when the host publishes its location before acknowledging the write', async () => {
         const routes: string[] = [];
         let acknowledge!: (subPath: string) => void;

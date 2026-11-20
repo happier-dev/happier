@@ -200,6 +200,9 @@ export function useTriageSettledLocation(input: Readonly<{
     }
     for (const hit of rowsByKey.values()) {
       if (!sameTriageEntryRefV1(hit.row.entryRef, located)) continue;
+      // A pin-only row records intent, so it supplies no window admission verdict.
+      // For a location, let the settled exact-open path qualify it like a press.
+      if (!hit.row.materialized && pendingLaunch === null) break;
       // A row the window could not qualify carries no connection, and opening
       // one anyway would read somebody else's. That is a rule about a LOCATION,
       // which names no connection at all: the entry stays unadopted until a
