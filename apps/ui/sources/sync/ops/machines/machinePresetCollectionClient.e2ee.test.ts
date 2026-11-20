@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished } from 'vit
 
 import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { getRandomBytes } from '@/platform/cryptoRandom';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 
 const harness = createHomeGovernanceHarness();
@@ -37,6 +40,13 @@ function recipient(accountId: string, contentPublicKey: Uint8Array,
         },
         envelopeStatus,
     };
+}
+
+function sealStoredTeamPreset(presetId: string, name: string, recipients: readonly ReturnType<typeof recipient>[]) {
+    return sealManagedMachinePresetContentV1({
+        presetId, mode: 'e2ee', content: { v: 1, name, setup: { scripts: [{ body: 'echo ready' }] } },
+        recipientCensus: recipients, randomBytes: getRandomBytes,
+    });
 }
 
 function readyPlainCensus() {
@@ -722,18 +732,11 @@ describe('machine preset content envelopes', () => {
             serverIdentityId: 'srv_preset_pruned', accountId: 'owner', currentAccount: true,
             accountEncryptionMode: 'e2ee', credentials: ownerCredentials,
         });
-        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
-            kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [
-                recipient('owner', ownerEncryption.contentDataKey), recipient('departed', departedEncryption.contentDataKey),
-            ],
-        } });
-        harness.answer(serverId, '/v1/machines/presets/create', { body: { kind: 'refused', code: 'permission_denied' } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(ownerCredentials) });
         const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_preset_pruned');
-        await client.execute('machines.presets.create', {
-            homeId: 'srv_preset_pruned', id: 'pruned-preset', owner: { kind: 'team', teamId: 'team' }, controller,
-            privateContent: { v: 1, name: 'Pruned Team preset', launch },
-        });
-        const created = harness.requestsFor('/v1/machines/presets/create')[0]!.input as Record<string, unknown>;
+        const created = sealStoredTeamPreset('pruned-preset', 'Pruned Team preset', [
+            recipient('owner', ownerEncryption.contentDataKey), recipient('departed', departedEncryption.contentDataKey),
+        ]);
         const existing = {
             id: 'pruned-preset', homeId: 'srv_preset_pruned', revision: 4,
             owner: { kind: 'team' as const, teamId: 'team' }, contentEncryptionMode: 'e2ee' as const, controller,
@@ -767,17 +770,11 @@ describe('machine preset content envelopes', () => {
             serverIdentityId: 'srv_preset_repair_unavailable', accountId: 'owner', currentAccount: true,
             accountEncryptionMode: 'e2ee', credentials,
         });
-        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
-            kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [recipient('owner', encryption.contentDataKey)],
-        } });
-        harness.answer(serverId, '/v1/machines/presets/create', { body: { kind: 'refused', code: 'permission_denied' } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
         const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_preset_repair_unavailable');
-        await client.execute('machines.presets.create', {
-            homeId: 'srv_preset_repair_unavailable', id: 'repair-unavailable-preset',
-            owner: { kind: 'team', teamId: 'team' }, controller,
-            privateContent: { v: 1, name: 'Visible without repair', launch },
-        });
-        const created = harness.requestsFor('/v1/machines/presets/create')[0]!.input as Record<string, unknown>;
+        const created = sealStoredTeamPreset('repair-unavailable-preset', 'Visible without repair', [
+            recipient('owner', encryption.contentDataKey),
+        ]);
         harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: { kind: 'unexpected' } });
         harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
             id: 'repair-unavailable-preset', homeId: 'srv_preset_repair_unavailable', revision: 4,
@@ -807,16 +804,11 @@ describe('machine preset content envelopes', () => {
             serverIdentityId: 'srv_preset_rewrap', accountId: 'owner', currentAccount: true,
             accountEncryptionMode: 'e2ee', credentials: ownerCredentials,
         });
-        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
-            kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [recipient('owner', ownerEncryption.contentDataKey)],
-        } });
-        harness.answer(serverId, '/v1/machines/presets/create', { body: { kind: 'refused', code: 'permission_denied' } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(ownerCredentials) });
         const ownerClient = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_preset_rewrap');
-        await ownerClient.execute('machines.presets.create', {
-            homeId: 'srv_preset_rewrap', id: 'existing-team-preset', owner: { kind: 'team', teamId: 'team' }, controller,
-            privateContent: { v: 1, name: 'Existing Team preset', launch },
-        });
-        const created = harness.requestsFor('/v1/machines/presets/create')[0]!.input as Record<string, unknown>;
+        const created = sealStoredTeamPreset('existing-team-preset', 'Existing Team preset', [
+            recipient('owner', ownerEncryption.contentDataKey),
+        ]);
         const existing = {
             id: 'existing-team-preset', homeId: 'srv_preset_rewrap', revision: 1,
             owner: { kind: 'team' as const, teamId: 'team' }, contentEncryptionMode: 'e2ee' as const, controller,
@@ -837,7 +829,7 @@ describe('machine preset content envelopes', () => {
             id: existing.id, revision: 2,
         })] });
 
-        expect(harness.requestsFor('/v1/machines/presets/recipient-census')[1]?.input).toEqual({
+        expect(harness.requestsFor('/v1/machines/presets/recipient-census')[0]?.input).toEqual({
             homeId: 'srv_preset_rewrap', presetId: existing.id, owner: { kind: 'team', teamId: 'team' }, controller,
         });
 
@@ -851,6 +843,7 @@ describe('machine preset content envelopes', () => {
             }) }),
         ] });
         await harness.switchAccount(serverId, 'member', memberCredentials);
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(memberCredentials) });
         harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
             kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [
                 recipient('owner', ownerEncryption.contentDataKey, 'prepared'),
