@@ -104,18 +104,10 @@ export type SelectionListInputBehavior = Readonly<{
 // `apps/ui/sources/utils/path/`) own their own target-platform type and
 // parameterise their helpers accordingly.
 
-/**
- * Quick-action keyboard shortcut binding. The orchestrator forwards these to
- * `useSelectionListKeyboardNav`, which dispatches the matching shortcut to the
- * targeted option's activation handler. Currently only `'cmd+n'` is wired —
- * additional shortcuts can be added via the hook without changing this contract.
- */
-export type SelectionListQuickActionShortcut = Readonly<{
-    /** Keyboard binding identifier (e.g. `'cmd+n'`). */
-    shortcut: 'cmd+n';
-    /** Stable id of the option to activate when the shortcut fires. */
-    optionId: string;
-}>;
+/** A modifier shortcut offered by the current list. */
+export type SelectionListQuickActionShortcut =
+    | Readonly<{ shortcut: 'cmd+n'; optionId: string }>
+    | Readonly<{ shortcut: `cmd+${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`; onActivate: () => void }>;
 
 /**
  * Multi-column row layout for a SelectionList.
@@ -500,13 +492,10 @@ export type SelectionListProps = Readonly<{
     detailPane?: Readonly<{ minListWidthPx: number; widthPx: number }>;
     /** Fill the parent's flex viewport while keeping SelectionList as the sole scroll owner. */
     fillAvailableSpace?: boolean;
-    /**
-     * Optional keyboard shortcuts that activate a specific option by id (e.g.
-     * Cmd+N → "Create new worktree"). Forwarded to
-     * `useSelectionListKeyboardNav`; does NOT bypass the option's `disabled`
-     * guard.
-     */
+    /** Optional modifier shortcuts for the mounted list, such as Cmd+N. */
     quickActionShortcuts?: ReadonlyArray<SelectionListQuickActionShortcut>;
+    /** Lets shortcut hints reflect whether the list's Command or Control modifier is held. */
+    onQuickActionModifierHeldChange?: (held: boolean) => void;
     /**
      * Arrange option rows into a responsive grid instead of a single stack.
      * Omit for the classic one-row-per-option list.

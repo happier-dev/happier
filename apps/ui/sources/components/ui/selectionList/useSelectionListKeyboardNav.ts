@@ -1,7 +1,8 @@
 import { resolveHappierRovingSelection, type HappierRovingEntry } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 
-import type { SelectionListVirtualizedOptionSource } from './_types';
+import type { SelectionListQuickActionShortcut, SelectionListVirtualizedOptionSource } from './_types';
+export type { SelectionListQuickActionShortcut } from './_types';
 
 export type SelectionListKeyboardEvent = Readonly<{
     key: string;
@@ -33,11 +34,6 @@ export type SelectionListKeyboardNavApi = Readonly<{
      *   - 'close'       : nothing local; caller should close the popover
      */
     handleEscape: () => SelectionListEscapeOutcome;
-}>;
-
-export type SelectionListQuickActionShortcut = Readonly<{
-    shortcut: 'cmd+n';
-    optionId: string;
 }>;
 
 export type SelectionListInputMode = 'search' | 'value';
@@ -159,7 +155,7 @@ function consume(event: SelectionListKeyboardEvent): true {
     return true;
 }
 
-function isCmdOrCtrl(event: SelectionListKeyboardEvent): boolean {
+export function isCmdOrCtrl(event: Pick<SelectionListKeyboardEvent, 'metaKey' | 'ctrlKey'>): boolean {
     return Boolean(event.metaKey) || Boolean(event.ctrlKey);
 }
 
@@ -506,7 +502,7 @@ function resolveFocusableOptionId(
  *    invoke `onWalkUp()`. If it returns true the event is consumed; false falls
  *    through to native delete.
  *  - **Escape**: routes via `handleEscape()` → 'pop-step' | 'clear-input' | 'close'.
- *  - **Cmd/Ctrl + N**: triggers the `quickActionShortcuts` 'cmd+n' binding.
+ *  - **Cmd/Ctrl + N or digit**: activates a matching opt-in from `quickActionShortcuts`.
  */
 export function useSelectionListKeyboardNav(
     params: SelectionListKeyboardNavParams,
@@ -757,11 +753,12 @@ export function useSelectionListKeyboardNav(
                 break;
         }
 
-        // Cmd/Ctrl+N quick action shortcut.
-        if ((event.key === 'n' || event.key === 'N') && isCmdOrCtrl(event)) {
-            const shortcut = quickActionShortcuts?.find((s) => s.shortcut === 'cmd+n');
+        if (quickActionShortcuts && !isComposing && isCmdOrCtrl(event)) {
+            const key = `cmd+${event.key.toLowerCase()}`;
+            const shortcut = quickActionShortcuts.find((binding) => binding.shortcut === key);
             if (shortcut) {
-                onActivate(shortcut.optionId);
+                if ('optionId' in shortcut) onActivate(shortcut.optionId);
+                else shortcut.onActivate();
                 return consume(event);
             }
         }

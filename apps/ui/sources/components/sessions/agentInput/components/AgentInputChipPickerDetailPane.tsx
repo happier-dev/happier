@@ -10,6 +10,7 @@ import { ItemListStatic } from "@/components/ui/lists/ItemList";
 
 import {
   AGENT_INPUT_CHIP_PICKER_DETAIL_MIN_HEIGHT,
+  AgentInputChipPickerCloseContext,
   type AgentInputChipPickerOption,
 } from "./AgentInputChipPickerTypes";
 import { deferAgentInputPopoverClose } from "@/components/sessions/agentInput/selection/deferAgentInputPopoverClose";
@@ -101,7 +102,9 @@ export function AgentInputChipPickerDetailPane(
       ) : null}
 
       {detailContent ? (
-        <View style={styles.detailCustomContent}>{detailContent}</View>
+        <AgentInputChipPickerCloseContext.Provider value={props.onRequestClose}>
+          <View style={styles.detailCustomContent}>{detailContent}</View>
+        </AgentInputChipPickerCloseContext.Provider>
       ) : null}
 
       {detailSelectOptions.length > 0 ? (

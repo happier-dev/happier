@@ -136,6 +136,49 @@ const texts = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
     .map((node) => node.children.join(''));
 
 describe('SessionModelPicker Runs through', () => {
+  it.each([
+    { modifier: 'metaKey', withSearch: true },
+    { modifier: 'ctrlKey', withSearch: false },
+  ] as const)('picks the saved favorite and closes with $modifier plus a digit', async ({ modifier, withSearch }) => {
+    const favorite = native('claude-opus-5-5');
+    const select = vi.fn(async () => true);
+    const close = vi.fn();
+    const search = new EventTarget();
+    const overrides = {
+      ...(withSearch ? { nativeModels: [
+        { value: favorite.modelId, label: 'Opus 5.5' },
+        ...Array.from({ length: 10 }, (_, index) => ({ value: `model-${index}`, label: `Model ${index}` })),
+      ] } : {}),
+      favoriteReasoningEffortByKey: new Map([[sessionModelSelectionKey(favorite), 'high']]),
+      onSelectFavoriteModel: select,
+      onRequestClose: close,
+    };
+    const screen = await renderScreen(picker(overrides), {
+      createNodeMock: (element) => element.props.testID === 'model-picker-overlay-search' ? search : null,
+    });
+    try {
+      const list = screen.findHostByTestId('model-picker-overlay-selection-list');
+      expect(screen.findHostByTestId('model-picker-overlay-search') !== null).toBe(withSearch);
+      const press = async (key: string) => {
+        const event = Object.assign(new Event('keydown', { cancelable: true }), { key, [modifier]: true });
+        await act(async () => {
+          if (withSearch) search.dispatchEvent(event);
+          else list!.props.onKeyDown(event);
+        });
+        return event.defaultPrevented;
+      };
+      expect(await press('ArrowDown')).toBe(true);
+      expect(await press('9')).toBe(false);
+      expect(select).not.toHaveBeenCalled();
+
+      await press('1');
+      expect(select).toHaveBeenCalledExactlyOnceWith(favorite, 'high');
+      expect(close).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('names one source with its source button and no Change (lab round 4)', async () => {
     const screen = await renderScreen(
       picker({ selected: native('claude-opus-5-5') }),

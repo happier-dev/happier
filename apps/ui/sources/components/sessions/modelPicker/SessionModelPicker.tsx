@@ -65,6 +65,8 @@ import { selectSessionModelPickerSourceGroups } from './selectSessionModelPicker
 import { SessionModelFavoriteEffortNote, SessionModelRunsThrough, type SessionModelPickerSource } from './SessionModelRunsThrough';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
+import { AgentInputChipPickerCloseContext } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
+import type { SelectionListQuickActionShortcut } from '@/components/ui/selectionList';
 import { providerConnectionDetailRoute } from '@/components/settings/providers/collection/providerCollectionModel';
 import {
     SessionModelHiddenSources,
@@ -88,6 +90,8 @@ import {
     reportedModelSummary,
     type ReportedModelStatus,
 } from './reportedModelPresentation';
+
+const FAVORITE_SHORTCUT_DIGITS = [1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 const MODEL_PICKER_THEME_SURFACE = {
     root: { surface: 'model-picker', part: 'root', state: 'default' },
@@ -128,6 +132,7 @@ export type SessionModelPickerFavoriteEntry = Readonly<{
     label?: string;
     description?: string;
     accessibilityLabel?: string;
+    reasoningEffort?: string;
 }>;
 
 export function buildSessionModelPickerNotes(input: Readonly<{
@@ -226,6 +231,7 @@ export type SessionModelPickerProps = Readonly<{
     favoriteKeys?: ReadonlySet<string>;
     favoriteReasoningEffortByKey?: ReadonlyMap<string, string | undefined>;
     onToggleFavorite?: (ref: ProviderBoundModelRef, reasoningEffort?: string) => void;
+    onSelectFavoriteModel?: (ref: ProviderBoundModelRef, reasoningEffort?: string) => boolean | Promise<boolean>;
     onUpdateFavoriteModelReasoningEffort?: (ref: ProviderBoundModelRef, reasoningEffort: string) => void;
     selectedOptionControls?: ReadonlyArray<SessionConfigOptionControl>;
     /** Draft/session intent, applied to the selected source's own descriptors. */
@@ -270,7 +276,19 @@ type SessionModelPickerRenderProps = Omit<SessionModelPickerProps, 'selected'> &
 
 export function SessionModelPicker(input: SessionModelPickerProps) {
     const selectedTeam = isTeamCredentialProviderModelPickerValue(input.selected) ? input.selected : null;
+    const favoriteReasoningEffortByKey = React.useMemo(
+        () => input.favoriteReasoningEffortByKey ?? (input.favoriteEntries
+            ? new Map(input.favoriteEntries.map(entry => [sessionModelSelectionKey(entry.ref), entry.reasoningEffort]))
+            : undefined),
+        [input.favoriteEntries, input.favoriteReasoningEffortByKey],
+    );
+    const favoriteKeys = React.useMemo(
+        () => input.favoriteKeys ?? (favoriteReasoningEffortByKey ? new Set(favoriteReasoningEffortByKey.keys()) : undefined),
+        [favoriteReasoningEffortByKey, input.favoriteKeys],
+    );
     const props: SessionModelPickerRenderProps = { ...input,
+        favoriteReasoningEffortByKey,
+        favoriteKeys,
         selected: isTeamCredentialProviderModelPickerValue(input.selected) ? null : input.selected,
         selectedTeamCredentialModel: selectedTeam ?? input.selectedTeamCredentialModel,
     };
@@ -395,9 +413,11 @@ function SessionModelSourceBrowse(props: Readonly<{
             canEnterCustomValue={false}
             selected={picker.selected}
             reportedModel={picker.reportedModel}
+            favoriteEntries={picker.favoriteEntries?.filter(entry => entry.ref.providerConnectionId === props.scope.connectionId)}
             favoriteKeys={picker.favoriteKeys}
             favoriteReasoningEffortByKey={picker.favoriteReasoningEffortByKey}
             onToggleFavorite={picker.onToggleFavorite}
+            onSelectFavoriteModel={picker.onSelectFavoriteModel}
             onUpdateFavoriteModelReasoningEffort={picker.onUpdateFavoriteModelReasoningEffort}
             favoriteActionVisibility={picker.favoriteActionVisibility}
             notes={notes}
@@ -645,6 +665,9 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         }) }));
     }, [labeledSections, paneSaysUnavailable, selectedAttribution, selectedKey]);
     const hiddenSources = props.hiddenSources ?? [];
+    const favoriteSlots = React.useMemo(() => new Map(
+        [...(props.favoriteKeys ?? [])].map((key, index) => [key, index + 1]),
+    ), [props.favoriteKeys]);
     const favoriteOptions = React.useMemo<OptionPickerFavoriteOptions<SessionModelPickerOptionValue> | undefined>(() => {
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
         return {
@@ -718,9 +741,8 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         }
         return props.onSelect(ref);
     }, [props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel]);
-    // A card press; the experimental confirmation guards it.
-    const selectModel = (ref: SessionModelPickerOptionValue) => {
-        const commit = () => commitSelection(ref);
+    // Both a card press and a favorite shortcut use the same confirmation.
+    const selectModel = (ref: SessionModelPickerOptionValue, commit = () => commitSelection(ref)) => {
         const resolution = resolveSessionModelPickerSelection({ purpose: props.purpose, groups: props.providerGroups, ref });
         if (resolution.kind === 'select') {
             commit();
@@ -730,6 +752,43 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         if (props.experimentalConfirmation?.pending) return;
         void props.experimentalConfirmation?.confirm(resolution, commit);
     };
+    const hostClose = React.useContext(AgentInputChipPickerCloseContext);
+    const close = props.onRequestClose ?? hostClose;
+    const selectFavoriteModel = props.onSelectFavoriteModel;
+    const favoriteEfforts = props.favoriteReasoningEffortByKey;
+    const chooseFavorite = useEventCallback((ref: ProviderBoundModelRef, effort: string | undefined) => {
+        selectModel(ref, () => {
+            props.experimentalConfirmation?.clear();
+            void Promise.resolve(selectFavoriteModel?.(ref, effort)).then((selected) => {
+                if (selected) close?.();
+            });
+        });
+    });
+    const favoriteBindings = React.useMemo(() => {
+        if (!selectFavoriteModel || !close || favoriteSlots.size === 0) return undefined;
+        const options = presentedSections.flatMap(section => section.options);
+        const seen = new Set<string>();
+        return options.flatMap(option => {
+            const ref = option.value;
+            if (!ref || isTeamCredentialProviderModelPickerValue(ref) || option.disabled || option.availability === 'unavailable') return [];
+            const key = sessionModelSelectionKey(ref);
+            const digit = FAVORITE_SHORTCUT_DIGITS.find(candidate => candidate === favoriteSlots.get(key));
+            if (digit === undefined || seen.has(key)) return [];
+            seen.add(key);
+            return [{ key, ref, digit }];
+        });
+    }, [close, favoriteSlots, presentedSections, selectFavoriteModel]);
+    const favoriteSlotByKey = React.useMemo(
+        () => favoriteBindings && new Map(favoriteBindings.map(({ key, digit }) => [key, digit])),
+        [favoriteBindings],
+    );
+    const quickActionShortcuts = React.useMemo<readonly SelectionListQuickActionShortcut[] | undefined>(
+        () => favoriteBindings?.map(({ key, ref, digit }) => ({
+            shortcut: `cmd+${digit}`,
+            onActivate: () => chooseFavorite(ref, favoriteEfforts?.get(key)),
+        })),
+        [chooseFavorite, favoriteBindings, favoriteEfforts],
+    );
     const pickSource = useEventCallback((source: SessionModelPickerSource, label: string) => {
         const option = source.state === 'ready'
             ? source.options.find(candidate => candidate.disabled !== true && candidate.availability !== 'unavailable')
@@ -750,7 +809,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     const effortControl = selectedOptionControls?.find(control => control.option.id === PROVIDER_REASONING_EFFORT_OPTION_ID);
     const favoriteEffort = props.favoriteReasoningEffortByKey?.get(selectedKey);
     const sessionEffort = typeof effortControl?.effectiveValue === 'string' ? effortControl.effectiveValue : undefined;
-    const favoriteSlot = props.favoriteKeys?.has(selectedKey) ? [...props.favoriteKeys].indexOf(selectedKey) + 1 : 0;
+    const favoriteSlot = favoriteSlots.get(selectedKey) ?? 0;
     const favoriteEffortLabel = favoriteEffort
         ? effortControl?.option.options?.find(choice => choice.value === favoriteEffort)?.name ?? favoriteEffort
         : null;
@@ -881,8 +940,9 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             showTitle={props.showTitle}
             maxHeight={props.maxHeight}
             heightBehavior={props.heightBehavior}
-            autoFocusInputOnWeb={props.autoFocusInputOnWeb}
+            autoFocusInputOnWeb={props.autoFocusInputOnWeb ?? Boolean(quickActionShortcuts?.length)}
             onRequestClose={props.onRequestClose}
+            quickActionShortcuts={quickActionShortcuts}
             favoriteActionVisibility={props.favoriteActionVisibility}
             multiColumn={props.multiColumn}
             title={props.scope ? props.scope.scope.label : t('agentInput.model.title')}
@@ -908,7 +968,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
                     modelId,
                 }),
             } : { canEnterCustomValue: false as const })}
-            favoriteOptions={favoriteOptions}
+            favoriteOptions={favoriteOptions && { ...favoriteOptions, shortcutSlotByKey: favoriteSlotByKey }}
             probe={hasDiscoveryErrorLine && props.probe?.failed ? { ...props.probe, failed: false } : props.probe}
             // Keep the handler stable even when a source declares no controls:
             // it owns the popup's ARIA pattern, independently of the selected row.

@@ -1,4 +1,7 @@
+import { createContext } from 'react';
 import { t } from '@/text';
+
+export const AgentInputChipPickerCloseContext = createContext<(() => void) | undefined>(undefined);
 
 export type AgentInputChipPickerDetailSelectOption = Readonly<{
     id: string;

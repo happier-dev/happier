@@ -58,6 +58,7 @@ import {
     type DynamicSectionState,
 } from './useSelectionListDynamicSections';
 import {
+    isCmdOrCtrl,
     useSelectionListKeyboardNav,
     useSelectionListRovingFocus,
     type SelectionListArrowKey,
@@ -1335,10 +1336,37 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     const autoFocusInput = IS_WEB
         ? props.autoFocusInputOnWeb === true
         : props.autoFocusInputOnNative === true;
+    const hasQuickActions = Boolean(props.quickActionShortcuts?.length);
     React.useEffect(() => {
-        if (!autoFocusInput || !showSearchHeader) return;
-        searchInputRef.current?.focus?.();
-    }, [autoFocusInput, currentStep.id, showSearchHeader]);
+        if (!autoFocusInput) return;
+        if (showSearchHeader) {
+            searchInputRef.current?.focus?.();
+        } else if (IS_WEB && hasQuickActions && typeof document !== 'undefined') {
+            document.getElementById(listboxId)?.querySelector<HTMLElement>('[tabindex="0"]')?.focus({ preventScroll: true });
+        }
+    }, [autoFocusInput, currentStep.id, hasQuickActions, listboxId, showSearchHeader]);
+
+    const onQuickActionModifierHeldChange = props.onQuickActionModifierHeldChange;
+    React.useEffect(() => {
+        if (!IS_WEB || !hasQuickActions || !onQuickActionModifierHeldChange || typeof window === 'undefined') return;
+        let held = false;
+        const publish = (next: boolean) => {
+            if (next === held) return;
+            held = next;
+            onQuickActionModifierHeldChange(held);
+        };
+        const onKey = (event: KeyboardEvent) => publish(isCmdOrCtrl(event));
+        const onBlur = () => publish(false);
+        window.addEventListener('keydown', onKey, true);
+        window.addEventListener('keyup', onKey, true);
+        window.addEventListener('blur', onBlur);
+        return () => {
+            window.removeEventListener('keydown', onKey, true);
+            window.removeEventListener('keyup', onKey, true);
+            window.removeEventListener('blur', onBlur);
+            onBlur();
+        };
+    }, [hasQuickActions, onQuickActionModifierHeldChange]);
 
     // FR3-4: headerless keyboard host. When the search header is omitted
     // (inputless list chips: session-mode, transcript-storage, recipient,

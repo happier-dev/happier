@@ -13,6 +13,7 @@ import {
     type SelectionListColumnsLayout,
     type SelectionListHeightBehavior,
     type SelectionListOption,
+    type SelectionListQuickActionShortcut,
 } from '@/components/ui/selectionList';
 import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionList/_constants';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -161,6 +162,7 @@ export type OptionPickerProbeState = Readonly<{
 export type OptionPickerFavoriteOptions<TValue = string> = Readonly<{
     /** Stable value keys, never display labels. */
     values: ReadonlySet<string>;
+    shortcutSlotByKey?: ReadonlyMap<string, number>;
     isFavoritable?: (option: OptionPickerOption<TValue>) => boolean;
     onToggle: (option: OptionPickerOption<TValue>) => void;
     getAccessibilityLabel?: (option: OptionPickerOption<TValue>, isFavorite: boolean) => string;
@@ -233,6 +235,7 @@ export type OptionPickerOverlayProps<TValue = string> = Readonly<{
     heightBehavior?: SelectionListHeightBehavior;
     autoFocusInputOnWeb?: boolean;
     onRequestClose?: () => void;
+    quickActionShortcuts?: readonly SelectionListQuickActionShortcut[];
     favoriteActionVisibility?: 'selected-or-favorite' | 'all';
     /**
      * Lay the options out as a two-up card grid when the surface is wide enough.
@@ -773,6 +776,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                         props.onSelect(option.value);
                     }}
                     onRequestClose={props.onRequestClose ?? (() => {})}
+                    quickActionShortcuts={props.quickActionShortcuts}
                     keyboardHintsEnabled={false}
                     autoFocusInputOnWeb={props.autoFocusInputOnWeb ?? false}
                     disableTransitions
