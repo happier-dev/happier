@@ -31,6 +31,7 @@ import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/act
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import {
   acquireAuthoritativePluginRuntimeRegistryLease,
+  acquireExecutableAuthoritativePluginRuntimeRegistryLease,
   tryAcquireAuthoritativePluginRuntimeRegistryLease,
 } from '@/plugins/runtime/reload/runtimeLease';
 import type {
@@ -82,15 +83,16 @@ export function createDaemonExternalActionContributedInvoker(input: Readonly<{
   ) => Promise<TargetActionCurrentIntentResult>;
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
   const acquireRuntimeRegistryLease = input.acquireRuntimeRegistryLease
-    ?? acquireAuthoritativePluginRuntimeRegistryLease;
+    ?? acquireExecutableAuthoritativePluginRuntimeRegistryLease;
 
   return createCommittedContributedActionInvoker({
     managedProviderOperationAuthority: input.managedProviderOperationAuthority,
     daemonHoldsApprovalWaiter: true,
     ...(input.observePluginExecution ? { observePluginExecution: input.observePluginExecution } : {}),
     defaultInvocationSurface: 'api',
-    acquireRuntimeRegistryLease: () => acquireRuntimeRegistryLease({
+    acquireRuntimeRegistryLease: params => acquireRuntimeRegistryLease({
       happyHomeDir: configuration.happyHomeDir,
+      ...(params?.signal ? { signal: params.signal } : {}),
     }),
     ...(input.requestCurrentIntent ? { requestCurrentIntent: input.requestCurrentIntent } : {}),
   });
@@ -116,7 +118,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
   now?: () => number;
 }>): NonNullable<ActionExecutorDeps['targetActionApprovalReplay']> {
   const acquireRuntimeRegistryLease = input.acquireRuntimeRegistryLease
-    ?? acquireAuthoritativePluginRuntimeRegistryLease;
+    ?? acquireExecutableAuthoritativePluginRuntimeRegistryLease;
   const targetActionApprovals = input.targetActionApprovals
     ?? createCliApprovalsArtifactStore({ credentials: input.credentials });
   const now = input.now ?? Date.now;
@@ -309,6 +311,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
           invocationSignal.throwIfAborted();
           const lease = await acquireRuntimeRegistryLease({
             happyHomeDir: configuration.happyHomeDir,
+            signal: invocationSignal,
           });
           try {
             invocationSignal.throwIfAborted();

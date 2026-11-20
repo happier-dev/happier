@@ -27,6 +27,7 @@ export function createEphemeralPluginRuntimeRegistryLease(
 type AuthoritativeControllerParams = Readonly<{
     happyHomeDir?: string;
     controller?: PluginReloadController;
+    signal?: AbortSignal;
 }>;
 
 function resolveAuthoritativeController(params?: AuthoritativeControllerParams): PluginReloadController | null {
@@ -66,7 +67,20 @@ export async function acquireAuthoritativePluginRuntimeRegistryLease(
         : tryAcquireAuthoritativePluginRuntimeRegistryLease(params);
     if (lease) return lease;
 
-    throw Object.assign(new Error(
+    throw createRuntimeUnavailableError();
+}
+
+/** Executable demand joins daemon restoration; advisory reads never wait on it. */
+export async function acquireExecutableAuthoritativePluginRuntimeRegistryLease(
+    params?: AuthoritativeControllerParams,
+): Promise<PluginRuntimeRegistryLease> {
+    const lease = await resolveAuthoritativeController(params)?.acquireExecutableRuntimeRegistry(params?.signal);
+    if (lease) return lease;
+    throw createRuntimeUnavailableError();
+}
+
+function createRuntimeUnavailableError(): Error {
+    return Object.assign(new Error(
         'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE: The canonical daemon-applied plugin runtime is unavailable in this process. '
         + 'Run this operation through the Machine daemon. For a Session, open its managed terminal or use `happier resume <session-id>` to continue.',
     ), { code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' as const });

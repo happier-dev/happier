@@ -13,7 +13,7 @@ vi.mock('@/plugins/runtime/invocation/actions/executeContributedAction', () => (
 
 vi.mock('@/plugins/runtime/reload/singleton', () => ({
   pluginReloadController: {
-    tryAcquireRuntimeRegistry: appliedRuntimeMock.tryAcquire,
+    acquireExecutableRuntimeRegistry: async () => appliedRuntimeMock.tryAcquire(),
   },
 }));
 

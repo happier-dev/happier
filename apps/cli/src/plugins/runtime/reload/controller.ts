@@ -1,5 +1,6 @@
 import { logger } from '@/ui/logger';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 import type {
     PluginRunningSessionDisposition,
     PluginRunningSessionRevocationScope,
@@ -153,6 +154,9 @@ export type PluginReloadController = Readonly<{
         refreshAccountCensus?: (pluginIds: readonly string[]) => Promise<void>;
     }>) => Promise<PluginRuntimeRegistryLease>;
     tryAcquireRuntimeRegistry: () => PluginRuntimeRegistryLease | null;
+    /** The daemon owns startup; executable demand joins its existing restoration. */
+    setRuntimeInitialization: (initialization: Promise<void>) => void;
+    acquireExecutableRuntimeRegistry: (signal?: AbortSignal) => Promise<PluginRuntimeRegistryLease | null>;
     /** Latest durable revision observed, even while its serving publication is pending or failed. */
     readCurrentDurableRevision: () => number;
     isRuntimeRegistryCurrent: (registry: ResolvedExecutablePluginRuntimeRegistry) => boolean;
@@ -287,6 +291,7 @@ export function createPluginReloadController(params?: Readonly<{
     );
     let generation = 0;
     let activeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
+    let runtimeInitialization: Promise<boolean> | null = null;
     /**
      * The one per-plugin currentness owner: which occurrence serves new
      * admissions. Written only at publication (changed occurrences swap, the
@@ -952,6 +957,16 @@ export function createPluginReloadController(params?: Readonly<{
                 throw new Error(result.diagnostics[0]?.message ?? 'Plugin runtime registry unavailable');
             }
             return createRuntimeRegistryLease(activeRegistry);
+        },
+        setRuntimeInitialization(initialization) {
+            runtimeInitialization = initialization.then(() => true, () => false);
+        },
+        async acquireExecutableRuntimeRegistry(signal) {
+            // Declaration publication may precede development-root restoration.
+            // Internal adoption/catalog reads must remain available during it.
+            if (runtimeInitialization && !await raceWithAbort(runtimeInitialization, signal)) return null;
+            signal?.throwIfAborted();
+            return controller.tryAcquireRuntimeRegistry();
         },
         tryAcquireRuntimeRegistry() {
             if (

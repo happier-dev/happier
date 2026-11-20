@@ -165,6 +165,53 @@ describe('createPluginReloadController', () => {
         } finally { await controller.shutdown(); }
     });
 
+    it('cancels executable startup demand without blocking declaration reads or startup settlement', async () => {
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
+                contributes: createResolvedContributionRegistry({}), pluginIds: [],
+            }),
+        });
+        const startup = createDeferred<void>();
+        try {
+            const declarations = await controller.acquireRuntimeRegistry();
+            await declarations.release();
+            controller.setRuntimeInitialization(startup.promise);
+            const cancellation = new AbortController();
+            const cancelledDemand = controller.acquireExecutableRuntimeRegistry(cancellation.signal);
+            cancellation.abort();
+            await expect(cancelledDemand).rejects.toMatchObject({ name: 'AbortError' });
+            const stillReadable = controller.tryAcquireRuntimeRegistry();
+            expect(stillReadable).not.toBeNull();
+            await stillReadable?.release();
+            startup.resolve();
+            const executable = await controller.acquireExecutableRuntimeRegistry();
+            expect(executable).not.toBeNull();
+            await executable?.release();
+        } finally {
+            startup.resolve();
+            await controller.shutdown();
+        }
+    });
+
+    it('settles failed executable startup as unavailable while declarations remain readable', async () => {
+        const controller = createPluginReloadController({
+            resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({
+                contributes: createResolvedContributionRegistry({}), pluginIds: [],
+            }),
+        });
+        try {
+            const declarations = await controller.acquireRuntimeRegistry();
+            await declarations.release();
+            controller.setRuntimeInitialization(Promise.reject(new Error('optional plugin startup failed')));
+            await expect(controller.acquireExecutableRuntimeRegistry()).resolves.toBeNull();
+            const stillReadable = controller.tryAcquireRuntimeRegistry();
+            expect(stillReadable).not.toBeNull();
+            await stillReadable?.release();
+        } finally {
+            await controller.shutdown();
+        }
+    });
+
     it('exposes no arbitrary reload owner and joins concurrent cold acquisitions through one resolver', async () => {
         const deferred = createDeferred<ResolvedExecutablePluginRuntimeRegistry>();
         const registry = (await createRuntimeRegistry('cold'));

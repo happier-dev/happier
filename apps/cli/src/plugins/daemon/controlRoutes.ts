@@ -154,7 +154,7 @@ export async function executeAppliedDaemonPluginActionWithController(
   signal?: AbortSignal,
 ): Promise<PluginActionExecutionAttempt> {
   const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
-  const lease = reloadController.tryAcquireRuntimeRegistry();
+  const lease = await reloadController.acquireExecutableRuntimeRegistry(signal);
   if (!lease) {
     return {
       matched: true,

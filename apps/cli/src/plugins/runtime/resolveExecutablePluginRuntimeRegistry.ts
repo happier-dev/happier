@@ -648,7 +648,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
          */
         currentGlobalExternalSessionsRouter?: CurrentGlobalExternalSessionsRouter;
         /** The existing daemon publication owner for retained callers' next Action. */
-        runtimeRegistryController?: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
+        runtimeRegistryController?: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'acquireExecutableRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
         /** Credential materializers held by the containing operation, independently of Account Action execution. */
         connectedAccountRuntimeRegistry?: Parameters<typeof createDeploymentTargetRoleAdmissionHost>[1]['connectedAccountRuntimeRegistry'];
         /** Invalidates projections after a same-generation lazy activation fails terminally. */
@@ -3524,7 +3524,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     };
     const runtimeRegistryController = params?.runtimeRegistryController;
     const invokeContributedAction: InvokeContributedAction = async request => {
-        const lease = runtimeRegistryController?.tryAcquireRuntimeRegistry();
+        const lease = await runtimeRegistryController?.acquireExecutableRuntimeRegistry(request.signal);
         try {
             // Retained activation components outlive the registry that made
             // their SDK context. Admission still runs through the current

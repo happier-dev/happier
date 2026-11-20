@@ -858,7 +858,8 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
 
   return Object.freeze({
     changeService,
-    async initialize() {
+    initialize() {
+      const initialization = (async () => {
       params.signal?.throwIfAborted();
       if (params.staleCandidateCleanup === 'exclusiveHome') {
         await cleanupStaleDaemonPluginCandidateRoots(params.happyHomeDir);
@@ -1119,6 +1120,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       });
       await reportCurrentAvailability();
       await developmentRoots.initialize();
+      })();
+      params.reloadController.setRuntimeInitialization(initialization);
+      return initialization;
     },
     reportCurrentAvailability,
     /**

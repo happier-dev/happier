@@ -21,6 +21,7 @@ import { createPluginRegistryStateStore } from '@/plugins/store/registry/current
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
 import { createDaemonPluginDevelopmentRootsOwner } from './developmentRoots';
+import { executeAppliedDaemonPluginActionWithController } from './controlRoutes';
 
 import { createPackedTestConnectedAccountsRuntime } from './packedTestConnectedAccounts';
 import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
@@ -304,32 +305,42 @@ it('re-enables a reviewed source in place, changes policy, and re-enables after 
   }
 });
 
-it('reactivates an enabled external development plugin after daemon restart without an author command', async () => {
+it.each([
+  { sourceChanged: false, packageMain: false },
+  { sourceChanged: true, packageMain: false },
+  { sourceChanged: false, packageMain: true },
+])('reactivates an enabled external development plugin after daemon restart without an author command (%j)', async ({ sourceChanged, packageMain }) => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-restart-')));
-  const entryPath = join(root, 'plugin.ts');
+  const sourceRoot = packageMain ? join(root, 'source') : root;
+  await mkdir(sourceRoot, { recursive: true });
+  const entryPath = join(sourceRoot, packageMain ? 'plugin.mjs' : 'plugin.ts');
+  const locator = packageMain ? sourceRoot : entryPath;
+  if (packageMain) await writeFile(join(sourceRoot, 'package.json'), JSON.stringify({
+    name: 'development-restart-fixture', version: '1.0.0', type: 'module', main: './plugin.mjs',
+  }));
   const pluginId = 'acme.development-restart';
   let runtime = createRuntime(root, pluginId);
   const manifest = createPluginManifestV2Fixture({
     id: pluginId,
-    entrypoints: { daemon: './plugin.mjs', development: './plugin.ts' },
+    entrypoints: { daemon: './plugin.mjs', ...(packageMain ? {} : { development: './plugin.ts' }) },
     contributes: {
       actions: [{ id: 'identity', title: 'Identity', scopes: ['global'], surfaces: ['cli'],
         execution: { target: 'daemon' }, dangerLevel: 'safe' }],
-      resources: [{ id: 'status', source: 'dynamic', kind: 'config', contentType: 'application/json' }],
+      ...(packageMain ? {} : { resources: [{ id: 'status', source: 'dynamic', kind: 'config', contentType: 'application/json' }] }),
     },
   });
   const source = (revision: number) => [
     `export const manifest = ${JSON.stringify(manifest)};`,
     'export function activate(api) {',
     `api.actions.register('identity', async () => ({ revision: ${revision} }));`,
-    `api.resources.registerDynamicResource('status', { read: async () => JSON.stringify({ revision: ${revision} }), observe: () => ({ dispose() {} }) });`,
+    ...(packageMain ? [] : [`api.resources.registerDynamicResource('status', { read: async () => JSON.stringify({ revision: ${revision} }), observe: () => ({ dispose() {} }) });`]),
     '}',
   ].join('\n');
   try {
     await writeFile(entryPath, source(1));
     const initial = await runtime.reloadController.acquireRuntimeRegistry();
     await initial.release();
-    await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: entryPath });
+    await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: locator });
     const pending = (await runtime.owner.changeService.listPendingPluginChanges()).changes[0]!;
     await expect(runtime.owner.changeService.decidePluginChange({
       pendingChangeId: pending.pendingChangeId, decision: 'installAndTrust',
@@ -337,7 +348,7 @@ it('reactivates an enabled external development plugin after daemon restart with
     await runtime.dispose();
     // A new daemon gets only durable state and current source, with no CLI watcher
     // or in-process occurrence from the previous daemon.
-    await writeFile(entryPath, source(2));
+    if (sourceChanged) await writeFile(entryPath, source(2));
     const credentials = { token: 'restart-fixture', encryption: null };
     setActiveAccountSettingsSnapshot({ source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials),
       settings: accountSettingsParse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
@@ -359,17 +370,41 @@ it('reactivates an enabled external development plugin after daemon restart with
       selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
       projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
     });
+    let markPublished!: () => void;
+    const published = new Promise<void>(resolve => { markPublished = resolve; });
     runtime = createRuntime(root, pluginId, async input => bindings.reconcileAuthorizedPurposes({
       consumerScopes: deriveRegistryConnectedAccountPurposeReconciliationScopes(input.previous, input.candidate,
         input.resolveOptionalAccess, { candidateActivePluginIds: input.candidateActivePluginIds }),
       signal: new AbortController().signal, publish: input.publish,
-    }));
-    await runtime.owner.initialize();
+    }), markPublished);
+    const initializing = runtime.owner.initialize();
+    let firstAction: Awaited<ReturnType<typeof executeAppliedDaemonPluginActionWithController>> | undefined;
+    try {
+      await published;
+      if (packageMain) {
+        firstAction = await executeAppliedDaemonPluginActionWithController({
+          actionId: `${pluginId}/identity`, input: {}, surface: 'cli',
+        }, runtime.reloadController);
+      }
+    } finally {
+      await initializing;
+    }
+    if (packageMain) {
+      const restoredAction = await executeAppliedDaemonPluginActionWithController({
+        actionId: `${pluginId}/identity`, input: {}, surface: 'cli',
+      }, runtime.reloadController);
+      expect(restoredAction, JSON.stringify(restoredAction)).toMatchObject({
+        matched: true, result: { ok: true, result: { revision: 1 } },
+      });
+      expect(firstAction, JSON.stringify(firstAction)).toMatchObject({
+        matched: true, result: { ok: true, result: { revision: 1 } },
+      });
+    }
     expect((await runtime.owner.changeService.listPendingPluginChanges()).changes).toEqual([]);
     expect(runtime.reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBeTruthy();
     await expect(runtime.reloadController.getState().activeRegistry!.targetActionInvocations.invoke({
       pluginId, localId: 'identity', input: {}, surface: 'cli',
-    })).resolves.toMatchObject({ status: 'executed', value: { revision: 2 } });
+    })).resolves.toMatchObject({ status: 'executed', value: { revision: sourceChanged ? 2 : 1 } });
   } finally {
     await runtime.dispose();
     await rm(root, { recursive: true, force: true });

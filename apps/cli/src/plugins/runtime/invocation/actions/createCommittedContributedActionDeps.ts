@@ -24,6 +24,7 @@ import { readResolvedActionContribution } from '@/plugins/projection/registry/ac
 import type { TargetActionCurrentIntentRequest, TargetActionCurrentIntentResult } from '../actionExecutor';
 import {
   acquireAuthoritativePluginRuntimeRegistryLease,
+  acquireExecutableAuthoritativePluginRuntimeRegistryLease,
   tryAcquireAuthoritativePluginRuntimeRegistryLease,
 } from '@/plugins/runtime/reload/runtimeLease';
 import type { PluginActionSurface } from '@/plugins/runtime/types';
@@ -141,7 +142,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
   /** Transport-only callers may supply a default without replacing a bound host surface. */
   defaultInvocationSurface?: PluginActionSurface;
 }> = {}): NonNullable<ActionExecutorDeps['invokeContributedAction']> {
-  const acquire = input.acquireRuntimeRegistryLease ?? acquireAuthoritativePluginRuntimeRegistryLease;
+  const acquire = input.acquireRuntimeRegistryLease ?? acquireExecutableAuthoritativePluginRuntimeRegistryLease;
   return async ({ action, input: actionInput, clientId, messageActionReference, context, approvalExecutionOrigin, requiredDangerLevel, resolveEnvironmentApprovalScope, signal }) => {
     const approvalContext = { ...context };
     const expectedContributorOccurrenceId = context.expectedContributedActionOccurrenceId;
@@ -187,7 +188,7 @@ export function createCommittedContributedActionInvoker(input: Readonly<{
         actionId: ACTION_INVOKE_ACTION_ID_V1, input: wrapper, context: approvalContext, reviewAdmitted: true,
       });
     }
-    const lease = await acquire();
+    const lease = await acquire({ signal: invocationSignal });
     let purposeActivation: ManagedProviderOperationAuthorityActivation | undefined;
     try {
       const { executeContributedAction } = await import('./executeContributedAction');

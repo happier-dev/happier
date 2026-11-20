@@ -204,6 +204,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       adoptPreparedRuntimeRegistry: vi.fn(),
       acquireRuntimeRegistry: vi.fn(),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -304,6 +306,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -380,6 +384,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -441,6 +447,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -486,6 +494,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -544,6 +554,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -602,6 +614,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -655,6 +669,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -726,6 +742,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -791,6 +809,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => true),
       invalidateRuntimeProjection: vi.fn(),
@@ -1076,6 +1096,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
       }),
       acquireRuntimeRegistry,
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => false),
       invalidateRuntimeProjection: vi.fn(),
@@ -1147,6 +1169,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => servingRevision,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: () => servingRegistry ? Object.freeze({
         registry: servingRegistry, source: 'active' as const, durableRevision: servingRevision, release: async () => undefined,
       }) : null,
@@ -1232,6 +1256,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => currentInventory.revision,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: () => servingRegistry ? Object.freeze({
         registry: servingRegistry, source: 'active' as const, durableRevision: currentInventory.revision, release: async () => undefined,
       }) : null,
@@ -1317,6 +1343,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         adoptPreparedRuntimeRegistry: vi.fn(),
         acquireRuntimeRegistry: vi.fn(),
         readCurrentDurableRevision: () => -1,
+        setRuntimeInitialization: vi.fn(),
+        acquireExecutableRuntimeRegistry: vi.fn(async () => null),
         tryAcquireRuntimeRegistry: vi.fn(() => null),
         isRuntimeRegistryCurrent: vi.fn(() => false),
         invalidateRuntimeProjection: vi.fn(),
@@ -1419,6 +1447,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         adoptPreparedRuntimeRegistry: vi.fn(),
         acquireRuntimeRegistry: vi.fn(),
         readCurrentDurableRevision: () => -1,
+        setRuntimeInitialization: vi.fn(),
+        acquireExecutableRuntimeRegistry: vi.fn(async () => null),
         tryAcquireRuntimeRegistry: vi.fn(() => null),
         isRuntimeRegistryCurrent: vi.fn(() => false),
         invalidateRuntimeProjection: vi.fn(),
@@ -1466,6 +1496,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => false),
       invalidateRuntimeProjection: vi.fn(),
@@ -1534,6 +1566,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => false),
       invalidateRuntimeProjection: vi.fn(),
@@ -1584,6 +1618,8 @@ describe('createDaemonPluginRuntimeOwner publication join', () => {
         });
       }),
       readCurrentDurableRevision: () => -1,
+      setRuntimeInitialization: vi.fn(),
+      acquireExecutableRuntimeRegistry: vi.fn(async () => null),
       tryAcquireRuntimeRegistry: vi.fn(() => null),
       isRuntimeRegistryCurrent: vi.fn(() => false),
       invalidateRuntimeProjection: vi.fn(),
