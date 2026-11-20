@@ -12,7 +12,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { t } from '@/text';
 
@@ -145,17 +145,18 @@ export const TeamJoinedSummary = React.memo(function TeamJoinedSummary(
  */
 export function TeamJoinedSummaryForTeam(props: Readonly<{
   testID: string;
-  serverId: string;
+  scope: ServerAccountScope;
   teamId: string;
 }>) {
-  const binding = useTeamBinding(props.serverId, props.teamId);
   const lifetime = useActiveServerAccountScopeLifetime();
-  if (binding.kind !== 'bound' || binding.state.kind !== 'ready' || !lifetime) return null;
-  if (!areServerAccountScopesEqual(lifetime.scope, binding.scope)) return null;
+  const admittedLifetime = lifetime && areServerAccountScopesEqual(lifetime.scope, props.scope) ? lifetime : null;
+  const binding = useTeamBinding(admittedLifetime ? props.scope.serverId : '', props.teamId);
+  if (binding.kind !== 'bound' || binding.state.kind !== 'ready' || !admittedLifetime) return null;
+  if (!areServerAccountScopesEqual(props.scope, binding.scope)) return null;
   return (
     <TeamJoinedSummary
       testID={props.testID}
-      context={{ scope: binding.scope, address: binding.address, team: binding.state.team, lifetime }}
+      context={{ scope: binding.scope, address: binding.address, team: binding.state.team, lifetime: admittedLifetime }}
     />
   );
 }

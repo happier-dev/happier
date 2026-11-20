@@ -28,7 +28,6 @@ import { StepMark } from '@/components/onboarding/unauthShell/StepMark';
 import { parseToken } from '@/utils/auth/parseToken';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import { TeamJoinedContent } from './TeamJoinedContent';
-import { TeamJoinedSummaryForTeam } from './TeamJoinedSummary';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { openAddHome } from '@/components/homes/add/openAddHome';
 
@@ -324,13 +323,6 @@ export const TeamJoinScreen = React.memo(function TeamJoinScreen(props: Readonly
                         label: t('teams.join.setUpForTeam', { team: completedAdmission.teamName }),
                         onContinue: () => openTeamOnExactHome(target.serverId, completedAdmission.teamId, 'setup'),
                     }}
-                    summary={(
-                        <TeamJoinedSummaryForTeam
-                            testID="team-join-joined-summary"
-                            serverId={target.serverId}
-                            teamId={completedAdmission.teamId}
-                        />
-                    )}
                 />
             </TeamJoinStateShell>
         );

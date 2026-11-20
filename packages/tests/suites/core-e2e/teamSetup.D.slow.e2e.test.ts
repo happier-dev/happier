@@ -3,23 +3,21 @@ import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { afterAll, beforeAll, expect, it } from 'vitest';
-import { act } from 'react-test-renderer';
+import { afterAll, beforeAll, expect, it, vi } from 'vitest';
+import { router } from 'expo-router';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
-import { TeamInvitationAcceptResultV1Schema, TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
-import { OpenProjectResultV1Schema, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
-import { ProjectSourcesReadOutputV1Schema, type ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
+import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
+import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
-import { TeamJoinedCard } from '../../../../apps/ui/sources/components/teams/join/TeamJoinedCard';
-import { TeamJoinedSummary } from '../../../../apps/ui/sources/components/teams/join/TeamJoinedSummary';
-import { TeamAuthEntrySurface } from '../../../../apps/ui/sources/components/teams/entry/TeamAuthEntrySurface';
+import { TeamJoinScreen } from '../../../../apps/ui/sources/components/teams/join/TeamJoinScreen';
+import { teamSetupPath } from '../../../../apps/ui/sources/components/settings/teams/teamsRoutes';
 import { renderHook, renderScreen } from '../../../../apps/ui/sources/dev/testkit';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '../../../../apps/ui/sources/sync/domains/scope/activeServerAccountScope';
 import { storage } from '../../../../apps/ui/sources/sync/domains/state/storage';
 import { createMachinePresetCollectionClient } from '../../../../apps/ui/sources/sync/ops/machines/machinePresetCollectionClient';
 import { createProjectManifestActionClient } from '../../../../apps/ui/sources/components/projects/projectSetup/projectManifestActionClient';
-import { useTeamBinding } from '../../../../apps/ui/sources/hooks/teams/useTeamBinding';
 import { createFrontDoorActionExecute } from '../../../../apps/ui/sources/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { readNewSessionDraftProjectionFromRepository } from '../../../../apps/ui/sources/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { createNewSessionComposerDocumentOwner } from '../../../../apps/ui/sources/components/sessions/composer/newSessionComposerDocumentOwner';
@@ -35,11 +33,10 @@ const testDir = createRunDirs({ runLabel: 'core' }).testDir(`team-join-${randomU
 let fixture: TeamSetupFFixture | undefined;
 let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
 let machineId: string;
-let invitationToken: string;
 let invitationUrl: string;
 let teamId: string;
 let homeId: string;
-let teamRepositorySource: ProjectSourceV1;
+let teamRepositorySourceId: string;
 let member: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let existingMember: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>;
 let existingMemberInvitationToken: string;
@@ -83,7 +80,7 @@ beforeAll(async () => {
     const createdSource = ProjectSourcesReadOutputV1Schema.parse(sharedSource.result);
     expect(createdSource).toMatchObject({ ok: true });
     if (!createdSource.ok) throw new Error(`Team Source unavailable: ${createdSource.error}`);
-    teamRepositorySource = createdSource.source;
+    teamRepositorySourceId = createdSource.source.id;
     const invited = await ownerUi.executeConfirmed('teams.invitations.create', { v: 1, teamId,
       role: 'member', historyAccess: 'from_membership', recipientEmail: null, requestKey: randomUUID() }, context);
     expect(invited.ok).toBe(true);
@@ -91,7 +88,6 @@ beforeAll(async () => {
     const { joinUrl } = TeamInvitationCreateResultV1Schema.parse(invited.result);
     if (!joinUrl) throw new Error('Invitation did not publish its one-time join URL');
     invitationUrl = joinUrl;
-    invitationToken = new URL(joinUrl).pathname.split('/').at(-1)!;
     const existingInvitation = await ownerUi.executeConfirmed('teams.invitations.create', { v: 1, teamId,
       role: 'member', historyAccess: 'from_membership', recipientEmail: null, requestKey: randomUUID() }, context);
     if (!existingInvitation.ok) throw new Error(`Existing-Machine invitation refused: ${existingInvitation.errorCode}`);
@@ -105,7 +101,8 @@ beforeAll(async () => {
   member = await fixture.createAccount('fresh-member');
   ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: member.uiCredentials });
   await waitFor(() => ui!.isAccountReady(), { timeoutMs: 60_000 });
-});
+  // Let each startup phase enforce its own deadline across both daemon enrollments.
+}, 0);
 
 afterAll(async () => {
   const failures: unknown[] = [];
@@ -123,94 +120,65 @@ it('TS.D.join continues the admitted Account into setup instead of ending at Ope
     expectedAccountId: admittedScope.accountId, actionCaller: { kind: 'host' } } as const;
   // The owner-principal projects.open control ran before this fresh Account was created.
   expect(Object.keys(storage.getState().machines)).toEqual([]);
-  expect.soft(classifyPairingLink(invitationUrl)).toMatchObject({ kind: 'team_join' });
+  const entry = classifyPairingLink(invitationUrl);
+  if (entry?.kind !== 'team_join') throw new Error('Invitation did not resolve to the Team join route');
+  const invitation = new URL(entry.path, fixture!.server.baseUrl);
+  const token = invitation.pathname.split('/').at(-1);
+  if (!token) throw new Error('Team join route omitted its token');
   const requests: string[] = [];
   setRuntimeFetch(async (input, init) => {
     requests.push(new URL(input instanceof Request ? input.url : String(input)).pathname);
     return fetch(input, init);
   });
-  const preview = await renderScreen(React.createElement(TeamAuthEntrySurface, {
-    target: { kind: 'saved_profile', profileRef: ui!.serverId },
-    invitation: { token: invitationToken, accountScope: getActiveServerAccountScope()! },
-    onSelectAction: () => {}, onAdmissionComplete: () => {},
+  const navigation = vi.spyOn(router, 'replace').mockClear();
+  const joinScreen = await renderScreen(React.createElement(TeamJoinScreen, {
+    token,
+    homeTarget: invitation.searchParams.get('target'),
+    targetBinding: invitation.searchParams.get('targetBinding'),
   }));
   try {
-    await waitFor(() => Boolean(preview.findByTestId('team-auth-entry-join')), { timeoutMs: 60_000 });
-    expect(preview.findByTestId('team-joined-resources')).toBeNull();
+    await waitFor(() => Boolean(joinScreen.findByTestId('team-auth-entry-join')), { timeoutMs: 60_000 });
     // This observes HTTP resource reads only; Machine RPC count is not inferred from it.
     expect(requests.filter(path => path.includes('/projects/sources') || path.includes('/machines/presets'))).toEqual([]);
-  } finally { await preview.unmount(); resetRuntimeFetch(); }
-  const accepted = await ui!.executeConfirmed('teams.invitations.accept', { v: 1, token: invitationToken }, context);
-  expect(accepted.ok).toBe(true);
-  if (!accepted.ok) throw new Error(`Invitation admission refused: ${accepted.errorCode}`);
-  const result = TeamInvitationAcceptResultV1Schema.parse(accepted.result);
-  expect(result.outcome).toBe('joined');
-  if (result.outcome !== 'joined') throw new Error(`Unexpected admission outcome: ${result.outcome}`);
+    await joinScreen.pressByTestIdAsync('team-auth-entry-join');
+    await waitFor(() => Boolean(joinScreen.findByTestId('team-auth-entry-admission-complete-action')), { timeoutMs: 60_000 });
+    expect(navigation).not.toHaveBeenCalled();
+    expect(await ui!.execute('teams.get', { v: 1, teamId }, context))
+      .toMatchObject({ ok: true, result: { id: teamId, hasSetup: true } });
+    await vi.waitFor(() => expect(joinScreen.findByTestId('team-join-joined-summary-projectSources')).not.toBeNull(), { timeout: 60_000 });
+    await joinScreen.pressByTestIdAsync('team-auth-entry-admission-complete-action');
+    await waitFor(() => navigation.mock.calls.length > 0, { timeoutMs: 60_000 });
+    expect(navigation).toHaveBeenCalledExactlyOnceWith(teamSetupPath({ serverId: ui!.serverId, teamId }));
+  } finally {
+    await joinScreen.unmount();
+    navigation.mockRestore();
+    resetRuntimeFetch();
+  }
   const { useTeamSetupPlan } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupPlan');
-  const { useTeamSetupResources } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupResources');
-  // Resource producers are mounted only after admission, against the real Team binding.
-  const bindingHook = await renderHook(() => useTeamBinding(ui!.serverId, teamId));
-  await waitFor(() => {
-    const binding = bindingHook.getCurrent();
-    return binding.kind === 'bound' && binding.state.kind === 'ready';
-  }, { timeoutMs: 60_000 });
-  const binding = bindingHook.getCurrent();
   const lifetime = captureActiveServerAccountScopeLifetime();
-  if (binding.kind !== 'bound' || binding.state.kind !== 'ready' || !lifetime) throw new Error('Admitted Team binding unavailable');
-  const resourceContext = { scope: binding.scope, address: binding.address, team: binding.state.team, lifetime };
-  const resourceHook = await renderHook(() => useTeamSetupResources(resourceContext));
-  await waitFor(() => resourceHook.getCurrent().credentialsEnabled && resourceHook.getCurrent().credentials.resolved,
-    { timeoutMs: 60_000 });
-  expect(resourceHook.getCurrent().credentials.error).toBeNull();
-  expect(resourceHook.getCurrent().credentials.resources).toEqual([]);
-  await waitFor(() => resourceHook.getCurrent().sharedResources.status === 'ready', { timeoutMs: 60_000 });
-  expect(resourceHook.getCurrent().sharedResources.error).toBeNull();
-  expect(resourceHook.getCurrent().sharedResources.kinds).toEqual(expect.arrayContaining([
-    { kind: 'sessions', status: 'available', count: 0 },
-    { kind: 'projectSources', status: 'available', count: 1 },
-  ]));
-  let openedTeam = false;
-  let continuedSetup = false;
-  let continuation: Promise<void> | undefined;
+  if (!lifetime) throw new Error('Admitted Account lifetime unavailable');
   let freshTaskDraftId: string | undefined;
   const composer = createFrontDoorActionExecute(undefined, { sessionAuthoringPresentation: {
     navigateToNewSession: input => { freshTaskDraftId = input.draftId; },
   } });
   const setupHook = await renderHook(() => useTeamSetupPlan(composer, context));
-  let firstProject: Extract<OpenProjectResultV1, { kind: 'opened' }> | undefined;
-  let freshMachineId: string | undefined;
-  const props = { testID: 'd-joined', result, teamName: 'D Join', accountScope: getActiveServerAccountScope(),
-    summary: React.createElement(TeamJoinedSummary, { testID: 'team-joined-resources', context: resourceContext }),
-    onOpenTeam: () => { openedTeam = true; },
-    setupContinuation: { label: 'Set up for D Join', onContinue: () => continuation = (async () => {
-      continuedSetup = true;
-      const paired = await fixture!.enrollDaemon(member, { cliLaunchSpec });
-      const pairedMachineId = paired.target.machineId;
-      freshMachineId = pairedMachineId;
-      await waitFor(() => ui!.isMachineActive(pairedMachineId), { timeoutMs: 60_000 });
-      const folder = join(testDir, 'first-project');
-      await mkdir(folder, { recursive: true });
-      const prepared = await setupHook.getCurrent().prepare({ target: { serverId: ui!.serverId, homeId, machineId: pairedMachineId },
-        repositories: [{ id: 'first-project', input: { source: { kind: 'folder', path: folder }, materialization: { kind: 'attach' } } }],
-        isCurrent: lifetime.isCurrent });
-      if (!prepared?.ok) throw new Error('Fresh member setup plan unavailable');
-      const settled = await setupHook.getCurrent().run({ plan: prepared.plan });
-      expect(settled.repositories).toMatchObject([{ id: 'first-project', result: { ok: true, result: { kind: 'opened', directory: folder } } }]);
-      const opened = settled.repositories[0]?.result;
-      if (!opened?.ok) throw new Error('Fresh project not opened');
-      const project = OpenProjectResultV1Schema.parse(opened.result);
-      if (project.kind !== 'opened') throw new Error('Fresh project not ready');
-      firstProject = project;
-    })() } };
-  const screen = await renderScreen(React.createElement(TeamJoinedCard, props));
   try {
-    await waitFor(() => Boolean(screen.findByTestId('team-joined-resources-projectSources')), { timeoutMs: 60_000 });
-    await act(async () => { await screen.findByTestId('d-joined-action').props.onPress(); });
-    expect(continuedSetup).toBe(true);
-    expect(openedTeam).toBe(false);
-    await continuation;
+    const paired = await fixture!.enrollDaemon(member, { cliLaunchSpec });
+    const freshMachineId = paired.target.machineId;
+    await waitFor(() => ui!.isMachineActive(freshMachineId), { timeoutMs: 60_000 });
+    const folder = join(testDir, 'first-project');
+    await mkdir(folder, { recursive: true });
+    const prepared = await setupHook.getCurrent().prepare({ target: { serverId: ui!.serverId, homeId, machineId: freshMachineId },
+      repositories: [{ id: 'first-project', input: { source: { kind: 'folder', path: folder }, materialization: { kind: 'attach' } } }],
+      isCurrent: lifetime.isCurrent });
+    if (!prepared?.ok) throw new Error('Fresh member setup plan unavailable');
+    const settled = await setupHook.getCurrent().run({ plan: prepared.plan });
+    expect(settled.repositories).toMatchObject([{ id: 'first-project', result: { ok: true, result: { kind: 'opened', directory: folder } } }]);
+    const opened = settled.repositories[0]?.result;
+    if (!opened?.ok) throw new Error('Fresh project not opened');
+    const firstProject = OpenProjectResultV1Schema.parse(opened.result);
+    if (firstProject.kind !== 'opened') throw new Error('Fresh project not ready');
     expect(freshTaskDraftId).toBeUndefined();
-    if (!firstProject || !freshMachineId) throw new Error('First task target unavailable');
     const authored = await setupHook.getCurrent().openFirstTask({ project: firstProject, machineId: freshMachineId,
       prompt: 'Inspect this project and suggest a first task.' });
     expect(authored.ok).toBe(true);
@@ -221,7 +189,7 @@ it('TS.D.join continues the admitted Account into setup instead of ending at Ope
       input: 'Inspect this project and suggest a first task.',
     });
   } finally {
-    await screen.unmount(); await setupHook.unmount(); await resourceHook.unmount(); await bindingHook.unmount();
+    await setupHook.unmount();
   }
 });
 
@@ -253,12 +221,14 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   if (!existing.ok) throw new Error(`Existing checkout unavailable: ${existing.errorCode}`);
   const checkout = OpenProjectResultV1Schema.parse(existing.result);
   if (checkout.kind !== 'opened' || !('machineId' in checkout.workspace)) throw new Error('Existing checkout not opened on member Machine');
-  const source = teamRepositorySource;
+  const sourceRead = await ui!.execute('projects.sources.read', { serverId: ui!.serverId, sourceId: teamRepositorySourceId }, context);
+  if (!sourceRead.ok) throw new Error(`Member could not read the Team Source: ${sourceRead.errorCode}`);
+  const sourceResult = ProjectSourcesReadOutputV1Schema.parse(sourceRead.result);
+  if (!sourceResult.ok) throw new Error(`Team Source unavailable: ${sourceResult.error}`);
+  const source = sourceResult.source;
   const selector = source.repository;
   if (!selector) throw new Error('Joined Team repository fixture unavailable');
   let draftId: string | undefined;
-  let openedProject: Extract<OpenProjectResultV1, { kind: 'opened' }> | undefined;
-  let continuation: Promise<void> | undefined;
   const executeAction = createFrontDoorActionExecute(undefined, { sessionAuthoringPresentation: {
     navigateToNewSession: input => { draftId = input.draftId; },
   } });
@@ -268,9 +238,7 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   const nativeRefusal = await executeAction.confirmed('projects.open', {
     ...missingFolder, serverId: ui!.serverId, machineId,
   }, context);
-  expect(nativeRefusal.ok).toBe(false);
-  if (nativeRefusal.ok) throw new Error('Missing-folder refusal fixture did not reach the Project owner');
-  expect(nativeRefusal.errorCode).not.toBe('action_failed');
+  expect(nativeRefusal).toMatchObject({ ok: true, result: { kind: 'refused', code: 'invalid_directory' } });
   const { useTeamSetupPlan } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupPlan');
   const { useTeamSetupBatchProgress } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupBatchProgress');
   const setupHook = await renderHook(() => {
@@ -290,40 +258,29 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   if (!prepared?.ok) throw new Error('Machine effects review unavailable');
   // Review alone must not run executable preset bytes.
   await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-  const screen = await renderScreen(React.createElement(TeamJoinedCard, {
-    testID: 'd-selected', result: { outcome: 'already_member', teamId }, teamName: 'D Join', accountScope: scope,
-    onOpenTeam: () => {}, setupContinuation: { label: 'Set up for D Join', onContinue: () => continuation = (async () => {
-      const settled = await setupHook.getCurrent().run({ plan: prepared.plan,
-        selection: { team: { serverId: ui!.serverId, teamId }, lifetime, sources: [source] } });
-      expect(settled.machine).toMatchObject({ ok: true, result: { operationId: expect.any(String) } });
-      expect(settled.machineSettlement).toBeNull();
-      expect(await readFile(marker, 'utf8')).toBe('selected');
-      expect(settled.repositories[0]).toMatchObject({ id: 'unavailable-checkout', result: {
-        ok: false, errorCode: nativeRefusal.errorCode, error: nativeRefusal.error,
-        ...(nativeRefusal.failureCause ? { failureCause: nativeRefusal.failureCause } : {}),
-      } });
-      const opened = settled.repositories[1]?.result;
-      if (!opened) throw new Error('Selected project was not attempted');
-      if (!opened.ok) throw new Error(`Selected project refused: ${opened.errorCode}`);
-      const project = OpenProjectResultV1Schema.parse(opened.result);
-      if (project.kind !== 'opened') throw new Error(`Project not opened: ${project.kind}`);
-      openedProject = project;
-    })() },
-  }));
   try {
-    await act(async () => { await screen.findByTestId('d-selected-action').props.onPress(); });
-    expect(continuation).toBeTruthy();
-    await continuation;
+    const settled = await setupHook.getCurrent().run({ plan: prepared.plan,
+      selection: { team: { serverId: ui!.serverId, teamId }, lifetime, sources: [source] } });
+    expect(settled.machine).toMatchObject({ ok: true, result: { operationId: expect.any(String) } });
+    expect(settled.machineSettlement).toBeNull();
+    expect(await readFile(marker, 'utf8')).toBe('selected');
+    expect(settled.repositories[0]).toMatchObject({ id: 'unavailable-checkout',
+      result: { ok: true, result: { kind: 'refused', code: 'invalid_directory' } } });
+    const opened = settled.repositories[1]?.result;
+    if (!opened) throw new Error('Selected project was not attempted');
+    if (!opened.ok) throw new Error(`Selected project refused: ${opened.errorCode}`);
+    const openedProject = OpenProjectResultV1Schema.parse(opened.result);
+    if (openedProject.kind !== 'opened') throw new Error(`Project not opened: ${openedProject.kind}`);
     await waitFor(() => setupHook.getCurrent().repositoryProgress?.ready === true, { timeoutMs: 60_000 });
     expect(setupHook.getCurrent().repositoryProgress).toMatchObject({ phase: 'ready', queued: false,
       team: { serverId: ui!.serverId, teamId }, source: { id: source.id, name: source.name },
       target: { serverId: ui!.serverId, homeId, machineId } });
     expect(setupHook.getCurrent().batch?.selection.repositories).toHaveLength(1);
-    expect(openedProject?.directory).toBe(directory);
+    expect(openedProject.directory).toBe(directory);
     expect(await readFile(dirtyPath, 'utf8')).toBe('Keep my unfinished work\n');
     // R-D2: setup edits reference-only Project metadata through the existing writer;
     // agent service choices remain with F defaults and ordinary Session admission.
-    if (!openedProject?.facts?.projectKey) throw new Error('Project binding target unavailable');
+    if (!openedProject.facts?.projectKey) throw new Error('Project binding target unavailable');
     const projectRef = { serverId: ui!.serverId, projectKey: openedProject.facts.projectKey };
     const organization = storage.getState().projectAccountRows?.organizations.find(row =>
       row.key.serverId === projectRef.serverId && row.key.projectKey === projectRef.projectKey);
@@ -341,7 +298,6 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
     if (!removed.ok || !('row' in removed)) throw new Error('Project binding removal refused');
     expect(removed.row.environmentBindings?.bindings.DEPLOY_TOKEN).toBeUndefined();
     expect(draftId).toBeUndefined();
-    if (!openedProject) throw new Error('First task project unavailable');
     const authored = await setupHook.getCurrent().openFirstTask({ project: openedProject, machineId,
       prompt: 'Review the project and propose the first change.' });
     expect(authored.ok).toBe(true);
@@ -357,5 +313,5 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
     const current = composer.read();
     composer.apply(current.revision, { text: 'My edited first task', references: [], attachments: [] });
     expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })?.draft.input).toBe('My edited first task');
-  } finally { await screen.unmount(); await setupHook.unmount(); }
+  } finally { await setupHook.unmount(); }
 });

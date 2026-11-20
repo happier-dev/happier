@@ -21,6 +21,7 @@ import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { HappyError } from '@/utils/errors/errors';
 
+import { TeamJoinedSummaryForTeam } from './TeamJoinedSummary';
 import { shouldOfferTeamJoinName } from './teamJoinOutcome';
 
 type TeamAdmissionSuccess = Extract<
@@ -50,7 +51,7 @@ export function TeamJoinedCard(
     accountScope: ServerAccountScope | null;
     onOpenTeam: () => Promise<void> | void;
     setupContinuation?: TeamSetupContinuation;
-    /** What the Team already shares, between the name and the way on (plan D, L1 Joined). */
+    /** Static summary for the design specimen. Live admissions bind their Team here. */
     summary?: React.ReactNode;
   }>,
 ): React.ReactElement {
@@ -126,6 +127,13 @@ export function TeamJoinedCard(
   const { theme } = useUnistyles();
   return (
     <View testID={props.testID} style={styles.body}>
+      {props.summary ?? (props.setupContinuation && props.accountScope ? (
+        <TeamJoinedSummaryForTeam
+          testID="team-join-joined-summary"
+          scope={props.accountScope}
+          teamId={props.result.teamId}
+        />
+      ) : null)}
       {asksName ? (
         <AccountNameField
           testID={`${props.testID}-name-field`}
@@ -142,7 +150,6 @@ export function TeamJoinedCard(
           onSubmitEditing={openTeam}
         />
       ) : null}
-      {props.summary}
       {props.setupContinuation ? (
         // What the Team gives ends here; the way on starts below the hairline (lab L1 Joined).
         <HappierDivider color={theme.colors.border.default} decorative testID={`${props.testID}-divider`} />
