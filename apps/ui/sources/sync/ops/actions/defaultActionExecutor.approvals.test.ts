@@ -484,7 +484,11 @@ describe('createDefaultActionExecutor approvals', () => {
         } finally { account.dispose(); }
     });
 
-    it('keeps the applied Voice receipt after an actual Account preference change and refuses the next decision', async () => {
+    it.each(['direct', 'admitted run'] as const)('keeps the applied %s Voice receipt and requires a tap for the next decision after the preference changes', async origin => {
+        const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
+        const voiceExecutor = origin === 'direct' ? executor : createDefaultActionExecutor({
+            readAdmittedVoiceInvocation: () => ({ caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' }),
+        });
         await seedApproval('voice-live-preference', liveCliConfidentialApproval());
         await seedApproval('voice-live-next', liveCliConfidentialApproval());
         await setVoiceApprovalDelegation(true);
@@ -496,12 +500,13 @@ describe('createDefaultActionExecutor approvals', () => {
             resolve({ ok: true, result: receipt });
         } };
         const voiceContext = { ...context(), surface: 'voice' as const, actionCaller: { kind: 'host' as const } };
-        expect(await executor.execute('approval.request.decide', {
+        expect(await voiceExecutor.execute('approval.request.decide', {
             artifactId: 'voice-live-preference', decision: 'approve',
         }, voiceContext)).toEqual(receipt);
-        expect(await executor.execute('approval.request.decide', {
+        expect(await voiceExecutor.execute('approval.request.decide', {
             artifactId: 'voice-live-next', decision: 'approve',
         }, voiceContext)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
+        expect(persistedApproval('voice-live-next').status).toBe('open');
         expect(outgoing).toHaveLength(1);
     });
 

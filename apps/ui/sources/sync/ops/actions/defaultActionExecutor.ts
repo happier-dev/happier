@@ -1345,7 +1345,6 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       isCurrent: async () => accountContext.credentialAuthorityKind === 'account' && accountContext.accountLifetime.isCurrent(),
     } } : {}) };
   };
-  const resolveActionsSettingsSnapshot = () => resolveActionsSettingsV1FromState({ settings: readAccountSettingsSnapshot() });
   const executeReviewCommentAction = createReviewCommentsHttpActionExecutor(accountContext ? {
     request: accountContext.request,
     resolveReviewResourceContext: async (reviewId, signal) => {
@@ -5186,17 +5185,20 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       && !context.externalActionCredential && !context.externalActionExecutionAuthorization && !context.rpcSessionAuthorization
       && !context.signal?.aborted && storage.getState().settingsScope === null && isSettingsOwnerCurrent()
       && (actionId === 'links.openExternal' || isBuiltInLocalSettingMutation(actionId, input));
-    const voiceCanApproveRequests = !opts?.readAdmittedVoiceInvocation && surface === 'voice' && credential === 'account'
+    const settings = readAccountSettingsSnapshot();
+    const voiceCanApproveRequests = surface === 'voice' && credential === 'account'
       && (!context?.actionCaller || context.actionCaller.kind === 'host')
       && !context?.externalActionCredential && !context?.externalActionExecutionAuthorization
       && !context?.rpcSessionAuthorization
-      && readAccountSettingsSnapshot().voice.canApproveRequests === true;
+      && settings.voice.canApproveRequests === true;
     const credentialAuthority = resolveInvocationAuthority({ credential, surface, localUiInteraction,
       actionId, voiceCanApproveRequests });
-    // Ordinary callers can narrow the installed credential's authority, never
-    // promote it. Authenticated daemon continuations retain their admitted stamp.
+    // A fresh Voice Action can use the Run's signed authority only within the
+    // Account's current Voice preference. Prepared Actions retain their decision.
     const authority = opts?.readAdmittedVoiceInvocation
-      ? credential === 'account' ? voiceInvocation?.authority ?? 'account_automation' : credentialAuthority
+      ? credential === 'account' && credentialAuthority === 'present_user'
+        ? voiceInvocation?.authority ?? 'account_automation'
+        : credentialAuthority
       : opts?.admittedClientActionId
       ? context?.authority ?? 'account_automation'
       : credentialAuthority === 'present_user' ? context?.authority ?? credentialAuthority : credentialAuthority;
@@ -5209,7 +5211,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       && typeof input.creationKey === 'string' ? input.creationKey.trim() : undefined;
     return {
       ...(context ?? {}),
-      actionsSettings: resolveActionsSettingsSnapshot(),
+      actionsSettings: resolveActionsSettingsV1FromState({ settings }),
       surface,
       authority,
       ...(actionCaller ? { actionCaller } : {}),
