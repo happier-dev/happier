@@ -161,7 +161,8 @@ export function createAgent37PreparationClient(request: typeof fetch, signal?: A
       if (build?.template && build.template.name !== operation.name) throw new NativeError('agent37_template_identity_mismatch');
       const before = await template(operation, expected);
       if (before === null) {
-        return artifact || build ? { kind: 'confirmed' } : { kind: 'unknown', code: 'agent37_build_identity_unconfirmed', nativeOperationRef: reference(operation) };
+        return artifact || build ? { kind: 'confirmed' } : { kind: 'unknown',
+          code: PREPARATION_SCHEMAS.artifactAbsentBuildUnconfirmedCode, nativeOperationRef: reference(operation) };
       }
       await http(templatePath(operation), 'DELETE');
       // Confirms workspace-template absence only. Existing instances keep their

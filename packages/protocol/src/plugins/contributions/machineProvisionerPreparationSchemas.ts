@@ -30,6 +30,9 @@ function preparationReference<I, O>(valueSchema: ProtocolComposableSchema<I, O>)
   });
 }
 
+/** An exact artifact lookup found nothing, but the original build can still publish. */
+export const PREPARATION_ARTIFACT_ABSENT_BUILD_UNCONFIRMED_CODE_V1 = 'preparation_artifact_absent_build_unconfirmed';
+
 /** Provider-native build contracts only; preset selection and operation custody belong to the host. */
 export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, NO, LI, LO>(schemas: Readonly<{
   input: ProtocolComposableSchema<II, IO>;
@@ -59,6 +62,7 @@ export function defineMachineProvisionerPreparationSchemas<II, IO, AI, AO, NI, N
       defineProtocolObject({ kind: defineProtocolLiteral('failed'), code, nativeOperationRef,
         nativeCause: nativeCauseSchema.optional() }, closed),
       defineProtocolObject({ kind: defineProtocolLiteral('absent') }, closed), unknown]),
+    artifactAbsentBuildUnconfirmedCode: PREPARATION_ARTIFACT_ABSENT_BUILD_UNCONFIRMED_CODE_V1,
     destroyInput: defineProtocolUnion([
       defineProtocolObject({ artifact, nativeOperation: nativeOperationRef.optional() }, closed),
       defineProtocolObject({ artifact: artifact.optional(), nativeOperation: nativeOperationRef }, closed),

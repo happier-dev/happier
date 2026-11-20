@@ -9,6 +9,7 @@ import { deriveBoxPublicKeyFromSeed, deriveBoxSecretKeyFromSeed } from '@happier
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { PREPARATION_ARTIFACT_ABSENT_BUILD_UNCONFIRMED_CODE_V1 } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { readManagedMachinePresetPreparationV1 } from './presetPreparation.js';
 import { ManagedMachineNativeEffectGuardRefusal } from './controllerErrors.js';
@@ -324,6 +325,31 @@ describe('private preset preparation operation', () => {
       expect(fixture.opened().prepared).not.toHaveProperty('nativeOperationRef');
       expect(destroys).toBe(2);
       expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('settles Archive after an exact absence observation and keeps the unconfirmed build reference', async () => {
+    vi.useFakeTimers();
+    try {
+      const fixture = storageFixture();
+      const custody = { mode: 'plain' as const };
+      const operation = { ...identity, operationId: 'operation-one', custody, storage: fixture.storage };
+      const oldObservation = { kind: 'unknown' as const, code: 'agent37_build_identity_unconfirmed', nativeOperationRef };
+      await advanceManagedMachinePresetPreparationOperationV1({ ...operation, composeBuild: async () => ({ input: buildInput }),
+        native: nativeFixture({ build: async () => oldObservation }) });
+      await cancelManagedMachinePresetPreparationOperationV1({ ...operation,
+        native: nativeFixture({ destroy: async () => oldObservation }) });
+      const observation = { ...oldObservation, code: PREPARATION_ARTIFACT_ABSENT_BUILD_UNCONFIRMED_CODE_V1 };
+      const destroy = vi.fn<ManagedMachinePresetPreparationNativeV1['destroy']>()
+        .mockResolvedValueOnce(observation)
+        .mockResolvedValue({ kind: 'refused', code: 'provider_unavailable' });
+      const settling = settleManagedMachinePresetPreparationOperationV1({ ...operation, cleanupOnly: true,
+        expectedRevision: fixture.row().revision, native: nativeFixture({ destroy }) });
+      await vi.runAllTimersAsync();
+      expect(await settling).toMatchObject({ kind: 'cancelled', revision: fixture.row().revision });
+      expect(fixture.opened().prepared).toMatchObject({ status: 'cancelled', code: observation.code, nativeOperationRef });
+      expect(fixture.opened().prepared).not.toHaveProperty('artifact');
+      expect(destroy).toHaveBeenCalledTimes(1);
     } finally { vi.useRealTimers(); }
   });
 

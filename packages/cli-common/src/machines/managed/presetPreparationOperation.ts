@@ -4,9 +4,10 @@ import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/mach
 import { openManagedMachinePresetContentV1, replaceManagedMachinePresetPreparationV1,
   type ManagedMachinePresetContentV1, type ManagedMachinePresetPreparedWriteV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { MachineProvisionerPreparationBuildInputV1, MachineProvisionerPreparationBuildResultV1,
-  MachineProvisionerPreparationInspectInputV1, MachineProvisionerPreparationInspectResultV1,
-  MachineProvisionerPreparationDestroyInputV1, MachineProvisionerPreparationDestroyResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
+import { PREPARATION_ARTIFACT_ABSENT_BUILD_UNCONFIRMED_CODE_V1,
+  type MachineProvisionerPreparationBuildInputV1, type MachineProvisionerPreparationBuildResultV1,
+  type MachineProvisionerPreparationInspectInputV1, type MachineProvisionerPreparationInspectResultV1,
+  type MachineProvisionerPreparationDestroyInputV1, type MachineProvisionerPreparationDestroyResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 import { createManagedMachinePresetPreparationBindingV1, readManagedMachinePresetPreparationV1 } from './presetPreparation.js';
 import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 import { createPresetPreparationProgress, type ManagedMachinePresetPreparationProgressV1 } from './presetPreparationProgress.js';
@@ -304,8 +305,14 @@ async function cancelOperation(input: OperationInput, current: OpenPreset, expec
       return await persist(input, current, settled, 'cancelled');
     }
     case 'pending': return await persist(input, current, { ...cancelled.prepared, nativeOperationRef: nativeResult.nativeOperationRef }, 'pending');
-    case 'unknown': return await persist(input, current, { ...cancelled.prepared, ...nativeFailure(nativeResult, cancelled.prepared),
-      nativeOperationRef: nativeResult.nativeOperationRef }, 'unknown');
+    case 'unknown': {
+      // Archive can hide the preset after observed absence. Keep the reference
+      // so Restore and a later cleanup can still account for a late publication.
+      const kind = input.cleanupOnly && nativeResult.code === PREPARATION_ARTIFACT_ABSENT_BUILD_UNCONFIRMED_CODE_V1
+        ? 'cancelled' : 'unknown';
+      return await persist(input, current, { ...cancelled.prepared, ...nativeFailure(nativeResult, cancelled.prepared),
+        nativeOperationRef: nativeResult.nativeOperationRef }, kind);
+    }
     case 'refused': return await persist(input, current, { ...cancelled.prepared, ...nativeFailure(nativeResult, cancelled.prepared) }, 'failed');
   }
 }

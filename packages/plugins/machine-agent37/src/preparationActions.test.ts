@@ -98,12 +98,18 @@ describe('Agent37 prepared templates through public Actions', () => {
   });
 
   it('keeps unknown build identity recoverable when no published template exists', async () => {
-    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: services(async () => response(404, {})) });
+    const calls: string[] = [];
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: services(async request => {
+      calls.push(request.method + ' ' + new URL(request.url).pathname);
+      return response(404, {});
+    }) });
     try {
       const recovered = await kit.invokeAction('prepare-inspect', { operationId, launch }, { surface: 'plugin' });
       expect(recovered).toEqual({ kind: 'unknown', code: 'agent37_build_identity_unconfirmed', nativeOperationRef: { ...nativeOperation, value: { name, launch } } });
       expect(await kit.invokeAction('prepare-destroy', { nativeOperation: { ...nativeOperation, value: { name, launch } } }, { surface: 'plugin' }))
-        .toMatchObject({ kind: 'unknown', code: 'agent37_build_identity_unconfirmed' });
+        .toMatchObject({ kind: 'unknown', code: 'preparation_artifact_absent_build_unconfirmed',
+          nativeOperationRef: { ...nativeOperation, value: { name, launch } } });
+      expect(calls).toEqual(['GET /v1/templates/' + name, 'GET /v1/templates/' + name]);
     } finally { await kit.dispose(); }
   });
 

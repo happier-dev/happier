@@ -3625,7 +3625,10 @@ can Manage; the controller never borrows author or daemon sign-in for this actio
 A new Prepare replaces the old owned artifact within its new admission. Archive removes the preset’s
 prepared image through the same operation owner and native destroy, while the
 preset rows, revisions and capacity retain their reversible behavior. Restore
-returns it cold; only an explicit Prepare rebuilds the image.
+returns it cold; only an explicit Prepare rebuilds the image. When native
+cleanup observes that the exact artifact is absent and the Build identity
+remains uncertain, Archive completes and keeps the private cleanup reference.
+A later Prepare reconciles that reference before building a replacement.
 
 Preparation reports may retain native `artifactSizeBytes` beside the artifact in
 the existing private preset envelope. The preparation hook exposes this measured
