@@ -239,7 +239,6 @@ export type {
 } from './sourceAdministration.js';
 
 export {
-    TRIAGE_SOURCES_READ_CONFIGURED_ACTION_ID_V1,
     TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1,
     TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1,
     TriageConfiguredSourceInstanceRecordV1Schema,

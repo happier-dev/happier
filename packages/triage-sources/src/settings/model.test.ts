@@ -281,10 +281,6 @@ describe('the source settings configuration model', () => {
   it('keeps the three published failure arms apart', () => {
     expect(readTriageSourceConfiguration({ status: 'success', result: { kind: 'invalidCaller' } }))
       .toMatchObject({ kind: 'sourceNotAdmitted' });
-    expect(readTriageSourceConfiguration({
-      status: 'success',
-      result: { kind: 'currentnessConflict' },
-    })).toEqual({ kind: 'raced' });
     expect(readTriageSourceConfiguration({ status: 'success', result: { kind: 'conflict' } }))
       .toEqual({ kind: 'conflict' });
     // A full configured set is resolved only by removing a connection, so it
@@ -368,10 +364,9 @@ describe('what a row may claim about itself', () => {
     // would put Remove on a row the target never created.
     for (const outcome of [
       { kind: 'conflict' },
-      { kind: 'raced' },
+      { kind: 'unreadable' },
       { kind: 'atMaximum' },
       { kind: 'sourceNotAdmitted' },
-      { kind: 'unreadable' },
       { kind: 'outcomeUnknown', message: 'timed out' },
       { kind: 'failed', message: 'denied', retryable: false },
     ] as const) {
@@ -725,10 +720,6 @@ describe('the configured-instance read', () => {
       status: 'success',
       result: { kind: 'invalidCaller' },
     })).toEqual({ kind: 'sourceNotAdmitted' });
-    expect(readTriageSourceConfiguredInstances({
-      status: 'success',
-      result: { kind: 'currentnessConflict' },
-    })).toEqual({ kind: 'raced' });
     expect(readTriageSourceConfiguredInstances({ status: 'success', result: { kind: 'read' } }))
       .toEqual({ kind: 'unreadable' });
     expect(readTriageSourceConfiguredInstances({ status: 'pending' })).toEqual({ kind: 'loading' });
@@ -764,14 +755,14 @@ describe('the configured-instance read', () => {
 
   it('routes configured-read notices through the shared translation owner', () => {
     const notice = describeTriageSourceConfiguredRead(
-      { kind: 'raced' },
+      { kind: 'unreadable' },
       'Example Tracker',
       (key) => `translated:${key}`,
     );
     expect(notice).toEqual({
-      title: 'translated:plugins.triage.sourceSettings.configuredRead.raced.title',
-      description: 'translated:plugins.triage.sourceSettings.configuredRead.raced.description',
-      tone: 'warning',
+      title: 'translated:plugins.triage.sourceSettings.configuredRead.unreadable.title',
+      description: 'translated:plugins.triage.sourceSettings.configuredRead.unreadable.description',
+      tone: 'danger',
     });
   });
 
@@ -780,10 +771,10 @@ describe('the configured-instance read', () => {
     // A mount that is still reading is already showing that it is reading.
     expect(describeTriageSourceConfiguredRead({ kind: 'loading' }, 'Example Tracker')).toBeNull();
 
-    const notices = (['unreadable', 'outcomeUnknown', 'sourceNotAdmitted', 'raced'] as const)
+    const notices = (['unreadable', 'outcomeUnknown', 'sourceNotAdmitted'] as const)
       .map((kind) => describeTriageSourceConfiguredRead({ kind }, 'Example Tracker'));
     expect(notices.every((notice) => notice !== null)).toBe(true);
-    expect(new Set(notices.map((notice) => notice?.title)).size).toBe(4);
+    expect(new Set(notices.map((notice) => notice?.title)).size).toBe(3);
     expect(describeTriageSourceConfiguredRead({ kind: 'unreachable', message: 'Denied.' }, 'Example Tracker'))
       .toMatchObject({ tone: 'warning' });
   });

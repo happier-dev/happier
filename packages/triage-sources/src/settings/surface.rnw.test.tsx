@@ -751,7 +751,7 @@ describe('the mounted PRs & Issues source settings page', () => {
         status: 'complete',
         instances: [configuredRecord('acme/api', 'retired')],
       },
-      administration: [{ kind: 'currentnessConflict' }],
+      administration: [{ kind: 'conflict' }],
     });
     const page = await mountSettings(harness);
 
@@ -760,7 +760,7 @@ describe('the mounted PRs & Issues source settings page', () => {
     // A refused press says nothing about what the row is. Recording it as
     // knowledge would drop the row back to Add and lose the only control that can
     // bring the user's own configuration back.
-    await expect(page.getByText('Something changed while this was saving. Try again.'))
+    await expect(page.getByText('You removed this earlier. This page cannot bring it back yet.'))
       .resolves.toBeDefined();
     await expect(page.getByRole('button', { name: 'Restore acme/api to PRs & Issues' }))
       .resolves.toBeDefined();
@@ -855,11 +855,11 @@ describe('the mounted PRs & Issues source settings page', () => {
   it('says it could not read what is configured instead of silently offering Add', async () => {
     const harness = createHarness({
       discovery: { kind: 'complete', candidates: [candidate('acme/api')], failures: [] },
-      configured: { kind: 'currentnessConflict' },
+      configured: { kind: 'unexpected-result' },
     });
     const page = await mountSettings(harness);
 
-    await expect(page.getByText('This page read while something was changing'))
+    await expect(page.getByText('This version cannot read what is configured'))
       .resolves.toBeDefined();
     // Add stays available — the target refuses a duplicate safely — but the page
     // never implies that nothing is configured.

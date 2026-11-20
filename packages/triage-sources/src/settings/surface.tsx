@@ -296,7 +296,7 @@ export function createTriageSourceSettingsSurface(
       setLearned((previous) => {
         const current = previous[key] ?? UNKNOWN_TRIAGE_SOURCE_SETTINGS_ROW_LIFECYCLE_V1;
         const next = advanceTriageSourceSettingsRowLifecycle(current, outcome, input);
-        // A refused, raced, unreadable or unknown arm teaches nothing, and recording
+        // A refused, unreadable or unknown arm teaches nothing, and recording
         // it here would shadow what the target's own read says about this row.
         return next === current ? previous : { ...previous, [key]: next };
       });

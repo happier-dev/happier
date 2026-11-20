@@ -126,11 +126,9 @@ export type TriageSourceSettingsConfiguredInstanceV1 = Readonly<{
  * rows are never deleted, and a page that presented a truncated answer as the
  * whole set would offer Add for something already configured without saying so.
  *
- * The two refusals stay apart because they are opposite sentences.
- * `sourceNotAdmitted` says this source is no longer an admitted source at all;
- * `raced` says ask again. Every other state means the page could not learn what
- * is configured — which it must SAY, because silently falling back to Add is how
- * a user is told their configured source is gone.
+ * `sourceNotAdmitted` says this source is no longer admitted. An unreadable or
+ * incomplete answer must remain visible so the page does not present Add as
+ * evidence that a configured source is gone.
  */
 export type TriageSourceSettingsConfiguredV1 =
   | Readonly<{ kind: 'loading' }>
@@ -138,7 +136,6 @@ export type TriageSourceSettingsConfiguredV1 =
   | Readonly<{ kind: 'unreachable'; message: string; failure?: TriageSourceReadFailureV1 }>
   | Readonly<{ kind: 'outcomeUnknown' }>
   | Readonly<{ kind: 'sourceNotAdmitted' }>
-  | Readonly<{ kind: 'raced' }>
   | Readonly<{
     kind: 'read';
     complete: boolean;
@@ -192,7 +189,6 @@ export function readTriageSourceConfiguredInstances(
   if (!parsed.success) return { kind: 'unreadable' };
   const result = parsed.data;
   if (result.kind === 'invalidCaller') return { kind: 'sourceNotAdmitted' };
-  if (result.kind === 'currentnessConflict') return { kind: 'raced' };
 
   return {
     kind: 'read',
@@ -205,7 +201,7 @@ export function readTriageSourceConfiguredInstances(
  * What the target said about one administration attempt.
  *
  * Every arm of the published administration result has a member here, including
- * the four failure arms, because a settings page that collapses `invalidCaller`
+ * the three failure arms, because a settings page that collapses `invalidCaller`
  * into "something went wrong" removes the only signal that the source
  * contribution itself is no longer admitted. The four success arms that carry
  * an id stay apart because each one is a different sentence for the user: a row
@@ -223,7 +219,6 @@ export type TriageSourceSettingsConfigurationV1 =
   | Readonly<{ kind: 'conflict' }>
   | Readonly<{ kind: 'atMaximum' }>
   | Readonly<{ kind: 'sourceNotAdmitted'; failure?: TriageSourceReadFailureV1 }>
-  | Readonly<{ kind: 'raced' }>
   | Readonly<{ kind: 'unreadable' }>
   | Readonly<{ kind: 'failed'; message: string; retryable: boolean; failure?: TriageSourceReadFailureV1 }>
   | Readonly<{ kind: 'outcomeUnknown'; message: string }>;
@@ -415,8 +410,6 @@ export function readTriageSourceConfiguration(
         }),
       }) };
     }
-    case 'currentnessConflict':
-      return { kind: 'raced' };
     case 'conflict':
       return { kind: 'conflict' };
     case 'atMaximum':
@@ -431,7 +424,7 @@ export function readTriageSourceConfiguration(
 /**
  * Advance what this page knows about a row from the arm the target returned.
  *
- * Only a success arm moves it. A `conflict`, a race, an unreadable result or a
+ * Only a success arm moves it. A `conflict`, an unreadable result or a
  * transport failure leaves the previous knowledge exactly as it was: none of
  * them tells us whether a row exists, and inventing an answer is what would put
  * a Remove control on a row the target never created.
@@ -533,11 +526,6 @@ function describeTriageSourceConfiguration(
       return {
         text: outcome.failure?.detail ?? text('plugins.triage.sourceSettings.configuration.refused', 'The source change was refused. Open Details for the reason.'),
         tone: 'danger',
-      };
-    case 'raced':
-      return {
-        text: text('plugins.triage.sourceSettings.configuration.raced', 'Something changed while this was saving. Try again.'),
-        tone: 'warning',
       };
     case 'unreadable':
       return {
@@ -890,12 +878,6 @@ export function describeTriageSourceConfiguredRead(
           { product: PRODUCT_NAME },
         ),
         tone: 'danger',
-      };
-    case 'raced':
-      return {
-        title: text('plugins.triage.sourceSettings.configuredRead.raced.title', 'This page read while something was changing'),
-        description: text('plugins.triage.sourceSettings.configuredRead.raced.description', 'Refresh to see what is configured now.'),
-        tone: 'warning',
       };
   }
 }

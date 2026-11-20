@@ -18,9 +18,6 @@ export function readTriageConfiguredSourceDisplayLabelV1(
 
 /** The Action's target-local id. */
 export const TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1 = 'sources/read-configured-v1';
-/** The Action's stable registration/descriptive id. */
-export const TRIAGE_SOURCES_READ_CONFIGURED_ACTION_ID_V1 =
-    'happier.triage/sources/read-configured-v1';
 /**
  * The exact qualified ref a source Settings surface passes to
  * `hostApi.executeAction(...)`, exactly as the administration Action's ref is
@@ -98,13 +95,6 @@ export type TriageConfiguredSourceInstanceRecordV1 = ReturnType<
  * caller with no currently admitted V1 source contribution, and it is a settled
  * answer rather than a thrown error: a Settings page that has just been retired
  * must render a refusal, not a crash.
- *
- * `currentnessConflict` is kept separate from it for the same reason the
- * administration result keeps them separate, and here the distinction is the
- * difference between two opposite sentences: a caller whose admitted view moved
- * DURING the read is still a configured source, and answering `invalidCaller`
- * would tell a person their source is not configured when re-reading would show
- * it is.
  */
 export const TriageReadConfiguredSourceInstancesResultV1Schema = defineProtocolUnion([
     defineProtocolObject({
@@ -117,9 +107,6 @@ export const TriageReadConfiguredSourceInstancesResultV1Schema = defineProtocolU
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('invalidCaller'),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('currentnessConflict'),
     }, { policy: 'closed' }),
 ]);
 export type TriageReadConfiguredSourceInstancesResultV1 = ReturnType<

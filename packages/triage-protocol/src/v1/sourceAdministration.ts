@@ -93,8 +93,7 @@ export type TriageSourceAdministrationActionInputV1 = ReturnType<
 /**
  * Every success arm exposes only the canonical `sourceInstanceId`: it never
  * echoes the binding, configuration, locator, credentials, or a provider DTO.
- * The closed failure arms are `invalidCaller`, `currentnessConflict`,
- * `conflict`, and `atMaximum`; ordinary Action cancellation aborts the
+ * The closed failure arms are `invalidCaller`, `conflict`, and `atMaximum`; ordinary Action cancellation aborts the
  * invocation rather than producing a result member (`CONTRACT.md` §3.0).
  *
  * `atMaximum` is separate from `conflict` because the two ask the caller for
@@ -139,9 +138,6 @@ export const TriageSourceAdministrationActionResultV1Schema = defineProtocolUnio
             surface: TriageIdentifierV1ProtocolSchema,
             candidateCount: defineProtocolNumber({ integer: true, minimum: 0 }),
         }, { policy: 'closed' }).optional(),
-    }, { policy: 'closed' }),
-    defineProtocolObject({
-        kind: defineProtocolLiteral('currentnessConflict'),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('conflict'),

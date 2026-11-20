@@ -119,8 +119,8 @@ describe('Triage source administration result', () => {
         }).success).toBe(false);
     });
 
-    it('has exactly four closed failure arms and no cancellation arm', () => {
-        for (const kind of ['invalidCaller', 'currentnessConflict', 'conflict', 'atMaximum']) {
+    it('has the three closed failure arms and no cancellation arm', () => {
+        for (const kind of ['invalidCaller', 'conflict', 'atMaximum']) {
             expect(TriageSourceAdministrationActionResultV1Schema.parse({ kind })).toEqual({ kind });
         }
         expect(TriageSourceAdministrationActionResultV1Schema.safeParse({ kind: 'cancelled' }).success)
