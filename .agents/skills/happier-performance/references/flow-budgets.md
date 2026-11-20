@@ -267,5 +267,6 @@ The first-open gates in `.project/plans/2026-11-19-first-open/` own these formul
 | `firstOpen.03.F13` | One terminal request read and one approval after Accept. | Real CLI link through the web receiver |
 | `firstOpen.03.F14` | Returning-method lead adds 0 reads. Recovery uses only the chosen method's calls. | Same-profile logout, return and Home recovery |
 | `firstOpen.03.F15` | No reread until Retry, then 1 for the failed resource. | Welcome notices at the server boundary |
+| `firstOpen.03.landing` | One destination choice and navigation per interactive sign-in. A continuation mounts no intermediate Home. The landing adds no credential or descriptor reads, requests, or Action dispatches. Record time to a usable destination without imposing a deadline. | OAuth, email, pairing, terminal, new-session and Team continuations |
 | `firstOpen.04.F1` | One outgoing freeze, one incoming layout pass, one particle set, and 0 added server calls. Per frame: 1 production and 0 layout, style recalculation, React commits, sprite allocations or pixel copies. After settle: 0 frames or retained captures. | Real wizard entry and mounted step stage |
 | `firstOpen.04.F5` | Same move budget, with work proportional to rendered Home leaves and 0 frames after settle. | Welcome provision → Home build |
