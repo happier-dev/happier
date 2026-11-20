@@ -18,14 +18,16 @@ export function createSessionCopyMenuItem(params: Readonly<{
     iconSize?: number;
     information: SessionDebugInformation;
 }>): DropdownMenuItem {
+    // Start the clipboard write while the menu still owns the gesture and its Account binding.
     const items: DropdownMenuItem[] = [
-        { id: SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID, title: t('sessionInfo.sessionInformation') },
-        { id: SESSION_COPY_ID_MENU_ITEM_ID, title: t('sessionInfo.happierSessionId') },
+        { id: SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID, title: t('sessionInfo.sessionInformation'), keepMenuOpen: true },
+        { id: SESSION_COPY_ID_MENU_ITEM_ID, title: t('sessionInfo.happierSessionId'), keepMenuOpen: true },
     ];
     if (params.information.providerDisplayName && params.information.providerSessionId) {
         items.push({
             id: SESSION_COPY_PROVIDER_ID_MENU_ITEM_ID,
             title: t('sessionInfo.providerSessionId', { provider: params.information.providerDisplayName }),
+            keepMenuOpen: true,
         });
     }
     return {

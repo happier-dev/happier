@@ -773,6 +773,10 @@ const SessionItemContent = React.memo(
         const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
         const setContextMenuOpen = onNativeContextMenuOpenChange ?? setUncontrolledContextMenuOpen;
+        const closeRowMenus = React.useCallback(() => {
+            setMoreMenuOpen(false);
+            setContextMenuOpen(false);
+        }, [setContextMenuOpen]);
         const writeClipboard = useClipboardWrite(serverId ?? null, { enabled: contextMenuOpen || moreMenuOpen });
         const setAttentionMenuHeld = useSessionListAttentionActivity();
         React.useLayoutEffect(() => {
@@ -981,7 +985,9 @@ const SessionItemContent = React.memo(
                 return true;
             }
             if (isSessionCopyActionId(itemId)) {
-                const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation(), itemId, writeClipboard);
+                const copy = copySessionDebugInformationToClipboard(resolveSessionDebugInformation(), itemId, writeClipboard);
+                closeRowMenus();
+                const copied = await copy;
                 if (copied) {
                     copyFeedback.markCopied(resolvedSession.id);
                 }
@@ -992,7 +998,7 @@ const SessionItemContent = React.memo(
                 return true;
             }
             return false;
-        }, [confirmDeleteDraft, copyFeedback, mention, mentionScope, openForkFlow, organize, resolvedSession.id, resolveSessionDebugInformation, writeClipboard, serverId, sessionNameResolved, workspaceOpen]);
+        }, [closeRowMenus, confirmDeleteDraft, copyFeedback, mention, mentionScope, openForkFlow, organize, resolvedSession.id, resolveSessionDebugInformation, writeClipboard, serverId, sessionNameResolved, workspaceOpen]);
 
         const handleEnterSelectionMode = React.useCallback(() => {
             if (!resolvedSelectionKey) return;
@@ -1070,10 +1076,6 @@ const SessionItemContent = React.memo(
             onSetSessionAppearance,
         });
         const appearanceStripeColor = resolveSessionAppearanceColor(appearanceColor, theme);
-        const closeRowMenus = React.useCallback(() => {
-            setMoreMenuOpen(false);
-            setContextMenuOpen(false);
-        }, [setContextMenuOpen]);
         const {
             tagMenuItems,
             handleTagMenuSelect,

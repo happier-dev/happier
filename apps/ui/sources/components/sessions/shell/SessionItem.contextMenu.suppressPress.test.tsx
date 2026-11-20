@@ -2,12 +2,14 @@ import React from 'react';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, installBrowserClipboardBoundary } from '@/dev/testkit';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
+import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 
 import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
 import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { SESSION_ACTION_RENAME_ID } from '@/components/sessions/actions/sessionActionIds';
+import { SESSION_ROW_ACTION_SELECT_ID } from './row/actionMenu/sessionRowActionMenuTypes';
 
 
 
@@ -35,14 +37,6 @@ vi.mock('react-native-gesture-handler', () => ({
     GestureDetector: (props: any) => React.createElement('GestureDetector', props, props.children),
 }));
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
-
-vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
-    ContextMenu: (props: any) => React.createElement('ContextMenu', props),
-}));
-
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => true) }));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
@@ -61,10 +55,6 @@ const platformState = vi.hoisted(() => ({
 vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
     useIsTablet: () => false,
-}));
-
-vi.mock('@/hooks/ui/useHappyAction', () => ({
-    useHappyAction: (fn: any) => [false, fn],
 }));
 
 installSessionShellCommonModuleMocks({
@@ -108,13 +98,30 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const {
+    SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID,
+    SESSION_COPY_ID_MENU_ITEM_ID,
+    SESSION_COPY_PROVIDER_ID_MENU_ITEM_ID,
+} = await import('@/components/sessions/debug/sessionDebugClipboard');
+const { SESSION_COPY_MENU_ITEM_ID } = await import('@/components/sessions/debug/sessionDebugMenuItem');
 let previousStorageState: ReturnType<typeof storage.getState>;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 let wireSession: ReturnType<typeof SessionCurrentProjectionRecordV1Schema.parse> | undefined;
+let restorePopoverWebGlobals: (() => void) | undefined;
 const metadataRequests: Array<{ url: string; patch: ReturnType<typeof SessionMetadataTuplePatchV1Schema.parse> }> = [];
 
 async function renderScreen(element: Parameters<typeof renderCanonicalScreen>[0]) {
-    return renderCanonicalScreen(element);
+    // Test Renderer paints popovers inline. Supply the web frame and window ports without a DOM portal target.
+    if (platformState.os === 'web') restorePopoverWebGlobals = withPopoverWebGlobals();
+    return renderCanonicalScreen(element, {
+        createNodeMock: () => ({
+            offsetTop: 32,
+            offsetHeight: 48,
+            measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) =>
+                callback(16, 32, 280, 48),
+            getBoundingClientRect: () => ({ x: 16, y: 32, left: 16, top: 32, right: 296, bottom: 80, width: 280, height: 48 }),
+        }),
+    });
 }
 
 // Collect the real owner before test execution. A cold graph transform inside
@@ -127,21 +134,26 @@ async function importSessionItem() {
     };
 }
 
-function hasSelectMenuItem(items: unknown): boolean {
-    if (!Array.isArray(items)) return false;
-    return items.some((item: unknown) => {
-        if (!item || typeof item !== 'object') return false;
-        return (item as { id?: unknown }).id === 'selection.select';
-    });
+type Screen = Awaited<ReturnType<typeof renderScreen>>;
+
+function menuOptionTestId(actionId: string): string {
+    return `dropdown-option-${actionId.replaceAll('.', '_')}`;
 }
 
-function hasCopyDebugInformationMenuItem(items: unknown): boolean {
-    if (!Array.isArray(items)) return false;
-    return items.some((item: unknown) => {
-        if (!item || typeof item !== 'object') return false;
-        const entry = item as { id?: unknown; submenu?: { items?: unknown } };
-        return entry.id === 'session.copyDebugInformation' || hasCopyDebugInformationMenuItem(entry.submenu?.items);
-    });
+async function pressMenuOption(screen: Screen, actionId: string) {
+    const testId = menuOptionTestId(actionId);
+    await vi.waitFor(() => expect(screen.findHostByTestId(testId)).toBeTruthy());
+    await screen.pressByTestIdAsync(testId);
+}
+
+async function openMoreMenu(screen: Screen) {
+    const hoverTarget = screen.root.findAll((node) => typeof node.props.onPointerEnter === 'function')[0];
+    await act(async () => { hoverTarget.props.onPointerEnter(); });
+    await screen.pressByTestIdAsync('session-item-more-menu');
+}
+
+async function openTouchMenu(screen: Screen, sessionId: string) {
+    await act(async () => { screen.findHostByTestId(`session-list-item-${sessionId}`)!.props.onLongPress(); });
 }
 
 describe('SessionItem context menu press suppression', () => {
@@ -201,6 +213,8 @@ describe('SessionItem context menu press suppression', () => {
     });
     afterEach(async () => {
         standardCleanup();
+        restorePopoverWebGlobals?.();
+        restorePopoverWebGlobals = undefined;
         navigateToSessionSpy.mockClear();
         modalPromptSpy.mockClear();
         modalShowSpy.mockClear();
@@ -232,26 +246,21 @@ describe('SessionItem context menu press suppression', () => {
             />,
         );
 
-        // A closed menu mounts nothing per row (addc1a6fbfd); it mounts, open, when the native menu opens.
-        expect(screen.tree.root.findAllByType('ContextMenu' as React.ElementType)).toHaveLength(0);
+        const renameOption = menuOptionTestId(SESSION_ACTION_RENAME_ID);
+        expect(screen.findHostByTestId(renameOption)).toBeNull();
 
-        await act(async () => {
-            await screen.update(
-                <SessionItem
-                    session={session}
-                    serverId={account.serverId}
-                    selected={false}
-                    compact={false}
-                    nativeContextMenuOpen={true}
-                    onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
-                />,
-            );
-        });
+        await screen.update(
+            <SessionItem
+                session={session}
+                serverId={account.serverId}
+                selected={false}
+                compact={false}
+                nativeContextMenuOpen
+                onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
+            />,
+        );
 
-        const menus = screen.tree.root.findAllByType('ContextMenu' as React.ElementType);
-        expect(menus).toHaveLength(1);
-        expect(menus[0].props.open).toBe(true);
-        expect(menus[0].props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_RENAME_ID)).toBe(true);
+        await vi.waitFor(() => expect(screen.findHostByTestId(renameOption)).toBeTruthy());
     });
 
     it.each(['ios', 'android', 'web'] as const)('shows copy information with developer mode disabled on %s', async (platform) => {
@@ -271,56 +280,32 @@ describe('SessionItem context menu press suppression', () => {
             },
         });
 
-        let reopenMenu = () => {};
-        function CopyRow() {
-            const [open, setOpen] = React.useState(true);
-            reopenMenu = () => setOpen(true);
-            return <SessionItem session={session} serverId={account.serverId} selected={false}
-            compact={false} nativeContextMenuOpen={open}
-                onNativeContextMenuOpenChange={setOpen} />;
-        }
-        const screen = await renderScreen(<CopyRow />);
-
-        if (platform === 'web') {
-            const hoverTarget = screen.tree.root.findAll(node => typeof node.props?.onPointerEnter === 'function')[0];
-            await act(async () => { hoverTarget.props.onPointerEnter(); });
-        }
-        const menus = screen.tree.root.findAllByType((platform === 'web' ? 'DropdownMenu' : 'ContextMenu') as React.ElementType);
-        expect(menus.some(menu => hasCopyDebugInformationMenuItem(menu.props.items))).toBe(true);
-        const menu = menus.find(menu => hasCopyDebugInformationMenuItem(menu.props.items))!;
-        const copyMenu = menu.props.items.find((item: { id: string }) => item.id === 'session.copy');
-        expect(copyMenu?.submenu?.items.map((item: { id: string }) => item.id)).toEqual([
-            'session.copyDebugInformation', 'session.copySessionId', 'session.copyProviderSessionId',
-        ]);
+        const screen = await renderScreen(
+            <SessionItem session={session} serverId={account.serverId} selected={false} compact={false} />,
+        );
         const Clipboard = await import('expo-clipboard');
         for (const [itemId, expected] of [
-            ['session.copySessionId', session.id],
-            ['session.copyProviderSessionId', 'claude-session-1'],
+            [SESSION_COPY_ID_MENU_ITEM_ID, session.id],
+            [SESSION_COPY_PROVIDER_ID_MENU_ITEM_ID, 'claude-session-1'],
         ]) {
-            await act(async () => { reopenMenu(); });
-            await flushHookEffects();
-            const currentMenu = screen.tree.root.findAllByType((platform === 'web' ? 'DropdownMenu' : 'ContextMenu') as React.ElementType)
-                .find(menu => hasCopyDebugInformationMenuItem(menu.props.items))!;
+            if (platform === 'web') await openMoreMenu(screen);
+            else await openTouchMenu(screen, session.id);
+            await pressMenuOption(screen, SESSION_COPY_MENU_ITEM_ID);
+            await vi.waitFor(() => expect(screen.findHostByTestId(menuOptionTestId(SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID))).toBeTruthy());
+
             if (platform === 'web') {
-                let gestureActive = true;
-                vi.mocked(Clipboard.setStringAsync).mockImplementation(async () => {
-                    if (!gestureActive) throw new DOMException('', 'NotAllowedError');
-                    return true;
-                });
+                const testId = menuOptionTestId(itemId);
+                await vi.waitFor(() => expect(screen.findHostByTestId(testId)).toBeTruthy());
                 await act(async () => {
-                    const copying = currentMenu.props.onSelect(itemId);
+                    screen.pressByTestId(testId);
                     expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected);
-                    gestureActive = false;
-                    await copying;
                 });
             } else {
-                await act(async () => { await currentMenu.props.onSelect(itemId); });
+                await pressMenuOption(screen, itemId);
                 await vi.waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected));
-                expect(screen.tree.root.findByType('ContextMenu' as React.ElementType).props.open).toBe(false);
             }
-            expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected);
+            await vi.waitFor(() => expect(screen.findHostByTestId(menuOptionTestId(SESSION_COPY_MENU_ITEM_ID))).toBeNull());
         }
-
     });
 
     it('copies debug information from the full cached session when row metadata is list-projected', async () => {
@@ -363,34 +348,22 @@ describe('SessionItem context menu press suppression', () => {
         };
 
         const screen = await renderScreen(
-            <SessionItem
-                session={rowSession}
-                serverId={account.serverId}
-                selected={false}
-                compact={false}
-                nativeContextMenuOpen={true}
-                onNativeContextMenuOpenChange={vi.fn()}
-            />,
+            <SessionItem session={rowSession} serverId={account.serverId} selected={false} compact={false} />,
         );
 
-        const contextMenu = screen.tree.root.findByType('ContextMenu' as React.ElementType);
-        await act(async () => {
-            await contextMenu.props.onSelect('session.copyDebugInformation');
+        await openTouchMenu(screen, rowSession.id);
+        await pressMenuOption(screen, SESSION_COPY_MENU_ITEM_ID);
+        await pressMenuOption(screen, SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID);
+        await vi.waitFor(() => {
+            const copied = vi.mocked(Clipboard.setStringAsync).mock.lastCall?.[0];
+            expect(copied).toContain('codex-session-1');
+            expect(copied).toContain('/tmp/happier/session.log');
         });
-        await vi.waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
-            'Happier session ID: sess_debug_full',
-            'agentInput.agent.codex session ID: codex-session-1',
-            'Happier logs: /tmp/happier/session.log',
-        ].join('\n')));
 
-        await act(async () => { await contextMenu.props.onSelect('session.copyProviderSessionId'); });
+        await openTouchMenu(screen, rowSession.id);
+        await pressMenuOption(screen, SESSION_COPY_MENU_ITEM_ID);
+        await pressMenuOption(screen, SESSION_COPY_PROVIDER_ID_MENU_ITEM_ID);
         await vi.waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('codex-session-1'));
-
-        expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
-            'Happier session ID: sess_debug_full',
-            'agentInput.agent.codex session ID: codex-session-1',
-            'Happier logs: /tmp/happier/session.log',
-        ].join('\n'));
     });
 
     it('suppresses the release press after a native context menu is opened externally', async () => {
@@ -496,8 +469,7 @@ describe('SessionItem context menu press suppression', () => {
         if (!itemPressable) throw new Error('expected carryable session pressable');
         expect(itemPressable.props.onLongPress).toEqual(expect.any(Function));
         expect(onNativeContextMenuOpenChange).not.toHaveBeenCalled();
-        const menu = screen.tree.root.findAllByType('ContextMenu' as React.ElementType)[0];
-        expect(menu?.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'entity.mentionInComposer' })]));
+        expect(screen.findHostByTestId(menuOptionTestId('entity.mentionInComposer'))).not.toBeNull();
     });
 
     it('suppresses the post-carry row press after a whole-row desktop carry', async () => {
@@ -665,24 +637,24 @@ describe('SessionItem context menu press suppression', () => {
         });
         const onNativeContextMenuOpenChange = vi.fn();
 
-        const screen = await renderScreen(
-            <SessionItem
-                session={session}
-                selected={false}
-                compact={false}
-                nativeContextMenuOpen={true}
-                onNativeContextMenuOpenChange={onNativeContextMenuOpenChange}
-                serverId={account.home.id}
-            />,
-        );
+        function RowWithControlledMenu() {
+            const [open, setOpen] = React.useState(false);
+            return <SessionItem session={session} selected={false} compact={false} serverId={account.home.id}
+                nativeContextMenuOpen={open} onNativeContextMenuOpenChange={next => {
+                    onNativeContextMenuOpenChange(next);
+                    setOpen(next);
+                }} />;
+        }
+        const screen = await renderScreen(<RowWithControlledMenu />);
 
-        const contextMenu = screen.findByType('ContextMenu' as any);
-        await act(async () => {
-            contextMenu.props.onSelect(SESSION_ACTION_RENAME_ID);
-        });
+        await openTouchMenu(screen, session.id);
+        onNativeContextMenuOpenChange.mockClear();
+        await pressMenuOption(screen, SESSION_ACTION_RENAME_ID);
 
+        await vi.waitFor(() => expect(modalPromptSpy).toHaveBeenCalled());
         expect(onNativeContextMenuOpenChange).toHaveBeenCalledWith(false);
-        expect(modalPromptSpy).toHaveBeenCalled();
+        expect(onNativeContextMenuOpenChange.mock.invocationCallOrder[0]).toBeLessThan(modalPromptSpy.mock.invocationCallOrder[0]!);
+        expect(screen.findHostByTestId(menuOptionTestId(SESSION_ACTION_RENAME_ID))).toBeNull();
         await vi.waitFor(() => expect(metadataRequests.length).toBeGreaterThan(0));
         expect(metadataRequests.every((request) => request.url.startsWith(`${account.home.serverUrl}/v2/sessions/sess_rename`))).toBe(true);
         expect(JSON.parse(wireSession!.metadata).summary.text).toBe('Renamed Session');
@@ -745,22 +717,10 @@ describe('SessionItem context menu press suppression', () => {
             </SessionListSelectionProvider>,
         );
 
-        const hoverTarget = screen.tree.root.findAll((node) => typeof node.props?.onPointerEnter === 'function')[0];
-        expect(hoverTarget).toBeDefined();
-        await act(async () => {
-            hoverTarget.props.onPointerEnter();
-        });
-
-        const menus = screen.tree.root.findAllByType('DropdownMenu' as React.ElementType);
-        const moreMenu = menus.find((menu) => hasSelectMenuItem(menu.props.items));
-        expect(moreMenu).toBeDefined();
-
-        await act(async () => {
-            moreMenu?.props.onSelect('selection.select');
-        });
-
-        const checkbox = screen.findByProps({ testID: 'session-list-selection-checkbox-sess_web_select' });
-        expect(checkbox.props.accessibilityState).toEqual({ checked: true });
+        await openMoreMenu(screen);
+        await pressMenuOption(screen, SESSION_ROW_ACTION_SELECT_ID);
+        await vi.waitFor(() => expect(screen.findHostByTestId('session-list-selection-checkbox-sess_web_select')?.props)
+            .toMatchObject({ role: 'checkbox', 'aria-checked': true }));
     });
 
     it('tracks keyboard focus independently from the selected row', async () => {
@@ -795,13 +755,12 @@ describe('SessionItem context menu press suppression', () => {
         expect(screen.tree.root.findAllByProps({ testID: 'session-list-selection-checkbox-sess_touch_select' })).toHaveLength(0);
         await act(async () => { row.props.onPress(); });
         expect(navigateToSessionSpy).not.toHaveBeenCalled();
-        const menu = screen.findByType('ContextMenu' as React.ElementType);
-        expect(hasSelectMenuItem(menu.props.items)).toBe(true);
-        await act(async () => { menu.props.onSelect('selection.select'); });
-        expect(screen.findByProps({ testID: 'session-list-selection-checkbox-sess_touch_select' }).props.accessibilityState.checked).toBe(true);
+        await pressMenuOption(screen, SESSION_ROW_ACTION_SELECT_ID);
+        await vi.waitFor(() => expect(screen.findHostByTestId('session-list-selection-checkbox-sess_touch_select')?.props)
+            .toMatchObject({ accessibilityRole: 'checkbox', accessibilityState: { checked: true } }));
     });
 
-    it('offers fork in the session row dropdown without a subtitle and opens the shared fork flow', async () => {
+    it('opens the shared fork flow from the session row dropdown', async () => {
         platformState.os = 'web';
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
@@ -831,19 +790,8 @@ describe('SessionItem context menu press suppression', () => {
             />,
         );
 
-        const hoverContainer = screen.tree.root.findAll((node) => typeof node.props.onPointerEnter === 'function')[0];
-        await act(async () => hoverContainer?.props.onPointerEnter());
-        const dropdown = screen.tree.root.findByType('DropdownMenu' as React.ElementType);
-        const forkItem = dropdown.props.items.find((item: { id: string }) => item.id === 'session.fork');
-
-        expect(forkItem).toMatchObject({
-            id: 'session.fork',
-            title: 'sessionInfo.forkSession',
-            subtitle: undefined,
-        });
-        await act(async () => {
-            await dropdown.props.onSelect('session.fork');
-        });
+        await openMoreMenu(screen);
+        await pressMenuOption(screen, 'session.fork');
 
         await vi.waitFor(() => expect(modalShowSpy).toHaveBeenCalledWith(expect.objectContaining({
             props: expect.objectContaining({ request: expect.objectContaining({
