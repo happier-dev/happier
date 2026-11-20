@@ -18,10 +18,10 @@ import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encry
 import { isExternalActionRequestVersionAllowedForAccountModeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { listMachineCandidatesInTx, resolveEffectiveMachineAccessForMachinesInTx } from "@/app/machines/machineAccess";
 import {
-    ManagedMachineError, readManagedMachineInTx, projectManagedMachineInTx,
+    ManagedMachineError, readManagedMachineInTx, projectManagedMachine,
     invalidateManagedMachineInTx, readManagedLaunchSnapshot, sameManagedInput, type StoredManagedMachine,
     inManagedMachinePublicationTx,
-    projectManagedMachinesInTx, projectManagedControllerAccess,
+    projectManagedControllerAccess,
     readManagedAdmissionState,
     hasPossibleManagedNativeResource, readStoredOpaquePresetLaunch,
     resolveManagedMachineRoleInTx, resolveManagedMachineRole,
@@ -229,7 +229,7 @@ export async function getManagedMachine(params: Readonly<{ actorAccountId: strin
 }
 /** Private native custody and public creator results share one actor-aware projection. */
 export async function projectManagedMachineForActorInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, admittedRole?: 'manage'): Promise<ManagedMachineV1> {
-    const machine = await projectManagedMachineInTx(tx, row);
+    const machine = projectManagedMachine(row);
     if (row.custodianAccountId === actorAccountId
         || !isManagedMachineCreator(row, actorAccountId)
             && (admittedRole ?? await resolveManagedMachineRoleInTx(tx, row, actorAccountId)) === 'manage') return machine;
@@ -295,9 +295,8 @@ export async function listManagedMachines(params: Readonly<{ actorAccountId: str
             row.enrolledMachineId ? access.get(row.enrolledMachineId)?.get(params.actorAccountId) ?? null : null);
         const accessible = rows.filter(row => isManagedMachineCreator(row, params.actorAccountId)
             || role(row));
-        const machines = await projectManagedMachinesInTx(tx, accessible);
-        return { machines: machines.map((machine, index) => {
-            const row = accessible[index];
+        return { machines: accessible.map(row => {
+            const machine = projectManagedMachine(row);
             const projected = row.custodianAccountId !== params.actorAccountId
                 && (isManagedMachineCreator(row, params.actorAccountId) || role(row) !== 'manage')
                 ? redactManagedMachineCredentialReferences(machine) : machine;

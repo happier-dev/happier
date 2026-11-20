@@ -19,7 +19,7 @@ import { markAccountChanged } from '@/app/changes/markAccountChanged';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { admitManagedAcquire } from './managedAcquire';
 import { cancelManagedCreation } from './managedRead';
-import { invalidateManagedMachineInTx, projectManagedMachineInTx, readManagedMachineInTx } from './managedRows';
+import { invalidateManagedMachineInTx, projectManagedMachine, readManagedMachineInTx } from './managedRows';
 import { archiveMachinePreset, createMachinePreset, updateMachinePreset } from './machinePresetService';
 import { observeLazyPrismaQuery } from '@/app/changes/accountPublicationContention.testkit';
 import { removeTeamMemberForActorInTx } from '@/app/teams/memberships/memberAdministration';
@@ -839,7 +839,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                 : phase === 'invalidate' && correlation ? await inTx(async tx => {
                     const row = await readManagedMachineInTx(tx, correlation);
                     await invalidateManagedMachineInTx(tx, row);
-                    return { machine: await projectManagedMachineInTx(tx, row) };
+                    return { machine: projectManagedMachine(row) };
                 })
                 : phase === 'submit' && correlation ? await submitManagedAcquire(correlation)
                 : phase === 'control' && control ? await admitManagedControl(control)

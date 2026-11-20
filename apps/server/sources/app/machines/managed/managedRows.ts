@@ -430,15 +430,6 @@ export async function readManagedProjectionFactsInTx(tx: Tx, inputs: readonly Ma
     return { controllers, declarationBodies, declarationFor: input => input.controller ? declarations.get(keyOf(input)) ?? null : null };
 }
 
-export async function projectManagedMachineInTx(tx: Tx, row: StoredManagedMachine): Promise<ManagedMachineV1> {
-    return (await projectManagedMachinesInTx(tx, [row]))[0];
-}
-
-/** Listing retained allocations needs no provider discovery or declaration admission. */
-export async function projectManagedMachinesInTx(_tx: Tx, rows: readonly StoredManagedMachine[]): Promise<ManagedMachineV1[]> {
-    return rows.map(row => projectManagedMachine(row));
-}
-
 export async function readManagedMachineInTx(tx: Tx, input: Readonly<{ homeId: string; managedId: string }>): Promise<StoredManagedMachine> {
     const row = await tx.managedMachine.findFirst({ where: { id: input.managedId, homeId: input.homeId } });
     if (!row) throw new ManagedMachineError("managed_not_found");

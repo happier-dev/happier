@@ -35,7 +35,6 @@ import {
     projectManagedMachine, invalidateManagedMachineInTx, sameManagedInput, matchesManagedEnrollmentResource,
     createManagedMachineRetainedSchema,
     readManagedLaunchSnapshot,
-    projectManagedMachineInTx,
     requireManagedControllerInTx,
     readManagedMachineInTx,
     type StoredManagedMachine, type ManagedDeclarationBodies,
@@ -89,7 +88,7 @@ async function hasPendingManagedCleanupTargetInTx(tx: Tx, row: StoredManagedMach
 
 /** Policy execution consumes committed row intent, guest drain or an accepted origin, never caller ids alone. */
 export async function requireManagedPolicyPurposeInTx(tx: Tx, row: StoredManagedMachine, purpose: ManagedPolicyPurposeV1, options: Readonly<{ admission?: boolean; actionOrigin?: ExternalActionExecutionAuthorizationV1 }> = {}): Promise<'start' | 'resume' | 'stop' | 'suspend' | 'delete'> {
-    const machine = await projectManagedMachineInTx(tx, row);
+    const machine = projectManagedMachine(row);
     const pendingCleanup = purpose.kind === 'creation-cleanup' && await hasPendingManagedCleanupTargetInTx(tx, row);
     if (machine.archivedAt !== undefined || (!hasBoundManagedLifecycle(row) && !pendingCleanup)
         || (purpose.kind === 'creation-cleanup'
@@ -183,23 +182,23 @@ async function readOrAdmitManagedPolicy(params: Readonly<{ custodianAccountId: s
         const currentAdmission = { kind: 'policy' as const, request: input };
         if (readManagedCurrentRequestId(row) === input.requestId) {
             if (!sameManagedInput(admitted.currentAdmission, currentAdmission)) throw new ManagedMachineError('request_conflict');
-            return { ...projectManagedAdmissionCarrier(row, await projectManagedMachineInTx(tx, row)), requestId: input.requestId, replayed: true };
+            return { ...projectManagedAdmissionCarrier(row), requestId: input.requestId, replayed: true };
         }
         const previousPurpose = admitted.currentAdmission?.kind === 'policy' ? admitted.currentAdmission.request.purpose : undefined;
         if (pending && previousPurpose?.kind === 'retention'
             && input.purpose.kind === 'retention') {
-            return { ...projectManagedAdmissionCarrier(row, await projectManagedMachineInTx(tx, row)), requestId: readManagedCurrentRequestId(row), replayed: true };
+            return { ...projectManagedAdmissionCarrier(row), requestId: readManagedCurrentRequestId(row), replayed: true };
         }
         if (input.purpose.kind === 'accepted-input-start'
             && previousPurpose?.kind === 'accepted-input-start' && (row.desired === 'start' || row.desired === 'resume')
             && sameManagedInput(previousPurpose.target.origin, input.purpose.target.origin)) {
             await requireManagedPolicyPurposeInTx(tx, row, previousPurpose, { actionOrigin: params.actionOrigin });
-            return { ...projectManagedAdmissionCarrier(row, await projectManagedMachineInTx(tx, row)), requestId: readManagedCurrentRequestId(row), replayed: true };
+            return { ...projectManagedAdmissionCarrier(row), requestId: readManagedCurrentRequestId(row), replayed: true };
         }
         await requireManagedControllerInTx(tx, { ...input, custodianAccountId: params.custodianAccountId });
         if (row.intentRevision !== input.expectedIntentRevision) throw new ManagedMachineError('intent_changed');
         const intent = await requireManagedPolicyPurposeInTx(tx, row, input.purpose, { admission: true, actionOrigin: params.actionOrigin });
-        const machine = await projectManagedMachineInTx(tx, row);
+        const machine = projectManagedMachine(row);
         const declaration = await resolveManagedRowDeclarationInTx(tx, row);
         if (!isStoredOpaquePresetMachine(row) && !declaration?.retention.supportedIntents.includes(intent)) throw new ManagedMachineError('provider_unavailable');
         if (!admit) return { ...projectManagedAdmissionCarrier(row, { ...machine, desired: intent, desiredWhen: 'now' as const, desiredAfterMs: undefined }),
@@ -212,7 +211,7 @@ async function readOrAdmitManagedPolicy(params: Readonly<{ custodianAccountId: s
         if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         await invalidateManagedMachineInTx(tx, current);
-        return { ...projectManagedAdmissionCarrier(current, await projectManagedMachineInTx(tx, current)), requestId: readManagedCurrentRequestId(current), replayed: false };
+        return { ...projectManagedAdmissionCarrier(current), requestId: readManagedCurrentRequestId(current), replayed: false };
     };
     return admit ? inManagedMachinePublicationTx(input, execute) : inReadSnapshot(execute);
 }
@@ -243,7 +242,7 @@ export async function admitManagedControl(params: Readonly<{
         }
         const projectControl = async (current: StoredManagedMachine) => {
             if (!isManagedMetadataControlActionIdV1(request.action)) {
-                return projectManagedAdmissionCarrier(current, await projectManagedMachineInTx(tx, current));
+                return projectManagedAdmissionCarrier(current);
             }
             const admittedRole = current.controllerMachineId === row.controllerMachineId ? 'manage' : undefined;
             const read = await projectManagedMachineReadForActorInTx(tx, current, params.actorAccountId, admittedRole);
@@ -468,13 +467,13 @@ export async function reportManagedResize(input: ManagedControllerResizeReportV1
             if (updated.count !== 1) throw new ManagedMachineError('intent_changed');
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, current);
-            return { machine: await projectManagedMachineInTx(tx, current) };
+            return { machine: projectManagedMachine(current) };
         }
         if ('presetContent' in canonical) throw new ManagedMachineError('invalid_request');
-        if (!canonical.observation) return { machine: await projectManagedMachineInTx(tx, row) };
+        if (!canonical.observation) return { machine: projectManagedMachine(row) };
         const current = await tx.managedMachine.update({ where: { id: row.id }, data: { observation: canonical.observation } });
         await invalidateManagedMachineInTx(tx, current);
-        return { machine: await projectManagedMachineInTx(tx, current) };
+        return { machine: projectManagedMachine(current) };
     });
 }
 
@@ -492,19 +491,19 @@ export async function submitManagedIntent(input: ManagedControllerCurrentnessV1)
             && await hasPendingManagedCleanupTargetInTx(tx, row);
         if (!hasBoundManagedLifecycle(row) && !pendingCleanup) throw new ManagedMachineError("resource_mismatch");
         const admitted = readManagedAdmissionState(row.admittedInput);
-        if (admitted.submittedEffect) return { machine: await projectManagedMachineInTx(tx, row), submitted: false };
+        if (admitted.submittedEffect) return { machine: projectManagedMachine(row), submitted: false };
         const rebuild = admitted.currentAdmission?.kind === 'control' && admitted.currentAdmission.request.action === 'machines.managed.rebuild'
             ? admitted.currentAdmission.request.input : undefined;
         if (row.desired === 'rebuild' && !rebuild) throw new ManagedMachineError('request_conflict');
         if (row.desired === 'rebuild' && admitted.currentAdmission?.kind === 'control' && admitted.currentAdmission.rebuildSettled) {
-            return { machine: await projectManagedMachineInTx(tx, row), submitted: false };
+            return { machine: projectManagedMachine(row), submitted: false };
         }
         const changed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: canonical.expectedIntentRevision, admittedInput: { equals: readManagedJsonEqualityOperand(row.admittedInput) } },
             data: { admittedInput: { ...admitted, submittedEffect: { ...canonical, intent: row.desired,
                 ...(rebuild ? { reviewedEffectDigest: rebuild.reviewedEffectDigest } : {}) } } } });
         const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
         if (changed.count) await invalidateManagedMachineInTx(tx, current);
-        return { machine: await projectManagedMachineInTx(tx, current), submitted: changed.count === 1 };
+        return { machine: projectManagedMachine(current), submitted: changed.count === 1 };
     });
 }
 
@@ -559,7 +558,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
                 const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
                 await invalidateManagedMachineInTx(tx, row);
-                return { machine: await projectManagedMachineInTx(tx, current) };
+                return { machine: projectManagedMachine(current) };
             }
             const previousObservation = createStoredReadSchema(ManagedOpaquePresetObservationV1Schema).safeParse(row.observation);
             const currentObservation = canonical.observation && (!previousObservation.success || canonical.observation.observedAt >= previousObservation.data.observedAt)
@@ -573,7 +572,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (!admitted.submittedEffect) {
                 // Settled custody admits newer observations, never its old private snapshot.
                 if (!currentObservation || previousObservation.success && sameManagedInput(previousObservation.data, currentObservation)) {
-                    return { machine: await projectManagedMachineInTx(tx, row) };
+                    return { machine: projectManagedMachine(row) };
                 }
                 const observationUpdate: Prisma.ManagedMachineUncheckedUpdateManyInput = {
                     observation: currentObservation,
@@ -588,7 +587,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
                 const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
                 await invalidateManagedMachineInTx(tx, row);
                 await publishManagedStopPresence(currentObservation);
-                return { machine: await projectManagedMachineInTx(tx, current) };
+                return { machine: projectManagedMachine(current) };
             }
             const currentControl = admitted.currentAdmission?.kind === 'control' ? admitted.currentAdmission.request : undefined;
             const retryDelete = pending.intent === 'delete' && row.intentRevision > pending.expectedIntentRevision
@@ -621,7 +620,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, row);
             await publishManagedStopPresence(currentObservation);
-            return { machine: await projectManagedMachineInTx(tx, current) };
+            return { machine: projectManagedMachine(current) };
         }
         if ('presetContent' in canonical) throw new ManagedMachineError('invalid_request');
         const data: Prisma.ManagedMachineUncheckedUpdateManyInput = {};
@@ -646,13 +645,13 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, row);
             await publishManagedStopPresence(currentObservation);
-            return { machine: await projectManagedMachineInTx(tx, current) };
+            return { machine: projectManagedMachine(current) };
         };
         if (!admitted.submittedEffect) {
             // Custody is already settled. Publish only a newer native fact;
             // replaying a Delete acknowledgement must not restore its handle.
             if (!currentObservation || previousObservation.success && sameManagedInput(previousObservation.data, currentObservation)) {
-                return { machine: await projectManagedMachineInTx(tx, row) };
+                return { machine: projectManagedMachine(row) };
             }
             recordObservation();
             if (currentObservation.availability === 'absent') data.cleanup = getActivePrismaRuntime().DbNull;
@@ -711,7 +710,7 @@ export async function reportManagedIntent(input: ManagedControllerIntentReportV1
             if (changed.count !== 1) throw new ManagedMachineError('intent_changed');
             const current = await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } });
             await invalidateManagedMachineInTx(tx, row);
-            return { machine: await projectManagedMachineInTx(tx, current) };
+            return { machine: projectManagedMachine(current) };
         }
         if (pending.intent === 'rebuild' && canonical.result.kind === 'unknown' && 'recovery' in canonical.result) {
             data.recovery = canonical.result.recovery;
@@ -771,7 +770,7 @@ export async function submitManagedAcquire(input: ManagedControllerSubmitInputV1
         } });
         const current = changed.count ? await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } }) : row;
         if (changed.count) await invalidateManagedMachineInTx(tx, current);
-        return { machine: await projectManagedMachineInTx(tx, current), submitted: changed.count === 1 };
+        return { machine: projectManagedMachine(current), submitted: changed.count === 1 };
     });
 }
 
@@ -899,13 +898,13 @@ export async function createManagedBootstrapCredential(input: ManagedBootstrapCr
     const canonical = ManagedBootstrapCredentialCreateV1Schema.parse(input);
     return await inManagedMachinePublicationTx(canonical, async (tx) => {
         const row = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority: 'creation' });
-        if (row.bootstrapCredentialRef !== null) return { machine: await projectManagedMachineInTx(tx, row) };
+        if (row.bootstrapCredentialRef !== null) return { machine: projectManagedMachine(row) };
         // Acquire the owning row's database write lock before creating a secret.
         // Concurrent callers then reuse the winning reference, never orphan a key.
         const claimed = await tx.managedMachine.updateMany({ where: { id: row.id, intentRevision: row.intentRevision, creationState: "active", bootstrapCredentialRef: { equals: getActivePrismaRuntime().DbNull } }, data: { intentRevision: row.intentRevision } });
         if (claimed.count !== 1) {
             const current = await requireCurrentManagedMachineInTx(tx, canonical, { requestAuthority: 'creation' });
-            if (current.bootstrapCredentialRef !== null) return { machine: await projectManagedMachineInTx(tx, current) };
+            if (current.bootstrapCredentialRef !== null) return { machine: projectManagedMachine(current) };
             throw new ManagedMachineError("intent_changed");
         }
         // The resource owner refuses a credential whose mode differs from the
@@ -919,7 +918,7 @@ export async function createManagedBootstrapCredential(input: ManagedBootstrapCr
         if (!created.ok) throw new ManagedMachineError("credential_unavailable");
         const updated = await tx.managedMachine.update({ where: { id: row.id }, data: { bootstrapCredentialRef: { kind: "shared_resource", resourceId: created.value.resourceId } } });
         await invalidateManagedMachineInTx(tx, updated);
-        return { machine: await projectManagedMachineInTx(tx, updated) };
+        return { machine: projectManagedMachine(updated) };
     });
 }
 

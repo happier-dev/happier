@@ -21,7 +21,7 @@ import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { admitManagedAcquire } from "./managedAcquire";
 import { submitManagedAcquire, reportManagedAcquire, createManagedBootstrapCredential, requireManagedEnrollmentInTx, admitManagedControl, submitManagedIntent, reportManagedIntent, admitManagedPolicy, prepareManagedPolicy } from "./managedMutations";
-import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachineInTx, projectManagedMachinesInTx, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess } from "./managedRows";
+import { ManagedMachineError, readManagedMachineInTx, requireCurrentManagedMachineInTx, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedCurrentRequestId, readManagedAdmissionState, readManagedEnrollmentAccountId, readManagedOpaquePresetContent, readManagedOpaquePresetContentOverride, projectManagedControllerAccess } from "./managedRows";
 import { getManagedMachine, listManagedMachines, cancelManagedCreation, admitsManagedTargetInTx } from "./managedRead";
 import { readManagedWakeTargets } from './managedWake';
 import { markPendingActivationFailed } from '@/app/session/pending/pendingMessageService';
@@ -127,7 +127,7 @@ export async function requireManagedPolicyRequest(request: FastifyRequest, path:
     return inTx(async tx => {
         const row = await readManagedMachineInTx(tx, input);
         const binding = carrier.payload.managedPolicy!;
-        const machine = await projectManagedMachineInTx(tx, row);
+        const machine = projectManagedMachine(row);
         const nativeTarget = machine.resource ?? (carrier.purpose.kind === 'creation-cleanup' && machine.allocation === 'may-exist'
             ? machine.nativeOperationRef : undefined);
         const pending = machine.submittedNativeEffect;
@@ -279,7 +279,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 return { managedId: row.id, bindings: native.ownedBindings,
                     desiredBindingKeys: native.desiredBindings.map(binding => binding.safeFacet.bindingKey) };
             })) : undefined;
-            return { machines: await projectManagedMachinesInTx(tx, rows), retentionContinuations,
+            return { machines: rows.map(projectManagedMachine), retentionContinuations,
                 ...(target ? { targetAdmitted: rows[0] ? await admitsManagedTargetInTx(tx, rows[0], target) : false } : {}),
                 ...(nativeCredentialPolicies ? { nativeCredentialPolicies } : {}) };
         });
@@ -494,7 +494,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 });
             })() : undefined;
             if (native && !native.ok) throw new ManagedMachineError('credential_unavailable');
-            const machine = await projectManagedMachineInTx(tx, current);
+            const machine = projectManagedMachine(current);
             const presetContentOverride = isManagedOpaquePresetMachineV1(machine)
                 ? readManagedOpaquePresetContentOverride(current)
                 : undefined;
@@ -523,7 +523,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                     throw new ManagedMachineError('permission_denied');
                 }
             }
-            return { machine: await projectManagedMachineInTx(tx, row) };
+            return { machine: projectManagedMachine(row) };
         });
     }));
     app.post("/v1/machines/managed/controller/submit", { preHandler: app.authenticate, schema: { body: ManagedControllerSubmitInputV1Schema } }, async (request, reply) => respond(reply, async () => {
@@ -557,7 +557,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 if ('phase' in delivery) {
                     const submitted = await submitSessionTeamCredentialNativeDeliveryInTx(tx, authority);
                     if (!submitted.ok) throw new ManagedMachineError('request_conflict');
-                    return { machine: await projectManagedMachineInTx(tx, row), submitted: submitted.submitted };
+                    return { machine: projectManagedMachine(row), submitted: submitted.submitted };
                 }
                 const completion = await completeSessionTeamCredentialNativeDeliveryInTx(tx, { ...authority,
                     outcome: delivery.result.kind, appliedPolicy: delivery.appliedPolicy });
@@ -565,7 +565,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                     kind: 'unknown', code: completion.code === 'action_outcome_unknown' ? completion.code : 'credential_unavailable',
                 });
                 return ManagedControllerCredentialDeliveryReportOutputV1Schema.parse({
-                    machine: await projectManagedMachineInTx(tx, row), credentialDeliveryResult: result,
+                    machine: projectManagedMachine(row), credentialDeliveryResult: result,
                 });
             });
         }
@@ -589,7 +589,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
     }));
     app.post("/v1/machines/managed/controller/enrollment-context", { preHandler: app.authenticate, schema: { body: ManagedEnrollmentCorrelationV1Schema } }, async (request, reply) => respond(reply, async () => {
         const { custodianAccountId } = await requireManagedOperationRequest(request, request.body, effects);
-        return await inTx(async (tx) => ({ machine: await projectManagedMachineInTx(tx,
+        return await inTx(async (tx) => ({ machine: projectManagedMachine(
             await requireManagedEnrollmentInTx(tx, request.body, { controllerCustodianAccountId: custodianAccountId })) }));
     }));
 }
