@@ -265,13 +265,62 @@ describe('createDefaultActionExecutor approvals', () => {
         const { SessionCreationKeyV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1');
         const { bindMachineAccessActionHttpRequestV1 } = await import('@happier-dev/protocol/actions');
         const { createDeferred } = await import('@/dev/testkit');
-        const machine = createPlainMachineRowFixture({ id: 'machine-exact', accountId: 'account-a' });
+        const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+        const { HomeSessionDefaultsProjectionV1Schema } = await import('@happier-dev/protocol/home/governance/projection');
+        const { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, createActionAutomationPortV1 } = await import('@happier-dev/protocol/actions/executor/actionAutomationAdmission');
+        const executionTarget = { serverId: 'srv_approval_home', machineId: 'machine-exact' };
+        const input = { creationKey: SessionCreationKeyV1Schema.parse('voice-pending-approval'),
+            executionTarget, sessionPlacement: { kind: 'machine' as const, target: executionTarget },
+            directory: { kind: 'path' as const, path: '/voice-root' },
+            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+        const receipt = { type: 'success', disposition: 'created', sessionId: 'voice-carrier',
+            executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+        const spawnAcknowledgement = createDeferred<typeof receipt>();
+        const spawning = createDeferred<void>();
+        const spawn = vi.fn(async () => {
+            spawning.resolve();
+            return outcome === 'approve_then_close' ? spawnAcknowledgement.promise : receipt;
+        });
+        const actionAutomationIndex = ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] });
+        const receivingExecutor = createActionExecutor({
+            actionAutomations: createActionAutomationPortV1({
+                accountId: 'account-a',
+                seed: async () => actionAutomationIndex,
+                settle: async () => {},
+            }),
+            sessionSpawnNewDirectoryApprovalPreflight: async ({ input: admitted }) => ({ type: 'approval_required',
+                approval: { v: 1, executionTarget: admitted.executionTarget, directory: input.directory.path } }),
+            sessionSpawnNew: spawn,
+        });
+        const { machine } = await answerExternalActionAccountForHome(homes, homeId, {
+            actionId: 'session.spawn_new', machineId: input.executionTarget.machineId, tokenEpoch: 0,
+            execute: async (received, { invocation, authorization, target, signal }) => {
+                const result = await receivingExecutor.execute('session.spawn_new', received, {
+                    surface: invocation.surface, authority: invocation.authority, actionCaller: invocation.caller,
+                    presentUserConfirmation: invocation.presentUserConfirmation, ...(signal ? { signal } : {}),
+                    actionRequestId: authorization.binding.requestId,
+                    runtimeAccountId: authorization.binding.accountId,
+                    serverId: homeId,
+                    serverIdentityId: authorization.binding.serverIdentityId,
+                    externalActionTarget: target,
+                    externalActionExecutionAuthorization: authorization,
+                    sessionCreationDefaults: invocation.sessionCreationDefaults,
+                });
+                return result.ok ? result.result : result;
+            },
+            failure: value => {
+                const parsed = ActionExecuteFailureSchema.safeParse(value);
+                return parsed.success ? parsed.data : null;
+            },
+        });
+        homes.answer(homeId, 'POST /v1/home/governance/get', { body: HomeSessionDefaultsProjectionV1Schema.parse({ homeDefaults: null }) });
+        homes.answer(homeId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, { body: actionAutomationIndex });
         homes.answer(homeId, '/v1/machines', { body: [machine] });
-        homes.answer(homeId, '/v1/machines/machine-exact', { body: { machine } });
         const access = bindMachineAccessActionHttpRequestV1('machines.access.grants.list', { serverId: homeId, machineId: machine.id });
         homes.answer(homeId, access.path, { body: { machineId: machine.id, custodian: machine.access!.custodian,
             access: machine.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] } });
-        rpcResult = { ok: true, directory: '/voice-root', directoryKind: 'path', directoryCreationRequired: true, checkout: null };
         const cancellation = new AbortController();
         const { Modal: nativeModal } = await import('@/modal/ModalManager');
         const shown = createDeferred<string>();
@@ -284,47 +333,39 @@ describe('createDefaultActionExecutor approvals', () => {
         });
         const originalArtifacts = homes.artifacts(homeId).list().map(row => row.id);
         const dismissed = vi.fn();
-        const input = { creationKey: SessionCreationKeyV1Schema.parse('voice-pending-approval'),
-            executionTarget: { serverId: homeId, machineId: 'machine-exact' },
-            directory: { kind: 'path' as const, path: '/voice-root' },
-            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
         const pending = executeWithInPlaceApprovalReview({ actionId: 'session.spawn_new', signal: cancellation.signal,
             onDismissed: dismissed, execute: (retained, signal) => executeSessionSpawnNewAction(input,
                 { ...context(), authority: 'present_user', actionCaller: { kind: 'host' },
                     actionRequestId: 'voice-pending-approval', signal }, retained) });
         retainedInvocations.push({ abort: cancellation, settled: pending.catch(() => null) });
         try {
-            expect(await Promise.race([shown.promise, pending.then(() => {
-                throw new Error('Carrier settled before presenting native confirmation');
+            expect(await Promise.race([shown.promise, pending.then(result => {
+                const errorCode = result.ok
+                    ? result.result.type === 'error' ? result.result.code : result.result.type
+                    : result.errorCode;
+                throw new Error(`Carrier settled before presenting native confirmation (${errorCode})`);
             })])).toBe('confirm');
             // 02102e614e separates a person's product confirmation from agent approvals.
             expect(homes.artifacts(homeId).list().map(row => row.id)).toEqual(originalArtifacts);
-            expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+            expect(spawn).not.toHaveBeenCalled();
             if (outcome === 'approve' || outcome === 'approve_then_close') {
-                const receipt = { type: 'success', disposition: 'created', sessionId: 'voice-carrier',
-                    executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
-                const spawnAcknowledgement = createDeferred<unknown>();
-                const spawning = createDeferred<void>();
-                rpcResponder = call => {
-                    if (!call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW)) return rpcResult;
-                    spawning.resolve();
-                    return outcome === 'approve_then_close' ? spawnAcknowledgement.promise : receipt;
-                };
                 nativeModal.resolveConfirm('voice-confirmation', true);
                 if (outcome === 'approve_then_close') {
-                    await spawning.promise;
+                    await Promise.race([spawning.promise, pending.then(result => {
+                        throw new Error(`Carrier settled before the approved spawn (${JSON.stringify(result)})`);
+                    })]);
                     nativeModal.resolveConfirm('voice-confirmation', false);
                     expect(dismissed).not.toHaveBeenCalled();
                     spawnAcknowledgement.resolve(receipt);
                 }
                 const settled = await pending;
                 expect(settled, JSON.stringify(settled)).toMatchObject({ ok: true, result: { type: 'success', sessionId: 'voice-carrier' } });
-                expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toHaveLength(1);
+                expect(spawn).toHaveBeenCalledOnce();
             } else if (outcome === 'stop') {
                 cancellation.abort();
                 await expect(pending).resolves.toMatchObject({ ok: false, errorCode: 'cancelled' });
                 expect(dismissed).not.toHaveBeenCalled();
-                expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+                expect(spawn).not.toHaveBeenCalled();
             } else {
                 const refused = pending.then(result => {
                     // The runtime must stop before its spawn adapter observes the refusal.
@@ -333,10 +374,11 @@ describe('createDefaultActionExecutor approvals', () => {
                 });
                 nativeModal.resolveConfirm('voice-confirmation', false);
                 expect(await refused).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
-                expect(outgoing.filter(call => call.method.endsWith(':' + RPC_METHODS.SESSION_SPAWN_NEW))).toEqual([]);
+                expect(spawn).not.toHaveBeenCalled();
             }
             expect(homes.artifacts(homeId).list().map(row => row.id)).toEqual(originalArtifacts);
         } finally {
+            spawnAcknowledgement.resolve(receipt);
             cancellation.abort();
             nativeModal.resolveConfirm('voice-confirmation', false);
             unregister();
