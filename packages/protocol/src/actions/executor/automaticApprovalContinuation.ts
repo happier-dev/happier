@@ -253,7 +253,9 @@ export function createApprovalAutomaticContinuationV1<Read extends AutomaticAppr
 
 /** Existing Action Artifact ownership adapter; no internal stored-read revalidation. */
 export function createAutomaticApprovalContinuation(deps: Pick<ActionExecutorDeps,
-  'approvalsUpdate' | 'approvalsGet' | 'actionAutomations'>): ApprovalAutomaticContinuationV1<StoredApprovalRequestV2, ApprovalRequestV2> {
+  'approvalsUpdate' | 'approvalsGet' | 'actionAutomations'>, writeApprovedDecision: (
+    artifactId: string, request: StoredApprovalRequestV2, serverId: string, context: ActionExecutorContext,
+  ) => Promise<ActionExecuteFailure | null>): ApprovalAutomaticContinuationV1<StoredApprovalRequestV2, ApprovalRequestV2> {
   return createApprovalAutomaticContinuationV1<StoredApprovalRequestV2, ApprovalRequestV2>({
     actionAutomations: deps.actionAutomations,
     parse: input => ApprovalRequestV2Schema.parse(input),
@@ -266,6 +268,7 @@ export function createAutomaticApprovalContinuation(deps: Pick<ActionExecutorDep
       return latest?.v === 2 ? latest : null;
     } } : {}),
     write: async (artifactId, request, context) => {
+      if (request.status === 'approved') return writeApprovedDecision(artifactId, request, request.executionOriginV1.serverId, context);
       if (!deps.approvalsUpdate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
       const response = await deps.approvalsUpdate({ artifactId, request, serverId: request.executionOriginV1.serverId, context });
       const failure = ActionExecuteFailureSchema.safeParse(response);

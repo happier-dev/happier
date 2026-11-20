@@ -1,5 +1,8 @@
 import { expect, it } from 'vitest';
-import { createActionExecutor } from './actionExecutor.js';
+import { createActionExecutor, type ActionExecutorContext } from './actionExecutor.js';
+import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
+import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
+import { createActionAutomationHttpPortV1 } from './executor/actionAutomationAdmission.js';
 import { getActionSpec } from './actionSpecs.js';
 import { createThemeProfileFile } from '../account/settings/themeProfileFile.js';
 import { parseThemeProfileDocument } from '../account/settings/themeProfiles.js';
@@ -196,4 +199,96 @@ it('publishes selected Store CSS coverage by face without changing preview docum
     faces: [], coverage: [{ faceId: 'dark', coverage }] };
   expect(ThemeActionOutputSchemas[THEME_ACTION_IDS.storeGet].parse(output))
     .toMatchObject({ coverage: [{ faceId: 'dark', coverage }] });
+});
+
+it.each(['acknowledged', 'acknowledgement lost after commit', 'write refused before commit'] as const)(
+  'executes only committed Agent CSS approvals and returns one result to the originating Session (%s)', async acknowledgement => {
+  const actionId = THEME_ACTION_IDS.tryOn;
+  const sessionId = 'session-theme';
+  const home = { serverIdentityId: 'home', runtimeAccountId: 'account' };
+  const app = { ...home, serverId: 'app-profile', surface: 'ui', authority: 'present_user',
+    actionCaller: { kind: 'host' } } satisfies ActionExecutorContext;
+  const agent = { ...home, serverId: 'daemon-profile', surface: 'agent', authority: 'account_automation',
+    actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+    actionRequestId: 'try-on', defaultSessionId: sessionId, defaultSessionMachineId: 'machine',
+    sessionInputSource: { sourceSessionId: sessionId, sourceTurnId: 'turn', via: 'action' },
+    callerPermissionMode: 'default', causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+  } satisfies ActionExecutorContext;
+  const profile = { schemaVersion: 1, id: 'theme_approval', name: 'Try on',
+    createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T00:00:00Z',
+    base: { light: 'light', dark: 'dark' }, overrides: { light: {}, dark: { 'background.canvas': '#232125' } } };
+  const input = (css?: string) => {
+    const parsed = parseThemeProfileDocument({ ...profile, ...(css ? { css } : {}) });
+    if (!parsed.ok) throw new Error(parsed.error);
+    return { document: parsed.document, mode: 'dark', origin: { kind: 'agent' }, group: 'workspace' };
+  };
+  const css = '[data-surface="composer"] { border-radius: 23px }';
+  const receipt = (previewRef: string, total: number) => ({
+    previewRef, coverage: { total, native: total, webOnly: 0, affectedSurfaces: [], hides: [] },
+    compatibility: { status: 'supported', unsupportedPaths: [] },
+  });
+  let stored: ApprovalRequestV2 | undefined;
+  const painted: (string | undefined)[] = [];
+  const published = new Map<string, { sessionId: string; result: unknown }>();
+  // The Artifact, client and Session transports are the three process boundaries.
+  const executor = createActionExecutor({
+    actionAutomations: createActionAutomationHttpPortV1({ accountId: 'account',
+      request: async () => ({ v: 1, rows: [] }) }),
+    approvalsCreate: async ({ request }) => {
+      stored = ApprovalRequestV2Schema.parse(request);
+      return { artifactId: 'css-approval' };
+    },
+    approvalsGet: async () => stored ?? null,
+    approvalsUpdate: async ({ request, expectedStatus }) => {
+      if (!stored) throw new Error('Missing approval row');
+      if (acknowledgement === 'write refused before commit' && request.status === 'approved') {
+        return { ok: false, errorCode: 'version_mismatch', error: 'artifact_version_mismatch', writeCommitted: false };
+      }
+      const transition = decideApprovalRequestTransition(stored, request, { expectedStatus });
+      if (!transition.ok) return transition;
+      stored = ApprovalRequestV2Schema.parse(request);
+      if (acknowledgement === 'acknowledgement lost after commit' && stored.status === 'approved') {
+        throw Object.assign(new Error('Home response lost after commit'), { code: 'P2024' });
+      }
+      return { ok: true };
+    },
+    isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverIdentityId === home.serverIdentityId
+      && origin.accountId === home.runtimeAccountId,
+    themeAction: async ({ input: effect }) => {
+      if (!('document' in effect)) throw new Error('Unexpected theme effect');
+      const authorCss = effect.document?.profile.css;
+      painted.push(authorCss);
+      return authorCss ? receipt('css-preview', 1) : receipt('color-preview', 0);
+    },
+    sessionSendMessage: async ({ sessionId: destination, message, localId }) => {
+      if (!localId) throw new Error('Missing publication identity');
+      const status = published.has(localId) ? 'alreadyAccepted' : 'accepted';
+      published.set(localId, { sessionId: destination, result: JSON.parse(message) });
+      return { status, localId };
+    },
+  });
+  expect(await executor.execute(actionId, input(), { ...agent, actionRequestId: 'try-on-color' }))
+    .toMatchObject({ ok: true, result: receipt('color-preview', 0) });
+  expect(stored).toBeUndefined();
+  expect(await executor.execute(actionId, input(css), agent))
+    .toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'css-approval', actionId } });
+  expect(stored).toMatchObject({ status: 'open', automaticChecks: { phase: 'consent', selected: [] } });
+  expect(painted).toEqual([undefined]);
+  const approve = () => executor.execute('approval.request.decide', { artifactId: 'css-approval', decision: 'approve' }, app);
+  const approved = await approve();
+  if (acknowledgement === 'write refused before commit') {
+    expect(approved).toMatchObject({ ok: false, errorCode: 'version_mismatch' });
+    expect(stored).toMatchObject({ status: 'open' });
+    expect(painted).toEqual([undefined]);
+    expect(published.size).toBe(0);
+    return;
+  }
+  expect(approved).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+  expect(stored).toMatchObject({ status: 'executed', execution: { ok: true, result: receipt('css-preview', 1) } });
+  expect(published.get('approval-result:css-approval')).toMatchObject({
+    sessionId, result: { actionId, execution: { ok: true, result: receipt('css-preview', 1) } },
+  });
+  await expect(approve()).resolves.toEqual(approved);
+  expect(painted).toEqual([undefined, css]);
+  expect(published.size).toBe(1);
 });

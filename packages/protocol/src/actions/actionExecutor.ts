@@ -809,7 +809,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       context: prepared ? { ...params.context, ...prepared } : params.context,
     });
   };
-  const automaticApproval = createAutomaticApprovalContinuation(deps);
+  const automaticApproval = createAutomaticApprovalContinuation(deps, writeApprovedDecision);
   const automaticContinuationContext = (request: StoredApprovalRequestV2, context: ActionExecutorContext): ActionExecutorContext => {
     const invocation = request.actionId === 'action.invoke' ? ActionInvokeInputSchema.safeParse(request.actionArgs) : null;
     const actionId = invocation?.success ? formatQualifiedPluginActionId(invocation.data.action) : request.actionId;
@@ -1417,6 +1417,24 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
     } catch { /* An unreadable or different receipt cannot establish a committed write. */ }
     return null;
+  }
+
+  /** Continue only after the Home acknowledges this consent or returns the exact committed decision. */
+  async function writeApprovedDecision(
+    artifactId: string, request: ApprovalRequest, serverId: string | null, context: ActionExecutorContext,
+  ): Promise<ActionExecuteFailure | null> {
+    if (!deps.approvalsUpdate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
+    let updated: unknown;
+    try {
+      updated = await deps.approvalsUpdate({ artifactId, request, serverId, context });
+    } catch (error) {
+      updated = { ok: false, ...normalizeActionExecutorThrownError(error) };
+    }
+    const failure = readActionFailureEnvelope(updated);
+    if (!failure) return null;
+    const persisted = await readMatchingApprovalRequestReceipt({ artifactId, serverId, request });
+    if (persisted && !isHistoricalPublishApprovalRequestV2(persisted)) return null;
+    return failure.errorCode === 'action_failed' ? approvalContextUnavailable() : failure;
   }
 
   /** Terminal approvals publish through their originating input owner, including receipt replays. */
@@ -7746,31 +7764,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               ...(narrowsInput ? { narrowedInput: projectNativeJsonValueForTransport(approvedActionArgs) } : {}) },
           };
 
-          let approved: unknown;
-          try {
-            approved = await deps.approvalsUpdate({
-              artifactId,
-              request: approvedRequest,
-              serverId: effectiveServerId,
-              context: ctx,
-            });
-          } catch (error) {
-            approved = { ok: false, ...normalizeActionExecutorThrownError(error) };
-          }
-          const approvalFailure = readActionFailureEnvelope(approved);
-          if (approvalFailure) {
-            // A lost acknowledgement can leave consent committed while its
-            // original live requester still waits. Reconcile the exact decision
-            // once before handing it to the existing execution-claim owner.
-            // A failed/unreadable/different write never authorizes an effect.
-            const persisted = await readMatchingApprovalRequestReceipt({
-              artifactId, serverId: effectiveServerId, request: approvedRequest,
-            });
-            if (!persisted || isHistoricalPublishApprovalRequestV2(persisted)) return approvalFailure.errorCode === 'action_failed'
-              ? approvalContextUnavailable()
-              : approvalFailure;
-            approvedRequest = persisted;
-          }
+          const approvalFailure = await writeApprovedDecision(artifactId, approvedRequest, effectiveServerId, ctx);
+          if (approvalFailure) return approvalFailure;
         }
 
         let approvalEffectMayHaveStarted = false;
