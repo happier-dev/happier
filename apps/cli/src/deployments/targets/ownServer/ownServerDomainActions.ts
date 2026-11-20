@@ -226,37 +226,49 @@ export async function prepareOwnServerTeardownDomainReviewedChildren(
     return children.length ? { children } : null;
 }
 
+export type ObservedDomainReview = Readonly<{
+    input: ReturnType<typeof DeploymentActionInputSchemasV1[DeploymentDomainChildActionIdV1]['parse']>;
+    environment: DeploymentEnvironmentDetailV1;
+    domain?: DeploymentDomainHeaderV1;
+}>;
+
 /** Review concrete recovery operands before admission; retain them in the existing child port. */
 export async function prepareOwnServerDomainReviewedChildren(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
     host: DomainDiscoveryHost & Readonly<{ storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
         open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
+    observed?: ObservedDomainReview,
 ): Promise<HostReviewedChildrenDomainPreparationV1> {
     const actionId = request.actionId;
     if (!isDeploymentDomainAddActionIdV1(actionId) && !isDeploymentDomainRemoveActionIdV1(actionId)) return null;
-    const input = DeploymentActionInputSchemasV1[actionId].parse(request.input);
+    const input = observed?.input ?? DeploymentActionInputSchemasV1[actionId].parse(request.input);
+    if ('mode' in input) return null;
     let content: DeploymentDomainContentV1;
-    let domain: DeploymentDomainHeaderV1 | undefined;
-    const add = isDeploymentDomainAddActionIdV1(actionId) ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
+    let domain = observed?.domain;
+    const add = 'targetLinkId' in input ? input : undefined;
     if (add && 'content' in add) content = add.content;
     else {
         let reference: { contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number };
         if (add && 'contentArtifactId' in add) reference = add;
         else {
-            const loaded = await host.storage('deployments.domains.get', { serverId: input.serverId,
-                environmentId: input.environmentId, domainId: input.domainId }, request.context);
-            if (isActionExecuteFailure(loaded)) return loaded;
-            const parsed = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(loaded);
-            if (!parsed.ok) return failure(parsed.error);
-            reference = parsed.domain;
-            domain = parsed.domain;
+            if (!domain) {
+                const loaded = await host.storage('deployments.domains.get', { serverId: input.serverId,
+                    environmentId: input.environmentId, domainId: input.domainId }, request.context);
+                if (isActionExecuteFailure(loaded)) return loaded;
+                const parsed = DeploymentActionOutputSchemasV1['deployments.domains.get'].parse(loaded);
+                if (!parsed.ok) return failure(parsed.error);
+                domain = parsed.domain;
+            }
+            reference = domain;
         }
         const opened = readDeploymentDomainArtifactV1(reference, await host.open(reference.contentArtifactId, request.context));
         if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
         content = opened.content;
     }
-    const environment = add
-        ? await host.readEnvironment({ environmentId: input.environmentId, context: request.context }) : undefined;
+    const readEnvironment = (targetLinkId: string) => observed?.environment
+        ?? host.readEnvironment({ environmentId: input.environmentId, targetLinkId, context: request.context });
+    const environment = add ? await readEnvironment(add.targetLinkId) : undefined;
+    if (add && !environment?.targetLinks.some(item => item.targetLink.id === add.targetLinkId)) return failure('target_mismatch');
     const resolved = resolveDomainIngress(content, environment?.content.ingress, add !== undefined);
     if (resolved.status === 'unavailable') return failure(resolved.reason, resolved.details);
     const selected = resolved.selection;
@@ -267,7 +279,7 @@ export async function prepareOwnServerDomainReviewedChildren(
     const prepared = content.cloudflarePreparation;
     if (isDeploymentDomainRemoveActionIdV1(actionId) && !prepared) {
         if (!domain) return failure('deployment_content_unavailable');
-        const environment = await host.readEnvironment({ environmentId: input.environmentId, context: request.context });
+        const environment = await readEnvironment(domain.targetLinkId);
         const link = environment.targetLinks.find(item => item.targetLink.id === domain.targetLinkId)?.targetLink;
         if (!link) return failure('target_mismatch');
         const discovered = await discoverOwnServerDomainPlacement({ actionId,
@@ -284,9 +296,9 @@ export async function prepareOwnServerDomainReviewedChildren(
                     expectedService: origin.service }], dnsOwnership: [] } }] };
     }
     const role = isDeploymentDomainAddActionIdV1(actionId) ? 'configure' : 'disable';
-    const tunnelOwnership = role === 'disable' && prepared
+    const tunnelOwnership = role === 'disable' && prepared && domain
         ? resolveCloudflareDomainTunnelOwnership(content,
-            (await host.readEnvironment({ environmentId: input.environmentId, context: request.context })).content.cloudflareTunnels)
+            (await readEnvironment(domain.targetLinkId)).content.cloudflareTunnels)
         : undefined;
     return { children: [{ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: `cloudflare-named/${role}` }, role,
         scopeInput: { credentialRef: purpose.credentialRef.account, accountId, zoneId,

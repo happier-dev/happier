@@ -113,6 +113,8 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
         environment.targetLinks = [{ targetLink: link, content: reopened.content }];
         const targetHost = createContributedDeploymentTargetForHost({ credentials: boundary.credentials, serverId: 'home',
             machineId: 'machine-a', serverHttpBaseUrl: origin, readEnvironment: async () => environment,
+            readEnvironmentMetadata: async () => { throw new Error('Preparation already has Environment custody'); },
+            readTargetLink: async () => { throw new Error('Preparation already has Link custody'); },
             readReceipt: async () => { throw new Error('Preparation must not read a receipt'); },
             readPreparedDeploymentContent: async () => { throw new Error('Preparation authors a candidate'); },
             assertCurrent: async () => {}, resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),

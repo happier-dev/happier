@@ -70,6 +70,7 @@ import { ApprovalRequestV2Schema, resolveApprovalExecutor } from '@happier-dev/p
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { ActionsSettingsV1Schema, sealExternalActionRequestV2 } from '@happier-dev/protocol/actions';
 import { DeploymentChildRpcV1Schema } from '@happier-dev/protocol';
+import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import { prepareStoredPromotionCandidate } from './storedPromotionCandidate';
 import { projectDeploymentFailure } from './deploymentFailure';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from '@/daemon/externalActions/approvalExecutionAuthorization';
@@ -1040,10 +1041,15 @@ describe('installed deployment storage and target composition', () => {
                 .resolves.toMatchObject({ ok: false, errorCode: 'action_forbidden' });
         }
     });
-    it('prepares the exact Cloudflare Account child from private Domain custody before parent approval', async () => {
+    it.each(['runtime', 'selected', 'unavailable'] as const)(
+        'prepares the exact Cloudflare Account child from private Domain custody before parent approval (%s)', async selection => {
         const credentials: StoredCredentials = { token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null };
-        const environment = createDeploymentEnvironmentDetailV1();
-        const link = environment.targetLinks[0].targetLink;
+        const base = createDeploymentEnvironmentDetailV1();
+        const runtime = base.targetLinks[0];
+        const selected = selection === 'runtime' ? runtime : { ...runtime, targetLink: { ...runtime.targetLink,
+            id: 'selected-link', contentArtifactId: 'selected-link-content' } };
+        const environment = selection === 'runtime' ? base : { ...base, targetLinks: [runtime, selected] };
+        const link = selected.targetLink;
         const credentialRef = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'cloudflare-profile' };
         const controller = { accountId: 'vendor-account', zoneId: 'vendor-zone',
             tunnel: { kind: 'create', name: 'environment-tunnel' }, owned: [], dnsOwnership: [],
@@ -1071,29 +1077,37 @@ describe('installed deployment storage and target composition', () => {
                 data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
             if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
             const isEnvironment = path === `/v1/artifacts/${environment.environment.contentArtifactId}`;
-            const isTargetLink = path === `/v1/artifacts/${link.contentArtifactId}`;
-            if (!isEnvironment && !isTargetLink) expect(path).toBe('/v1/artifacts/domain-content');
+            const readLink = environment.targetLinks.find(item => path === `/v1/artifacts/${item.targetLink.contentArtifactId}`);
+            if (!isEnvironment && !readLink) expect(path).toBe('/v1/artifacts/domain-content');
             reads.push(path);
+            if (readLink === selected && selection === 'unavailable') return { status: 404, data: { error: 'artifact_not_found' } };
             return { status: 200, data: { id: isEnvironment ? environment.environment.contentArtifactId
-                : isTargetLink ? link.contentArtifactId : input.contentArtifactId,
+                : readLink ? readLink.targetLink.contentArtifactId : input.contentArtifactId,
                 ownerAccountId: 'owner', access: 'owner', publicAudience: 'none',
                 encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                 header: encodePlainArtifactStoredContent({ kind: isEnvironment ? DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1
-                    : isTargetLink ? DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 : 'deployment-domain.v1', title: 'Domain' }),
+                    : readLink ? DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 : 'deployment-domain.v1', title: 'Domain' }),
                 body: encodePlainArtifactStoredContent({ body: JSON.stringify(isEnvironment ? environment.content
-                    : isTargetLink ? environment.targetLinks[0].content : domain) }),
+                    : readLink ? readLink.content : domain) }),
                 headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } };
         });
         const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl: 'https://domain.test',
             machineId: 'controller', resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
             runtime: { async acquire() { throw new Error('Review cannot acquire native custody'); } } });
+        const domainInputParse = vi.spyOn(DeploymentActionInputSchemasV1['deployments.domains.add'], 'parse');
         const prepared = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.domains.add', input,
             context: { serverId: 'home', runtimeAccountId: 'owner', surface: 'cli', actionCaller: { kind: 'host' } } });
+        if (selection === 'unavailable') {
+            expect(prepared).toMatchObject({ ok: false, errorCode: 'deployment_content_unavailable' });
+            expect(reads).toEqual([`/v1/artifacts/${environment.environment.contentArtifactId}`, `/v1/artifacts/${link.contentArtifactId}`]);
+            return;
+        }
         expect(prepared, JSON.stringify({ prepared, reads })).toEqual({ children: [{ action: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare-named/configure' },
             role: 'configure', scopeInput: { credentialRef, accountId: controller.accountId, zoneId: controller.zoneId,
                 tunnel: controller.tunnel, owned: controller.owned, dnsOwnership: controller.dnsOwnership } }] });
-        expect(reads).toEqual([`/v1/artifacts/${environment.environment.contentArtifactId}`, `/v1/artifacts/${link.contentArtifactId}`,
-            '/v1/artifacts/domain-content', `/v1/artifacts/${environment.environment.contentArtifactId}`, `/v1/artifacts/${link.contentArtifactId}`]);
+        expect.soft(domainInputParse).toHaveBeenCalledTimes(1);
+        expect.soft(reads).toEqual([`/v1/artifacts/${environment.environment.contentArtifactId}`, `/v1/artifacts/${link.contentArtifactId}`,
+            '/v1/artifacts/domain-content']);
     });
 
     it('does not report Domain admission as native activation', async () => {
@@ -1444,7 +1458,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['controller build failure', 'controller build success', 'controller build log write failure', 'provider teardown Cloudflare absence', 'provider teardown Vercel absence', 'provider teardown changed identity', 'provider teardown preview', 'provider teardown linked default', 'provider teardown created default', 'provider teardown explicit unlink', 'provider teardown', 'provider teardown wrong controller', 'provider teardown wrong key', 'provider teardown stale receipt', 'provider teardown ambiguous', 'provider teardown ambiguous unverified', 'provider teardown recovery', 'provider teardown queued observation', 'provider teardown review', 'provider teardown confirm re-entry', 'provider teardown denied', 'promote retained platform', 'rollback retained platform', 'provider Domain add', 'provider Domain Vercel active add', 'provider Domain verify', 'provider Domain remove', 'provider Domain retained native teardown', 'variable telemetry remote endpoint', 'variable telemetry managed header cleanup', 'variable synchronization', 'variable metadata', 'variable sync storage conflict', 'variable sync storage rollback', 'variable sync transport failure', 'leased target preparation', 'explicit failure policy', 'build logs', 'runtime logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'teardown with data target', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'settlement observation refused', 'uncertain receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'confirmed repository upload', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const receiptId = `platform-receipt-${scenario.replaceAll(' ', '-')}`;
@@ -2010,20 +2024,31 @@ describe('installed deployment storage and target composition', () => {
                 expect(content.sourceMethod).toBeUndefined();
                 expect(content.platform).toMatchObject({ providerIdentity: row.content.providerIdentity,
                     credentialPrincipal: row.content.credentialPrincipal, observation: { state: 'queued' } });
+                const mismatchedReceipt = scenario === 'provider teardown wrong controller' || scenario === 'provider teardown wrong key';
+                const staleReceipt = scenario === 'provider teardown stale receipt';
+                const rejectedRevisions: number[] = [];
                 const receipt = createDeploymentReceiptHeaderV1({ id: 'provider-teardown', environmentId: intent.environmentId,
-                    targetLinkId: row.targetLink.id, operation: 'teardown', requestKey: intent.requestKey,
+                    targetLinkId: row.targetLink.id, operation: 'teardown',
+                    requestKey: scenario === 'provider teardown wrong key' ? 'foreign-request' : intent.requestKey,
                     actionOperationId: 'provider-delete-operation', state: scenario === 'provider teardown recovery' ? 'outcome_unknown' : 'queued',
                     startedAtMs: undefined, settledAtMs: undefined, contentArtifactId: input.contentArtifactId,
-                    acceptedExecution: { v: 1, controller: { machineId: 'machine-a', installationId: 'installation-a' } } });
+                    acceptedExecution: { v: 1, controller: scenario === 'provider teardown wrong controller'
+                        ? { machineId: 'machine-b', installationId: 'installation-b' } : { machineId: 'machine-a', installationId: 'installation-a' } } });
                 const previousHttp = vi.mocked(axios.request).getMockImplementation()!;
                 const states: string[] = [];
+                const dispatchReads: string[] = [];
+                let receiptAdmitted = false;
                 vi.mocked(axios.request).mockImplementation(async request => {
                     const path = new URL(request.url!).pathname;
+                    if (receiptAdmitted && request.method === 'GET') dispatchReads.push(path);
                     if (path.endsWith('/domains')) return { status: 200, data: { ok: true,
                         environmentId: intent.environmentId, revision: environment.environment.revision, domains: [], nextCursor: null } };
                     if (path.endsWith(`/receipts/${receipt.id}`)) return { status: 200, data: { ok: true, deployment: receipt } };
-                    if (path.endsWith('/teardown')) return { status: 200, data: { ok: true, environmentId: intent.environmentId,
-                        revision: environment.environment.revision, deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state } };
+                    if (path.endsWith('/teardown')) {
+                        receiptAdmitted = true;
+                        return { status: 200, data: { ok: true, environmentId: intent.environmentId,
+                            revision: environment.environment.revision, deploymentId: receipt.id, deploymentRevision: receipt.revision, state: receipt.state } };
+                    }
                     if (path.endsWith('/transitions')) {
                         const transition = DeploymentTransitionInputV1Schema.parse(request.data);
                         states.push(transition.state);
@@ -2041,6 +2066,10 @@ describe('installed deployment storage and target composition', () => {
                             const stored = JSON.parse(z.object({ body: z.string() }).parse(decodePlainArtifactStoredContent(body)).body);
                             expect(DeploymentProviderTeardownContentV1Schema.parse(stored)).toMatchObject({ failure: {
                                 failureCause: { errorCode: 'provider_absence_unconfirmed', phase: 'deployment.teardown.observe' } } });
+                        }
+                        if (staleReceipt) {
+                            rejectedRevisions.push(transition.expectedRevision);
+                            return { status: 409, data: { ok: false, error: 'deployment_conflict' } };
                         }
                         return { status: 200, data: { ok: true, environmentId: intent.environmentId,
                             revision: environment.environment.revision, deploymentId: receipt.id,
@@ -2079,7 +2108,14 @@ describe('installed deployment storage and target composition', () => {
                         serverId: intent.serverId, environmentId: intent.environmentId, deploymentId: receipt.id,
                     }, context)
                     : await executor.execute('deployments.teardown', input, context);
-                if (scenario === 'provider teardown changed identity') {
+                if (mismatchedReceipt) {
+                    expect(result).toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                    expect(states).toEqual([]);
+                } else if (staleReceipt) {
+                    expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown', effectAttempted: true });
+                    expect(states).toEqual(['succeeded']);
+                    expect(rejectedRevisions).toEqual([receipt.revision]);
+                } else if (scenario === 'provider teardown changed identity') {
                     expect(result).toMatchObject({ ok: false, errorCode: 'deployment_access_denied', effectAttempted: false });
                     expect(states.at(-1)).toBe('failed');
                 } else if (scenario === 'provider teardown review') {
@@ -2093,7 +2129,13 @@ describe('installed deployment storage and target composition', () => {
                 }
                 const module = runtime.modulesByPluginId.get(pluginId);
                 if (typeof module?.readObservationCount !== 'function') throw new Error('Expected provider invocation probe');
-                expect(module.readObservationCount()).toBe(scenario === 'provider teardown review' || scenario === 'provider teardown changed identity' ? 0 : 1);
+                expect(module.readObservationCount()).toBe(mismatchedReceipt || scenario === 'provider teardown review'
+                    || scenario === 'provider teardown changed identity' ? 0 : 1);
+                if (scenario === 'provider teardown') {
+                    // Dispatch and the independently admitted provider invocation each read custody once.
+                    expect.soft(dispatchReads.filter(path => path.endsWith(`/receipts/${receipt.id}`))).toHaveLength(2);
+                    expect.soft(dispatchReads.filter(path => path === `/v1/deployments/environments/${intent.environmentId}`)).toHaveLength(2);
+                }
                 expect(nativeReads).toBe(0);
                 return;
             }
@@ -2680,16 +2722,33 @@ describe('installed deployment storage and target composition', () => {
                 row.targetLink.revision = 2;
                 const compactInput = { serverId: 'home', environmentId: receipt.environmentId,
                     deploymentId: receipt.id, kind: 'build' as const };
+                const readsOf = (artifactId: string) => vi.mocked(axios.get).mock.calls.filter(([url]) =>
+                    new URL(url).pathname === `/v1/artifacts/${artifactId}`).length;
+                const environmentReadsBefore = readsOf(environment.environment.contentArtifactId);
+                const linkReadsBefore = readsOf(row.targetLink.contentArtifactId);
                 for (const mismatch of [{ targetLinkId: 'other-link' }, { machineId: 'other-machine' },
                     { installationId: 'other-installation' }]) {
                     await expect(executor.execute('deployments.logs.read', { ...compactInput, ...mismatch }, context))
                         .resolves.toMatchObject({ ok: false, errorCode: 'target_mismatch' });
                 }
+                const read = vi.mocked(axios.request).getMockImplementation()!;
+                vi.mocked(axios.request).mockImplementation(async request =>
+                    new URL(request.url!).pathname.endsWith(`/receipts/${receipt.id}`)
+                        ? { status: 200, data: { ok: true, deployment: { ...receipt, environmentId: 'another-environment' } } }
+                        : read(request));
+                await expect(executor.execute('deployments.logs.read', compactInput, context))
+                    .resolves.toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+                vi.mocked(axios.request).mockImplementation(read);
+                expect.soft(readsOf(environment.environment.contentArtifactId) - environmentReadsBefore).toBe(0);
+                expect.soft(readsOf(row.targetLink.contentArtifactId) - linkReadsBefore).toBe(0);
                 const result = await executor.execute('deployments.logs.read', { serverId: 'home', environmentId: receipt.environmentId,
                     deploymentId: receipt.id, kind: 'build' }, context);
                 if (!result.ok) throw new Error(JSON.stringify(result));
                 expect(result).toMatchObject({ ok: true, result: { ok: true, kind: 'build', logs: { kind: 'page',
                     page: { sourceRevision: 'existing-provider-deployment', text: 'Build complete\n' } } } });
+                // The mounted provider Action still admits its own invocation.
+                expect.soft(readsOf(environment.environment.contentArtifactId) - environmentReadsBefore).toBe(1);
+                expect.soft(readsOf(row.targetLink.contentArtifactId) - linkReadsBefore).toBe(2);
                 await expect(executor.execute('deployments.logs.read', { ...compactInput, targetLinkId: receipt.targetLinkId,
                     machineId: 'machine-a', installationId: 'installation-a' }, context))
                     .resolves.toMatchObject({ ok: true, result: { ok: true, kind: 'build' } });
@@ -4483,7 +4542,7 @@ describe('installed deployment storage and target composition', () => {
         expect(writes).toHaveLength(3);
         expect(acquisitions).toBe(0);
     });
-    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation removed required binding', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'native tool version changes', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent', 'trigger claim consent merge', 'missing native builder'] as const)('retains native review from %s without rewriting either Artifact', async selection => {
+    it.each(['template install', 'template install artifact failure', 'template install native failure', 'template install docker access denied', 'template install preparation failure', 'template install failed receipt', 'template install pending receipt', 'stored preparation cost', 'stored preparation forwarded', 'stored preparation stale held', 'stored preparation failure reason', 'stored preparation removed required binding', 'stored preparation missing tool', 'machine Use stored definition', 'machine Use Team receipt history', 'machine Use pending stored definition', 'configured ref', 'stale Team grant', 'approved exact SHA', 'native tool version changes', 'compact exact SHA', 'pending exact SHA', 'retained rollback', 'retained rollback intent', 'retained rollback intent e2ee', 'trigger claim consent', 'trigger claim consent merge', 'missing native builder'] as const)('retains native review from %s without rewriting either Artifact', async selection => {
         const triggerConsentSelection = selection === 'trigger claim consent' || selection === 'trigger claim consent merge';
         const storedPreparation = selection.startsWith('stored preparation');
         const teamReceiptHistory = selection === 'machine Use Team receipt history';
@@ -5096,6 +5155,57 @@ describe('installed deployment storage and target composition', () => {
                     body: encodePlainArtifactStoredContent({ body: JSON.stringify(environment.content) }) });
                 const nativeBefore = (await docker.readInvocations()).length;
                 phase('stored-cost-preparation');
+                if (selection === 'stored preparation forwarded') {
+                    const child = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.deploy',
+                        machineId: 'machine-a', installationId: 'installation-a', expectedRevision: environment.environment.revision,
+                        expectedTargetLinkRevision: environment.targetLinks[0]!.targetLink.revision, input: {
+                            serverId: 'home', environmentId: environment.environment.id, targetLinkId: currentTargetLinkId,
+                            sourceIntent: environment.content.definition, requestKey: 'forwarded-prepare',
+                        } });
+                    if (child.kind !== 'prepare' || child.actionId !== 'deployments.deploy') throw new Error('Expected deploy prepare child');
+                    const purpose = { kind: 'machine_rpc', method: RPC_METHODS.DAEMON_DEPLOYMENT_CHILD, params: child,
+                        recipient: { machineId: child.machineId, installationId: child.installationId } } as const;
+                    for (const controller of [false, true]) {
+                        const machineId = controller ? environment.environment.controllerMachineId : 'foreign-origin';
+                        const target = { kind: 'machine' as const, machineId };
+                        const envelope = { v: 1 as const, requestId: 'forwarded-prepare', target, input: child.input };
+                        const requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+                        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'forwarded-root', binding: {
+                            serverIdentityId: 'home', accountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+                            custodianAccountId: 'owner', accountEncryptionMode: 'plain', admittedMachineRole: 'use',
+                            machineId, installationId: controller ? 'installation-a' : 'foreign-installation', target, requestEnvelopeDigest,
+                            requestId: envelope.requestId, actionId: child.actionId, deploymentChildRoot: true,
+                            deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ serverIdentityId: 'home',
+                                accountId: 'owner', actionId: child.actionId, requestId: envelope.requestId, requestEnvelopeDigest,
+                                environmentId: child.input.environmentId, source: { id: environment.environment.projectSourceId, revision: 1 } }),
+                        } });
+                        const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root, purpose,
+                            credentials: { token: credentials.token, secret: null, encryption: null },
+                            installationPublicKey: keys.publicKey, randomBytes: tweetnacl.randomBytes });
+                        const prepared = await prepareRequesterAccountActionContext({ authorization, purpose,
+                            deploymentChildExecution: { method: `${child.machineId}:${purpose.method}`, requestId: 'received-prepare', params: child,
+                                originalActionEnvelope: envelope, externalActionExecution: { v: 1, authorization, effectActionId: child.actionId,
+                                    target, installationId: root.binding.installationId, machineSignature: 'a'.repeat(86),
+                                    deploymentChildRouting: projectDeploymentChildRoutingV1(child) } },
+                            machineId: child.machineId, installationId: child.installationId, installationPrivateKey: keys.secretKey,
+                            serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test',
+                            isCurrent: async () => true, createExecutor: () => executor });
+                        if (!prepared) throw new Error('Expected installed requester fixture');
+                        try {
+                            const reads = () => vi.mocked(axios.get).mock.calls.filter(([url]) =>
+                                new URL(url).pathname === `/v1/artifacts/${environment.environment.contentArtifactId}`).length;
+                            const before = reads();
+                            const result = await deps.prepareDeploymentAction({ actionId: child.actionId, input: child.input,
+                                context: { ...nativeReviewContext, externalActionExecutionAuthorization: prepared.authorization,
+                                    originalActionEnvelope: envelope } });
+                            expect(result, JSON.stringify(result)).toMatchObject(controller
+                                ? { input: { environmentId: child.input.environmentId, contentArtifactId: expect.any(String) } }
+                                : { ok: false, errorCode: 'action_forbidden' });
+                            expect(reads() - before).toBe(1);
+                        } finally { await prepared.dispose(); }
+                    }
+                    return;
+                }
                 const input = { serverId: 'home', environmentId: environment.environment.id, targetLinkId: currentTargetLinkId,
                     ...(selection === 'machine Use pending stored definition' ? { requestKey: 'use-pending', whenBusy: 'supersede' as const } : {}) };
                 if (selection === 'machine Use pending stored definition') pendingEnvelope = DeploymentPendingDeployV1Schema.parse({ t: 'plain', v: {

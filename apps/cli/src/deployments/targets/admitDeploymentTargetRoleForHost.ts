@@ -24,7 +24,9 @@ import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTargetInspectDraftInputV1Schema, type DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
-export type DeploymentTargetRoleAdmissionHost = Readonly<{
+export type DeploymentTargetRoleEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'targetLinks'>;
+
+export type DeploymentTargetRoleAdmissionHost<Detail extends DeploymentTargetRoleEnvironment = DeploymentEnvironmentDetailV1> = Readonly<{
     serverId: string;
     machineId: string;
     installationId?: string;
@@ -36,7 +38,7 @@ export type DeploymentTargetRoleAdmissionHost = Readonly<{
     acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; includeDataTargetLinkContent?: true;
-        context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
+        context: ActionExecutorContext }>): Promise<Detail>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
 }>;
@@ -63,14 +65,14 @@ const refuse = (code: string, phase?: string): never => {
 };
 
 /** Shared current Environment custody for role Actions and in-process database attachments. */
-export async function readDeploymentTargetEnvironmentForHost(input: Readonly<{
+export async function readDeploymentTargetEnvironmentForHost<Detail extends DeploymentTargetRoleEnvironment>(input: Readonly<{
     serverId: string;
     environmentId: string;
     projectSourceId?: string;
     targetLinkId?: string;
     includeDataTargetLinkContent?: true;
     context: ActionExecutorContext;
-}>, host: Pick<DeploymentTargetRoleAdmissionHost, 'serverId' | 'readEnvironment'>): Promise<DeploymentEnvironmentDetailV1> {
+}>, host: Pick<DeploymentTargetRoleAdmissionHost<Detail>, 'serverId' | 'readEnvironment'>): Promise<Detail> {
     if (!await isServerProfileHomeIdentity(input.serverId, host.serverId)) return refuse('server_scope_mismatch');
     const detail = await host.readEnvironment({ environmentId: input.environmentId,
         ...(input.targetLinkId ? { targetLinkId: input.targetLinkId } : {}),
@@ -85,7 +87,7 @@ export async function readDeploymentTargetEnvironmentForHost(input: Readonly<{
 }
 
 /** The current selected Link and its recorded author remain one host-owned custody decision. */
-export function readCurrentDeploymentTargetLinkForHost(detail: DeploymentEnvironmentDetailV1, targetLinkId: string,
+export function readCurrentDeploymentTargetLinkForHost(detail: DeploymentTargetRoleEnvironment, targetLinkId: string,
     host: Pick<DeploymentTargetRoleAdmissionHost, 'credentialOwnerAccountId'>, retained = false) {
     const selected = detail.targetLinks.find(entry => entry.targetLink.id === targetLinkId);
     const link = selected?.targetLink;
@@ -115,9 +117,9 @@ const preflightSchema = z.extend(DeploymentTargetRoleCommonInputV1Schema, {
     expectedTargetLinkRevision: DeploymentTargetRoleInputSchemasV1.deploy.shape.expectedTargetLinkRevision,
 });
 type AdmittedRoleInput = DeploymentTargetRoleInputV1 | z.infer<typeof preflightSchema>;
-export type DeploymentTargetRoleAdmissionForHost = Readonly<{
+export type DeploymentTargetRoleAdmissionForHost<Detail extends DeploymentTargetRoleEnvironment = DeploymentEnvironmentDetailV1> = Readonly<{
     input: DeploymentTargetRoleInputV1 | DeploymentTargetRoleCommonInputV1;
-    environment: DeploymentEnvironmentDetailV1;
+    environment: Detail;
     receipt?: DeploymentReceiptDetailV1;
     role: string;
     /** Existing accepted native mutation, captured once by role admission. */
@@ -142,8 +144,8 @@ function projectPreparationInput<TSchema extends z.ZodMiniObject>(value: unknown
  * One admission owner for routed preparation and direct qualified execution.
  * Readers open only the selected Environment/link/receipt under captured custody.
  */
-export async function admitDeploymentTargetRoleForHost(request: DeploymentTargetRoleAdmissionRequest,
-    host: DeploymentTargetRoleAdmissionHost): Promise<DeploymentTargetRoleAdmissionForHost> {
+export async function admitDeploymentTargetRoleForHost<Detail extends DeploymentTargetRoleEnvironment>(request: DeploymentTargetRoleAdmissionRequest,
+    host: DeploymentTargetRoleAdmissionHost<Detail>): Promise<DeploymentTargetRoleAdmissionForHost<Detail>> {
     request.context.signal?.throwIfAborted();
     const bindings = request.bindings.filter(binding => roleName(binding.role) && (!request.role || request.role === binding.role));
     if (!bindings.length) return refuse('deployment_target_role_unavailable');

@@ -28,12 +28,13 @@ import type { DeploymentReceiptDispatchV1 } from '../createCliDeploymentActionDe
 import type { OwnServerDeploymentTransition, OwnServerDeploymentTargetHostInput } from './ownServer/ownServerDeploymentTarget';
 import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntentForHost';
 import { readDeploymentTargetV1 } from './deploymentTargetCatalog';
-import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
+import { admitDeploymentTargetRoleForHost, type DeploymentTargetRoleEnvironment } from './admitDeploymentTargetRoleForHost';
 import { projectDeploymentException, projectDeploymentFailure as failure, projectDeploymentReceiptFailure,
     readProviderTeardownAbsenceFailure } from '../deploymentFailure';
 import { readDeploymentObservationTargetFailure } from '../readObservationForHost';
 import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/scm/hostingProviders/resolveRefForHost';
 import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import type { DeploymentEnvironmentGetResultV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { configuration } from '@/configuration';
 import { resolveOwnServerDeploymentIdentityForHost } from './ownServer/paths';
@@ -48,6 +49,7 @@ const readContributedReceiptContent = (content: unknown): ContributedReceiptCont
 type ContentReference = Pick<ReturnType<typeof DeploymentDeployInputV1Schema.parse>,
     'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
 type ScopeRequest = Readonly<{ environmentId: string; targetLinkId: string; context: ActionExecutorContext }>;
+type EnvironmentMetadata = Extract<DeploymentEnvironmentGetResultV1, { ok: true }>;
 type Role = Exclude<DeploymentTargetRuntimeRoleV1, 'create' | 'inspect' | 'link'>;
 type Host = Readonly<{
     credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
@@ -55,6 +57,8 @@ type Host = Readonly<{
     acquirePluginRuntimeRegistryLease?(): Promise<PluginRuntimeRegistryLease>;
     executeSourceReadAction?: ExecuteScmSourceReadAction;
     readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; context: ActionExecutorContext }>): Promise<DeploymentEnvironmentDetailV1>;
+    readEnvironmentMetadata(request: Pick<ScopeRequest, 'environmentId' | 'context'>): Promise<EnvironmentMetadata>;
+    readTargetLink(link: DeploymentTargetLinkHeaderV1, context: ActionExecutorContext): Promise<DeploymentTargetRoleEnvironment['targetLinks'][number]>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
     readPreparedDeploymentContent(request: Readonly<{ input: ReturnType<typeof DeploymentDeployInputV1Schema.parse>; context: ActionExecutorContext }>):
         Promise<Readonly<{ ok: true; content: DeploymentContentV1 }> | ActionExecuteFailure>;
@@ -97,7 +101,7 @@ export const deploymentTeardownDetachPreview = {
 };
 
 export function createContributedDeploymentTargetForHost(host: Host) {
-    async function withRole<T>(request: ScopeRequest, environment: DeploymentEnvironmentDetailV1, role: Role,
+    async function withRole<T>(request: ScopeRequest, environment: DeploymentTargetRoleEnvironment, role: Role,
         run: (scope: Readonly<{
             common: ReturnType<typeof DeploymentTargetRoleCommonInputV1Schema.parse> & { targetLinkId: string; expectedTargetLinkRevision: number };
             action: Readonly<{ pluginId: string; localId: string }>;
@@ -405,7 +409,9 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         } catch (error) { return projectDeploymentException(error, { signal: request.context.signal }); }
     }
 
-    async function execute(request: DeploymentReceiptDispatchV1) {
+    async function execute(request: DeploymentReceiptDispatchV1, observed: Readonly<{
+        environment: EnvironmentMetadata['environment']; link: DeploymentTargetLinkHeaderV1; receipt?: DeploymentReceiptDetailV1;
+    }>) {
         let receipt: DeploymentReceiptDetailV1 | undefined;
         let providerInvocationStarted = false;
         let providerEffectObserved = false;
@@ -414,8 +420,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         let ownsReceipt = false;
         let buildOutput: DeploymentStageLogWriter | undefined;
         try {
-            const environment = await host.readEnvironment({ environmentId: request.input.environmentId, context: request.context });
-            receipt = await host.readReceipt({ environmentId: request.input.environmentId,
+            const environment = { environment: observed.environment, targetLinks: [await host.readTargetLink(observed.link, request.context)] };
+            receipt = observed.receipt ?? await host.readReceipt({ environmentId: request.input.environmentId,
                 deploymentId: request.receipt.deploymentId, context: request.context });
             let content = readContributedReceiptContent(receipt.content);
             effectContent = content;
@@ -538,16 +544,12 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         }
     }
     /** Select the target's declared reader once; own-server keeps its native reader. */
-    async function prepareLogs(request: Readonly<{ input: DeploymentLogsReadInputV1; context: ActionExecutorContext }>):
+    async function prepareLogs(request: Readonly<{ input: DeploymentLogsReadInputV1; context: ActionExecutorContext }>,
+        observedMetadata?: EnvironmentMetadata):
         Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null> {
         try {
             const address = request.input;
             if (address.serverId !== host.serverId || address.machineId !== undefined && address.machineId !== host.machineId) return failure('target_mismatch');
-            const environment = await host.readEnvironment({ environmentId: address.environmentId, context: request.context });
-            const selectedRow = address.targetLinkId === undefined ? undefined
-                : environment.targetLinks.find(row => row.targetLink.id === address.targetLinkId);
-            if (address.targetLinkId !== undefined && !selectedRow) return failure('target_mismatch');
-            if (selectedRow && selectedRow.targetLink.source.kind !== 'plugin') return null;
             const receipt = await host.readReceipt({ environmentId: address.environmentId, deploymentId: address.deploymentId, context: request.context });
             const targetLinkId = receipt.deployment.targetLinkId;
             const controller = receipt.deployment.acceptedExecution?.controller;
@@ -555,9 +557,10 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 || address.targetLinkId !== undefined && address.targetLinkId !== targetLinkId
                 || address.machineId !== undefined && address.machineId !== controller?.machineId
                 || address.installationId !== undefined && address.installationId !== controller?.installationId) return failure('target_mismatch');
-            const row = selectedRow ?? environment.targetLinks.find(row => row.targetLink.id === targetLinkId);
-            if (!row) return failure('target_mismatch');
-            if (row.targetLink.source.kind !== 'plugin') return null;
+            const metadata = observedMetadata ?? await host.readEnvironmentMetadata({ environmentId: address.environmentId, context: request.context });
+            const link = metadata.targetLinks.find(link => link.id === targetLinkId && link.environmentId === address.environmentId);
+            if (!link) return failure('target_mismatch');
+            if (link.source.kind !== 'plugin') return null;
             if (address.kind === 'build' && (address.machineId !== undefined || !receipt.content.platform?.observation.providerDeploymentId)
                 && receipt.content.platform?.stageLogs?.some(log => (address.machineId === undefined || log.machineId === address.machineId)
                     && (address.installationId === undefined || log.installationId === address.installationId))) {
@@ -575,6 +578,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                 } };
             }
             const role = address.kind === 'build' ? 'logs.build' : 'logs.runtime';
+            const environment = { environment: metadata.environment, targetLinks: [await host.readTargetLink(link, request.context)] };
             return await withRole<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null>({ environmentId: address.environmentId, targetLinkId,
                 context: request.context }, environment, role, async scope => {
                 const input = DeploymentTargetRoleInputSchemasV1[role].parse({ ...scope.common,

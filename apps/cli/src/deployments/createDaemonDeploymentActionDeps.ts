@@ -52,7 +52,7 @@ import {
     DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1,
     DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema, DeploymentReceiptResultV1Schema,
     DeploymentTransitionInputV1Schema, computeDeploymentTransitionRequestDigestV1, signMachineInstallationProof,
-    type ActionExecutorContext, type ActionExecutorDeps, type DeploymentDomainHeaderV1,
+    type ActionExecutorContext, type ActionExecutorDeps, type DeploymentDomainHeaderV1, type DeploymentTargetLinkHeaderV1,
     DeploymentDeployInputV1Schema, DeploymentTeardownInputV1Schema, DeploymentTeardownPreparedInputV1Schema, type DeploymentDeployInputV1,
     DeploymentPendingCancelInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentCreateInputV1Schema,
     DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinksListResultV1Schema,
@@ -361,6 +361,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         if (!detail.ok) return refuse(detail.error);
         return detail;
     };
+    const readTargetLink = async (targetLink: DeploymentTargetLinkHeaderV1, context: ActionExecutorContext) => {
+        const content = readDeploymentTargetLinkArtifactV1(targetLink, await open(targetLink.contentArtifactId, context));
+        if (!content.ok) return refuse(failure(content.error, content));
+        return { targetLink, content: content.content };
+    };
     const assertEnvironmentContentOwnerCurrent = async (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>,
         owner: DeploymentEnvironmentDetailV1['environment']['owner']) => {
         await assertCurrent(request.context);
@@ -401,11 +406,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const selected = detail.targetLinks.find(link => link.id === (targetLinkId ?? detail.environment.runtimeTargetLinkId));
             const lineage = selected?.role === 'runtime' ? getDeploymentTargetLinkLineageV1(selected, detail.targetLinks)
                 : new Set(selected ? [selected.id] : []);
-            const links = await Promise.all(detail.targetLinks.filter(link => lineage.has(link.id)).map(async targetLink => {
-                const content = readDeploymentTargetLinkArtifactV1(targetLink, await open(targetLink.contentArtifactId, context));
-                if (!content.ok) return refuse(failure(content.error, content));
-                return { targetLink, content: content.content };
-            }));
+            const links = await Promise.all(detail.targetLinks.filter(link => lineage.has(link.id))
+                .map(link => readTargetLink(link, context)));
             await assertCurrent(context);
             return { ...detail, targetLinks: links };
         },
@@ -795,6 +797,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
     };
     const contributedTarget = createContributedDeploymentTargetForHost({ ...host,
         readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readAnyReceipt,
+        readEnvironmentMetadata, readTargetLink,
         readPreparedDeploymentContent, assertCurrent, writeTransition: targetHost.writeTransition,
         createCandidate: createReceiptCandidate,
     });
@@ -1042,7 +1045,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         const link = environment.targetLinks.find(item => item.id === request.input.targetLinkId);
         if (!link) return failure('target_mismatch');
         if (providerTeardownReceipt && link.role === 'data') return dataTeardown.executeProject(request, providerTeardownReceipt, link);
-        return link.source.kind === 'plugin' ? contributedTarget.execute(request)
+        return link.source.kind === 'plugin' ? contributedTarget.execute(request, {
+            environment: environment.environment, link, receipt: providerTeardownReceipt,
+        })
             : request.actionId === 'deployments.teardown'
                 ? host.teardownBoundary ? injectedTeardown(request) : ownServerTeardown.execute(request)
                 : target.execute(request);
@@ -1735,7 +1740,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const metadata = await readEnvironmentMetadata({ environmentId: input.data.environmentId, context: request.context });
                     const link = metadata.targetLinks.find(link => link.id === input.data.targetLinkId);
                     if (!link) return failure('target_mismatch');
-                    return link.source.kind === 'plugin' ? contributedTarget.prepareLogs({ input: input.data, context: request.context }) : null;
+                    return link.source.kind === 'plugin' ? contributedTarget.prepareLogs({ input: input.data, context: request.context }, metadata) : null;
                 } catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (isDeploymentDomainDnsActionIdV1(request.actionId)) {
@@ -1743,8 +1748,10 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (isDeploymentDomainChildActionIdV1(request.actionId)) {
-                try { return await prepareContributedDomain(request) ?? await prepareOwnServerDomainReviewedChildren(request, { storage, open, dispatch: sendChild,
-                    readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation }); }
+                try { return await prepareContributedDomain(request, observed => prepareOwnServerDomainReviewedChildren(request, {
+                    storage, open, dispatch: sendChild, readEnvironment: targetHostReaders.readEnvironment,
+                    readReceipt: targetHostReaders.readReceipt, readInstallation,
+                }, observed)); }
                 catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }
             if (request.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
@@ -2264,7 +2271,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 else {
                     if (originalRequest.actionId !== 'deployments.deploy' || 'deploymentId' in originalInput || 'sourceDeploymentId' in originalInput) return failure('invalid_parameters');
                     if (originalInput.serverId !== host.serverId) return failure('server_scope_mismatch');
-                    await admitCandidateRequest({ environmentId: originalInput.environmentId, context: originalRequest.context,
+                    preparationEnvironment = await admitCandidateRequest({ environmentId: originalInput.environmentId, context: originalRequest.context,
                         ...(originalInput.sourceIntent ? { sourceIntent: originalInput.sourceIntent } : {}),
                         ...(originalInput.sha ? { sha: originalInput.sha } : {}),
                         ...(originalInput.sourceMethod ? { sourceMethod: originalInput.sourceMethod } : {}),
@@ -2296,7 +2303,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     // An approved compact replay may only observe an already
                     // active invocation; it never authors a replacement candidate.
                     if (replayingDeployment) return failure('invalid_parameters');
-                    preparationEnvironment = await targetHostReaders.readEnvironment({ environmentId: originalInput.environmentId,
+                    preparationEnvironment ??= await targetHostReaders.readEnvironment({ environmentId: originalInput.environmentId,
                         context: originalRequest.context });
                     const candidate = await prepareAdmittedDeployCandidate({ environmentId: originalInput.environmentId,
                         admittedTemplateSource: originalRequest.admittedTemplateSource,

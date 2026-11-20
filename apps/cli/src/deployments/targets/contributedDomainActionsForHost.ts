@@ -1,6 +1,6 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios from '@/api/client/credentialAxios';
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, isDeploymentDomainAddActionIdV1,
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1,
     isDeploymentDomainChildActionIdV1, type ActionExecutorContext, type ActionExecutorDeps, type ActionExecuteResult, type DeploymentDomainChildActionIdV1 } from '@happier-dev/protocol';
 import { deploymentTargetDomainRoleForActionV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainTransitionInputV1Schema, DeploymentDomainProviderObservationBodyV1Schema,
@@ -15,7 +15,7 @@ import { isRecord } from '@happier-dev/protocol/common/records';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { projectDeploymentFailure } from '../deploymentFailure';
 import type { createAccountArtifactStore, ArtifactRequestAuthorizationHeaders } from '@/api/artifacts/accountArtifactStore';
-import type { createOwnServerDomainActions } from './ownServer/ownServerDomainActions';
+import type { createOwnServerDomainActions, ObservedDomainReview } from './ownServer/ownServerDomainActions';
 import type { createContributedDeploymentTargetForHost } from './contributedDeploymentTargetForHost';
 
 type NativeHost = Parameters<typeof createOwnServerDomainActions>[0];
@@ -80,15 +80,16 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
         } catch (error) { return projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
             : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'outcome_unknown', error); }
     }
-    async function prepare(request: Preparation): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
+    async function prepare(request: Preparation,
+        prepareNative?: (observed: ObservedDomainReview) => ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>,
+    ): ReturnType<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>> {
         if (!isDeploymentDomainChildActionIdV1(request.actionId)) return null;
         const actionId = request.actionId;
         const role = deploymentTargetDomainRoleForActionV1(actionId);
         if (!role) return null;
         const input = DeploymentActionInputSchemasV1[actionId].parse(request.input);
         if ('mode' in input) return null;
-        const environment = await host.readEnvironment({ environmentId: input.environmentId, context: request.context });
-        const add = isDeploymentDomainAddActionIdV1(actionId) ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
+        const add = 'targetLinkId' in input ? input : undefined;
         let retained: DeploymentDomainHeaderV1 | undefined;
         if (!add) {
             const read = await host.storage('deployments.domains.get', { serverId: input.serverId,
@@ -99,9 +100,10 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
             retained = parsed.domain;
         }
         const targetLinkId = add?.targetLinkId ?? retained?.targetLinkId ?? refuse('target_mismatch');
+        const environment = await host.readEnvironment({ environmentId: input.environmentId, targetLinkId, context: request.context });
         const link = environment.targetLinks.find(row => row.targetLink.id === targetLinkId)?.targetLink;
         if (!link) return refuse('target_mismatch');
-        if (link.source.kind !== 'plugin') return null;
+        if (link.source.kind !== 'plugin') return prepareNative?.({ input, environment, ...(retained ? { domain: retained } : {}) }) ?? null;
         const opened = add && 'content' in add ? { ok: true as const, content: add.content }
             : readDeploymentDomainArtifactV1(add && 'contentArtifactId' in add ? add : retained!,
                 await host.open(add && 'contentArtifactId' in add ? add.contentArtifactId : retained!.contentArtifactId, request.context));
@@ -125,7 +127,7 @@ export function createContributedDomainActionsForHost(host: NativeHost & Readonl
             && isRecord(child.input) && child.input.domainId === input.domainId);
         if (!child) return null;
         try {
-            const add = isDeploymentDomainAddActionIdV1(actionId) ? DeploymentActionInputSchemasV1[actionId].parse(input) : undefined;
+            const add = 'targetLinkId' in input ? input : undefined;
             let retained: DeploymentDomainHeaderV1 | undefined;
             let retainedResult: Awaited<ReturnType<NativeHost['storage']>> | undefined;
             if (!add) {
