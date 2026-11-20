@@ -312,6 +312,7 @@
   "plugins.github.ui.linkedSession": "Sesión",
   "plugins.github.ui.mutations.separateWithCommas": "Separa varios valores con comas",
   "plugins.github.ui.mutations.oneLabelPerLine": "Una etiqueta por línea",
+  "plugins.github.ui.mutations.review.includeWalkthrough": "Incluir la explicación paso a paso",
   "plugins.github.ui.mutations.review.verdict": "Veredicto de revisión",
   "plugins.github.ui.mutations.review.verdict.requestChanges": "Solicitar cambios",
   "plugins.github.ui.mutations.review.verdict.approve": "Aprobar",

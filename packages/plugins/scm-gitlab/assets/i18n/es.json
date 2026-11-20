@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Publicar revisión",
   "plugins.gitlab.ui.publication.description": "Publica los comentarios propuestos vinculados a esta solicitud de fusión. Los borradores no relacionados de GitLab quedan pendientes.",
   "plugins.gitlab.ui.publication.comments": "Comentarios de revisión",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Incluir la explicación paso a paso",
   "plugins.gitlab.ui.publication.verdict": "Veredicto de la revisión",
   "plugins.gitlab.ui.publication.verdict.none": "Sin veredicto",
   "plugins.gitlab.ui.publication.verdict.comment": "Comentario",

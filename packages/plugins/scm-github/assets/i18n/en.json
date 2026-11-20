@@ -312,6 +312,7 @@
   "plugins.github.ui.linkedSession": "Session",
   "plugins.github.ui.mutations.separateWithCommas": "Separate several with commas",
   "plugins.github.ui.mutations.oneLabelPerLine": "One label per line",
+  "plugins.github.ui.mutations.review.includeWalkthrough": "Include the walkthrough",
   "plugins.github.ui.mutations.review.verdict": "Review verdict",
   "plugins.github.ui.mutations.review.verdict.requestChanges": "Request changes",
   "plugins.github.ui.mutations.review.verdict.approve": "Approve",

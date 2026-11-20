@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "發布審查",
   "plugins.gitlab.ui.publication.description": "發布與此合併請求連結的建議留言。GitLab 上無關的草稿將保持未發布。",
   "plugins.gitlab.ui.publication.comments": "審查留言",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "包含逐步解說",
   "plugins.gitlab.ui.publication.verdict": "審查結論",
   "plugins.gitlab.ui.publication.verdict.none": "無結論",
   "plugins.gitlab.ui.publication.verdict.comment": "留言",

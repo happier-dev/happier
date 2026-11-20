@@ -312,6 +312,7 @@
   "plugins.github.ui.linkedSession": "セッション",
   "plugins.github.ui.mutations.separateWithCommas": "複数の値はコンマで区切ってください",
   "plugins.github.ui.mutations.oneLabelPerLine": "1 行に 1 つのラベル",
+  "plugins.github.ui.mutations.review.includeWalkthrough": "ウォークスルーを含める",
   "plugins.github.ui.mutations.review.verdict": "レビュー判定",
   "plugins.github.ui.mutations.review.verdict.requestChanges": "変更をリクエスト",
   "plugins.github.ui.mutations.review.verdict.approve": "承認",

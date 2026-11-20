@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "发布评审",
   "plugins.gitlab.ui.publication.description": "发布与此合并请求关联的建议评论。GitLab 中无关的草稿将保持待发布状态。",
   "plugins.gitlab.ui.publication.comments": "评审评论",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "包含逐步讲解",
   "plugins.gitlab.ui.publication.verdict": "评审结论",
   "plugins.gitlab.ui.publication.verdict.none": "无结论",
   "plugins.gitlab.ui.publication.verdict.comment": "评论",

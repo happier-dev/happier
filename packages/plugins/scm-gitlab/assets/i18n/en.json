@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Publish review",
   "plugins.gitlab.ui.publication.description": "Publish proposed comments linked to this merge request. GitLab’s unrelated drafts stay pending.",
   "plugins.gitlab.ui.publication.comments": "Review comments",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Include the walkthrough",
   "plugins.gitlab.ui.publication.verdict": "Review verdict",
   "plugins.gitlab.ui.publication.verdict.none": "No verdict",
   "plugins.gitlab.ui.publication.verdict.comment": "Comment",

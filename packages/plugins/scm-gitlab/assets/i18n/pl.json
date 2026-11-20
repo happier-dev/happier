@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Opublikuj przegląd",
   "plugins.gitlab.ui.publication.description": "Publikuje proponowane komentarze powiązane z tym żądaniem scalenia. Niepowiązane szkice GitLab pozostaną nieopublikowane.",
   "plugins.gitlab.ui.publication.comments": "Komentarze przeglądu",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Dołącz omówienie zmian",
   "plugins.gitlab.ui.publication.verdict": "Werdykt przeglądu",
   "plugins.gitlab.ui.publication.verdict.none": "Brak werdyktu",
   "plugins.gitlab.ui.publication.verdict.comment": "Komentarz",

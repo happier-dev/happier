@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Review veröffentlichen",
   "plugins.gitlab.ui.publication.description": "Vorgeschlagene Kommentare veröffentlichen, die mit diesem Merge Request verknüpft sind. Andere GitLab-Entwürfe bleiben ausstehend.",
   "plugins.gitlab.ui.publication.comments": "Review-Kommentare",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Schritt-für-Schritt-Erklärung einfügen",
   "plugins.gitlab.ui.publication.verdict": "Review-Entscheidung",
   "plugins.gitlab.ui.publication.verdict.none": "Keine Entscheidung",
   "plugins.gitlab.ui.publication.verdict.comment": "Kommentieren",

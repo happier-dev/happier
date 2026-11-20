@@ -312,6 +312,7 @@
   "plugins.github.ui.linkedSession": "工作階段",
   "plugins.github.ui.mutations.separateWithCommas": "多個值請用逗號分隔",
   "plugins.github.ui.mutations.oneLabelPerLine": "每行一個標籤",
+  "plugins.github.ui.mutations.review.includeWalkthrough": "包含逐步解說",
   "plugins.github.ui.mutations.review.verdict": "審查結論",
   "plugins.github.ui.mutations.review.verdict.requestChanges": "要求變更",
   "plugins.github.ui.mutations.review.verdict.approve": "核准",

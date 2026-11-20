@@ -312,6 +312,7 @@
   "plugins.github.ui.linkedSession": "Sessió",
   "plugins.github.ui.mutations.separateWithCommas": "Separa diversos valors amb comes",
   "plugins.github.ui.mutations.oneLabelPerLine": "Una etiqueta per línia",
+  "plugins.github.ui.mutations.review.includeWalkthrough": "Inclou l’explicació pas a pas",
   "plugins.github.ui.mutations.review.verdict": "Veredicte de revisió",
   "plugins.github.ui.mutations.review.verdict.requestChanges": "Sol·licita canvis",
   "plugins.github.ui.mutations.review.verdict.approve": "Aprova",

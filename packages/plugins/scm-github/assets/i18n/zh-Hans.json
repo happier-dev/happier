@@ -312,6 +312,7 @@
   "plugins.github.ui.linkedSession": "会话",
   "plugins.github.ui.mutations.separateWithCommas": "多个值请用逗号分隔",
   "plugins.github.ui.mutations.oneLabelPerLine": "每行一个标签",
+  "plugins.github.ui.mutations.review.includeWalkthrough": "包含逐步讲解",
   "plugins.github.ui.mutations.review.verdict": "评审结论",
   "plugins.github.ui.mutations.review.verdict.requestChanges": "请求更改",
   "plugins.github.ui.mutations.review.verdict.approve": "批准",

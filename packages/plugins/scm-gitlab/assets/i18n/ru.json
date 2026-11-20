@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Опубликовать ревью",
   "plugins.gitlab.ui.publication.description": "Публикует предложенные комментарии, привязанные к этому запросу на слияние. Посторонние черновики GitLab останутся неопубликованными.",
   "plugins.gitlab.ui.publication.comments": "Комментарии ревью",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Включить разбор изменений",
   "plugins.gitlab.ui.publication.verdict": "Вердикт ревью",
   "plugins.gitlab.ui.publication.verdict.none": "Без вердикта",
   "plugins.gitlab.ui.publication.verdict.comment": "Комментарий",

@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Pubblica revisione",
   "plugins.gitlab.ui.publication.description": "Pubblica i commenti proposti collegati a questa richiesta di merge. Le bozze GitLab non correlate restano in sospeso.",
   "plugins.gitlab.ui.publication.comments": "Commenti di revisione",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Includi la spiegazione passo passo",
   "plugins.gitlab.ui.publication.verdict": "Verdetto della revisione",
   "plugins.gitlab.ui.publication.verdict.none": "Nessun verdetto",
   "plugins.gitlab.ui.publication.verdict.comment": "Commento",

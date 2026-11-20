@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Publier la revue",
   "plugins.gitlab.ui.publication.description": "Publie les commentaires proposés liés à cette demande de fusion. Les brouillons GitLab sans rapport restent en attente.",
   "plugins.gitlab.ui.publication.comments": "Commentaires de revue",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Inclure le pas-à-pas",
   "plugins.gitlab.ui.publication.verdict": "Verdict de la revue",
   "plugins.gitlab.ui.publication.verdict.none": "Aucun verdict",
   "plugins.gitlab.ui.publication.verdict.comment": "Commentaire",

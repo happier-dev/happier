@@ -312,6 +312,7 @@
   "plugins.github.ui.linkedSession": "Сессия",
   "plugins.github.ui.mutations.separateWithCommas": "Разделяйте несколько значений запятыми",
   "plugins.github.ui.mutations.oneLabelPerLine": "Одна метка на строку",
+  "plugins.github.ui.mutations.review.includeWalkthrough": "Включить разбор изменений",
   "plugins.github.ui.mutations.review.verdict": "Решение по рецензии",
   "plugins.github.ui.mutations.review.verdict.requestChanges": "Запросить изменения",
   "plugins.github.ui.mutations.review.verdict.approve": "Одобрить",

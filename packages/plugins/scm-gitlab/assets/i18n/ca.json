@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Publica la revisió",
   "plugins.gitlab.ui.publication.description": "Publica els comentaris proposats vinculats a aquesta sol·licitud de fusió. Els esborranys no relacionats del GitLab queden pendents.",
   "plugins.gitlab.ui.publication.comments": "Comentaris de revisió",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Inclou l’explicació pas a pas",
   "plugins.gitlab.ui.publication.verdict": "Veredicte de la revisió",
   "plugins.gitlab.ui.publication.verdict.none": "Cap veredicte",
   "plugins.gitlab.ui.publication.verdict.comment": "Comentari",

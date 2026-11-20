@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "レビューを公開",
   "plugins.gitlab.ui.publication.description": "このマージリクエストにリンクされた提案コメントを公開します。GitLab 上の無関係な下書きは下書きのまま残ります。",
   "plugins.gitlab.ui.publication.comments": "レビューコメント",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "ウォークスルーを含める",
   "plugins.gitlab.ui.publication.verdict": "レビューの判定",
   "plugins.gitlab.ui.publication.verdict.none": "判定なし",
   "plugins.gitlab.ui.publication.verdict.comment": "コメント",

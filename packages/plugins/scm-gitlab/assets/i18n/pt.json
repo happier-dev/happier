@@ -263,6 +263,7 @@
   "plugins.gitlab.ui.publication.title": "Publicar revisão",
   "plugins.gitlab.ui.publication.description": "Publica os comentários propostos associados a este pedido de merge. Os rascunhos não relacionados do GitLab ficam pendentes.",
   "plugins.gitlab.ui.publication.comments": "Comentários de revisão",
+  "plugins.gitlab.ui.publication.includeWalkthrough": "Incluir a explicação passo a passo",
   "plugins.gitlab.ui.publication.verdict": "Veredito da revisão",
   "plugins.gitlab.ui.publication.verdict.none": "Sem veredito",
   "plugins.gitlab.ui.publication.verdict.comment": "Comentário",
