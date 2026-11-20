@@ -50,11 +50,12 @@ afterEach(() => vi.restoreAllMocks());
 afterAll(() => pluginReloadController.shutdown());
 
 it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-approval-verify', 'account-agent-approval-verify',
-  'plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
+  'plugin-approval-verify', 'unobserved-plugin-approval-verify', 'account-approval-reject', 'account-approval-cancel', 'approval-reject', 'approval-cancel', 'owner-verify', 'owner-prepare', 'owner-foreign-use', 'owner-foreign-manage',
   'owner-unadmitted', 'owner-retarget', 'owner-home'] as const)('runs mounted source %s through its serving Machine SDK executor without minting an Account root', async shape => {
   const approvalShape = shape.includes('approval-');
   const accountChild = shape.startsWith('account-');
-  const localPluginChild = shape === 'plugin-approval-verify';
+  const unobservedPluginChild = shape === 'unobserved-plugin-approval-verify';
+  const localPluginChild = shape === 'plugin-approval-verify' || unobservedPluginChild;
   const accountOrigin = shape === 'account-agent-approval-verify' ? 'agent' as const : 'cli' as const;
   const verifyShape = shape.endsWith('verify');
   await withConfiguredDaemonTestHome({ prefix: 'review-workspace-child-',
@@ -78,6 +79,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
       access: { custodian: { accountId, displayName: 'Reviewer' }, role: 'manage',
         resourceMode: 'plain', accessState: 'ready' } };
+    let publishUnobservedApproval: ((artifactId: string) => void) | undefined;
     const approvalHome = approvalShape ? Fastify() : null;
     const approvalChannel = approvalHome ? await createRequesterCurrentnessSocketHarness() : null;
     const approvalPaths: string[] = [];
@@ -90,6 +92,13 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
     let restoreHttp: (() => void) | undefined;
     if (approvalHome) {
       approvalHome.addHook('onRequest', async request => { approvalPaths.push(request.url); });
+      approvalHome.addHook('onResponse', async request => {
+        if (!unobservedPluginChild || request.method !== 'POST' || request.url !== '/v1/artifacts') return;
+        const body: unknown = request.body;
+        if (body && typeof body === 'object' && 'id' in body && typeof body.id === 'string') {
+          publishUnobservedApproval?.(body.id);
+        }
+      });
       const features = registerAccountHomeHttp(approvalHome, { accountId, serverId: 'srv_review_home' });
       registerPlainArtifactRoutes(approvalHome, accountId);
       approvalHome.get('/v1/features', async () => features);
@@ -274,6 +283,8 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
       let childSettled = false;
       let approvalReady!: (value: unknown) => void;
       const approvalPublished = new Promise<unknown>(resolve => { approvalReady = resolve; });
+      publishUnobservedApproval = artifactId => approvalReady({ kind: 'approval_request_created', artifactId,
+        actionId: 'scm.reviewWorkspace.materializePrepared' });
       const releaseApprovalObservation = operations.store.subscribe(() => {
         const held = operations.store.findByRequestIdentity({ accountId, machineId }, request.qualifiedActionId, request.requestId);
         if (held?.progress?.approval) approvalReady(held.progress.approval);
@@ -304,7 +315,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
         child = executeContributedAction({ runtimeRegistry: runtime.registry, actionId: request.qualifiedActionId,
           input: providerInput, approvalContext, actionsSettings: { v: 1, actions: {} }, context: {
             ...approvalContext, operationRequestId: request.requestId, operationRpcContext: approvalContext,
-            observePluginExecution: operations.observePluginExecution,
+            ...(unobservedPluginChild ? {} : { observePluginExecution: operations.observePluginExecution }),
           } }).then(attempt => {
             childSettled = true;
             if (!attempt.matched) throw new Error('Expected local SDK source child');
@@ -330,7 +341,9 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
           expect(childSettled).toBe(false);
         }
         const held = operations.store.findByRequestIdentity({ accountId, machineId }, request.qualifiedActionId, request.requestId);
-        expect(held).toMatchObject({ state: 'running', progress: { phase: 'waiting_for_approval', approval: receipt } });
+        if (!unobservedPluginChild) {
+          expect(held).toMatchObject({ state: 'running', progress: { phase: 'waiting_for_approval', approval: receipt } });
+        }
         if (!verifyShape) expect(runScmExecutable(root, 'git', ['worktree', 'list', '--porcelain'])).not.toContain(targetPath);
         const decider = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
           serverId, serverIdentityId: 'srv_review_home', serverHttpBaseUrl: 'https://review-home.test' });
@@ -339,25 +352,30 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
           { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: accountId,
             serverId, serverIdentityId: 'srv_review_home', actionRequestId: 'approve-review-workspace' });
         expect(decided, JSON.stringify(decided)).toMatchObject({ ok: true });
-        if (!held) throw new Error('Expected retained source operation');
-        const terminal = await operations.handlers.getV2({ operationId: held.operationId, waitForTerminal: true });
-        if (decision !== 'approve') {
-          if (child) expect(await child).toMatchObject({ ok: false,
-            errorCode: decision === 'reject' ? 'approval_rejected' : 'approval_canceled' });
-          expect(terminal, JSON.stringify({ decided, terminal })).toMatchObject({ kind: 'found', operation: {
-            state: 'failed',
-            error: { errorCode: decision === 'reject' ? 'approval_rejected' : 'approval_canceled' },
-          } });
-          expect(runScmExecutable(root, 'git', ['worktree', 'list', '--porcelain'])).not.toContain(targetPath);
-          expect(post.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/artifacts')).toHaveLength(1);
-          return;
+        if (unobservedPluginChild) {
+          result = await child!;
+          expect(result).toMatchObject({ ok: true, result: { kind: 'verified' } });
+        } else {
+          if (!held) throw new Error('Expected retained source operation');
+          const terminal = await operations.handlers.getV2({ operationId: held.operationId, waitForTerminal: true });
+          if (decision !== 'approve') {
+            if (child) expect(await child).toMatchObject({ ok: false,
+              errorCode: decision === 'reject' ? 'approval_rejected' : 'approval_canceled' });
+            expect(terminal, JSON.stringify({ decided, terminal })).toMatchObject({ kind: 'found', operation: {
+              state: 'failed',
+              error: { errorCode: decision === 'reject' ? 'approval_rejected' : 'approval_canceled' },
+            } });
+            expect(runScmExecutable(root, 'git', ['worktree', 'list', '--porcelain'])).not.toContain(targetPath);
+            expect(post.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/v1/artifacts')).toHaveLength(1);
+            return;
+          }
+          expect(terminal, JSON.stringify({ decided, terminal })).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
+          if (terminal.kind !== 'found') throw new Error('Expected settled source operation');
+          const settled = readActionOperationTerminalResultV1(terminal.operation);
+          if (!settled) throw new Error('Expected terminal source result');
+          result = settled;
+          if (child) expect(await child).toMatchObject({ ok: true, result: { kind: 'verified' } });
         }
-        expect(terminal, JSON.stringify({ decided, terminal })).toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
-        if (terminal.kind !== 'found') throw new Error('Expected settled source operation');
-        const settled = readActionOperationTerminalResultV1(terminal.operation);
-        if (!settled) throw new Error('Expected terminal source result');
-        result = settled;
-        if (child) expect(await child).toMatchObject({ ok: true, result: { kind: 'verified' } });
       }
       expect(result, JSON.stringify({ result, sourceEntered, approvalPaths,
         getPaths: get.mock.calls.map(([url]) => new URL(String(url)).pathname),

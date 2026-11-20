@@ -751,7 +751,10 @@ export function createPluginInvocationActionsService(params: Readonly<{
         // retry instead of waiting for that one consent and its result.
         const workspaceOperation = isScmReviewWorkspaceMaterializationActionIdV1(actionId)
             ? params.seed.finiteOperation : undefined;
-        const retainsInput = workspaceOperation !== undefined || isPluginRetainedInputActionIdV1(actionId);
+        // Approval settlement belongs to the invocation even when its caller
+        // does not observe operation progress.
+        const retainsInput = isScmReviewWorkspaceMaterializationActionIdV1(actionId)
+            || isPluginRetainedInputActionIdV1(actionId);
         const invocationRetirement = retainsInput ? new AbortController() : null;
         const executionSignal = invocationRetirement ? AbortSignal.any([signal, invocationRetirement.signal]) : signal;
         const invocationExecutor = retainsInput
