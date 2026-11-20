@@ -1,6 +1,9 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import React from 'react';
 import { useShallow } from 'zustand/react/shallow';
+import { useSetting } from './settingsReadHooks';
+import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
+import { normalizeMachineIdentityString } from '@/sync/domains/machines/identity/machineIdentityTypes';
 
 import type { LocalSettings } from '../domains/settings/localSettings';
 import type {
@@ -71,7 +74,7 @@ const directLocalSettingDeclarations = BUILT_IN_SETTINGS_DECLARATIONS_V1.filter(
     && binding.access === 'read_write' && !declaration.sensitive;
 });
 
-export function useApplySettings(): (change: SettingsWrite) => void {
+export function useApplySettings(): (change: SettingsWrite) => Promise<void> {
   const expectedSettingsScope = useAccountSettingsScope();
   const writeSetting = useSettingActionWriter();
   const apply = React.useCallback(async (change: SettingsWrite) => {
@@ -102,6 +105,36 @@ export function useApplySettings(): (change: SettingsWrite) => void {
     fireAndForget(operation, { tag: 'settings.apply' });
     return operation;
   }, [apply]);
+}
+
+const pendingMachineFavoriteWrites = new Map<string, Promise<void>>();
+
+export function useMachineFavorites(newFavoritePosition: 'first' | 'last' = 'last') {
+  const ids = useSetting('favoriteMachines');
+  const scope = useAccountSettingsScope();
+  const applySettings = useApplySettings();
+  const toggle = React.useCallback((id: string) => {
+    const machineId = normalizeMachineIdentityString(id);
+    if (!scope || !machineId) return;
+    const key = serverAccountScopeKeySuffix(scope);
+    const write = () => applySettings(({ favoriteMachines }) => {
+      if (favoriteMachines.includes(machineId)) {
+        return { favoriteMachines: favoriteMachines.filter(favoriteId => favoriteId !== machineId) };
+      }
+      return { favoriteMachines: newFavoritePosition === 'first'
+        ? [machineId, ...favoriteMachines]
+        : [...favoriteMachines, machineId] };
+    });
+    const previous = pendingMachineFavoriteWrites.get(key);
+    // The declared setting takes a whole value. Wait for its write to publish before
+    // reading the next value, including when the presses come from different pickers.
+    const settled = (previous ? previous.then(write) : write()).then(() => {}, () => {});
+    pendingMachineFavoriteWrites.set(key, settled);
+    void settled.then(() => {
+      if (pendingMachineFavoriteWrites.get(key) === settled) pendingMachineFavoriteWrites.delete(key);
+    });
+  }, [scope, applySettings, newFavoritePosition]);
+  return [ids, toggle] as const;
 }
 
 /** Voice editors submit their change, not a stale replacement of the Account-owned profile. */

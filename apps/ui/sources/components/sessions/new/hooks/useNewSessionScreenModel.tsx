@@ -1,3 +1,4 @@
+import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import { sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { createApprovalProfileComposerChip } from '@/components/approvals/createApprovalProfileComposerChip';
 import { resolveApprovalProfileMachineDefault, useApprovalProfiles } from '@/hooks/approvals/useApprovalProfiles';
@@ -905,7 +906,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const profiles = React.useMemo(() => launchProfiles.map(projectAiLaunchProfileForLegacyUi), [launchProfiles]);
     const lastUsedProfile = useAuthoringMemoryField('lastUsedProfile');
     const [favoriteDirectories, setFavoriteDirectories] = useSettingMutable('favoriteDirectories');
-    const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
+    const [favoriteMachines, toggleFavoriteMachineId] = useMachineFavorites();
     const [favoriteProfileIds, setFavoriteProfileIds] = useProfileFavoriteIdsMutable();
     const [favoriteModelSelections, setFavoriteModelSelections] = useCurrentFavoriteModelSelectionsV1Mutable();
     const [favoriteBackendTargetKeys, setFavoriteBackendTargetKeys] = useSettingMutable('favoriteBackendTargetKeysV1');
@@ -2852,10 +2853,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
         commitExactMachineTarget(target);
     }, [commitExactMachineTarget]);
     const toggleFavoriteMachine = React.useCallback((machine: Machine) => {
-        setFavoriteMachines(favoriteMachines.includes(machine.id)
-            ? favoriteMachines.filter((id) => id !== machine.id)
-            : [...favoriteMachines, machine.id]);
-    }, [favoriteMachines, setFavoriteMachines]);
+        toggleFavoriteMachineId(machine.id);
+    }, [toggleFavoriteMachineId]);
     const clearProfileRouteParam = React.useCallback(() => {
         const setParams = (navigation as any)?.setParams;
         if (typeof setParams === 'function') {
@@ -4636,7 +4635,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
             setSelectedPath: setDraftPathWithAction,
             setDraftSelectedPath,
             favoriteMachines,
-            setFavoriteMachines,
             selectedPath,
             recentPaths,
             usePathPickerSearch,

@@ -1,3 +1,4 @@
+import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
@@ -136,7 +137,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     const machineListStatusByServerId = useMachineListStatusByServerId();
     const activeServerMachines = useMachineRecordValues() ?? [];
     const activeServer = useActiveServerSnapshot();
-    const [favoriteMachinesRaw, setFavoriteMachinesRaw] = useSettingMutable('favoriteMachines');
+    const [favoriteMachineIds, toggleFavoriteMachineId] = useMachineFavorites('first');
     const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
     const [sessionHandoffDefaultsRaw] = useSettingMutable('sessionHandoffDefaultsV1');
     const relationshipSummaries = useWorkspaceSyncRelationshipSummaries(undefined, serverId ?? undefined);
@@ -218,7 +219,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
         }
     }, [serverId]);
 
-    const favoriteMachineIds = Array.isArray(favoriteMachinesRaw) ? favoriteMachinesRaw : [];
     const favoriteMachines = React.useMemo(() => {
         const byId = new Map(machines.map((machine: any) => [machine?.id, machine] as const));
         return favoriteMachineIds.map((id) => byId.get(id)).filter(Boolean) as any[];
@@ -481,10 +481,7 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
     };
     const toggleFavorite = (machine: NonNullable<typeof selectedMachine>) => {
         if (awaitingAdmission) return;
-        const machineId = normalizeId(machine.id);
-        if (!machineId) return;
-        const exists = favoriteMachineIds.includes(machineId);
-        setFavoriteMachinesRaw(exists ? favoriteMachineIds.filter((id: string) => id !== machineId) : [machineId, ...favoriteMachineIds]);
+        toggleFavoriteMachineId(machine.id);
     };
 
     const canStart = startReadiness.canStart && (!existingStateRequested || existingStateAvailability === 'available');

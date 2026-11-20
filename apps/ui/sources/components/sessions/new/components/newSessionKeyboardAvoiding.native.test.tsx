@@ -282,7 +282,6 @@ function buildWizard() {
                 getBestPathForMachine: () => '/tmp',
                 setSelectedPath: () => {},
                 favoriteMachines: [],
-                setFavoriteMachines: () => {},
                 selectedPath: '/tmp',
                 recentPaths: [],
                 usePathPickerSearch: false,

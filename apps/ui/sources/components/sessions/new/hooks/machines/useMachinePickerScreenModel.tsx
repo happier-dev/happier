@@ -1,10 +1,11 @@
+import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import * as React from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 import { useMachinePickerRouteOptions } from '@/components/sessions/new/navigation/machinePickerRouteOptions';
 
-import { useAllSessionListRenderables, useSetting, useSettingMutable, useActiveMachineFacts } from '@/sync/domains/state/storage';
+import { useAllSessionListRenderables, useSetting, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { t } from '@/text';
 import { getRecentMachinesFromSessions } from '@/utils/sessions/recentMachines';
@@ -88,7 +89,7 @@ export function useMachinePickerScreenModel() {
     const machines = useActiveMachineFacts();
     const sessions = useAllSessionListRenderables();
     const useMachinePickerSearch = useSetting('useMachinePickerSearch');
-    const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
+    const [favoriteMachines, toggleFavoriteMachineId] = useMachineFavorites();
 
     const [isRefreshing, setIsRefreshing] = React.useState(false);
     const [refreshToken, setRefreshToken] = React.useState(0);
@@ -446,12 +447,8 @@ export function useMachinePickerScreenModel() {
     }, [favoriteMachines, machinesForSelectedServer]);
 
     const onToggleFavorite = React.useCallback((machine: Machine) => {
-        const isInFavorites = favoriteMachines.includes(machine.id);
-        setFavoriteMachines(isInFavorites
-            ? favoriteMachines.filter((id: string) => id !== machine.id)
-            : [...favoriteMachines, machine.id],
-        );
-    }, [favoriteMachines, setFavoriteMachines]);
+        toggleFavoriteMachineId(machine.id);
+    }, [toggleFavoriteMachineId]);
 
     const temporaryComputerSelections = React.useMemo(() => buildTemporaryComputerSelectionRows({
         serverId: selectedServerId,

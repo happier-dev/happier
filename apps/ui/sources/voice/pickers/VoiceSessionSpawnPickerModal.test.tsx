@@ -7,6 +7,7 @@ import type { PathSelectionListProps } from '@/components/sessions/new/component
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { CustomModalChromeConfig } from '@/modal';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -65,6 +66,7 @@ const { t } = await import('@/text');
 const { MachineSelector } = await import('@/components/sessions/new/components/MachineSelector');
 const { PathSelectionList } = await import('@/components/sessions/new/components/PathSelectionList');
 const initialStorage = storage.getState();
+let settingsPostCount: number;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
 
 async function renderScreen(...args: Parameters<typeof renderActualScreen>) {
@@ -83,11 +85,21 @@ function pathProps(screen: Awaited<ReturnType<typeof renderActualScreen>>): Path
 describe('VoiceSessionSpawnPickerModal', () => {
   beforeEach(async () => {
     network.resetRequests();
+    settingsPostCount = 0;
     const home = await network.addHome('https://voice-picker.example.test', 'picker-account');
-    const request = async (url: RequestInfo | URL): Promise<Response | null> => {
+    const settings = createAccountSettingsHttpBoundary({ serverUrl: home.serverUrl, initialAccounts: [{
+      accountId: 'picker-account',
+      snapshot: { content: { t: 'plain', v: {
+        actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
+      } }, version: 1 },
+    }] });
+    const request = async (url: RequestInfo | URL, init?: RequestInit): Promise<Response | null> => {
       const path = new URL(String(url)).pathname;
       if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+      if (path === '/v2/account/settings') {
+        if (init?.method === 'POST') settingsPostCount++;
+        return settings.handle(url, init) ?? null;
+      }
       if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
       if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
       return null;
@@ -104,6 +116,37 @@ describe('VoiceSessionSpawnPickerModal', () => {
     storage.setState(initialStorage, true);
   });
   afterAll(() => network.dispose());
+
+    it('keeps both Machines starred when two open pickers press before either rerenders', async () => {
+        const { VoiceSessionSpawnPickerModal } = await import('./VoiceSessionSpawnPickerModal');
+        const firstMachine = createMachine({ id: 'first-machine' });
+        const secondMachine = createMachine({ id: 'second-machine' });
+        machinesState = [firstMachine, secondMachine];
+
+        const screen = await renderScreen(<>
+            <VoiceSessionSpawnPickerModal onClose={() => {}} onResolve={() => {}} />
+            <VoiceSessionSpawnPickerModal onClose={() => {}} onResolve={() => {}} />
+        </>);
+        const [first, second] = screen.tree.findAllByType(MachineSelector);
+        const starFirst = first.props.onToggleFavorite;
+        const starSecond = second.props.onToggleFavorite;
+
+        await act(async () => {
+            starFirst(firstMachine);
+            await vi.waitFor(() => expect(storage.getState().settings.favoriteMachines).toEqual([firstMachine.id]));
+            starSecond(secondMachine);
+            await vi.waitFor(() => expect(storage.getState().settings.favoriteMachines).toEqual([firstMachine.id, secondMachine.id]));
+        });
+
+        expect(settingsPostCount).toBe(2);
+
+        await act(async () => {
+            starFirst(firstMachine);
+            starSecond(secondMachine);
+            await vi.waitFor(() => expect(storage.getState().settings.favoriteMachines).toEqual([]));
+        });
+        expect(settingsPostCount).toBe(4);
+    });
 
     it('passes machine browse config to PathSelectionList after choosing a machine', async () => {
         const { VoiceSessionSpawnPickerModal } = await import('./VoiceSessionSpawnPickerModal');

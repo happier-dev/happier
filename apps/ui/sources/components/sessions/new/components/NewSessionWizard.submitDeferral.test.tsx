@@ -182,7 +182,6 @@ describe('NewSessionWizard submit deferral', () => {
                         getBestPathForMachine: () => '',
                         setSelectedPath: () => {},
                         favoriteMachines: [],
-                        setFavoriteMachines: () => {},
                         selectedPath: '',
                         recentPaths: [],
                         usePathPickerSearch: false,

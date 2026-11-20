@@ -226,7 +226,6 @@ export interface NewSessionWizardMachineProps {
     setSelectedPath: (path: string) => void;
     setDraftSelectedPath?: (path: string) => void;
     favoriteMachines: ReadonlyArray<string>;
-    setFavoriteMachines: (ids: string[]) => void;
     selectedPath: string;
     recentPaths: ReadonlyArray<string>;
     usePathPickerSearch: boolean;

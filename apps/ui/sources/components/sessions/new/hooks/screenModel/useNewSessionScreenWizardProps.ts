@@ -140,7 +140,6 @@ export function useNewSessionScreenWizardProps(params: Readonly<{
         | 'setSelectedPath'
         | 'setDraftSelectedPath'
         | 'favoriteMachines'
-        | 'setFavoriteMachines'
         | 'selectedPath'
         | 'recentPaths'
         | 'usePathPickerSearch'

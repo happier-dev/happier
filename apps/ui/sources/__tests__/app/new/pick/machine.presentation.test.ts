@@ -36,9 +36,12 @@ const HOME_ID = 'srv_machine_presentation';
 const HOME_URL = 'https://machine-presentation.example.test';
 const ACCOUNT_ID = 'machine-presentation-account';
 const POOL_ID = '3a948f0c-bc30-491c-b764-37f0e6744d1f';
+const POOL_NAME = 'Development';
 const poolList = MachinePoolListOutputV1Schema.parse({ pools: [{
     pool: {
-        id: POOL_ID, name: 'Development', description: null,
+        id: POOL_ID,
+        name: { kind: 'available', label: { content: { t: 'plain', v: POOL_NAME }, recipientEnvelope: null } },
+        description: null,
         revision: 1, createdAt: 1, updatedAt: 1,
         members: [{ machineId: 'machine-from-pool', priorityTier: 0, enabled: true, state: 'connected' }],
     },
@@ -141,6 +144,31 @@ describe('MachinePickerScreen (iOS presentation)', () => {
         const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
         connection = await restoreServerAccountForTest({ serverUrl: HOME_URL,
             serverIdentityId: HOME_ID, accountId: ACCOUNT_ID, request: homes.request });
+    });
+
+    it('sends the starred Machine id to the settings owner', async () => {
+        const writers = await import('@/sync/store/settingsWriters');
+        const useMachineFavorites = writers.useMachineFavorites;
+        const onToggle = vi.fn<(machineId: string) => void>();
+        const owner = vi.spyOn(writers, 'useMachineFavorites').mockImplementation((position) => {
+            const [ids, toggle] = useMachineFavorites(position);
+            return [ids, (machineId) => { onToggle(machineId); toggle(machineId); }];
+        });
+        try {
+            const { useMachinePickerScreenModel } = await import('@/components/sessions/new/hooks/machines/useMachinePickerScreenModel');
+            const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+            const { NewSessionMachineSelectionContent } = await import('@/components/sessions/new/components/NewSessionMachineSelectionContent');
+            const picker = await renderHook(() => useMachinePickerScreenModel());
+            const { content } = picker.getCurrent();
+            if (!React.isValidElement<React.ComponentProps<typeof NewSessionMachineSelectionContent>>(content)) {
+                throw new Error('Expected the Machine picker content');
+            }
+            const machine = createMachineFixture({ id: 'machine-picker-favorite' });
+            await act(async () => { content.props.onToggleFavorite?.(machine); });
+            expect(onToggle).toHaveBeenCalledExactlyOnceWith(machine.id);
+        } finally {
+            owner.mockRestore();
+        }
     });
 
     it('provides an explicit header Cancel on iOS', async () => {
@@ -328,7 +356,10 @@ describe('MachinePickerScreen (iOS presentation)', () => {
         const screen = await renderScreen(React.createElement(MachinePickerScreen));
         await waitForHomeGovernance(() => {
             expect(storage.getState().machineListStatusByServerId[HOME_ID]).toBe('error');
-            expect(storage.getState().machinePoolListByServerId[HOME_ID]).toEqual(poolList.pools);
+            expect(storage.getState().machinePoolListByServerId[HOME_ID]).toEqual(poolList.pools.map(view => ({
+                ...view,
+                pool: { ...view.pool, name: POOL_NAME },
+            })));
             expect(storage.getState().machinePoolListStatusByServerId[HOME_ID]).toBe('idle');
             expect(screen.findByTestId(`new-session-machine-pool-refresh:${HOME_ID}`)).toBeTruthy();
         });

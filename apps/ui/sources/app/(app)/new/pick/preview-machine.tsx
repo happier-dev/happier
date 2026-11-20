@@ -1,10 +1,11 @@
+import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import React from 'react';
 import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
-import { useSettingMutable, useSettingsSelector, useActiveMachineFacts } from '@/sync/domains/state/storage';
+import { useSettingsSelector, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -44,7 +45,7 @@ export default React.memo(function PreviewMachinePickerScreen() {
         inventoryPurpose: 'launch',
     });
     const machines = React.useMemo(() => groups.flatMap(group => group.machines), [groups]);
-    const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
+    const [favoriteMachines, toggleFavorite] = useMachineFavorites();
     const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
         backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
@@ -108,14 +109,6 @@ export default React.memo(function PreviewMachinePickerScreen() {
         const byId = new Map(machines.map((m) => [m.id, m] as const));
         return favoriteMachines.map((id: string) => byId.get(id)).filter(Boolean) as typeof machines;
     }, [favoriteMachines, machines]);
-
-    const toggleFavorite = React.useCallback((machineId: string) => {
-        if (favoriteMachines.includes(machineId)) {
-            setFavoriteMachines(favoriteMachines.filter((id: string) => id !== machineId));
-            return;
-        }
-        setFavoriteMachines([...favoriteMachines, machineId]);
-    }, [favoriteMachines, setFavoriteMachines]);
 
     const setPreviewMachineIdOnPreviousRoute = React.useCallback((previewMachineId: string) => {
         const roundTripFallbackTarget = resolveRouteCloseoutFallbackTarget({

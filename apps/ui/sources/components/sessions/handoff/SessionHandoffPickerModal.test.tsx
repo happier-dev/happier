@@ -290,6 +290,29 @@ describe('SessionHandoffPickerModal', () => {
         };
     });
 
+    it('sends the starred Machine id to the settings owner', async () => {
+        const writers = await import('@/sync/store/settingsWriters');
+        const useMachineFavorites = writers.useMachineFavorites;
+        const onToggle = vi.fn<(machineId: string) => void>();
+        const owner = vi.spyOn(writers, 'useMachineFavorites').mockImplementation((position) => {
+            const [ids, toggle] = useMachineFavorites(position);
+            return [ids, (machineId) => { onToggle(machineId); toggle(machineId); }];
+        });
+        try {
+            const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
+            const screen = await renderScreen(<SessionHandoffPickerModal
+                onClose={vi.fn()} onResolve={vi.fn()} sessionId="sess_1" serverId={homeA.id}
+            />);
+            const machine = allMachinesState[0];
+            await act(async () => {
+                invokeTestInstanceHandler(screen.tree.findByType(MachineSelector), 'onToggleFavorite', machine);
+            });
+            expect(onToggle).toHaveBeenCalledExactlyOnceWith(machine.id);
+        } finally {
+            owner.mockRestore();
+        }
+    });
+
     it('defaults to transferring session data and submits existing-state only after turning it off', async () => {
         const onResolve = vi.fn();
         let chrome: CustomModalChromeConfig | null = null;

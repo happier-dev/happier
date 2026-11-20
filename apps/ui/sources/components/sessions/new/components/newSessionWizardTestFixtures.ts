@@ -38,7 +38,7 @@ export function createNewSessionWizardTestProps(): NewSessionWizardTestProps {
             machines: [machine], serverId: null, selectedMachine: machine, recentMachines: [], favoriteMachineItems: [],
             useMachinePickerSearch: false, onRefreshMachines: () => {}, setSelectedMachineId: () => {},
             getBestPathForMachine: () => '/Users/alice/repo', setSelectedPath: () => {},
-            favoriteMachines: [], setFavoriteMachines: () => {}, selectedPath: '/Users/alice/repo', recentPaths: [],
+            favoriteMachines: [], selectedPath: '/Users/alice/repo', recentPaths: [],
             usePathPickerSearch: false, favoriteDirectories: [], setFavoriteDirectories: () => {},
         },
         footer: { promptStore: createNewSessionPromptStore(''), setSessionPrompt: () => {}, handleCreateSession: () => {},

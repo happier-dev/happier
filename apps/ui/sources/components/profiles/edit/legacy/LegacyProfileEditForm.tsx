@@ -1,3 +1,4 @@
+import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import React from 'react';
 import { ViewStyle, Platform } from 'react-native';
@@ -18,7 +19,7 @@ import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/cat
 import { Switch } from '@/components/ui/forms/Switch';
 import { getBuiltInProfileDocumentation } from '@/sync/domains/profiles/profileUtils';
 import { EnvironmentVariablesList, type EnvironmentVariableAddition } from '@/components/profiles/environmentVariables/EnvironmentVariablesList';
-import { useSetting, useSettingsSelector, useMachine, useSettingMutable, useActiveMachineFacts } from '@/sync/domains/state/storage';
+import { useSetting, useSettingsSelector, useMachine, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
@@ -150,7 +151,7 @@ function LegacyProfileEditFormReady({
     ), ["opencodeBackendMode"]);
     const transcriptStorageSettings = React.useMemo(() => ({ opencodeBackendMode }), [opencodeBackendMode]);
     const externalSessionsEnabled = useFeatureEnabled('sessions.direct');
-    const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
+    const [favoriteMachines, toggleFavoriteMachineId] = useMachineFavorites('first');
     const routeMachine = machineId;
     const [previewMachineId, setPreviewMachineId] = React.useState<string | null>(routeMachine);
 
@@ -224,13 +225,6 @@ function LegacyProfileEditFormReady({
         return getAgentCore(displayAgentId ?? '')?.ui.agentPickerIconName ?? NEUTRAL_AGENT_ICON_NAME;
     }, [getDisplayAgentIdForEntry]);
 
-    const toggleFavoriteMachineId = React.useCallback((machineIdToToggle: string) => {
-        if (favoriteMachines.includes(machineIdToToggle)) {
-            setFavoriteMachines(favoriteMachines.filter((id: string) => id !== machineIdToToggle));
-        } else {
-            setFavoriteMachines([machineIdToToggle, ...favoriteMachines]);
-        }
-    }, [favoriteMachines, setFavoriteMachines]);
 
     const MachinePreviewModalWrapper = React.useCallback(({ onClose }: { onClose: () => void }) => {
         return (

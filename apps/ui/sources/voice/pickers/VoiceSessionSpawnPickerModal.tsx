@@ -1,3 +1,4 @@
+import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import { useAuthoringMemoryField } from '@/sync/domains/state/storage';
 import * as React from 'react';
 import { View, ScrollView } from 'react-native';
@@ -75,10 +76,9 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
     [recentMachinePaths],
   );
   const useMachinePickerSearch = useSetting('useMachinePickerSearch');
-  const [favoriteMachinesRaw, setFavoriteMachinesRaw] = useSettingMutable('favoriteMachines');
+  const [favoriteMachineIds, toggleFavoriteMachineId] = useMachineFavorites();
   const [favoriteDirectoriesRaw, setFavoriteDirectoriesRaw] = useSettingMutable('favoriteDirectories');
 
-  const favoriteMachineIds = Array.isArray(favoriteMachinesRaw) ? favoriteMachinesRaw : [];
   const favoriteMachines = React.useMemo(() => {
     const byId = new Map(machines.map((machine) => [machine.id, machine] as const));
     return favoriteMachineIds
@@ -210,13 +210,7 @@ export function VoiceSessionSpawnPickerModal(props: Props) {
                 setSelectedPath(resolveRecentPathsForMachine(nextMachineId)[0] ?? '');
                 setStep('path');
               }}
-              onToggleFavorite={(machine) => {
-                const id = normalizeId(machine.id);
-                if (!id) return;
-                const exists = favoriteMachineIds.includes(id);
-                const next = exists ? favoriteMachineIds.filter((v) => v !== id) : [...favoriteMachineIds, id];
-                setFavoriteMachinesRaw(next);
-              }}
+              onToggleFavorite={(machine) => toggleFavoriteMachineId(machine.id)}
             />
           </ItemList>
         </>

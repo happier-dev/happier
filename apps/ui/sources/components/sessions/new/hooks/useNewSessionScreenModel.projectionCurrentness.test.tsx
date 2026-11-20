@@ -404,11 +404,6 @@ vi.mock('@/components/sessions/new/modules/profileHelpers', () => ({
     transformProfileToEnvironmentVars: () => [],
 }));
 
-vi.mock('@/components/sessions/new/hooks/newSessionModelModePolicy', () => ({
-    resolveInitialNewSessionModelMode: () => 'default',
-    coerceNewSessionModelMode: ({ modelMode }: any) => modelMode,
-}));
-
 vi.mock('@/sync/domains/profiles/profileUtils', () => ({
     getBuiltInProfile: () => null,
     DEFAULT_PROFILES: [],
@@ -639,6 +634,30 @@ describe('useNewSessionScreenModel (Agent projection currentness)', () => {
             machineId: 'machine-2',
             descriptorsByAgentId: {},
         });
+    });
+
+    it('sends the starred Machine id to the settings owner', async () => {
+        const writers = await import('@/sync/store/settingsWriters');
+        const useMachineFavorites = writers.useMachineFavorites;
+        const onToggle = vi.fn<(machineId: string) => void>();
+        const owner = vi.spyOn(writers, 'useMachineFavorites').mockImplementation((position) => {
+            const [ids, toggle] = useMachineFavorites(position);
+            return [ids, (machineId) => { onToggle(machineId); toggle(machineId); }];
+        });
+        try {
+            const hook = await renderNewSessionScreenModel();
+            const renderContent = wizard(hook.getCurrent()).footer.machinePopover?.renderContent;
+            if (typeof renderContent !== 'function') throw new Error('Expected the Machine popover');
+            const content = renderContent({ maxHeight: 420, requestClose: vi.fn() });
+            if (!React.isValidElement<{ onToggleFavorite?: (machine: Machine) => void }>(content)) {
+                throw new Error('Expected the Machine picker content');
+            }
+            const machine = machineState.value[0];
+            await invokeHookAction(() => content.props.onToggleFavorite?.(machine));
+            expect(onToggle).toHaveBeenCalledExactlyOnceWith(machine.id);
+        } finally {
+            owner.mockRestore();
+        }
     });
 
     it('opens with profiles and a retained configured Agent without losing its definition', async () => {
