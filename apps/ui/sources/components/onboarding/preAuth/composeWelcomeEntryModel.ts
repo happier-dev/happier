@@ -71,6 +71,8 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
         | Readonly<{ kind: 'selected_service'; label: string }>
         | Readonly<{ kind: 'explicit_home' | 'selected_home'; home: HomeTargetInput; label: string }>;
     homeMethods: readonly WelcomeAuthenticationMethod[];
+    /** Decision from the exact Home observation, including the client's pairing policy. */
+    homePairingAvailable?: boolean;
     /**
      * Exact identity the Home methods were observed from. Only an equal service
      * identity may be a same-server (`self`) deployment eligible for dedupe.
@@ -222,10 +224,12 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         ? [{ kind: 'choose_sign_in_service' }]
         : [];
     const scanOrPaste: readonly WelcomeAction[] = input.allowedNavigation.scanOrPasteHome ? [{ kind: 'scan_or_paste_home', labelRole: 'method' }] : [];
-    // Scanning a QR code or entering a secret key restores an account on the Home, so it is the Login
-    // door only where Home methods are on offer. It then carries the Home's key, which is not listed twice.
-    const pairingDoor = input.allowedNavigation.scanOrPasteHome && input.homeMethods.length > 0;
+    const pairingDoor = showHomeStatus && input.allowedNavigation.scanOrPasteHome && input.homePairingAvailable === true;
     const pairingLogin: WelcomeAction = { kind: 'scan_or_paste_home', labelRole: 'login' };
+    const firstHomeLogin = homeDirect[0];
+    const homeLogin: WelcomeAction | undefined = pairingDoor ? pairingLogin : firstHomeLogin
+        ? { kind: 'authenticate', request: firstHomeLogin, labelRole: 'login', lastUsed: false }
+        : undefined;
     const quietDirect = (login: WelcomeAction | undefined) => homeDirect
         .filter((row) => !(login === pairingLogin && row.execution.kind === 'key_entry'))
         .map((row) => methodAction(row));
@@ -250,12 +254,12 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         if (input.allowedNavigation.selectService) actions.push({ kind: 'choose_sign_in_service' });
         if (input.allowedNavigation.openTerminalLink) actions.push({ kind: 'open_terminal_link' });
         if (primaryProvision) actions.push({ kind: 'authenticate', request: primaryProvision, labelRole: 'new_account' });
-    } else if (oneTapProvision && pairingDoor) {
-        actions.push(methodAction(oneTapProvision, 'new_here'), pairingLogin);
+    } else if (oneTapProvision && homeLogin) {
+        actions.push(methodAction(oneTapProvision, 'new_here'), homeLogin);
     } else if (firstTime) {
         // Service-backed and sign-in-only Homes need to show their actual ways in.
         actions.push(...newHere, ...createPersonalHome);
-        const login = actions.length > 0 && pairingDoor ? pairingLogin : undefined;
+        const login = actions.length > 0 ? homeLogin : undefined;
         if (login) actions.push(login);
         const signIn = [
             ...quietDirect(login),
@@ -302,7 +306,7 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         && input.context.kind === 'home'
         && input.target.kind === 'none'
         && !input.allowedNavigation.createPersonalHome
-        && !(hasHome && showKeyProvisioningIntro)
+        && (!hasHome || pairingDoor && !showKeyProvisioningIntro)
         && input.allowedNavigation.scanOrPasteHome;
     if (!canChooseHome) {
         const chooseHomeIndex = unique.findIndex((action) => action.kind === 'choose_home');

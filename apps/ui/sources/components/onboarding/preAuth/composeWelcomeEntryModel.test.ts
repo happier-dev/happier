@@ -23,6 +23,23 @@ const method = (id: string, actionId: 'login' | 'provision', mode: 'keyed' | 'ke
 });
 
 describe('composeWelcomeEntryModel', () => {
+    const ownHome = {
+        target: { kind: 'selected_home', home: target, label: 'Home A' },
+        homeMethods: [method('key_challenge', 'provision', 'keyed'), method('email', 'login', 'keyless'), method('github', 'login', 'keyless')],
+        context: { kind: 'home' },
+        allowedNavigation: { changeHome: true, selectService: false, scanOrPasteHome: true, createPersonalHome: false },
+        serviceCatalogState: { kind: 'not_offered' },
+        userHistory: 'first_time',
+        placement: { hasHome: true, canConnectDirectly: true, platform: 'computer', canScanQr: false, canShowQr: false },
+    } as const;
+
+    it.each(['first_time', 'returning'] as const)('opens the Home’s first enabled login when pairing is disabled (%s)', (userHistory) => {
+        const model = composeWelcomeEntryModel({ ...ownHome, userHistory, homePairingAvailable: false });
+        expect(model.actions.find(({ action }) => 'labelRole' in action && action.labelRole === 'login')?.action)
+            .toMatchObject({ kind: 'authenticate', request: { method: { id: 'email' } } });
+        if (userHistory === 'first_time') expect(model.actions).toHaveLength(2);
+    });
+
     it('places the first-run restore door and self-hosting footer from device and Home facts', () => {
         const input = {
             target: { kind: 'none' },
@@ -41,6 +58,7 @@ describe('composeWelcomeEntryModel', () => {
         const returning = composeWelcomeEntryModel({
             ...input,
             userHistory: 'returning',
+            homePairingAvailable: true,
             homeMethods: [method('key_challenge', 'login', 'keyed')],
             placement: { ...input.placement, hasHome: true, platform: 'computer' },
         });
@@ -52,6 +70,7 @@ describe('composeWelcomeEntryModel', () => {
         const model = composeWelcomeEntryModel({
             target: { kind: 'selected_home', home: target, label: 'Home A' },
             homeMethods: [method('key_challenge', 'provision', 'keyed'), method('github', 'login', 'keyless')],
+            homePairingAvailable: true,
             context: { kind: 'home' },
             allowedNavigation: { changeHome: true, selectService: false, scanOrPasteHome: true, createPersonalHome: false },
             serviceCatalogState: { kind: 'loading', hintName: 'Happier' },
@@ -203,6 +222,7 @@ describe('composeWelcomeEntryModel', () => {
         const compose = (input: Partial<Parameters<typeof composeWelcomeEntryModel>[0]>) => composeWelcomeEntryModel({
             target: { kind: 'selected_home', home: target, label: 'Home A' },
             homeMethods,
+            homePairingAvailable: true,
             context: { kind: 'home' },
             allowedNavigation: navigation,
             serviceCatalogState: { kind: 'not_offered' },

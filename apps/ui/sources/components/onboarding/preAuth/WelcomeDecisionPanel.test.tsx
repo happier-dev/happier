@@ -71,6 +71,7 @@ const baseOptions: AuthEntryOptions = {
     homeTarget: { kind: 'saved_profile', profileRef: 'home-a' },
     requestedHomeTarget: { kind: 'saved_profile', profileRef: 'home-a' },
     homeLabel: 'Home A',
+    homePairingAvailable: true,
     authenticationActions: [{
         method: { id: 'key_challenge', enabledActions: [{ id: 'provision', mode: 'keyed' }] },
         action: { id: 'provision', mode: 'keyed' },

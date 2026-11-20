@@ -47,6 +47,7 @@ describe('RestoreScanComputerQrView (feature disabled)', () => {
 
         expect(screen.findAllByType(QrCodeScannerView)).toHaveLength(0);
         expect(screen.getTextContent()).toContain('connect.scanComputerQrUnavailableBody');
+        expect(screen.findByTestId('restore-scan-unavailable')).not.toBeNull();
         expect(screen.findByTestId('restore-open-manual')).not.toBeNull();
         expect(screen.findByTestId('restore-show-qr-instead')).toBeNull();
     });

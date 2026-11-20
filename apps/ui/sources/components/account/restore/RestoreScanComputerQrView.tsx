@@ -40,6 +40,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { Text } from '@/components/ui/text/Text';
 import { resolveLocalDeviceLabel } from '@/utils/platform/resolveLocalDeviceLabel';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Typography } from '@/constants/Typography';
 import { PairingCountdown } from '@/components/auth/pairing/PairingCountdown';
@@ -1153,11 +1154,15 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
             <View style={containerStyle}>
                 <View style={contentWrapperStyle}>
                     {embedded ? null : <Text style={styles.title}>{t('connect.restoreAccount')}</Text>}
-                    <Text style={subtitleStyle}>{t('connect.scanComputerQrUnavailableBody')}</Text>
-
-                    <View style={[styles.statusCard, embedded ? styles.embeddedStatusCard : null]}>
-                        <Text style={styles.detailLabel}>{t('connect.scanComputerQrUnavailableTitle')}</Text>
-                    </View>
+                    <SurfaceStateCard
+                        testID="restore-scan-unavailable"
+                        size="line"
+                        lineLayout="notice"
+                        kind="unavailable"
+                        title={t('connect.scanComputerQrUnavailableTitle')}
+                        reason={t('connect.scanComputerQrUnavailableBody')}
+                        accessibilitySemantics="status"
+                    />
 
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
                         {renderAlternative('restore-open-manual', t('connect.restoreWithSecretKeyInstead'), openSecretKeyLogin)}

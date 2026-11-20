@@ -360,6 +360,7 @@ const baseAuthOptions = {
     },
     authenticationActions: [generatedKeyAuthenticationAction],
     keyChallengeV2Available: true,
+    homePairingAvailable: true,
     authEntryUnavailable: false,
     homeTarget: baseHomeTarget,
     requestedHomeTarget: baseHomeTarget,

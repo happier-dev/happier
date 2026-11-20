@@ -8,6 +8,8 @@ import type { AccountDirectoryAuthTransport } from '@/auth/accountDirectory/acco
 import type { HomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
+import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import {
     getCachedServerFeaturesSnapshot,
     getServerFeaturesSnapshot,
@@ -40,6 +42,8 @@ export type AuthEntryOptions = Readonly<{
     authenticationCatalog?: ProjectedAuthenticationCatalog;
     authenticationActions?: readonly HomeAuthenticationAction[];
     keyChallengeV2Available?: boolean;
+    /** The effective Home and this client both admit device pairing. */
+    homePairingAvailable?: boolean;
     /** Home named by selection or its serving web origin; absent for a generic fallback profile. */
     requestedHomeTarget?: HomeTargetInput;
     homeTarget?: HomeTargetInput;
@@ -103,7 +107,7 @@ type ObservedAuthEntryOptions = Pick<
     | 'signInServicePolicy'
     | 'observedHomeServerIdentityId'
     | 'retentionDisclosure'
->;
+> & Readonly<{ pairingFeatures?: FeaturesResponse }>;
 
 function createUnobservedAuthEntryOptions(): ObservedAuthEntryOptions {
     return {
@@ -157,6 +161,7 @@ export function createUsableAuthEntryObservation(input: Readonly<{
                     execution: { kind: 'generated_key' },
                 }],
                 keyChallengeV2Available: false,
+                pairingFeatures: input.features ?? undefined,
                 signInServicePolicy: input.features?.signInService,
                 ...(observedHomeServerIdentityId ? { observedHomeServerIdentityId } : {}),
                 authEntryUnavailable: input.authEntryUnavailable,
@@ -173,6 +178,7 @@ export function createUsableAuthEntryObservation(input: Readonly<{
             // Auth-entry owns the live method/action list. The released feature
             // contract still owns key-challenge wire-version negotiation.
             keyChallengeV2Available: input.features?.capabilities?.auth?.keyChallenge?.v2 === true,
+            pairingFeatures: input.features ?? undefined,
             signInServicePolicy: input.entryProjection
                 ? input.entryProjection.signInService
                 : input.features?.signInService,
@@ -237,6 +243,7 @@ export function resolvePreferredProvisionProviderId(features: FeaturesResponse |
 
 export function useAuthEntryOptions(): AuthEntryOptions {
     const activeServerSnapshot = useActiveServerSnapshot();
+    const featureSettings = useFeatureLocalPolicySettings();
     const activeProfile = activeServerSnapshot.serverId
         ? getServerProfileById(activeServerSnapshot.serverId)
         : null;
@@ -508,6 +515,14 @@ export function useAuthEntryOptions(): AuthEntryOptions {
     const exactEnrollmentTransport = enrollmentRead?.serverId === activeServerSnapshot.serverId
         && enrollmentRead.descriptor === enrollmentDescriptor
         ? enrollmentRead.transport : null;
+    const { pairingFeatures, ...observedOptions } = options;
+    const exactPairingFeatures = lastUsableObservationRef.current?.key === activeObservationKey ? pairingFeatures : undefined;
+    const homePairingAvailable = React.useMemo(() => exactPairingFeatures !== undefined
+        && resolveRuntimeFeatureDecisionFromSnapshot({
+            featureId: 'auth.pairing.boundQrV2',
+            settings: featureSettings,
+            snapshot: { status: 'ready', features: exactPairingFeatures },
+        })?.state === 'enabled', [exactPairingFeatures, featureSettings]);
     return {
         serverAvailability,
         serverUrlForCopy,
@@ -531,7 +546,8 @@ export function useAuthEntryOptions(): AuthEntryOptions {
                         } }
                     : {}),
         } : {}),
-        ...options,
+        ...observedOptions,
+        homePairingAvailable,
         ...(enrollmentDescriptor && !exactEnrollmentTransport ? {
             showAuthActions: false,
             serverAvailability: serverAvailability === 'ready' || serverAvailability === 'legacy' ? 'loading' as const : serverAvailability,
