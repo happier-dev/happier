@@ -1,4 +1,5 @@
 import { prepareStandaloneVoicePolicyHarness } from '../../../../../../../apps/ui/sources/dev/testkit/harness/standaloneVoicePolicyHarness';
+import { allowRealServerSocketBoundary } from '../../../../../../../apps/ui/sources/dev/testkit/harness/serverAccountConnectionHarness';
 import { createServer } from 'node:net';
 import { createInterface } from 'node:readline';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -15,6 +16,7 @@ import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/pr
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { createOpenCodeAgentRuntime } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/nativeRuntime';
 import { OPEN_CODE_CONNECTED_ACCOUNT_DECLARATIONS } from '../../../../../../../packages/plugins/opencode/src/agent/auth/services/purposes';
@@ -67,6 +69,11 @@ import { settingsDefaults } from '../../../../../../../apps/ui/sources/sync/doma
 import type { VoiceAgentHandle } from '../../../../../../../apps/ui/sources/voice/agent/types';
 import { installLocalStorageMock, installWebLockManagerMock } from '../../../../../../../apps/ui/sources/auth/storage/tokenStorage.web.testHelpers';
 import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvailability';
+
+// CLI setup does not register the UI Socket.IO boundary before static imports.
+vi.mock('socket.io-client', async importOriginal => (await import(
+  '../../../../../../../apps/ui/sources/dev/testkit/harness/serverAccountConnectionHarness'
+)).createDormantSocketIoClientBoundary(importOriginal));
 
 const credentials = vi.hoisted(() => ({ token: `header.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`, encryption: null }));
 // Credential storage, external Home HTTP, ACP and socket RPC are the boundaries.
@@ -154,12 +161,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
     } });
     const account = await captureLazyActionAccountContext(serverId);
     const rpcChannel = await createRequesterCurrentnessSocketHarness();
-    const socketIo = await import('socket.io-client');
-    const uiIo = socketIo.io;
-    const nativeIo = (await vi.importActual<typeof import('socket.io-client')>('socket.io-client')).io;
-    // Keep UI's disconnected SDK boundary while the CLI testkit dials real TCP.
-    vi.spyOn(socketIo, 'io').mockImplementation((uri, options) => typeof uri === 'string' && uri === rpcChannel.serverUrl
-      ? nativeIo(uri, options) : uiIo(uri, options));
+    const loopbackSocket = allowRealServerSocketBoundary(rpcChannel.serverUrl);
     const controller = new AbortController();
     let bridge: ExecutionRunHostBridge | undefined;
     let fixture: Awaited<ReturnType<typeof createAuthoredAdmittedPluginRuntimeFixture>> | undefined;
@@ -246,6 +248,13 @@ describe('OpenCode Voice authority through shared MCP', () => {
       const session = createMutableApiSessionClientFixture({ sessionId: canApprove ? 'cmwec73r300gamcvijq3b0p9z' : 'cmwec73r300gbmcvijq3b0p9z',
         serverBinding: { serverId, serverUrl: account.endpointUrl }, metadata: createTestMetadata({ path: home, machineId: 'voice-machine' }),
         overrides: { enqueueSessionEventCommitted: createApiSessionClientFixture().enqueueSessionEventCommitted } });
+      const actionAutomationIndex = ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] });
+      homes.answer(serverId, `GET ${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`, { body: actionAutomationIndex });
+      vi.spyOn(axios, 'request').mockImplementation(async request => {
+        const path = new URL(String(request.url)).pathname;
+        if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && request.method === 'GET') return { status: 200, data: actionAutomationIndex };
+        throw new Error(`Unexpected Home request ${request.method} ${path}`);
+      });
       vi.spyOn(axios, 'get').mockImplementation(async url => {
         const path = new URL(String(url)).pathname;
         if (path === '/v1/account/encryption/currentness' || path === '/v1/account/encryption') return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
@@ -417,6 +426,8 @@ describe('OpenCode Voice authority through shared MCP', () => {
       const ensured = await client.start({ sessionId: session.sessionId, existingRunId: started.voiceAgentId, agentId,
         chatModelId: 'ollama/qwen2.5:3b', commitModelId: 'ollama/qwen2.5:3b', connectedServices: { v: 2, bindingsByServiceId: {} }, permissionIntent: 'read-only', idleTtlSeconds: 300 });
       expect(ensured.actionInvocation).toEqual(started.actionInvocation);
+      const uiSettings = storage.getState().settings;
+      storage.setState({ settings: { ...uiSettings, voice: { ...uiSettings.voice, canApproveRequests: !canApprove } } });
       setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'voice-call', status: 'connected', mode: 'listening', canStop: true });
       handle = { accountLifetime: account.accountLifetime, client, voiceAgentId: started.voiceAgentId, rpcSessionId: session.sessionId,
         transcriptEpoch: 0, metadataSessionId: null, backend: 'daemon', agentBackendId: agentId, signal: controller.signal,
@@ -454,11 +465,12 @@ describe('OpenCode Voice authority through shared MCP', () => {
       })();
       try {
         const first = await Promise.race([pending.then(value => ({ kind: 'settled', value })), approvalCreated.then(() => ({ kind: 'approval' }))]);
-        if (canApprove) { expect(first).toMatchObject({ kind: 'settled' }); expect(homes.artifacts(serverId).list()).toEqual([]); }
-        else { expect(first).toEqual({ kind: 'approval' }); expect(version).toBe(1);
-          const asks = homes.artifacts(serverId).list(); expect(asks).toHaveLength(1);
-          expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: asks[0]!.id, decision: 'approve' },
-            { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true }); }
+        expect(first).toEqual({ kind: 'approval' });
+        expect(version).toBe(1);
+        const asks = homes.artifacts(serverId).list();
+        expect(asks).toHaveLength(1);
+        expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId: asks[0]!.id, decision: 'approve' },
+          { surface: 'ui', serverId, actionCaller: { kind: 'host' } })).toMatchObject({ ok: true });
         await pending; expect(version).toBe(2); expect(daemon.actionRequestCount).toBeGreaterThan(0);
         expect(executed).toMatchObject({ anchor: actionInput.anchor, value: actionInput.value });
         if (canApprove) {
@@ -487,6 +499,7 @@ describe('OpenCode Voice authority through shared MCP', () => {
     })()]);
     } finally {
       controller.abort(); await bridge?.dispose(); await peer.close(); await daemon?.close(); await fixture?.dispose(); await rpcChannel.close(); account.dispose();
+      loopbackSocket.dispose();
       await rm(home, { recursive: true, force: true });
     }
   });
