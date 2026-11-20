@@ -145,6 +145,13 @@ export type DeploymentSettingsTranslations = Readonly<{
   privateSharingHappierNetworkPending: string;
   privateSharingJoinedNetworkBody: string;
   privateSharingReviewBodyHappier: string;
+  privateSharingWho: string;
+  privateSharingOutcomeHappier: (params: Readonly<{ service: string }>) => string;
+  privateSharingOutcomeNetwork: (params: Readonly<{ service: string; network: string }>) => string;
+  privateSharingNeedsAdvanced: (params: Readonly<{ field: string }>) => string;
+  privateSharingWhereToUse: string;
+  referenceEnvironment: string;
+  referenceNone: (params: Readonly<{ environment: string }>) => string;
   destinationS3: (params: { region: string }) => string;
   destinationS3NoRegion: string;
   destinationTest: string;
@@ -282,6 +289,13 @@ export const deploymentSettingsTranslations = {
     privateSharingHappierNetworkPending: "Not available yet",
     privateSharingJoinedNetworkBody: "Apps on this network reach it at its private address.",
     privateSharingReviewBodyHappier: "The next deployment publishes this port on this Machine only. Your other Machines reach it through Happier.",
+    privateSharingWho: "Who can use it",
+    privateSharingOutcomeHappier: ({ service }: { service: string }) => `${service} stays off the internet. Apps that can see this Environment can connect to it privately from the next deploy.`,
+    privateSharingOutcomeNetwork: ({ service, network }: { service: string; network: string }) => `Apps on ${network} can use ${service} at its private address from the next deploy.`,
+    privateSharingNeedsAdvanced: ({ field }: { field: string }) => `Fill in “${field}” under Advanced to review sharing.`,
+    privateSharingWhereToUse: "Another Environment connects to it from its Variables: Add › Point at another service.",
+    referenceEnvironment: "Environment",
+    referenceNone: ({ environment }: { environment: string }) => `${environment} shares no service yet. Share one in its Settings › Private sharing.`,
     destinationS3: ({ region }) => `S3 in ${region}`,
     destinationS3NoRegion: 'S3 storage',
     destinationTest: 'Test',

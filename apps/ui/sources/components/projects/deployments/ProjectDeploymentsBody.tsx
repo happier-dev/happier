@@ -576,6 +576,7 @@ const ProjectDeploymentsPage = React.memo(
           deploy={props.actions?.deploy ?? null}
           review={review}
           environmentTitle={environmentTitle}
+          environmentTitles={titles}
           lifetime={props.lifetime}
           setBindings={props.actions?.setBindings ?? null}
           disposition={disposition}

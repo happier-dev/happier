@@ -52,6 +52,8 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import type { DeploymentSecretControlTarget } from './DeploymentWithdrawnSecretControl';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
 import { DeploymentEnvironmentDomainSelect } from './DeploymentEnvironmentDomainSelect';
+import { privateServiceExportReachLabel } from './DeploymentPrivateServiceExports';
+import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { useDeploymentProviderVariables } from './useDeploymentProviderVariables';
 import type { DeploymentTargetVariableMetadataV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import type { DeploymentBindingsSetResultV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -81,8 +83,15 @@ const MASK = '••••••••••••••••••••••
 const TABLE_MIN_WIDTH_PX = 520;
 const keyOf = (row: VariableRow) => row.key;
 /** A service another variable can point at: one declared service export of an Environment the page can name. */
-export type VariableReferenceTarget = Readonly<{ environmentId: string; export: string; service: string }>;
+export type VariableReferenceTarget = Readonly<{ environmentId: string; export: string; service: string;
+  /** Where the export is published: Happier network or the joined network's name (DEPLOY-UI-LOGIC-B 10:25Z contract). */
+  network?: string }>;
+/** The Environments a reference can point into, by id and name, the current one first (the page's held list). */
+export type VariableReferenceEnvironments = ReadonlyMap<string, string>;
 const NO_REFERENCE_TARGETS: readonly VariableReferenceTarget[] = Object.freeze([]);
+const NO_REFERENCE_ENVIRONMENTS: VariableReferenceEnvironments = new Map();
+/** Without the page's read, another Environment's record is not read at all. */
+const HIDDEN_REFERENCE_READ = Object.freeze({ mounted: false, visible: false, focused: false });
 type SecretRevisions = DeploymentEnvironmentReadDetailV1['secretRevisions'];
 /** Per variable (name, phase): the newest saved revision the running release does not have yet. */
 type RotatedSecrets = ReadonlyMap<string, number>;
@@ -127,6 +136,8 @@ export const DeploymentVariablesPanel = React.memo(
       onDeploy?: (() => void) | null;
       /** Declared service exports "Point at another service" offers (this Environment's and its Project's). */
       referenceTargets?: readonly VariableReferenceTarget[];
+      /** Other Environments of this Project whose shared services a reference may point at (their exact read). */
+      referenceEnvironments?: VariableReferenceEnvironments;
       domainRead?: Pick<React.ComponentProps<typeof DeploymentEnvironmentDomainSelect>, 'controller' | 'demand'>;
     }>,
   ) {
@@ -454,7 +465,8 @@ export const DeploymentVariablesPanel = React.memo(
             disabled={adding !== null}
             secretsAvailable={props.scope !== null}
             savedAvailable={props.lifetime !== null}
-            referenceAvailable={(props.referenceTargets ?? NO_REFERENCE_TARGETS).length > 0}
+            referenceAvailable={(props.referenceTargets ?? NO_REFERENCE_TARGETS).length > 0
+              || (props.referenceEnvironments?.size ?? 0) > 1}
             onSelect={(choice) => {
               if (choice === 'paste') setMode('bulk');
               else if (choice === 'saved') void pickSaved();
@@ -560,6 +572,9 @@ export const DeploymentVariablesPanel = React.memo(
           <AddReferenceVariable
             taken={rows}
             targets={props.referenceTargets ?? NO_REFERENCE_TARGETS}
+            currentEnvironmentId={props.environmentId}
+            environments={props.referenceEnvironments ?? NO_REFERENCE_ENVIRONMENTS}
+            read={props.domainRead ?? null}
             environmentName={props.environmentName}
             onCancel={() => setAdding(null)}
             onAdd={(name, target) => {
@@ -926,18 +941,39 @@ function AddReferenceVariable(
   props: Readonly<{
     taken: readonly VariableRow[];
     targets: readonly VariableReferenceTarget[];
+    /** Two steps (DEPLOY-UI-LOGIC-B 10:25Z contract): the Environment, this one first, then the services it shares. */
+    currentEnvironmentId: string;
+    environments: VariableReferenceEnvironments;
+    read: Pick<React.ComponentProps<typeof DeploymentEnvironmentDomainSelect>, 'controller' | 'demand'> | null;
     environmentName: (environmentId: string) => string | null;
     onCancel: () => void;
     onAdd: (name: string, target: VariableReferenceTarget) => boolean;
   }>,
 ) {
   const [name, setName] = React.useState('');
+  const [environmentId, setEnvironmentId] = React.useState(props.currentEnvironmentId);
   const [targetKey, setTargetKey] = React.useState<string | null>(null);
   const [failed, setFailed] = React.useState(false);
+  const other = environmentId !== props.currentEnvironmentId;
+  // Another Environment's shared services come from its exact record, read only while it is the chosen one.
+  const record = useDeploymentEnvironmentRecord(props.read?.controller ?? null, other ? environmentId : null,
+    props.read?.demand ?? HIDDEN_REFERENCE_READ);
+  const otherDetail = other ? record.snapshot.value : null;
+  const targets = React.useMemo<readonly VariableReferenceTarget[]>(() => !other ? props.targets
+    : (otherDetail?.content.ownServer?.serviceExports ?? []).map(entry => ({ environmentId, export: entry.key,
+        service: entry.service, network: privateServiceExportReachLabel(entry) })),
+  [environmentId, other, otherDetail, props.targets]);
   const keyFor = (target: VariableReferenceTarget) => JSON.stringify([target.environmentId, target.export]);
-  const target = props.targets.find(item => keyFor(item) === targetKey) ?? null;
+  const target = targets.find(item => keyFor(item) === targetKey) ?? null;
   const trimmed = name.trim();
   const duplicate = props.taken.some((row) => row.name === trimmed);
+  const environmentTitle = props.environments.get(environmentId) ?? props.environmentName(environmentId) ?? '';
+  const loading = other && otherDetail === null && record.snapshot.status !== 'unavailable';
+  const unreadable = other && otherDetail === null && record.snapshot.status === 'unavailable';
+  const environmentItems = React.useMemo(() => {
+    const ids = [props.currentEnvironmentId, ...[...props.environments.keys()].filter(id => id !== props.currentEnvironmentId)];
+    return ids.map(id => ({ id, title: props.environments.get(id) ?? props.environmentName(id) ?? id }));
+  }, [props.currentEnvironmentId, props.environments, props.environmentName]);
   return (
     <InlineAddExpander
       isOpen
@@ -963,14 +999,36 @@ function AddReferenceVariable(
           placeholder="DATABASE_URL"
           error={duplicate ? t('projects.deployments.variableExists') : failed ? t('projects.deployments.variableInvalid') : null}
         />
-        <ValueFieldSelect
-          testID="project-deployments.environment.variables.add.reference"
-          label={t('projects.deployments.editors.referenceTarget')}
-          items={props.targets.map(item => ({ id: keyFor(item),
-            title: `${item.service} · ${item.export} · ${props.environmentName(item.environmentId) ?? t('projects.deployments.sourceAnotherEnvironment')}` }))}
-          selectedId={targetKey}
-          onSelect={setTargetKey}
-        />
+        {environmentItems.length > 1 ? (
+          <ValueFieldSelect
+            testID="project-deployments.environment.variables.add.referenceEnvironment"
+            label={t('projects.deployments.settingsSections.referenceEnvironment')}
+            items={environmentItems}
+            selectedId={environmentId}
+            onSelect={(next) => { setEnvironmentId(next); setTargetKey(null); }}
+          />
+        ) : null}
+        {loading ? (
+          <SurfaceStateCard testID="project-deployments.environment.variables.add.referenceLoading" size="line" kind="loading"
+            title={t('common.loading')} />
+        ) : unreadable ? (
+          <SurfaceStateCard testID="project-deployments.environment.variables.add.referenceUnavailable" size="line" kind="unavailable"
+            title={t('common.unavailable')} action={{ label: t('common.retry'), onPress: () => { void record.refresh(); } }} />
+        ) : targets.length === 0 ? (
+          <Text testID="project-deployments.environment.variables.add.referenceNone" variant="meta" style={styles.referenceNone}>
+            {t('projects.deployments.settingsSections.referenceNone', { environment: environmentTitle })}
+          </Text>
+        ) : (
+          <ValueFieldSelect
+            testID="project-deployments.environment.variables.add.reference"
+            label={t('projects.deployments.editors.referenceTarget')}
+            items={targets.map(item => ({ id: keyFor(item),
+              title: `${item.service} · ${item.export}`,
+              ...(item.network ? { subtitle: item.network } : {}) }))}
+            selectedId={targetKey}
+            onSelect={setTargetKey}
+          />
+        )}
       </View>
     </InlineAddExpander>
   );
@@ -1505,6 +1563,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   mono: { ...Typography.mono() },
   addFields: { gap: theme.space.s8 },
+  referenceNone: { color: theme.colors.text.secondary },
   sealed: {
     flexDirection: 'row',
     alignItems: 'flex-start',

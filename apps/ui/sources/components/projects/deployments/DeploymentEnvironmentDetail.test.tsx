@@ -2462,7 +2462,10 @@ describe('Project deployments page', () => {
     try {
       await waitForContent(screen, 'project-deployments.environment.settings.servers-build');
       expect(screen.findByTestId(`${id}.add`)).not.toBeNull();
-      const fill = async (hostPort: string) => { await act(async () => {
+      const fill = async (hostPort: string) => {
+        // Ports, scheme and export name wait under Advanced (PAGE-ACCEPT-176 R7-D1).
+        if (!screen.findByTestId(`${id}.hostPort`)) await screen.pressByTestIdAsync(`${id}.advanced.header`);
+        await act(async () => {
         screen.findByTestId(`${id}.hostPort`)!.props.onChangeText(hostPort);
         screen.findByTestId(`${id}.containerPort`)!.props.onChangeText('5432');
         screen.findByTestId(`${id}.scheme`)!.props.onChangeText('postgres'); }); };
@@ -2474,6 +2477,12 @@ describe('Project deployments page', () => {
         return definition && 'document' in definition ? definition.document : ''; };
       // The deployed forwarding owner supports Happier-network exports without a joined network.
       await screen.pressByTestIdAsync(`${id}.add`);
+      // The default view asks what is shared and who may use it, and says what sharing does; no networking fields
+      // (PAGE-ACCEPT-176 R7-D1).
+      await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.outcome`)).not.toBeNull());
+      expect(screen.findByTestId(`${id}.hostPort`)).toBeNull();
+      expect(screen.findByTestId(`${id}.scheme`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.advanced.header`);
       // The port the stored Compose service declares fills Container port (PAGE-ACCEPT-176 D29).
       await waitForHomeGovernance(() => expect(screen.findByTestId(`${id}.containerPort`)?.props.value).toBe('5432'));
       // Review sharing says what it still needs instead of staying disabled without a reason (D29).

@@ -57,4 +57,8 @@ export const deploymentSheetStyles = StyleSheet.create((theme) => ({
     ...Typography.variant('body'),
     color: theme.colors.text.secondary,
   },
+  /** Fields inside a disclosure in the body: the body's rhythm without its edge padding. */
+  fields: {
+    gap: theme.space.s16,
+  },
 }));

@@ -7,6 +7,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -120,6 +121,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
   const [reviewed, setReviewed] = React.useState<Readonly<{ patch: ReturnType<typeof buildPrivateServiceExportPatch>;
     hostAddress: string | null; networkName: string }> | null>(null);
   const [invalid, setInvalid] = React.useState(false);
+  const [advanced, setAdvanced] = React.useState(false);
   // Happier forwarding needs no joined network; an explicitly chosen network retains its observed identity.
   const chosen = reachId ?? HAPPIER_NETWORK;
   const selectedNetwork: MachinePrivateNetworkObservationV1 | undefined = networks.find(network => networkReachId(network) === chosen);
@@ -138,6 +140,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     editing.onChanged(); onClose();
   });
   const canReview = Boolean(service && key.trim() && scheme.trim() && containerPort && hostPort && (happier || hostAddress));
+  // Every field Review can still need sits under Advanced; the needs line says so instead of naming a hidden field.
   const missingField = canReview ? null : !key.trim() ? t('projects.deployments.settingsSections.privateSharingKey')
     : !containerPort ? t('projects.deployments.settingsSections.privateSharingPort')
     : !scheme.trim() ? t('projects.deployments.settingsSections.privateSharingScheme')
@@ -175,7 +178,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
   const reachTiles = <SelectionTiles<string> testIdPrefix={`${id}.reach`} density="compact" subtitleLines={0} minimumTileWidth={220}
-    accessibilityLabel={t('projects.deployments.settingsSections.privateSharingNetwork')} options={reachOptions}
+    accessibilityLabel={t('projects.deployments.settingsSections.privateSharingWho')} options={reachOptions}
     value={happier ? HAPPIER_NETWORK : selectedNetwork ? networkReachId(selectedNetwork) : null}
     onChange={next => { if (next) { setReachId(next); setAddress(null); } }} />;
   const field = (name: 'key' | 'containerPort' | 'scheme' | 'hostPort', label: string, value: string, onChangeText: (value: string) => void) =>
@@ -189,7 +192,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
       <Item title={t('projects.deployments.settingsSections.privateSharingService')} detail={`${service}:${containerPort}`} mode="info" />
       <Item title={t('projects.deployments.settingsSections.privateSharingKey')} detail={key} mode="info" />
       <Item title={t('projects.deployments.settingsSections.privateSharingScheme')} detail={scheme} mode="info" />
-      <Item title={t('projects.deployments.settingsSections.privateSharingNetwork')}
+      <Item title={t('projects.deployments.settingsSections.privateSharingWho')}
         detail={reviewed.networkName} mode="info" />
       {reviewed.hostAddress === null ? null : <Item testID={`${id}.reviewAddress`}
         title={t('projects.deployments.settingsSections.privateSharingAddress')} detail={reviewed.hostAddress} mode="info" />}
@@ -207,19 +210,33 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
       <FieldItem label={t('projects.deployments.settingsSections.privateSharingService')}><ValueFieldSelect testID={`${id}.service`}
         label={t('projects.deployments.settingsSections.privateSharingService')} items={services.map(value => ({ id: value, title: value }))}
         selectedId={service} onSelect={value => { setService(value); setKey(value); setContainerPort(''); }} fill /></FieldItem>
-      {/* What is shared, then who reaches it: Happier network is the default and needs no setup (IROH-PRIVATE-ROUTE-1119
-          "Control for the Opus pass"); the technical fields follow. */}
-        <FieldItem label={t('projects.deployments.settingsSections.privateSharingNetwork')}>{reachTiles}</FieldItem>
-      {field('key', t('projects.deployments.settingsSections.privateSharingKey'), key, setKey)}
-      {field('containerPort', t('projects.deployments.settingsSections.privateSharingPort'), containerPort, setContainerPort)}
-      {field('scheme', t('projects.deployments.settingsSections.privateSharingScheme'), scheme, setScheme)}
-        {selectedNetwork ? <FieldItem label={t('projects.deployments.settingsSections.privateSharingAddress')}><ValueFieldSelect testID={`${id}.address`}
-          label={t('projects.deployments.settingsSections.privateSharingAddress')}
-          items={selectedNetwork.addresses.map(value => ({ id: value, title: value }))} selectedId={hostAddress} onSelect={setAddress} fill /></FieldItem> : null}
-      {field('hostPort', t('projects.deployments.settingsSections.privateSharingHostPort'), hostPort, setHostPort)}
+      {/* What is shared, then who may use it, then one sentence of what sharing does (PAGE-ACCEPT-176 R7-D1). The
+          default view speaks no networking; export name, ports and scheme wait under Advanced with their values shown. */}
+      <FieldItem label={t('projects.deployments.settingsSections.privateSharingWho')}>{reachTiles}</FieldItem>
+      {selectedNetwork ? <FieldItem label={t('projects.deployments.settingsSections.privateSharingAddress')}><ValueFieldSelect testID={`${id}.address`}
+        label={t('projects.deployments.settingsSections.privateSharingAddress')}
+        items={selectedNetwork.addresses.map(value => ({ id: value, title: value }))} selectedId={hostAddress} onSelect={setAddress} fill /></FieldItem> : null}
+      <Text testID={`${id}.outcome`} style={deploymentSheetStyles.lead}>
+        {selectedNetwork ? t('projects.deployments.settingsSections.privateSharingOutcomeNetwork', { service,
+          network: selectedNetwork.displayName ?? selectedNetwork.networkIdentity ?? '' })
+          : t('projects.deployments.settingsSections.privateSharingOutcomeHappier', { service })}
+        {' '}{t('projects.deployments.settingsSections.privateSharingWhereToUse')}
+      </Text>
+      <ExpandableItem testID={`${id}.advanced`} expanded={advanced} onExpandedChange={setAdvanced}
+        header={state => <Item testID={`${id}.advanced.header`} {...state.headerProps}
+          title={t('projects.deployments.domainIngressAdvanced')}
+          subtitle={[key.trim(), containerPort, scheme.trim(), hostPort].filter(Boolean).join(' · ') || undefined} />}>
+        <View style={deploymentSheetStyles.fields}>
+          {field('key', t('projects.deployments.settingsSections.privateSharingKey'), key, setKey)}
+          {field('containerPort', t('projects.deployments.settingsSections.privateSharingPort'), containerPort, setContainerPort)}
+          {field('scheme', t('projects.deployments.settingsSections.privateSharingScheme'), scheme, setScheme)}
+          {field('hostPort', t('projects.deployments.settingsSections.privateSharingHostPort'), hostPort, setHostPort)}
+        </View>
+      </ExpandableItem>
       {/* Review sharing says what it still needs instead of staying disabled without a reason (PAGE-ACCEPT-176 D29). */}
       {missingField ? <Text testID={`${id}.needs`} style={deploymentSheetStyles.lead}>
-        {t('projects.deployments.settingsSections.privateSharingNeeds', { field: missingField })}</Text> : null}
+        {t(advanced ? 'projects.deployments.settingsSections.privateSharingNeeds'
+          : 'projects.deployments.settingsSections.privateSharingNeedsAdvanced', { field: missingField })}</Text> : null}
       </>}
     </>}
     {invalid ? <SurfaceStateCard testID={`${id}.invalid`} size="line" kind="error"

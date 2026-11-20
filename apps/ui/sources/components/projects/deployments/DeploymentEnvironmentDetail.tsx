@@ -116,6 +116,7 @@ import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1, DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainsPanel, type DeploymentDomainEditing } from './DeploymentDomainsPanel';
+import { privateServiceExportReachLabel } from './DeploymentPrivateServiceExports';
 import { projectDeploymentConnections, type DeploymentConnection } from './deploymentConnections';
 import { DeploymentPermissionsPanel } from './DeploymentPermissionsPanel';
 import { DeploymentServingReceipt } from './DeploymentServingReceipt';
@@ -219,6 +220,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       review: DeploymentReviewHandle;
       /** Names a sibling Environment a variable reference points at, from the page's Environment list. */
       environmentTitle?: (environmentId: string) => string | null;
+      /** This Project's Environments by id and name (the page's held list): where a variable reference may point. */
+      environmentTitles?: ReadonlyMap<string, string>;
       /** The captured Home/Account the Variables draft writes under; absent while it is not current. */
       lifetime?: ServerAccountScopeLifetime | null;
       workspaceRef?: WorkspaceRefV1 | null;
@@ -282,7 +285,8 @@ export const DeploymentEnvironmentDetail = React.memo(
     const serviceExports = detail?.content.ownServer?.serviceExports;
     const detailEnvironmentId = detail?.environment.id ?? null;
     const referenceTargets = React.useMemo(() => detailEnvironmentId && serviceExports
-      ? serviceExports.map((entry) => ({ environmentId: detailEnvironmentId, export: entry.key, service: entry.service }))
+      ? serviceExports.map((entry) => ({ environmentId: detailEnvironmentId, export: entry.key, service: entry.service,
+          network: privateServiceExportReachLabel(entry) }))
       : undefined, [detailEnvironmentId, serviceExports]);
     // The address under the title (lab d1): the first Domain that is not on its way out.
     const domains = useDeploymentEnvironmentDomains(props.controller, props.environmentId, props.demand);
@@ -1288,6 +1292,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}
+              referenceEnvironments={props.environmentTitles}
               domainRead={{ controller: props.controller, demand: props.demand }}
             />
             </>

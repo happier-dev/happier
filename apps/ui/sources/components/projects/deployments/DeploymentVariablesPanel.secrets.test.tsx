@@ -47,7 +47,7 @@ afterEach(async () => {
 
 async function mount(phone = true, referenceTargets?: readonly unknown[],
   rotation?: Readonly<{ secretRevisions: readonly unknown[]; onDeploy?: () => void; bindingRevision?: number;
-    additionalBindings?: readonly EnvironmentSecretBindingV1[] }>) {
+    additionalBindings?: readonly EnvironmentSecretBindingV1[] }>, referenceEnvironments?: ReadonlyMap<string, string>) {
   home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }),
     handleRequest: async path => path === '/v1/account/saved-secrets/resources/activity'
       ? Response.json({ historyEntryId: 'disclosure-entry' }) : null });
@@ -71,6 +71,7 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
     return <DeploymentVariablesPanel draft={draft} phone={phone} environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id} scope={scope} lifetime={lifetime}
       referenceTargets={referenceTargets as never}
+      referenceEnvironments={referenceEnvironments}
       secretRevisions={rotation?.secretRevisions as never} onDeploy={rotation?.onDeploy} />;
   }
   const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
@@ -162,6 +163,23 @@ it('points a new variable at another service export through the same draft and b
   await screen.pressByTestIdAsync('project-deployments.environment.variables.add.save');
   await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.variable.DATABASE_URL')).not.toBeNull());
   expect(screen.findByTestId('project-deployments.environment.variables.save')).not.toBeNull();
+});
+
+it('asks for the Environment first, this one leading, when the Project has others to point into (R7-D1)', async () => {
+  const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+  const base = createDeploymentEnvironmentDetailV1();
+  const { screen } = await mount(false, [], undefined,
+    new Map([['environment-data', 'Data'], [base.environment.id, 'Production']]));
+  const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel !== undefined
+    && node.props.items?.some((item: { id: string }) => item.id === 'reference'));
+  // Another Environment can share a service, so the pointer is offered although this one shares none.
+  expect(menu()).toBeDefined();
+  await act(async () => menu()!.props.onSelect('reference'));
+  const environments = screen.findAllByType(DropdownMenu)
+    .find(node => node.props.testID === 'project-deployments.environment.variables.add.referenceEnvironment')!;
+  expect(environments.props.items.map((item: { id: string }) => item.id)).toEqual([base.environment.id, 'environment-data']);
+  // This Environment shares nothing: the step says where to share one instead of an empty menu.
+  expect(screen.findByTestId('project-deployments.environment.variables.add.referenceNone')).not.toBeNull();
 });
 
 it('offers no service pointer when there is no declared export to point at', async () => {
