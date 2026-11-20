@@ -1,6 +1,8 @@
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 import type { ScmSuggestionV1 } from '@happier-dev/protocol/scm';
 import { projectGithubSuggestions } from './suggestions.js';
+import { GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1, GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1, GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1 } from './feedbackPageSizes.js';
+export { GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1, GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1, GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1 } from './feedbackPageSizes.js';
 
 import type { GithubApiClientV1 } from '../observations/githubApiClient.js';
 
@@ -29,9 +31,6 @@ import {
 /** PR conversation mounts the newest 24 comments; issue history uses its own wider 40-row window. */
 export const GITHUB_PULL_REQUEST_FEEDBACK_COMMENT_PAGE_SIZE_V1 = 24;
 export const GITHUB_ISSUE_FEEDBACK_COMMENT_PAGE_SIZE_V1 = 40;
-export const GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1 = 12;
-export const GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1 = 8;
-export const GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1 = 16;
 export const GITHUB_FEEDBACK_REPLY_PAGE_SIZE_V1 = 3;
 
 export type GithubFeedbackConnectionV1 =

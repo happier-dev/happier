@@ -16,6 +16,7 @@ import { createTeamCredentialWatcherRead, type TeamCredentialWatcherTransport } 
 
 describe('Team credential watcher reads', () => {
   it('opens one authority for multiple finite GETs and keeps service credentials out of the requester', async () => {
+    const { GITHUB_CHECKS_QUERY } = await import('../../../../../packages/plugins/scm-github/src/triage/checksQuery');
     const { service, attemptActionId, backgroundServiceId, purposeId } = GITHUB_BROKER_WATCHER_V1;
     const purpose = { consumer: { pluginId: service.pluginId, localId: attemptActionId }, purpose: purposeId };
     const activation = ProviderBrokerWatcherRefreshRequestV1Schema.shape.activation.parse({ automationId: 'automation',
@@ -47,12 +48,15 @@ describe('Team credential watcher reads', () => {
     const openTunnel = vi.fn<TeamCredentialWatcherTransport['openTunnel']>(async () => ({ localPort: 1234, localCapability: 'carrier-only', observedPath: 'direct',
       close, retire: close }));
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response('[]', { headers: { etag: 'v2' } }));
-    const read = createTeamCredentialWatcherRead({
+    const watcher = {
       caller: { pluginId: service.pluginId, contributionLocalId: backgroundServiceId, occurrenceId: 'occurrence',
         sourceCustody: { kind: 'managed', immutableGenerationId: 'generation', installSource: 'archive' },
         materialization: { pluginId: service.pluginId, machineId: 'watcher', materializationId: 'materialization' } },
       teamId: 'team', resourceId: 'resource', purpose, activation, repository: { owner: 'acme', name: 'widget', repositoryId: '42' },
       openBroker, openTunnel, fetchImpl,
+    } satisfies Parameters<typeof createTeamCredentialWatcherRead>[0];
+    const read = createTeamCredentialWatcherRead({
+      ...watcher, checks: { eventLocalId: 'automation/pull-request-checks-passed-v1', pullRequestNumber: 12 },
     });
     const opts = { signal: controller.signal };
     const first = 'https://api.github.com/repos/acme/widget/events?per_page=30';
@@ -90,6 +94,27 @@ describe('Team credential watcher reads', () => {
     await expect(read.adapter.request({ url: 'https://api.github.com/repos/acme/other/events', redirect: 'error' }, opts))
       .rejects.toMatchObject({ code: 'broker_binding_changed' });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const graphql = 'https://api.github.com/graphql';
+    const checks = { query: GITHUB_CHECKS_QUERY, variables: {
+      owner: 'acme', name: 'widget', number: 12, cursor: null, includeSummary: false, includeOutput: false,
+    } };
+    const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
+    const getOnly = createTeamCredentialWatcherRead(watcher);
+    await expect(getOnly.adapter.request({ url: graphql, method: 'POST', redirect: 'error',
+      body: encode(checks) }, opts)).rejects.toMatchObject({ code: 'broker_binding_changed' });
+    await getOnly.dispose();
+    for (const variables of [{ ...checks.variables, name: 'other' }, { ...checks.variables, number: 13 }]) {
+      await expect(read.adapter.request({ url: graphql, method: 'POST', redirect: 'error',
+        body: encode({ ...checks, variables }) }, opts)).rejects.toMatchObject({ code: 'broker_binding_changed' });
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const checksRead = await http.prepareRead({ intent: 'graphqlQuery', url: graphql, method: 'POST', redirect: 'error',
+      body: encode(checks) }, opts);
+    await expect(checksRead.request(opts)).resolves.toMatchObject({ status: 200, finalUrl: graphql });
+    expect(fetchImpl.mock.calls.at(-1)?.[0]).toBe('http://127.0.0.1:1234/v1/graphql');
+    const graphQlRequest = fetchImpl.mock.calls.at(-1)?.[1];
+    expect(graphQlRequest?.method).toBe('POST');
+    await expect(new Response(graphQlRequest?.body).json()).resolves.toEqual(checks);
     const renewed = { ok: true, authority: { ...brokerOpen.authority, payload: { ...brokerOpen.authority.payload,
       grantId: 'renewed-grant', issuedAt: expiresAt, expiresAt: expiresAt + DIRECT_ROUTE_GRANT_TTL_MS.directTcpTunnel,
     } } } satisfies ProviderBrokerWatcherRefreshResponseV1;
@@ -113,7 +138,7 @@ describe('Team credential watcher reads', () => {
       clock.mockReturnValue(renewed.authority.payload.expiresAt - ACCOUNT_DIRECTORY_ASSERTION_CLOCK_SKEW_MS);
       openBroker.mockResolvedValueOnce({ ok: false, reasonCode: 'resource_unavailable' });
       await expect(read.adapter.request({ url: first, redirect: 'error' }, opts)).rejects.toMatchObject({ code: 'resource_unavailable' });
-      expect(fetchImpl).toHaveBeenCalledTimes(4);
+      expect(fetchImpl).toHaveBeenCalledTimes(5);
       await read.dispose();
       await expect(read.adapter.request({ url: first, redirect: 'error' }, opts)).rejects.toMatchObject({ name: 'AbortError' });
       expect(openBroker).toHaveBeenCalledTimes(3);

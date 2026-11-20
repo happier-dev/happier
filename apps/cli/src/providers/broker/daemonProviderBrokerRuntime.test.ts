@@ -1393,6 +1393,7 @@ function startBrokerAdmission(
 }
 
 it('serves only finite GitHub watcher reads through the signed machine/1 broker path', async () => {
+  const { GITHUB_CHECKS_QUERY } = await import('../../../../../packages/plugins/scm-github/src/triage/checksQuery');
   const refuseModelPath = (): never => { throw new Error('Unexpected model or local default access'); };
   const github = GITHUB_BROKER_WATCHER_V1;
   const githubAccount = { service: github.service, accountId: 'custodian-github' };
@@ -1420,6 +1421,7 @@ it('serves only finite GitHub watcher reads through the signed machine/1 broker 
     assertTargetAccountMaterializable: async () => {},
   });
   const upstream: string[] = [];
+  const graphQlBodies: unknown[] = [];
   let upstreamStarted!: () => void;
   const waitingForUpstream = new Promise<void>(resolve => { upstreamStarted = resolve; });
   let upstreamCancelled!: () => void;
@@ -1440,6 +1442,13 @@ it('serves only finite GitHub watcher reads through the signed machine/1 broker 
           const headers = new Headers(request.headers);
           expect(headers.get('authorization')).toBe('Bearer custodian-fixture-only');
           expect(headers.get('cookie')).toBeNull();
+          if (request.url === 'https://api.github.com/graphql') {
+            expect(request.method).toBe('POST');
+            expect(headers.get('content-type')).toBe('application/json');
+            graphQlBodies.push(JSON.parse(new TextDecoder().decode(request.body)));
+            return { finalUrl: request.url, status: 200, headers: {},
+              body: new TextEncoder().encode('{"data":{"repository":null}}') };
+          }
           if (request.url.endsWith('/pending_deployments')) {
             upstreamStarted();
             const signal = options?.signal;
@@ -1497,6 +1506,30 @@ it('serves only finite GitHub watcher reads through the signed machine/1 broker 
   ] });
   expect(responses.map(response => /^HTTP\/1\.1 (\d+)/u.exec(response)?.[1])).toEqual(['200', '200', '403', '403', '403']);
   nowMs = 150;
+  const checks = { query: GITHUB_CHECKS_QUERY, variables: {
+    owner: 'acme', name: 'widgets', number: 42, cursor: null, includeSummary: false, includeOutput: false,
+  } };
+  for (const denied of [
+    { ...checks, query: `${GITHUB_CHECKS_QUERY}\nquery Viewer { viewer { login } }` },
+    { ...checks, query: 'mutation { unknown }' },
+    { ...checks, operationName: 'Checks' },
+    { ...checks, variables: { ...checks.variables, includeOutput: true } },
+    { ...checks, variables: { ...checks.variables, includeSummary: true } },
+    { ...checks, variables: { ...checks.variables, number: 0 } },
+    { ...checks, variables: { ...checks.variables, cursor: { value: 'next' } } },
+    { ...checks, variables: { ...checks.variables, extra: true } },
+  ]) {
+    expect(await rawRequestThroughApplicationTarget({ ...(await admit()), method: 'POST', path: '/v1/graphql',
+      headers, body: JSON.stringify(denied) })).toMatch(/^HTTP\/1\.1 403/);
+  }
+  const continuation = { ...checks, variables: { ...checks.variables, cursor: 'opaque-next-page' } };
+  for (const body of [checks, continuation]) {
+    const response = await rawRequestThroughApplicationTarget({ ...(await admit()), method: 'POST', path: '/v1/graphql',
+      headers, body: JSON.stringify(body) });
+    expect(response).toMatch(/^HTTP\/1\.1 200/);
+    expect(response).toContain('{"data":{"repository":null}}');
+  }
+  expect(graphQlBodies).toEqual([checks, continuation]);
   const cancellation = new AbortController();
   const pending = rawRequestThroughApplicationTarget({ ...(await admit()), method: 'GET',
     path: '/v1/repos/acme/widgets/actions/runs/501/pending_deployments', headers, signal: cancellation.signal });

@@ -37,6 +37,7 @@ export function createTeamCredentialWatcherRead(input: TeamCredentialWatcherTran
   resourceId: string;
   purpose: QualifiedConnectedAccountPurposeV1;
   repository: TeamCredentialWatcherRepository;
+  checks?: Readonly<{ eventLocalId: string; pullRequestNumber: number }>;
   fetchImpl?: typeof fetch;
 }>): Readonly<{ adapter: PluginHttpRuntimeAdapter; dispose(): Promise<void> }> {
   const lifetime = new AbortController();
@@ -98,8 +99,21 @@ export function createTeamCredentialWatcherRead(input: TeamCredentialWatcherTran
       signal.throwIfAborted();
       const url = new URL(request.url);
       const path = url.pathname.toLowerCase();
-      if ((request.method ?? 'GET') !== 'GET' || request.body !== undefined || url.origin !== 'https://api.github.com'
-        || url.username || url.password || url.hash || !repositoryPaths.some(root => path === root || path.startsWith(`${root}/`))) {
+      const githubOrigin = url.origin === 'https://api.github.com' && !url.username && !url.password && !url.hash;
+      const repositoryGet = githubOrigin && (request.method ?? 'GET') === 'GET' && request.body === undefined
+        && repositoryPaths.some(root => path === root || path.startsWith(`${root}/`));
+      let checksBody: Uint8Array | undefined;
+      if (githubOrigin && request.method === 'POST' && url.pathname === '/graphql' && !url.search && input.checks) {
+        const { isGithubChecksEvent, readGithubWatcherChecksQuery } = await import('@happier-dev/plugins-scm-github');
+        const checks = readGithubWatcherChecksQuery(request.body);
+        if (checks && isGithubChecksEvent(input.checks.eventLocalId)
+          && checks.pullRequestNumber === input.checks.pullRequestNumber
+          && checks.owner.toLowerCase() === input.repository.owner.toLowerCase()
+          && checks.name.toLowerCase() === input.repository.name.toLowerCase()) {
+          checksBody = checks.body;
+        }
+      }
+      if (!repositoryGet && !checksBody) {
         throw new PluginError({ code: 'broker_binding_changed', message: 'The requested read does not match this watcher’s repository' });
       }
       const headers = new Headers(request.headers);
@@ -113,9 +127,11 @@ export function createTeamCredentialWatcherRead(input: TeamCredentialWatcherTran
       const tunnel = await raceWithAbort(opened, signal);
       headers.set('authorization', authorization);
       headers.set(MACHINE_HTTP_LOCAL_CAPABILITY_HEADER, tunnel.localCapability);
+      if (checksBody) headers.set('content-type', 'application/json');
       const response = await runtime.request({
         url: `http://127.0.0.1:${tunnel.localPort}/v1${url.pathname}${url.search}`,
-        method: 'GET', redirect: 'error', headers: Object.fromEntries(headers),
+        method: checksBody ? 'POST' : 'GET', redirect: 'error', headers: Object.fromEntries(headers),
+        ...(checksBody ? { body: checksBody } : {}),
         ...(request.responseBody ? { responseBody: request.responseBody } : {}),
       }, { signal });
       return { ...response, finalUrl: request.url };

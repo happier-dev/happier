@@ -23,11 +23,17 @@ export function createTeamCredentialBrokerWatcherRead(input: Readonly<{
   return async ({ authority, requestId, request }) => {
     // The sender owns exact repository admission under its decrypted Event
     // definition. The carrier can spend the grant only on these watcher reads.
-    if (request.method !== 'GET' || request.body !== undefined || !request.pathAndQuery.startsWith('/v1/')) {
+    const checksPost = request.method === 'POST' && request.pathAndQuery === '/v1/graphql';
+    const get = request.method === 'GET' && request.body === undefined && request.pathAndQuery.startsWith('/v1/');
+    if (!checksPost && !get) {
       return { ok: false, reasonCode: 'route_not_allowed' };
     }
     const url = new URL(GITHUB_API_ORIGIN + request.pathAndQuery.slice('/v1'.length));
-    if (!GITHUB_WATCHER_READ_PATH.test(url.pathname) && !GITHUB_WATCHER_PAGE_PATH.test(url.pathname)) {
+    const checks = checksPost
+      ? (await import('@happier-dev/plugins-scm-github')).readGithubWatcherChecksQuery(request.body)
+      : null;
+    if (checksPost ? checks === null
+      : !GITHUB_WATCHER_READ_PATH.test(url.pathname) && !GITHUB_WATCHER_PAGE_PATH.test(url.pathname)) {
       return { ok: false, reasonCode: 'route_not_allowed' };
     }
     const { source, consumer } = authority.payload;
@@ -68,8 +74,10 @@ export function createTeamCredentialBrokerWatcherRead(input: Readonly<{
       signal.throwIfAborted();
       const publicHeaders = Object.fromEntries(Object.entries(request.headers ?? {}).filter(([name]) => WATCHER_REQUEST_HEADERS.has(name)));
       const response = await http.request({
-        url: url.href, method: 'GET', redirect: 'error',
-        headers: { 'user-agent': github.service.pluginId, ...publicHeaders, authorization },
+        url: url.href, method: checks ? 'POST' : 'GET', redirect: 'error',
+        headers: { 'user-agent': github.service.pluginId, ...publicHeaders,
+          ...(checks ? { 'content-type': 'application/json' } : {}), authorization },
+        ...(checks ? { body: checks.body } : {}),
       }, { signal });
       const headers = Object.fromEntries(Object.entries(response.headers)
         .filter(([name]) => !isPluginHttpCredentialHeader(name.toLowerCase()) && name.toLowerCase() !== 'set-cookie'));

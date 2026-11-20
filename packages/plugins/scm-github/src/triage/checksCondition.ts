@@ -10,8 +10,8 @@ import { readGithubCheckOutcomeV1, readGithubStatusContextObservationV1 } from '
 import { projectGithubChecksCountsSurface, projectGithubChecksSurface, type GithubChecksOutcomeTallyV1, type GithubCheckObservationV1, type GithubChecksDependenciesV1, type GithubChecksSurfaceV1, type GithubNativePullRequestFactsV1 } from './checks.js';
 import type { GithubRepositoryRouteV1 } from './locator.js';
 import type { GithubResponseFailureV1 } from '../observations/githubResponseFailure.js';
-import { decodeGithubReviewDecision, readGithubThreadResolutionV1, GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1,
-  GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1, GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1 } from './feedback.js';
+import { decodeGithubReviewDecision, readGithubThreadResolutionV1 } from './feedback.js';
+import { encodeGithubChecksQueryBody, githubChecksRepositoryFields } from './checksQuery.js';
 import type { GithubReviewDecisionV1 } from './mapping/facts.js';
 import { classifyGithubGraphqlError } from './mutations/graphql.js';
 import { buildGithubCollisionScope, readGithubRepositoryIdFromCollisionScope } from './identity.js';
@@ -29,50 +29,6 @@ export type GithubChecksConditionSnapshotV1 = Readonly<{
   failure?: GithubResponseFailureV1;
 }>;
 
-// GitHub GraphQL Checks/Commits schema, checked 2026-10-02. Both concrete
-// context types expose isRequired(pullRequestNumber:). 100 is GitHub's page
-// maximum, not a suite-size cap; traverse the entire connection.
-// PullRequest/MergeQueueEntry native fields checked 2026-10-24 against GitHub's
-// Pull requests reference. Body-free summaries reuse Feedback's mounted windows.
-const repositoryFields = `
-    isArchived @include(if: $includeSummary)
-    hasIssuesEnabled @include(if: $includeSummary)
-    mergeCommitAllowed @include(if: $includeSummary)
-    squashMergeAllowed @include(if: $includeSummary)
-    rebaseMergeAllowed @include(if: $includeSummary)
-    pullRequest(number: $number) {
-    headRefOid
-    id @include(if: $includeSummary)
-    viewerSubscription @include(if: $includeSummary)
-    reviewDecision
-    mergeStateStatus @include(if: $includeSummary)
-    viewerCanMergeAsAdmin @include(if: $includeSummary)
-    viewerCanUpdate @include(if: $includeSummary)
-    viewerCanEnableAutoMerge @include(if: $includeSummary)
-    viewerCanDisableAutoMerge @include(if: $includeSummary)
-    mergeQueueEntry @include(if: $includeSummary) { id state position estimatedTimeToMerge }
-    reviews(last: ${GITHUB_FEEDBACK_REVIEW_PAGE_SIZE_V1}) @include(if: $includeSummary) {
-      nodes { id author { login } state submittedAt } pageInfo { hasPreviousPage }
-    }
-    reviewRequests(first: ${GITHUB_FEEDBACK_REQUEST_PAGE_SIZE_V1}) @include(if: $includeSummary) {
-      nodes { requestedReviewer { __typename ... on User { login } ... on Team { name slug } } }
-      pageInfo { hasNextPage }
-    }
-    reviewThreads(last: ${GITHUB_FEEDBACK_THREAD_PAGE_SIZE_V1}) @include(if: $includeSummary) {
-      nodes { id isResolved } pageInfo { hasPreviousPage }
-    }
-    commits(last: 1) { nodes { commit { oid statusCheckRollup {
-      contexts(first: 100, after: $cursor) { nodes {
-        __typename
-        ... on CheckRun { id databaseId name status conclusion detailsUrl startedAt completedAt annotations(first: 1) { totalCount }
-          checkSuite { createdAt app { slug } commit { oid } repository { nameWithOwner } workflowRun { databaseId runAttempt } }
-          isRequired(pullRequestNumber: $number) title @include(if: $includeOutput) summary @include(if: $includeOutput)
-          text @include(if: $includeOutput) }
-        ... on StatusContext { id context state targetUrl createdAt updatedAt isRequired(pullRequestNumber: $number)
-          description @include(if: $includeOutput) }
-      } pageInfo { hasNextPage endCursor } }
-    } } } }
-  }`;
 // The list row needs only the head's outcome counts. GitHub states them for the whole
 // rollup connection, so no context page, per-context isRequired evaluation or follow-up
 // cursor request is made (measured on the owner's account: 53 PRs 281 KB / ~9.7 s as
@@ -107,9 +63,6 @@ function readOutcomeCounts(contexts: Readonly<Record<string, unknown>> | null): 
     state => readGithubCheckOutcomeV1(readGithubStatusContextObservationV1(state)));
   return runs && statuses ? tally : null;
 }
-const query = `query Checks($owner: String!, $name: String!, $number: Int!, $cursor: String, $includeSummary: Boolean!, $includeOutput: Boolean!) {
-  repository(owner: $owner, name: $name) { ${repositoryFields} }
-}`;
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : null;
 }
@@ -422,7 +375,7 @@ export async function readGithubChecksConditionBatch(
         variables[`number${index}`] = state.target.pullRequestNumber;
         variables[`cursor${index}`] = state.traversal.cursor;
         variables[`includeSummary${index}`] = state.target.includeStatus === true && state.traversal.cursor === null;
-        fields += repositoryFields.replace(/\$(number|cursor|includeSummary|includeOutput)\b/gu, (_match, name: string) => `$${name}${index}`);
+        fields += githubChecksRepositoryFields.replace(/\$(number|cursor|includeSummary|includeOutput)\b/gu, (_match, name: string) => `$${name}${index}`);
       }
       selections.push(`row${index}: repository(owner: $owner${index}, name: $name${index}) { ${fields} }`);
     }
@@ -482,11 +435,11 @@ async function readFreshGithubChecksConditionSurface(
     let response: Awaited<ReturnType<GithubChecksDependenciesV1['client']['request']>>;
     try {
       response = await dependencies.client.request({ url: `${GITHUB_API_ORIGIN}/graphql`, method: 'POST', readOnlyGraphql: true,
-        headers: { 'Content-Type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify({ query,
-          variables: { owner: input.route.owner, name: input.route.name, number: input.observation.pullRequestNumber,
-            cursor: traversal.cursor, includeSummary: traversal.cursor === null && input.includeStatus === true,
-            includeOutput: input.includeOutput === true },
-        })) });
+        headers: { 'Content-Type': 'application/json' }, body: encodeGithubChecksQueryBody({
+          owner: input.route.owner, name: input.route.name, number: input.observation.pullRequestNumber,
+          cursor: traversal.cursor, includeSummary: traversal.cursor === null && input.includeStatus === true,
+          includeOutput: input.includeOutput === true,
+        }) });
     } catch (error) {
       dependencies.signal.throwIfAborted();
       return traversal.finish('unknown', classifyGithubTransportFailure(error));

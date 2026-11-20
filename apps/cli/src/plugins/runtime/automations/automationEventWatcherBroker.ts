@@ -27,6 +27,7 @@ export type AutomationEventWatcherBindingInput = Readonly<{
 const watcherSourceConfigSchema = z.looseObject({
     credentialRef: ConnectedAccountActionFormTeamSelectionV1Schema,
     repository: z.looseObject({ owner: z.string(), name: z.string(), repositoryId: z.string() }),
+    checks: z.optional(z.looseObject({ pullRequestNumber: z.number() })),
 });
 const sourceAttemptSchema = z.looseObject({ definitions: z.array(z.object({
     ...AutomationEventAdmitDefinitionSelectorV1Schema.shape,
@@ -112,6 +113,8 @@ export function createAutomationEventWatcherBroker(transport: TeamCredentialWatc
                 activation,
                 teamId: selected.teamId, resourceId: selected.selection.resourceId, purpose: selected.purpose,
                 repository: config.data.repository,
+                ...(config.data.checks ? { checks: { eventLocalId: first.eventRef.localId,
+                    pullRequestNumber: config.data.checks.pullRequestNumber } } : {}),
             });
             occurrence.sources.set(key, { kind, activation, read });
             return read.adapter;
