@@ -3,6 +3,8 @@ import { createActionExecuteFailureError, isActionExecuteFailure, type ActionFai
 import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { isDeepStrictEqual } from 'node:util';
 
+export const ACCOUNT_PLUGIN_CENSUS_UNAVAILABLE_MESSAGE = 'Account plugin availability could not be checked. Try again in a moment.';
+
 /** Admission and catalog projections change when any owning scope fact changes. */
 export function arePluginEnablementsEqual(
     before: ResolvedPluginEnablement | undefined,
@@ -53,7 +55,7 @@ export function projectAccountPluginCensusLaunchError(error: unknown): SessionSp
     return {
         kind: 'launch_error',
         code: error.errorCode,
-        message: 'Account plugin availability could not be checked. Try again in a moment.',
+        message: ACCOUNT_PLUGIN_CENSUS_UNAVAILABLE_MESSAGE,
         failureCause: {
             phase: 'client_start',
             failureReason: 'unknown',

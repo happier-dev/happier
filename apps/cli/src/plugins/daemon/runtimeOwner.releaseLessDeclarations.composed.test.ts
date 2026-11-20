@@ -20,6 +20,7 @@ import { resolveRunnerAgentSessionDescriptorForLease } from '@/daemon/spawn/prep
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createDaemonPluginAvailabilityReporter } from '@/plugins/availability/daemonReporter';
 import { buildPluginProjectionV2 } from '@/plugins/projection/registry/projection/v2';
+import { executeAppliedDaemonPluginActionWithController } from './controlRoutes';
 import { createDaemonPluginRuntimeOwner } from './runtimeOwner';
 import { createDaemonPluginRegistryProjectionInvalidation } from '@/daemon/pluginRegistryProjectionInvalidation';
 import type { DaemonState } from '@/api/types';
@@ -292,11 +293,44 @@ describe('daemon release-less declaration publication', () => {
             const readCensusDiagnostic = async () => (await owner!.readCatalog()).find(row => row.pluginId === target.identity.pluginId)
                 ?.contributionIntrospection.diagnostics.find(row => row.data.code === 'plugin_runtime_capability_missing')?.data.details;
             expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'database_connection_unavailable', httpStatus: 503 } });
+            // A connected daemon with an unavailable Home shares a single retry
+            // across overlapping executable requests and preserves the cause.
+            accountReadErrorCode = 'ECONNREFUSED';
+            const retryStarted = Promise.withResolvers<void>();
+            const releaseRetry = Promise.withResolvers<void>();
+            holdFailedCensus = async () => {
+                retryStarted.resolve();
+                await releaseRetry.promise;
+            };
+            const readsBeforeDemand = accountReadStates.length;
+            const invoke = () => executeAppliedDaemonPluginActionWithController({
+                actionId: 'happier.machine.lima/check', input: {}, surface: 'cli',
+            }, controller);
+            const requests = [invoke(), invoke()];
+            const retried = await Promise.race([retryStarted.promise.then(() => true), requests[0]!.then(() => false)]);
+            releaseRetry.resolve();
+            const attempts = await Promise.all(requests);
+            expect(retried).toBe(true);
+            expect(accountReadStates.length - readsBeforeDemand).toBe(1);
+            for (const attempt of attempts) {
+                expect(attempt).toMatchObject({ matched: true, result: {
+                    ok: false, errorCode: 'plugin_account_census_failed', retryable: true,
+                    actionHandlerInvocation: 'notStarted',
+                    data: { failureCause: { errorCode: 'ECONNREFUSED', phase: 'plugins.account_census' } },
+                } });
+            }
+            accountReadable = true;
+            await controller.recoverFailedAccountCensus();
+            expect(resolveSessionCreationAgentTarget(target, controller.getState().activeRegistry!.contributes))
+                .toMatchObject({ agentId: 'codex' });
+            await controller.recoverFailedAccountCensus();
+            expect(accountReadStates.length - readsBeforeDemand).toBe(2);
             // Remaining unavailable is not unchanged: the currently reported
             // cause must replace the preceding census's catalog diagnostic.
-            accountReadErrorCode = 'ECONNREFUSED';
+            accountReadable = false;
+            accountReadErrorCode = 'database_connection_unavailable';
             await refreshStore.refreshRuntime([manifest.id]);
-            expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'ECONNREFUSED' } });
+            expect(await readCensusDiagnostic()).toMatchObject({ failureCause: { errorCode: 'database_connection_unavailable' } });
             accountReadable = true;
             const readsBeforeRecovery = accountReadStates.length;
             expect((await owner.readCatalog()).find(row => row.pluginId === target.identity.pluginId))

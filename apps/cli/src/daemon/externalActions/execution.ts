@@ -1572,6 +1572,10 @@ resolveServerFeaturesSnapshot?: () =>
               externalActionExecutionAuthorization: decorateRequesterAuthorization(authorization),
             };
           }
+          if (!confidential && !replay
+            && (actionId === REVIEW_START_ACTION_ID_V1 || actionId === SESSION_SPAWN_NEW_ACTION_ID_V1)) {
+            await pluginRuntimeController.recoverFailedAccountCensus(acceptedContext?.signal);
+          }
           const execute = () => confidential
             ? executor.continueConfidentialApprovalRequest(confidential.input, acceptedContext)
             : replay ? executor.replayApprovedApprovalRequest(replay, replayIngress)

@@ -64,7 +64,9 @@ export async function acquireAuthoritativePluginRuntimeRegistryLease(
 export async function acquireExecutableAuthoritativePluginRuntimeRegistryLease(
     params?: AuthoritativeControllerParams,
 ): Promise<PluginRuntimeRegistryLease> {
-    const lease = await resolveAuthoritativeController(params)?.acquireExecutableRuntimeRegistry(params?.signal);
+    const lease = await resolveAuthoritativeController(params)?.acquireExecutableRuntimeRegistry(
+        params?.signal, { recoverAccountCensus: true },
+    );
     if (lease) return lease;
     throw createRuntimeUnavailableError();
 }

@@ -61,6 +61,7 @@ import {
 } from '@/session/shared/spawnSessionContract';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
 import { projectAccountPluginCensusLaunchError } from '@/plugins/projection/registry/builtIn/enablement';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveProjectFilesForManagedLaunch } from './projectFilesLaunchSelection';
 import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
@@ -369,6 +370,7 @@ export async function executeSpawnSessionRequest(
             await assertCurrent();
             return readSnapshot()?.acpCatalog ?? { status: 'unavailable', reason: 'catalog-unobserved' };
         };
+        await pluginReloadController.recoverFailedAccountCensus(preparationSignal);
         let prepared = await prepareExecuteSpawnSessionRequest({
             request: {
                 ...params,

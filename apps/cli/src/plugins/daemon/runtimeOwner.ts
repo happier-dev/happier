@@ -870,6 +870,32 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
     return admissionRefresh;
   }
 
+  let lastEnablement: ResolvedContributionRegistry['pluginEnablementById'];
+  let failedCensusPluginIds: readonly string[] = [];
+  function readFailedAccountCensusPluginIds(): readonly string[] {
+    const enablement = params.reloadController.getState().activeRegistry?.contributes.pluginEnablementById;
+    if (enablement !== lastEnablement) {
+      lastEnablement = enablement;
+      failedCensusPluginIds = Object.entries(enablement ?? {})
+        .filter(([, fact]) => fact.unavailableCode === 'plugin_account_census_failed')
+        .map(([pluginId]) => pluginId);
+    }
+    return failedCensusPluginIds;
+  }
+
+  let accountCensusRecovery: Promise<void> | undefined;
+  function recoverFailedAccountCensus(waitForAdmission = false): Promise<void> | undefined {
+    if (!waitForAdmission && readFailedAccountCensusPluginIds().length === 0) return;
+    if (accountCensusRecovery) return accountCensusRecovery;
+    accountCensusRecovery = refreshAdmission(readFailedAccountCensusPluginIds)
+      .catch(error => {
+        // A refresh failure leaves the last typed refusal in service.
+        logger.warn('[PLUGIN RUNTIME] Account plugin census recovery failed', projectPluginFailureText(error));
+      })
+      .finally(() => { accountCensusRecovery = undefined; });
+    return accountCensusRecovery;
+  }
+
   return Object.freeze({
     changeService,
     initialize() {
@@ -1136,15 +1162,12 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       })();
       // The first authenticated connection can arrive before cold admission settles.
       admissionRefresh = initialization;
-      params.reloadController.setRuntimeInitialization(initialization);
+      params.reloadController.setRuntimeInitialization(initialization, recoverFailedAccountCensus);
       return initialization;
     },
-    recoverAccountCensusAfterConnect: () => refreshAdmission(() => {
-      const contributes = params.reloadController.getState().activeRegistry?.contributes;
-      return Object.entries(contributes?.pluginEnablementById ?? {})
-        .filter(([, fact]) => fact.unavailableCode === 'plugin_account_census_failed')
-        .map(([pluginId]) => pluginId);
-    }),
+    async recoverAccountCensusAfterConnect() {
+      await recoverFailedAccountCensus(true);
+    },
     reportCurrentAvailability,
     /**
      * The Machine role set changed: republish only the plugins whose role admission changed,

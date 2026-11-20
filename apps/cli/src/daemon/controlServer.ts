@@ -1583,6 +1583,7 @@ export function createDaemonControlApp({
         );
       },
       ...(pluginActionCurrentIntent ? { requestCurrentIntent: pluginActionCurrentIntent } : {}),
+      recoverFailedAccountCensus: pluginReloadController.recoverFailedAccountCensus,
       readCatalogSnapshot: async (request) => await readCurrentDaemonPluginCatalogSnapshot({
         reloadController: pluginReloadController,
         selection: request?.selection,

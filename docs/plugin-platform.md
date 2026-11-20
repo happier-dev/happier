@@ -404,13 +404,16 @@ A failed Account enablement census withdraws new admission with
 HTTP status and available Request ID in the catalog diagnostic and file log.
 An unclassified read failure is not an authoritative Account execution refusal.
 The daemon does not reuse last-good Account enablement for new admission;
-already admitted work still finishes at its natural boundary. When the Machine
-transport authenticates, the daemon retries failed census admission through the
-same refresh used by Account availability changes. Session and catalog reads
-use the serving result. Admission compares the full bundled enablement result
-and republishes only changed plugins. Until the census succeeds, Session open
-and resume return a retryable launch refusal. The existing launch and Action
-results carry the original Account census cause and Request ID when available,
+already admitted work still finishes at its natural boundary. The daemon
+publishes the census result after Account settings warmup settles, including
+when Home refuses both reads. Authenticated Machine reconnect and the next
+Session open or resume, plugin dispatch, or full plugin inventory request can
+retry failed admission through the same refresh used by Account availability
+changes. Concurrent requests join one attempt. A healthy census needs no
+extra Home read, and passive projections use the serving result. Admission
+compares the full bundled enablement result and republishes only changed
+plugins. If the census still fails, Session launch and plugin dispatch return
+a retryable refusal with the Account census cause and Request ID when available,
 including a typed usage-limit cause supplied by the census producer. Pool usage
 alone does not classify a failed Account census.
 

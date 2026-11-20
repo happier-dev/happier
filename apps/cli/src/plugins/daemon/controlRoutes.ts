@@ -157,7 +157,7 @@ export async function executeAppliedDaemonPluginActionWithController(
   signal?: AbortSignal,
 ): Promise<PluginActionExecutionAttempt> {
   const { executeContributedAction } = await import('@/plugins/runtime/invocation/actions/executeContributedAction');
-  const lease = await reloadController.acquireExecutableRuntimeRegistry(signal);
+  const lease = await reloadController.acquireExecutableRuntimeRegistry(signal, { recoverAccountCensus: true });
   if (!lease) {
     return {
       matched: true,
@@ -228,6 +228,7 @@ export function registerDaemonPluginChangeRoutes(
     readCatalog?: () => Promise<readonly unknown[]>;
     readCatalogSnapshot?: (request?: DaemonPluginCatalogReadRequest) => Promise<CurrentDaemonPluginCatalogSnapshot>;
     readCatalogProjection?: () => DaemonPluginCatalogProjection;
+    recoverFailedAccountCensus?: PluginReloadController['recoverFailedAccountCensus'];
   }>,
 ): void {
   app.post(PLUGIN_CATALOG_READ_PATH, { preHandler: params.requireAuth }, async (request, reply) => {
@@ -241,6 +242,7 @@ export function registerDaemonPluginChangeRoutes(
         code: 'plugin_catalog_runtime_unavailable',
       });
     }
+    if (parsed.data.selection !== 'tools') await params.recoverFailedAccountCensus?.();
     if (params.readCatalogSnapshot) {
       // Capture before the asynchronous snapshot: a concurrent invalidation
       // must never label an older leased occurrence with the newer revision.

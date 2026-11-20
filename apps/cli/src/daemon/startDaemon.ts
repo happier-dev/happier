@@ -2067,9 +2067,10 @@ export async function startDaemon(
           connectedAccountPurposeBindingRuntime.activatePurposeBindings,
       }),
       providers: providerOperationsSource,
-      // Declaration discovery can overlap warmup; executable plugins still
-      // observe the established Account policy, catalog and lifetime.
-      awaitAccountSettingsReadiness: () => accountCatalogWarmup,
+      // Wait for the Account warmup attempt so healthy startup sees its hydrated
+      // settings. The plugin census owns admission when Home is unavailable.
+      awaitAccountSettingsReadiness: async () => { await accountCatalogReadiness; },
+      accountStorageDependencies: { resolveBaseUrl: readDaemonHomeServerHttpBaseUrl },
       onInitialRegistryPublished: resolveInitialPluginRegistryPublished,
       awaitInitialRuntimeActivation: async () => {
         await Promise.race([
@@ -4396,8 +4397,7 @@ export async function startDaemon(
         setDaemonServerWorkOnline: runtimeBootstrap.setDaemonServerWorkOnline,
         orphanedDeadDaemonSessions,
         onMachineConnectionOnline: async () => {
-          void pluginRuntimeOwner.recoverAccountCensusAfterConnect()
-            .catch(error => logger.warn('[DAEMON RUN] Account plugin census recovery failed', serializeAxiosErrorForLog(error)));
+          void pluginRuntimeOwner.recoverAccountCensusAfterConnect();
           await reconcileSessionMachineAccessBindings();
           await refreshServerFeaturesAndBrowserRouteOwners();
           pluginRuntimeOwner.reportCurrentAvailability();

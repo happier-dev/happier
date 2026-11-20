@@ -3,6 +3,8 @@ import { readPluginModuleFailureCause } from '@/plugins/runtime/moduleFailure';
 import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { ACCOUNT_PLUGIN_CENSUS_UNAVAILABLE_MESSAGE } from '@/plugins/projection/registry/builtIn/enablement';
 import type { ActionExecutorContext, ActionId, QualifiedPluginActionId } from '@happier-dev/protocol/actions';
 import { buildApprovalExecutionOriginV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1, type HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
@@ -431,6 +433,18 @@ export async function executeContributedAction(params: Readonly<{
   const contributes = readContributionRegistry(registry);
   const action = contributes.actionsById?.get(actionId);
   if (!action) {
+    const identity = parseQualifiedPluginContributionKey(actionId);
+    const admission = identity && contributes.pluginEnablementById?.[identity.pluginId];
+    if (admission && admission.unavailableCode === 'plugin_account_census_failed') {
+      return { matched: true, result: {
+        ...actionHandlerNotStartedFailure(admission.unavailableCode, ACCOUNT_PLUGIN_CENSUS_UNAVAILABLE_MESSAGE),
+        retryable: true,
+        data: {
+          ...(admission.unavailableCause ? { failureCause: admission.unavailableCause } : {}),
+          ...(admission.unavailableRequestId ? { details: { requestId: admission.unavailableRequestId } } : {}),
+        },
+      } };
+    }
     return { matched: false };
   }
   const trackedOperation = action.definition.execution?.target === 'daemon' ? action.definition.operation : undefined;

@@ -169,6 +169,7 @@ export async function runPackedTestDaemonHost(args: readonly string[]): Promise<
   registerDaemonPluginChangeRoutes(app, {
     service: runtimeOwner.changeService,
     requireAuth: requireControlAuth,
+    recoverFailedAccountCensus: pluginReloadController.recoverFailedAccountCensus,
     readCatalog: runtimeOwner.readCatalog,
   });
   app.post(

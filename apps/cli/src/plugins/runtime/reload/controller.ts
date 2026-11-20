@@ -153,8 +153,16 @@ export type PluginReloadController = Readonly<{
     }>) => Promise<PluginRuntimeRegistryLease>;
     tryAcquireRuntimeRegistry: () => PluginRuntimeRegistryLease | null;
     /** The daemon owns startup; executable demand joins its existing restoration. */
-    setRuntimeInitialization: (initialization: Promise<void>) => void;
-    acquireExecutableRuntimeRegistry: (signal?: AbortSignal) => Promise<PluginRuntimeRegistryLease | null>;
+    setRuntimeInitialization: (
+        initialization: Promise<void>,
+        recoverAccountCensus?: () => Promise<void> | undefined,
+    ) => void;
+    /** Explicit demand joins the daemon owner's retry if the serving census failed. */
+    recoverFailedAccountCensus: (signal?: AbortSignal) => Promise<void> | undefined;
+    acquireExecutableRuntimeRegistry: (
+        signal?: AbortSignal,
+        demand?: Readonly<{ recoverAccountCensus: true }>,
+    ) => Promise<PluginRuntimeRegistryLease | null>;
     /** Latest durable revision observed, even while its serving publication is pending or failed. */
     readCurrentDurableRevision: () => number;
     isRuntimeRegistryCurrent: (registry: ResolvedExecutablePluginRuntimeRegistry) => boolean;
@@ -290,6 +298,7 @@ export function createPluginReloadController(params?: Readonly<{
     let generation = 0;
     let activeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let runtimeInitialization: Promise<boolean> | null = null;
+    let recoverAccountCensus: (() => Promise<void> | undefined) | undefined;
     /**
      * The one per-plugin currentness owner: which occurrence serves new
      * admissions. Written only at publication (changed occurrences swap, the
@@ -931,14 +940,22 @@ export function createPluginReloadController(params?: Readonly<{
             }
             return createRuntimeRegistryLease(activeRegistry);
         },
-        setRuntimeInitialization(initialization) {
+        setRuntimeInitialization(initialization, recover) {
             runtimeInitialization = initialization.then(() => true, () => false);
+            recoverAccountCensus = recover;
         },
-        async acquireExecutableRuntimeRegistry(signal) {
+        recoverFailedAccountCensus(signal) {
+            signal?.throwIfAborted();
+            if (shutdownStarted) return;
+            const recovery = recoverAccountCensus?.();
+            return recovery && signal ? raceWithAbort(recovery, signal) : recovery;
+        },
+        async acquireExecutableRuntimeRegistry(signal, demand) {
             // Declaration publication may precede development-root restoration.
             // Internal adoption/catalog reads must remain available during it.
             if (runtimeInitialization && !await raceWithAbort(runtimeInitialization, signal)) return null;
             signal?.throwIfAborted();
+            if (demand?.recoverAccountCensus) await controller.recoverFailedAccountCensus(signal);
             return controller.tryAcquireRuntimeRegistry();
         },
         tryAcquireRuntimeRegistry() {
