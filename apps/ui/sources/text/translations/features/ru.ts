@@ -7509,7 +7509,7 @@ const ru: typeof en = {
         githubSignIn: 'Вход через GitHub',
         githubPurpose: "OAuth-приложение GitHub, через которое люди входят в этот Home. Вход через GitHub включается и выключается в «Правилах».",
         workosPurpose: "Позволяет каждой команде в этом Home подключить свой корпоративный вход и каталог через WorkOS на странице «Аутентификация» команды.",
-        notSetGithub: "Не настроено · Выключено, пока не добавлено приложение GitHub",
+        notSetGithub: "Не настроено · Нужно собственное OAuth-приложение; GitHub Apps дают доступ только к репозиториям",
         notSetWorkos: 'Не настроено · команды пока не могут использовать WorkOS',
         needsClientId: 'Нужен идентификатор клиента',
         needsClientSecret: 'Нужен секрет клиента',
@@ -7690,7 +7690,7 @@ const ru: typeof en = {
     signInPolicy: {
         methodsDescription: "Как люди входят в этот Home. Хотя бы один способ остаётся включённым, и никто не теряет последний способ входа.",
         methodUnavailable: 'Недоступно — ваше развёртывание не может это предложить',
-        needsGithubApp: 'Сначала нужно приложение для входа через GitHub.',
+        needsGithubApp: "Сначала нужно собственное OAuth-приложение GitHub; GitHub Apps дают доступ только к репозиториям.",
         needsWorkos: 'Сначала нужно настроить WorkOS.',
         setUp: 'Настроить',
         signInService: 'Служба входа Home',

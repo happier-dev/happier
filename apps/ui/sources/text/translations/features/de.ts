@@ -7496,7 +7496,7 @@ const de: typeof en = {
         githubSignIn: 'GitHub-Anmeldung',
         githubPurpose: "Die GitHub-OAuth-App, mit der sich Personen bei diesem Home über GitHub anmelden. Die GitHub-Anmeldung schaltest du unter Richtlinien ein oder aus.",
         workosPurpose: "Damit kann jedes Team auf diesem Home seine eigene Firmenanmeldung und sein Verzeichnis über WorkOS verbinden – auf der Authentifizierungsseite des Teams.",
-        notSetGithub: "Nicht eingerichtet · Aus, bis eine GitHub-App hinzugefügt ist",
+        notSetGithub: "Nicht eingerichtet · Benötigt eine eigene OAuth-App; GitHub Apps greifen nur auf Repositorys zu",
         notSetWorkos: 'Nicht eingerichtet · Teams können WorkOS noch nicht nutzen',
         needsClientId: 'Benötigt eine Client-ID',
         needsClientSecret: 'Benötigt ein Client-Secret',
@@ -7677,7 +7677,7 @@ const de: typeof en = {
     signInPolicy: {
         methodsDescription: "Wie man sich bei diesem Home anmeldet. Mindestens eine Methode bleibt aktiv, und niemand verliert seinen letzten Zugang.",
         methodUnavailable: 'Nicht verfügbar — deine Bereitstellung kann sie nicht anbieten',
-        needsGithubApp: 'Benötigt zuerst eine GitHub-Anmelde-App.',
+        needsGithubApp: "Benötigt zuerst eine eigene GitHub-OAuth-App; GitHub Apps greifen nur auf Repositorys zu.",
         needsWorkos: 'Benötigt zuerst eingerichtetes WorkOS.',
         setUp: 'Einrichten',
         signInService: 'Anmeldedienst des Homes',

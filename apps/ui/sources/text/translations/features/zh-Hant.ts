@@ -7381,7 +7381,7 @@ const zhHant: typeof en = {
         githubSignIn: 'GitHub 登入',
         githubPurpose: "使用者透過 GitHub 登入此 Home 所用的 GitHub OAuth 應用程式。在「政策」中開啟或關閉 GitHub 登入。",
         workosPurpose: "讓此 Home 上的每個團隊在團隊的「身分驗證」頁面，透過 WorkOS 連接自己的公司登入與目錄。",
-        notSetGithub: "未設定 · 新增 GitHub 應用程式前保持關閉",
+        notSetGithub: "未設定 · 需要專用的 OAuth 應用程式；GitHub App 僅用於存取儲存庫",
         notSetWorkos: '未設定 · 團隊暫時無法使用 WorkOS',
         needsClientId: '需要用戶端 ID',
         needsClientSecret: '需要用戶端密鑰',
@@ -7562,7 +7562,7 @@ const zhHant: typeof en = {
     signInPolicy: {
         methodsDescription: "大家如何登入此 Home。至少保留一種方式開啟，任何人都不會失去最後的登入途徑。",
         methodUnavailable: '無法使用 — 你的部署無法提供',
-        needsGithubApp: '需要先設定 GitHub 登入應用程式。',
+        needsGithubApp: "需要先設定專用的 GitHub OAuth 應用程式；GitHub App 僅用於存取儲存庫。",
         needsWorkos: '需要先設定 WorkOS。',
         setUp: '設定',
         signInService: 'Home 登入服務',

@@ -410,7 +410,7 @@ export const en = {
         githubSignIn: 'GitHub sign-in',
         githubPurpose: 'The GitHub OAuth app people use to sign in to this Home with GitHub. Turn GitHub sign-in on or off in Policies.',
         workosPurpose: 'Lets each Team on this Home connect its own company sign-in and directory through WorkOS, from the Team’s Authentication page.',
-        notSetGithub: "Not set up · Off until a GitHub app is added",
+        notSetGithub: "Not set up · Needs its own OAuth app; GitHub Apps only reach repositories",
         notSetWorkos: 'Not set up · Teams can’t use WorkOS yet',
         needsClientId: 'Needs a client ID',
         needsClientSecret: 'Needs a client secret',
@@ -591,7 +591,7 @@ export const en = {
     signInPolicy: {
         methodsDescription: 'How people sign in to this Home. At least one method stays on, and nobody loses their last way in.',
         methodUnavailable: 'Unavailable — your deployment can’t offer it',
-        needsGithubApp: 'Needs a GitHub sign-in app first.',
+        needsGithubApp: "Needs its own GitHub OAuth app first; GitHub Apps only reach repositories.",
         needsWorkos: 'Needs WorkOS set up first.',
         setUp: 'Set up',
         signInService: 'Home sign-in service',

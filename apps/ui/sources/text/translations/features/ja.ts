@@ -7441,7 +7441,7 @@ const ja: typeof en = {
         githubSignIn: 'GitHub サインイン',
         githubPurpose: "この Home に GitHub でサインインするための GitHub OAuth アプリ。GitHub サインインのオン／オフはポリシーで切り替えます。",
         workosPurpose: "この Home の各チームが、チームの認証ページから WorkOS 経由で自社のサインインとディレクトリを接続できます。",
-        notSetGithub: "未設定 · GitHub アプリを追加するまでオフ",
+        notSetGithub: "未設定 · 専用の OAuth アプリが必要です。GitHub App はリポジトリへのアクセス専用です",
         notSetWorkos: '未設定 · チームはまだ WorkOS を使えません',
         needsClientId: 'クライアント ID が必要です',
         needsClientSecret: 'クライアントシークレットが必要です',
@@ -7622,7 +7622,7 @@ const ja: typeof en = {
     signInPolicy: {
         methodsDescription: "この Home へのサインイン方法です。少なくとも 1 つの方法は常にオンのままで、誰も最後の手段を失いません。",
         methodUnavailable: '利用不可 — このデプロイでは提供できません',
-        needsGithubApp: '先に GitHub サインイン用アプリが必要です。',
+        needsGithubApp: "先に専用の GitHub OAuth アプリが必要です。GitHub App はリポジトリへのアクセス専用です。",
         needsWorkos: '先に WorkOS の設定が必要です。',
         setUp: '設定する',
         signInService: 'Home のサインインサービス',

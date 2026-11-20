@@ -7501,7 +7501,7 @@ const fr: typeof en = {
         githubSignIn: 'Connexion GitHub',
         githubPurpose: "L’application OAuth GitHub avec laquelle les gens se connectent à ce Home. Active ou désactive la connexion GitHub dans Règles.",
         workosPurpose: "Permet à chaque équipe de ce Home de connecter sa propre connexion d’entreprise et son annuaire via WorkOS, depuis la page Authentification de l’équipe.",
-        notSetGithub: "Non configurée · Désactivée tant qu’aucune app GitHub n’est ajoutée",
+        notSetGithub: "Non configurée · Nécessite sa propre application OAuth ; les GitHub Apps n’accèdent qu’aux dépôts",
         notSetWorkos: 'Non configuré · les équipes ne peuvent pas encore utiliser WorkOS',
         needsClientId: 'Il manque un ID client',
         needsClientSecret: 'Il manque un secret client',
@@ -7682,7 +7682,7 @@ const fr: typeof en = {
     signInPolicy: {
         methodsDescription: "Comment on se connecte à ce Home. Au moins une méthode reste active, et personne ne perd son dernier accès.",
         methodUnavailable: 'Indisponible — ton déploiement ne peut pas la proposer',
-        needsGithubApp: 'Il faut d’abord une application de connexion GitHub.',
+        needsGithubApp: "Il faut d’abord sa propre application OAuth GitHub ; les GitHub Apps n’accèdent qu’aux dépôts.",
         needsWorkos: 'Il faut d’abord configurer WorkOS.',
         setUp: 'Configurer',
         signInService: 'Service de connexion du Home',

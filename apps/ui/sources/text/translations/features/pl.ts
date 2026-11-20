@@ -7508,7 +7508,7 @@ const pl: typeof en = {
         githubSignIn: 'Logowanie przez GitHub',
         githubPurpose: "Aplikacja OAuth GitHub, przez którą ludzie logują się do tego Home. Logowanie przez GitHub włączasz i wyłączasz w Zasadach.",
         workosPurpose: "Pozwala każdemu zespołowi w tym Home podłączyć własne firmowe logowanie i katalog przez WorkOS, na stronie Uwierzytelnianie zespołu.",
-        notSetGithub: "Nieskonfigurowane · Wyłączone, dopóki nie dodasz aplikacji GitHub",
+        notSetGithub: "Nieskonfigurowane · Potrzebna własna aplikacja OAuth; GitHub Apps dają dostęp tylko do repozytoriów",
         notSetWorkos: 'Nieskonfigurowane · zespoły nie mogą jeszcze używać WorkOS',
         needsClientId: 'Brakuje identyfikatora klienta',
         needsClientSecret: 'Brakuje sekretu klienta',
@@ -7689,7 +7689,7 @@ const pl: typeof en = {
     signInPolicy: {
         methodsDescription: "Jak ludzie logują się do tego Home. Co najmniej jedna metoda pozostaje włączona i nikt nie traci ostatniego dostępu.",
         methodUnavailable: 'Niedostępne — twoje wdrożenie nie może tego oferować',
-        needsGithubApp: 'Najpierw potrzebna jest aplikacja logowania GitHub.',
+        needsGithubApp: "Najpierw potrzebna jest własna aplikacja OAuth GitHub; GitHub Apps dają dostęp tylko do repozytoriów.",
         needsWorkos: 'Najpierw trzeba skonfigurować WorkOS.',
         setUp: 'Skonfiguruj',
         signInService: 'Usługa logowania Home',

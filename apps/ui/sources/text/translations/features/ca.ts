@@ -7485,7 +7485,7 @@ const ca: typeof en = {
         githubSignIn: 'Inici de sessió amb GitHub',
         githubPurpose: "L’aplicació OAuth de GitHub amb què la gent inicia sessió en aquest Home. Activa o desactiva l’inici de sessió amb GitHub a Polítiques.",
         workosPurpose: "Permet que cada equip d’aquest Home connecti el seu propi inici de sessió d’empresa i directori a través de WorkOS, des de la pàgina d’Autenticació de l’equip.",
-        notSetGithub: "Sense configurar · Desactivat fins que s’afegeixi una app de GitHub",
+        notSetGithub: "Sense configurar · Cal una aplicació OAuth pròpia; les GitHub Apps només accedeixen als repositoris",
         notSetWorkos: 'Sense configurar · els equips encara no poden fer servir WorkOS',
         needsClientId: 'Cal un ID de client',
         needsClientSecret: 'Cal un secret de client',
@@ -7666,7 +7666,7 @@ const ca: typeof en = {
     signInPolicy: {
         methodsDescription: "Com s’inicia la sessió en aquest Home. Com a mínim un mètode continua actiu i ningú perd el seu últim accés.",
         methodUnavailable: 'No disponible — el teu desplegament no el pot oferir',
-        needsGithubApp: 'Primer cal una aplicació d’inici de sessió de GitHub.',
+        needsGithubApp: "Primer cal una aplicació OAuth de GitHub pròpia; les GitHub Apps només accedeixen als repositoris.",
         needsWorkos: 'Primer cal configurar WorkOS.',
         setUp: 'Configura',
         signInService: 'Servei d’inici de sessió del Home',

@@ -7381,7 +7381,7 @@ const zhHans: typeof en = {
         githubSignIn: 'GitHub 登录',
         githubPurpose: "用户通过 GitHub 登录此 Home 所用的 GitHub OAuth 应用。在“策略”中开启或关闭 GitHub 登录。",
         workosPurpose: "让此 Home 上的每个团队在团队的“身份验证”页面，通过 WorkOS 连接自己的公司登录和目录。",
-        notSetGithub: "未设置 · 添加 GitHub 应用前保持关闭",
+        notSetGithub: "未设置 · 需要专用的 OAuth 应用；GitHub App 仅用于访问仓库",
         notSetWorkos: '未设置 · 团队暂时无法使用 WorkOS',
         needsClientId: '需要客户端 ID',
         needsClientSecret: '需要客户端密钥',
@@ -7562,7 +7562,7 @@ const zhHans: typeof en = {
     signInPolicy: {
         methodsDescription: "人们如何登录此 Home。至少保留一种方式开启，任何人都不会失去最后的登录途径。",
         methodUnavailable: '不可用 — 你的部署无法提供',
-        needsGithubApp: '需要先设置 GitHub 登录应用。',
+        needsGithubApp: "需要先设置专用的 GitHub OAuth 应用；GitHub App 仅用于访问仓库。",
         needsWorkos: '需要先设置 WorkOS。',
         setUp: '设置',
         signInService: 'Home 登录服务',

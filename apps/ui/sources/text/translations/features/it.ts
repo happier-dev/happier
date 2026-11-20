@@ -7492,7 +7492,7 @@ const it: typeof en = {
         githubSignIn: 'Accesso con GitHub',
         githubPurpose: "L’app OAuth di GitHub con cui le persone accedono a questo Home. Attiva o disattiva l’accesso con GitHub in Criteri.",
         workosPurpose: "Consente a ogni team di questo Home di collegare il proprio accesso aziendale e la propria directory tramite WorkOS, dalla pagina Autenticazione del team.",
-        notSetGithub: "Non configurato · Disattivato finché non si aggiunge un’app GitHub",
+        notSetGithub: "Non configurato · Serve un’app OAuth dedicata; le GitHub App accedono solo ai repository",
         notSetWorkos: 'Non configurato · i team non possono ancora usare WorkOS',
         needsClientId: 'Serve un ID client',
         needsClientSecret: 'Serve un segreto client',
@@ -7673,7 +7673,7 @@ const it: typeof en = {
     signInPolicy: {
         methodsDescription: "Come si accede a questo Home. Almeno un metodo resta attivo e nessuno perde il suo ultimo accesso.",
         methodUnavailable: 'Non disponibile — il tuo deployment non può offrirlo',
-        needsGithubApp: 'Serve prima un’app di accesso GitHub.',
+        needsGithubApp: "Serve prima un’app OAuth di GitHub dedicata; le GitHub App accedono solo ai repository.",
         needsWorkos: 'Serve prima configurare WorkOS.',
         setUp: 'Configura',
         signInService: 'Servizio di accesso della Home',
