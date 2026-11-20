@@ -22,7 +22,8 @@ import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/P
 import { readableSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { t, usePreferredLanguage } from '@/text';
 
-import { describeWorkflowRunState } from '../presentation/workflowLifecyclePresentation';
+import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { formatWorkflowRunDisplayName, resolveWorkflowRunDisplayName } from '../presentation/workflowRunDisplayName';
 import { readWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
 import { useWorkflowTriggerSets } from '../triggers/useWorkflowTriggerSets';
@@ -47,6 +48,7 @@ export type WorkflowRunCollectionRow = Readonly<{
     project: GroupLabel;
     workflow: GroupLabel;
     result: string | null;
+    status: WorkStatusPresentation | null;
     startedBy: string | null;
     subject: string | null;
     createdAt: number | undefined;
@@ -148,7 +150,8 @@ export function useWorkflowRunCollection(focused: boolean) {
                 workflow: { key: workflowId ?? 'noWorkflow', title: workflowTitle ?? (workflowId
                     ? `${t('workflows.destination.display.workflow')} · ${workflowId.slice(-8)}`
                     : t('workflows.destination.display.noWorkflow')) },
-                result: result === undefined ? null : describeWorkflowRunState(result).label,
+                result: result === undefined ? null : readWorkflowRunWorkStatusFacts({ state: result }).word,
+                status: summary ? resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(summary) }) : null,
                 startedBy: startedByLabel,
                 subject: discussions.get(run.id) ?? subjects.get(run.id) ?? null,
                 createdAt,

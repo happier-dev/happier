@@ -360,9 +360,7 @@ function buildCard(member: BoardMember, facts: BoardCardFacts): BoardCard {
         case 'workflow_run': {
             const row = facts.workflowRun(member.ref);
             if (!row?.summary) return missingEntity(member, facts);
-            const lifecycle = describeWorkflowRunState(row.summary.state, {
-                inAttentionWindow: row.summary.attentionRequired === true,
-                workflowCustodyState: row.summary.workflowCustodyState,
+            const lifecycle = describeWorkflowRunState(row.summary, {
                 ...readRunMachine(member.ref, row.summary, facts).context,
             });
             return {

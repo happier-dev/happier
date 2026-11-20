@@ -112,8 +112,7 @@ export function useWorkflowInlineRunControls(params: Readonly<{
     const anotherRound = React.useCallback(() => startAcceptedRun('another_round'), [startAcceptedRun]);
     const runAgain = React.useCallback(() => startAcceptedRun('replay'), [startAcceptedRun]);
     return {
-        lifecycle: describeWorkflowRunState(params.run.state, { workflowCustodyState: params.run.workflowCustodyState,
-            cancelRequested, inAttentionWindow: params.run.attentionRequired }),
+        lifecycle: describeWorkflowRunState(run, { cancelRequested }),
         progress: describeWorkflowRunProgress(params.run.stepProgress),
         availability: params.run.availability,
         canResume: canResumeWorkflowRunBoundary(params),

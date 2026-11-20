@@ -1004,8 +1004,19 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         machineReachable: props.machineReachable,
     }), [derivedStructure, props.definition, props.frozenChildren, props.invocationHistoryComplete, props.invocations,
         props.invocationsLoaded, props.machineReachable, props.run]);
-    const outcomeFailed = describeWorkflowRunState(props.run.state).variant === 'danger'
-        || (props.run.state === 'succeeded' && coverage.knownFailure);
+    const outcomePresentation = describeWorkflowRunState(props.run, {
+        word: outcomeWord,
+        cancelRequested: props.cancelRequested,
+        machineReachable: props.machineReachable,
+        machineName: props.machineName ?? props.run.machineId,
+        machineStatus: props.machineStatus,
+        // A live Run whose own outcome is not a hold keeps its calm mark even when a separate item asks for attention.
+        inAttentionWindow: isTerminalWorkflowRunState(props.run.state) ? props.run.attentionRequired : workflowRunOutcomeIsAttention({
+            ...props.run, cancelRequested: props.cancelRequested,
+            inAttentionWindow: props.run.attentionRequired === true || attentionRows.length > 0,
+        }),
+        outcome: props.run.state === 'succeeded' && coverage.knownFailure ? 'completed_with_failures' : undefined,
+    });
     // A Run made only of Machine setup steps says what they installed instead of counting steps.
     const runSetupOutcome = React.useMemo(() => {
         if (props.definition === null) return null;
@@ -1355,26 +1366,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 {props.completionEmphasis === true ? <View testID={`${testIDPrefix}-outcome-emphasis`} /> : null}
                 {/* The headline names the state; the attention card explains its concrete request. */}
                 <View style={styles.outcomeLine}>
-                    <WorkflowRunStateMark
-                        state={props.run.state}
-                        context={{ workflowCustodyState: props.run.workflowCustodyState,
-                            cancelRequested: props.cancelRequested, machineReachable: props.machineReachable,
-                            machineName: props.machineName ?? props.run.machineId, machineStatus: props.machineStatus }}
-                        // Amber only when the outcome is the hold itself; a Paused or Running Run whose hold
-                        // Needs you lists keeps its own calm mark (FIN-DESIGN-REVIEW L2).
-                        inAttentionWindow={workflowRunOutcomeIsAttention({
-                            state: props.run.state,
-                            workflowCustodyState: props.run.workflowCustodyState,
-                            cancelRequested: props.cancelRequested,
-                            inAttentionWindow: props.run.attentionRequired === true || attentionRows.length > 0,
-                        })}
-                        testID={`${testIDPrefix}-outcome-mark`}
-                    />
+                    <WorkflowRunStateMark presentation={outcomePresentation} testID={`${testIDPrefix}-outcome-mark`} />
                     <Text testID={`${testIDPrefix}-outcome`} style={styles.outcomeSentence}>
                         {/* The status word leads in the heading weight; the sentence after it reads as
-                            prose (lab run-A). Failure keeps its rose; healthy and done stay ink. */}
+                            prose (lab run-A). The semantic tone also colours the leading mark. */}
                         {outcomeLine.startsWith(outcomeWord) ? <>
-                            <Text style={[styles.outcomeWord, outcomeFailed ? styles.outcomeWordFailed : null]}>{outcomeWord}</Text>
+                            <Text style={[styles.outcomeWord, outcomePresentation.variant === 'neutral' ? null
+                                : { color: theme.colors.state[outcomePresentation.variant].textForeground }]}>{outcomeWord}</Text>
                             {outcomeLine.slice(outcomeWord.length)}
                         </> : outcomeLine}
                     </Text>

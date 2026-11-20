@@ -196,9 +196,6 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         ...Typography.default('semiBold'),
         color: theme.colors.text.primary,
     },
-    outcomeWordFailed: {
-        color: theme.colors.state.danger.textForeground,
-    },
     provenance: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,

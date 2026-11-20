@@ -78,9 +78,7 @@ export function SessionManagedWorkflowSection(props: Readonly<{
                 const title = formatWorkflowRunDisplayName(
                     resolveWorkflowRunDisplayName(props.state.metadataByRunId?.[run.id]),
                 );
-                const state = describeWorkflowRunState(run.state, { workflowCustodyState: run.workflowCustodyState });
-                // A state that asks for the person (interrupted, failed, waiting) reads in its own tone; the rest stay quiet.
-                const toned = state.variant === 'attention' || state.variant === 'warning' || state.variant === 'danger';
+                const state = describeWorkflowRunState(run);
                 const origin = formatWorkflowRunOriginLabel(run.origin);
                 return (
                     <Item
@@ -93,8 +91,7 @@ export function SessionManagedWorkflowSection(props: Readonly<{
                         onPress={() => props.onOpenRun(run.id)}
                         icon={(
                             <WorkflowRunStateMark
-                                state={run.state}
-                                context={{ workflowCustodyState: run.workflowCustodyState }}
+                                presentation={state}
                                 size={16}
                                 testID={`${testIDPrefix}-run-${run.id}-state-marker`}
                             />
@@ -104,7 +101,7 @@ export function SessionManagedWorkflowSection(props: Readonly<{
                             <Text
                                 testID={`${testIDPrefix}-run-${run.id}-state`}
                                 accessibilityLabel={state.label}
-                                style={[styles.meta, toned ? { color: theme.colors.state[state.variant].textForeground } : null]}
+                                style={[styles.meta, state.variant === 'neutral' ? null : { color: theme.colors.state[state.variant].textForeground }]}
                                 numberOfLines={1}
                             >
                                 {[state.label, origin].filter(Boolean).join(' · ')}

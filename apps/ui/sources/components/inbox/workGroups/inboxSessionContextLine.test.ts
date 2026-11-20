@@ -56,6 +56,21 @@ function readyCandidate() {
 }
 
 describe('Inbox session row line', () => {
+  it('names the projected current work in the Inbox row beside its workspace', () => {
+    const ready = readyCandidate();
+    const session = {
+      ...ready.session,
+      metadata: {
+        ...ready.session.metadata!,
+        work: { statusReason: 'Waiting on the staging deploy' },
+      },
+    };
+    const candidate = { ...buildSessionActivityAttention({ session, nowMs: 1000 }), context: ready.context };
+    const line = buildInboxSessionContextLine(candidate, { showHome: false, showNeed: false });
+    expect(line).toContain('Waiting on the staging deploy');
+    expect(line).toContain('0.3');
+  });
+
   it.each([
     { total: 2, working: 0, needsYou: 0, stalled: 2, finished: 0, attentionPrimary: 'disconnected' as const },
     { total: 2, working: 0, needsYou: 2, stalled: 0, finished: 0, attentionPrimary: 'permission_required' as const },

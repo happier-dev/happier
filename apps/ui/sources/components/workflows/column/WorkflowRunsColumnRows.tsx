@@ -15,17 +15,12 @@ import { Text } from '@/components/ui/text/Text';
 import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
-import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { t, usePreferredLanguage } from '@/text';
 
 import type {
   WorkflowRunCollection,
   WorkflowRunCollectionRow,
 } from '../library/useWorkflowRunCollection';
-import {
-  readWorkflowRunResultTone,
-} from '../library/WorkflowRunsHome';
 
 /**
  * The Runs sidebar and phone list (scene 8 Runs): the one `workflowRun` collection grouped as its Group by says
@@ -134,30 +129,17 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
   }>,
 ) {
   const { row } = props;
-  const tone = readWorkflowRunResultTone(row);
-  const summary = row.run.summary;
-  const mark =
-    tone === 'quiet' || summary === null ? null : (
-      <WorkStatusRowMark
-        testIDSuffix={`workflow-run-${row.key}`}
-        status={resolveWorkStatusTone({
-          kind: 'workflow_run',
-          facts: readWorkflowRunWorkStatusFacts(summary),
-        })}
-      />
-    );
+  const { status } = row;
+  const mark = status === null || (status.tone === 'neutral' && status.bucket !== 'working') ? null : (
+    <WorkStatusRowMark testIDSuffix={`workflow-run-${row.key}`} status={status} />
+  );
   // The start time ends a settled row; a working run's mark speaks instead (its live timer is on its page).
   const when =
-    tone === 'working' || row.createdAt === undefined
+    status?.bucket === 'working' || row.createdAt === undefined
       ? null
       : props.time.format(row.createdAt);
   const line = row.subject;
-  const stateWord =
-    tone === 'attention'
-      ? t('workflows.destination.sections.needsYou')
-      : tone === 'quiet'
-        ? null
-        : row.result;
+  const stateWord = status?.word ?? row.result;
   return (
     <CollectionNavigationRow
       testID={props.testID}

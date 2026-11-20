@@ -52,6 +52,18 @@ describe('describeWorkflowInvocationLifecycle', () => {
             runState: 'running', cancelRequested: true,
         }).observedLeafCounts.attention).toBe(0);
     });
+    it('withdraws failure emphasis after acknowledgement without changing the failed outcome', () => {
+        const failed = createWorkflowRunSummaryFixture({ state: 'failed', failureUnseen: true });
+        expect(describeWorkflowRunState(failed)).toMatchObject({
+            label: 'workflows.runState.failed', variant: 'danger', terminal: true,
+        });
+        const acknowledged = { ...failed, failureUnseen: false };
+        expect(describeWorkflowRunState(acknowledged)).toMatchObject({
+            label: 'workflows.runState.failed', variant: 'neutral', terminal: true,
+        });
+        expect(describeWorkflowRunState({ ...acknowledged, attentionRequired: true, invocationAttentionRequired: true }))
+            .toMatchObject({ label: 'workflows.runState.failed', variant: 'attention', terminal: true });
+    });
     it('presents every canonical Run state, including an unsettled review wait', () => {
         for (const state of WORKFLOW_RUN_STATES_V1) {
             expect(describeWorkflowRunState(state)).toMatchObject({ state, label: state === 'waiting_for_review'

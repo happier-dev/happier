@@ -8,14 +8,13 @@ import { StatusPill } from '@/components/ui/status/StatusPill';
 
 import {
     describeWorkflowInvocationLifecycle,
-    describeWorkflowRunState,
+    type WorkflowRunStatePresentation,
     type WorkflowLifecycleMarker,
     type WorkflowInvocationLifecycleContext,
 } from './workflowLifecyclePresentation';
 
 import type {
     WorkflowInvocationLifecycleV1,
-    WorkflowRunStateV1,
 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 /**
@@ -110,15 +109,13 @@ export function WorkflowLifecycleStatus(props: Readonly<{
  * `uwr-halo`). Decorative: the sentence is the accessible statement.
  */
 export function WorkflowRunStateMark(props: Readonly<{
-    state: WorkflowRunStateV1;
-    inAttentionWindow?: boolean;
-    context?: Parameters<typeof describeWorkflowRunState>[1];
+    presentation: Pick<WorkflowRunStatePresentation, 'marker' | 'variant'>;
     /** The mark's size where it stands in a quiet meta line (a Discussion run's end row); the outcome line's by default. */
     size?: number;
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
-    const presentation = describeWorkflowRunState(props.state, { ...props.context, inAttentionWindow: props.inAttentionWindow });
+    const { presentation } = props;
     return (
         <View
             {...(props.testID === undefined ? {} : { testID: props.testID })}

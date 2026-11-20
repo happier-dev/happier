@@ -17,6 +17,7 @@ import {
     WORK_STATUS_PILL_VARIANT,
     type WorkStatusPresentation,
 } from '@/components/work/status/resolveWorkStatusTone';
+import { readWorkflowRunWorkStatusFacts, type WorkflowRunWorkStatusContext, type WorkflowRunWorkStatusSummary } from '@/components/work/status/workflowWorkStatusFacts';
 import { t } from '@/text';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { supportsWorkflowAnotherRoundV1 } from '@happier-dev/protocol/workflows';
@@ -267,7 +268,7 @@ export function describeWorkflowInvocationLifecycle(
 export type WorkflowRunStatePresentation = Readonly<{
     state: WorkflowRunStateV1;
     label: string;
-    variant: StatusPillVariant;
+    variant: (typeof WORK_STATUS_PILL_VARIANT)[WorkStatusPresentation['tone']];
     marker: WorkflowLifecycleMarker;
     terminal: boolean;
     /** A known parent hold, or neutral attention when its reason is not projected. */
@@ -296,38 +297,24 @@ const WORKFLOW_RUN_STATE_SHAPES: Readonly<Record<
 };
 
 export function describeWorkflowRunState(
-    state: WorkflowRunStateV1,
-    context?: Readonly<{ word?: string; inAttentionWindow?: boolean; workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState']; cancelRequested?: boolean; machineReachable?: boolean; machineName?: string | null; machineStatus?: WorkStatusPresentation | null }>,
+    run: WorkflowRunStateV1 | WorkflowRunWorkStatusSummary,
+    context?: WorkflowRunWorkStatusContext,
 ): WorkflowRunStatePresentation {
+    const summary = typeof run === 'string' ? { state: run } : run;
+    const facts = readWorkflowRunWorkStatusFacts(summary, context);
+    const { state } = summary;
     const shape = WORKFLOW_RUN_STATE_SHAPES[state];
-    // A live Run that waits on the person says so in the one attention word ("Needs you"): its
-    // own state word ("Running") in the attention tone would claim healthy and urgent at once.
-    // A held Run uses that same short word before attention membership catches up. A terminal
-    // Run reports its outcome; an explicit composed headline stays the caller's.
-    // "Interrupted" is already an attention word that says why the person is needed, so it stays.
-    const needsYou = context?.word === undefined && (state === 'waiting_for_review'
-        || context?.inAttentionWindow === true && !isTerminalWorkflowRunState(state)
-            && state !== 'interrupted' && state !== 'paused' && state !== 'pause_requested');
-    const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: {
-        state,
-        word: context?.word ?? (needsYou ? t('workStatus.buckets.needs_you') : t(`workflows.runState.${state}`)),
-        inAttentionWindow: context?.inAttentionWindow,
-        workflowCustodyState: context?.workflowCustodyState,
-        cancelRequested: context?.cancelRequested,
-        machineReachable: context?.machineReachable,
-        machineName: context?.machineName,
-        machineStatus: context?.machineStatus,
-    } });
+    const status = resolveWorkStatusTone({ kind: 'workflow_run', facts });
     return {
         state,
         label: status.word,
         variant: WORK_STATUS_PILL_VARIANT[status.tone],
         // A known hold does not claim starting motion while the parent summary
         // catches up. A running parent may still own concurrent work.
-        marker: context?.inAttentionWindow === true && (state === 'queued' || state === 'claimed')
+        marker: facts.inAttentionWindow === true && (state === 'queued' || state === 'claimed')
             ? WORKFLOW_RUN_STATE_SHAPES.waiting_for_review.marker
             : shape.marker,
-        terminal: isTerminalWorkflowRunState(state) && !isWorkflowRunStopPending({ state, ...context }),
+        terminal: isTerminalWorkflowRunState(state) && !isWorkflowRunStopPending(facts),
         attentionLabel: state === 'waiting_for_review' ? t('workflows.review.waitTitle')
             : status.bucket === 'needs_you' ? t('workStatus.buckets.needs_you') : null,
     };

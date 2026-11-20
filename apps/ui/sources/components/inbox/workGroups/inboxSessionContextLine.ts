@@ -49,6 +49,7 @@ export function buildInboxSessionContextLine(
   return (
     joinHappierFacts(
       need,
+      presentSessionAwarenessNowLineV1(candidate.awareness),
       readWorkingReports(candidate),
       reportsTo ? options.worker?.headline ?? null : null,
       reportsTo ?? context,

@@ -23,8 +23,7 @@ import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { StatusWord } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
-import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
+import { WORK_STATUS_PILL_VARIANT } from '@/components/work/status/resolveWorkStatusTone';
 import { t, usePreferredLanguage } from '@/text';
 import { WorkflowRunsViewMenu } from './WorkflowsViewMenu';
 
@@ -34,21 +33,6 @@ import {
   type WorkflowRunCollection,
   type WorkflowRunCollectionRow,
 } from './useWorkflowRunCollection';
-/** How a run's result speaks (scene 8 Runs): amber when it needs you, danger when it failed, quiet otherwise. */
-export function readWorkflowRunResultTone(
-  row: WorkflowRunCollectionRow,
-): 'attention' | 'danger' | 'working' | 'quiet' {
-  const summary = row.run.summary;
-  if (summary === null) return 'quiet';
-  const status = resolveWorkStatusTone({
-    kind: 'workflow_run',
-    facts: readWorkflowRunWorkStatusFacts(summary),
-  });
-  if (status.tone === 'danger') return 'danger';
-  if (status.bucket === 'needs_you') return 'attention';
-  return status.bucket === 'working' ? 'working' : 'quiet';
-}
-
 
 /** How long a finished run took; a run still going has no "took" yet. */
 export function readWorkflowRunTook(
@@ -64,13 +48,13 @@ export function readWorkflowRunTook(
 export const WorkflowRunResult = React.memo(function WorkflowRunResult(
   props: Readonly<{ row: WorkflowRunCollectionRow; testID?: string }>,
 ) {
-  const tone = readWorkflowRunResultTone(props.row);
-  const label = tone === 'attention' ? t('workflows.destination.sections.needsYou') : props.row.result;
+  const { status, result } = props.row;
+  const label = status?.word ?? result;
   if (label === null) return null;
-  // The word at the cells' own size: ink for a settled run, amber or danger only when it speaks.
+  const variant = WORK_STATUS_PILL_VARIANT[status?.tone ?? 'neutral'];
   return (
-    <Text testID={props.testID} variant="meta" numberOfLines={1} style={tone === 'quiet' || tone === 'working' ? styles.result : undefined}>
-      {tone === 'attention' || tone === 'danger' ? <StatusWord variant={tone} label={label} /> : label}
+    <Text testID={props.testID} variant="meta" numberOfLines={1} style={variant === 'neutral' ? styles.result : undefined}>
+      {variant === 'neutral' ? label : <StatusWord variant={variant} label={label} />}
     </Text>
   );
 });
@@ -194,15 +178,18 @@ export function WorkflowRunsPage(props: Readonly<{ model: WorkflowRunCollection;
         loadingGlyph: false,
         title: (row) => row.title,
         byline: (row) => row.subject,
-        bylineLead: (row) =>
-          readWorkflowRunResultTone(row) === 'quiet' ? null : (
-            <WorkflowRunResult row={row} />
-          ),
+        bylineLead: (row) => {
+          const { status } = row;
+          return status === null || (status.tone === 'neutral' && status.bucket !== 'working')
+            ? null : <WorkflowRunResult row={row} />;
+        },
         listFact: (row) =>
           row.createdAt === undefined ? null : time.format(row.createdAt),
         fields,
-        accessibilityLabel: (row) =>
-          row.result ? `${row.title}, ${row.result}` : row.title,
+        accessibilityLabel: (row) => {
+          const label = row.status?.word ?? row.result;
+          return label ? `${row.title}, ${label}` : row.title;
+        },
         testID: (row) => `workflow-runs:row:${row.key}`,
         columnTitles: { title: t('workflows.destination.columns.run') },
       };

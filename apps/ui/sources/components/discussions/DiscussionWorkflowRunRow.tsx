@@ -56,22 +56,18 @@ function useRunLine(props: Pick<DiscussionWorkflowRunProps, 'run' | 'metadata' |
   const { run, metadata } = props;
   const answerCount = props.publishedMessageIds.length;
   return React.useMemo(() => {
-    const lifecycle = describeWorkflowRunState(run.state, {
-      workflowCustodyState: run.workflowCustodyState,
-      inAttentionWindow: run.attentionRequired,
-      cancelRequested: props.cancelRequested,
-    });
+    const lifecycle = describeWorkflowRunState(run, { cancelRequested: props.cancelRequested });
     const progress = describeWorkflowRunProgress(run.stepProgress);
     const finished = isTerminalWorkflowRunState(run.state);
     return {
       verb: formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(metadata)),
-      lifecycle: lifecycle.label,
+      lifecycle,
       // The lifecycle word already says "Needs you" while the Run waits on the person.
       details: [lifecycle.label, ...(finished
         ? answerCount > 0 ? [t('workflows.start.answerCount', { count: answerCount })] : []
         : progress ? [progress] : [])],
     };
-  }, [answerCount, metadata, props.cancelRequested, run.attentionRequired, run.state, run.stepProgress, run.workflowCustodyState]);
+  }, [answerCount, metadata, props.cancelRequested, run]);
 }
 
 /**
@@ -288,10 +284,9 @@ function DiscussionWorkflowRunEnd(props: DiscussionWorkflowRunProps & Readonly<{
         <View style={styles.end}>
           {/* Which run these act on, in the thread's quiet meta voice: the replies above can be several runs'. */}
           <View style={styles.endSummary}>
-            <WorkflowRunStateMark state={props.run.state}
-              context={{ workflowCustodyState: props.run.workflowCustodyState }} size={ICON_SIZE.xs} />
+            <WorkflowRunStateMark presentation={line.lifecycle} size={ICON_SIZE.xs} />
             <Text style={styles.endLine} numberOfLines={2}>
-              {[line.verb, line.lifecycle, ...(elapsed ? [elapsed] : [])].join(' · ')}
+              {[line.verb, line.lifecycle.label, ...(elapsed ? [elapsed] : [])].join(' · ')}
             </Text>
           </View>
           <View style={styles.endActions}>{props.actions}</View>
