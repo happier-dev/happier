@@ -12,6 +12,7 @@ import { createManagedNativeObservationWait } from './nativeObservationWait.js';
 import { createPresetPreparationProgress, type ManagedMachinePresetPreparationProgressV1 } from './presetPreparationProgress.js';
 import type { ManagedMachinePresetPreparationBuildCompositionV1 } from './presetPreparationBuildInput.js';
 import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
+import { ManagedMachineNativeEffectGuardRefusal } from './controllerErrors.js';
 
 export type ManagedMachinePresetPreparationStorageV1 = Readonly<{
   /** Bound to the preset and original admission by the installed custodian. */
@@ -181,7 +182,19 @@ async function advanceOperation(input: OperationInput, current: OpenPreset,
     if (!('prepared' in persisted)) return persisted;
     if (signal?.aborted) return await cancelOperation(input, current);
     progress.start('build-image');
-    nativeResult = await input.native.build({ operationId: input.operationId, input: composition.input }, root(current));
+    try {
+      nativeResult = await input.native.build({ operationId: input.operationId, input: composition.input }, root(current));
+    } catch (error) {
+      if (error instanceof ManagedMachineNativeEffectGuardRefusal) {
+        // The native handler did not start. Keep that fact in the preset so
+        // later Archive never has to infer absence from a lost response.
+        const nativeCause = error.details?.kind === 'managedNative' ? error.details.nativeCause : undefined;
+        const failed = await persist(input, current, { ...building, status: 'failed', code: error.code,
+          ...(nativeCause === undefined ? {} : { nativeCause }) }, 'failed');
+        if (!('prepared' in failed)) return failed;
+      }
+      throw error;
+    }
   }
   const prepared = current.content.prepared!;
   const { code: _oldCode, nativeCause: _oldCause, ...withoutCode } = prepared;

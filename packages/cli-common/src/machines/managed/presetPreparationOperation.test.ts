@@ -11,6 +11,7 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import { SavedSecretResourceEnvelopeCensusRecipientV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { MachineProvisionerNativeCauseV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { readManagedMachinePresetPreparationV1 } from './presetPreparation.js';
+import { ManagedMachineNativeEffectGuardRefusal } from './controllerErrors.js';
 import { advanceManagedMachinePresetPreparationOperationV1, cancelManagedMachinePresetPreparationOperationV1,
   settleManagedMachinePresetPreparationOperationV1,
   type ManagedMachinePresetPreparationCustodyV1, type ManagedMachinePresetPreparationStorageV1,
@@ -79,6 +80,25 @@ async function editAuthor(fixture: ReturnType<typeof storageFixture>, content: M
 }
 
 describe('private preset preparation operation', () => {
+  it('archives a preparation whose build handler was refused before dispatch', async () => {
+    const fixture = storageFixture();
+    const operation = { ...identity, operationId: 'retired-generation-build', custody: { mode: 'plain' as const },
+      storage: fixture.storage, composeBuild: async () => ({ input: buildInput }) };
+    const inspect = vi.fn(async (): Promise<never> => { throw new Error('No native build identifier was issued'); });
+    const destroy = vi.fn(async (): Promise<never> => { throw new Error('No native image was submitted'); });
+    const native = { inspect, destroy,
+      build: async () => { throw new ManagedMachineNativeEffectGuardRefusal('plugin_action_generation_retired'); } };
+    await expect(settleManagedMachinePresetPreparationOperationV1({ ...operation, native }))
+      .rejects.toMatchObject({ code: 'plugin_action_generation_retired' });
+    expect(fixture.opened().prepared).toMatchObject({ operationId: operation.operationId, status: 'failed',
+      code: 'plugin_action_generation_retired' });
+    await expect(settleManagedMachinePresetPreparationOperationV1({
+      ...operation, native, expectedRevision: fixture.row().revision, cleanupOnly: true,
+    })).resolves.toMatchObject({ kind: 'cancelled', prepared: { status: 'cancelled' } });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(destroy).not.toHaveBeenCalled();
+  });
+
   it.each(['plain', 'e2ee'] as const)('prepares a newly created revision-zero preset in %s', async mode => {
     let nonce = 51;
     const custody: ManagedMachinePresetPreparationCustodyV1 = mode === 'plain' ? { mode }

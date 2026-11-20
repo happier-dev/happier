@@ -15,6 +15,7 @@ import { MachineProvisionerPreparationBuildResultV1Schema, MachineProvisionerPre
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { createManagedOpaquePresetReviewedChildPortV1, bindManagedMachineRoleCredentials,
     projectManagedMachineRolePurposeBindingsV1, composeManagedMachinePresetPreparationBuildInputV1,
@@ -25,7 +26,7 @@ import { prepareManagedGuestCliLocalBuildPayload, readManagedGuestCliLocalBuildP
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createManagedPresetHydrator } from '@/machines/managed/presetHydration';
-import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
+import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from '@/machines/managed/controllerErrors';
 import { prepareMachineSetupPreparationV1 } from '@/machines/setup/prepareMachineSetupPreparation';
 import { createManagedBootstrapTaskRunner } from '@/machines/managed/enrollmentTask';
 import { runPreparedPresetSshHostTrust } from '@/machines/managed/enrollmentSshTrust';
@@ -138,7 +139,11 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
         if (!port) throw new ManagedMachineControllerError('admission_unavailable');
         const result = await port.invoke({ action: identity, role, input: projectNativeJsonValueForTransport(nativeInput),
             invocationServices: childContext.invocationServices });
-        if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, MACHINE_PRESET_PREPARE_ACTION_ID_V1);
+        if (!result.ok) {
+            const ErrorClass = readPluginActionFailureHandlerInvocation({ code: result.errorCode, message: result.error,
+                data: result.details }) === 'notStarted' ? ManagedMachineNativeEffectGuardRefusal : ManagedMachineControllerError;
+            throw ErrorClass.fromActionFailure(result, MACHINE_PRESET_PREPARE_ACTION_ID_V1, identity);
+        }
         return result.result;
     };
     const accepted = { status: 'accepted' as const, operationId: acceptance.operationId, machineId: host.machineId };
