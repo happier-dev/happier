@@ -315,7 +315,9 @@ async function describeCloneTargets(input: Readonly<{
         });
         let selected = selectCloneTarget(description, input.request.protocol, registeredProvider);
         if (!selected.ok) return selected;
-        if (input.request.authentication === 'connected_account') {
+        const requiresBoundAccount = input.request.authentication === 'connected_account'
+            || (selected.target.protocol === 'https' && description.auth.profileKind === 'connected_account');
+        if (requiresBoundAccount) {
             const authentication = selected.target.protocol === 'https'
                 ? await adapter.resolveCloneAuthentication?.({ provider: registeredProvider,
                     runtimeServices: await readRuntimeServices(input.deps) }) : undefined;

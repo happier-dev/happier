@@ -6,6 +6,7 @@ import {
   type ScmRepositoryCloneInput,
 } from '@happier-dev/plugin-sdk/scm';
 import { type HostingProviderRuntimeServices as ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting';
+import { runWithHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/scm/hosting/runtime';
 import { describe, expect, it } from 'vitest';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
@@ -14,6 +15,9 @@ import { createGitScmBackendRuntimeRegistration } from '../backend.js';
 import { createScmHostingProviderRuntimeServicesForTest } from '../testkit/scmRuntime.test-support.js';
 import { createRealGitScmBackendRuntimeServices } from '../testkit/scmRuntime.test-support.js';
 import { runWithBackendRuntimeServices, type BackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
+import { createGithubRepositoryProvisioningAdapter } from '../../../scm-github/src/repositoryProvisioning/createRepositoryWithAuthFallback.js';
+import { createGithubRepositoryRestAdapter } from '../../../scm-github/src/repositoryProvisioning/githubRepositoryRestAdapter.js';
+import { runScmCommand } from '../runtime.js';
 
 import {
     cloneWithRealGitRuntime,
@@ -69,6 +73,83 @@ describe('git repository clone operation', () => {
         expect(response).toMatchObject({ success: false, errorCode: 'REMOTE_AUTH_REQUIRED',
             remediation: { kind: 'auth_required' } });
         expect(existsSync(join(parent, 'happier'))).toBe(false);
+    });
+
+    it('uses the bound HTTPS credential for a private repository without a per-clone account selection', async () => {
+        const parent = createWorkspace();
+        const remote = createBareRemoteRepository();
+        const description = makeCloneTargetDescription(remote);
+        const authorizationHeader = 'Basic fixture';
+        const hostingServices = createScmHostingProviderRuntimeServicesForTest();
+        let transported: readonly { url: string; authorizationHeader: string }[] | undefined;
+        let transportFailure: unknown;
+        const clone = getRepositoryCloneOperation({
+            registry: makeProviderRegistry(description, {
+                describeCloneTargets: async () => ({ ...description,
+                    auth: { state: 'authenticated', profileKind: 'connected_account' },
+                    repository: { ...description.repository, visibility: 'private' },
+                }),
+                resolveCloneAuthentication: async () => ({ kind: 'available', authorizationHeader }),
+            }),
+            runtimeServices: hostingServices,
+            // The simulated private forge refuses Git without an authenticated host transport.
+            runCommand: async () => ({ success: false, exitCode: 128, stdout: '', stderr: 'fatal: Authentication failed' }),
+        });
+        const response = await runWithBackendRuntimeServices({
+            ...createRealGitScmBackendRuntimeServices(),
+            repositoryTransport: { requiresConnectedAccount: false, run: async ({ repositories, command }) => {
+                transported = repositories;
+                try {
+                    const stdout = runGit(command.cwd, [...command.args]);
+                    return { success: true, exitCode: 0, stdout, stderr: '' };
+                } catch (error) {
+                    transportFailure = error;
+                    throw error;
+                }
+            } },
+        }, () => runWithHostingProviderRuntimeServices(hostingServices, () =>
+            clone({ context: makeContext(parent), request: makeRequest(parent, remote) })));
+
+        expect(transported).toEqual([{ url: `file://${remote}`, authorizationHeader }]);
+        if (transportFailure) throw transportFailure;
+        if (!response.success) throw new Error(`${response.errorCode}: ${response.error}`);
+        expect(response).toMatchObject({ success: true, repository: { visibility: 'private' } });
+        expect(runGit(response.destinationPath, ['rev-parse', 'HEAD'])).toBe(runGit(remote, ['rev-parse', 'HEAD']));
+    });
+
+    it('clones a private repository discovered with a Machine GitHub CLI login and no Connected Account', async () => {
+        const parent = createWorkspace();
+        const remote = createBareRemoteRepository();
+        const cloneUrl = 'https://github.com/happier-dev/happier.git';
+        const adapter = createGithubRepositoryProvisioningAdapter({ restAdapter: createGithubRepositoryRestAdapter({
+            fetcher: async (_url, init) => {
+                if (new Headers(init?.headers).get('authorization') !== 'Bearer fixture-gh-cli-token') {
+                    return new Response(null, { status: 404 });
+                }
+                return Response.json({ full_name: 'happier-dev/happier', html_url: cloneUrl.slice(0, -4),
+                    clone_url: cloneUrl, visibility: 'private', default_branch: 'main' });
+            },
+        }) });
+        const registry = makeProviderRegistry(makeCloneTargetDescription(remote), adapter);
+        const hostingServices: ScmHostingProviderRuntimeServices = {
+            ...createScmHostingProviderRuntimeServicesForTest(registry),
+            resolveScmHostingTokenMaterialization: async input => input.boundAccountOnly
+                ? { kind: 'missing', reason: 'account_unbound' }
+                : { kind: 'available', token: 'fixture-gh-cli-token' },
+        };
+        const clone = getRepositoryCloneOperation({
+            registry,
+            runtimeServices: hostingServices,
+            // Route native Git's network access to the fixture repository.
+            runCommand: input => runScmCommand({ ...input, env: { ...input.env,
+                GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.file://${remote}.insteadOf`, GIT_CONFIG_VALUE_0: cloneUrl } }),
+        });
+        const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent), request: makeRequest(parent, remote) },
+            { hostingProviderRuntimeServices: hostingServices });
+
+        if (!response.success) throw new Error(`${response.errorCode}: ${response.error}`);
+        expect(response).toMatchObject({ success: true, repository: { visibility: 'private' } });
+        expect(runGit(response.destinationPath, ['rev-parse', 'HEAD'])).toBe(runGit(remote, ['rev-parse', 'HEAD']));
     });
 
     it.each(['feature/project-files', 'refs/heads/feature/project-files'])('clones the selected remote branch %s with its upstream instead of the remote default', async branch => {
