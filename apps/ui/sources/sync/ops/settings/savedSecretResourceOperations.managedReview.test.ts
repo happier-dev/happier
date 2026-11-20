@@ -3,14 +3,12 @@ import { installApprovalCommonModuleMocks } from '@/components/approvals/approva
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 import { openSavedSecretResourceStoredContentV1, sealSavedSecretResourceStoredContentV1} from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import {
-    StoredApprovalRequestSchema, ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { listAccountSettingsSavedSecretReferences } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -46,9 +44,7 @@ import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncry
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { deriveSavedSecretImportResourceIdV1 } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { deriveSettingsSecretsKeySet, encryptSecretString } from '@/sync/encryption/secretSettings';
-import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
-import type { ArtifactCreateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { TeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
+import type { ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import tweetnacl from 'tweetnacl';
 
 vi.mock('socket.io-client', async importOriginal =>
@@ -103,6 +99,8 @@ describe('Saved Secret native responsibility review through its real delete owne
                 if (path === '/health') return Response.json({});
                 if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(
+                    createAccountEncryptionCurrentnessFixtureForCredentials(activeCredentials));
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
                 return Response.json({ error: 'not_found' }, { status: 404 });
             } });
@@ -117,6 +115,8 @@ describe('Saved Secret native responsibility review through its real delete owne
             const url = new URL(String(rawUrl));
             if (url.pathname === '/health' || url.pathname === '/v1/auth/ping') return Response.json({});
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(features);
+            if (url.pathname === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({
+                id: url.origin === targetUrl ? accountId : 'focused-encrypted-account' }));
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: url.origin === targetUrl ? 'plain' : 'e2ee', updatedAt: 1 });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }));
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: { actionsSettingsV1 } }, version: 4 });
@@ -139,7 +139,8 @@ describe('Saved Secret native responsibility review through its real delete owne
         expect(result).toMatchObject({ ok: true, revision: 1 });
         expect(writeHomes).toEqual([targetUrl]);
         expect(writes).toEqual([expect.objectContaining({ encryptionMode: 'plain',
-            storedContent: { t: 'plain', v: { v: 1, name: 'Destination token', kind: 'token', value: 'destination-private' } } })]);
+            // e99da6f27796: the content owner publishes the value storage descriptor.
+            storedContent: { t: 'plain', storage: { kind: 'value' }, v: { v: 1, name: 'Destination token', kind: 'token', value: 'destination-private' } } })]);
         expect(writes[0]).not.toHaveProperty('keyEnvelopes');
         expect(getSyncSingleton().encryption).toBe(focusedEncryption);
     });
@@ -200,6 +201,10 @@ describe('Saved Secret native responsibility review through its real delete owne
                 return artifactResponse;
             }
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+            if (url.pathname === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: accountId }));
+            // 263571943a8a includes retained machine presets in the promotion reference census.
+            if (url.pathname === '/v1/machines/presets/list') return Response.json({ kind: 'listed', presets: [] });
+            if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [] });
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json({ mode: 'e2ee', version: 1,
                 settingsVersion: approved ? 5 : 4, signingKeyFingerprint: null, contentKeyFingerprint, updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' } });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'encrypted',
@@ -249,33 +254,27 @@ describe('Saved Secret native responsibility review through its real delete owne
             expect(key).not.toBeNull();
             expect(openSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey: key!, storedContent: mutation.storedContent })).toMatchObject({ value: 'target-private' });
         } else {
-            const succeeded = vi.fn();
-            const pending = await promotePersonalSavedSecretResource({ scope, expectedSettingsVersion: 4, secret,
-                accountGrants: ['ready-recipient'], teamGrants: [], groupGrants: [], onApprovalSucceeded: succeeded }).catch((error: unknown) => error);
-            expect(pending).toBeInstanceOf(TeamActionApprovalPendingError);
-            if (!(pending instanceof TeamActionApprovalPendingError) || typeof pending.registration === 'string') throw new Error('Missing promotion continuation');
-            const artifact = artifacts[0]!;
-            const key = await targetEncryption.decryptEncryptionKey(artifact.dataEncryptionKey, scope);
-            if (!key) throw new Error('Missing captured Artifact key');
-            const decrypted = await new ArtifactEncryption(key).decryptBody(artifact.body!);
-            if (!decrypted || typeof decrypted.body !== 'string') throw new Error('Missing captured Artifact body');
-            const request = StoredApprovalRequestSchema.parse(JSON.parse(decrypted.body));
-            if (request.v !== 2) throw new Error('Missing immutable approval origin');
-            approved = true;
-            source = { ...source, secrets: [] };
-            const settledAt = request.createdAtMs + 1;
-            const settled = ApprovalRequestV2Schema.parse({ ...request, status: 'executed', updatedAtMs: settledAt, decision: { kind: 'approve', decidedAtMs: settledAt },
-                execution: { ok: true, executedAtMs: settledAt, result: { resourceId, settingsVersion: 5 } } });
-            const observation: DecryptedArtifact = { id: artifact.id, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled),
-                title: buildApprovalRequestArtifactHeaderV1(settled).title,
-                headerVersion: 2, bodyVersion: 2, seq: 2, createdAt: 1, updatedAt: 2, isDecrypted: true };
-            expect(await pending.registration.onExecuted(observation)).toBe('consumed');
-            expect(succeeded).toHaveBeenCalledWith({ ok: true, resourceRef: `happier:shared-secret:v1:${resourceId}` });
+            // 87d625db617: the person's own UI Ask confirms in this invocation.
+            const { Modal } = await import('@/modal');
+            const confirmation = vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+            try {
+                expect(await promotePersonalSavedSecretResource({ scope, expectedSettingsVersion: 4, secret,
+                    accountGrants: ['ready-recipient'], teamGrants: [], groupGrants: [] }))
+                    .toEqual({ ok: true, resourceRef: `happier:shared-secret:v1:${resourceId}` });
+                expect(confirmation).toHaveBeenCalledTimes(1);
+            } finally { confirmation.mockRestore(); }
+            expect(artifacts).toEqual([]);
+            const promotions = writes.filter(value => value.path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']);
+            expect(promotions).toHaveLength(1);
+            const promotion = SharedSavedSecretPromoteInputV1Schema.parse(promotions[0]!.body);
+            const key = await targetEncryption.decryptEncryptionKey(promotion.keyEnvelopes![0]!.encryptedDataKey, scope);
+            expect(key).not.toBeNull();
+            expect(openSavedSecretResourceStoredContentV1({ resourceId, mode: 'e2ee', resourceDataKey: key!,
+                storedContent: promotion.storedContent })).toMatchObject({ value: 'target-private' });
             const repairs = writes.filter(value => value.path.endsWith('/envelopes/repair'));
             expect(repairs).toHaveLength(1);
             expect(SavedSecretResourceEnvelopeRepairInputV1Schema.parse(repairs[0]!.body)).toMatchObject({ resourceId, expectedRevision: 1,
                 keyEnvelopes: [{ recipientAccountId: 'ready-recipient' }] });
-            expect(writes.some(value => value.path.endsWith('/promote'))).toBe(false);
         }
         expect(getSyncSingleton().encryption).toBeNull();
     });
@@ -317,6 +316,9 @@ describe('Saved Secret native responsibility review through its real delete owne
                 if (url.pathname === '/health') return Response.json({});
                 if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(features);
                 if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                // 263571943a8a requires the native preset reference census before delete admission.
+                if (url.pathname === '/v1/machines/presets/list') return Response.json({ kind: 'listed', presets: [] });
+                if (url.pathname === '/v1/machines/managed/actions/list') return Response.json({ machines: [] });
                 if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 4 }));
                 if (url.pathname === PROFILE_ROWS_ROUTE_V1) return Response.json(profileRows);
                 if (url.pathname === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json(profileGuard);
@@ -352,6 +354,7 @@ describe('Saved Secret native responsibility review through its real delete owne
             tombstones: [{ id: 'retired-profile-a', revision: 7 }] });
         if (profiles.status !== 'ready') throw new Error('The real Profile reference inventory must be readable');
         const referenceCensus = SavedSecretReferenceCensusV1Schema.parse({ accountMode: 'plain',
+            opaquePresetReferences: { presets: [], snapshots: [] },
             remoteHosts: { revision: 'absent', resourceRefs: [] },
             notificationChannels: { revision: 'absent', resourceRefs: [] },
             catalogs: { mcp: 'absent', acp: 'absent', providerConnections: 'absent', connectedConfigurations: 'absent', connectedPurposes: 'absent',

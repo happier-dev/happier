@@ -28,6 +28,9 @@ import { installApprovalCommonModuleMocks } from '@/components/approvals/approva
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { socketRpcCodec } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
@@ -159,7 +162,7 @@ const agentCaller = { surface: 'agent', authority: 'account_automation' } as con
 const agentMutation: typeof runTeamAction = mutation => runTeamAction({ ...mutation, actionContext: { ...agentCaller } });
 
 async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: boolean; askAgentUpdate?: boolean; teams?: boolean; home?: string;
-    raw?: Record<string, unknown>; captureSourceTrace?: boolean; historySnapshot?: Record<string, unknown>; encryptedVaultMachine?: boolean } = {}) {
+    raw?: Record<string, unknown>; captureSourceTrace?: boolean; historySnapshot?: Record<string, unknown>; encryptedVaultMachine?: boolean; callerSessionId?: string } = {}) {
     // Each fixture replaces its HTTP database with version 7. Do not rewind
     // one physical Home under evidence retained by the real history owner.
     const home = options.home ?? `_fixture_${++accountFixtureSequence}`;
@@ -230,9 +233,13 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
     };
     connection = await restoreServerAccountForTest({ serverUrl: `https://saved-secret-operations-${mode}${home}.test`,
         serverIdentityId: `srv_secret_operations_${mode}${home}`, accountId, credentials,
-        request: async (rawUrl, init) => {
+        request: createSessionReadBatchFetchBoundary(async (rawUrl, init) => {
             const url = new URL(String(rawUrl));
             const path = url.pathname;
+            // 19c58f5caedc: Session callers acquire their real source through the read-batch boundary.
+            if (options.callerSessionId && path === `/v2/sessions/${options.callerSessionId}`) {
+                return Response.json(createPlainSessionByIdResponseFixture(createSessionFixture({ id: options.callerSessionId })));
+            }
             if (path === '/v4/connect/qualified/credential' && credentialRequest) {
                 return credentialRequest(url, init?.method ?? 'GET');
             }
@@ -266,6 +273,8 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
                 return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
             }
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
+            // 2b368c6a4a16 moved Action check selection onto its indexed Account projection.
+            if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return Response.json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
             if (path === '/v1/account/encryption') return Response.json({ mode: persistedMode, updatedAt: 1 });
             if (path === '/v1/machines/presets/list' && init?.method === 'POST') {
                 return Response.json({ kind: 'listed', presets: [] });
@@ -387,7 +396,7 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
                 if (effect) return effect(path, body);
             }
             return Response.json({ error: 'not_found' }, { status: 404 });
-        } });
+        }) });
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(connection.home.id), accountId };
     await waitForHomeGovernance(() => {
         expect(getActiveServerAccountScope()).toEqual(scope);
@@ -2382,6 +2391,33 @@ describe('Saved Secret operations through their real Account and Action owners',
                 savedSecretRevisions: [{ resourceId: importedId, expectedRevision: 1 }] });
         }
     });
+    it.each(['present_user', 'account_automation'] as const)('legacy importer retains the Session caller and caps claimed %s authority at its credential ceiling', async authority => {
+        const legacy = { id: 'actor-legacy-key', name: 'Legacy credential', kind: 'apiKey' as const,
+            encryptedValue: { _isSecretValue: true as const, value: 'legacy-approval-value' }, createdAt: 1, updatedAt: 2 };
+        const caller = { kind: 'session', sessionId: 'legacy-import-session', starterDepth: 0, turnDepth: 0 } as const;
+        const account = await openAccount('plain', { raw: { secrets: [legacy] }, callerSessionId: caller.sessionId });
+        const outcome = await withProfileAccount(account.scope, undefined, (context, mode) =>
+            importLegacySavedSecretsInContext(context, mode, account.scope, undefined, undefined, 'current-read', undefined, {
+                actionContext: { surface: 'agent', authority, actionCaller: caller, actionRequestId: 'parent-import' },
+            })).then(value => ({ kind: 'resolved' as const, value }), error => ({ kind: 'rejected' as const, error: error as unknown }));
+        expect(account.writes).toEqual([]);
+        expect(account.resources.size).toBe(0);
+        expect(account.raw.secrets).toEqual([legacy]);
+        expect(outcome.kind, outcome.kind === 'resolved' ? JSON.stringify(outcome.value) : undefined).toBe('rejected');
+        if (outcome.kind !== 'rejected') throw new Error('Expected ordinary Secret approval');
+        expect(outcome.error).toBeInstanceOf(TeamActionApprovalPendingError);
+        expect(account.artifacts).toHaveLength(1);
+        const opened = decodePlainArtifactStoredContent(account.artifacts[0]!.body!);
+        if (!opened || typeof opened !== 'object' || typeof Reflect.get(opened, 'body') !== 'string')
+            throw new Error('Expected stored Plain approval');
+        const request = StoredApprovalRequestSchema.parse(JSON.parse(Reflect.get(opened, 'body')));
+        // db3f302419c4 / e1847f913a45: an ordinary Agent call cannot raise its verified credential authority.
+        expect(request).toMatchObject({ requestedSurface: 'agent', executionOriginV1: { surface: 'agent', authority: 'account_automation', caller,
+            serverId: account.scope.serverId, accountId: account.scope.accountId } });
+        if (request.v !== 2) throw new Error('Expected immutable request identity');
+        expect(request.executionOriginV1.requestId).not.toBe('parent-import');
+    });
+
     it('foreground legacy importer preserves the exact pending approval registration without dispatching or replaying its source transaction', async () => {
         const legacy = { id: 'approval-legacy-key', name: 'Legacy credential', kind: 'apiKey' as const,
             encryptedValue: { _isSecretValue: true as const, value: 'legacy-approval-value' }, createdAt: 1, updatedAt: 2 };
@@ -3585,6 +3621,33 @@ describe('Saved Secret operations through their real Account and Action owners',
             expect(result).toEqual({ ok: false, reason: 'failed', failure: {
                 code: 'account-encryption-mode-unavailable', context: { kind: 'unknown', httpStatus: 503 },
             } });
+            expect(account.writes).toHaveLength(0);
+            expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
+        } finally { await hook?.unmount(); }
+    });
+
+    it.each(['shared', 'private'] as const)('keeps ordinary pre-dispatch exceptions opaque through the %s update transport', async entry => {
+        const account = await openAccount('plain');
+        const row = account.materialRow('resource-a', 'plain', { t: 'plain', v: { v: 1, name: 'Key', kind: 'token', value: 'fixture-old' } }, 3);
+        if (entry === 'private') account.resources.set('resource-a', { ...row, entry: { ...row.entry,
+            audience: { accounts: [], teams: [], groups: [] } } });
+        await refreshCatalogAndWaitForLegacyImport(account.scope);
+        const hook = entry === 'private' ? await renderHook(() => useSavedSecretCatalog({ scope: account.scope })) : null;
+        try {
+            if (hook) await vi.waitFor(() => expect(hook.getCurrent().personalSecrets).toHaveLength(1));
+            account.setEncryptionReadResponse(path => {
+                if (path === '/v1/account/encryption') throw Object.assign(new Error('private-message-marker'), {
+                    code: 'private_code_marker', details: { reason: 'private_reason_marker' },
+                });
+                return undefined;
+            });
+            const input = { resourceId: 'resource-a', expectedRevision: 3, nextValue: 'fixture-new', decryptDataKeyEnvelope: async () => null };
+            const result = hook ? await hook.getCurrent().updateResource(input)
+                : await updateSavedSecretResource({ ...input, scope: account.scope });
+            expect(result).toMatchObject({ ok: false, reason: 'failed' });
+            expect(JSON.stringify(result)).not.toContain('private-message-marker');
+            expect(JSON.stringify(result)).not.toContain('private_code_marker');
+            expect(JSON.stringify(result)).not.toContain('private_reason_marker');
             expect(account.writes).toHaveLength(0);
             expect(account.resources.get('resource-a')).toMatchObject({ entry: { revision: 3 } });
         } finally { await hook?.unmount(); }
