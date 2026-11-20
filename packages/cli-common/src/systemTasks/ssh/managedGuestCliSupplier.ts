@@ -1,9 +1,11 @@
+import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { GuestCliIdentityV1Schema, type GuestCliIdentityV1, type GuestCliPayloadV1 } from '@happier-dev/protocol/features';
 import type { ManagedGuestCliBuildInputV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationBuildInputV1';
 import { ManagedGuestCliBuildTargetV1Schema, type ManagedGuestCliBuildTargetV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { GitHubReleaseRateLimitError } from '@happier-dev/release-runtime/github';
 import { assertManagedGuestCliVersion, ManagedGuestCliReleaseError, resolveManagedGuestCliRelease } from '../../firstPartyRuntime/resolveManagedGuestCliRelease.js';
+import { resolveDescriptorApplicationOrigin } from '../../homeEnrollment/homeCarrierPolicy.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { buildRemoteFirstPartyStagingCleanupCommand } from './remoteFirstPartyStagingCleanup.js';
 import { quoteRemotePathWithHomeExpansion, safeBashSingleQuote } from '../../ssh/shellQuote.js';
@@ -26,6 +28,10 @@ export type ManagedGuestCliSourceRequest = Readonly<{
 }>;
 
 export async function readManagedGuestCliIdentity(input: Pick<ManagedGuestCliSourceRequest, 'homeUrl' | 'signal' | 'fetchImpl'>): Promise<GuestCliIdentityV1> {
+  return (await readManagedGuestCliHome(input)).identity;
+}
+
+async function readManagedGuestCliHome(input: Pick<ManagedGuestCliSourceRequest, 'homeUrl' | 'signal' | 'fetchImpl'>) {
   input.signal?.throwIfAborted();
   const response = await (input.fetchImpl ?? globalThis.fetch)(`${input.homeUrl.replace(/\/+$/u, '')}/v1/features`, {
     method: 'GET', credentials: 'omit', redirect: 'error', signal: input.signal,
@@ -35,7 +41,8 @@ export async function readManagedGuestCliIdentity(input: Pick<ManagedGuestCliSou
   const capabilities = body && typeof body === 'object' && 'capabilities' in body ? body.capabilities : undefined;
   const parsed = GuestCliIdentityV1Schema.safeParse(capabilities && typeof capabilities === 'object' && 'guestCli' in capabilities ? capabilities.guestCli : undefined);
   if (!parsed.success) throw new SystemTaskExecutionError('guest_cli_identity_unavailable', 'This Home does not advertise a valid guest CLI source, release line and channel.');
-  return parsed.data;
+  return { identity: parsed.data,
+    descriptor: body && typeof body === 'object' && 'homeConnectionDescriptor' in body ? body.homeConnectionDescriptor : undefined };
 }
 
 /** Select only from this enrollment's frozen Home export; never refresh the pin beside a download. */
@@ -107,6 +114,7 @@ export type ManagedGuestCliLocalBuildMetadata = Pick<ManagedGuestCliLocalBuildPa
 type ManagedGuestCliBuildSourceRequest<Local extends ManagedGuestCliLocalBuildMetadata> = Readonly<{
   homeUrl: string;
   target?: Readonly<{ os: string; arch: string }>;
+  guestDownload?: Readonly<{ homeId: string }>;
   readLocalPayload?: (target: ManagedGuestCliBuildTarget) => Promise<Local>;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
@@ -118,15 +126,29 @@ async function resolveManagedGuestCliBuildSelection<Local extends ManagedGuestCl
     throw new SystemTaskExecutionError('guest_architecture_unsupported', 'Preparation requires an explicit supported image OS and architecture.');
   }
   const target = parsedTarget.data;
-  const identity = await readManagedGuestCliIdentity(input);
-  const local = identity.source === 'home-payload' ? await input.readLocalPayload?.({ os: target.os, arch: target.arch }) : undefined;
-  if (identity.source === 'home-payload' && (!local || local.target.os !== target.os || local.target.arch !== target.arch)) {
+  const { identity, descriptor } = await readManagedGuestCliHome(input);
+  const { channel } = identity;
+  const source = await selectManagedGuestCliSource(identity, input);
+  if (source.kind === 'public-release') {
+    return { ...source, channel, target, identity: `public-release:${source.versionId}` };
+  }
+  if (input.guestDownload) {
+    const parsed = HomeConnectionDescriptorV1Schema.safeParse(descriptor);
+    const guestHomeUrl = parsed.success && parsed.data.homeServerIdentityId === input.guestDownload.homeId
+      ? resolveDescriptorApplicationOrigin(parsed.data, 'remote') : null;
+    if (!guestHomeUrl) {
+      throw new SystemTaskExecutionError('guest_payload_missing', 'This Home has no advertised HTTPS endpoint for downloading the image CLI.');
+    }
+    const payload = selectManagedGuestCliPayload({ guestCli: identity, homeUrl: guestHomeUrl, target });
+    return { kind: 'guest-download' as const, payload, channel, target,
+      identity: `home-payload:${payload.sha256}`, versionId: `local-${payload.sha256}` };
+  }
+  const local = await input.readLocalPayload?.(target);
+  if (!local || local.target.os !== target.os || local.target.arch !== target.arch) {
     throw new SystemTaskExecutionError('guest_payload_missing', 'The Home CLI payload for this image target is unavailable.');
   }
-  const source = await selectManagedGuestCliSource(identity, input);
-  return { source, channel: identity.channel, local, target,
-    identity: source.kind === 'public-release' ? `public-release:${source.versionId}` : `home-payload:${local!.identity}`,
-    versionId: source.kind === 'public-release' ? source.versionId : local!.versionId };
+  return { kind: 'home-payload' as const, local, channel, target,
+    identity: `home-payload:${local.identity}`, versionId: local.versionId };
 }
 
 /** Current acquisition identity, without preparing or encoding installation files. */
@@ -138,20 +160,16 @@ export async function resolveManagedGuestCliBuildIdentity(input: Omit<ManagedGue
 }
 
 /** Fresh, uncredentialed image input. No guest process, enrollment or Account material is read. */
-export async function prepareManagedGuestCliBuildInput(input: Readonly<{
-  homeUrl: string;
-  target?: Readonly<{ os: string; arch: string }>;
+export async function prepareManagedGuestCliBuildInput(input: Omit<ManagedGuestCliBuildSourceRequest<ManagedGuestCliLocalBuildPayload>, 'readLocalPayload'> & Readonly<{
   prepareLocalPayload?: (target: ManagedGuestCliBuildTarget) => Promise<ManagedGuestCliLocalBuildPayload>;
   remoteHomeDir?: string;
-  signal?: AbortSignal;
-  fetchImpl?: typeof fetch;
 }>): Promise<ManagedGuestCliBuildInput> {
   const selection = await resolveManagedGuestCliBuildSelection({ ...input, readLocalPayload: input.prepareLocalPayload });
-  const { source, channel, target, local } = selection;
-  if (source.kind === 'public-release') {
+  const { channel, target } = selection;
+  if (selection.kind === 'public-release') {
     const fetchImpl = input.fetchImpl ?? globalThis.fetch;
     const plan = await resolveRemoteSelfDownloadFirstPartyInstallPlan({ componentId: 'happier-cli', channel,
-      versionId: source.versionId, os: target.os, arch: target.arch, remoteHomeDir: input.remoteHomeDir, fetchImpl, managedGuest: true,
+      versionId: selection.versionId, os: target.os, arch: target.arch, remoteHomeDir: input.remoteHomeDir, fetchImpl, managedGuest: true,
       readReleaseTextAsset: async url => {
         const response = await fetchImpl(url, { credentials: 'omit', signal: input.signal });
         if (!response.ok) throw new SystemTaskExecutionError('managed_guest_cli_release_unavailable', `The signed CLI integrity asset could not be read (HTTP ${response.status}).`);
@@ -161,8 +179,12 @@ export async function prepareManagedGuestCliBuildInput(input: Readonly<{
     return { identity: selection.identity, versionId: plan.versionId, binaryPath: plan.binaryPath,
       installScript: plan.command, files: [] };
   }
-  // The Home branch above establishes the matching owner-produced payload.
-  if (!local) throw new SystemTaskExecutionError('guest_payload_missing', 'The Home CLI payload is unavailable.');
+  if (selection.kind === 'guest-download') {
+    const plan = buildManagedGuestCliPayloadInstallPlan({ guestCliPayload: selection.payload, channel, remoteHomeDir: input.remoteHomeDir });
+    return { identity: selection.identity, versionId: plan.versionId, binaryPath: plan.binaryPath,
+      installScript: plan.command, files: [] };
+  }
+  const { local } = selection;
   const versionId = `local-${local.identity}`;
   const layout = resolveRemoteFirstPartyInstallLayout({ componentId: 'happier-cli', channel, versionId, remoteHomeDir: input.remoteHomeDir });
   const installScript = [

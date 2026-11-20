@@ -55,6 +55,7 @@ export const MACHINE_PROVISIONER = {
   snapshot: HETZNER_SNAPSHOT_FACTS,
   preparation: { inputSchema: HetznerPreparationInputSchema.jsonSchema, artifactSchema: HetznerPreparedArtifactSchema.jsonSchema,
     nativeOperationSchema: HetznerPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    cliPayloadDelivery: 'guest-download',
     actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
   reconciliation: { action: 'reconcile', nativeOperationSchema: HetznerNativeOperationV1Schema.jsonSchema },
 } satisfies MachineProvisionerAuthorDefinitionV1;

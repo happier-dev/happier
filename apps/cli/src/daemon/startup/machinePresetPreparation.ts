@@ -171,13 +171,16 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
             const projection = projectMachineProvisionerSelectionV1({ options, launchSchema: provisioner.launchSchema,
                 selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) });
             if (projection.kind !== 'ready' || !projection.nativeFacts.preparationGuest) throw new ManagedMachineControllerError('provider_unavailable');
-            return projection.nativeFacts.preparationGuest;
+            return {
+                ...projection.nativeFacts.preparationGuest,
+                ...(provisioner.preparation?.cliPayloadDelivery === 'guest-download' ? { guestDownload: { homeId: host.homeId } } : {}),
+            };
         };
         // Recovery needs the current supplier identity, not a newly archived payload.
         // Reuse this selected guest if the preset owner decides a rebuild is needed.
         const recoveryGuest = content.prepared?.status === 'building' ? await readGuest(content.launch) : undefined;
         const cliIdentity = recoveryGuest ? (await resolveManagedGuestCliBuildIdentity({ homeUrl: host.serverBaseUrl,
-            target: recoveryGuest.target, readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata,
+            ...recoveryGuest, readLocalPayloadMetadata: readManagedGuestCliLocalBuildPayloadMetadata,
             ...(signal ? { signal } : {}) })).identity : undefined;
         let firstRead = true;
         const result = await settleManagedMachinePresetPreparationOperationV1({ operationId: acceptance.operationId,
@@ -194,7 +197,7 @@ export async function prepareMachinePresetOnHost(request: PrepareRequest, host: 
                 const launch = capturedContent.launch;
                 const guest = recoveryGuest ?? await readGuest(launch);
                 const cli = await prepareManagedGuestCliBuildInput({ homeUrl: host.serverBaseUrl,
-                    target: guest.target, remoteHomeDir: guest.remoteHomeDir, prepareLocalPayload: prepareManagedGuestCliLocalBuildPayload,
+                    ...guest, prepareLocalPayload: prepareManagedGuestCliLocalBuildPayload,
                     ...(signal ? { signal } : {}) });
                 const setup = capturedContent.setup ? prepareMachineSetupPreparationV1({ operationId: acceptance.operationId,
                     setup: capturedContent.setup, recipes: (host.registry.contributes.machineRecipes ?? []).flatMap(entry =>

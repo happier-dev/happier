@@ -141,6 +141,37 @@ describe('managed guest CLI source supplier', () => {
     expect(JSON.stringify(first)).not.toContain('private-home');
     expect(JSON.stringify(first)).not.toContain('home.example');
   });
+  it('uses the admitted Home HTTPS endpoint and target pin for cloud Prepare and its recovery identity', async () => {
+    const homeUrl = 'http://127.0.0.1:4123';
+    const publicUrl = 'https://guest-home.example:8443';
+    const sha256 = 'a'.repeat(64);
+    const path = '/v1/runtime/guest-cli/payloads/linux/x64';
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json({
+      homeConnectionDescriptor: { v: 1, revision: 2, homeServerIdentityId: 'srv_home',
+        canonicalServerUrl: 'https://signing-home.example', endpoints: [
+          { kind: 'https', url: homeUrl }, { kind: 'https', url: publicUrl },
+        ] },
+      capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev', payloads: [
+        { target: { os: 'linux', arch: 'arm64' }, sha256: 'b'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/arm64' },
+        { target: { os: 'linux', arch: 'x64' }, sha256, url: path },
+      ] } },
+    }));
+    const readLocalPayload = vi.fn(async () => { throw new Error('Cloud Prepare must work without a controller archive'); });
+    const input = { homeUrl, target: { os: 'linux', arch: 'x64' }, fetchImpl, guestDownload: { homeId: 'srv_home' } };
+    const build = await prepareManagedGuestCliBuildInput({ ...input, remoteHomeDir: '/opt/happier', prepareLocalPayload: readLocalPayload });
+    expect(build).toMatchObject({ identity: `home-payload:${sha256}`, versionId: `local-${sha256}`,
+      binaryPath: '/opt/happier/cli-dev/current/happier', files: [] });
+    expect(build.installScript).toContain(`${publicUrl}${path}`);
+    expect(build.installScript).toContain(sha256);
+    expect(build.installScript).not.toContain(homeUrl);
+    await expect(resolveManagedGuestCliBuildIdentity({ ...input, readLocalPayloadMetadata: readLocalPayload }))
+      .resolves.toEqual({ identity: build.identity, versionId: build.versionId, target: input.target });
+    expect(readLocalPayload).not.toHaveBeenCalled();
+    expect(fetchImpl.mock.calls.map(([url, options]) => [url, options?.credentials]))
+      .toEqual([[`${homeUrl}/v1/features`, 'omit'], [`${homeUrl}/v1/features`, 'omit']]);
+    await expect(prepareManagedGuestCliBuildInput({ ...input, guestDownload: { homeId: 'srv_other' } }))
+      .rejects.toMatchObject({ code: 'guest_payload_missing' });
+  });
   it.each([undefined, { os: 'windows', arch: 'x64' }])('requires an explicit supported image target before source lookup: %j', async target => {
     const http = homeFetch('public-release');
     await expect(prepareManagedGuestCliBuildInput({ homeUrl: 'https://home.example', target, fetchImpl: http.boundary }))

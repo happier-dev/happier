@@ -162,6 +162,8 @@ export const MachineProvisionerContributionV1Schema = lazyZodSchema(() => z.stri
   preparation: z.optional(z.strictObject({
     inputSchema: strictPortableSchema, artifactSchema: strictPortableSchema, nativeOperationSchema: strictPortableSchema,
     artifactLaunchPath: InputPathSchema,
+    /** The image downloads Home payloads instead of receiving an inline archive in the Build context. */
+    cliPayloadDelivery: z.optional(z.literal('guest-download')),
     actions: z.strictObject({ build: local(), inspect: local(), destroy: local() }),
   })),
 }).check(z.superRefine((descriptor, context) => {

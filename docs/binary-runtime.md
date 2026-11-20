@@ -389,9 +389,16 @@ The development preset-preparation supplier exposes
 `prepareManagedGuestCliBuildInput` through
 `cli-common/systemTasks/nativeRemoteSshBootstrap`.
 It requires an explicit image OS and architecture, and reuses the same Home
-source and release-line decision. Home payload input uses the finalized
-`HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA` identity for the matching root
-and target; source daemon restart forwards that metadata with the payload root.
+source and release-line decision. For inline image builds, Home payload input
+uses the finalized `HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA` identity for
+the matching root and target. Source daemon restart forwards that metadata with
+the payload root. Hetzner and DigitalOcean declare guest download for their
+size-limited cloud-init builds. The supplier reads the admitted Home's published
+HTTPS endpoint and matching OS/architecture archive pin from its features
+response. The Build context carries an installation script with that URL and
+SHA-256 and an empty file list. The guest verifies the digest before extracting
+and promoting the CLI. Prepare needs a Home HTTPS endpoint the build guest can reach.
+The unreleased cloud plugin declarations and their strict readers ship together.
 Public-release input retains the exact selected version's signed integrity
 checks. The result contains only the CLI identity/version, binary path,
 installation script and archive files. It reads no Account, provider,
@@ -401,11 +408,10 @@ The image promotion command also sets the existing
 `HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION=1` switch so an older base CLI cannot
 repair or start a daemon during the build. Ordinary CLI promotion retains its
 existing migration behavior.
-These source producers do not establish an executable Prepare or warm-acquire
-path; provider and operation integration remain separate development work.
 
 The same supplier exposes `resolveManagedGuestCliBuildIdentity` for the current
-target identity without constructing an archive. The Node filesystem adapters
+target identity without constructing an archive. Guest-download recovery uses
+the selected archive's SHA-256. The Node filesystem adapters
 `readManagedGuestCliLocalBuildPayloadMetadata` and
 `prepareManagedGuestCliLocalBuildPayload` live behind
 `cli-common/systemTasks/kinds/remoteFirstPartyPayloadInstaller`; the portable

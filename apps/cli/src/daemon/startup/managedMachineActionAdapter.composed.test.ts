@@ -132,6 +132,8 @@ import { createMachineProvisionerSpecializedPreparationAuthorFixture } from '../
 import { MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 
 import { ManagedMachinePresetV1Schema, ManagedMachinePresetUpdateInputV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetPreparationBuildInputV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetPreparationBuildInputV1';
+import { MachineProvisionerPreparationBuildInputV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisionerPreparationSchemas';
 
 import { openManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 
@@ -242,16 +244,25 @@ function adapter(withAuthority = true, executeSessionStart?: Parameters<typeof c
 }
 
 describe('daemon managed Machine Action factory', () => {
-    it.each(['ready', 'inspected', 'cancelled', 'replaced', 'interrupted-adopt', 'interrupted-replace', 'interrupted-reconnected', 'trust-approved', 'trust-declined', 'native-failed', 'ask-first'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
+    it.each(['ready', 'ready-cloud', 'inspected', 'cancelled', 'replaced', 'interrupted-adopt', 'interrupted-replace', 'interrupted-reconnected', 'trust-approved', 'trust-declined', 'native-failed', 'ask-first'] as const)('prepares a private preset beneath its original public Action (%s)', async outcome => {
         const actionId = MACHINE_PRESET_PREPARE_ACTION_ID_V1;
+        const cloud = outcome === 'ready-cloud';
+        const completesDuringBuild = outcome === 'ready' || cloud || outcome === 'trust-approved';
+        const remoteHome = 'https://guest-home.example:8443';
+        const archivePath = '/v1/runtime/guest-cli/payloads/linux/x64';
+        const archiveDigest = 'd'.repeat(64);
         const payload = await createCliPayloadFixture();
         onTestFinished(() => payload.cleanup());
         await writeFile(join(payload.payloadRoot, 'package.json'), JSON.stringify({ version: '0.3.0' }));
-        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload.payloadRoot);
-        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', JSON.stringify({ root: payload.payloadRoot, identity: 'a'.repeat(64) }));
+        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', cloud ? undefined : payload.payloadRoot);
+        vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', cloud ? undefined : JSON.stringify({ root: payload.payloadRoot, identity: 'a'.repeat(64) }));
         vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({ features: {},
+            ...(cloud ? { homeConnectionDescriptor: { v: 1, revision: 2, homeServerIdentityId: 'srv_home',
+                canonicalServerUrl: serverUrl, endpoints: [{ kind: 'https', url: remoteHome }] } } : {}),
             capabilities: { serverIdentity: { serverIdentityId: 'srv_home' },
-                guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev' } } })));
+                guestCli: { source: 'home-payload', line: '0.3', channel: 'publicdev', ...(cloud ? { payloads: [
+                    { target: { os: 'linux', arch: 'x64' }, sha256: archiveDigest, url: archivePath },
+                ] } : {}) } } })));
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const accountCredentials = { token, encryption: null };
@@ -259,7 +270,12 @@ describe('daemon managed Machine Action factory', () => {
         const settings = AccountSettingsSchema.parse({});
         const input = { homeId: 'srv_home', id: `prepare-preset-${outcome}-${randomUUID()}`, expectedRevision: 1, machineId: 'controller' };
         const reconnected = outcome === 'interrupted-reconnected';
-        const authorFixture = normalizePluginManifestV2(createMachineProvisionerSpecializedPreparationAuthorFixture().manifest);
+        const fixtureManifest = createMachineProvisionerSpecializedPreparationAuthorFixture().manifest;
+        const authorFixture = normalizePluginManifestV2(cloud ? { ...fixtureManifest, contributes: {
+            ...fixtureManifest.contributes, machineProvisioners: fixtureManifest.contributes.machineProvisioners.map(provisioner => ({
+                ...provisioner, preparation: { ...provisioner.preparation!, cliPayloadDelivery: 'guest-download' },
+            })),
+        } } : fixtureManifest);
         const account = { service: { pluginId: authorFixture.id, localId: 'cloud' }, accountId: 'same-native-account' };
         const authored = !reconnected ? authorFixture : normalizePluginManifestV2({ ...authorFixture,
             hostAccess: { ...authorFixture.hostAccess, required: [{ id: 'native-connection', capability: 'connectedAccounts',
@@ -339,6 +355,13 @@ describe('daemon managed Machine Action factory', () => {
                     nativeFacts: { preparationGuest: { target: { os: 'linux', arch: 'x64' }, remoteHomeDir: '/opt/happier' } } },
                     dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
                 if (action.id === 'prepare-build') {
+                    if (cloud) {
+                        const request = MachineProvisionerPreparationBuildInputV1Schema.parse(body);
+                        const { cli } = ManagedMachinePresetPreparationBuildInputV1Schema.parse(request.input);
+                        expect(cli).toMatchObject({ identity: `home-payload:${archiveDigest}`, files: [] });
+                        expect(cli.installScript).toContain(`${remoteHome}${archivePath}`);
+                        expect(cli.installScript).toContain(archiveDigest);
+                    }
                     if (outcome.startsWith('trust-')) {
                         nativeGuestAllocated = true;
                         await pluginContext.services.machineProvisioners.establishSshHostTrust({ kind: 'ssh',
@@ -350,7 +373,7 @@ describe('daemon managed Machine Action factory', () => {
                     markBuildStarted();
                     builds++;
                     if (outcome === 'native-failed') return { kind: 'unknown', code: 'setup_failed', nativeCause, nativeOperationRef };
-                    return outcome === 'ready' || interrupted || outcome === 'trust-approved' ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
+                    return completesDuringBuild || interrupted ? { kind: 'ready', artifact } : { kind: 'pending', nativeOperationRef };
                 }
                 if (action.id === 'prepare-inspect') {
                     if (outcome === 'trust-declined') {
@@ -544,8 +567,8 @@ describe('daemon managed Machine Action factory', () => {
         }
         if (outcome !== 'cancelled') {
             expect(prepared).toMatchObject({ status: 'ready', artifact: outcome === 'replaced' ? replacementArtifact : artifact });
-            expect(writes).toEqual(outcome === 'ready' || outcome === 'trust-approved' ? [1, 2] : outcome === 'replaced' ? [1, 2, 3, 4] : [1, 2, 3]);
-            expect(nativeRoles).toEqual(outcome === 'ready' || outcome === 'trust-approved' ? ['options', 'prepare-build'] : outcome === 'replaced'
+            expect(writes).toEqual(completesDuringBuild ? [1, 2] : outcome === 'replaced' ? [1, 2, 3, 4] : [1, 2, 3]);
+            expect(nativeRoles).toEqual(completesDuringBuild ? ['options', 'prepare-build'] : outcome === 'replaced'
                 ? ['prepare-destroy', 'options', 'prepare-build-replacement'] : ['options', 'prepare-build', 'prepare-inspect']);
         } else {
             expect(prepared).toMatchObject({ status: 'cancelled' });

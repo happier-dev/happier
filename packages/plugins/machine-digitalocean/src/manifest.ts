@@ -56,6 +56,7 @@ export const MACHINE_PROVISIONER = {
   reconciliation: { action: 'reconcile', nativeOperationSchema: dropletNativeOperationSchema.jsonSchema },
   preparation: { inputSchema: DigitalOceanPreparationInputSchema.jsonSchema, artifactSchema: DigitalOceanPreparedArtifactSchema.jsonSchema,
     nativeOperationSchema: DigitalOceanPreparationOperationSchema.jsonSchema, artifactLaunchPath: 'launch',
+    cliPayloadDelivery: 'guest-download',
     actions: { build: 'prepare-build', inspect: 'prepare-inspect', destroy: 'prepare-destroy' } },
 } satisfies MachineProvisionerAuthorDefinitionV1;
 
