@@ -1348,30 +1348,29 @@ export async function updateGithubPullRequestBranch(
     });
   }
 
-  let dispatched: Awaited<ReturnType<typeof send>> | null = null;
   const settlement = await settleAtMostOnceProviderWrite({
-    dispatch: async () => {
-      dispatched = await send(dependencies, {
-        url: `${pullRequestUrl(input.route, input.localRef.entryId)}/update-branch`,
-        method: 'PUT',
-        body: { expected_head_sha: input.headRevision },
-      });
-      return dispatched;
-    },
+    dispatch: () => send(dependencies, {
+      url: `${pullRequestUrl(input.route, input.localRef.entryId)}/update-branch`,
+      method: 'PUT',
+      body: { expected_head_sha: input.headRevision },
+    }),
     // A transport failure or 5xx cannot say whether GitHub accepted the PUT.
     // A 4xx can, and keeps its status-specific handling below.
     mayHaveChanged: (result) => result.ok
       ? isGithubWriteResponseAmbiguous(result.response)
       : true,
-    confirm: async () => {
+    confirm: async (dispatched) => {
       const confirmed = await confirm(input.localRef, input.route, repositories, dependencies);
       if (!confirmed.ok) {
         return Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
       }
-      return confirmed.facts.headRevision !== null
-        && confirmed.facts.headRevision !== input.headRevision
-        ? Object.freeze({ kind: 'applied' as const, observation: confirmed.observation })
-        : Object.freeze({ kind: 'unchanged' as const, observation: confirmed.observation });
+      if (confirmed.facts.headRevision !== null && confirmed.facts.headRevision !== input.headRevision) {
+        return Object.freeze({ kind: 'applied' as const, observation: confirmed.observation });
+      }
+      const failure = dispatched.ok
+        ? toTriageFailure(classifyGithubResponseFailure(dispatched.response, dependencies.now()))
+        : dispatched.failure;
+      return Object.freeze({ kind: 'uncertain' as const, observation: confirmed.observation, failure });
     },
   });
   if (settlement.kind === 'applied') {
@@ -1381,29 +1380,11 @@ export async function updateGithubPullRequestBranch(
       observation: settlement.observation,
     });
   }
-  if (settlement.kind === 'unchanged') {
-    const dispatchedOutcome = dispatched as Awaited<ReturnType<typeof send>> | null;
-    const failure = dispatchedOutcome === null
-      ? undefined
-      : dispatchedOutcome.ok
-        ? isGithubWriteResponseAmbiguous(dispatchedOutcome.response)
-          ? toTriageFailure(classifyGithubResponseFailure(
-            dispatchedOutcome.response,
-            dependencies.now(),
-          ))
-          : undefined
-        : dispatchedOutcome.failure;
-    return Object.freeze({
-      kind: 'uncertain' as const,
-      observation: settlement.observation,
-      ...(failure === undefined ? {} : { failure }),
-    });
-  }
-  if (settlement.kind === 'uncertain') {
+  if (settlement.kind !== 'settled') {
     return Object.freeze({
       kind: 'uncertain' as const,
       ...(settlement.observation === undefined ? {} : { observation: settlement.observation }),
-      ...(settlement.failure === undefined ? {} : { failure: settlement.failure }),
+      ...('failure' in settlement && settlement.failure !== undefined ? { failure: settlement.failure } : {}),
     });
   }
   const written = settlement.result;

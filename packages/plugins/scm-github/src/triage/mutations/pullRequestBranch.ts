@@ -51,21 +51,23 @@ async function changeBranch(input: unknown, context: PluginInvocationContext, op
   }
   const request = operation === 'restore' ? { method: 'POST' as const, url: buildGithubApiUrl(path), body: { ref, sha: parsed.data.headRevision } }
     : { method: 'DELETE' as const, url: buildGithubApiUrl([...path, 'heads', ...tip.branch.split('/')]) };
-  let confirmed = false;
   const settled = await settleAtMostOnceProviderWrite({
-    dispatch: async () => {
-      const response = await sendGithubRestRequest(dependencies, request);
-      if (response.ok && isGithubSuccessStatus(response.response.status)) {
-        if (operation === 'delete') confirmed = response.response.status === 204;
-        else try {
-          const body: unknown = decodeGithubJsonResponse(response.response);
-          confirmed = record(body) && body.ref === ref && record(body.object) && body.object.sha === parsed.data.headRevision;
-        } catch { /* An unreadable acknowledgement is uncertain, never a second POST. */ }
-      }
-      return response;
-    },
+    dispatch: () => sendGithubRestRequest(dependencies, request),
     mayHaveChanged: response => !response.ok || isGithubSuccessStatus(response.response.status) || isGithubWriteResponseAmbiguous(response.response),
-    confirm: async () => confirmed ? { kind: 'applied' as const, observation: true } : { kind: 'uncertain' as const },
+    confirm: async response => {
+      const uncertain = { kind: 'uncertain' as const };
+      if (!response.ok || !isGithubSuccessStatus(response.response.status)) return uncertain;
+      if (operation === 'delete') {
+        return response.response.status === 204 ? { kind: 'applied' as const, observation: true } : uncertain;
+      }
+      try {
+        const body: unknown = decodeGithubJsonResponse(response.response);
+        return record(body) && body.ref === ref && record(body.object) && body.object.sha === parsed.data.headRevision
+          ? { kind: 'applied' as const, observation: true } : uncertain;
+      } catch {
+        return uncertain;
+      }
+    },
   });
   if (settled.kind === 'applied') return { kind: 'applied', effect: 'changed', entry: { id: current.facts.nodeId,
     branch: { name: tip.branch, exists: operation === 'restore' } } };

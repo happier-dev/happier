@@ -130,10 +130,9 @@ export async function createJiraIssue(raw: unknown, context: JiraSourceContext):
         const fields = { ...nativeFields(input.fields, client.origin), project: { id: configuration.projectId }, issuetype: { id: configuration.issueTypeId } };
         const metadata = await readJiraCreateDirectory(client, `/rest/api/3/issue/createmeta/${configuration.projectId}/issuetypes/${configuration.issueTypeId}`, 'fields');
         validateMetadata(fields, Object.fromEntries(metadata.map((field) => [String(field.fieldId ?? field.key), field])), true);
-        let sent: Dispatch;
         return settledResult(await settleJiraWrite({
-            dispatch: async () => sent = await dispatch(() => client.request('/rest/api/3/issue', 'POST', { fields })), mayHaveChanged,
-            confirm: async () => {
+            dispatch: () => dispatch(() => client.request('/rest/api/3/issue', 'POST', { fields })), mayHaveChanged,
+            confirm: async (sent) => {
                 if (!sent.ok || !numericId(object(sent.value).id)) return { kind: 'uncertain' as const, ...(!sent.ok ? { failure: jiraFailure(sent.error) } : {}) };
                 try {
                     const { issue, observation } = await confirmedObservation(client, configuration, String(object(sent.value).id));
@@ -230,12 +229,11 @@ export async function transitionJiraIssue(raw: unknown, context: JiraSourceConte
         if (!targetId) throw invalidJira('jira/transitionStatusInvalid');
         const values = input.fieldValues ?? [];
         const fields = transitionNativeFields(transition, before, values);
-        let sent: Dispatch;
         return settledResult(await settleJiraWrite({
-            dispatch: async () => sent = await dispatch(() => client.request(`/rest/api/3/issue/${input.localRef.entryId}/transitions`, 'POST', {
+            dispatch: () => dispatch(() => client.request(`/rest/api/3/issue/${input.localRef.entryId}/transitions`, 'POST', {
                 transition: { id: input.transitionId }, ...(values.length === 0 ? {} : { fields }),
             })), mayHaveChanged,
-            confirm: async () => {
+            confirm: async (sent) => {
                 try {
                     const { issue, observation } = await confirmedObservation(client, configuration, input.localRef.entryId);
                     return { kind: object(issue.fields.status).id === targetId
@@ -253,10 +251,9 @@ export async function commentJiraIssue(raw: unknown, context: JiraSourceContext)
         const { client, configuration } = await openJiraInstance(input.entry.instance, context, input.entry.localRef);
         const id = input.entry.localRef.entryId;
         await readExactJiraIssue(client, configuration, id);
-        let sent: Dispatch;
         return settledResult(await settleJiraWrite({
-            dispatch: async () => sent = await dispatch(() => client.request(`/rest/api/3/issue/${id}/comment`, 'POST', { body: jiraAdfBody(input.body) })), mayHaveChanged,
-            confirm: async () => {
+            dispatch: () => dispatch(() => client.request(`/rest/api/3/issue/${id}/comment`, 'POST', { body: jiraAdfBody(input.body) })), mayHaveChanged,
+            confirm: async (sent) => {
                 const commentId = sent.ok ? string(object(sent.value).id) : undefined;
                 if (!commentId) return { kind: 'uncertain' as const, ...(!sent.ok ? { failure: jiraFailure(sent.error) } : {}) };
                 try {

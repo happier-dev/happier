@@ -192,28 +192,23 @@ export async function createGithubIssue(
   const repositories = openResolver(dependencies);
   const repository = await repositories.read(input.route);
   if (repository.kind !== 'readable') return { kind: 'failed', failure: toTriageFailure(repository.failure) };
-  let dispatched: Awaited<ReturnType<typeof send>> | undefined;
   const settlement = await settleAtMostOnceProviderWrite<
     Awaited<ReturnType<typeof send>>, ProjectedObservation, TriageSourceFailureV1
   >({
-    dispatch: async () => {
-      dispatched = await send(dependencies, {
-        url: buildGithubApiUrl(['repos', input.route.owner, input.route.name, 'issues']),
-        method: 'POST',
-        body: {
-          title: input.fields.title,
-          ...(input.fields.body === undefined ? {} : { body: input.fields.body }),
-          ...(input.fields.assigneeIds === undefined ? {} : { assignees: input.fields.assigneeIds }),
-          ...(input.fields.labelIds === undefined ? {} : { labels: input.fields.labelIds }),
-        },
-      });
-      return dispatched;
-    },
+    dispatch: () => send(dependencies, {
+      url: buildGithubApiUrl(['repos', input.route.owner, input.route.name, 'issues']),
+      method: 'POST',
+      body: {
+        title: input.fields.title,
+        ...(input.fields.body === undefined ? {} : { body: input.fields.body }),
+        ...(input.fields.assigneeIds === undefined ? {} : { assignees: input.fields.assigneeIds }),
+        ...(input.fields.labelIds === undefined ? {} : { labels: input.fields.labelIds }),
+      },
+    }),
     mayHaveChanged: (result) => !result.ok || isGithubSuccessStatus(result.response.status)
       || isGithubWriteResponseAmbiguous(result.response),
-    confirm: async () => {
+    confirm: async (dispatched) => {
       // With no proven identity there is no safe confirming route to guess.
-      if (dispatched === undefined) return { kind: 'uncertain' as const };
       if (!dispatched.ok) return { kind: 'uncertain' as const, failure: dispatched.failure };
       if (!isGithubSuccessStatus(dispatched.response.status)) {
         return { kind: 'uncertain' as const, failure: toTriageFailure(classifyGithubResponseFailure(dispatched.response, dependencies.now())) };
@@ -272,20 +267,16 @@ export async function editGithubIssue(
   };
   let changed = false;
   if (Object.keys(content).length > 0) {
-    let dispatched: Awaited<ReturnType<typeof send>> | undefined;
     const settlement = await settleAtMostOnceProviderWrite({
-      dispatch: async () => {
-        dispatched = await send(dependencies, { url: issueUrl(input.route, input.localRef.entryId), method: 'PATCH', body: content });
-        return dispatched;
-      },
+      dispatch: () => send(dependencies, { url: issueUrl(input.route, input.localRef.entryId), method: 'PATCH', body: content }),
       mayHaveChanged: (result) => !result.ok || isGithubWriteResponseAmbiguous(result.response),
-      confirm: async () => {
+      confirm: async (dispatched) => {
         const observed = await confirm(input.localRef, input.route, repositories, dependencies);
-        const failure = dispatched === undefined ? undefined : dispatched.ok
+        const failure = dispatched.ok
           ? toTriageFailure(classifyGithubResponseFailure(dispatched.response, dependencies.now()))
           : dispatched.failure;
         return { kind: 'uncertain' as const, ...(observed.ok ? { observation: observed.observation } : {}),
-          ...(failure === undefined ? {} : { failure }) };
+          failure };
       },
     });
     // An ambiguous content edit stops the compound write; reread evidence never

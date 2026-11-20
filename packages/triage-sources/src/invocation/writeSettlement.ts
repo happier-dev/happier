@@ -25,9 +25,9 @@ export async function settleAtMostOnceProviderWrite<TDispatch, TObservation, TFa
   /** Provider-owned classification: true only when this dispatch may have changed remote state. */
   mayHaveChanged(result: TDispatch): boolean;
   /** One authoritative provider read, already reduced to applied, unchanged, or uncertain. */
-  confirm(): Promise<ProviderWriteConfirmation<TObservation, TFailure>>;
+  confirm(result: TDispatch): Promise<ProviderWriteConfirmation<TObservation, TFailure>>;
 }>): Promise<AtMostOnceProviderWriteSettlement<TDispatch, TObservation, TFailure>> {
   const result = await input.dispatch();
   if (!input.mayHaveChanged(result)) return Object.freeze({ kind: 'settled', result });
-  return await input.confirm();
+  return await input.confirm(result);
 }

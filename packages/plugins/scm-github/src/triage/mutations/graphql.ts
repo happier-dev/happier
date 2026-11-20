@@ -96,19 +96,14 @@ export async function settleGithubGraphqlMutation<TApplied extends Readonly<{ ki
   dependencies: Readonly<{ client: GithubApiClientV1; now: () => number }>,
 ): Promise<TApplied | Readonly<{ kind: 'uncertain'; failure?: TriageSourceFailureV1 }>
   | Readonly<{ kind: 'failed'; failure: TriageSourceFailureV1 }>> {
-  let confirmation: Readonly<{ kind: 'applied'; observation: TApplied }>
-    | Readonly<{ kind: 'uncertain'; failure?: TriageSourceFailureV1 }> = { kind: 'uncertain' };
   const settled = await settleAtMostOnceProviderWrite({
-    dispatch: async () => {
-      const response = await sendGithubGraphqlRequest(request, dependencies);
-      if (response.ok) {
-        const applied = project(response.data);
-        if (applied !== null) confirmation = { kind: 'applied', observation: applied };
-      } else confirmation = { kind: 'uncertain', failure: response.failure };
-      return response;
-    },
+    dispatch: () => sendGithubGraphqlRequest(request, dependencies),
     mayHaveChanged: response => response.ok || response.mayHaveChanged,
-    confirm: async () => confirmation,
+    confirm: async response => {
+      if (!response.ok) return { kind: 'uncertain' as const, failure: response.failure };
+      const applied = project(response.data);
+      return applied === null ? { kind: 'uncertain' as const } : { kind: 'applied' as const, observation: applied };
+    },
   });
   if (settled.kind === 'applied') return settled.observation;
   if (settled.kind === 'settled' && !settled.result.ok) return { kind: 'failed', failure: settled.result.failure };

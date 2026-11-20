@@ -69,12 +69,11 @@ async function dispatchMutation(input: EntryInput['instance'], operationName: st
 }
 
 async function settleWrite(dispatch: () => Promise<Dispatch>, confirm: (result: Dispatch) => Promise<LinearWriteResult>): Promise<LinearWriteResult> {
-  let dispatched: Dispatch | undefined;
   const settled = await settleAtMostOnceProviderWrite<Dispatch, Observation, TriageSourceFailureV1>({
-    dispatch: async () => { dispatched = await dispatch(); return dispatched; },
+    dispatch,
     mayHaveChanged: (result) => result.kind !== 'failed',
-    confirm: async () => {
-      const result = await confirm(dispatched!);
+    confirm: async (dispatched) => {
+      const result = await confirm(dispatched);
       return result.kind === 'applied' || result.kind === 'uncertain' ? result : { kind: 'uncertain' };
     },
   });
