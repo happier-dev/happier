@@ -23,6 +23,7 @@ import { parseQualifiedPluginContributionKey } from '../../plugins/contributionI
 import { PluginActionFailureResponseV1Schema } from '../../plugins/actions/failureResponse.js';
 
 import { SessionForkStrategySchema } from '../../sessions/fork.js';
+import { SessionHandoffSourceStoppedV1Schema } from '../../sessions/control/handoff/handoffStatus.js';
 import { isProjectCheckoutRemovalActionIdV1 } from '../projectActionIdsV1.js';
 import { ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema } from '../projectSetupConsentFailure.js';
 import { ProjectWorkerNoAcceptanceFailureDetailsV1Schema, readProjectWorkerNoAcceptanceFailureV1 } from '../projectWorkerRefusal.js';
@@ -276,6 +277,7 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   effectAttempted: z.optional(z.boolean()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
   setupRetry: ActionExecuteFailureSchema.shape.setupRetry,
+  handoffRecovery: z.optional(SessionHandoffSourceStoppedV1Schema),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
     ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedMachineFailureDetailsV1Schema,
     MachineSetupFailureDetailsV1Schema, FiniteCommandFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
@@ -341,9 +343,12 @@ export type ActionOperationFailureV1 = Readonly<z.infer<typeof ActionOperationFa
 export const ActionOperationFailureV1ReadSchema = lazyZodSchema(() => z.pipe(z.transform(value => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
   const record = value as Record<string, unknown>;
+  const handoffRecovery = record.handoffRecovery === undefined
+    ? undefined : SessionHandoffSourceStoppedV1Schema.safeParse(record.handoffRecovery);
   return {
     errorCode: record.errorCode,
     error: record.error,
+    ...(handoffRecovery?.success ? { handoffRecovery: handoffRecovery.data } : {}),
     ...(record.requestId === undefined ? {} : { requestId: record.requestId }),
     ...(record.effectAttempted === undefined ? {} : { effectAttempted: record.effectAttempted }),
     ...(record.details === undefined ? {} : { details: record.details }),
@@ -734,7 +739,9 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
       ...(snapshot.error?.effectAttempted !== undefined ? { effectAttempted: snapshot.error.effectAttempted } : {}),
       ...(snapshot.error?.failureCause ?? linkFailure?.failureCause
         ? { failureCause: snapshot.error?.failureCause ?? linkFailure?.failureCause } : {}),
-      ...(linkFailure ? { details: linkFailure.details }
+      ...(snapshot.actionId === 'session.handoff' && snapshot.error?.handoffRecovery
+        ? { details: { handoffRecovery: snapshot.error.handoffRecovery } }
+        : linkFailure ? { details: linkFailure.details }
         : snapshot.error?.details ? { details: snapshot.error.details } : backupFailure ? { details: backupFailure } : {}),
       ...metadata,
     };

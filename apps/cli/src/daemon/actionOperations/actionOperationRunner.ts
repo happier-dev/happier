@@ -561,7 +561,13 @@ export function createActionOperationRunner(deps: Readonly<{
               }
             }
           } else {
+            const handoffRecovery = action.actionId === 'session.handoff' && nativeOutcome?.ok === false
+              && nativeOutcome.details && typeof nativeOutcome.details === 'object'
+              && 'handoffRecovery' in nativeOutcome.details
+              ? ActionOperationFailureV1Schema.shape.handoffRecovery.safeParse(nativeOutcome.details.handoffRecovery)
+              : null;
             const failure = { errorCode: executionResult.errorCode, error: executionResult.error,
+              ...(handoffRecovery?.success ? { handoffRecovery: handoffRecovery.data } : {}),
               ...(executionResult.requestId !== undefined ? { requestId: executionResult.requestId } : {}),
               ...(executionResult.effectAttempted !== undefined ? { effectAttempted: executionResult.effectAttempted } : {}),
               ...(executionResult.failureCause ? { failureCause: executionResult.failureCause } : {}),

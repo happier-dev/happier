@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierProgress } from '@happier-dev/plugin-ui/presentation';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -9,6 +10,9 @@ import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/op
 import type { HandoffWorkspaceOutcomeV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 
 import type { CustomModalInjectedProps } from '@/modal';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
+import { emitSessionResumeRequest, useSessionResumeRequestAvailable } from '@/components/sessions/model/sessionResumeRequests';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
@@ -38,6 +42,7 @@ type Props = CustomModalInjectedProps & Readonly<{
     status?: SessionHandoffStatus;
     operation?: ActionOperationSnapshotV1;
     serverId?: string | null;
+    sourceSessionId?: string;
     onResume?: () => Promise<void> | void;
     workspaceSyncEnabled?: boolean;
     requestFailure?: Extract<ExecuteSessionHandoffActionResult, { ok: false }>;
@@ -447,7 +452,7 @@ function translateCheckpoint(checkpoint: SessionHandoffProgressCheckpoint): stri
     }
 }
 
-export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry }: Props) {
+export function SessionHandoffProgressModal({ onClose, setChrome, title, message, status, operation, serverId, sourceSessionId, onResume, requestFailure, onOpenConflicts, machineCreation, onRetry }: Props) {
     const { theme } = useUnistyles();
     const presentationTheme = usePluginUiTheme(theme);
     const styles = stylesheet;
@@ -569,7 +574,11 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
         ? (hasSeenSourceScanRef.current ? FULL_TIMELINE_WITH_SOURCE_SCAN : FULL_TIMELINE)
         : canonicalTimelineForCheckpoint;
     const currentCheckpointIndex = currentCheckpoint ? timeline.indexOf(currentCheckpoint) : -1;
-    const isAwaitingRecovery = effectiveStatus?.status === 'awaiting_recovery';
+    const hasStoppedSource = operationFailed && operation?.error?.handoffRecovery?.kind === 'session_handoff_source_stopped';
+    const isAwaitingRecovery = effectiveStatus?.status === 'awaiting_recovery' || hasStoppedSource;
+    const canOpenSource = Boolean(hasStoppedSource && sourceSessionId && serverId);
+    const sourceResumeAvailable = useSessionResumeRequestAvailable(sourceSessionId ?? '', canOpenSource ? serverId : null);
+    const router = useRouter();
     const isAwaitingUserResume = effectiveStatus?.status === 'awaiting_user_resume';
     const currentDetailLabel =
         effectiveStatus?.progress?.current?.relativePath
@@ -629,15 +638,25 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
     const [detailsExpanded, setDetailsExpanded] = React.useState(false);
     const resumeInFlightRef = React.useRef(false);
     const [resumeInFlight, setResumeInFlight] = React.useState(false);
+    const resumeSource = React.useCallback(async () => {
+        if (!sourceSessionId || !serverId) return;
+        if (!sourceResumeAvailable) {
+            onClose();
+            router.push(buildScopedSessionRouteHref({ sessionId: sourceSessionId, serverId }) as never);
+            return;
+        }
+        if (await emitSessionResumeRequest(sourceSessionId, serverId)) onClose();
+    }, [onClose, router, serverId, sourceResumeAvailable, sourceSessionId]);
+    const resume = canOpenSource ? resumeSource : isAwaitingUserResume ? onResume : undefined;
     const handleResume = React.useCallback(() => {
-        if (!onResume || resumeInFlightRef.current) return;
+        if (!resume || resumeInFlightRef.current) return;
         resumeInFlightRef.current = true;
         setResumeInFlight(true);
-        void Promise.resolve(onResume()).finally(() => {
+        fireAndForget(Promise.resolve().then(resume).finally(() => {
             resumeInFlightRef.current = false;
             setResumeInFlight(false);
-        });
-    }, [onResume]);
+        }), { tag: 'SessionHandoffProgressModal.resume' });
+    }, [resume]);
     // A committed workspace outcome is itself a terminal reading, so the footer
     // must offer Done rather than a cancel control the daemon can no longer honor.
     const operationTerminal = Boolean(requestFailure || operation?.state === 'succeeded'
@@ -702,11 +721,12 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                     {t('workspaceSync.review.completedLinks', { count: requestFailure.workspacePreparation.completed.length })}
                 </Text>
             ) : null}
-            {isAwaitingUserResume && onResume ? (
+            {resume ? (
                 <View style={styles.actionRow}>
                     <RoundButton
                         testID="session-handoff-progress-resume"
-                        title={t('externalSessions.operationActionResume')}
+                        title={canOpenSource && !sourceResumeAvailable
+                            ? t('sessionPages.info.openToResume') : t('externalSessions.operationActionResume')}
                         onPress={handleResume}
                         disabled={resumeInFlight}
                     />

@@ -36,6 +36,7 @@ export function openObservedSessionHandoffProgressModal(params: Readonly<{
         component: SessionHandoffProgressModal,
         props: {
             serverId: params.serverId,
+            sourceSessionId: params.sessionId,
             ...(params.workspaceSyncEnabled ? { workspaceSyncEnabled: true } : {}),
             ...(params.machineCreation ? { machineCreation: params.machineCreation } : {}),
             ...(params.onOpenConflicts ? { onOpenConflicts: params.onOpenConflicts } : {}),

@@ -6,6 +6,11 @@ import {
   SessionHandoffTransportStrategySchema,
 } from './handoffTypes.js';
 
+/** A failed tracked handoff may carry the source's confirmed stop. */
+export const SessionHandoffSourceStoppedV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('session_handoff_source_stopped'),
+}));
+
 const MAX_HANDOFF_ID_LENGTH = 256;
 const MAX_JOB_ID_LENGTH = 256;
 const MAX_PATH_LENGTH = 4096;

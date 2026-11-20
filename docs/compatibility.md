@@ -8765,6 +8765,15 @@ native process effects. Update both computers before retrying the move. The V2
 semantic adapter is removed; current V3 handoff retains its canonical lifecycle.
 This operation-scoped refusal leaves unrelated Machine and Session operations usable.
 
+A failed tracked Move can carry the optional `error.handoffRecovery` observation
+when the source reported that it stopped a running Session. The progress modal
+reuses the stopped-source explanation and offers the Session's ordinary Resume
+entry point. The observation does not perform a restart or promise restoration
+of source metadata after target launch. Older Action operation readers ignore
+the extra diagnostic or receive the generic failure via the V1 projection.
+Without a diagnostic from an older daemon, the UI retains its generic failure
+display. The V3 peer messages are unchanged.
+
 ### Existing native session-state handoff (development)
 
 The development handoff contract adds optional `stateTransfer: 'transfer' | 'existing'`.

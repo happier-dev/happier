@@ -429,11 +429,25 @@ export async function coordinateTrackedSessionHandoff(
     progress: { phase: 'preparing_target', label: 'Preparing target' },
   });
 
+  const sourceStopped = started.data.status.recoveryActions.includes('restart_on_source');
+  const settleFailedCutover = async (failure: Failure): Promise<Failure> => {
+    await abortWorkspace();
+    const acknowledged = await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
+    const settled = withWorkspaceAbortFailure(failure);
+    // Once launch may have begun, a rejected or lost abort cannot establish
+    // that it is safe to offer recovery while the target outcome is uncertain.
+    if (sourceStopped && (!cancellationClosed || acknowledged)) {
+      input.publishOwnerUpdate({ outcome: {
+        ...settled,
+        details: { handoffRecovery: { kind: 'session_handoff_source_stopped' } },
+      } });
+    }
+    return settled;
+  };
+
   const negotiatedTransportStrategy = started.data.status.transportStrategy;
   if (negotiatedTransportStrategy !== 'direct_peer' && negotiatedTransportStrategy !== 'server_routed_stream') {
-    await abortWorkspace();
-    await abortBoth(input, source.sourceMachineId, handoffId, 'transport_unavailable');
-    return withWorkspaceAbortFailure({ ok: false, errorCode: 'transport_unavailable', error: 'transport_unavailable' });
+    return await settleFailedCutover({ ok: false, errorCode: 'transport_unavailable', error: 'transport_unavailable' });
   }
 
   // `start()` has now quiesced the source session. Move the final workspace
@@ -458,9 +472,7 @@ export async function coordinateTrackedSessionHandoff(
         // aborting here could terminate the only runtime behind a durable row.
         return failure;
       }
-      await abortWorkspace();
-      await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
-      return withWorkspaceAbortFailure(failure);
+      return await settleFailedCutover(failure);
     }
   }
 
@@ -492,9 +504,7 @@ export async function coordinateTrackedSessionHandoff(
   publishTargetStatusProgress(input.publishOwnerUpdate, preparedRaw);
   const prepareFailure = readFailure(preparedRaw, 'session_handoff_prepare_failed');
   if (prepareFailure && !isPrepareObservationPending(prepareFailure.errorCode)) {
-    await abortWorkspace();
-    await abortBoth(input, source.sourceMachineId, handoffId, prepareFailure.errorCode);
-    return withWorkspaceAbortFailure(prepareFailure);
+    return await settleFailedCutover(prepareFailure);
   }
 
   let prepared = SessionHandoffPrepareTargetResponseSchema.safeParse(preparedRaw);
@@ -511,25 +521,19 @@ export async function coordinateTrackedSessionHandoff(
       await input.getTargetStatus({ handoffId }, input.signal),
     );
     if (!targetStatus.ok) {
-      await abortWorkspace();
-      await abortBoth(input, source.sourceMachineId, handoffId, targetStatus.errorCode);
-      return withWorkspaceAbortFailure(targetStatus);
+      return await settleFailedCutover(targetStatus);
     }
     const terminalFailure = readTerminalPrepareStatusFailure(targetStatus.status);
     if (terminalFailure) {
       const settledResult = await input.getPreparedTargetResult({ handoffId }, input.signal);
       const failure = readFailure(settledResult, terminalFailure.errorCode) ?? terminalFailure;
-      await abortWorkspace();
-      await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
-      return withWorkspaceAbortFailure(failure);
+      return await settleFailedCutover(failure);
     }
     if (targetStatus.status.status === 'ready_for_cutover') {
       const resultRaw = await input.getPreparedTargetResult({ handoffId }, input.signal);
       const resultFailure = readFailure(resultRaw, 'session_handoff_prepare_failed');
       if (resultFailure) {
-        await abortWorkspace();
-        await abortBoth(input, source.sourceMachineId, handoffId, resultFailure.errorCode);
-        return withWorkspaceAbortFailure(resultFailure);
+        return await settleFailedCutover(resultFailure);
       }
       const result = SessionHandoffPrepareTargetResultGetSuccessResponseSchema.safeParse(resultRaw);
       prepared = SessionHandoffPrepareTargetResponseSchema.safeParse(result.success ? result.data : resultRaw);
@@ -545,9 +549,7 @@ export async function coordinateTrackedSessionHandoff(
     await wait(input.signal, targetStatus.status);
   }
   if (!prepared.success || !prepared.data.resume || !prepared.data.remoteSessionId || !prepared.data.directSource) {
-    await abortWorkspace();
-    await abortBoth(input, source.sourceMachineId, handoffId, 'session_handoff_prepare_invalid');
-    return withWorkspaceAbortFailure({ ok: false, errorCode: 'session_handoff_prepare_invalid', error: 'session_handoff_prepare_invalid' });
+    return await settleFailedCutover({ ok: false, errorCode: 'session_handoff_prepare_invalid', error: 'session_handoff_prepare_invalid' });
   }
 
   publishPhase(input.publishOwnerUpdate, 'resuming_target', 'Resuming target session');
@@ -568,9 +570,7 @@ export async function coordinateTrackedSessionHandoff(
       errorCode: 'session_handoff_resume_failed',
       error: 'session_handoff_resume_failed',
     };
-    await abortWorkspace();
-    await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
-    return withWorkspaceAbortFailure(failure);
+    return await settleFailedCutover(failure);
   }
 
   publishPhase(input.publishOwnerUpdate, 'confirming_target', 'Confirming target custody');
@@ -586,9 +586,7 @@ export async function coordinateTrackedSessionHandoff(
       errorCode: 'session_handoff_target_unconfirmed',
       error: 'session_handoff_target_unconfirmed',
     };
-    await abortWorkspace();
-    await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
-    return withWorkspaceAbortFailure(failure);
+    return await settleFailedCutover(failure);
   }
 
   publishPhase(input.publishOwnerUpdate, 'committing_target', 'Committing target');
@@ -605,9 +603,7 @@ export async function coordinateTrackedSessionHandoff(
       errorCode: 'session_handoff_commit_invalid',
       error: 'session_handoff_commit_invalid',
     };
-    await abortWorkspace();
-    await abortBoth(input, source.sourceMachineId, handoffId, failure.errorCode);
-    return withWorkspaceAbortFailure(failure);
+    return await settleFailedCutover(failure);
   }
   committedTarget = committedResponse.data;
 
