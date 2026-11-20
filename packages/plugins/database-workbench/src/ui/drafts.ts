@@ -4,8 +4,12 @@ export function createStagedEdits<T>() {
     let snapshot: readonly T[] = [];
     const listeners = new Set<() => void>();
     const rowListeners = new Map<string, Set<() => void>>();
+    const dirtyListeners = new Set<(dirty: boolean) => void>();
     const publish = (keys: readonly string[]) => {
+        const wasDirty = snapshot.length > 0;
+        const dirty = rows.size > 0;
         snapshot = [...rows.values()];
+        if (dirty !== wasDirty) for (const listener of dirtyListeners) listener(dirty);
         for (const key of keys) for (const listener of rowListeners.get(key) ?? []) listener();
         for (const listener of listeners) listener();
     };
@@ -23,5 +27,6 @@ export function createStagedEdits<T>() {
         discard() { if (rows.size) { const keys = [...rows.keys()]; rows.clear(); publish(keys); } },
         changes: () => snapshot,
         subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        subscribeDirty(listener: (dirty: boolean) => void) { dirtyListeners.add(listener); return () => { dirtyListeners.delete(listener); }; },
     };
 }

@@ -100,11 +100,13 @@ it('prepares Apply for a host gesture and retains proposals edited while the sub
     const relation = { schema: 'public', name: 'items' };
     const location: WorkbenchLocation = { targetKey, relation, mode: 'data', sort: [], columns: ['id'], page: { rows: 40, offset: 0 }, fkTrail: [] };
     let commits = 0;
+    const unsavedTransitions: boolean[] = [];
     const unexpected = async (): Promise<never> => { throw new Error('Staging performs no database reads'); };
     const client: WorkbenchClient & { commit(): Promise<DatabaseOperationResultV1> } = { targets: unexpected, operation: unexpected, access: unexpected,
         commit: async () => { commits++; return { ok: true, operation: 'edits.apply', status: 'committed', inserted: '0', updated: '0', deleted: '1' }; },
         subscribeOwnWrites: () => () => {}, navigate: async () => {}, openRoot: async () => {},
-        setUnsavedChanges: async () => {}, presentDeviceStorageError(error) { throw error; }, saveExport: async () => { throw new Error('Nothing is saved as a file here'); } };
+        setUnsavedChanges: async dirty => { unsavedTransitions.push(dirty); }, presentDeviceStorageError(error) { throw error; },
+        saveExport: async () => { throw new Error('Nothing is saved as a file here'); } };
     const instance = createWorkbenchInstance({ client, scope: { kind: 'worktree', accountId: 'account', installationId: 'installation', projectKey: 'project',
         workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' } }, location, selectedTarget: descriptor,
         cataloguePageRows: 40, statementRanges: () => [], consoleStorage: () => ({ read: async () => null, write: async () => {} }) });
@@ -121,6 +123,8 @@ it('prepares Apply for a host gesture and retains proposals edited while the sub
         binding.controller.onSettled({ ok: true, result: { ok: true, operation: 'edits.apply', status: 'committed', inserted: '0', updated: '0', deleted: '1' } });
         expect(instance.drafts.changes()).toEqual([replacement]);
         expect(instance.applyOutcomes.get(JSON.stringify([targetKey, relation]))).toMatchObject({ kind: 'applied', count: '1' });
+        instance.drafts.takeBack(instance.draftKey(replacement));
+        expect(unsavedTransitions).toEqual([true, false]);
     } finally { instance.close(); }
 });
 

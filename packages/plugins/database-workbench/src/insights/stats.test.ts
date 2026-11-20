@@ -1,13 +1,13 @@
 import { expect, it } from 'vitest';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
-import { createWorkbenchInstance } from '../ui/workbench.js';
+import { createWorkbenchInstance, workbenchTargetKey } from '../ui/workbench.js';
 import type { WorkbenchClient, WorkbenchLocation } from '../ui/models.js';
 import { createNativeFindingFixture, target } from './nativeFixture.testkit.js';
 
 it('keeps selected insight demand pending, shares its native read, and distinguishes unavailable statistics', async () => {
     const native = await createNativeFindingFixture();
     const descriptor = { ...createDatabaseDescriptorV1Fixture(), target, engine: 'sqlite' as const };
-    const targetKey = JSON.stringify(target);
+    const targetKey = workbenchTargetKey(target);
     let release: () => void = () => {};
     const held = new Promise<void>(resolve => { release = resolve; });
     const unexpected = async (): Promise<never> => { throw new Error('Insights must use the selected stats Action only'); };

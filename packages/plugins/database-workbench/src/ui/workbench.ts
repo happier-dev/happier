@@ -77,7 +77,7 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
         }
     }
     const unsubscribe = client.subscribeOwnWrites(change => invalidate(workbenchTargetKey(change.target), change.relation));
-    const draftOff = drafts.subscribe(() => { void client.setUnsavedChanges(drafts.changes().length > 0); });
+    const draftOff = drafts.subscribeDirty(dirty => { void client.setUnsavedChanges(dirty); });
     function structure(targetKey: string, relation: DatabaseRelationV1) {
         return resource(key(['structure', targetKey, relation]), async () => success(await client.operation({ operation: 'relation.structure', target: target(targetKey).target, relation }, reads.signal), 'relation.structure').structure, targetKey, relation);
     }

@@ -215,6 +215,7 @@ not a measured reference-runtime total or an equivalent authorization topology.
 | --- | --- | --- | --- |
 | `dbw.targets.machine-labels` | One display-name read per selected Home and Machine pair per target list acquisition. Refresh reads the current name. | 25 targets over two pairs: 25 → 2 reads. A one-target refresh added one read. `database-workbench/src/ui/workbench.test.ts` | Workbench target list projection |
 | `dbw.targets.discovery-access` | One local access record read per recognized projected database variable. Other variables perform zero access reads. | One database URL plus 25 unrelated variables: 26 → 1 reads. `database-workbench/src/worktreeTargets.test.ts` | Worktree launch target discovery |
+| `dbw.drafts.unsaved` | Publish at the first staged proposal and when the last proposal is removed. Replacing a proposal while an Apply is pending adds zero host calls. | Stage, replace, settle earlier Apply, and take back the replacement: 3 → 2 host calls. `database-workbench/src/ui/workbench.test.ts` | Staged draft store |
 | `dbw.capture.publication` | One notification per affected observer per committed batch. Unchanged replay, unrelated partitions and disposed observers add zero. | One batch across two selected partitions: 2 → 1 invalidations. `telemetry/src/resources.test.ts` | Capture background partition dispatch |
 
 ### Database capture — P5 (implementation evidence, 2026-11-16)
