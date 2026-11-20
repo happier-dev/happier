@@ -4,7 +4,19 @@ import { decodeVoiceAssistantActions, getVoiceActionFunctionTool } from './actio
 import { getActionSpec, listVoiceActionBlockSpecs } from '../actions/actionSpecs.js';
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 
-describe('Voice carrier advertisement cost', () => {
+describe('Voice carrier advertisement', () => {
+  it('describes the returned Action result and the named-model lookup', () => {
+    const { description } = getVoiceActionFunctionTool();
+    const spawn = getActionSpec('session.spawn_new');
+    const resolveOptions = getActionSpec('action.options.resolve');
+    expect(description).toContain('returned result');
+    expect(description).toContain(spawn.bindings!.voiceClientToolName);
+    expect(description).toContain(resolveOptions.bindings!.voiceClientToolName);
+    expect(description).toContain(spawn.id);
+    expect(description).toContain('modelSelection');
+    expect(description).not.toContain('tool-results follow-up');
+  });
+
   it('advertises one envelope instead of embedding the real Action catalog', () => {
     const catalog = listVoiceActionBlockSpecs();
     expect(catalog.length).toBeGreaterThanOrEqual(460); // Brief's incident-scale floor, not a runtime cap.

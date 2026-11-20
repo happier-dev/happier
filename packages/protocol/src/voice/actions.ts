@@ -83,10 +83,10 @@ let voiceActionFunctionTool: ReturnType<typeof buildVoiceActionFunctionTool> | u
 function buildVoiceActionFunctionTool() {
   return {
     name: VOICE_ACTION_FUNCTION_NAME,
-    description: 'Queue one Happier Voice Action for the connected UI. This does not execute it. Wait for the Voice tool-results follow-up before reporting its outcome.',
+    description: 'Execute one Happier Voice Action and use its returned result. If the user names a model for spawnSession, call resolveActionOptions for session.spawn_new at modelSelection. Use the exact selection returned, or ask for clarification. Omit modelSelection only if no model was requested.',
     // Advertise transport, not the whole catalog. searchActionSpecs/getActionSpec
     // provide the canonical sectioned schemas on demand; the decoder below
-    // still validates args against the selected Action before queueing it.
+    // still validates args against the selected Action before executing it.
     inputSchema: PluginJsonValueV2Schema.parse(zodSchemaToJsonSchemaObject(z.strictObject({
       t: z.string(),
       args: z.record(z.string(), z.unknown()),
