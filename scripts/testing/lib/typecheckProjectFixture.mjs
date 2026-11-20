@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } f
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { coerceHappyMonorepoRootFromPath } from '../../../apps/stack/scripts/utils/paths/paths.mjs';
+import { resolveTypecheckCacheDirectory } from '../../workspaces/workspaceSourceTypecheck.mjs';
 
 const require = createRequire(new URL('../../../apps/ui/package.json', import.meta.url));
 
@@ -23,10 +25,10 @@ export async function installUiTypecheckFixtureDependencies(t, packageDir) {
       process.platform === 'win32' ? 'junction' : 'dir');
   }
   return async inventory => {
-    const fixture = await realpath(packageDir);
-    const cache = join(packageDir, 'node_modules/.cache/tsc');
+    const fixture = await realpath(coerceHappyMonorepoRootFromPath(packageDir) ?? packageDir);
+    const cache = resolveTypecheckCacheDirectory(packageDir);
     const outputs = [...inventory.map(({ configPath }) => configPath),
-      ...(await readdir(cache)).map(file => join(cache, file))];
+      ...(await readdir(cache).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))).map(file => join(cache, file))];
     for (const output of outputs) {
       const path = relative(fixture, await realpath(output));
       assert.ok(!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`),

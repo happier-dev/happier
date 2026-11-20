@@ -18,6 +18,7 @@ import { resolveRemoteCommandPolicy } from '../../stack/scripts/utils/dev_target
 import { runWorkspaceBuildAdmission } from '../../stack/scripts/utils/proc/workspace_build_admission.mjs';
 
 import { requiresTypeScriptAdmission, resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
+import { resolveTypecheckCacheDirectory } from '../../../scripts/workspaces/workspaceSourceTypecheck.mjs';
 import { readHappyCliRuntimeInputFreshness } from '../../stack/scripts/utils/proc/cli_runtime_inputs.mjs';
 import { readCliNodeWorkspaceRuntimeIdentity } from '@happier-dev/cli-common/componentArtifacts/copyCliNodeRuntimePayload';
 import { finalizeDist, readCliDistBuildManifestFingerprint } from './finalizeDist.mjs';
@@ -196,7 +197,7 @@ function copyPreparedCliDeclarations(packageRoot, declarationSourceDir) {
   };
   // The public source compiler derives current membership into this project.
   // Consume its exact references and file set, rather than the authored seed.
-  copyProject(join(packageRoot, 'node_modules/.cache/tsc/tsconfig.source.json'));
+  copyProject(join(resolveTypecheckCacheDirectory(packageRoot), 'tsconfig.source.json'));
   if (!copied) throw new Error('missing prepared CLI declaration graph; run the current source compiler before this consumer');
 }
 

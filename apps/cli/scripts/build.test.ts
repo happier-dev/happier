@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import { build as bundle } from 'esbuild';
 import ts from 'typescript';
 import { syncBundledWorkspacePackages } from '../../../scripts/workspaces/syncBundledWorkspacePackages.mjs';
+import { resolveTypecheckCacheDirectory } from '../../../scripts/workspaces/workspaceSourceTypecheck.mjs';
 
 import { createTempDirSync } from '../src/testkit/fs/tempDir';
 import { buildCliDist } from './build.mjs';
@@ -89,8 +90,15 @@ describe('buildCliDist', () => {
   });
 
   it.each([false, true])('consumes checked source partitions without another compiler and rejects a missing declaration (%s)', async (missingLeaf) => {
-    const packageRoot = createTempDirSync('happier-cli-prepared-declarations-');
+    const workspaceRoot = createTempDirSync('happier-cli-prepared-declarations-');
+    const packageRoot = join(workspaceRoot, 'apps/cli');
     try {
+      for (const app of ['cli', 'ui', 'server']) {
+        mkdirSync(join(workspaceRoot, 'apps', app), { recursive: true });
+        writeFileSync(join(workspaceRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+      }
+      writeFileSync(join(workspaceRoot, 'package.json'), JSON.stringify({ private: true }));
+      writeFileSync(join(workspaceRoot, 'pnpm-workspace.yaml'), "packages:\n  - 'apps/*'\n");
       writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
         name: '@happier-dev/build-fixture', version: '0.0.0',
         main: './dist/index.cjs', module: './dist/index.mjs', types: './dist/index.d.cts',
@@ -116,7 +124,7 @@ describe('buildCliDist', () => {
         writeFileSync(join(packageRoot, `tsconfig.${name}.json`), JSON.stringify({
           extends: './tsconfig.json', compilerOptions: { composite: true, noEmit: false,
             emitDeclarationOnly: true, disableSourceOfProjectReferenceRedirect: true,
-            outDir: `node_modules/.cache/${name}`, tsBuildInfoFile: `node_modules/.cache/${name}.tsbuildinfo` },
+            outDir: `node_modules/.cache/tsc/${name}`, tsBuildInfoFile: `node_modules/.cache/tsc/${name}.tsbuildinfo` },
           files: name === 'test-ui' ? [] : [name === 'test' ? 'src/index.test.ts' : 'src/foundation.ts'], include: [],
           references: projectNames.slice(0, index).map(previous => ({ path: `./tsconfig.${previous}.json` })),
         }));
@@ -124,11 +132,11 @@ describe('buildCliDist', () => {
       const compilerRunner = resolve(dirname(fileURLToPath(import.meta.url)), '../../../scripts/workspaces/runTypeScriptCli.mjs');
       const checked = spawnSync(process.execPath, [compilerRunner, '--singleThreaded',
         ...projectNames.flatMap(name => ['--project', `tsconfig.${name}.json`])], {
-        // The prepared-declaration consumer reads Microsoft's `.cache/tsc` layout; tsrs keeps its own `.tsrs` caches.
+        // The prepared-declaration consumer reads Microsoft's workspace cache; tsrs keeps separate `.tsrs` caches.
         cwd: packageRoot, encoding: 'utf8', env: { ...process.env, HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' },
       });
       expect(checked.status, checked.stdout + checked.stderr).toBe(0);
-      if (missingLeaf) rmSync(join(packageRoot, 'node_modules/.cache/foundation/foundation.d.ts'));
+      if (missingLeaf) rmSync(join(resolveTypecheckCacheDirectory(packageRoot), 'foundation/foundation.d.ts'));
       const build = buildCliDist({
         packageRoot, repoRoot: packageRoot, lockPath: join(packageRoot, 'build.lock'),
         preparedDeclarations: true,
@@ -154,7 +162,7 @@ describe('buildCliDist', () => {
         })).rejects.toThrow(/exited with status [12]/u);
         expect(readFileSync(join(packageRoot, 'dist/index.mjs'), 'utf8')).toContain('prepared');
       }
-    } finally { rmSync(packageRoot, { recursive: true, force: true }); }
+    } finally { rmSync(workspaceRoot, { recursive: true, force: true }); }
   });
   it.each(['source-dev', 'qa-runtime'])('emits semantic-invalid runtime without launching a checker (%s)', async (mode) => {
     const packageRoot = createTempDirSync('happier-cli-runtime-emission-');

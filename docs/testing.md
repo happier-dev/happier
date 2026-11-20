@@ -45,7 +45,7 @@ reservation: one source file can import a large graph. Package/project checks
 and multiple-source-file requests retain their existing classes.
 
 The public UI typecheck generates typed routes with the installed Expo generator and
-Metro exclusions into `apps/ui/node_modules/.cache/tsc/router.d.ts`. All finite
+Metro exclusions into `.project/tmp/typecheck-declarations/projects/apps/ui/tsc/router.d.ts`. All finite
 partitions, including CLI's referenced UI declarations, consume this compiler-owned
 input; Expo's live `.expo/types/router.d.ts` remains the editor/watcher's output.
 This also lets these checks run without an Expo server or a synchronized
@@ -1773,7 +1773,10 @@ belongs to core, its prerequisites belong to foundation, and remaining editor ro
 belong to source or tests. Shared ambient declarations contribute to every partition.
 Imported authored TypeScript and JSON are included in their consuming closure.
 The generator checks exactly-once editor-root coverage before writing finite
-projects into each package's `node_modules/.cache/tsc/tsconfig.*.json`. These ignored
+projects into `.project/tmp/typecheck-declarations/projects/<package>/tsc/tsconfig.*.json`
+(with the selected compiler's cache suffix). Generated route declarations and private
+partition outputs share this workspace cache, so dependency generation replacement
+cannot remove an admitted compilation's inputs or reference outputs. These ignored
 projects extend the authored configs, preserving option paths and redirecting
 references to the other finite projects. Public checking leaves tracked configs
 unchanged. `node apps/ui/scripts/deriveTypecheckProjects.mjs --check` detects stale

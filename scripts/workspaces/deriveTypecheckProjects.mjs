@@ -3,7 +3,7 @@ import { basename, dirname, relative, resolve } from 'node:path';
 import ts from 'typescript';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
-import { readWorkspaceTypecheckSources, sourceTypecheckCompilerOptions } from './workspaceSourceTypecheck.mjs';
+import { readWorkspaceTypecheckSources, resolveTypecheckCacheDirectory, sourceTypecheckCompilerOptions } from './workspaceSourceTypecheck.mjs';
 import { deriveTypecheckSourceOwners } from './deriveTypecheckSourceOwners.mjs';
 
 export function readTypecheckProject(path) {
@@ -397,7 +397,7 @@ export async function deriveTypecheckProjects(packageDir, { sourceNames, testNam
   const { cacheSuffix } = resolveTypeScriptCliInvocation({
     args: ['-p', resolve(packageDir, `tsconfig.${names[0]}.json`)], workspaceDir: packageDir,
   });
-  const outputDir = resolve(packageDir, `node_modules/.cache/tsc${cacheSuffix}`);
+  const outputDir = resolveTypecheckCacheDirectory(packageDir, cacheSuffix);
   const targets = names.map(name => resolve(outputDir, `tsconfig.${name}.json`));
   for (let index = 0; index < names.length; index++) {
     const target = targets[index];

@@ -1,9 +1,11 @@
 import { mkdir } from 'node:fs/promises';
 import { basename, dirname, relative, resolve } from 'node:path';
+import ts from 'typescript';
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { coerceHappyMonorepoRootFromPath } from '../../apps/stack/scripts/utils/paths/paths.mjs';
 import { readReferencedUiTypecheckProjects, readTypecheckAmbientModules, readTypecheckProject } from './deriveTypecheckProjects.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { resolveTypecheckCacheDirectory } from './workspaceSourceTypecheck.mjs';
 
 export function orderTypecheckProjects(projects, cwd = process.cwd()) {
   const byPath = new Map(projects.map(project => [resolve(cwd, project.project), project]));
@@ -109,11 +111,7 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
     const { cacheSuffix } = resolveTypeScriptCliInvocation({
       args: ['-p', foreign.configPath, '--noEmit', 'false', '--emitDeclarationOnly'], workspaceDir: cwd,
     });
-    // Fixture dependency directories can be replaced independently of this
-    // compilation. Keep generated projects with the workspace declaration cache.
-    const cache = workspaceRoot
-      ? resolve(workspaceRoot, '.project/tmp/typecheck-declarations/projects', relative(workspaceRoot, ownerDir), `consumer${cacheSuffix}`)
-      : resolve(ownerDir, `node_modules/.cache/tsc${cacheSuffix}`);
+    const cache = resolveTypecheckCacheDirectory(ownerDir, cacheSuffix, 'consumer');
     const project = resolve(cache, 'tsconfig.consumer-declarations.json');
     const source = readTypecheckProject(foreign.configPath);
     // Retain producer strictness and explicit aliases. Host workspace defaults
@@ -123,6 +121,7 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
     await writeJsonAtomic(project, {
       extends: foreign.configPath,
       compilerOptions: { composite: true, declaration: true, emitDeclarationOnly: true, noEmit: false,
+        typeRoots: ts.getEffectiveTypeRoots(source.parsed.options, ts.sys),
         rootDir: workspaceRoot ?? resolve(ownerDir, '../..'), outDir: resolve(cache, 'consumer.declarations'),
         tsBuildInfoFile: resolve(cache, 'consumer.typecheck.tsbuildinfo'), disableSourceOfProjectReferenceRedirect: true,
         ...(Object.keys(publicWorkspacePaths).length ? {
@@ -219,11 +218,12 @@ export async function prepareReferencedTypecheckDeclarations(projects, cwd, inve
       });
     });
     const files = [...new Set([...parsed.fileNames, ...consumerAmbientInputs])];
-    const target = configPath === authored ? resolve(dirname(authored), 'node_modules/.cache/tsc', basename(authored)) : configPath;
+    const target = configPath === authored ? resolve(resolveTypecheckCacheDirectory(dirname(authored)), basename(authored)) : configPath;
     if (!redirects.size) continue;
     await mkdir(dirname(target), { recursive: true });
     await writeJsonAtomic(target, configPath === authored
-      ? { extends: authored, files, include: [], exclude: [], references }
+      ? { extends: authored, compilerOptions: { typeRoots: ts.getEffectiveTypeRoots(parsed.options, ts.sys) },
+        files, include: [], exclude: [], references }
       : { ...config, files, references });
     if (target !== configPath) {
       consumer.args = consumer.args.map((arg, index) => ['--project', '-p'].includes(consumer.args[index - 1])

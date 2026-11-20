@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { uiTypedRoutesDeclaration } from './uiTypedRoutesDeclaration.mjs';
 export { uiTypedRoutesDeclaration } from './uiTypedRoutesDeclaration.mjs';
 import { deriveTypecheckProjects, prepareDerivedTypecheckProjects } from '../../../scripts/workspaces/deriveTypecheckProjects.mjs';
+import { resolveTypecheckCacheDirectory } from '../../../scripts/workspaces/workspaceSourceTypecheck.mjs';
 
 const sourceNames = ['foundation', 'core', 'source'];
 const testNames = ['test-components', 'test-other'];
@@ -14,7 +15,7 @@ function prepareUiTypedRoutes(packageDir) {
   if (!routes) return;
   // Expo's live watcher owns .expo/types/router.d.ts and can regenerate it
   // while finite programs compile. Keep this input with the finite configs.
-  const outputDir = resolve(packageDir, 'node_modules/.cache/tsc');
+  const outputDir = resolveTypecheckCacheDirectory(packageDir);
   mkdirSync(outputDir, { recursive: true });
   const outputPath = resolve(outputDir, 'router.d.ts');
   const temporaryPath = resolve(outputDir, `.router.${process.pid}.tmp`);

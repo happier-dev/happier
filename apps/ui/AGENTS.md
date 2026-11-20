@@ -27,7 +27,8 @@ The public typecheck compiles foundation → core → source remainder → tests
 editor roots and dependency graph at the shared native compiler choke point. Change
 that producer rather than hand-registering files in the generated partition lists.
 Compiler options remain in the authored tsconfigs. Finite membership and
-declaration-reference projections live in `node_modules/.cache/tsc/tsconfig.*.json`;
+declaration-reference projections live in the workspace's
+`.project/tmp/typecheck-declarations/projects/apps/ui/tsc*/tsconfig.*.json`;
 public checking does not rewrite tracked configs. `node scripts/deriveTypecheckProjects.mjs --check`
 validates the ignored membership projection.
 

@@ -11,6 +11,7 @@ import ts from 'typescript';
 import { installUiTypecheckFixtureDependencies } from '../testing/lib/typecheckProjectFixture.mjs';
 import { readTypecheckProject } from './deriveTypecheckProjects.mjs';
 import { resolveTypeScriptCliInvocation } from './resolveTypeScriptCliInvocation.mjs';
+import { resolveTypecheckCacheDirectory } from './workspaceSourceTypecheck.mjs';
 
 const runner = fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url));
 const typecheckCompilers = (project, workspaceDir) => resolveTypeScriptCliInvocation({
@@ -207,7 +208,7 @@ test('finite UI consumers retain workspace owner membership and contextual types
     for (const file of files) assert.ok(config.parsed.fileNames.includes(join(root, owner, 'src', file)),
       'new workspace imports belong to their declaration producer closure');
   }
-  const declaration = await readFile(join(ui, 'node_modules/.cache/tsc/ui.source.declarations/apps/ui/sources/entry.d.ts'), 'utf8');
+  const declaration = await readFile(join(resolveTypecheckCacheDirectory(ui), 'ui.source.declarations/apps/ui/sources/entry.d.ts'), 'utf8');
   t.diagnostic(`Native cross-partition declaration: ${declaration.trim()}`);
   assert.doesNotMatch(declaration, /ui\.core\.declarations/, 'producer-source resolution cannot interpret an output-directory-relative import');
   await put(join(ui, 'sources/consumer.test.ts'), consumer.replace('request.enabled', 'request.missing'));

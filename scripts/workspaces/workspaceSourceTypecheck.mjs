@@ -6,6 +6,16 @@ import { packageNameOfSpecifier, readWorkspacePackages, SOURCE_CONDITION, worksp
 import { typecheckCompilerOptions } from './resolveTypeScriptCliInvocation.mjs';
 import { resolvePackageDeclarationTarget } from './packageBuildOutputTargets.mjs';
 
+export function resolveTypecheckCacheDirectory(packageDir, cacheSuffix = '', purpose = 'tsc') {
+  const repoRoot = coerceHappyMonorepoRootFromPath(packageDir);
+  // Dependency generations replace package node_modules independently of an
+  // admitted compilation. Its selected inputs and private outputs belong to
+  // the existing workspace declaration cache, outside those installations.
+  return repoRoot
+    ? resolve(repoRoot, '.project/tmp/typecheck-declarations/projects', relative(repoRoot, packageDir), `${purpose}${cacheSuffix}`)
+    : resolve(packageDir, `node_modules/.cache/tsc${cacheSuffix}`);
+}
+
 export async function readWorkspaceTypecheckSources(directory) {
   const repoRoot = coerceHappyMonorepoRootFromPath(directory);
   const packages = repoRoot ? await readWorkspacePackages(repoRoot) : new Map();
@@ -53,6 +63,14 @@ function matchesPath(name, pattern) {
 
 export function sourceTypecheckCompilerOptions(options, configPath, sources, { declarations: useDeclarations = false } = {}) {
   if (!sources.repoRoot) return {};
+  const originalCache = resolve(dirname(configPath), 'node_modules/.cache');
+  const cache = dirname(resolveTypecheckCacheDirectory(dirname(configPath)));
+  const outputs = Object.fromEntries(['outDir', 'tsBuildInfoFile'].flatMap(key => {
+    if (!options[key]) return [];
+    const path = relative(originalCache, options[key]);
+    return [[key, !isAbsolute(path) && path !== '..' && !path.startsWith('../') && !path.startsWith('..\\')
+      ? resolve(cache, path) : options[key]]];
+  }));
   const base = options.baseUrl ?? options.pathsBasePath ?? dirname(configPath);
   const declarations = workspaceDeclarationPaths(options, configPath, sources);
   const configRelative = relative(sources.repoRoot, configPath);
@@ -70,6 +88,9 @@ export function sourceTypecheckCompilerOptions(options, configPath, sources, { d
     }
   }
   return {
+    ...outputs,
+    // Generated config placement must not choose a different ambient environment.
+    typeRoots: ts.getEffectiveTypeRoots({ ...options, configFilePath: configPath }, ts.sys),
     customConditions: useDeclarations ? (options.customConditions ?? []).filter(condition => condition !== SOURCE_CONDITION)
       : [...new Set([...(options.customConditions ?? []), SOURCE_CONDITION])],
     paths: {
@@ -118,7 +139,8 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     const authored = ts.readConfigFile(original, ts.sys.readFile);
     if (authored.error) throw new Error(ts.flattenDiagnosticMessageText(authored.error.messageText, '\n'));
     const cache = /^tsc(?:\.tsrs)?$/u.test(basename(dirname(original)))
-      ? dirname(original) : resolve(dirname(original), 'node_modules/.cache/tsc');
+      || (project.authoredProject && original !== resolve(cwd, project.authoredProject))
+      ? dirname(original) : resolveTypecheckCacheDirectory(dirname(original));
     const target = resolve(cache, `source-${basename(original)}`);
     preparedProjects.set(original, { target, config: {
       extends: original,
