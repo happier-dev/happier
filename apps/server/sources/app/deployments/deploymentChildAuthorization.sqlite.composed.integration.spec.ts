@@ -5192,7 +5192,7 @@ describe('deployment children retain their controller Action authority', () => {
     async function domainRootFixture(contentMode: 'plain' | 'e2ee' = 'plain', encryptedRoot = false,
         separateControllerCustodian = false, bothListenersOnController = false) {
         const f = await fixture('team', 'account', { separateMemberCustodian: true, separateControllerCustodian,
-            separateContentOwner: true, contentMode });
+            separateContentOwner: true, contentMode, readableEnvironment: true });
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const receiver = bothListenersOnController ? f.controller : f.member;
         if (bothListenersOnController) await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: {
@@ -6376,16 +6376,27 @@ describe('deployment children retain their controller Action authority', () => {
         const prepared = { body: JSON.stringify(preparedContent) };
         const bytes = mode === 'plain' ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(prepared))
             : new Uint8Array(await sealSessionDataKeyBundleV0(prepared, f.artifactKeys.get(input.contentArtifactId)!));
-        const payload = { serverId, environmentId: input.environmentId, domainId: input.domainId,
-            expectedDomainRevision: created.domain.revision, actionOperationId, capture,
-            contentUpdate: { body: privacyKit.encodeBase64(bytes), expectedBodyVersion: capture.content.contentBodyVersion } };
-        const path = `/v1/deployments/environments/${input.environmentId}/domains/${input.domainId}/prepared-content`;
-        const open = async (value: Uint8Array) => {
+        const open = async (value: Uint8Array, artifactId = input.contentArtifactId) => {
             if (mode === 'plain') return decodePlainArtifactStoredContent(privacyKit.encodeBase64(new Uint8Array(value)));
-            const opened = await openSessionDataKeyBundleV0(value, f.artifactKeys.get(input.contentArtifactId)!);
+            const opened = await openSessionDataKeyBundleV0(value, f.artifactKeys.get(artifactId)!);
             if (opened.status !== 'authenticated') throw new Error(opened.status);
             return opened.value;
         };
+        const environment = capture.environmentContent;
+        if (!environment) throw new Error('Expected the admitted Environment content reference');
+        const originalEnvironment = await readArtifactForCallerInTx(db, { actorAccountId: f.account.id, artifactId: environment.contentArtifactId });
+        if (!originalEnvironment.ok || !originalEnvironment.artifact.body) throw new Error('Expected Environment content');
+        const environmentBody = ArtifactBodyEnvelopeV1Schema.parse(await open(originalEnvironment.artifact.body, environment.contentArtifactId));
+        const sharedTunnel = { body: JSON.stringify({ ...JSON.parse(environmentBody.body!), cloudflareTunnels: [{
+            accountId: 'a'.repeat(32), tunnelId: '61bc2c65-9253-4917-8f74-05587547bfa2' }] }) };
+        const environmentBytes = mode === 'plain' ? privacyKit.decodeBase64(encodePlainArtifactStoredContent(sharedTunnel))
+            : new Uint8Array(await sealSessionDataKeyBundleV0(sharedTunnel, f.artifactKeys.get(environment.contentArtifactId)!));
+        const payload = { serverId, environmentId: input.environmentId, domainId: input.domainId,
+            expectedDomainRevision: created.domain.revision, actionOperationId, capture,
+            contentUpdate: { body: privacyKit.encodeBase64(bytes), expectedBodyVersion: capture.content.contentBodyVersion },
+            environmentContentUpdate: { body: privacyKit.encodeBase64(environmentBytes),
+                expectedBodyVersion: environment.contentBodyVersion } };
+        const path = `/v1/deployments/environments/${input.environmentId}/domains/${input.domainId}/prepared-content`;
         const acquire = async (reference: typeof capture.content) => {
             const read = await readArtifactForCallerInTx(db, { actorAccountId: f.account.id, artifactId: reference.contentArtifactId,
                 admittedContent: { requesterAccountId: f.account.id, content: reference } });
@@ -6417,7 +6428,13 @@ describe('deployment children retain their controller Action authority', () => {
             const bearer = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
             expect((await app.inject({ method: 'POST', url: path, payload, headers: { authorization: `Bearer ${bearer}` } })).statusCode).toBe(403);
             expect((await send({ ...payload, contentUpdate: { ...payload.contentUpdate, expectedBodyVersion: 999 } })).statusCode).toBe(409);
+            const staleShared = await send({ ...payload,
+                environmentContentUpdate: { ...payload.environmentContentUpdate, expectedBodyVersion: 999 } });
+            expect(staleShared.statusCode).toBe(409);
+            expect(staleShared.json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
             expect((await db.artifact.findUniqueOrThrow({ where: { id: input.contentArtifactId } })).bodyVersion).toBe(1);
+            expect((await db.artifact.findUniqueOrThrow({ where: { id: environment.contentArtifactId } })).bodyVersion)
+                .toBe(environment.contentBodyVersion);
             const preparedQueries: { model?: string; action: string }[] = [];
             const stopPreparedQueries = observeSqliteRequests({ before: request => {
                 preparedQueries.push({ model: request.model, action: request.action });
@@ -6428,13 +6445,19 @@ describe('deployment children retain their controller Action authority', () => {
             const result = DeploymentDomainMutationResultV1Schema.parse(response.json());
             if (!result.ok || !result.domain.placements?.length) throw new Error('Expected prepared Domain capture');
             const refreshed = result.domain.placements[0]!;
-            expect(result).toMatchObject({ ok: true, revision: created.revision, domain: {
+            expect(result).toMatchObject({ ok: true, revision: created.revision + 1, domain: {
                 revision: created.domain.revision, state: 'pending', contentArtifactId: input.contentArtifactId, contentBodyVersion: 2 } });
-            expect(refreshed).toEqual({ ...capture, content: { ...capture.content, contentBodyVersion: 2 } });
+            expect(refreshed).toEqual({ ...capture, content: { ...capture.content, contentBodyVersion: 2 },
+                environmentContent: { ...environment, contentBodyVersion: environment.contentBodyVersion + 1 } });
             expect(capture.content.contentBodyVersion).toBe(1);
             const artifact = await db.artifact.findUniqueOrThrow({ where: { id: input.contentArtifactId } });
             expect(artifact.bodyVersion).toBe(2);
             expect(artifact.headerVersion).toBe(capture.content.contentHeaderVersion);
+            const sharedArtifact = await readArtifactForCallerInTx(db, { actorAccountId: f.account.id, artifactId: environment.contentArtifactId });
+            if (!sharedArtifact.ok || !sharedArtifact.artifact.body) throw new Error('Expected the prepared Environment content');
+            expect(sharedArtifact.artifact).toMatchObject({ headerVersion: environment.contentHeaderVersion,
+                bodyVersion: environment.contentBodyVersion + 1 });
+            expect(await open(sharedArtifact.artifact.body, environment.contentArtifactId)).toEqual(sharedTunnel);
             const current = await readArtifactForCallerInTx(db, { actorAccountId: f.account.id, artifactId: input.contentArtifactId });
             if (!current.ok) throw new Error(current.error);
             expect(current.artifact.body).toEqual(bytes);

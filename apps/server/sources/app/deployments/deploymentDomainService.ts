@@ -6,7 +6,7 @@ import { DeploymentDomainHeaderV1Schema, DeploymentDomainCapturedPlacementsV1Sch
     type DeploymentDomainNetworkExposureV1,
     nativeCaddyDomainRouteIdsV1, verifyNativeCaddyRemovalProofV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
+import { DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
 import { isDeploymentDomainAddActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
@@ -477,7 +477,11 @@ export async function createDeploymentDomainInTx(tx: Tx, actorAccountId: string,
         controller: { machineId: executionBinding.machineId, installationId: executionBinding.installationId },
         requestEnvelopeDigest: executionBinding.requestEnvelopeDigest!, actionId: 'deployments.domains.add',
     } : undefined;
-    if (execution) desired.forEach(item => { item.execution = execution; });
+    if (execution) desired.forEach(item => {
+        item.execution = !membership && item.listener === 'privateOrigin'
+            ? { ...execution, prepareEnvironmentContent: true }
+            : execution;
+    });
     const sameResource = (left: Captures[number], right: Captures[number]) => left.placement.machineId === right.placement.machineId
         && left.placement.installationId === right.placement.installationId && left.placement.nativeServer === right.placement.nativeServer
         && left.listener === right.listener && left.dockerEngineId === right.dockerEngineId
@@ -633,6 +637,13 @@ export async function removeDeploymentDomainInTx(tx: Tx, actorAccountId: string,
     return domainResult(changed, loaded.row.revision + 1);
 }
 
+/** Both private heads must advance together or roll back. */
+export class DeploymentDomainPreparationError extends Error {
+    constructor(readonly failure: Exclude<Awaited<ReturnType<typeof updateDeploymentStoredContentInTx>>, { ok: true }>) {
+        super(failure.error);
+    }
+}
+
 /** Commit private vendor provenance and refresh desired operands before the controller dispatches native work. */
 export async function prepareDeploymentDomainContentInTx(tx: Tx, actorAccountId: string,
     input: DeploymentDomainPreparedContentInputV1, binding?: ExternalActionExecutionAuthorizationBindingV1,
@@ -650,15 +661,35 @@ export async function prepareDeploymentDomainContentInTx(tx: Tx, actorAccountId:
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId } });
     const custody = environment ? await readProjectSourceCustodyInTx(tx, environment.projectSourceId) : null;
     if (!environment || !custody) return deploymentFailure('deployment_unavailable', { phase: 'deployment.domain.content.prepare', causeKind: environment ? 'binding_missing' : 'not_found' });
+    // This is the manager's authority captured at Domain admission. Deploy-only
+    // membership reconciliation cannot update the Environment Artifact.
+    const environmentReference = deploymentContentReference(environment);
+    if (input.environmentContentUpdate) {
+        if (!job.execution.prepareEnvironmentContent) return deploymentFailure('deployment_access_denied');
+        if (!isDeepStrictEqual(job.capture.environmentContent, environmentReference)) return deploymentFailure('deployment_conflict');
+    }
     const updated = await updateDeploymentStoredContentInTx(tx, actorAccountId, custody,
         input.capture.content, input.contentUpdate, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1);
     if (!updated.ok) return updated;
+    let revision = environment.revision;
+    let refreshedEnvironmentReference: typeof environmentReference | undefined;
+    if (input.environmentContentUpdate) {
+        const shared = await updateDeploymentStoredContentInTx(tx, actorAccountId, custody,
+            environmentReference, input.environmentContentUpdate, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
+        if (!shared.ok) throw new DeploymentDomainPreparationError(shared);
+        const related = await tx.deploymentEnvironment.update({ where: { id: environment.id },
+            data: { ...shared.reference, revision: { increment: 1 } } });
+        revision = related.revision;
+        refreshedEnvironmentReference = shared.reference;
+    }
     const changed = await tx.deploymentDomain.update({ where: { id: job.row.id }, data: {
         ...updated.reference, capturedPlacements: job.captures.map(capture => capture.desired
-            && isDeepStrictEqual(capture.content, input.capture.content) ? { ...capture, content: updated.reference } : capture),
+            && isDeepStrictEqual(capture.content, input.capture.content) ? { ...capture, content: updated.reference,
+                ...(refreshedEnvironmentReference && isDeepStrictEqual(capture.environmentContent, environmentReference)
+                    ? { environmentContent: refreshedEnvironmentReference } : {}) } : capture),
     } });
-    await publishDeploymentChangesInTx(tx, custody, environment.id, environment.revision);
-    return domainResult(changed, environment.revision);
+    await publishDeploymentChangesInTx(tx, custody, environment.id, revision);
+    return domainResult(changed, revision);
 }
 
 /** Captured installations settle semantic facts; requester departure and current placement edits cannot erase custody. */

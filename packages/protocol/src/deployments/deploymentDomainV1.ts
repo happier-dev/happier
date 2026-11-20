@@ -124,6 +124,7 @@ export const DeploymentDomainCapturedPlacementsV1Schema = lazyZodSchema(() => z.
     routedReplicas: z.optional(domainRoutedReplicas),
     execution: z.optional(z.strictObject({ controller: z.strictObject({ machineId: id, installationId: id }),
         requestEnvelopeDigest: z.string().check(z.minLength(1)), actionId: z.enum(['deployments.domains.add', 'deployments.domains.remove']),
+        prepareEnvironmentContent: z.optional(z.literal(true)),
     })),
 })));
 
@@ -253,6 +254,7 @@ export const DeploymentDomainPreparedContentInputV1Schema = lazyZodSchema(() => 
     expectedDomainRevision: revision, actionOperationId: id, capture: DeploymentDomainPlacementV1Schema,
     // Artifact history retains bodies, not headers: predecessor captures must keep their exact readable header.
     contentUpdate: DeploymentDomainContentUpdateV1Schema,
+    environmentContentUpdate: z.optional(DeploymentDomainContentUpdateV1Schema),
 }));
 export type DeploymentDomainAddInputV1 = z.infer<typeof DeploymentDomainAddInputV1Schema>;
 export type DeploymentDomainAddAdmissionInputV1 = z.infer<typeof DeploymentDomainAddAdmissionInputV1Schema>;

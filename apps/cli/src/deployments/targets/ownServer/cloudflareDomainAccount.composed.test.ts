@@ -5,10 +5,11 @@ import fastify from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import nacl from 'tweetnacl';
 import * as undici from 'undici';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorContext, DeploymentActionInputSchemasV1,
     DeploymentChildRpcV1Schema, DeploymentDomainChildRpcV1Schema, DeploymentDomainMachineTopologyV1Schema,
     DeploymentEnvironmentGetResultV1Schema, encodeBase64, verifyMachineInstallationProof, signMachineInstallationProof } from '@happier-dev/protocol';
+import { createActionAutomationPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from '@happier-dev/protocol/actions/actionSettings';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationVerifyRequestV1Schema,
     bindExternalActionExecutionAuthorizationVerifyHttpPathV1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -73,6 +74,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(
 /** Home, Cloudflare and native Socket.IO are the system boundaries. The
  * reviewed issuer, Account module, credential purpose, sealing and CAS stay real. */
 it.each(['connector grant authorization refused', 'create connector grant authorization refused', 'prepared', 'connector admitted Domain child proof', 'adopt omitted configuration', 'adopt omitted configuration result', 'create configuration without version', 'create malformed configuration', 'authored ui', 'authored agent', 'Home Domain admission refused', 'authored domain ingress', 'authored domain ingress null configuration', 'authored domain DNS refused', 'rejected authored', 'vendor unknown', 'content conflict', 'two members', 'partial grant', 'remove shared', 'remove final', 'remove created final', 'remove created shared', 'remove adopted final', 'remove legacy final',
+    'remove adopter after creator', 'remove foreign-routed tunnel after creator', 'remove different tunnel after creator',
     'recovery Add a3318568 missing selection', 'recovery Add no recorded ingress', 'recovery Add no recorded ingress multiple members', 'remove unprepared absent tunnel', 'remove unprepared partial config', 'remove unprepared foreign route', 'remove unprepared app gone',
     'remove unprepared configuration without version', 'remove unprepared null configuration', 'remove unprepared malformed configuration',
     'remove unprepared DNS optional pagination', 'remove unprepared tunnel optional pagination',
@@ -92,7 +94,12 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const dnsOptionalPagination = scenario === 'remove unprepared DNS optional pagination';
     const tunnelOptionalPagination = scenario === 'remove unprepared tunnel optional pagination';
     const nullConfiguration = scenario === 'authored domain ingress null configuration' || scenario === 'remove unprepared null configuration';
-    const settledRemoval = scenario === 'remove created final' || scenario === 'remove created shared' || scenario === 'remove adopted final' || scenario === 'remove legacy final';
+    const sharedCreation = scenario === 'remove adopter after creator' || scenario === 'remove foreign-routed tunnel after creator'
+        || scenario === 'remove different tunnel after creator';
+    const foreignRoute = scenario === 'remove foreign-routed tunnel after creator';
+    const removeTunnel = scenario === 'remove created final' || scenario === 'remove adopter after creator';
+    const settledRemoval = sharedCreation || scenario === 'remove created final' || scenario === 'remove created shared'
+        || scenario === 'remove adopted final' || scenario === 'remove legacy final';
     const realNativeRemoval = scenario === 'remove unprepared configuration without version' || scenario === 'remove unprepared null configuration' || dnsOptionalPagination || tunnelOptionalPagination;
     const realNativeDiscovery = scenario === 'remove unprepared app gone' || realNativeRemoval;
     const createWithoutVersion = scenario === 'create configuration without version';
@@ -151,6 +158,11 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const domainIngressOnly = scenario === 'authored domain ingress' || scenario === 'authored domain ingress null configuration' || scenario === 'authored domain DNS refused';
     if (domainIngressOnly || scenario === 'recovery Add no recorded ingress' || scenario === 'recovery Add no recorded ingress multiple members') delete environment.content.ingress;
     else environment.content.ingress = { kind: 'cloudflareTunnel' };
+    // The creating Domain has already been removed. Only the Environment
+    // retains its creation proof by exact Cloudflare account and tunnel.
+    const environmentContent = sharedCreation ? { ...environment.content, cloudflareTunnels: [{
+        accountId: 'vendor-account', tunnelId: scenario === 'remove different tunnel after creator' ? 'different-tunnel' : 'reviewed-tunnel',
+    }] } : environment.content;
     const targetLink = environment.targetLinks[0];
     if (!targetLink) throw new Error('Expected the canonical Environment target-link fixture');
     const link = targetLink.targetLink;
@@ -187,13 +199,13 @@ it.each(['connector grant authorization refused', 'create connector grant author
     const retainedGrant = machineSecretGrantSubjectKey({ v: 1, kind: 'connectorToken', machineId: 'receiver',
         installationId: installation('receiver'), provider: { kind: 'builtin', id: 'cloudflareNamed' }, connectorId: 'reviewed-tunnel' });
     const retainedContent = removing && !unprepared ? { ...content, cloudflarePreparation: { tunnelId: 'reviewed-tunnel',
-        ...(settledRemoval && scenario !== 'remove legacy final' ? { tunnelOwnership: scenario === 'remove adopted final' ? 'adopted' as const : 'created' as const } : {}),
+        ...(settledRemoval && scenario !== 'remove legacy final' ? { tunnelOwnership: scenario === 'remove adopted final' || sharedCreation ? 'adopted' as const : 'created' as const } : {}),
         owned: [{ hostname: content.hostname, expectedService: 'http://172.18.0.2:9381' }],
         dnsOwnership: [{ hostname: content.hostname, recordId: 'acknowledged-dns-record' }],
         connectors: [{ machineId: 'receiver', installationId: installation('receiver'), ...vendorController.connector,
             networkName: 'environment_default', grantRef: retainedGrant }] } } : content;
     for (const [id, kind, body] of [[authoredInput.contentArtifactId, 'deployment-domain.v1', retainedContent],
-        [environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environment.content],
+        [environment.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environmentContent],
         [link.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {}]] as const) {
         if (authoredDomain && id === authoredInput.contentArtifactId) continue;
         authored.artifacts.seed(id, encodePlainArtifactStoredContent({ kind, title: 'Domain' }),
@@ -210,6 +222,8 @@ it.each(['connector grant authorization refused', 'create connector grant author
             dockerEngineId: 'engine-receiver', content: { contentArtifactId: authoredInput.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 } }] });
     const grants = new Map<string, string>();
     let preparedBody: unknown;
+    let preparedEnvironmentUpdate: unknown;
+    let preparedEnvironmentBody: unknown;
     let tunnelDeleted = false;
     app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 0 }));
     app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture({ mode: 'plain' }));
@@ -249,7 +263,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
         expect(request.method).toBe(removalRequest.method);
         if (!domain) throw new Error('Expected existing Domain');
         domain = { ...domain, revision: 2, state: 'removing', placements: domain.placements?.map(capture => ({ ...capture, desired: false,
-            retireSharedTunnel: scenario === 'remove final' || scenario === 'remove created final' || scenario === 'remove adopted final' || scenario === 'remove legacy final', placement: { ...capture.placement,
+            retireSharedTunnel: scenario === 'remove final' || settledRemoval && scenario !== 'remove created shared', placement: { ...capture.placement,
                 actionOperationId: 'domain-operation', requestId: envelope.requestId } })) };
         trace.push('removal-admitted');
         return { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1, domain };
@@ -269,7 +283,10 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 installationId: placement.installationId, nativeServer: placement.nativeServer,
                 actionOperationId: admitted.actionOperationId, requestId: admitted.requestId }, listener: placement.listener, desired: true,
                 dockerEngineId: placement.dockerEngineId, content: { contentArtifactId: authoredInput.contentArtifactId,
-                    contentHeaderVersion: 1, contentBodyVersion: 1 } })) });
+                    contentHeaderVersion: 1, contentBodyVersion: 1 },
+                environmentContent: { contentArtifactId: environment.environment.contentArtifactId,
+                    contentHeaderVersion: environment.environment.contentHeaderVersion,
+                    contentBodyVersion: environment.environment.contentBodyVersion } })) });
         return { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1, domain };
     });
     app.post('/v1/deployments/environments/:environmentId/domains/:domainId/transitions', async request => {
@@ -352,6 +369,8 @@ it.each(['connector grant authorization refused', 'create connector grant author
         const prepared = DeploymentDomainPreparedContentInputV1Schema.parse(request.body);
         expect(prepared).toMatchObject({ expectedDomainRevision: 1, actionOperationId: 'domain-operation', capture: domain?.placements?.[0] });
         trace.push('content-cas');
+        const environmentUpdate = prepared.environmentContentUpdate;
+        preparedEnvironmentUpdate = environmentUpdate;
         if (scenario === 'content conflict') return reply.code(409).send({ ok: false, error: 'deployment_conflict' });
         const row = authored.artifacts.read(authoredInput.contentArtifactId);
         if (!row) throw new Error('Expected the original Domain Artifact at CAS');
@@ -363,9 +382,23 @@ it.each(['connector grant authorization refused', 'create connector grant author
         const decoded = decodePlainArtifactStoredContent(row.body);
         if (!decoded || typeof decoded !== 'object' || !('body' in decoded) || typeof decoded.body !== 'string') throw new Error('Expected private Domain Artifact');
         preparedBody = JSON.parse(decoded.body);
+        if (environmentUpdate) {
+            const environmentRow = authored.artifacts.read(environment.environment.contentArtifactId);
+            if (!environmentRow) throw new Error('Expected the original Environment Artifact at CAS');
+            expect(environmentRow.bodyVersion).toBe(environmentUpdate.expectedBodyVersion);
+            environmentRow.body = environmentUpdate.body;
+            environmentRow.bodyVersion += 1;
+            environment.environment.contentBodyVersion = environmentRow.bodyVersion;
+            const decodedEnvironment = decodePlainArtifactStoredContent(environmentRow.body);
+            if (!decodedEnvironment || typeof decodedEnvironment !== 'object' || !('body' in decodedEnvironment) || typeof decodedEnvironment.body !== 'string')
+                throw new Error('Expected private Environment Artifact');
+            preparedEnvironmentBody = JSON.parse(decodedEnvironment.body);
+        }
         if (!domain) throw new Error('Preparation must follow Domain admission');
         domain = DeploymentDomainHeaderV1Schema.parse({ ...domain, contentBodyVersion: row.bodyVersion,
-            placements: domain.placements?.map(capture => ({ ...capture, content: { ...capture.content, contentBodyVersion: row.bodyVersion } })) });
+            placements: domain.placements?.map(capture => ({ ...capture, content: { ...capture.content, contentBodyVersion: row.bodyVersion },
+                ...(capture.environmentContent && environmentUpdate ? { environmentContent: { ...capture.environmentContent,
+                    contentBodyVersion: environment.environment.contentBodyVersion } } : {}) })) });
         return { ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1, domain };
     });
     const unrelatedRoute = { hostname: 'other.example.test', service: 'http://172.18.0.9:9381' };
@@ -373,7 +406,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
     // Cloudflare can already contain configure's acknowledged route and DNS.
     let remoteConfig: unknown = { ingress: [...(removing && scenario !== 'remove unprepared absent tunnel'
         ? [{ hostname: content.hostname, service: scenario === 'remove unprepared foreign route'
-            ? 'http://foreign-service:9381' : 'http://172.18.0.2:9381' }] : []), ...(unprepared ? [unrelatedRoute] : []),
+            ? 'http://foreign-service:9381' : 'http://172.18.0.2:9381' }] : []), ...(unprepared || foreignRoute ? [unrelatedRoute] : []),
         { service: 'http_status:404' }] };
     // Real read-only QA Account GET, 2026-11-07T02:40:19Z: successful
     // result object with config:null and numeric version (no response values retained).
@@ -594,7 +627,10 @@ it.each(['connector grant authorization refused', 'create connector grant author
             runtime: { async acquire() { throw new Error('Domain cannot deploy an application'); } } });
         const invokeAccount = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease,
             requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }) });
-        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
+        const actionAutomations = createActionAutomationPortV1({ accountId: 'owner',
+            seed: async () => ({ v: 1, rows: [] }), settle: async () => {} });
+        onTestFinished(() => actionAutomations.dispose());
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps, actionAutomations,
             listContributedActionDefinitions: list, readContributedActionSchemas: createCommittedContributedActionSchemaReader(list),
             invokeContributedAction: invokeAccount });
         requester = await prepareInstalledRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' }, machineId: 'controller',
@@ -767,10 +803,12 @@ it.each(['connector grant authorization refused', 'create connector grant author
             return;
         }
         if (settledRemoval) {
-            expect(result, JSON.stringify({ result, trace, vendorRequests })).toMatchObject({ ok: true, result: { ok: true, domain: { deletedAtMs: 2 },
-                tunnel: { kind: scenario === 'remove created final' ? 'removed' : 'retained',
-                    ...(scenario === 'remove created final' ? {} : { reason: scenario === 'remove created shared' ? 'shared' : scenario === 'remove legacy final' ? 'ownership_unknown' : 'adopted' }) } } });
-            expect(tunnelDeleted).toBe(scenario === 'remove created final');
+            const tunnel = removeTunnel ? { kind: 'removed' } : { kind: 'retained',
+                reason: foreignRoute ? 'foreign_routes' : scenario === 'remove created shared' ? 'shared'
+                    : scenario === 'remove legacy final' ? 'ownership_unknown' : 'adopted' };
+            expect(result, JSON.stringify({ result, trace, vendorRequests })).toMatchObject({
+                ok: true, result: { ok: true, domain: { deletedAtMs: 2 }, tunnel } });
+            expect(tunnelDeleted).toBe(removeTunnel);
             expect(trace.indexOf('vendor-config')).toBeGreaterThan(trace.indexOf('native-dispatch'));
             expect(nativeJobs[0]?.cloudflareConnector === undefined).toBe(scenario === 'remove created shared');
             return;
@@ -796,7 +834,12 @@ it.each(['connector grant authorization refused', 'create connector grant author
             expect(trace.indexOf('vendor-config')).toBeGreaterThan(trace.indexOf('sealed-for-target'));
             expect(trace.indexOf('content-cas')).toBeGreaterThan(trace.indexOf('vendor-dns'));
         } else expect(trace.indexOf('content-cas'), JSON.stringify({ result, trace })).toBeGreaterThan(trace.indexOf('sealed-for-target'));
-        if (createWithoutVersion) expect(trace).toContain('vendor-tunnel-created');
+        if (createWithoutVersion) {
+            expect(trace).toContain('vendor-tunnel-created');
+            expect(preparedEnvironmentUpdate).toMatchObject({ body: expect.any(String), expectedBodyVersion: 1 });
+            expect(preparedEnvironmentBody).toEqual({ ...environmentContent,
+                cloudflareTunnels: [{ accountId: 'vendor-account', tunnelId: 'reviewed-tunnel' }] });
+        }
         expect(result).toMatchObject({ ok: false, errorCode: scenario === 'prepared' || scenario === 'connector admitted Domain child proof' || createWithoutVersion || omittedConfiguration || scenario === 'two members' ? 'native_route_unavailable'
             : scenario === 'content conflict' ? 'deployment_conflict' : 'outcome_unknown' });
         if (scenario === 'content conflict') {
@@ -806,12 +849,14 @@ it.each(['connector grant authorization refused', 'create connector grant author
                 failureCause: { errorClass: 'Error', errorCode: 'deployment_conflict' } });
             expect(nativeJobs).toEqual([]);
             expect(authored.artifacts.read(authoredInput.contentArtifactId)?.bodyVersion).toBe(1);
+            expect(authored.artifacts.read(environment.environment.contentArtifactId)?.bodyVersion).toBe(1);
         } else {
             expect(preparedBody).toMatchObject({ cloudflarePreparation: { tunnelId: 'reviewed-tunnel',
-                tunnelOwnership: creatingTunnel ? 'created' : 'adopted',
+                ...(!creatingTunnel ? { tunnelOwnership: 'adopted' } : {}),
                 owned: [{ hostname: content.hostname, expectedService: 'http://172.18.0.2:9381' }],
                 dnsOwnership: scenario === 'partial grant' || scenario === 'vendor unknown' ? [] : [{ hostname: content.hostname, recordId: dnsRecord.id }], connectors: grantedMembers.map(machineId => ({ machineId,
                     installationId: installation(machineId), ...vendorController.connector, networkName: 'environment_default', grantRef: grants.get(machineId) })) } });
+            if (creatingTunnel) expect(preparedBody).not.toHaveProperty('cloudflarePreparation.tunnelOwnership');
             expect(authored.artifacts.read(authoredInput.contentArtifactId)?.bodyVersion).toBe(2);
             if (scenario === 'vendor unknown' || scenario === 'partial grant') expect(nativeJobs).toEqual([]);
             else {
@@ -821,6 +866,7 @@ it.each(['connector grant authorization refused', 'create connector grant author
                     capture: { content: { contentBodyVersion: 2 }, placement: { nativeServer: 'private_app' } },
                     cloudflareConnector: { tunnelId: 'reviewed-tunnel', networkName: 'environment_default', grantRef,
                         connector: vendorController.connector } });
+                if (creatingTunnel) expect(nativeJobs[0]).toMatchObject({ capture: { environmentContent: { contentBodyVersion: 2 } } });
             }
         }
         expect(JSON.stringify({ result, nativeJobs, preparedBody })).not.toContain('private-minted-connector-token');

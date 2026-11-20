@@ -9,6 +9,7 @@ import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { readEnvironmentDomainSecretLaunchAdmissionForHost,
     bindMachineConnectorSecretsForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
+import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { createOwnServerDomainContentWriter } from './ownServerDomainActions';
 import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -37,6 +38,7 @@ type Prepared = { kind: 'prepared' | 'unknown' | 'refused'; code?: string; provi
 /** One Account operation prepares a shared tunnel; each real target receives its own sealed grant. */
 export async function prepareCloudflareDomainForHost(input: Readonly<{
     domain: DeploymentDomainHeaderV1; content: DeploymentDomainContentV1;
+    membershipReconciliation: boolean;
     topology: DeploymentDomainTopologyV1; context: ActionExecutorContext;
     host: Readonly<{ serverId: string; machineId: string; credentials: StoredCredentials; installedCredentials?: StoredCredentials;
         serverHttpBaseUrl: string;
@@ -53,9 +55,13 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     if (!child) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });
     const purpose = selected.selection.credentialRefs.find(item => item.purpose === 'tunnel.manage');
     if (purpose?.credentialRef.kind !== 'connectedAccount') return refuse('connected_account_required');
+    const previous = content.cloudflarePreparation;
+    // Membership can reconfigure a recorded tunnel. A pending new tunnel
+    // needs the Domain add that can commit its Environment creation proof.
+    if (input.membershipReconciliation && !previous && selected.controller.tunnel.kind === 'create')
+        return refuse('required_fact_unavailable', { requiredFact: 'cloudflarePreparation' });
     const admissions: Awaited<ReturnType<typeof readEnvironmentDomainSecretLaunchAdmissionForHost>>[] = [];
     const acknowledged: Grant[] = [];
-    const previous = content.cloudflarePreparation;
     const desired = [{ hostname: content.hostname, ...(content.target.path ? { path: content.target.path } : {}),
         service: origin.service }];
     try {
@@ -87,9 +93,8 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
         let updated = domain;
         let preparedContent = content;
         if (tunnelId) {
-            // Re-preparation adopts this ID; preserve witnessed creation and
-            // keep older records without provenance unknown.
             const tunnelOwnership = previous ? previous.tunnelOwnership : prepared?.tunnelOwnership;
+            const createdTunnel = !previous && tunnelOwnership === 'created' ? { accountId: selected.controller.accountId, tunnelId } : undefined;
             const connectors = acknowledged.map(grant => {
                 const member = origin.members.find(item => item.machineId === grant.machineId && item.installationId === grant.installationId);
                 if (!member) return refuse('target_mismatch');
@@ -100,11 +105,12 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
             try {
                 preparedContent = { ...content,
                     cloudflarePreparation: { tunnelId, owned: desired.map(({ service, ...route }) => ({ ...route, expectedService: service })),
-                        ...(tunnelOwnership ? { tunnelOwnership } : {}),
+                        ...(!createdTunnel && tunnelOwnership ? { tunnelOwnership } : {}),
                         dnsOwnership: [...(prepared?.dnsOwnership ?? previous?.dnsOwnership ?? selected.controller.dnsOwnership)],
                         connectors: [...(previous?.connectors ?? []).filter(old => !connectors.some(current =>
                             old.machineId === current.machineId && old.installationId === current.installationId)), ...connectors] } };
-                updated = await host.persistPreparedContent({ domain, capture, context, content: preparedContent });
+                updated = await host.persistPreparedContent({ domain, capture, context, content: preparedContent,
+                    ...(createdTunnel ? { createdTunnel } : {}) });
             } catch (error) {
                 const failureCause = projectActionFailureCauseV1(error, 'deployment.domain.cloudflare_preparation');
                 return refuseCloudflare(failureCause.errorCode ?? 'outcome_unknown', 'preparation', { failureCause, tunnelId });
@@ -118,9 +124,20 @@ export async function prepareCloudflareDomainForHost(input: Readonly<{
     } finally { await Promise.all(admissions.map(item => item.release?.())); }
 }
 
+/** Shared creation is proof for this exact Cloudflare account and tunnel only. */
+export function resolveCloudflareDomainTunnelOwnership(content: DeploymentDomainContentV1,
+    shared: DeploymentEnvironmentDetailV1['content']['cloudflareTunnels']): DeploymentDomainTunnelOwnershipV1 | undefined {
+    const prepared = content.cloudflarePreparation;
+    if (!prepared) return;
+    const selected = readCloudflareNamedControllerSelection(content.ingress);
+    if (shared?.some(tunnel => tunnel.tunnelId === prepared.tunnelId && tunnel.accountId === selected?.controller.accountId)) return 'created';
+    return prepared.tunnelOwnership;
+}
+
 /** Retire this Domain's reviewed resources using Home's captured last-consumer decision. */
 export async function disableCloudflareDomainForHost(content: DeploymentDomainContentV1,
-    context: ActionExecutorContext, retireTunnel = false): Promise<DeploymentDomainTunnelDispositionV1 | undefined> {
+    context: ActionExecutorContext, retireTunnel: boolean, tunnelOwnership: DeploymentDomainTunnelOwnershipV1 | undefined):
+    Promise<DeploymentDomainTunnelDispositionV1 | undefined> {
     const selected = readCloudflareNamedControllerSelection(content.ingress);
     if (!selected) return;
     const prepared = content.cloudflarePreparation;
@@ -135,7 +152,7 @@ export async function disableCloudflareDomainForHost(content: DeploymentDomainCo
         action: { pluginId, localId: 'cloudflare-named/disable' }, role: 'disable',
         input: { credentialRef: purpose.credentialRef.account, accountId: selected.controller.accountId,
             zoneId: selected.controller.zoneId, tunnelId: prepared.tunnelId,
-            ...(prepared.tunnelOwnership ? { tunnelOwnership: prepared.tunnelOwnership } : {}), retireTunnel,
+            ...(tunnelOwnership ? { tunnelOwnership } : {}), retireTunnel,
             owned: prepared.owned, dnsOwnership: prepared.dnsOwnership },
     } : recovered;
     if (!request) return refuse('required_fact_unavailable', { requiredFact: 'reviewed_cloudflare_child' });

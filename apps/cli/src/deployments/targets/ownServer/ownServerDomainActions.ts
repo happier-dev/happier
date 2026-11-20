@@ -19,9 +19,10 @@ import {
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { resolveDomainIngress, selectDomainCaddyPlacements, readDomainIngressMembersForHost, selectDomainMembershipMachines } from './domainRouteSelection';
 import { DeploymentDomainPreparedContentInputV1Schema, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
+import { getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { readDeploymentDomainArtifactV1, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
+import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1,
+    type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import type { StoredCredentials } from '@/persistence';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { HostReviewedChildrenDomainPreparationV1 } from '@happier-dev/protocol/actions/executor/types';
@@ -29,7 +30,8 @@ import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/a
 import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ArtifactRequestAuthorizationHeaders, createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget } from './cloudflareDomainPreparation';
+import { prepareCloudflareDomainForHost, disableCloudflareDomainForHost, cloudflareDomainConnectorForTarget,
+    resolveCloudflareDomainTunnelOwnership } from './cloudflareDomainPreparation';
 import { createActionExecuteFailureError, isActionExecuteFailure, readActionFailureCauseV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentException, projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { isRecord } from '@happier-dev/protocol/common/records';
@@ -282,12 +284,16 @@ export async function prepareOwnServerDomainReviewedChildren(
                     expectedService: origin.service }], dnsOwnership: [] } }] };
     }
     const role = isDeploymentDomainAddActionIdV1(actionId) ? 'configure' : 'disable';
+    const tunnelOwnership = role === 'disable' && prepared
+        ? resolveCloudflareDomainTunnelOwnership(content,
+            (await host.readEnvironment({ environmentId: input.environmentId, context: request.context })).content.cloudflareTunnels)
+        : undefined;
     return { children: [{ action: { pluginId: purpose.credentialRef.account.service.pluginId, localId: `cloudflare-named/${role}` }, role,
         scopeInput: { credentialRef: purpose.credentialRef.account, accountId, zoneId,
             owned: prepared?.owned ?? selected.controller.owned,
             dnsOwnership: prepared?.dnsOwnership ?? selected.controller.dnsOwnership,
             ...(role === 'disable' && prepared ? { tunnelId: prepared.tunnelId,
-                ...(prepared.tunnelOwnership ? { tunnelOwnership: prepared.tunnelOwnership } : {}) }
+                ...(tunnelOwnership ? { tunnelOwnership } : {}) }
                 : { tunnel: prepared ? { kind: 'adopt', tunnelId: prepared.tunnelId, name: tunnel.name } : tunnel }) } }] };
 }
 
@@ -300,33 +306,55 @@ export function createOwnServerDomainContentWriter(host: Readonly<{
         request: Readonly<{ method: string; path: string; body?: unknown }>): Promise<Readonly<Record<string, string>>>;
 }>) {
     return (input: Readonly<{ domain: DeploymentDomainHeaderV1; capture: DeploymentDomainPlacementV1;
-        content: DeploymentDomainContentV1; context: ActionExecutorContext }>): Promise<DeploymentDomainHeaderV1> =>
+        content: DeploymentDomainContentV1; context: ActionExecutorContext;
+        createdTunnel?: NonNullable<DeploymentEnvironmentDetailV1['content']['cloudflareTunnels']>[number] }>): Promise<DeploymentDomainHeaderV1> =>
         runWithServerHttpBaseUrl(host.serverHttpBaseUrl, async () => {
             const { domain, capture, content, context } = input;
             const actionId = 'deployments.domains.add';
             const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
             const authorizationHeaders: ArtifactRequestAuthorizationHeaders = async request =>
                 ({ ...await host.headers(context, actionId, request) });
-            const resource = await host.artifacts.readForUpdate(domain.contentArtifactId, { signal: context.signal,
+            const readResource = (id: string) => host.artifacts.readForUpdate(id, { signal: context.signal,
                 prepareRecipients: false, includeSharedAudience: false, authorizationHeaders });
+            const resource = await readResource(domain.contentArtifactId);
             const opened = readDeploymentDomainArtifactV1(domain, resource?.artifact ?? null);
             if (!opened.ok) return refuseDeploymentArtifactRead(opened);
             if (!resource) return refuse('deployment_content_unavailable');
-            const prepared = await resource.prepareJsonUpdate({ header: resource.artifact.header, body: JSON.stringify(content),
-                beforeWrite: () => context.signal?.throwIfAborted() });
-            if (!prepared.ok) return refuse(prepared.errorCode);
+            const prepareBody = async (resource: NonNullable<Awaited<ReturnType<typeof readResource>>>, content: unknown) => {
+                const prepared = await resource.prepareJsonUpdate({ header: resource.artifact.header, body: JSON.stringify(content),
+                    beforeWrite: () => context.signal?.throwIfAborted() });
+                if (!prepared.ok) return refuse(prepared.errorCode);
+                const { body, expectedBodyVersion, expectedHeaderVersion, provenance, provenanceDataEncryptionKey, kind } = prepared.mutation;
+                return { update: { body, expectedBodyVersion, expectedHeaderVersion,
+                        ...(provenance === undefined ? {} : { provenance }),
+                        ...(provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey }),
+                        ...(kind === undefined ? {} : { kind }) },
+                    assertCurrent: prepared.assertCurrent, afterCommit: prepared.afterCommit };
+            };
+            const prepared = await prepareBody(resource, content);
+            let environmentPrepared: Awaited<ReturnType<typeof prepareBody>> | undefined;
+            const { createdTunnel } = input;
+            if (createdTunnel) {
+                const reference = capture.environmentContent;
+                if (!reference) return refuse('deployment_content_unavailable');
+                const resource = await readResource(reference.contentArtifactId);
+                const opened = readDeploymentEnvironmentArtifactV1(reference, resource?.artifact ?? null);
+                if (!opened.ok) return refuseDeploymentArtifactRead(opened);
+                if (!resource) return refuse('deployment_content_unavailable');
+                const tunnels = opened.content.cloudflareTunnels ?? [];
+                if (!tunnels.some(tunnel => isDeepStrictEqual(tunnel, createdTunnel)))
+                    environmentPrepared = await prepareBody(resource, { ...opened.content, cloudflareTunnels: [...tunnels, createdTunnel] });
+            }
             // Only the body advances: retained predecessors still pin the original readable header.
             const body = DeploymentDomainPreparedContentInputV1Schema.parse({ serverId: host.serverId,
                 environmentId: domain.environmentId, domainId: domain.id, expectedDomainRevision: domain.revision,
                 actionOperationId: capture.placement.actionOperationId, capture,
-                contentUpdate: { body: prepared.mutation.body, expectedBodyVersion: prepared.mutation.expectedBodyVersion,
-                    expectedHeaderVersion: prepared.mutation.expectedHeaderVersion,
-                    ...(prepared.mutation.provenance === undefined ? {} : { provenance: prepared.mutation.provenance }),
-                    ...(prepared.mutation.provenanceDataEncryptionKey === undefined ? {} : { provenanceDataEncryptionKey: prepared.mutation.provenanceDataEncryptionKey }),
-                    ...(prepared.mutation.kind === undefined ? {} : { kind: prepared.mutation.kind }) } });
+                contentUpdate: prepared.update,
+                ...(environmentPrepared ? { environmentContentUpdate: environmentPrepared.update } : {}) });
             const path = `/v1/deployments/environments/${encodeURIComponent(domain.environmentId)}/domains/${encodeURIComponent(domain.id)}/prepared-content`;
             const headers = await host.headers(context, actionId, { method: 'POST', path, body });
             await prepared.assertCurrent();
+            await environmentPrepared?.assertCurrent();
             let response;
             try {
                 response = await axios.request<unknown>({ method: 'POST', url: `${host.serverHttpBaseUrl}${path}`,
@@ -340,6 +368,7 @@ export function createOwnServerDomainContentWriter(host: Readonly<{
             if (!result.success) return refuse('outcome_unknown');
             if (!result.data.ok) return refuse(result.data.error);
             await prepared.afterCommit();
+            await environmentPrepared?.afterCommit();
             return result.data.domain;
         });
 }
@@ -431,7 +460,9 @@ export function createOwnServerDomainActions(host: Readonly<{
                         ? { tunnelId: privateContent.cloudflarePreparation.tunnelId } : {}) };
                 if (isDeploymentDomainAddActionIdV1(actionId) && topology?.tunnelOrigin) {
                     // Add's discovery already opened this private content; preparation returns its own authored update.
-                    const prepared = await prepareCloudflareDomainForHost({ domain, content: privateContent!, topology, context, host });
+                    const prepared = await prepareCloudflareDomainForHost({ domain, content: privateContent!,
+                        membershipReconciliation: 'membershipDeploymentId' in input && input.membershipDeploymentId !== undefined,
+                        topology, context, host });
                     domain = prepared.domain;
                     captures = domain.placements ?? [];
                     privateContent = prepared.content;
@@ -444,6 +475,10 @@ export function createOwnServerDomainActions(host: Readonly<{
                         privateContent = opened.content;
                     }
                 }
+                const tunnelOwnership = isDeploymentDomainRemoveActionIdV1(actionId) && privateContent?.cloudflarePreparation
+                    ? resolveCloudflareDomainTunnelOwnership(privateContent,
+                        (await host.readEnvironment({ environmentId: input.environmentId, context })).content.cloudflareTunnels)
+                    : undefined;
                 // Retire a changed route before replacing the same exact native id.
                 // Both effects spend the captured admission, not another Action.
                 const observations = [];
@@ -471,7 +506,7 @@ export function createOwnServerDomainActions(host: Readonly<{
                 const tunnel = isDeploymentDomainRemoveActionIdV1(actionId) && privateContent
                     && observations.every(observation => observation.state === 'removed')
                     ? await disableCloudflareDomainForHost(privateContent, context,
-                        captures.some(capture => capture.retireSharedTunnel === true)) : undefined;
+                        captures.some(capture => capture.retireSharedTunnel === true), tunnelOwnership) : undefined;
                 const body = DeploymentDomainTransitionInputV1Schema.parse({ serverId: input.serverId,
                     environmentId: input.environmentId, domainId: input.domainId, expectedDomainRevision: domain.revision, observations });
                 const path = `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/domains/${encodeURIComponent(input.domainId)}/transitions`;

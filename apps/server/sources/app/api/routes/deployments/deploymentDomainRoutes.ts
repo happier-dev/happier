@@ -6,7 +6,7 @@ import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { deploymentWriteIsolationLevel } from '@/app/deployments/deploymentEnvironmentService';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { createDeploymentDomainInTx, removeDeploymentDomainInTx, readDeploymentDomainInTx,
-    listDeploymentDomainsInTx, transitionDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from '@/app/deployments/deploymentDomainService';
+    listDeploymentDomainsInTx, transitionDeploymentDomainInTx, prepareDeploymentDomainContentInTx, DeploymentDomainPreparationError } from '@/app/deployments/deploymentDomainService';
 import type { Fastify } from '../../types';
 import { deploymentNewWorkFeatureGate } from './deploymentFeatureGate';
 import { PresentUserRequiredResponseSchema } from '../../utils/requirePresentUser';
@@ -79,7 +79,11 @@ export function registerDeploymentDomainRoutes(app: Fastify): void {
         if (request.validationError || request.params.environmentId !== request.body.environmentId
             || request.params.domainId !== request.body.domainId) return reply.code(400).send(invalid);
         const value = await inTx(tx => prepareDeploymentDomainContentInTx(tx, request.userId, request.body,
-            readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: deploymentWriteIsolationLevel() });
+            readDeploymentExecutionBindingFromRequest(request) ?? undefined), { isolationLevel: deploymentWriteIsolationLevel() })
+            .catch((error: unknown) => {
+                if (error instanceof DeploymentDomainPreparationError) return error.failure;
+                throw error;
+            });
         return reply.code(status(value)).send(value);
     });
     app.post('/v1/deployments/environments/:environmentId/domains/:domainId/transitions', {

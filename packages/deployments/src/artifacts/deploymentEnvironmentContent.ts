@@ -87,6 +87,8 @@ const environmentContentShape = {
     definition: DeploymentEnvironmentDefinitionV1Schema, bindings: z.array(EnvironmentSecretBindingV1Schema),
     ownServer: z.optional(OwnServerEnvironmentConfigurationV1Schema),
     ingress: z.optional(DeploymentIngressV1Schema),
+    /** Vendor-acknowledged creation of the Environment's shared tunnel. */
+    cloudflareTunnels: z.optional(z.array(z.strictObject({ accountId: text, tunnelId: text }))),
     backup: z.optional(DeploymentEnvironmentBackupV1Schema),
     telemetry: z.optional(DeploymentTelemetryCapabilitiesV1Schema),
     template: z.optional(DeploymentEnvironmentTemplateProvenanceV1Schema),
