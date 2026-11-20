@@ -41,6 +41,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
                 sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
+                toolOutputs: { mode: 'keep_forever' },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'keep_forever' },
                 userFeedItems: { mode: 'keep_forever' },
@@ -74,6 +75,7 @@ describe('retention/retentionPolicyToCapabilities', () => {
             domains: {
                 sessions: { mode: 'delete_inactive', inactivityDays: 30 },
                 sessionSidechainMessages: { mode: 'delete_older_than', days: 7 },
+                toolOutputs: { mode: 'keep_forever' },
                 accountChanges: { mode: 'delete_older_than', days: 14 },
                 voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
                 userFeedItems: { mode: 'keep_forever' },
