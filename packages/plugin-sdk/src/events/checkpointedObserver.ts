@@ -130,9 +130,14 @@ async function processCheckpointedAttempt(
     return disposition;
 }
 
+type ObserverSourceState = {
+    nextEligibleAt: number | null | undefined;
+    status?: NonNullable<PluginCheckpointedEventAttemptResultV1<unknown>['status']>;
+};
+
 type ObserverState = {
     catalogs: Map<string, CurrentSourceCatalog>;
-    nextEligibleAt: Map<string, number | null>;
+    sources: Map<string, ObserverSourceState>;
     pendingObservations: Map<string, Set<string>>;
     retiredRevision: string | null;
     owner: string | null;
@@ -185,7 +190,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
     const now = input.now ?? Date.now;
     const sleep = input.sleep ?? sleepUntilEligible;
     const transports: readonly ('checkpointedPull' | 'durablePush')[] = input.transportKinds ?? ['checkpointedPull'];
-    const state: ObserverState = { catalogs: new Map(), nextEligibleAt: new Map(), pendingObservations: new Map(), retiredRevision: null, owner: null,
+    const state: ObserverState = { catalogs: new Map(), sources: new Map(), pendingObservations: new Map(), retiredRevision: null, owner: null,
         adoptedRevision: null, reconciliationStartedAt: null };
     // Admission can await a person's approval. Keep its original candidate in
     // custody while the same source's advancing provider schedule keeps running.
@@ -219,7 +224,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
         // Credential/endpoint changes can unpark an unavailable source. They
         // do not shorten an unchanged source's numeric provider deadline;
         // changed configuration/assignment naturally creates a new key.
-        for (const [key, next] of state.nextEligibleAt) if (next === null) state.nextEligibleAt.delete(key);
+        for (const source of state.sources.values()) if (source.nextEligibleAt === null) source.nextEligibleAt = undefined;
         wake?.();
     };
     const hostSubscription = context.services.events.host.subscribe({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' } }, invalidated);
@@ -306,8 +311,8 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                         else groups.set(key, [definition]);
                     }
                 }
-                for (const key of state.nextEligibleAt.keys()) if (!groups.has(key)) {
-                    state.nextEligibleAt.delete(key);
+                for (const key of state.sources.keys()) if (!groups.has(key)) {
+                    state.sources.delete(key);
                 }
                 for (const key of state.pendingObservations.keys()) if (!groups.has(key)) state.pendingObservations.delete(key);
                 for (const key of admitting.keys()) if (!groups.has(key)) admitting.delete(key);
@@ -328,8 +333,11 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                 for (const [key, group] of groups) {
                     cycleContext.signal.throwIfAborted();
                     const definition = group[0]!;
+                    const sourceState: ObserverSourceState = state.sources.get(key) ?? { nextEligibleAt: undefined };
+                    state.sources.set(key, sourceState);
                     const requested = requestedSources.has(undefined) || requestedSources.has(definition.sourceInstanceId);
                     const reportSource = async (status: NonNullable<PluginCheckpointedEventAttemptResultV1<TCheckpoint>['status']>, nextRetryAt: number | null) => {
+                        sourceState.status = status;
                         for (const member of group) {
                             const report = {
                                 kind: 'source', automationId: member.automationId, triggerId: member.triggerId, triggerRevision: member.triggerRevision,
@@ -354,7 +362,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                                 now: now(), definition }));
                         const nextEligibleAt = disposition.failure === undefined || reportedEligibleAt === null ? reportedEligibleAt
                             : failureRetryAt === null ? null : Math.max(failureRetryAt, reportedEligibleAt);
-                        state.nextEligibleAt.set(key, nextEligibleAt);
+                        sourceState.nextEligibleAt = nextEligibleAt;
                         if (disposition.failure !== undefined && nextEligibleAt !== null) {
                             await reportSource({ state: 'backingOff', code: disposition.failure.code }, nextEligibleAt);
                         } else if (disposition.failure === undefined && result.status !== undefined) await reportSource(result.status, nextEligibleAt);
@@ -375,8 +383,13 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                             await finish(completed.result, disposition, completed.nextEligibleAt);
                             continue;
                         }
-                        const next = state.nextEligibleAt.get(key);
-                        if (!requested && (next === null || (next !== undefined && next > now()))) continue;
+                        const next = sourceState.nextEligibleAt;
+                        if (!requested && (next === null || (next !== undefined && next > now()))) {
+                            // A new subscriber inherits this source's last produced status;
+                            // per-member acknowledgement signatures only suppress equal writes.
+                            if (sourceState.status) await reportSource(sourceState.status, next);
+                            continue;
+                        }
                         const decoded = source.decode(definition);
                         if (decoded === null || !(await isCurrent())) continue;
                         const attemptContext: PluginCheckpointedEventAttemptContextV1<TSource> = { context: cycleContext, definition, definitions: group, source: decoded, isCurrent };
@@ -385,15 +398,18 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                         cycleContext.signal.throwIfAborted();
                         // Admission publishes its own observation/counter status. The
                         // next empty scan must reconcile against that publication.
-                        if (result.observations.length > 0) for (const member of group) reportedStatuses.delete(statusKey(member));
+                        if (result.observations.length > 0) {
+                            delete sourceState.status;
+                            for (const member of group) reportedStatuses.delete(statusKey(member));
+                        }
                         const retained = admitting.get(key);
                         if (retained !== undefined) {
                             retained.nextEligibleAt = eligibility(result.nextEligibleAt);
                             // A buffered cursor can request an immediate drain without
                             // advancing while admission is pending. Its settlement or an
                             // authenticated wake releases that work; never hot-loop it.
-                            state.nextEligibleAt.set(key, retained.nextEligibleAt !== null && retained.nextEligibleAt > startedAt
-                                ? retained.nextEligibleAt : null);
+                            sourceState.nextEligibleAt = retained.nextEligibleAt !== null && retained.nextEligibleAt > startedAt
+                                ? retained.nextEligibleAt : null;
                             continue;
                         }
                         let pending = state.pendingObservations.get(key);
@@ -409,8 +425,8 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                             const attempt: NonNullable<ReturnType<typeof admitting.get>> = { context: attemptContext, result,
                                 nextEligibleAt: eligibility(result.nextEligibleAt) };
                             admitting.set(key, attempt);
-                            state.nextEligibleAt.set(key, attempt.nextEligibleAt !== null && attempt.nextEligibleAt > startedAt
-                                ? attempt.nextEligibleAt : null);
+                            sourceState.nextEligibleAt = attempt.nextEligibleAt !== null && attempt.nextEligibleAt > startedAt
+                                ? attempt.nextEligibleAt : null;
                             const settled = () => {
                                 if (admitting.get(key) !== attempt || context.signal.aborted) return;
                                 changed = true;
@@ -422,11 +438,12 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                     } catch (error) {
                         if (cycleContext.signal.aborted) throw error;
                         const nextEligibleAt = eligibility(source.retryAt({ error, now: now(), definition }));
-                        state.nextEligibleAt.set(key, nextEligibleAt);
+                        sourceState.nextEligibleAt = nextEligibleAt;
                         await reportSource({ state: nextEligibleAt === null ? 'attention' : 'backingOff', code: readPluginEventFailureV1(error).code }, nextEligibleAt);
                     }
                 }
-                for (const next of state.nextEligibleAt.values()) if (next !== null && (wakeAt === null || next < wakeAt)) wakeAt = next;
+                for (const { nextEligibleAt: next } of state.sources.values())
+                    if (next !== undefined && next !== null && (wakeAt === null || next < wakeAt)) wakeAt = next;
                 cycleWake?.resolve();
             } catch (error) {
                 cycleWake?.reject(error);

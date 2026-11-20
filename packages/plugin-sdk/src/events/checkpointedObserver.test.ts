@@ -489,6 +489,48 @@ describe('checkpointed observer ownership', () => {
         expect(f.save).toHaveBeenCalledOnce();
     });
 
+    it.each([false, true])('publishes the current parked source status to a subscriber added during its first scan (failed acknowledgement: %s)', async failedAcknowledgement => {
+        const f = fixture();
+        if (failedAcknowledgement) f.failBoundary('source status');
+        let release!: () => void;
+        const pending = new Promise<void>(resolve => { release = resolve; });
+        f.observe.mockImplementation(async () => {
+            await pending;
+            return { observations: [], complete: true, nextEligibleAt: null };
+        });
+        const sleep = vi.fn(async () => {});
+        const running = runCheckpointedPluginEventObserverV1({ context: f.context,
+            source: { ...f.source, retryAt: () => null }, sleep });
+        try {
+            await vi.waitFor(() => expect(f.observe).toHaveBeenCalledOnce());
+            f.replace([definition(), { ...definition(), triggerId: 'trigger-2',
+                sourceSelectorId: '33333333-3333-4333-8333-333333333333' }]);
+            release();
+            await vi.waitFor(() => {
+                const reports = f.execute.mock.calls.filter(([id, input]) => id === 'automation.event.source.status.report'
+                    && input.kind === 'source' && input.state === 'observing')
+                    .map(([, input]) => ({ triggerId: input.triggerId, state: input.state }));
+                expect(reports).toEqual([
+                    ...(failedAcknowledgement ? [{ triggerId: 'trigger-1', state: 'observing' }] : []),
+                    { triggerId: 'trigger-1', state: 'observing' },
+                    { triggerId: 'trigger-2', state: 'observing' },
+                ]);
+            });
+            const acknowledgements = await Promise.allSettled(f.execute.mock.calls.flatMap(([id, input], index) =>
+                id === 'automation.event.source.status.report' && input.kind === 'source' && input.state === 'observing'
+                    ? [f.execute.mock.results[index]!.value] : []));
+            expect(acknowledgements.map(result => result.status)).toEqual([
+                ...(failedAcknowledgement ? ['rejected'] : []), 'fulfilled', 'fulfilled',
+            ]);
+            expect(f.observe).toHaveBeenCalledOnce();
+            expect(sleep).not.toHaveBeenCalled();
+        } finally {
+            release();
+            f.controller.abort();
+            await running;
+        }
+    });
+
     it('scans one native source once across pull and durable enrollments without borrowing assignment authority', async () => {
         const f = fixture();
         const pull = definition();
