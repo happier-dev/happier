@@ -52,7 +52,7 @@ function browserEntryId(state: unknown): string | null {
 export function createWorkspaceBrowserTransport(input: Readonly<{
     history: BrowserHistoryBoundary;
     getHref: () => string;
-    mirror: (href: string) => void;
+    mirror: (href: string, entry?: WorkspaceNavigationEntry) => void;
     createId: () => string;
     accept: (href: string, entry?: WorkspaceNavigationEntry, position?: number) => boolean | void;
     /** Settles the shared decision against the still-current destination, including cancellation. */
@@ -109,7 +109,7 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
             const id = writeHref(href, replace);
             currentPosition = readBrowserHistoryIndex(input.history) ?? position;
             entries.set(id, { entry, position, browserPosition: currentPosition });
-            input.mirror(href);
+            input.mirror(href, entry);
         },
         traverse(direction) { input.history.go(direction); },
         acceptPopState(state, event) {

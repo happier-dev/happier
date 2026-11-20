@@ -1893,9 +1893,13 @@ describe('consumed workspace navigation owner', () => {
         await act(async () => { navigation().closeTab(navigation().state.focusedGroupId, tabId); });
         expect(navigation().state.tabs[tabId]).toBeUndefined();
     });
-    it.each([true, false])('retains the exact Team arrival while Expo mounts Settings from a public capability route (ready=%s)', async ready => {
+    it.each([
+        { ready: true, admittedRecovery: false },
+        { ready: false, admittedRecovery: false },
+        { ready: false, admittedRecovery: true },
+    ])('retains the exact Settings arrival while Expo mounts its parent ($ready, $admittedRecovery)', async ({ ready, admittedRecovery }) => {
         boundary.platform = 'web';
-        boundary.pathname = '/join/invitation';
+        boundary.pathname = admittedRecovery ? '/server' : '/join/invitation';
         boundary.params = {};
         boundary.dataReady = ready;
         const location = { pathname: boundary.pathname, search: '', hash: '' };
@@ -1915,22 +1919,35 @@ describe('consumed workspace navigation owner', () => {
         } });
         // Public links have no shell, but an authenticated Account can explicitly
         // enter one. This is the same presentation transition the invitation uses.
-        const element = (enabled: boolean) => <WorkspaceProvider enabled={enabled} entry={!enabled} catalog={catalog}>
+        const element = (enabled: boolean) => <WorkspaceProvider enabled={enabled} entry={!enabled && !admittedRecovery} catalog={catalog}>
             {navigation => <>{React.createElement('WorkspaceOwner', { navigation })}<CapabilityArrivalProbe /></>}
         </WorkspaceProvider>;
         const screen = await renderScreen(element(false));
         const navigation = () => screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue;
         expect(navigation().active).toBe(false);
-        await act(async () => { screen.root.findByType('CapabilityArrival').props.open(); });
+        const href = admittedRecovery ? '/settings/appearance' : '/settings/teams/home-a/team-1';
+        await act(async () => {
+            if (admittedRecovery) expect(navigation().openHref(href, { replace: true, admittedEntry: true })).toBe(true);
+            else screen.root.findByType('CapabilityArrival').props.open();
+        });
         // The child route can acknowledge Expo's requested pathname before
         // Account restoration admits it. That acknowledgement must not release
         // the explicit destination to the parent's following index publication.
         if (!ready) {
-            boundary.pathname = '/settings/teams/home-a/team-1';
+            boundary.pathname = href;
             await screen.update(element(false));
         }
-        // Expo's nested Settings navigator first publishes its index while its
-        // child mounts. Browser custody must already retain the explicit Team.
+        if (admittedRecovery) {
+            // Once the shell has initialized, Expo can acknowledge the child before
+            // Mounting Settings publishes its index over the same history entry.
+            boundary.pathname = '/settings';
+            boundary.dataReady = true;
+            await screen.update(element(true));
+            boundary.pathname = href;
+            await screen.update(element(true));
+        }
+        // Expo's nested Settings navigator publishes its index while its child
+        // mounts. Browser custody must retain the admitted destination.
         await act(async () => {
             boundary.pathname = '/settings';
             history.replaceState(history.state, '', boundary.pathname);
@@ -1939,8 +1956,8 @@ describe('consumed workspace navigation owner', () => {
         await screen.update(element(true));
         const state = navigation().state;
         const target = state.tabs[state.groups[state.focusedGroupId].activeTabId].target;
-        expect(hrefForDestinationRef(catalog, target)).toBe('/settings/teams/home-a/team-1');
-        expect(location.pathname).toBe('/settings/teams/home-a/team-1');
+        expect(hrefForDestinationRef(catalog, target)).toBe(href);
+        expect(location.pathname).toBe(href);
 
         // A deliberate workspace action supersedes that pending child even
         // before Expo acknowledges it; the mirror repair must not trap people.

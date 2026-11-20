@@ -18,6 +18,8 @@ export type WorkspaceOpenOptions = Readonly<{
     beforeTabId?: string | null;
     reuseExisting?: boolean;
     replace?: boolean;
+    /** Exact return already selected by an authenticated public flow. */
+    admittedEntry?: true;
     /** A phone Details page opens or focuses its own rail tab; the source tab keeps its route. */
     retainSourceTab?: boolean;
     /** Explicit app-section activation. Ordinary item opens retain the selected section. */

@@ -129,6 +129,8 @@ export function WorkspaceProvider(props: Readonly<{
     appResourceNavigationRef.current = appResourceNavigation;
     const findHandoff = findSeedContext?.fileFindSeedHandoff;
     const scopeKey = scope ? JSON.stringify([scope.serverId, scope.accountId]) : null;
+    // Auth can publish a new Account and restore its workspace after the public flow has navigated.
+    const admittedEntryHref = React.useRef<string | null>(null);
     // Browser history is authoritative even when readiness changes before Expo updates its mirror.
     // Expo's own location. The workspace may lead it on the same route pattern (see `mirror`).
     const expoHref = workspaceRouteHref(pathname, params);
@@ -249,6 +251,7 @@ export function WorkspaceProvider(props: Readonly<{
         const mirror = (href: string, entry?: WorkspaceNavigationEntry) => {
             // Native owns this window's boot URL. Its workspace history is entirely local.
             if (props.appWindow) return;
+            if (entry) admittedEntryHref.current = null;
             const projected = phoneTransport && entry?.target.kind === 'newTab' ? '/' : href;
             mounted.projectedHref = projected;
             // The browser transport has already written the URL, and hosted bodies read their tab's params, not
@@ -279,7 +282,10 @@ export function WorkspaceProvider(props: Readonly<{
                 history: window.history,
                 getHref: () => `${window.location.pathname}${window.location.search}${window.location.hash}`,
                 mirror, createId: randomUUID,
-                accept: (href, entry, position) => adapter.acceptUrl(href, entry, position),
+                accept: (href, entry, position) => {
+                    admittedEntryHref.current = null;
+                    return adapter.acceptUrl(href, entry, position);
+                },
                 guard: guardTraversal,
                 needsGuard: (direction) => {
                     const state = latest.current.owner.getState();
@@ -490,7 +496,8 @@ export function WorkspaceProvider(props: Readonly<{
         props.appWindow?.record.layoutId, nativeWindows?.kind, paneSubscription, requestAppWindowOpen, runtime, scopeKey]);
 
     React.useLayoutEffect(() => {
-        if (!hostsRoute) {
+        const entryHref = admittedEntryHref.current;
+        if (!hostsRoute && !entryHref) {
             runtime.projectedHref = null;
             setMirrorLead(null);
             return;
@@ -498,7 +505,7 @@ export function WorkspaceProvider(props: Readonly<{
         // A nested Expo navigator can briefly mirror its parent while mounting
         // the requested child. Keep the workspace's explicit URL until Expo
         // acknowledges that child; our own browser write is not that acknowledgement.
-        const projectedHref = runtime.projectedHref;
+        const projectedHref = entryHref ?? runtime.projectedHref;
         if (runtime.browser && projectedHref) {
             const projectedPath = projectedHref.split(/[?#]/)[0]!;
             const currentPath = routeHref.split(/[?#]/)[0]!;
@@ -510,13 +517,18 @@ export function WorkspaceProvider(props: Readonly<{
             // At '/' that may be New Tab rather than the catalog's Sessions page.
             // A child mirror can arrive before restoration. Keep the intent
             // until its Account owner can adopt that destination.
-            if (routeHref === projectedHref && pathname === projectedPath && owner.isReady) {
+            if (routeHref === projectedHref && pathname === projectedPath && runtime.initialized) {
+                // Expo can publish the child before publishing its parent. Keep the
+                // admitted entry until navigation actually leaves it.
                 runtime.projectedHref = null;
                 return;
             }
-            if (routeHref !== projectedHref) runtime.projectedHref = null;
+            if (routeHref !== projectedHref) {
+                admittedEntryHref.current = null;
+                runtime.projectedHref = null;
+            }
         }
-        if (!owner.isReady || !eligible) return;
+        if (!hostsRoute || !owner.isReady || !eligible) return;
         if (!runtime.initialized) {
             // A Home window has no addressed destination; its restored layout owns the selection.
             const state = owner.getState();
@@ -597,6 +609,12 @@ export function WorkspaceProvider(props: Readonly<{
         return subscribeRegisteredStorageState(drop, { projectAccountRows: true, profileScope: true });
     }, [isCurrentUiOwner, runtime]);
     const openHref = React.useCallback((href: string, options?: WorkspaceOpenOptions) => {
+        // This callback can arrive before React publishes the authenticated presentation.
+        if (options?.admittedEntry && runtime.browser && resolveDestinationRefFromHref(latest.current.catalog, href)) {
+            admittedEntryHref.current = href;
+            runtime.browser.enterHref(href, true);
+            return true;
+        }
         const canEnter = () => entry && latest.current.entry && latest.current.scopeKey === scopeKey
             && latest.current.phoneTransport === phoneTransport && runtime.browser !== null;
         if (canEnter() && resolveDestinationRefFromHref(latest.current.catalog, href)) {

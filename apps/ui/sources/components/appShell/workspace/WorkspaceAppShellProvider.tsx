@@ -42,15 +42,16 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // Native's stack owns recovery navigation before the workspace can restore private tabs.
     // Web retains its initial navigator gate so a transient first scope cannot consume its deep link.
     // While it waits, the person sees the startup state, or the Home's Retry once it is unreachable.
-    if (pendingFirstAccount && Platform.OS === 'web') {
-        // Nothing yet says which page opens, so startup is the app's launch state, not a page's loading rows.
-        return <HomeReachabilityGate variant="pane"><AppLaunchState testID="workspace-account-restoring" /></HomeReachabilityGate>;
-    }
-    if ((presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
+    const restoring = pendingFirstAccount && Platform.OS === 'web';
+    if (!restoring && (presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
         || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime)))) return null;
-    if (resolveDesktopWindowContext().role === 'secondary') return <AppWindowWorkspace catalog={catalog} browserRecord={props.browserWindow}>{props.children}</AppWindowWorkspace>;
+    if (!restoring && resolveDesktopWindowContext().role === 'secondary') {
+        return <AppWindowWorkspace catalog={catalog} browserRecord={props.browserWindow}>{props.children}</AppWindowWorkspace>;
+    }
     return <WorkspaceProvider enabled={presentation === 'shell' && !pendingFirstAccount} phone={presentation === 'phone'}
         entry={presentation === 'entry'} deferred={pendingFirstAccount} catalog={catalog}>
-        {props.children}
+        {restoring
+            ? <HomeReachabilityGate variant="pane"><AppLaunchState testID="workspace-account-restoring" /></HomeReachabilityGate>
+            : props.children}
     </WorkspaceProvider>;
 }
