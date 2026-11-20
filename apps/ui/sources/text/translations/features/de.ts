@@ -4851,6 +4851,7 @@ const de: ConnectedServicesSettingsCopy = {
     detailRemoveAccountConfirm: ({ name }) => `${name} entfernen?`,
     detailRemoveSavedSecrets: "Dabei werden auch die von dieser Verbindung erstellten Geheimnisse gelöscht, sofern sie nirgends sonst verwendet werden. Separat gespeicherte oder weiterhin verwendete Geheimnisse bleiben unter Gespeicherte Geheimnisse erhalten.",
     detailRemoveSavedSecretCleanupIncomplete: "Das Konto wurde entfernt. Einige Geheimnisse konnten nicht geprüft oder gelöscht werden. Du kannst sie unter Gespeicherte Geheimnisse überprüfen.",
+    detailRemoveSavedSecretCleanupUnreadablePresets: "Das Konto wurde entfernt. Einige Geheimnisse blieben erhalten, weil Happier nicht prüfen konnte, ob Maschinenvorlagen sie verwenden. Du kannst sie unter Gespeicherte Geheimnisse überprüfen.",
     detailRemoveProviderSignOut: ({ provider }) => `Dadurch wird es aus Happier entfernt. Um den Zugriff vollständig zu widerrufen, melde dich auch bei ${provider} ab.`,
     detailUsageSignedOut: 'Zuletzt bekannt · ohne Anmeldung keine Aktualisierung',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `Zuletzt bekannt um ${time} · ohne Anmeldung keine Aktualisierung`,

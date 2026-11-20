@@ -1455,8 +1455,10 @@ const ConnectedAccountServiceController = React.memo(
             }
             if (result.status === 'revoked') {
                 if ('savedSecretCleanup' in result && result.savedSecretCleanup === 'incomplete') {
-                    await Modal.alert(t('connectedServicesSettings.detailRemoveAccount'),
-                        t('connectedServicesSettings.detailRemoveSavedSecretCleanupIncomplete'));
+                    await Modal.alertAsync(t('connectedServicesSettings.detailRemoveAccount'),
+                        result.savedSecretCleanupReason === 'unreadable_references'
+                            ? t('connectedServicesSettings.detailRemoveSavedSecretCleanupUnreadablePresets')
+                            : t('connectedServicesSettings.detailRemoveSavedSecretCleanupIncomplete'));
                 }
                 return true;
             }

@@ -4796,6 +4796,7 @@ const ja: ConnectedServicesSettingsCopy = {
     detailRemoveAccountConfirm: ({ name }) => `${name}を削除しますか？`,
     detailRemoveSavedSecrets: "この接続で作成された保存済みのシークレットは、ほかで使われていなければ削除されます。個別に保存したものや、引き続き使われているものは保存済みシークレットに残ります。",
     detailRemoveSavedSecretCleanupIncomplete: "アカウントを削除しました。一部のシークレットを確認または削除できませんでした。保存済みシークレットで確認できます。",
+    detailRemoveSavedSecretCleanupUnreadablePresets: "アカウントを削除しました。一部のシークレットは、マシンプリセットで使われているか確認できなかったため保持しました。保存済みシークレットで確認できます。",
     detailRemoveProviderSignOut: ({ provider }) => `Happierから削除します。アクセスを完全に取り消すには、${provider}でもサインアウトしてください。`,
     detailUsageSignedOut: '最終取得値 · サインアウト中は更新できません',
     detailUsageSignedOutAt: ({ time }: { time: string }) => `${time}の最終取得値 · サインアウト中は更新できません`,

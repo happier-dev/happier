@@ -2451,7 +2451,9 @@ The Home records those resource IDs when it commits the secret and credential
 together. After revocation, the shared Action passes them to the Saved Secret
 owner, which retains independently selected keys, keys still in use and keys
 with active grants. An older connection without recorded provenance retains
-its secrets. If cleanup cannot finish, the app directs the user to Saved Secrets.
+its secrets. If the client cannot read machine presets during cleanup, it keeps
+the affected secrets and explains why in the removal dialog. If cleanup cannot
+finish, the app directs the user to Saved Secrets.
 
 Pool membership does not disable Remove account. The controller decides from the
 loaded memberships before invoking the Action: one confirmation names the pool

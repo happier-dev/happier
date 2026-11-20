@@ -38,11 +38,14 @@ export type ConnectedServiceConfigurationActionIdV1 = z.infer<typeof ConnectedSe
 
 const Success = z.strictObject({ applied: z.literal(true) });
 const MetadataCleanupSuccess = z.extend(Success, { metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema) });
+const SavedSecretCleanupReason = lazyZodSchema(() => z.literal('unreadable_references'));
+export type ConnectedAccountSavedSecretCleanupV1 = 'complete' | 'incomplete' | z.infer<typeof SavedSecretCleanupReason>;
 const RevokeActionResponse = lazyZodSchema(() => z.union([
   ConnectedAccountRevokeResponseV1Schema,
   z.extend(ConnectedAccountRevokedResponseV1Schema, {
     metadataCleanup: z.optional(ConnectedMetadataCleanupV1Schema),
     savedSecretCleanup: z.optional(z.literal('incomplete')),
+    savedSecretCleanupReason: z.optional(SavedSecretCleanupReason),
   }),
 ]));
 const ConfigurationTarget = lazyZodSchema(() => z.pick(ConnectedAccountServiceConfigurationEntryV1Schema, { service: true, modeId: true }));

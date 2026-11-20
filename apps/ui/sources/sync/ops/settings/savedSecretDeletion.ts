@@ -3,6 +3,7 @@ import { formatSavedSecretCatalogReferenceV1 } from '@happier-dev/protocol/accou
 import { listAccountSettingsSavedSecretReferences, type AccountSettingsSavedSecretReference } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { SharedSavedSecretDeleteOutputV1Schema, SavedSecretResourceActionErrorV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { ManagedResourceDependencyV1, ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
+import type { ConnectedAccountSavedSecretCleanupV1 } from '@happier-dev/protocol/connect/configurationActionsV1';
 
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -166,7 +167,7 @@ export async function deleteSavedSecretResource(params: Readonly<{
 /** Clean up resources created by the revoked credential's connection flow. */
 export async function deleteRevokedConnectedAccountSecretsInContext(context: ProfileAccountContext,
     input: Readonly<{ account: QualifiedConnectedAccountRef; resourceIds: readonly string[] }>,
-    signal?: AbortSignal): Promise<'complete' | 'incomplete'> {
+    signal?: AbortSignal): Promise<ConnectedAccountSavedSecretCleanupV1> {
     const scope = context.accountLifetime.scope;
     const catalog = await readSavedSecretCatalogMetadataInContext(context, signal);
     if (!catalog.ok) return 'incomplete';
@@ -179,11 +180,11 @@ export async function deleteRevokedConnectedAccountSecretsInContext(context: Pro
         });
         return outcome.ok ? { kind: 'succeeded', value: mutation.parse(outcome.value) } : { kind: 'failed', failure: outcome.failure };
     };
-    let outcome: 'complete' | 'incomplete' = 'complete';
+    let outcome: ConnectedAccountSavedSecretCleanupV1 = 'complete';
     for (const entry of catalog.resources) {
         if (entry.relationship !== 'owner') continue;
         if (!('ref' in entry)) {
-            if (candidates.has(entry.repair.resourceId)) outcome = 'incomplete';
+            if (outcome === 'complete' && candidates.has(entry.repair.resourceId)) outcome = 'incomplete';
             continue;
         }
         if (entry.revision === null) continue;
@@ -191,7 +192,9 @@ export async function deleteRevokedConnectedAccountSecretsInContext(context: Pro
         if (ref.kind !== 'shared_resource' || !candidates.has(ref.resourceId)) continue;
         const result = await deleteSavedSecretResource({ scope, resourceId: ref.resourceId, expectedRevision: entry.revision,
             revokedConnection: { context, account: input.account }, executeAdmittedMutation });
-        if (!result.ok && result.reason !== 'in_use' && result.reason !== 'managed_resources_review_required'
+        if (result.ok) continue;
+        if (result.reason === 'unreadable_references') outcome = result.reason;
+        else if (outcome === 'complete' && result.reason !== 'in_use' && result.reason !== 'managed_resources_review_required'
             && result.failure?.code !== 'resource_in_use' && result.failure?.code !== 'resource_not_found') outcome = 'incomplete';
     }
     return outcome;

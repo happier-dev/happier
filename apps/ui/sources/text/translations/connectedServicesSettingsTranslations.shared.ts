@@ -204,6 +204,7 @@ export const en = {
     detailRemoveAccountConfirm: ({ name }: { name: string }) => `Remove ${name}?`,
     detailRemoveSavedSecrets: "This also deletes saved secrets created by this connection if nothing else uses them. Secrets you saved separately or that are still in use stay in Saved Secrets.",
     detailRemoveSavedSecretCleanupIncomplete: "The account was removed. Some secrets could not be checked or deleted. You can review them in Saved Secrets.",
+    detailRemoveSavedSecretCleanupUnreadablePresets: "The account was removed. Some secrets were kept because Happier couldn’t check whether machine presets use them. You can review them in Saved Secrets.",
     detailRemoveProviderSignOut: ({ provider }: { provider: string }) => `This removes it from Happier. To fully revoke access, also sign out at ${provider}.`,
     detailRemoveNote: ({ service }: { service: string }) => `Signs Happier out of this ${service} account on every machine.`,
     detailWorksOnTitle: 'Works on',

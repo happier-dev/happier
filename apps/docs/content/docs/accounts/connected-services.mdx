@@ -960,9 +960,11 @@ page; subscription changes remain with the provider.
 
 In 0.3 development builds, **Remove account** also deletes unused Saved Secrets
 created by that connection's setup form. Happier keeps secrets you selected from
-Saved Secrets, secrets another binding still uses and shared secrets. Secrets
-from older connections may stay in Saved Secrets. If Happier reports incomplete
-cleanup, check **Saved Secrets** before deleting any remaining key.
+Saved Secrets, secrets another binding still uses and secrets shared with other
+people. Secrets from older connections may stay in Saved Secrets. If Happier
+cannot check which machine presets use a secret, it keeps the secret and explains
+why after removing the account. Check **Saved Secrets** before deleting any
+remaining key.
 
 ## Security model
 

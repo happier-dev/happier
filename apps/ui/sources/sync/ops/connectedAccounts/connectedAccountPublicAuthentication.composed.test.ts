@@ -979,7 +979,8 @@ it.each([
 });
 
 async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConfiguration = false,
-    provider: 'example' | 'vercel' | 'claude' | 'claude-oauth' = 'example', discoverVercel = false) {
+    provider: 'example' | 'vercel' | 'claude' | 'claude-oauth' = 'example', discoverVercel = false,
+    remove?: 'unused' | 'unreadable-presets') {
     const isVercel = provider === 'vercel';
     const needsConfiguration = requireAccountConfiguration || discoverVercel;
     const isClaude = provider === 'claude' || provider === 'claude-oauth';
@@ -989,10 +990,13 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
     const { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema,
         QualifiedConnectedAccountConfigurationPatchV4Schema } =
         await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
-    const { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema,
+    const { SharedSavedSecretPromoteInputV1Schema, SharedSavedSecretPromoteOutputV1Schema, SharedSavedSecretDeleteInputV1Schema,
         SHARED_SAVED_SECRET_ACTION_PATHS_V1 } = await import('@happier-dev/protocol/account/settings/savedSecretResourceActionsV1');
     const { SavedSecretResourceMaterialV1Schema, SavedSecretResourceMaterialsResponseV1Schema } =
         await import('@happier-dev/protocol/account/settings/savedSecretCatalogV1');
+    const { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } =
+        await import('@happier-dev/protocol/profiles/profileRecordV1');
+    const { ManagedMachinePresetV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
     const { formatSharedSavedSecretRefV1 } = await import('@happier-dev/protocol/account/settings/savedSecretReferenceV1');
     const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
     const { replacePluginAccountAvailabilityProjection, readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
@@ -1003,8 +1007,9 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
     const credentials = { token: createAccountTokenForTests(accountId),
         ...(mode === 'e2ee' ? { secret: encodeBase64(new Uint8Array(32).fill(37), 'base64url') } : {}) };
     const url = `https://${accountId}.test`;
+    const homeId = remove ? 'srv_public_auth_vercel_remove' : undefined;
     const serverId = await homes.addHome({ name: 'Public auth', serverUrl: url, accountId, credentials,
-        accountEncryptionMode: mode, teamsEnabled: true, credentialResourcesEnabled: true });
+        serverIdentityId: homeId, accountEncryptionMode: mode, teamsEnabled: true, credentialResourcesEnabled: true });
     homes.answer(serverId, '/v1/account/encryption/currentness', {
         body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials),
     });
@@ -1023,6 +1028,7 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
     const observations: unknown[][] = [];
     for (const method of ['log', 'info', 'warn', 'error'] as const) vi.spyOn(console, method).mockImplementation((...values) => { observations.push(values); });
     connection = await restoreServerAccountForTest({ serverUrl: url, accountId, credentials,
+        serverIdentityId: homeId,
         ...(isVercel ? { additionalRequestOrigins: ['https://api.vercel.com'] } : {}),
         configureSocket: socket => {
             configureConnectedServerSocketBoundary(socket);
@@ -1052,6 +1058,16 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
                 vendorCalls += 1;
                 return Response.json({ id: 'prj_fixture', accountId: 'team_fixture', name: 'Vercel fixture project' });
             }
+            if (remove && method === 'POST' && request.pathname === '/v1/machines/presets/list') {
+                const presets = remove === 'unreadable-presets' ? ['legacy-preset-a', 'legacy-preset-b'].map(id =>
+                    ManagedMachinePresetV1Schema.parse({ id, homeId, revision: 1, owner: { kind: 'account', accountId },
+                        contentEncryptionMode: 'e2ee', content: { t: 'encrypted', c: Buffer.alloc(64).toString('base64') },
+                        recipients: [] })) : [];
+                return Response.json({ kind: 'listed', presets });
+            }
+            if (remove && method === 'POST' && request.pathname === '/v1/machines/managed/actions/list') {
+                return Response.json({ machines: [] });
+            }
             if (request.pathname.startsWith('/v1/machines')) {
                 machineReads += 1;
                 if (request.pathname === '/v1/machines') bootstrapMachineRead.resolve();
@@ -1065,6 +1081,12 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
             if (request.pathname === '/v4/connect/qualified/credential') {
                 if (method === 'GET') return saved.current ? Response.json(saved.current)
                     : Response.json({ error: 'connect_credential_not_found' }, { status: 404 });
+                if (remove && method === 'DELETE') {
+                    expect(request.searchParams.get('expectedCredentialRevision')).toBe(saved.current?.credentialRevision);
+                    saved.current = null;
+                    saved.configuration = null;
+                    return Response.json({ success: true });
+                }
                 directCredentialWrites += 1;
                 throw new Error('Declared manual secrets must commit through atomic Saved Secret promotion');
             }
@@ -1106,7 +1128,8 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
                     authenticationModeId: credential.authenticationModeId, revisionSemantics: 'revisioned',
                     credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
                     configurationRevision: initialConfiguration ? 'staged-configuration-1' : null,
-                    content: credential.content, metadata: credential.metadata });
+                    content: credential.content, metadata: credential.metadata,
+                    createdSavedSecretResourceIds: creations.map(resource => resource.resourceId) });
                 if (initialConfiguration) saved.configuration = QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({
                     target: { kind: 'account', ref: credential.ref }, authenticationModeId: credential.authenticationModeId,
                     revisionSemantics: 'revisioned', credentialRevision: saved.current.credentialRevision,
@@ -1122,6 +1145,27 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
                 const resourceId = request.searchParams.get('resourceId');
                 return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [...resources.values()]
                     .filter(row => !resourceId || ('resourceId' in row && row.resourceId === resourceId)) }));
+            }
+            if (remove && request.pathname === '/v1/account/saved-secrets/resources') {
+                return Response.json({ resources: [...resources.values()].map(row => row.entry) });
+            }
+            if (remove && method === 'GET' && request.pathname === PROFILE_ROWS_ROUTE_V1) {
+                return Response.json({ status: 'listed', rows: [], nextCursor: null, complete: true,
+                    referenceGuardRevision: 3, transferControl: { status: 'absent' }, diagnostics: [] });
+            }
+            if (remove && method === 'GET' && request.pathname === PROFILE_REFERENCE_GUARD_ROUTE_V1) {
+                return Response.json({ status: 'ready', revision: 3 });
+            }
+            if (remove && method === 'GET' && request.pathname.startsWith('/v1/account/entity-rows/')) {
+                return Response.json({ status: 'absent' });
+            }
+            if (remove && request.pathname === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.delete']) {
+                const deletion = SharedSavedSecretDeleteInputV1Schema.parse(await new Response(init?.body).json());
+                expect(saved.current).toBeNull();
+                expect(deletion).toMatchObject({ expectedRevision: 1, onlyIfUnshared: true,
+                    referenceCensus: { accountMode: 'e2ee' } });
+                expect(resources.delete(deletion.resourceId)).toBe(true);
+                return Response.json({ resourceId: deletion.resourceId });
             }
             return await homes.request(input, init);
         } });
@@ -1269,6 +1313,22 @@ async function runPublicManualJourney(mode: 'plain' | 'e2ee', requireAccountConf
             expect(promotions).toBe(1);
             expect(directCredentialWrites).toBe(0);
         }
+        if (remove) {
+            expect(reopened.content.t).toBe('encrypted');
+            expect([...resources.values()].map(row => row.entry)).toMatchObject([
+                { source: 'shared_resource', relationship: 'owner', encryptionMode: 'e2ee', revision: 1 },
+            ]);
+            const removed = await createDefaultActionExecutor(acceptedUserConfirmation).execute('connectedServices.accounts.revoke', {
+                account: reopened.ref, expectedCredentialRevision: reopened.credentialRevision, cleanupGroupReferences: false,
+            }, context);
+            expect(removed).toMatchObject({ ok: true, result: { status: 'revoked' } });
+            expect(saved.current).toBeNull();
+            expect(resources.size).toBe(remove === 'unused' ? 0 : 1);
+            if (remove === 'unreadable-presets') {
+                expect(removed).toMatchObject({ result: { savedSecretCleanup: 'incomplete',
+                    savedSecretCleanupReason: 'unreadable_references' } });
+            }
+        }
     } finally { fresh.dispose(); }
 }
 
@@ -1283,6 +1343,9 @@ it('connects actual Vercel Account authentication through pending and staged con
 
 it.each(['plain', 'e2ee'] as const)('discovers and stages an actual Vercel team in the Account host without a Machine (%s)',
     async mode => runPublicManualJourney(mode, false, 'vercel', true));
+
+it.each(['unused', 'unreadable-presets'] as const)('removes the Vercel pasted-token connection with E2EE Saved Secret cleanup (%s)',
+    async remove => runPublicManualJourney('e2ee', false, 'vercel', true, remove));
 
 it.each(['plain', 'e2ee'] as const)('opens actual Claude setup-token input and refuses an empty dummy without a Machine (%s)',
     async mode => runPublicManualJourney(mode, false, 'claude'));

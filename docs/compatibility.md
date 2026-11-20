@@ -9970,6 +9970,13 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `connectedServices.accounts.revoke` may include
+`savedSecretCleanupReason: 'unreadable_references'` on an incomplete Saved Secret
+cleanup receipt. The keyholding UI host reports this after preserving the secret
+because it could not check machine preset references. Matching Protocol and UI
+development sources load together because earlier strict readers reject the new
+field. The Home API, daemon response and stored formats are unaffected.
+
 Unreleased 0.3 `openNewSession` requests may name `teamModelFromSessionId` within
 the mounted Account. The host reads the source through its existing Account
 authority and seeds its qualified Team choice into the existing draft model

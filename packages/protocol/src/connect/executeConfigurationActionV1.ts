@@ -20,6 +20,7 @@ import {
   CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 as inputs,
   CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
   reorderConnectedServicePoolMembersV1,
+  type ConnectedAccountSavedSecretCleanupV1,
   type ConnectedServiceConfigurationActionIdV1,
 } from './configurationActionsV1.js';
 import type { ConnectedServiceQuotaGetInputV1 } from './providerAccountUsageHistory.js';
@@ -80,7 +81,7 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   }>): Promise<'applied' | 'conflict' | 'unavailable' | 'outcome_unknown' | 'invalid'>;
   /** Reuse the Saved Secret owner and keep the successful revoke receipt if cleanup cannot settle. */
   deleteCreatedAccountSecrets?(input: Readonly<{ account: QualifiedConnectedAccountCredentialSnapshotV4['ref'];
-    resourceIds: readonly string[] }>): Promise<'complete' | 'incomplete'>;
+    resourceIds: readonly string[] }>): Promise<ConnectedAccountSavedSecretCleanupV1>;
   /** Authenticated transport for the invocation's exact Home. */
   request(input: Readonly<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; body?: unknown;
     expectedEffect?: 'qualified-connected-group-delete' | 'qualified-connected-credential-create' | 'qualified-connected-credential-delete' }>): Promise<unknown>;
@@ -553,7 +554,10 @@ export async function executeConnectedServiceConfigurationActionV1(
           : cleanup && (!canCaptureForCleanup || !incumbent
             || (incumbent.revisionSemantics === 'revisioned' && incumbent.credentialRevision !== expectedCredentialRevision))
             ? 'incomplete' : 'complete';
-        return { ...result, metadataCleanup, ...(savedSecretCleanup === 'incomplete' ? { savedSecretCleanup } : {}) };
+        return { ...result, metadataCleanup, ...(savedSecretCleanup === 'complete' ? {} : {
+          savedSecretCleanup: 'incomplete' as const,
+          ...(savedSecretCleanup === 'incomplete' ? {} : { savedSecretCleanupReason: savedSecretCleanup }),
+        }) };
       }
       host.assertCurrent();
       return result;
