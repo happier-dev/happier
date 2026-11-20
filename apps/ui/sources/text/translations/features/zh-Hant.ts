@@ -18416,7 +18416,7 @@ const walkthroughTranslations = { 'zh-Hant': {
             },
             generationFailure: { inputTooLarge: '此變更超出了這台機器上的代理一次能讀取的範圍。', contextTooSmall: '這超出了所選模型一次能讀取的範圍。', narrowChange: '請說明較小的一組變更，或在「檔案」中查看。', invalidRequest: '這台機器無法讀取該請求。它的 Happier 可能已過時。', reviewRequest: '請更新這台機器上的 Happier，然後重試。', modelUnavailable: '所選模型目前無法使用。', machineUnavailable: 'Happier 無法連線到這台機器。', reconnectMachine: '請重新連線後重試。', disabled: '「解釋變更」已關閉。', enableExplain: '在設定中開啟' },
             none: { title: '尚無導讀', reason: '導讀會依序閱讀這些變更，並在確切程式碼旁逐一說明。所有檔案已在檔案中。', showFiles: '顯示檔案' },
-            explain: { notInStory: '不在故事中', readInWalkthrough: '在導讀中閱讀' },
+            explain: { notInStory: '不在故事中', readInWalkthrough: '在導讀中閱讀', captionLines: ({ start, end }) => start === end ? `L${start}` : `L${start}–${end}`, captionA11y: ({ letter, lines }) => `註釋 ${letter}，${lines}`, captionOf: ({ position, total }) => `第 ${position} 個，共 ${total} 個`, captionStop: ({ number, title }) => `第 ${number} 站 · ${title}`, stopCaptions: ({ number, count }) => `第 ${number} 站 · ${count === 1 ? '1 條註釋' : `${count} 條註釋`}`, previousCaption: '上一條註釋', nextCaption: '下一條註釋', showCaption: '顯示註釋' },
         }),
     } };
 

@@ -18476,7 +18476,7 @@ const walkthroughTranslations = { ja: {
             },
             generationFailure: { inputTooLarge: 'この変更は、このマシンのエージェントが一度に読める量を超えています。', contextTooSmall: '選択したモデルが一度に読める量を超えています。', narrowChange: '変更を絞って説明するか、ファイルで確認してください。', invalidRequest: 'このマシンはリクエストを読み取れませんでした。Happier が古い可能性があります。', reviewRequest: 'このマシンの Happier を更新して、もう一度お試しください。', modelUnavailable: '選択したモデルは現在利用できません。', machineUnavailable: 'Happier はこのマシンに接続できません。', reconnectMachine: '再接続してから、もう一度お試しください。', disabled: '「変更を説明」はオフです。', enableExplain: '設定でオンにする' },
             none: { title: 'ウォークスルーはまだありません', reason: 'ウォークスルーはこれらの変更を順に読み、それぞれを正確なコードの横で説明します。すべてのファイルはすでにファイルにあります。', showFiles: 'ファイルを表示' },
-            explain: { notInStory: 'ストーリー外', readInWalkthrough: 'ウォークスルーで読む' },
+            explain: { notInStory: 'ストーリー外', readInWalkthrough: 'ウォークスルーで読む', captionLines: ({ start, end }) => start === end ? `L${start}` : `L${start}–${end}`, captionA11y: ({ letter, lines }) => `注釈 ${letter}、${lines}`, captionOf: ({ position, total }) => `${position} / ${total}`, captionStop: ({ number, title }) => `ステップ ${number} · ${title}`, stopCaptions: ({ number, count }) => `ステップ ${number} · ${count === 1 ? '注釈 1 件' : `注釈 ${count} 件`}`, previousCaption: '前の注釈', nextCaption: '次の注釈', showCaption: '注釈を表示' },
         }),
     } };
 

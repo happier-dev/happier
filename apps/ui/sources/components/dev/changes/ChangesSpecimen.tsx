@@ -14,6 +14,7 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { ChangedFilesReview, type ChangedFilesReviewCoverage } from '@/components/workspaces/scm/review/ChangedFilesReview';
+import type { DiffLineCaptionLane } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffBlock';
 import { Typography } from '@/constants/Typography';
 import type { SessionAttributedFile } from '@/scm/scmAttribution';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
@@ -22,7 +23,8 @@ import { t } from '@/text';
 import { ScmComparisonExplainToggle, ScmComparisonStartReview, ScmComparisonViewSwitch } from '@/components/sessions/files/comparison/ScmComparisonBar';
 import { WalkthroughExplainNotes, WalkthroughFileStops, WALKTHROUGH_EXPLAIN_COLUMN_WIDTH_PX } from '@/components/sessions/files/walkthrough/WalkthroughExplainNotes';
 import { WalkthroughAnalysisFact, WalkthroughReviewedFact } from '@/components/sessions/files/walkthrough/WalkthroughAtoms';
-import { buildWalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { buildWalkthroughReading, type WalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
+import { createWalkthroughCaptionFocus, WalkthroughCaptionLane } from '@/components/sessions/files/walkthrough/WalkthroughCaptions';
 
 import { WALKTHROUGH_SPECIMEN_FRAMES } from './WalkthroughSpecimen';
 import { COMMITS_SPECIMEN_FRAMES } from './CommitsSpecimen';
@@ -30,7 +32,7 @@ import { REVIEW_WALKTHROUGH_SPECIMEN_FRAMES } from './ReviewWalkthroughSpecimen'
 import { PULL_REQUEST_SPECIMEN_FRAMES } from './PullRequestSpecimen';
 import { PULL_REQUEST_VIEWED_SPECIMEN_FRAMES } from './PullRequestViewedSpecimen';
 import { PULL_REQUEST_FORM_SPECIMEN_FRAMES } from './PullRequestFormSpecimen';
-import { SPECIMEN_ANALYSIS_COMPLETE, SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH, specimenReviewedRefs } from './walkthroughSpecimenFixture';
+import { SPECIMEN_ANALYSIS_COMPLETE, SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH, SPECIMEN_WALKTHROUGH_CAPTIONED, specimenReviewedRefs } from './walkthroughSpecimenFixture';
 
 /**
  * Dev-only specimen of the turn-end changes card (Walkthrough lab WT9-R) and the Files view (WT8) drawn
@@ -128,6 +130,12 @@ const EXPLAIN_READING = buildWalkthroughReading({
     analysis: SPECIMEN_ANALYSIS_COMPLETE,
     reviewed: applyScmReviewedMarkIntent(SPECIMEN_COMPARISON, null, specimenReviewedRefs(2), true),
 });
+const CAPTIONED_READING = buildWalkthroughReading({
+    comparison: SPECIMEN_COMPARISON,
+    walkthrough: { state: 'complete', value: SPECIMEN_WALKTHROUGH_CAPTIONED },
+    analysis: SPECIMEN_ANALYSIS_COMPLETE,
+    reviewed: null,
+});
 const EXPLAIN_FILES: ScmFileStatus[] = SESSION_FILES.flatMap((entry) => {
     const row = EXPLAIN_READING.inventory.find((item) => item.path === entry.fullPath);
     return row ? [file(row.path, row.changeKind === 'added' ? 'added' : 'modified', row.added, row.removed)] : [];
@@ -136,9 +144,12 @@ const EXPLAIN_DIFFS: ReadonlyMap<string, string | null> = new Map(SPECIMEN_COMPA
 const EXPLAIN_SNAPSHOT = snapshotOf(EXPLAIN_FILES);
 const EXPLAIN_ATTRIBUTED: SessionAttributedFile[] = EXPLAIN_FILES.map((entry) => ({ ...SESSION_ATTRIBUTED[0]!, file: entry }));
 
-function FilesFrame(props: Readonly<{ stacked: boolean; explain?: boolean }>) {
+function FilesFrame(props: Readonly<{ stacked: boolean; explain?: boolean; reading?: WalkthroughReading }>) {
     const { theme } = useUnistyles();
     const [explain, setExplain] = React.useState(props.explain === true);
+    const reading = props.reading ?? EXPLAIN_READING;
+    const [captionFocus] = React.useState(createWalkthroughCaptionFocus);
+    const captioned = explain && reading.captionsByPath.size > 0;
     const chrome = React.useMemo(() => ({
         renderBar: props.stacked ? (coverage: ChangedFilesReviewCoverage, actions: React.ReactNode) => <ScmComparisonPhoneHeader
             view="files" views={['files', 'walkthrough']} scope={{ options: SCOPE_OPTIONS, current: SESSION_COMPARISON,
@@ -180,10 +191,15 @@ function FilesFrame(props: Readonly<{ stacked: boolean; explain?: boolean }>) {
         rootPath: '/repo',
         hunkNotesColumnWidth: WALKTHROUGH_EXPLAIN_COLUMN_WIDTH_PX,
         renderHunkNotes: explain
-            ? (path: string, hunkIndex: number, placement: 'column' | 'inline') => <WalkthroughExplainNotes reading={EXPLAIN_READING} path={path} hunkIndex={hunkIndex} placement={placement} onReadInWalkthrough={noop} />
+            ? (path: string, hunkIndex: number, placement: 'column' | 'inline') => <WalkthroughExplainNotes reading={reading} path={path} hunkIndex={hunkIndex} placement={placement} onReadInWalkthrough={noop}
+                captionFocus={captioned ? captionFocus : null} />
             : null,
-        renderIndexAccessory: explain ? (path: string) => <WalkthroughFileStops reading={EXPLAIN_READING} path={path} /> : null,
-    }), [explain, props.stacked]);
+        renderLineCaptions: captioned ? (path: string, unifiedDiff: string, renderDiff: (lane: DiffLineCaptionLane) => React.ReactNode) => {
+            const captions = reading.captionsByPath.get(path);
+            return captions ? <WalkthroughCaptionLane path={path} captions={captions} focus={captionFocus} unifiedDiff={unifiedDiff} onReadInWalkthrough={noop}>{renderDiff}</WalkthroughCaptionLane> : null;
+        } : null,
+        renderIndexAccessory: explain ? (path: string) => <WalkthroughFileStops reading={reading} path={path} /> : null,
+    }), [explain, props.stacked, reading, captioned, captionFocus]);
     return (
         <ChangedFilesReview
             comparisonChrome={chrome}
@@ -216,6 +232,7 @@ const FRAMES: readonly Frame[] = [
     { id: 'T4c', title: 'WT9-T4c · 214 files collapsed', render: () => <TurnChangesCard files={TURN_BIG} onOpenFile={noop} onWalkThrough={noop} onOpenInFiles={noop} /> },
     { id: 'F1', title: 'WT8-F1/F3 · Files (rail on wide, stream list on narrow)', render: (phone) => <FilesFrame stacked={phone} />, tall: true },
     { id: 'F2', title: 'WT8-F2 · Files with Explain', render: (phone) => <FilesFrame stacked={phone} explain />, tall: true },
+    { id: 'LC', title: 'Line captions · lettered markers and notes (one, overlapping, long, out of the drawn lines)', render: (phone) => <FilesFrame stacked={phone} explain reading={CAPTIONED_READING} />, tall: true },
     ...WALKTHROUGH_SPECIMEN_FRAMES.map((frame) => ({ ...frame, tall: true })),
     ...COMMITS_SPECIMEN_FRAMES.map((frame) => ({ ...frame, tall: true })),
     ...REVIEW_WALKTHROUGH_SPECIMEN_FRAMES.map((frame) => ({ ...frame, tall: true })),

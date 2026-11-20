@@ -44,6 +44,18 @@ export type WalkthroughLineCaption = Readonly<
     NonNullable<ScmDiffSummaryWalkthrough['stops'][number]['captions']>[number] & { path: string; hunkIndex: number }
 >;
 
+/**
+ * A caption as Files' Explain draws it (lab ideas-1118-reviews scene 3): lettered A, B, C… per file in file
+ * order (hunk, then line), so its marker in the code and its line under the stop note carry one letter.
+ */
+export type WalkthroughLetteredCaption = WalkthroughLineCaption & Readonly<{
+    key: string;
+    letter: string;
+    stopId: string;
+    stopNumber: number;
+    stopTitle: string;
+}>;
+
 export type WalkthroughStop = Readonly<{
     id: string;
     number: number;
@@ -131,6 +143,8 @@ export type WalkthroughReading = Readonly<{
     stopIdsByHunk: ReadonlyMap<string, readonly (readonly string[])[]>;
     /** Files Explain: each stop appears at its first hunk in each file; unassigned hunks retain a note. */
     explainNotesByHunk: ReadonlyMap<string, readonly (readonly WalkthroughExplainNote[])[]>;
+    /** Files Explain: each file's line captions, lettered in file order. A file without captions has no entry. */
+    captionsByPath: ReadonlyMap<string, readonly WalkthroughLetteredCaption[]>;
     /** The overview strip's miniatures; above {@link CODE_MAP_FOLDER_THRESHOLD} files they group by folder. */
     codeMap: readonly WalkthroughCodeMapFile[];
 }>;
@@ -461,7 +475,33 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
         stopNumbersByPath,
         stopIdsByHunk,
         explainNotesByHunk,
+        captionsByPath: letterCaptionsByPath(stops),
     };
+}
+
+/** Spreadsheet letters: A…Z, then AA, AB… */
+function captionLetter(index: number): string {
+    let letter = '';
+    for (let rest = index + 1; rest > 0; rest = Math.floor((rest - 1) / 26)) letter = String.fromCharCode(65 + ((rest - 1) % 26)) + letter;
+    return letter;
+}
+
+function letterCaptionsByPath(stops: readonly WalkthroughStop[]): ReadonlyMap<string, readonly WalkthroughLetteredCaption[]> {
+    const byPath = new Map<string, Omit<WalkthroughLetteredCaption, 'letter'>[]>();
+    for (const stop of stops) {
+        stop.captions.forEach((caption, index) => {
+            const entry = { ...caption, key: `${stop.id}:${index}`, stopId: stop.id, stopNumber: stop.number, stopTitle: stop.title };
+            const group = byPath.get(caption.path);
+            if (group) group.push(entry);
+            else byPath.set(caption.path, [entry]);
+        });
+    }
+    const lettered = new Map<string, readonly WalkthroughLetteredCaption[]>();
+    for (const [path, captions] of byPath) {
+        const ordered = [...captions].sort((a, b) => a.hunkIndex - b.hunkIndex || a.startLine - b.startLine || a.stopNumber - b.stopNumber);
+        lettered.set(path, ordered.map((caption, index) => ({ ...caption, letter: captionLetter(index) })));
+    }
+    return lettered;
 }
 
 /** No walkthrough of this comparison exists yet: the view invites one and points at Files. */
@@ -480,6 +520,7 @@ export const EMPTY_WALKTHROUGH_READING: WalkthroughReading = {
     stopNumbersByPath: new Map(),
     stopIdsByHunk: new Map(),
     explainNotesByHunk: new Map(),
+    captionsByPath: new Map(),
     codeMap: [],
 };
 

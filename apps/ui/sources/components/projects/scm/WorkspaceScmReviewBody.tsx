@@ -9,6 +9,9 @@ import { ScmComparisonScopePicker } from '@/components/sessions/files/comparison
 import type { FilesComparisonScopeOption } from '@/components/sessions/files/comparison/filesComparison';
 import { WalkthroughAnalysisFact, WalkthroughReviewedFact } from '@/components/sessions/files/walkthrough/WalkthroughAtoms';
 import { WalkthroughExplainNotes, WalkthroughFileStops, WALKTHROUGH_EXPLAIN_COLUMN_WIDTH_PX } from '@/components/sessions/files/walkthrough/WalkthroughExplainNotes';
+import { createWalkthroughCaptionFocus, WalkthroughCaptionLane } from '@/components/sessions/files/walkthrough/WalkthroughCaptions';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
 import type { WalkthroughViewLayout } from '@/components/sessions/files/walkthrough/WalkthroughView';
 import { ChangedFilesLayoutSwitch } from '@/components/sessions/panes/git/display/GitDisplayMenu';
@@ -144,6 +147,21 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
         props.onSelectView('files');
     }, [activeKey, props.onSelectView]);
     const readInWalkthrough = React.useCallback(() => props.onSelectView('walkthrough'), [props.onSelectView]);
+    // Explain's line captions: one pairing per comparison body, read by the notes and by each captioned file's code.
+    const [captionFocus] = React.useState(createWalkthroughCaptionFocus);
+    const captioned = props.explain && reading && reading.captionsByPath.size > 0 ? reading : null;
+    // Showing a caption is one command on this page's context: an agent brings it up the way a press on its note does.
+    useCurrentUiContextLocalCommands(captioned ? [{
+        key: 'walkthrough.caption.show',
+        title: t('walkthrough.explain.showCaption'),
+        description: 'walkthrough.caption.show — Bring one of the walkthrough\'s line captions into view in Files\' Explain and keep its callout open, with {path: string, letter: string} (the letter shown on its marker).',
+        invoke: input => {
+            if (!isJsonObject(input) || typeof input.path !== 'string' || typeof input.letter !== 'string') return false;
+            const path = input.path;
+            const caption = captioned.captionsByPath.get(path)?.find((entry) => entry.letter === input.letter);
+            return caption ? captionFocus.reveal(path, caption.key) : false;
+        },
+    }] : [], { unbound: 'local' });
     const { chrome, renderBar, renderStateBar } = React.useMemo(() => {
         // An empty comparison says so once, in the review's own empty state: the bar and the stacked header
         // keep the scope's name but don't add "0 files" beside it.
@@ -227,7 +245,13 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
             indexPlacement: stacked ? 'phone' : rail ? 'rail' : 'stream',
             rootPath: props.rootPath,
             renderHunkNotes: props.explain && reading ? (path, hunkIndex, placement) => <WalkthroughExplainNotes
-                reading={reading} path={path} hunkIndex={hunkIndex} placement={placement} onReadInWalkthrough={readInWalkthrough} /> : null,
+                reading={reading} path={path} hunkIndex={hunkIndex} placement={placement} onReadInWalkthrough={readInWalkthrough}
+                captionFocus={captioned ? captionFocus : null} /> : null,
+            renderLineCaptions: captioned ? (path, unifiedDiff, renderDiff) => {
+                const captions = captioned.captionsByPath.get(path);
+                return captions ? <WalkthroughCaptionLane path={path} captions={captions} focus={captionFocus} unifiedDiff={unifiedDiff}
+                    onReadInWalkthrough={readInWalkthrough}>{renderDiff}</WalkthroughCaptionLane> : null;
+            } : null,
             hunkNotesColumnWidth: WALKTHROUGH_EXPLAIN_COLUMN_WIDTH_PX,
             renderIndexAccessory: props.explain && reading ? (path) => <WalkthroughFileStops reading={reading} path={path} /> : null,
         };
@@ -237,7 +261,7 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
         props.onSelectComparison, props.fileCount, props.onStartReview, props.proposeCommits, props.onProposeCommits,
         props.reviewDisabled, props.reviewDisabledReason, props.barMenuSection, props.barActions, props.barPanel, props.headerAccessory,
         props.scopeDetail, props.changeCount, props.modelLabel, props.analysisMark, props.marksAvailable,
-        props.marksPending, props.explain, props.onExplainChange, props.onExplainDraft, props.rootPath]);
+        props.marksPending, props.explain, props.onExplainChange, props.onExplainDraft, props.rootPath, captioned, captionFocus]);
     const context: ScmReviewViewContext = { layout: stacked ? 'phone' : rail ? 'wide' : 'narrow', renderBar, onShowFiles: showFiles };
     return <View style={{ flex: 1, minHeight: 0 }} onLayout={onLayout}>
         {stacked && props.hostSwitch ? <View style={HOST_SWITCH_STACKED_STYLE}>{props.hostSwitch}</View> : null}

@@ -155,6 +155,14 @@ export const en = {
     explain: {
         notInStory: 'Not part of the story',
         readInWalkthrough: 'Read in Walkthrough',
+        captionLines: ({ start, end }: { start: number; end: number }) => start === end ? `L${start}` : `L${start}–${end}`,
+        captionA11y: ({ letter, lines }: { letter: string; lines: string }) => `Caption ${letter}, ${lines}`,
+        captionOf: ({ position, total }: { position: number; total: number }) => `${position} of ${total}`,
+        captionStop: ({ number, title }: { number: number; title: string }) => `Stop ${number} · ${title}`,
+        stopCaptions: ({ number, count }: { number: number; count: number }) => `Stop ${number} · ${count === 1 ? '1 caption' : `${count} captions`}`,
+        previousCaption: 'Previous caption',
+        nextCaption: 'Next caption',
+        showCaption: 'Show caption',
     },
 };
 

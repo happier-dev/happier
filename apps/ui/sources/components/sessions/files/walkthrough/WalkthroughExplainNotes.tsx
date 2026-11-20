@@ -11,7 +11,8 @@ import { parseMarkdownSpans } from '@/components/markdown/parseMarkdownSpans';
 import { t } from '@/text';
 
 import { WalkthroughStopNumber } from './WalkthroughAtoms';
-import type { WalkthroughReading } from './walkthroughReading';
+import { WalkthroughCaptionLetters, WalkthroughCaptionList, WalkthroughStopCaptionsSheet, type WalkthroughCaptionFocus } from './WalkthroughCaptions';
+import type { WalkthroughLetteredCaption, WalkthroughReading, WalkthroughStop } from './walkthroughReading';
 
 function plainInlineText(markdown: string): string {
     return parseMarkdownSpans(markdown, false).map((span) => span.styles.includes('code') || span.text === markdown
@@ -36,9 +37,12 @@ export const WalkthroughExplainNotes = React.memo(function WalkthroughExplainNot
     hunkIndex: number;
     placement: 'column' | 'inline';
     onReadInWalkthrough?: (stopId: string) => void;
+    /** Explain's caption pairing for this comparison; absent, captions are not drawn. */
+    captionFocus?: WalkthroughCaptionFocus | null;
 }>) {
     const { theme } = useUnistyles();
     const notes = props.reading.explainNotesByHunk.get(props.path)?.[props.hunkIndex];
+    const fileCaptions = props.captionFocus ? props.reading.captionsByPath.get(props.path) : undefined;
     if (!notes || notes.length === 0) return null;
     const inline = props.placement === 'inline';
     return (
@@ -48,6 +52,11 @@ export const WalkthroughExplainNotes = React.memo(function WalkthroughExplainNot
                     return <Text key={note.key} style={[styles.none, inline ? styles.noneInline : null]}>{t('walkthrough.explain.notInStory')}</Text>;
                 }
                 const stop = note.stop;
+                const captions = fileCaptions ? captionsOfStop(fileCaptions, stop.id) : NO_CAPTIONS;
+                if (inline && captions.length > 0 && props.captionFocus) {
+                    return <InlineStopWithCaptions key={note.key} path={props.path} stop={stop} captions={captions}
+                        focus={props.captionFocus} onReadInWalkthrough={props.onReadInWalkthrough} />;
+                }
                 if (inline) {
                     return (
                         <HappierPressable
@@ -70,6 +79,11 @@ export const WalkthroughExplainNotes = React.memo(function WalkthroughExplainNot
                             <Text style={[styles.noteTitle, note.secondary ? styles.noteTitleSecondary : null]}>{stop.title}</Text>
                         </View>
                         {note.secondary ? null : <Text style={styles.noteBody}>{firstSentence(stop.explanationMarkdown)}</Text>}
+                        {captions.length > 0 && props.captionFocus ? (
+                            <View style={styles.captions}>
+                                <WalkthroughCaptionList path={props.path} captions={captions} focus={props.captionFocus} />
+                            </View>
+                        ) : null}
                         {!note.secondary && props.onReadInWalkthrough ? (
                             <HappierPressable
                                 accessibilityRole="link"
@@ -87,6 +101,48 @@ export const WalkthroughExplainNotes = React.memo(function WalkthroughExplainNot
         </View>
     );
 });
+
+const NO_CAPTIONS: readonly WalkthroughLetteredCaption[] = [];
+
+function captionsOfStop(captions: readonly WalkthroughLetteredCaption[], stopId: string): readonly WalkthroughLetteredCaption[] {
+    const own = captions.filter((caption) => caption.stopId === stopId);
+    return own.length > 0 ? own : NO_CAPTIONS;
+}
+
+/** Phone (lab 390): the stop header carries its captions' letters; tapping it lists them in a sheet. */
+function InlineStopWithCaptions(props: Readonly<{
+    path: string;
+    stop: WalkthroughStop;
+    captions: readonly WalkthroughLetteredCaption[];
+    focus: WalkthroughCaptionFocus;
+    onReadInWalkthrough?: (stopId: string) => void;
+}>) {
+    const { theme } = useUnistyles();
+    const anchorRef = React.useRef<View | null>(null);
+    const [open, setOpen] = React.useState(false);
+    const close = React.useCallback(() => setOpen(false), []);
+    return (
+        <View ref={anchorRef} collapsable={false}>
+            <HappierPressable
+                testID={`walkthrough-stop-captions-${props.stop.number}`}
+                accessibilityRole="button"
+                hasPopup="dialog"
+                expanded={open}
+                accessibilityLabel={`${t('walkthrough.stopA11y', { number: props.stop.number, title: props.stop.title })}, ${t('walkthrough.explain.stopCaptions', { number: props.stop.number, count: props.captions.length })}`}
+                onPress={() => setOpen(true)}
+                style={styles.inlineRow}
+            >
+                <WalkthroughStopNumber number={props.stop.number} reviewed={props.stop.reviewed} size="rail" />
+                <Text style={styles.inlineTitleShrink} numberOfLines={1}>{props.stop.title}</Text>
+                <WalkthroughCaptionLetters captions={props.captions} />
+                <View style={styles.inlineSpacer} />
+                <Icon name="caret-right" size={12} color={theme.colors.text.tertiary} />
+            </HappierPressable>
+            <WalkthroughStopCaptionsSheet anchorRef={anchorRef} open={open} onClose={close} path={props.path} stop={props.stop}
+                captions={props.captions} focus={props.focus} onReadInWalkthrough={props.onReadInWalkthrough} />
+        </View>
+    );
+}
 
 /**
  * Files' Explain in the file list (lab WT8-F2): the stops that explain this file, once each, in reading
@@ -134,5 +190,8 @@ const styles = StyleSheet.create((theme) => ({
     noneInline: { paddingBottom: 0, paddingVertical: theme.space.s4 },
     inlineRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, minHeight: 32 },
     inlineTitle: { flex: 1, ...Typography.variant('body', 'semiBold'), color: theme.colors.text.primary,  },
+    inlineTitleShrink: { flexShrink: 1, ...Typography.variant('body', 'semiBold'), color: theme.colors.text.primary },
+    inlineSpacer: { flex: 1 },
+    captions: { marginLeft: 22 },
     fileStops: { flexDirection: 'row', alignItems: 'center', gap: 3, flexShrink: 0 },
 }));

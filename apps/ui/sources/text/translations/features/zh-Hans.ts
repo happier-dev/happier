@@ -18416,7 +18416,7 @@ const walkthroughTranslations = { 'zh-Hans': {
             },
             generationFailure: { inputTooLarge: '此更改超出了这台机器上的智能体一次能读取的范围。', contextTooSmall: '这超出了所选模型一次能读取的范围。', narrowChange: '请解释更小的一组更改，或在“文件”中查看。', invalidRequest: '这台机器无法读取该请求。它的 Happier 可能已过时。', reviewRequest: '请更新这台机器上的 Happier，然后重试。', modelUnavailable: '所选模型目前不可用。', machineUnavailable: 'Happier 无法连接到这台机器。', reconnectMachine: '请重新连接后重试。', disabled: '“解释变更”已关闭。', enableExplain: '在设置中开启' },
             none: { title: '尚无导读', reason: '导读会按顺序阅读这些更改，并在确切代码旁逐一解释。所有文件已在文件中。', showFiles: '显示文件' },
-            explain: { notInStory: '不在故事中', readInWalkthrough: '在导读中阅读' },
+            explain: { notInStory: '不在故事中', readInWalkthrough: '在导读中阅读', captionLines: ({ start, end }) => start === end ? `L${start}` : `L${start}–${end}`, captionA11y: ({ letter, lines }) => `注释 ${letter}，${lines}`, captionOf: ({ position, total }) => `第 ${position} 个，共 ${total} 个`, captionStop: ({ number, title }) => `第 ${number} 站 · ${title}`, stopCaptions: ({ number, count }) => `第 ${number} 站 · ${count === 1 ? '1 条注释' : `${count} 条注释`}`, previousCaption: '上一条注释', nextCaption: '下一条注释', showCaption: '显示注释' },
         }),
     } };
 

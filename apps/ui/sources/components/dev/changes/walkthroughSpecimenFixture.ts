@@ -209,6 +209,26 @@ export const SPECIMEN_WALKTHROUGH: ScmDiffSummaryWalkthrough = {
     otherChangeRefs: [ref('apps/ui/sources/text/en.ts', 0), ref('yarn.lock', 0)],
 };
 
+/**
+ * The same walkthrough with line captions (lab ideas-1118-reviews scene 3): one, overlapping, long, before-side, and one
+ * whose lines are not in the drawn hunk (its note reads, without a marker).
+ */
+export const SPECIMEN_WALKTHROUGH_CAPTIONED: ScmDiffSummaryWalkthrough = {
+    ...SPECIMEN_WALKTHROUGH,
+    stops: SPECIMEN_WALKTHROUGH.stops.map((stop) => stop.id === 'why' ? { ...stop, captions: [
+        { changeRef: ref(MODAL, 1), side: 'before', startLine: 20, endLine: 20, text: 'The old key mixed in the window width, so every resize made a new one.' },
+        { changeRef: ref(MODAL, 1), side: 'after', startLine: 21, endLine: 22, text: 'The key now comes from the route alone; a resize keeps the same modal.' },
+    ] } : stop.id === 'key' ? { ...stop, captions: [
+        { changeRef: ref(MODAL, 0), side: 'after', startLine: 5, endLine: 5, text: 'Brings in the hook that turns a route into its key.' },
+        { changeRef: ref(KEY, 0), side: 'after', startLine: 8, endLine: 18, text: 'One key per destination: it changes when the route does, never when the window resizes.' },
+        { changeRef: ref(KEY, 0), side: 'after', startLine: 10, endLine: 13, text: 'Each section gets its own key, so moving between sections still opens a fresh page.' },
+        { changeRef: ref(KEY, 0), side: 'after', startLine: 13, endLine: 14, text: 'Every search shares one key, so typing a query never remounts the results.' },
+    ] } : stop.id === 'compact' ? { ...stop, captions: [
+        { changeRef: ref(MODAL, 2), side: 'after', startLine: 24, endLine: 24, text: 'Compact is now a prop on the same modal instead of a second one, which is what used to throw the draft away whenever the window crossed 600 points while someone was typing, and why the old test only passed at a fixed width.' },
+        { changeRef: ref(MODAL, 2), side: 'after', startLine: 40, endLine: 41, text: 'The dismiss handler is unchanged; it still closes through the route.' },
+    ] } : stop),
+};
+
 const ALL_REFS = SPECIMEN_COMPARISON.inventory.files.flatMap((file) => file.occurrences.map((occurrence) => occurrence.id));
 export const SPECIMEN_ANALYSIS_COMPLETE: ScmDiffSummaryAnalysisCoverage = { suppliedChangeRefs: ALL_REFS, analysedChangeRefs: ALL_REFS, remainingChangeRefs: [] };
 export const SPECIMEN_ANALYSIS_EARLY: ScmDiffSummaryAnalysisCoverage = { suppliedChangeRefs: ALL_REFS, analysedChangeRefs: ALL_REFS.slice(0, 4), remainingChangeRefs: ALL_REFS.slice(4) };

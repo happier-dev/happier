@@ -208,6 +208,8 @@ type ChangedFilesReviewProps = {
         renderFileNotes?: ((path: string, placement: 'column' | 'inline') => React.ReactNode) | null;
         /** Hunk-anchored Explain notes. File notes remain for evidence-availability notices. */
         renderHunkNotes?: ((path: string, hunkIndex: number, placement: 'column' | 'inline') => React.ReactNode) | null;
+        /** Explain's line captions, drawn in the code beside the hunk notes (`ChangedFilesReviewDiffBlock` `hunkNotes.lineCaptions`). */
+        renderLineCaptions?: NonNullable<NonNullable<ChangedFilesReviewDiffBlockProps['hunkNotes']>['lineCaptions']> | null;
         hunkNotesColumnWidth?: number;
         /** Beside a file's name in the file list (Explain: the stops that explain it). */
         renderIndexAccessory?: ((path: string) => React.ReactNode) | null;
@@ -1129,7 +1131,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         placement: props.comparisonChrome.indexPlacement === 'rail' ? 'column' as const : 'inline' as const,
         columnWidth: props.comparisonChrome.hunkNotesColumnWidth ?? 0,
         render: props.comparisonChrome.renderHunkNotes,
-    } : null, [props.comparisonChrome?.renderHunkNotes, props.comparisonChrome?.indexPlacement, props.comparisonChrome?.hunkNotesColumnWidth]);
+        lineCaptions: props.comparisonChrome.renderLineCaptions ?? undefined,
+    } : null, [props.comparisonChrome?.renderHunkNotes, props.comparisonChrome?.renderLineCaptions, props.comparisonChrome?.indexPlacement,
+        props.comparisonChrome?.hunkNotesColumnWidth]);
     const reviewDiffs = React.useSyncExternalStore(
         React.useCallback(listener => reviewEnabled ? diffStateSource.subscribeAll(listener) : () => {}, [reviewEnabled, diffStateSource]),
         React.useCallback(() => reviewEnabled ? diffStateSource.getSnapshot() : null, [reviewEnabled, diffStateSource]),

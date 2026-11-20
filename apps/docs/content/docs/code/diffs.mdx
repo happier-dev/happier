@@ -115,8 +115,37 @@ its hunk. A stop's gist appears at its first matched hunk; later files and
 secondary stops show its title, with repeated stops deduplicated within each file.
 These notes use the same saved explanation
 and personal reviewed marks; they do not generate a second explanation.
+A saved walkthrough can attach a caption to an exact line range in a stop's
+captured code. For example, a stop whose `changeRefs` contains `change-4` can
+caption lines 12–14 on the new side of that captured change:
+
+```json
+{
+  "changeRef": "change-4",
+  "side": "after",
+  "startLine": 12,
+  "endLine": 14,
+  "text": "Reuse the retry deadline from the original request."
+}
+```
+
+The line numbers are inclusive and must stay inside the referenced change on
+the selected side. Use `before` to caption the old side.
+With **Explain** on, Files letters each file's captions A, B, C in file order.
+The letter sits on the caption's first line beside the code, with a thin bracket
+over the rest of its range, and the same letter introduces the caption under its
+stop's note. Point at or focus either one to highlight the lines and show the
+caption under them; press a caption to bring its lines into view. On phones,
+tap a letter to open the caption in a sheet and step through the file's
+captions, or tap a stop's title to list its captions. A caption whose lines are
+not in the drawn code reads under its note without a letter in the code.
+Agents can show a caption with the `walkthrough.caption.show` page command
+(`{path, letter}`).
 The turn card's **Open in Files** keeps the selected turn, even after a later turn.
 List/tree presentation shares the existing changed-files preference with Git.
+In captured Session and Project comparisons, a file counts as Viewed after you
+mark all its changes reviewed. **Hide viewed** filters those files out, and
+**Show** restores them. If a previously viewed file gains changed hunks, it returns to the list and is counted as changed since you viewed it.
 On wide layouts, Files keeps its changed-file index in a side rail, including
 when Explain is on. Phones use the compact file control above the reading.
 On phones, full-screen Files and Walkthrough use one tab bar while reading.

@@ -18528,7 +18528,7 @@ const walkthroughTranslations = { pt: {
             },
             generationFailure: { inputTooLarge: 'Esta alteração é maior do que o agente deste computador consegue ler de uma vez.', contextTooSmall: 'Isto é mais do que o modelo selecionado consegue ler de uma vez.', narrowChange: 'Explique um conjunto menor de alterações ou leia-as em Arquivos.', invalidRequest: 'Esta máquina não conseguiu ler a solicitação. O Happier dela pode estar desatualizado.', reviewRequest: 'Atualize o Happier nesta máquina e tente novamente.', modelUnavailable: 'O modelo selecionado não está disponível no momento.', machineUnavailable: 'O Happier não consegue alcançar esta máquina.', reconnectMachine: 'Reconecte-a e tente novamente.', disabled: '“Explicar alterações” está desativado.', enableExplain: 'Ative nas configurações' },
             none: { title: 'Ainda não há roteiro', reason: 'Um roteiro lê essas alterações em ordem e explica cada uma ao lado do código exato. Todos os arquivos já estão em Arquivos.', showFiles: 'Mostrar arquivos' },
-            explain: { notInStory: 'Fora da história', readInWalkthrough: 'Ler no roteiro' },
+            explain: { notInStory: 'Fora da história', readInWalkthrough: 'Ler no roteiro', captionLines: ({ start, end }) => start === end ? `L${start}` : `L${start}–${end}`, captionA11y: ({ letter, lines }) => `Legenda ${letter}, ${lines}`, captionOf: ({ position, total }) => `${position} de ${total}`, captionStop: ({ number, title }) => `Parada ${number} · ${title}`, stopCaptions: ({ number, count }) => `Parada ${number} · ${count === 1 ? '1 legenda' : `${count} legendas`}`, previousCaption: 'Legenda anterior', nextCaption: 'Próxima legenda', showCaption: 'Mostrar legenda' },
         }),
     } };
 

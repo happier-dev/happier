@@ -17,7 +17,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { useDiffHunkTable } from '@/components/ui/code/diff/hunks/useDiffHunkTable';
-import type { DiffHunkInfo, DiffViewerHunks } from '@/components/ui/code/diff/diffViewerTypes';
+import type { DiffHunkInfo, DiffViewerBaseProps, DiffViewerHunks } from '@/components/ui/code/diff/diffViewerTypes';
 import { CODE_LINE_BASE_HEIGHT } from '@/components/ui/code/view/CodeLineRow';
 import { DiffReviewCommentsViewer } from '@/components/ui/code/diff/reviewComments/DiffReviewCommentsViewer';
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
@@ -43,6 +43,9 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 import type { HunkReviewControllerParams } from './hunkReview/useHunkReviewController';
 import { useChangedFilesReviewPathHunkReview, type ChangedFilesReviewHunkReviewSource } from './changedFilesReviewHunkReviewSource';
+
+/** The code view's leading lane and line tint a file's captions draw through. */
+export type DiffLineCaptionLane = Pick<DiffViewerBaseProps, 'renderLeadingLane' | 'highlightLineIds'>;
 
 /** Keep / Discard on a Review file's changes (P5): the list's checkout and its one discard owner. */
 export type ReviewBlockHunkReview = Readonly<Pick<HunkReviewControllerParams, 'source' | 'host' | 'serverId' | 'onDiscard'
@@ -91,6 +94,12 @@ export type ChangedFilesReviewDiffBlockProps = Readonly<{
         placement: 'column' | 'inline';
         columnWidth: number;
         render: (path: string, hunkIndex: number, placement: 'column' | 'inline') => React.ReactNode;
+        /**
+         * Explain's line captions for a file (lab ideas-1118-reviews scene 3): null when the file has none, and the
+         * diff draws exactly as without them. Otherwise it wraps the diff, handing it the code view's leading-lane
+         * cells (markers and brackets) and the lines to tint.
+         */
+        lineCaptions?: (path: string, unifiedDiff: string, renderDiff: (lane: DiffLineCaptionLane) => React.ReactNode) => React.ReactNode | null;
     }> | null;
     /** Hunk rows with Keep / Discard, read for this file only (absent: notes and navigation only). */
     hunkReviewSource?: ChangedFilesReviewHunkReviewSource;
@@ -444,13 +453,22 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
 
     // While Find is open its target is the current match, marked only by the match fill; the line ring is for hunk navigation.
     const reviewHighlightLineId = props.findActive ? undefined : props.scrollToLineId;
+    // A file with captions draws its diff through their lane; every other file draws it alone, with no per-line work.
+    // A lane is drawn by the canonical line renderer, never Pierre, so its hunk headers take Pierre's quiet
+    // "N unchanged lines" band and the file reads like its neighbours.
+    const withLineCaptions = (renderDiff: (lane: DiffLineCaptionLane | null) => React.ReactNode) =>
+        props.hunkNotes?.lineCaptions?.(filePath, state.diff, renderDiff) ?? renderDiff(null);
 
     if (props.reviewCommentsEnabled || props.reviewComments?.length) {
         return (
             <View ref={frameRef} collapsable={false} onLayout={columnNotes ? onFrameLayout : undefined} testID={blockTestId} style={[props.flat ? FLAT_BLOCK_STYLE : { paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 }, noOverflowAnchor, noteColumnStyle]}>
             {freshness}
             {svgPictures}
+                {withLineCaptions((lane) => (
                 <DiffReviewCommentsViewer
+                    renderLeadingLane={lane?.renderLeadingLane}
+                    highlightLineIds={lane?.highlightLineIds}
+                    lineInfoSeparators={lane ? true : undefined}
                     findActive={props.findActive}
                     precomputedLines={findLines}
                     contextBaseText={findContextBaseText}
@@ -474,6 +492,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     onDeleteReviewCommentDraft={props.onDeleteReviewCommentDraft}
                     onReviewCommentError={props.onReviewCommentError}
                 />
+                ))}
                 {columnNotes ? notesColumn.column : null}
             </View>
         );
@@ -484,7 +503,11 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
             {freshness}
             {svgPictures}
             <View style={[props.flat ? FLAT_DIFF_FRAME_STYLE : { borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border.default }, diffContainerStyle]}>
+                {withLineCaptions((lane) => (
                 <DiffViewer
+                    renderLeadingLane={lane?.renderLeadingLane}
+                    highlightLineIds={lane?.highlightLineIds}
+                    lineInfoSeparators={lane ? true : undefined}
                     findActive={props.findActive}
                     precomputedLines={findLines}
                     contextBaseText={findContextBaseText}
@@ -503,6 +526,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     showLineNumbers={effectiveShowLineNumbers}
                     virtualized={virtualized}
                 />
+                ))}
             </View>
             {columnNotes ? notesColumn.column : null}
         </View>

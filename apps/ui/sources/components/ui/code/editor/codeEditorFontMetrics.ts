@@ -6,7 +6,9 @@ export const CODE_EDITOR_TAB_SIZE = 2;
 export const CODE_EDITOR_FORMATTING_OPTIONS = Object.freeze({ tabSize: CODE_EDITOR_TAB_SIZE, insertSpaces: true });
 export { CODE_EDITOR_BASE_LINE_HEIGHT as CODE_LINE_BASE_HEIGHT };
 /** Existing code-view insets; editors consume the same geometry. */
-export const CODE_GUTTER_METRICS = Object.freeze({ rowPadding: 8, numberPaddingLeft: 4, numberPaddingRight: 18, numberMinWidth: 24, numberFontSize: 11, columnGap: 6, reviewLaneWidth: 32 });
+export const CODE_GUTTER_METRICS = Object.freeze({ rowPadding: 8, numberPaddingLeft: 4, numberPaddingRight: 18, numberMinWidth: 24, numberFontSize: 11, columnGap: 6, reviewLaneWidth: 32,
+    /** One column of a per-line marker lane (Explain's caption letters and their range brackets). */
+    markerLaneWidth: 22 });
 /**
  * The inset around a file's code on a page canvas: the code view, the diff and the editor that replaces them in
  * place all hold their first line and their numbers here, so View -> Edit moves nothing (files lab ED1).

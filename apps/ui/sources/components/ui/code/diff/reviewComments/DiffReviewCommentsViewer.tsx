@@ -28,7 +28,8 @@ const DISABLED_INTRA_LINE_WORD_DIFF = {
     maxPairs: 0,
 } as const;
 
-export type DiffReviewCommentsViewerProps = Pick<UnifiedDiffViewerProps, 'findActive' | 'findRangesByLineId' | 'registerFindRefold' | 'precomputedLines' | 'contextBaseText' | 'hunks' | 'reviewUnits'> & Readonly<{
+export type DiffReviewCommentsViewerProps = Pick<UnifiedDiffViewerProps, 'findActive' | 'findRangesByLineId' | 'registerFindRefold' | 'precomputedLines' | 'contextBaseText' | 'hunks' | 'reviewUnits'
+    | 'renderLeadingLane' | 'highlightLineIds' | 'lineInfoSeparators'> & Readonly<{
     filePath: string;
     unifiedDiff: string;
     scrollToLineId?: string;
@@ -69,6 +70,9 @@ function areDiffReviewCommentsViewerPropsEqual(
         && previous.hunks === next.hunks
         && previous.reviewUnits === next.reviewUnits
         && previous.highlightLineId === next.highlightLineId
+        && previous.highlightLineIds === next.highlightLineIds
+        && previous.renderLeadingLane === next.renderLeadingLane
+        && previous.lineInfoSeparators === next.lineInfoSeparators
         && previous.onScrollToLine === next.onScrollToLine
         && previous.externalScrollView === next.externalScrollView
         && previous.renderAfterLine === next.renderAfterLine
@@ -173,6 +177,9 @@ function DiffReviewCommentsViewerInner(props: DiffReviewCommentsViewerProps) {
                 findRangesByLineId={props.findRangesByLineId}
                 scrollToLineId={props.scrollToLineId}
                 highlightLineId={props.highlightLineId}
+                highlightLineIds={props.highlightLineIds}
+                renderLeadingLane={props.renderLeadingLane}
+                lineInfoSeparators={props.lineInfoSeparators}
                 onScrollToLine={props.onScrollToLine}
                 externalScrollView={props.externalScrollView}
                 mode="unified"
