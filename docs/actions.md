@@ -11359,6 +11359,11 @@ or script bytes. Apply, removal and updates share this producer; terminal and
 task attachments retain the rows. The existing operation subscription publishes
 only changed snapshots. Released V1 readers omit the Machine setup reference.
 
+Confirming a saved Machine preset Review after its preset revision changes
+returns `plan_changed`. The existing attachment stays in place and a fresh
+Review can show the current revision. An unavailable candidate returns
+`required_fact_unavailable`.
+
 In unreleased 0.3, a failed finite Machine Setup or retained Project command also
 carries closed `finiteCommand` failure details for current V2 operation and
 approval readers: the execution phase, optional zero-based command index, exit
