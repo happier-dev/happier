@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HappierReviewFinding } from '@happier-dev/plugin-ui';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -12,6 +12,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
+import { useWorkTheme, WORK_HOST } from '@/components/work/map/WorkMapView';
 import { Typography } from '@/constants/Typography';
 import { t, usePreferredLanguage } from '@/text';
 
@@ -266,18 +267,9 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
     ask: (messageMarkdown: string) => Promise<boolean>;
 }>) {
     const { theme } = useUnistyles();
+    const workTheme = useWorkTheme();
     const { finding, rowId, onToggleExpanded } = props;
-    const [narrow, setNarrow] = React.useState(false);
-    const onLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const width = event.nativeEvent.layout.width;
-        if (!Number.isFinite(width) || width <= 0) return;
-        const next = width < HAPPIER_PAGE_METRICS.rowStackBelowWidthPx;
-        setNarrow((current) => (current === next ? current : next));
-    }, []);
     const location = formatReviewFindingLocation(finding);
-    const ignored = props.decision === 'reject';
-    const expanded = props.expanded;
-    const decisionWord = props.decision === null ? null : reviewFindingDecisionLabel(props.decision);
     const followUp = props.followUp;
 
     const conversation = followUp !== null && followUp.available && props.askContext ? (
@@ -298,64 +290,46 @@ function ReviewFindingPageRow(props: Readonly<React.ComponentProps<typeof Review
     );
 
     return (
-        <View testID={`review-finding:${rowId}`} onLayout={onLayout} style={[styles.pageFinding, props.divided ? styles.divided : null]}>
-            <View style={styles.pageHead}>
-                <Pressable
-                    testID={`review-finding-toggle:${rowId}`}
-                    accessibilityRole="button"
-                    accessibilityState={{ expanded }}
-                    onPress={() => onToggleExpanded(rowId)}
-                    style={styles.pageToggle}
-                >
-                    <View style={styles.pageGlyph}>
-                        <Icon name={decisionGlyph(props.decision)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
-                    </View>
-                    <View style={styles.head}>
-                        <Text style={[styles.title, ignored ? styles.titleIgnored : null]}>{finding.title}</Text>
-                        <View style={styles.placeRow}>
-                            <Text style={styles.metaText}>{reviewSeverityLabel(finding.severity)}</Text>
-                            {location ? <Text selectable numberOfLines={1} style={styles.location}>{location}</Text> : null}
-                            {props.attribution ? (
-                                <View testID={`review-finding-attribution:${rowId}`} style={styles.attribution}>
-                                    {props.attribution.backendIds.map((backendId) => (hasAgentIconMark(backendId, theme)
-                                        ? <AgentIcon key={backendId} agentId={backendId} size={ICON_SIZE.xs} />
-                                        : null))}
-                                    <Text numberOfLines={1} style={styles.attributionText}>{props.attribution.label}</Text>
-                                </View>
-                            ) : null}
-                            {props.facts?.map((fact) => (
-                                <Text key={fact} testID={`review-finding-fact:${rowId}`} numberOfLines={1} style={styles.attributionText}>{fact}</Text>
-                            ))}
-                        </View>
-                    </View>
-                </Pressable>
-                {expanded && !narrow ? props.decisionControl : null}
-                {(!expanded || !props.decisionControl) && decisionWord !== null ? (
-                    <Text testID={`review-finding-decision:${rowId}`} style={props.decision === 'undecided' ? styles.decisionPending : styles.decisionWord}>{decisionWord}</Text>
-                ) : null}
-            </View>
-            {expanded ? (
-                <View style={[styles.pageBody, narrow ? null : styles.pageBodyHung]}>
-                    {narrow && props.decisionControl ? <View style={styles.pageDecisionNarrow}>{props.decisionControl}</View> : null}
-                    <ReviewFindingBody
-                        rowId={rowId}
-                        finding={finding}
-                        currentBodyMarkdown={props.currentBodyMarkdown}
-                        reviewContext={props.reviewContext}
-                        seenBefore={props.seenBefore}
-                        reviewers={props.reviewers}
-                        notice={(
-                            <>
-                                <ReviewFindingUpdatedNotice rowId={rowId} finding={finding} original={props.original} />
-                                {props.decision !== null && props.decisionNote ? <Text style={styles.note}>{props.decisionNote}</Text> : null}
-                            </>
-                        )}
-                        conversation={conversation}
-                    />
-                    {props.taskControl}
+        <HappierReviewFinding
+            rowId={rowId}
+            finding={finding}
+            severityLabel={reviewSeverityLabel(finding.severity)}
+            location={location ? <Text selectable numberOfLines={1} style={styles.location}>{location}</Text> : null}
+            attribution={props.attribution ? (
+                <View testID={`review-finding-attribution:${rowId}`} style={styles.attribution}>
+                    {props.attribution.backendIds.map((backendId) => (hasAgentIconMark(backendId, theme)
+                        ? <AgentIcon key={backendId} agentId={backendId} size={ICON_SIZE.xs} /> : null))}
+                    <Text numberOfLines={1} style={styles.attributionText}>{props.attribution.label}</Text>
                 </View>
             ) : null}
-        </View>
+            facts={props.facts}
+            decision={props.decision === null ? null : { value: props.decision, label: reviewFindingDecisionLabel(props.decision) }}
+            decisionEditable={props.decisionEditable}
+            decisionControl={props.decisionControl}
+            decisionGlyph={<Icon name={decisionGlyph(props.decision)} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
+            expanded={props.expanded}
+            onToggleExpanded={onToggleExpanded}
+            divided={props.divided}
+            theme={workTheme}
+            host={WORK_HOST}
+        >
+            <ReviewFindingBody
+                rowId={rowId}
+                finding={finding}
+                currentBodyMarkdown={props.currentBodyMarkdown}
+                reviewContext={props.reviewContext}
+                seenBefore={props.seenBefore}
+                reviewers={props.reviewers}
+                notice={(
+                    <>
+                        <ReviewFindingUpdatedNotice rowId={rowId} finding={finding} original={props.original} />
+                        {props.decision !== null && props.decisionNote ? <Text style={styles.note}>{props.decisionNote}</Text> : null}
+                    </>
+                )}
+                conversation={conversation}
+            />
+            {props.taskControl}
+        </HappierReviewFinding>
     );
 }
 
@@ -453,54 +427,8 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         ...Typography.variant('body'),
     },
-    // The page row (merged B): status glyph in the row's leading column, the body hung on the title's
-    // text column while wide.
-    pageFinding: {
-        paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx,
-        gap: theme.space.s16,
-    },
-    pageHead: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: theme.space.s12,
-    },
-    pageToggle: {
-        flex: 1,
-        minWidth: 0,
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        gap: HAPPIER_PAGE_METRICS.rowLeadingGapPx,
-    },
-    pageGlyph: {
-        width: HAPPIER_PAGE_METRICS.rowLeadingColumnPx,
-        alignItems: 'center',
-        paddingTop: theme.space.s2,
-    },
-    pageBody: {
-        gap: theme.space.s16,
-    },
-    pageBodyHung: {
-        marginLeft: HAPPIER_PAGE_METRICS.rowLeadingColumnPx + HAPPIER_PAGE_METRICS.rowLeadingGapPx,
-    },
-    pageDecisionNarrow: {
-        alignSelf: 'stretch',
-    },
-    titleIgnored: {
-        color: theme.colors.text.tertiary,
-        textDecorationLine: 'line-through',
-    },
     metaText: {
         color: theme.colors.text.secondary,
-        ...Typography.variant('meta'),
-    },
-    decisionWord: {
-        flexShrink: 0,
-        color: theme.colors.text.secondary,
-        ...Typography.variant('meta'),
-    },
-    decisionPending: {
-        flexShrink: 0,
-        color: theme.colors.text.tertiary,
         ...Typography.variant('meta'),
     },
     decisionOpened: {

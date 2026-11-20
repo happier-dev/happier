@@ -2549,6 +2549,52 @@ the surface environment. The words stay yours: a row says the owner's own state
 ("Waiting for approval"), never the bucket label. A row carries no answer
 controls; open the place where the request is answered once.
 
+## Review findings (0.3 development)
+
+`HappierReviewFinding` and `HappierReviewFindingBody` draw the same finding
+disclosure and opened body as Happier's Review page. Use them inside your existing
+Review surface. Pass the SDK's `ReviewFinding` and the comment owner's projected
+decision; the components read no resources and perform no Review mutations.
+
+```tsx
+import {
+  HappierReviewFinding,
+  HappierReviewFindingBody,
+  formatHappierReviewFindingLocation,
+} from '@happier-dev/plugin-ui';
+
+<HappierReviewFinding
+  rowId={comment.id}
+  finding={finding}
+  severityLabel={severityLabel}
+  location={formatHappierReviewFindingLocation(finding)}
+  decision={decision}
+  decisionEditable={canEditDecision}
+  decisionControl={decisionControl}
+  expanded={expanded}
+  onToggleExpanded={toggleFinding}
+>
+  <HappierReviewFindingBody
+    rowId={comment.id}
+    finding={finding}
+    currentBodyMarkdown={comment.bodyMarkdown}
+    labels={{ where: 'Where', verification: 'How it was verified', conversation: 'Conversation' }}
+    reviewers={reviewerMarksAndNames}
+    seenBefore={history}
+    conversation={conversation}
+  />
+</HappierReviewFinding>;
+```
+
+Supply localized labels and bind `decisionControl` to the existing admitted
+comment Actions. `decision` is `{ value, label }` or `null`; making a decision
+read-only keeps its saved word and ignored styling while hiding the editor.
+The body preserves the current explanation, original evidence, history and
+conversation. Its default Markdown and diff use the mounted host's existing
+renderers. Native adapters can supply `renderMarkdown` and `renderWhere` to keep
+their existing code frame and copy control. `extensions` carries already-admitted
+finding content; it does not resolve or activate contributions.
+
 ## Page headers and group labels (0.3 development)
 
 `PageHeader` is the header Happier's own pages draw. `actionsLayout` chooses how the

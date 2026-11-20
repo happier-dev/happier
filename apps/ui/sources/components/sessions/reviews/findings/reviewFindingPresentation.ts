@@ -1,4 +1,5 @@
 import { HAPPIER_REVIEW_SEVERITY_RANK } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierReviewFindingLocation as formatReviewFindingLocation } from '@happier-dev/plugin-ui';
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { t } from '@/text';
@@ -21,14 +22,7 @@ export function reviewSeverityLabel(severity: ReviewFinding['severity']): string
     }
 }
 
-export function formatReviewFindingLocation(finding: Pick<ReviewFinding, 'filePath' | 'startLine' | 'endLine'>): string | null {
-    if (!finding.filePath) return null;
-    if (typeof finding.startLine === 'number' && typeof finding.endLine === 'number' && finding.endLine !== finding.startLine) {
-        return `${finding.filePath}:${finding.startLine}-${finding.endLine}`;
-    }
-    if (typeof finding.startLine === 'number') return `${finding.filePath}:${finding.startLine}`;
-    return finding.filePath;
-}
+export { formatReviewFindingLocation };
 
 export function formatReviewFindingThreadQuote(finding: ReviewFinding): string {
     const location = formatReviewFindingLocation(finding);

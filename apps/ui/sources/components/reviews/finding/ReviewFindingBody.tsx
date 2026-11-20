@@ -1,6 +1,9 @@
 import * as React from 'react';
-import { View, useWindowDimensions } from 'react-native';
+import { View, useWindowDimensions, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+
+import { HappierReviewFindingBody } from '@happier-dev/plugin-ui';
+import type { HappierWorkHost } from '@happier-dev/plugin-ui/presentation';
 
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 import type { ReviewSeenBeforeResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
@@ -18,6 +21,7 @@ import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedLi
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { useWorkTheme } from '@/components/work/map/WorkMapView';
 import { Typography } from '@/constants/Typography';
 import type { ReviewHistorySnapshot } from '@/sync/store/domains/reviews/history';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -60,63 +64,34 @@ export function ReviewFindingBody(
   }>,
 ) {
   const { finding } = props;
-  const impact = finding.whyItMatters ?? null;
+  const theme = useWorkTheme();
   return (
-    <View testID={`review-finding-body:${props.rowId}`} style={styles.body}>
-      <View style={styles.why}>
-        {impact ? (
-          <Text selectable style={styles.impact}>
-            {impact}
-          </Text>
-        ) : null}
-        {props.currentBodyMarkdown !== undefined ? (
-          <MarkdownView markdown={props.currentBodyMarkdown} textStyle={impact ? styles.cause : styles.impact} />
-        ) : (
-          <Text selectable style={impact ? styles.cause : styles.impact}>
-            {finding.summary}
-          </Text>
-        )}
-        {props.notice ?? null}
-      </View>
-      <ReviewFindingWhere finding={finding} rowId={props.rowId} />
-      {finding.evidence ? (
-        <View
-          testID={`review-finding-verified:${props.rowId}`}
-          style={styles.section}
-        >
-          <Text
-            accessibilityRole="header"
-            variant="label"
-            emphasis="semiBold"
-            style={styles.label}
-          >
-            {t('runPage.review.howItWasVerified')}
-          </Text>
-          <MarkdownView markdown={finding.evidence} textStyle={styles.prose} />
-        </View>
-      ) : null}
-      {props.reviewContext && finding.extensions ? (
-        <ReviewFindingPluginContent {...props.reviewContext} extensions={finding.extensions} />
-      ) : null}
-      {props.seenBefore ? <ReviewFindingSeenBeforeHistory rowId={props.rowId} {...props.seenBefore} /> : null}
-      <View
-        testID={`review-finding-conversation:${props.rowId}`}
-        style={styles.section}
-      >
-        <Text
-          accessibilityRole="header"
-          variant="label"
-          emphasis="semiBold"
-          style={styles.label}
-        >
-          {t('runPage.review.conversation')}
-        </Text>
-        <ReviewFindingReviewers reviewers={props.reviewers} />
-        {props.conversation}
-      </View>
-    </View>
+    <HappierReviewFindingBody
+      rowId={props.rowId}
+      finding={finding}
+      currentBodyMarkdown={props.currentBodyMarkdown}
+      theme={theme}
+      host={FINDING_BODY_HOST}
+      labels={{ where: t('runPage.review.where'), verification: t('runPage.review.howItWasVerified'), conversation: t('runPage.review.conversation') }}
+      renderMarkdown={(markdown, role) => <MarkdownView markdown={markdown}
+        textStyle={role === 'cause' ? finding.whyItMatters ? styles.cause : styles.impact : styles.prose} />}
+      renderWhere={() => <ReviewFindingWhere finding={finding} rowId={props.rowId} />}
+      notice={props.notice}
+      reviewers={<ReviewFindingReviewers reviewers={props.reviewers} />}
+      extensions={props.reviewContext && finding.extensions
+        ? <ReviewFindingPluginContent {...props.reviewContext} extensions={finding.extensions} /> : null}
+      seenBefore={props.seenBefore ? <ReviewFindingSeenBeforeHistory rowId={props.rowId} {...props.seenBefore} /> : null}
+      conversation={props.conversation}
+    />
   );
 }
+
+/** Core text keeps the incumbent body and label typography and selectable prose. */
+const FINDING_BODY_HOST: HappierWorkHost = { Text: (props) => (
+  <Text selectable variant={props.role === 'pageRowTitle' ? 'label' : 'body'}
+    emphasis={props.strong ? 'semiBold' : undefined} accessibilityRole={props.accessibilityRole}
+    testID={props.testID} style={props.style as StyleProp<TextStyle>}>{props.children}</Text>
+) };
 
 function ReviewFindingSeenBeforeHistory(props: ReviewFindingSeenBefore & Readonly<{ rowId: string }>) {
   const { history, rowId } = props;
@@ -152,7 +127,6 @@ function ReviewFindingWhere(
   const { theme } = useUnistyles();
   const { finding } = props;
   const location = formatReviewFindingLocation(finding);
-  if (!location && !finding.patch && !finding.suggestion) return null;
   const path = finding.filePath ?? null;
   return (
     <View testID={`review-finding-where:${props.rowId}`} style={styles.section}>
@@ -240,12 +214,6 @@ function ReviewFindingReviewers(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  body: {
-    gap: theme.space.s24,
-  },
-  why: {
-    gap: theme.space.s4,
-  },
   impact: {
     color: theme.colors.text.primary,
     ...Typography.variant('body', 'semiBold'),

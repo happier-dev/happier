@@ -14276,6 +14276,18 @@ includes the complete Review context, so changed evidence uses a fresh demanded
 Resource view without a new cache or refresh timer. The Slice review engine
 demonstrates all three contexts with one ordinary declarative-document Resource.
 
+The public `@happier-dev/plugin-ui` components `HappierReviewFinding` and
+`HappierReviewFindingBody` own the finding disclosure and opened body used by
+the native Review page. Native adapters supply existing Markdown/code renderers,
+reviewer attribution, history and conversation; contributed hosts can use the
+same presentation with the public host renderers. The comment model supplies
+the projected decision and editability. A read-only decision retains its saved
+label and ignored styling without an editor. Presentation reads no resources,
+activates no contribution and performs no mutation; existing comment Actions
+remain the sole decision writer. The shared location formatter also serves
+native summaries and thread quotes. See the
+[plugin UI guide](../apps/docs/content/docs/plugins/ui/react-native.mdx#review-findings-03-development).
+
 ### Review cost acknowledgement (0.3 development)
 
 A Review profile can name an existing boolean option in
