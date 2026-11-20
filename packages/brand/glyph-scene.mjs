@@ -401,7 +401,7 @@ function sampleStepTravellers(out, layer, time, palette) {
 }
 
 function sampleFront(out, grid, layer, time, palette) {
-    const { rect, origin, shape, front, band, ragged, alpha, ink, mode, inkMap, cover } = layer;
+    const { rect, origin, shape, front, band, ragged, alpha, ink, mode, inkMap, cover, climbProgress } = layer;
     const area = rect ?? { x: 0, y: 0, width: out.width / out.dpr, height: out.height / out.dpr };
     const ox = origin?.x ?? area.x + area.width / 2, oy = origin?.y ?? area.y + area.height / 2;
     const [dw, dh] = grid.cell;
@@ -412,13 +412,28 @@ function sampleFront(out, grid, layer, time, palette) {
         for (let i = 0; i < grid.cols; i++) {
             const x = (i + 0.5) * dw / out.dpr;
             if (x < area.x || x >= area.x + area.width) continue;
-            const edge = frontEdge(shape, Math.abs(x - ox), Math.abs(y - oy), front, ragged, i, j);
+            const edge = shape === 'horizontal' ? front - y + (cellHash(i, j) - 0.5) * ragged
+                : frontEdge(shape, Math.abs(x - ox), Math.abs(y - oy), front, ragged, i, j);
+            const mapped = inkMap && j < inkMap.rows && i < inkMap.cols ? inkMap.rgba[(j * inkMap.cols + i) * 4 + 3] / 255 : 0;
+            const inkWeight = inkMap && mode === 'eat' ? mapped : 1;
+            if (climbProgress !== undefined && inkWeight > 0 && cellHash(i, j) < 0.42) {
+                const seed = cellHash(i, j + 7);
+                const encounter = 0.55 * (1 - (y + 90) / (area.y + area.height + 310));
+                const travel = (climbProgress - encounter) / 0.45;
+                if (travel > 0 && travel < 1) {
+                    const rise = (y + 80) * (0.55 + 0.45 * seed) * travel ** 1.4;
+                    const color = ink === 'sunrise' ? gradient(palette.body, y / (out.height / out.dpr), out.ink) : ink;
+                    writeSprite(out, (x + (seed - 0.5) * 6 * travel) * out.dpr, (y - rise) * out.dpr,
+                        digitOf(i, j, step), color, 0.32 * Math.sin(Math.PI * travel) * (0.6 + 0.4 * seed) * inkWeight);
+                }
+            }
             if (mode === 'decode' && cover && edge >= 0) writeSprite(out, x * out.dpr, y * out.dpr, 20, cover, (cover[3] ?? 255) / 255);
-            if (Math.abs(edge) >= band) continue;
+            const frontAmount = climbProgress === undefined
+                ? Math.max(0, 1 - Math.abs(edge) / band)
+                : Math.min(1, Math.max(0, edge / (0.8 * band)));
+            if (frontAmount <= 0) continue;
             const color = ink === 'sunrise' ? gradient(palette.body, y / (out.height / out.dpr), out.ink) : ink;
-            const mapped = inkMap?.rgba;
-            const index = (j * grid.cols + i) * 4;
-            const amount = alpha * (1 - Math.abs(edge) / band) * (mapped && mode === 'eat' ? (mapped[index + 3] ?? 0) / 255 : 1);
+            const amount = alpha * (climbProgress === undefined ? frontAmount : frontAmount ** 2 * (3 - 2 * frontAmount)) * inkWeight;
             writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, j, step), color, amount);
         }
     }
@@ -477,7 +492,7 @@ export function createGlyphFrameSampler() {
             if (layer.kind === 'traveller') return sum + layer.particles.length / 8 * (layer.small && layer.stepMorphProgress !== undefined ? 3 : 1);
             if (layer.kind === 'mark') return sum + (layer.cellTimeline ? layer.cellTimeline.length / 4 : cols * rows) * markCellSprites(grid, dpr);
             if (layer.kind === 'planet') return sum + cols * rows * ((layer.ring ? 3 : 2) + Math.ceil(cell[0] / dpr / latticePitch) * Math.ceil(cell[1] / dpr / latticePitch));
-            return sum + cols * rows * (layer.kind === 'front' && layer.cover ? 2 : 1);
+            return sum + cols * rows * (layer.kind === 'front' && (layer.cover || layer.climbProgress !== undefined) ? 2 : 1);
         }, 0);
         if (capacity > storage.glyph.length) storage = { at: new Uint16Array(capacity * 2), glyph: new Uint8Array(capacity), rgba: new Uint8Array(capacity * 4) };
         const out = { ...storage, ink, dpr, width, height, count: 0 };

@@ -34,6 +34,7 @@ export type StepFreeze = Readonly<{
     control?: HTMLElement | null;
     webLeaves?: readonly StepWebLeaf[];
     webFocal?: HTMLElement;
+    webChrome?: readonly HTMLElement[];
     release: () => void;
 }>;
 
@@ -43,6 +44,7 @@ export type StepMotionLayerHandle = Readonly<{
     compact: boolean;
     warmOnMount: boolean;
     webElement: () => HTMLElement | null;
+    webChrome?: () => readonly HTMLElement[];
     nativeElement: () => View | null;
     focal: (returnTo?: string) => FocusReturnTarget;
     paintOpacity: (values: readonly number[], durationMs: number, delayMs: number) => () => void;

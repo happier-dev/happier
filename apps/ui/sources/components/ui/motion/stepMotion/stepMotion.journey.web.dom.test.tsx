@@ -205,8 +205,12 @@ it.each(['back', 'blur'] as const)('keeps stage continuity when a late QR is fol
     vi.stubGlobal('CSS', { escape: (id: string) => id });
     setReducedMotionPreferenceOverride(false);
     const previousAnimate = HTMLElement.prototype.animate;
+    const animated = new Map<HTMLElement, { frames: Keyframe[]; timing: KeyframeAnimationOptions }>();
     Object.defineProperty(HTMLElement.prototype, 'animate', {
-        configurable: true, value: () => ({ onfinish: null, cancel() {} }),
+        configurable: true, value(this: HTMLElement, frames: Keyframe[], timing: KeyframeAnimationOptions) {
+            animated.set(this, { frames, timing });
+            return { onfinish: null, cancel() {} };
+        },
     });
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
         if (this.dataset.testid === 'open-approval') return new DOMRect(30, 100, 120, 32);
@@ -220,17 +224,33 @@ it.each(['back', 'blur'] as const)('keeps stage continuity when a late QR is fol
     const root = createRoot(container);
     const settled = vi.fn();
     let showQr = () => {};
+    let hideWelcomeCorner = () => {};
     function Approve() {
         const focal = useStepFocal();
         const [ready, setReady] = React.useState(false);
         showQr = () => setReady(true);
-        return <><h1 data-testid="approval-title">Approve</h1>{ready && <div ref={focal} data-testid="late-qr" />}</>;
+        return <>
+            <h1 data-testid="approval-title">Approve</h1>
+            <p data-testid="late-host">{ready ? 'Personal Home' : '\u00a0'}</p>
+            {ready && <>
+                <div ref={focal} data-testid="late-qr" />
+                <p data-testid="late-status">Waiting for approval</p>
+            </>}
+        </>;
     }
+    const readWebChrome = () => Array.from(container.querySelectorAll<HTMLElement>(
+        '[data-testid="welcome-links"], [data-testid="welcome-corner"]',
+    ));
     function Journey() {
         const [approve, setApprove] = React.useState(false);
+        const [showCorner, setShowCorner] = React.useState(true);
+        hideWelcomeCorner = () => setShowCorner(false);
         return <StepMotionStage>
             <button data-testid="back" onClick={() => runStepMove({ layer: 'workflow', kind: 'back', commit: () => setApprove(false) })}>Back</button>
-            <StepMotionLayer layerKey="workflow" stepKey={approve ? 'approve' : 'welcome'} backTestID="back">
+            {!approve && <footer data-testid="welcome-links"><a href="/help">Help</a></footer>}
+            {!approve && showCorner && <header data-testid="welcome-corner">Run your own Home</header>}
+            <StepMotionLayer layerKey="workflow" stepKey={approve ? 'approve' : 'welcome'} backTestID="back"
+                webChrome={readWebChrome}>
                 {approve ? <Approve /> : <button data-testid="open-approval" onClick={() => runStepMove({
                     layer: 'workflow', kind: 'step', commit: () => setApprove(true), onSettled: settled,
                 })}>Log in</button>}
@@ -242,14 +262,29 @@ it.each(['back', 'blur'] as const)('keeps stage continuity when a late QR is fol
     try {
         await act(async () => root.render(<Journey />));
         await act(async () => { await vi.dynamicImportSettled(); });
-        await act(async () => {
-            pointerDown(find('open-approval'), 1);
-            click(find('open-approval'), 1);
-        });
+        await act(async () => pointerDown(find('open-approval'), 1));
+        // The active-Home lookup may remove the corner door before Login commits the new step.
+        await act(async () => hideWelcomeCorner());
+        await act(async () => click(find('open-approval'), 1));
         const forward = travellerAt(0.368);
         expect(forward).toBeDefined();
+        expect(find('welcome-links')).toBeNull();
+        const departing = [...document.querySelectorAll<HTMLElement>('footer[aria-hidden="true"]')].find(node => node.textContent === 'Help');
+        expect(departing?.inert).toBe(true);
+        expect(departing?.querySelector('a')?.hasAttribute('href')).toBe(false);
+        expect(departing && animated.get(departing)?.frames.some(frame => Number(frame.opacity) > 0 && Number(frame.opacity) < 1)).toBe(true);
+        const corner = document.querySelector<HTMLElement>('header[aria-hidden="true"]');
+        expect(corner?.textContent).toBe('Run your own Home');
+        expect(corner && animated.get(corner)?.frames.at(-1)?.opacity).toBe(0);
+        clock.mockReturnValue(1070);
         await act(async () => showQr());
         expect(document.activeElement).toBe(find('late-qr'));
+        for (const id of ['late-qr', 'late-host', 'late-status']) {
+            const reveal = animated.get(find(id));
+            expect(reveal?.frames.at(0)?.opacity).toBe(0);
+            expect(reveal?.frames.at(-1)?.opacity).toBe(1);
+            expect(reveal?.timing.delay).toBe(-70);
+        }
         clock.mockReturnValue(1368);
         if (interruption === 'back') {
             await act(async () => { find('back').click(); });

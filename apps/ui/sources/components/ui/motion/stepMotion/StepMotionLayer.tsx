@@ -17,6 +17,7 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     compact?: boolean;
     testID?: string;
     backTestID?: string;
+    webChrome?: StepMotionLayerHandle['webChrome'];
     retainContent?: boolean;
     warmOnMount?: boolean;
     shareFocalWithParent?: boolean;
@@ -72,17 +73,20 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
         if (Platform.OS === 'web' && typeof HTMLElement !== 'undefined' && root.current instanceof HTMLElement) return root.current;
         return null;
     }, []);
-    const { layerKey, backTestID, compact = false, warmOnMount = true } = props;
+    const { layerKey, backTestID, compact = false, warmOnMount = true, webChrome } = props;
     const layer = React.useMemo<StepMotionLayerHandle>(() => ({
         key: layerKey,
         backTestID,
         compact,
         warmOnMount,
         webElement,
+        webChrome,
         nativeElement: () => root.current,
         focal(returnTo) {
             const web = webElement();
-            const preferred = returnTo ? web ? findWebStepAnchor(web, returnTo) : findNativeStepAnchor(root.current, returnTo) : null;
+            const preferred = returnTo ? web
+                ? findWebStepAnchor(web, returnTo) ?? webChrome?.().map(region => findWebStepAnchor(region, returnTo)).find(Boolean)
+                : findNativeStepAnchor(root.current, returnTo) : null;
             return preferred ?? focals.focal.current ?? focals.heading.current ?? web?.querySelector<HTMLElement>('[role="heading"], h1, h2');
         },
         focus(returnTo, allowLateFocal) {
@@ -125,7 +129,7 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             animation.start(({ finished }) => { if (finished) onSettled(); });
             return () => { animation.stop(); fadeOpacity.setValue(1); };
         },
-    }), [layerKey, backTestID, compact, fadeOpacity, focals, warmOnMount, webElement]);
+    }), [layerKey, backTestID, compact, fadeOpacity, focals, warmOnMount, webChrome, webElement]);
     React.useLayoutEffect(() => active ? stage?.attach(layer) : undefined, [active, stage, layer]);
     React.useLayoutEffect(() => {
         if (active) stage?.commit(layer, !wasActive.current);

@@ -164,6 +164,7 @@ export const QRCode = React.memo((props: QRCodeProps) => {
             }}
         >
             <svg
+                data-qr-ink=""
                 width={size}
                 height={size}
                 viewBox={`0 0 ${size} ${size}`}

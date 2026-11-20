@@ -38,7 +38,7 @@ export type TravellerGlyphOptions = Readonly<{
     stepMorphProgress?: number;
 }>;
 export type FrontGlyphOptions = Readonly<{
-    shape: 'superellipse' | 'roundRect';
+    shape: 'superellipse' | 'roundRect' | 'horizontal';
     origin?: GlyphPoint;
     rect?: GlyphRect;
     front: number;
@@ -48,6 +48,8 @@ export type FrontGlyphOptions = Readonly<{
     ink: 'sunrise' | GlyphInk;
     mode: 'eat' | 'decode';
     inkMap?: GlyphInkMap;
+    /** Lift the sampled leaving ink after the climbing front passes it. */
+    climbProgress?: number;
     cover?: GlyphInk;
 }>;
 export type PlanetGlyphLayer = PlanetGlyphOptions & { kind: 'planet' };

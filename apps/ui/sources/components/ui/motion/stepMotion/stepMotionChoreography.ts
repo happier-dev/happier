@@ -21,6 +21,11 @@ const segment = (p: number, start: number, end: number) => Math.min(1, Math.max(
 export const easeInOutCubic = (p: number) => p < 0.5 ? 4 * p ** 3 : 1 - (-2 * p + 2) ** 3 / 2;
 const smooth = (p: number) => p * p * (3 - 2 * p);
 
+export function leavingEdge(region: GlyphRect, eased: number): number {
+    const start = region.y + region.height + 220;
+    return start + (-90 - start) * eased;
+}
+
 function climbPace(p: number) {
     const knee = 1.5 / (3.6 - 3.6 * stepMotionTiming.homeClimbStart);
     return p < knee
@@ -53,7 +58,7 @@ export function visualAt(grammar: Exclude<StepGrammar, 'fade'>, p: number) {
             ? elapsed ** 2 / (2 * openingSoftStartS)
             : elapsed - openingSoftStartS / 2;
         const arriveFront = travel / (openingS - openingSoftStartS / 2);
-        return { leave: 0, arrive: arriveFront, pressed: 0, focal: 0, leaveFront: 1, arriveFront };
+        return { leave: 0, arrive: arriveFront, pressed: 0, chrome: 0, focal: 0, leaveFront: 1, arriveFront };
     }
     if (grammar === 'home') {
         const leaveFront = easeInOutCubic(segment(p, 0, stepMotionTiming.homeClear));
@@ -64,17 +69,19 @@ export function visualAt(grammar: Exclude<StepGrammar, 'fade'>, p: number) {
             leave: 1 - leaveFront,
             arrive: arriveFront,
             pressed: 0,
+            chrome: 1 - smooth(segment(p, 0, 0.25)),
             focal: 0,
             leaveFront,
             arriveFront,
         };
     }
     const leaveFront = easeInOutCubic(segment(p, 0, 0.55));
-    const arriveFront = easeInOutCubic(segment(p, 0.2, 1));
+    const arriveFront = 1 - (1 - segment(p, 0.2, 1)) ** 2;
     return {
-        leave: 1 - leaveFront,
+        leave: grammar === 'morph' ? (1 - segment(p, 0, 0.32)) ** 2 : 1 - leaveFront,
         arrive: arriveFront,
         pressed: 1 - smooth(segment(p, 0, 0.06)),
+        chrome: (1 - p) ** 2,
         focal: smooth(segment(p, 0.8, 0.95)),
         leaveFront,
         arriveFront,

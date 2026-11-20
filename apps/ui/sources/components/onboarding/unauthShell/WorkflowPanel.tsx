@@ -116,6 +116,15 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // The welcome's "Run your own Home" door, in the page's top-right corner on a computer (lab direction A).
     const [cornerDoor, setCornerDoor] = React.useState<ShellCornerDoor | null>(null);
     const cornerSlot = isMobile ? null : setCornerDoor;
+    const pane = React.useRef<View>(null);
+    const readWebChrome = React.useCallback(() => {
+        const root = pane.current;
+        if (typeof HTMLElement === 'undefined' || !(root instanceof HTMLElement)) return [];
+        const welcomeWordmark = isMobile ? ', [data-testid="welcome-mobile-wordmark"]' : '';
+        return Array.from(root.querySelectorAll<HTMLElement>(
+            `[data-testid="unauth-shell-corner"], [data-testid="unauth-shell-welcome-footer"]${welcomeWordmark}`,
+        ));
+    }, [isMobile]);
     const cardDimensions = useModalCardDimensions({ size: 'md', width: WORKFLOW_CARD_WIDTH_HINT });
     const layoutMaxWidth = useLayoutMaxWidth();
     // The pane is capped at exactly the wizard card width (~500px) including
@@ -157,10 +166,11 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                 paddingBottom: WORKFLOW_MOBILE_BOTTOM_PADDING + safeAreaInsets.bottom,
                 paddingLeft: WORKFLOW_MOBILE_HORIZONTAL_PADDING + safeAreaInsets.left,
             }
-        : styles.contentDesktopPadding;
+        : props.isWelcomeStep ? styles.contentDesktopPadding : styles.contentDesktopStepPadding;
 
     return (
         <View
+            ref={pane}
             testID={props.testID ?? 'unauth-shell-workflow-pane'}
             // The pane is transparent: the shell's welcome atmosphere draws the page behind it.
             style={styles.paneOuter}
@@ -252,6 +262,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <View onLayout={props.onColumnLayout}>
                                 <StepMotionLayer
                                     layerKey={FIRST_RUN_WORKFLOW_LAYER}
+                                    webChrome={readWebChrome}
                                     active={focused}
                                     warmOnMount={props.warmStepMotion}
                                     backTestID={UNAUTH_BACK_TEST_ID}
@@ -264,7 +275,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                 </StepMotionLayer>
                             </View>
                             <View style={styles.welcomeTrail} />
-                            <View>
+                            <View testID="unauth-shell-welcome-footer">
                                 <WelcomeFooterLinks
                                     variant="mobile"
                                     trailing={props.footerAccessory}
@@ -277,6 +288,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <View style={styles.welcomeLead} />
                             <StepMotionLayer
                                 layerKey={FIRST_RUN_WORKFLOW_LAYER}
+                                webChrome={readWebChrome}
                                 active={focused}
                                 warmOnMount={props.warmStepMotion}
                                 backTestID={UNAUTH_BACK_TEST_ID}
@@ -291,7 +303,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                             <View style={styles.welcomeTrail} />
                             {/* The links stand on the wordmark's corner grid (40 px from the window's edges), not the pane's
                                 gutter (lab direction A). */}
-                            <View style={styles.desktopFooterCorner}>
+                            <View testID="unauth-shell-welcome-footer" style={styles.desktopFooterCorner}>
                                 <WelcomeFooterLinks
                                     variant="desktop"
                                     trailing={props.footerAccessory}
@@ -306,6 +318,7 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                     <>
                         <StepMotionLayer
                             layerKey={FIRST_RUN_WORKFLOW_LAYER}
+                            webChrome={readWebChrome}
                             active={focused}
                             warmOnMount={props.warmStepMotion}
                             backTestID={UNAUTH_BACK_TEST_ID}
@@ -364,6 +377,13 @@ const stylesheet = StyleSheet.create(() => ({
     },
     contentDesktopPadding: {
         paddingTop: 56,
+        paddingHorizontal: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER,
+        paddingBottom: DESKTOP_PANE_BOTTOM_PADDING_PX,
+    },
+    // A step after the welcome starts its column where the lab's steps do (direction A: 110 px from the window's top),
+    // clear of the wordmark row, rather than at the welcome's pane edge.
+    contentDesktopStepPadding: {
+        paddingTop: 110,
         paddingHorizontal: WORKFLOW_DESKTOP_HORIZONTAL_GUTTER,
         paddingBottom: DESKTOP_PANE_BOTTOM_PADDING_PX,
     },

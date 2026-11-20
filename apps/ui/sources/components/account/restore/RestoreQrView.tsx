@@ -391,7 +391,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                         <ActivitySpinner size="small" />
                     ) : null}
                     {pendingCode || visibleTargetLabel ? (
-                        <Text aria-hidden={pendingCode || undefined} style={[styles.targetName, embedded ? styles.embeddedTargetName : null]}>
+                        <Text testID="restore-requester-host" aria-hidden={pendingCode || undefined} style={[styles.targetName, embedded ? styles.embeddedTargetName : null]}>
                             {visibleTargetLabel ?? '\u00a0'}
                         </Text>
                     ) : null}

@@ -45,12 +45,27 @@ describe('first-open glyph choreography', () => {
         expect(Math.min(...frame.sprites.glyph)).toBeGreaterThanOrEqual(10);
     });
 
+    it('lifts outgoing ink and moves a scattered pill toward the focal element', () => {
+        const forward = scene({ grammar: 'morph', from: 0, to: 1, secondsPerProgress: 0.92 });
+        const sample = createGlyphFrameSampler();
+        const positions = (progress: number, kind: 'front' | 'traveller') => {
+            const layer = forward(progress * 0.92).find(layer => layer.kind === kind);
+            if (!layer) throw new Error('Missing paint layer');
+            return sample({ view: { w: 390, h: 844 }, dpr: 1, theme: 'light', layers: [layer] }).sprites.at.slice();
+        };
+        expect(positions(0.48, 'front').some((y, index) => index % 2 === 1 && y < geometry.outgoing.y)).toBe(true);
+        const pill = positions(0.05, 'traveller');
+        expect(new Set(pill.filter((_, index) => index % 2 === 1)).size).toBeGreaterThan(25);
+        expect(positions(0.72, 'traveller').some((y, index) => index % 2 === 1 && y > 480)).toBe(true);
+    });
+
     it('clears outgoing Home digits before revealing Home and leaves an empty scene at settle', () => {
         const home = scene({ grammar: 'home', from: 0, to: 1, secondsPerProgress: 3.4 });
         const modes = (seconds: number) => home(seconds).flatMap(layer => layer.kind === 'front' ? [layer.mode] : []);
 
         expect(modes(0.5)).toEqual(['eat']);
         expect(modes(1.05)).toEqual(['decode']);
+        expect(home(1.5).find(layer => layer.kind === 'front')?.rect).toEqual(geometry.incoming);
         expect(home(3.4)).toEqual([]);
     });
 });

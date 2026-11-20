@@ -12,13 +12,13 @@ import { captureElementFlightRect } from '../rectFlight';
 import { readNativeStepAnchor } from './capturePressedElement.native';
 import { findInteractiveWebStepTarget, findPressedWebControl, readWebStepAnchor } from './capturePressedElement.web';
 import type { StepGrammar } from './stepMotionChoreography';
-import type { StepAnimation } from './stepMotionScene';
+import type { StepAnimation, StepFocalInk } from './stepMotionScene';
 import { stepMotionTiming } from './stepMotionTiming';
 import type { StepAnchor, StepBuild, StepBuildResult, StepFreeze, StepGrid, StepMotionLayerHandle, StepMove, StepWebLeaf } from './stepMotionTypes';
 
 type AnimatedGrammar = Exclude<StepGrammar, 'fade'>;
 type StepMotionPresentation = typeof import('./stepMotionPresentation');
-type StepEndpoints = Readonly<{ source?: StepAnchor['rect']; target?: StepAnchor['rect'] }>;
+type StepEndpoints = { source?: StepAnchor['rect']; target?: StepAnchor['rect']; focalInk?: StepFocalInk };
 type PendingMove = {
     destination: string;
     kind: StepMove['kind'];
@@ -93,6 +93,7 @@ function createStepMotionStage(
     const committedSteps = new WeakSet<StepMotionLayerHandle>();
     const laidOutLayers = new WeakSet<StepMotionLayerHandle>();
     let pressed: StepAnchor | null = null;
+    let pressedChrome: { layer: string; regions: readonly StepWebLeaf[] } | undefined;
     let pending: PendingMove | null = null;
     let active: { layer: string; animation?: StepAnimation; endpoints?: StepEndpoints; stop: () => void } | null = null;
     let commitOrder = 0;
@@ -132,6 +133,7 @@ function createStepMotionStage(
     }
 
     function settle() {
+        pressedChrome = undefined;
         cancelPending();
         active?.stop();
         syncPresentation();
@@ -179,7 +181,8 @@ function createStepMotionStage(
             showIncoming(layer, complete);
             return;
         }
-        const { createStepMotionScene, radialDistance, readStepLeaves, readStepProgress, revealRadius, visualAt } = presentation;
+        const { createStepMotionScene, leavingEdge, radialDistance, readStepLeaves, readStepProgress, readWebFocalInk,
+            revealRadius, stepLeavesIn, visualAt } = presentation;
         const reversing = animation.to === 0;
         const focalTarget = layer.focal();
         const returnTarget = returnTo?.testID ? layer.focal(returnTo.testID) : undefined;
@@ -188,7 +191,14 @@ function createStepMotionStage(
             target: reversing ? source?.rect : targetRect(focalTarget),
         };
         const { source: sourceRect, target } = endpoints;
+        const morphing = animation.grammar === 'morph';
+        const sampleFocalInk = (node: HTMLElement) => {
+            if (morphing && target && !reversing && !endpoints.focalInk) {
+                endpoints.focalInk = readWebFocalInk(node, target);
+            }
+        };
         const web = layer.webElement();
+        if (web && focalTarget instanceof HTMLElement) sampleFocalInk(focalTarget);
         const leaves = web ? readStepLeaves(web, grid) : null;
         const { primary, tertiary, page } = colors();
         const cover = web ? undefined : reversing ? undefined : inkFor(page);
@@ -199,6 +209,7 @@ function createStepMotionStage(
             incoming: reversing && freeze ? freeze.rect : incoming,
             source: sourceRect,
             target,
+            readFocalInk: () => endpoints.focalInk,
             outgoingInk: reversing ? leaves?.ink : freeze?.ink,
             incomingInk: reversing ? freeze?.ink : leaves?.ink,
             ink: inkFor(tertiary),
@@ -212,21 +223,27 @@ function createStepMotionStage(
         const delayMs = animation.epoch - performance.now();
         const cleanups: Array<() => void> = [];
         const animate = (node: HTMLElement, keyframes: Keyframe[], duration = durationMs) => {
-            const effect = node.animate(keyframes, { duration, delay: delayMs, fill: 'both' });
+            const effect = node.animate(keyframes, { duration, delay: animation.epoch - performance.now(), fill: 'both' });
             cleanups.push(() => { effect.onfinish = null; effect.cancel(); });
             return effect;
         };
         const building = animation.grammar === 'home' || animation.grammar === 'opening';
-        const paintIncomingWeb = (element: HTMLElement, region: StepAnchor['rect'], leafNodes: readonly StepWebLeaf[], focal?: HTMLElement) => {
-            if (leafNodes.length === 0) {
-                animate(element, frames.map(frame => ({ opacity: frame.arrive, clipPath: `inset(${100 * (1 - frame.arriveFront)}% 0 0)` })));
-            } else {
-                const origin = !building && sourceRect
-                    ? { x: sourceRect.x + sourceRect.width / 2, y: sourceRect.y + sourceRect.height / 2 }
-                    : undefined;
-                const radius = origin ? revealRadius(region, origin) : region.height;
-                for (const { element: leaf, rect } of leafNodes) {
-                    if (!building && leaf === focal) continue;
+        const paintIncomingWeb = (element: HTMLElement, region: StepAnchor['rect'], leafNodes: readonly StepWebLeaf[],
+            focal?: HTMLElement, live = false) => {
+            const origin = !building && sourceRect
+                ? { x: sourceRect.x + sourceRect.width / 2, y: sourceRect.y + sourceRect.height / 2 }
+                : undefined;
+            const radius = origin ? revealRadius(region, origin) : region.height;
+            const painted = new Set<Element>();
+            const paintFocal = (node: HTMLElement | undefined) => {
+                if (building || !node || !element.contains(node) || painted.has(node)) return;
+                painted.add(node);
+                animate(node, frames.map(frame => ({ opacity: frame.focal })));
+            };
+            const paintLeaves = (leaves: readonly StepWebLeaf[]) => {
+                for (const { element: leaf, rect } of leaves) {
+                    painted.add(leaf);
+                    if (!building && focal?.contains(leaf)) continue;
                     const midpoint = rect.y + rect.height / 2;
                     const distance = origin ? radialDistance(rect.x + rect.width / 2, midpoint, origin) : region.y + region.height - midpoint;
                     const at = Math.min(1, Math.max(0, distance / radius));
@@ -234,22 +251,63 @@ function createStepMotionStage(
                         opacity: frame.arriveFront === 1 ? 1 : Math.max(0, Math.min(1, (frame.arriveFront - at) * 8)),
                     })));
                 }
+            };
+            paintFocal(focal);
+            paintLeaves(leafNodes);
+            if (!live && painted.size === 0) {
+                animate(element, frames.map(frame => ({ opacity: frame.arrive, clipPath: `inset(${100 * (1 - frame.arriveFront)}% 0 0)` })));
             }
-            if (!building && focal && element.contains(focal)) animate(focal, frames.map(frame => ({ opacity: frame.focal })));
+            if (!live) return;
+            const observer = new MutationObserver(records => {
+                const currentFocal = layer.focal();
+                if (currentFocal instanceof HTMLElement) {
+                    paintFocal(currentFocal);
+                    sampleFocalInk(currentFocal);
+                }
+                const added = new Set<HTMLElement>();
+                const collect = (node: Node) => {
+                    const candidate = node.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+                    if (!(candidate instanceof HTMLElement) || !element.contains(candidate)) return;
+                    if (!building && currentFocal instanceof HTMLElement && currentFocal.contains(candidate)) return;
+                    added.add(candidate);
+                    if (candidate === node) {
+                        for (const child of candidate.querySelectorAll<HTMLElement>('*')) added.add(child);
+                    }
+                };
+                for (const record of records) {
+                    if (record.type === 'characterData') collect(record.target);
+                    for (const node of record.addedNodes) collect(node);
+                }
+                if (added.size === 0) return;
+                paintLeaves(stepLeavesIn(element, [...added], painted));
+            });
+            observer.observe(element, { characterData: true, childList: true, subtree: true });
+            cleanups.push(() => observer.disconnect());
         };
-        const paintOutgoingWeb = (element: HTMLElement, region: StepAnchor['rect'], pressed?: HTMLElement | null, onCleared?: () => void) => {
+        const paintOutgoingWeb = (element: HTMLElement, region: StepAnchor['rect'], leafNodes: readonly StepWebLeaf[],
+            pressed?: HTMLElement | null, onCleared?: () => void) => {
             const fold = building ? region : animation.grammar === 'fold' ? sourceRect : undefined;
             const clearFrame = onCleared ? frames.findIndex(frame => frame.leave === 0) : -1;
             const lastFrame = clearFrame > 0 ? clearFrame : intervals;
-            const dissolve = animate(element, frames.slice(0, lastFrame + 1).map(frame => ({
-                opacity: frame.leave, clipPath: leaveClip(frame.leaveFront, region, fold),
-            })), durationMs * lastFrame / intervals);
+            const dissolve = animate(element, frames.slice(0, lastFrame + 1).map(frame => animation.grammar === 'morph'
+                ? { opacity: frame.leave, clipPath: `inset(0 0 ${Math.max(0, Math.min(100, 100 * (region.y + region.height - leavingEdge(region, frame.leaveFront)) / region.height))}% 0)` }
+                : { opacity: frame.leave, clipPath: leaveClip(frame.leaveFront, region, fold) }), durationMs * lastFrame / intervals);
             if (onCleared) dissolve.onfinish = onCleared;
+            if (animation.grammar === 'morph') {
+                for (const { element: leaf, rect } of leafNodes) {
+                    if (leaf === pressed) continue;
+                    animate(leaf, frames.map(frame => ({
+                        opacity: Math.max(0, Math.min(1, (leavingEdge(region, frame.leaveFront) - rect.y - rect.height / 2) / 32)),
+                    })));
+                }
+            }
             if (pressed && !building) animate(pressed, frames.map(frame => ({ opacity: frame.pressed })));
         };
         if (web?.animate) {
-            if (reversing) paintOutgoingWeb(web, incoming, returnTarget instanceof HTMLElement ? returnTarget : undefined);
-            else paintIncomingWeb(web, incoming, leaves?.leaves ?? [], focalTarget instanceof HTMLElement ? focalTarget : undefined);
+            if (reversing) {
+                paintOutgoingWeb(web, incoming, leaves?.leaves ?? [], returnTarget instanceof HTMLElement ? returnTarget : undefined);
+                for (const chrome of layer.webChrome?.() ?? []) animate(chrome, frames.map(frame => ({ opacity: frame.chrome })));
+            } else paintIncomingWeb(web, incoming, leaves?.leaves ?? [], focalTarget instanceof HTMLElement ? focalTarget : undefined, true);
         } else if (!cover) {
             cleanups.push(layer.paintOpacity(frames.map(frame => reversing ? frame.leave : frame.arrive), durationMs, delayMs));
         }
@@ -262,7 +320,11 @@ function createStepMotionStage(
         };
         if (freeze?.clone) {
             if (reversing) paintIncomingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.webFocal);
-            else paintOutgoingWeb(freeze.clone, freeze.rect, freeze.control, releaseFreeze);
+            else {
+                paintOutgoingWeb(freeze.clone, freeze.rect, freeze.webLeaves ?? [], freeze.control,
+                    animation.grammar === 'morph' ? undefined : releaseFreeze);
+                for (const chrome of freeze.webChrome ?? []) animate(chrome, frames.map(frame => ({ opacity: frame.chrome })));
+            }
         }
 
         const releaseHomeArrival = () => {
@@ -323,7 +385,9 @@ function createStepMotionStage(
         let found: StepMotionLayerHandle | undefined;
         for (const layer of layers) {
             const candidate = layer.webElement();
-            if (candidate?.contains(target) && (!found || found.webElement()?.contains(candidate))) found = layer;
+            if (!candidate) continue;
+            if ((candidate.contains(target) || layer.webChrome?.().some(region => region.contains(target))) &&
+                (!found || found.webElement()?.contains(candidate))) found = layer;
         }
         return found;
     }
@@ -336,8 +400,16 @@ function createStepMotionStage(
         const control = findPressedWebControl(target);
         if (isBackControl(control?.dataset.testid)) return;
         settle();
-        const element = layerFor(target)?.webElement();
-        pressed = element ? readWebStepAnchor(element, control) : null;
+        const layer = layerFor(target);
+        const element = layer?.webElement();
+        const chrome = layer?.webChrome?.();
+        pressed = (element ? readWebStepAnchor(element, control) : null)
+            ?? chrome?.map(region => readWebStepAnchor(region, control)).find(Boolean) ?? null;
+        if (pressed && layer && chrome?.length) {
+            // Login's Home lookup can remove the corner before the move commits. Keep its measured
+            // node for this press so admission can still freeze it with the departing step.
+            pressedChrome = { layer: layer.key, regions: chrome.map(element => ({ element, rect: captureElementFlightRect(element) })) };
+        }
     }
 
     function observeInput() {
@@ -353,7 +425,10 @@ function createStepMotionStage(
             pointerCommits.set(event.pointerId, commitOrder);
             webInput(event.target);
         };
-        const cancelPointer = (event: PointerEvent) => { pointerCommits.delete(event.pointerId); };
+        const cancelPointer = (event: PointerEvent) => {
+            pointerCommits.delete(event.pointerId);
+            pressedChrome = undefined;
+        };
         const mouseDown = (event: MouseEvent) => {
             if (event.button !== 0 || event.detail < 2) return;
             const layer = layerFor(event.target);
@@ -481,6 +556,7 @@ function createStepMotionStage(
             const outgoing = findLayer(move.layer);
             const outgoingFocal = move.kind === 'back' && outgoing ? targetRect(outgoing.focal()) : undefined;
             const anchor = outgoingFocal ? { rect: outgoingFocal } : pressed ?? undefined;
+            const chrome = pressedChrome?.layer === move.layer ? pressedChrome.regions : undefined;
             pressed = null;
             settle();
             if (move.kind === 'home') anchors.clear();
@@ -515,7 +591,7 @@ function createStepMotionStage(
             pending = next;
             syncPresentation();
             if (presentation && grammar !== 'fade') {
-                const freeze = presentation.freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor);
+                const freeze = presentation.freezeStepLayer(outgoing, grid, move.kind === 'back' ? undefined : anchor, chrome);
                 if (freeze instanceof Promise) {
                     void freeze.then(result => {
                         if (next.cancelled) result?.release();
@@ -618,7 +694,7 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
                     delayMs={paints.animation.epoch - performance.now()}
                     onCleared={paints.releaseFreeze}
                 /> : null}
-                <renderer.GlyphSurface width={width} height={height} cell={stepMotionTiming.cell}
+                <renderer.GlyphSurface testID="step-motion-glyphs" width={width} height={height} cell={stepMotionTiming.cell}
                     scene={paints?.scene ?? emptyScene} motion={motion} onReady={stage.glyphReadiness} warmWhenHidden />
             </View> : null}
         </View>
