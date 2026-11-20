@@ -15,17 +15,17 @@ export function readNativeStepAnchor(event: GestureResponderEvent, layer: object
     let node: NativePressTarget | null | undefined = typeof target === 'object' && target !== null
         ? target as NativePressTarget
         : undefined;
-    let measured: StepAnchor | undefined;
+    const { pageX, pageY } = event.nativeEvent;
+    const touch = { x: pageX, y: pageY, width: 0, height: 0 };
+    let measured: StepAnchor['rect'] | undefined;
     while (node && node !== layer) {
         const rect = node.getBoundingClientRect?.();
-        if (rect && rect.width > 0 && rect.height > 0) {
-            if (node.id) return { testID: node.id, rect };
-            measured ??= { rect };
-        }
+        const bounds = rect && rect.width > 0 && rect.height > 0 ? rect : undefined;
+        if (node.id) return { testID: node.id, rect: bounds ?? touch };
+        measured ??= bounds;
         node = node.parentElement;
     }
-    const { pageX, pageY } = event.nativeEvent;
-    return measured ?? { rect: { x: pageX, y: pageY, width: 0, height: 0 } };
+    return { rect: measured ?? touch };
 }
 
 export function findNativeStepAnchor(root: unknown, testID: string): FocusReturnTarget {

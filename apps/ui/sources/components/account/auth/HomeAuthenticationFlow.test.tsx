@@ -29,9 +29,13 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string) => key });
 });
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+const { Animated } = await import('react-native');
 const { renderScreen } = await import('@/dev/testkit');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { AuthProvider } = await import('@/auth/context/AuthContext');
+const { setReducedMotionPreferenceOverride } = await import('@/hooks/ui/useReducedMotionPreference');
+const { dispatchEscapeToLayerStack } = await import('@/keyboard/escape');
+const { StepMotionStage } = await import('@/components/ui/motion/stepMotion/StepMotionStage');
 const { HomeAuthenticationFlow } = await import('./HomeAuthenticationFlow');
 
 function actionFromEntry(action: Extract<AuthEntryActionV1, { kind: 'authenticate' }>) {
@@ -58,9 +62,11 @@ describe('HomeAuthenticationFlow', () => {
         boundary.request.mockImplementation(async () => Response.json({ error: 'signup-disabled' }, { status: 403 }));
         boundary.openURL.mockClear();
     });
-    afterEach(() => { vi.restoreAllMocks(); restoreLocks(); restoreStorage(); });
+    afterEach(() => { setReducedMotionPreferenceOverride(null); vi.restoreAllMocks(); restoreLocks(); restoreStorage(); });
     it('returns from exact key entry to the admitted method chooser', async () => {
-        const screen = await renderScreen(<AuthProvider initialCredentials={null}>
+        setReducedMotionPreferenceOverride(true);
+        const animate = vi.spyOn(Animated, 'timing');
+        const screen = await renderScreen(<StepMotionStage><AuthProvider initialCredentials={null}>
             <HomeAuthenticationFlow
                 target={{
                     kind: 'descriptor',
@@ -78,13 +84,23 @@ describe('HomeAuthenticationFlow', () => {
                 onAuthenticated={vi.fn()}
                 onBack={vi.fn()}
             />
-        </AuthProvider>);
+        </AuthProvider></StepMotionStage>);
 
         await screen.pressByTestIdAsync('home-auth-key_challenge-login-keyed');
         expect(screen.findByTestId('home-auth-key-back')).toBeTruthy();
+        expect(animate).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 200 }));
 
+        animate.mockClear();
         await screen.pressByTestIdAsync('home-auth-key-back');
         expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).toBeTruthy();
+        expect(animate).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 200 }));
+
+        await screen.pressByTestIdAsync('home-auth-key_challenge-login-keyed');
+        await React.act(async () => {
+            expect(dispatchEscapeToLayerStack({ key: 'Escape', target: { tagName: 'INPUT' } })).toBe(true);
+        });
+        expect(screen.findByTestId('home-auth-key_challenge-login-keyed')).toBeTruthy();
+        await screen.unmount();
     });
 
     it('opens a chosen key form directly, leaving the step\'s own back as the only way out', async () => {

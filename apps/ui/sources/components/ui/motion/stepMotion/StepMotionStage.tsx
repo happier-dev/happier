@@ -289,10 +289,13 @@ function createStepMotionStage(
         return found;
     }
 
+    function isBackControl(testID: string | undefined) {
+        return testID !== undefined && Array.from(layers).some(layer => layer.backTestID === testID);
+    }
+
     function webInput(target: EventTarget | null) {
         const control = findPressedWebControl(target);
-        const testID = control?.dataset.testid;
-        if (testID !== undefined && Array.from(layers).some(layer => layer.backTestID === testID)) return;
+        if (isBackControl(control?.dataset.testid)) return;
         settle();
         const element = layerFor(target)?.webElement();
         pressed = element ? readWebStepAnchor(element, control) : null;
@@ -381,8 +384,8 @@ function createStepMotionStage(
             laidOutLayers.add(layer);
             if (pending?.layoutReady) enter(layer);
         },
-        nativeInput(anchor: StepAnchor, backTestID?: string) {
-            if (backTestID !== undefined && anchor.testID === backTestID) return;
+        nativeInput(anchor: StepAnchor) {
+            if (isBackControl(anchor.testID)) return;
             settle();
             pressed = anchor;
         },

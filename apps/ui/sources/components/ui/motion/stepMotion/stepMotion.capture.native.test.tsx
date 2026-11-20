@@ -1,11 +1,12 @@
 import * as React from 'react';
 import { act } from 'react';
-import { Animated, type View } from 'react-native';
+import { Animated, type GestureResponderEvent, type View } from 'react-native';
 import type { SkImage } from '@shopify/react-native-skia';
 import { expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
+import { readNativeStepAnchor } from './capturePressedElement.native';
 import { freezeStepLayer } from './freezeLayer.native';
 import { StepFreezeImage } from './StepFreezeImage.native';
 import * as presentation from './stepMotionPresentation';
@@ -20,6 +21,17 @@ vi.mock('@shopify/react-native-skia', async () => ({
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeNativeMock({ platformOS: 'ios' });
+});
+
+it('uses the touch position and keeps the control ID when Fabric cannot measure it', () => {
+    const layer = {};
+    const event = {
+        target: { id: 'method-back', parentElement: layer },
+        nativeEvent: { pageX: 140, pageY: 260 },
+    } as unknown as GestureResponderEvent;
+    expect(readNativeStepAnchor(event, layer)).toEqual({
+        testID: 'method-back', rect: { x: 140, y: 260, width: 0, height: 0 },
+    });
 });
 
 it('releases the native image when its last visible frame clears', async () => {
@@ -100,6 +112,14 @@ it.each([false, true])('selects the native presentation in layout order (capture
         expect(fadeIn).toHaveBeenCalledTimes(early ? 0 : 1);
         if (!early) await act(async () => { completeCapture(); });
         expect(dispose).toHaveBeenCalledTimes(early ? 0 : 1);
+
+        if (early) {
+            const detachBack = stage.attach({ ...layer(), key: 'method', backTestID: 'method-back' });
+            // The outer view also sees this touch as it bubbles from the method form.
+            await act(async () => { stage.nativeInput({ testID: 'method-back', rect }); });
+            expect(dispose).not.toHaveBeenCalled();
+            detachBack();
+        }
 
         await act(async () => { stage.settle(); });
         expect(dispose).toHaveBeenCalledOnce();

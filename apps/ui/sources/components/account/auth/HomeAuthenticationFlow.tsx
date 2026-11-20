@@ -20,6 +20,10 @@ import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeAction
 import { WelcomeActionList } from '@/components/onboarding/preAuth/WelcomeActionList';
 import { ExactHomeDestinationNotice } from '@/components/account/auth/ExactHomeDestinationNotice';
 import { useExactHomeArrival } from '@/components/account/auth/useExactHomeDestination';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { NativeBackLayerBoundary } from '@/components/ui/overlays/NativeBackLayerBoundary';
+import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import { t } from '@/text';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import {
@@ -28,6 +32,7 @@ import {
 } from '@/components/settings/account/openAccountSecurityForHome';
 
 const homeActionTestId = ({ method, action }: HomeAuthenticationAction): string => `home-auth-${method.id}-${action.id}-${action.mode}`;
+const methodLayer = 'home-auth-method';
 
 type HomeAuthenticationFlowProps = Readonly<{
     target: HomeTargetInput;
@@ -85,6 +90,12 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
         intendedHome: props.target,
     });
     const chosenAction = props.openChosenAction && props.actions.length === 1 ? props.actions[0]! : null;
+    const [enteredSignedOut] = React.useState(!auth.isAuthenticated);
+    const movesMethods = enteredSignedOut && !chosenAction;
+    const moveMethod = (kind: 'step' | 'back', commit: () => void) => {
+        if (movesMethods) runStepMove({ kind, layer: methodLayer, commit });
+        else commit();
+    };
     const [keyRequest, setKeyRequest] = React.useState<WelcomeAuthenticationMethod | null>(() => (
         chosenAction?.execution.kind === 'key_entry' ? toRequest(chosenAction) : null
     ));
@@ -104,6 +115,23 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
     // on, where the only thing left to press re-submits a credential that already
     // committed. The shared arrival owner holds that state and its retry instead.
     const arrival = useExactHomeArrival();
+    const backToMethods = () => moveMethod('back', () => {
+        setKeyRequest(null);
+        setPasswordRequest(null);
+    });
+    const methodHasBack = movesMethods && resolvedTarget !== null && arrival.state.kind === 'idle'
+        && (keyRequest !== null || passwordRequest !== null);
+    useEscapeLayer({
+        enabled: methodHasBack,
+        priority: ESCAPE_LAYER_PRIORITIES.pane,
+        allowEditableTarget: true,
+        onEscape: backToMethods,
+    });
+    const showMethod = (stepKey: string, content: React.ReactElement, backTestID?: string) => movesMethods ? (
+        <NativeBackLayerBoundary active={methodHasBack} onRequestClose={backToMethods}>
+            <StepMotionLayer layerKey={methodLayer} stepKey={stepKey} backTestID={backTestID}>{content}</StepMotionLayer>
+        </NativeBackLayerBoundary>
+    ) : content;
     const admission = React.useMemo(() => ({
         pendingActionId,
         run: async (actionId: string, action: () => Promise<void> | void) => {
@@ -123,11 +151,11 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
         const { execution } = homeAction;
         const request = toRequest(homeAction);
         if (execution.kind === 'key_entry') {
-            setKeyRequest(request);
+            moveMethod('step', () => setKeyRequest(request));
             return;
         }
         if (execution.kind === 'email_password') {
-            setPasswordRequest(request);
+            moveMethod('step', () => setPasswordRequest(request));
             return;
         }
         await executeHomeAuthentication({
@@ -157,15 +185,15 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
 
     if (arrival.state.kind !== 'idle') {
         const arrivalState = arrival.state;
-        return <WelcomeActionList admission={admission}>
+        return showMethod('destination', <WelcomeActionList admission={admission}>
             <ExactHomeDestinationNotice testID="home-auth-destination-home" state={arrivalState} />
             <WelcomeActionCard testID="home-auth-destination-back" title={t('common.back')} iconName="arrow-left" escape
                 onPress={() => { abortRef.current.abort(); props.onBack(); }} />
-        </WelcomeActionList>;
+        </WelcomeActionList>, 'home-auth-destination-back');
     }
 
     if (keyRequest && resolvedTarget) {
-        return <WelcomeActionList admission={admission}>
+        return showMethod('key', <WelcomeActionList admission={admission}>
             <SecretKeyLoginForm embedded returnTo={props.returnTo} target={{
                 ...resolvedTarget,
                 ...(props.transport?.runtimeOrigin ? { runtimeOrigin: props.transport.runtimeOrigin } : {}),
@@ -181,14 +209,14 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             }} onSuccess={() => {}} />
             {chosenAction ? null : (
                 <WelcomeActionCard testID="home-auth-key-back" title={t('common.back')} iconName="arrow-left" escape
-                    onPress={() => setKeyRequest(null)} />
+                    onPress={backToMethods} />
             )}
-        </WelcomeActionList>;
+        </WelcomeActionList>, 'home-auth-key-back');
     }
 
     if (passwordRequest && resolvedTarget && passwordRequest.execution.kind === 'email_password') {
         const execution = passwordRequest.execution;
-        return <WelcomeActionList admission={admission}>
+        return showMethod('password', <WelcomeActionList admission={admission}>
             <EmailPasswordAuthPanel
                 returnTo={props.returnTo}
                 target={{
@@ -234,14 +262,14 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
                         },
                     });
                 }}
-                onBack={() => chosenAction ? leave() : setPasswordRequest(null)}
+                onBack={chosenAction ? leave : backToMethods}
                 // The caller's step already carries the way back, so the form adds none of its own.
                 showBackAction={chosenAction === null}
             />
-        </WelcomeActionList>;
+        </WelcomeActionList>, 'email-password-back');
     }
 
-    return <WelcomeActionList admission={admission}>
+    return showMethod('methods', <WelcomeActionList admission={admission}>
         {props.actions.map((homeAction) => {
             const { method, execution } = homeAction;
             const providerName = method.presentation?.displayName ?? getAuthProvider(method.id)?.displayName ?? method.id;
@@ -256,5 +284,5 @@ function HomeAuthenticationFlowBody(props: HomeAuthenticationFlowProps): React.R
             <WelcomeActionCard testID="home-auth-back" title={t('common.back')} iconName="arrow-left" escape
                 onPress={() => { abortRef.current.abort(); props.onBack(); }} />
         )}
-    </WelcomeActionList>;
+    </WelcomeActionList>, props.showBackAction === false ? undefined : 'home-auth-back');
 }

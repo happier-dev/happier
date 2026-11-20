@@ -90,8 +90,8 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
     React.useLayoutEffect(() => stage?.attach(layer), [stage, layer]);
     React.useLayoutEffect(() => { stage?.commit(layer); }, [stage, layer, props.stepKey]);
     const onTouchStart = React.useCallback((event: GestureResponderEvent) => {
-        if (root.current) stage?.nativeInput(readNativeStepAnchor(event, root.current), backTestID);
-    }, [stage, backTestID]);
+        if (root.current) stage?.nativeInput(readNativeStepAnchor(event, root.current));
+    }, [stage]);
     const contentKey = props.retainContent ? undefined : props.stepKey;
     return (
         <Animated.View
