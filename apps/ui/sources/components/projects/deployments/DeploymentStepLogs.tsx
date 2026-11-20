@@ -102,12 +102,12 @@ export function DeploymentStepLogs(
         !recorded.some(({ log }) => log !== null && log.machineId === reference.machineId && log.installationId === reference.installationId),
       ).map(({ reference }) => ({ id: `build-log.${reference.machineId}.${reference.installationId}`,
         // Beside steps it is the whole deploy log; with no steps, sibling logs differ only by their Machine.
-        label: recorded.length > 0 ? t('projects.deployments.deployLog')
+        label: recorded.length > 0 || facts.placement === 'platform' ? t('projects.deployments.deployLog')
           : reference.machineId ? machineNames[reference.machineId] ?? t('projects.deployments.aMachine')
             : t('projects.deployments.deployLog'),
         step: null, log: reference }))];
     },
-    [facts.steps, facts.logs, machineId, steps, machineNames],
+    [facts.steps, facts.logs, facts.placement, machineId, steps, machineNames],
   );
   const hasFailed = rows.some((row) => row.step && isFailedStep(row.step));
   const [filter, setFilter] = React.useState<Filter>('all');
@@ -123,10 +123,11 @@ export function DeploymentStepLogs(
   );
   const openId = chosen === undefined ? (automatic?.id ?? null) : chosen;
   const open = rows.find((row) => row.id === openId && row.log) ?? null;
-  const logMachineId = props.readLogs ? open?.log?.machineId : undefined;
+  const machineName = facts.placement === 'machine' ? props.machineName : null;
+  const logMachineId = machineName !== null && props.readLogs ? open?.log?.machineId : undefined;
   const [logMachine] = useMachinePresenceSummaries(props.serverId, logMachineId ? [logMachineId] : [], lifetime);
   const offlineLogMachine = logMachine?.reachability === 'unreachable'
-    ? logMachine.sentenceName ?? (logMachineId ? machineNames[logMachineId] : undefined) ?? props.machineName
+    ? logMachine.sentenceName ?? (logMachineId ? machineNames[logMachineId] : undefined) ?? machineName
     : null;
   const visible =
     filter === 'failed' && hasFailed
@@ -198,8 +199,8 @@ export function DeploymentStepLogs(
       );
   };
   const renderLog = React.useCallback(
-    () => <StepLogBody testID={props.testID} logs={logs} machineName={props.machineName} offlineLogMachine={offlineLogMachine} />,
-    [logs, props.machineName, props.testID, offlineLogMachine],
+    () => <StepLogBody testID={props.testID} logs={logs} machineName={machineName} offlineLogMachine={offlineLogMachine} />,
+    [logs, machineName, props.testID, offlineLogMachine],
   );
   const checklist = React.useMemo(() => ({
     items: visible.map((row): PlanChecklistItem => ({
@@ -217,7 +218,7 @@ export function DeploymentStepLogs(
       <ItemGroup
         testID={props.testID}
         title={props.title}
-        description={props.outcome ?? props.machineName}
+        description={props.outcome ?? machineName ?? undefined}
         surface="none"
       >
         <StepRows steps={steps} running={props.running} />
@@ -229,8 +230,10 @@ export function DeploymentStepLogs(
       <ItemGroup
         testID={props.testID}
         title={stepless ? t('projects.deployments.deployLog') : props.title}
-        description={[props.outcome, t(stepless ? 'projects.deployments.logWhole' : 'projects.deployments.stepLogsDescription', { machine: props.machineName })]
-          .filter(Boolean).join(' · ')}
+        description={machineName === null ? props.outcome : [
+          props.outcome,
+          t(stepless ? 'projects.deployments.logWhole' : 'projects.deployments.stepLogsDescription', { machine: machineName }),
+        ].filter(Boolean).join(' · ')}
         surface="none"
       >
         <NativeLogToolbar
@@ -265,7 +268,7 @@ export function DeploymentStepLogs(
       {lone ? (
         <ItemGroup header="none" testID={`${props.testID}.list`}>
           <View style={styles.lone}>
-            <StepLogBody testID={props.testID} logs={logs} machineName={props.machineName} />
+            {renderLog()}
           </View>
         </ItemGroup>
       ) : (
@@ -340,7 +343,7 @@ function StepLogBody(
   props: Readonly<{
     testID: string;
     logs: ReturnType<typeof useDeploymentStepLog>;
-    machineName: string;
+    machineName: string | null;
     offlineLogMachine: string | null;
   }>,
 ) {
@@ -361,7 +364,9 @@ function StepLogBody(
           kind={projection.reason === 'denied' ? 'denied' : 'unavailable'}
           size="line"
           title={
-            projection.reason === 'admission_unavailable'
+            machineName === null
+              ? t('machineServices.logs.error.title')
+              : projection.reason === 'admission_unavailable'
               ? t('projects.deployments.stepLogAdmission', {
                   machine: machineName,
                 })
@@ -388,9 +393,8 @@ function StepLogBody(
           testID={`${id}.unavailable`}
           kind="unavailable"
           size="line"
-          title={t('projects.deployments.stepLogAdmission', {
-            machine: machineName,
-          })}
+          title={machineName === null ? t('machineServices.logs.error.title')
+            : t('projects.deployments.stepLogAdmission', { machine: machineName })}
           diagnosticCode={first.error.code}
           action={retry}
         />
@@ -400,7 +404,7 @@ function StepLogBody(
           kind="error"
           size="line"
           title={t('machineServices.logs.error.title')}
-          reason={machineServiceLogReadFailureReason(first.error, machineName)}
+          reason={machineName === null ? undefined : machineServiceLogReadFailureReason(first.error, machineName)}
           diagnosticCode={first.error.code}
           action={retry}
         />
@@ -438,7 +442,7 @@ function StepLogBody(
           testID={`${id}.stale`}
           asOf={logs.first.kind === 'read' ? logs.first.readAt : null}
           tone="warning"
-          reason={t('machineServices.logs.stale', { machine: machineName })}
+          reason={machineName === null ? '' : t('machineServices.logs.stale', { machine: machineName })}
           busy={
             logs.followed?.pending !== undefined &&
             logs.followed.pending !== 'idle'

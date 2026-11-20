@@ -3014,7 +3014,7 @@ describe('Deployment receipt step logs', () => {
   });
 
   it('reads a failed Receipt’s recorded cause even when its live logs need the Machine online', async () => {
-    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { createMachineFixture, createMachineMetadataFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
     const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
@@ -3032,8 +3032,10 @@ describe('Deployment receipt step logs', () => {
     const readLogs = vi.fn<DeploymentReadLogs>(async () => ({ ok: false, error: 'action_failed' }));
     runtime.publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
     try {
-      await publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'machine-a', active: false, activeAt: 1 })]);
-      const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} {...receiptProps}
+      const name = 'Deploy host';
+      await publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'machine-a', active: false, activeAt: 1,
+        metadata: createMachineMetadataFixture({ displayName: name }) })]);
+      const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} {...receiptProps} serverId={scope.serverId}
         environmentId={detail.environment.id} deploymentId={receipt.deployment.id} readLogs={readLogs} />);
       try {
         await settle(screen, 'project-deployments.receipt.outcome.failed');
@@ -3044,7 +3046,7 @@ describe('Deployment receipt step logs', () => {
         const log = 'project-deployments.receipt.steps.log';
         await waitForHomeGovernance(() => {
           expect(screen.findByTestId(`${log}.offline`)).not.toBeNull();
-          expect(screen.getTextContent()).toContain('Live logs need');
+          expect(screen.getTextContent()).toContain(t('machineServices.logs.needMachineOnline', { machine: name }));
         });
         expect(screen.findByTestId(`${log}.error`)).toBeNull();
       } finally { await screen.unmount(); }
