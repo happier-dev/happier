@@ -1,18 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-    type ActionId} from '@happier-dev/protocol/actions/actionIds';
-import {
     createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import {
     DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
     normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
-import {
-    type ActionExecutorContext,
-    type ActionExecutorDeps,
-} from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 
 import type { MachinePluginUiResourceReadResult, MachinePluginUiResourceWatchNextResult } from '@/sync/ops/machineContributionRegistryProjection';
 import type {
@@ -153,17 +148,22 @@ describe('Session caller-hosted HTML request controller', () => {
     });
     it('refuses foreign Session HTML host Actions without prompting while own Session Actions still work', async () => {
         let owned = false;
-        let settings = normalizeActionsSettingsV1({ v: 1, actions: {} });
+        // Hold ordinary Action approval policy constant while changing only the HTML audience.
+        const ordinaryPolicy = {
+            v: 1,
+            approvalWaivedSurfaces: { 'session.message.send': ['ui'], 'session.stop': ['ui'] },
+        };
+        let settings = normalizeActionsSettingsV1(ordinaryPolicy);
         const sessionSendMessage = vi.fn(async () => ({ status: 'accepted' as const, localId: 'input-1' }));
         const sessionStop = vi.fn(async () => ({ stopped: true }));
         const approvalsCreate = vi.fn(async () => ({ artifactId: 'unexpected-approval' }));
         const executor = createActionExecutor({ sessionSendMessage, sessionStop, approvalsCreate,
-            readActionsSettings: () => DEFAULT_ACTIONS_SETTINGS_V1,
+            readActionsSettings: () => settings,
         } as unknown as ActionExecutorDeps);
         const options = {
             sessionId: 'session-1', serverId: 'home-1', serverIdentityId: 'identity-1', accountId: 'viewer',
             isSessionOwned: () => owned,
-            executeHostAction: (actionId: ActionId, value: unknown, context?: ActionExecutorContext) => executor.execute(actionId, value, { ...context, actionsSettings: settings }),
+            executeHostAction: executor.execute,
             readActionsSettings: async () => settings,
             isAccountCurrent: () => true, isSessionCurrent: () => true, pluginTarget: null,
             publishResourceEvent: () => {}, notify: () => {},
@@ -178,25 +178,27 @@ describe('Session caller-hosted HTML request controller', () => {
             expect(sessionSendMessage).not.toHaveBeenCalled();
             expect(sessionStop).not.toHaveBeenCalled();
             expect(approvalsCreate).not.toHaveBeenCalled();
-            settings = normalizeActionsSettingsV1({ v: 1, actions: {}, callerSurfacePolicies: {
+            settings = normalizeActionsSettingsV1({ ...ordinaryPolicy, callerSurfacePolicies: {
                 foreign_session_html: { 'session.message.send': 'allowed', 'session.stop': 'allowed' },
             } });
             for (const action of ['session.message.send', 'session.stop'] as const) {
                 await expect(controller.handleRequest({ requestId: `granted-${action}`, method: 'executeAction',
                     payload: { action, input: action === 'session.message.send' ? { message: 'Hello' } : { sessionId: 'session-1' } },
-                })).resolves.toBeDefined();
+                })).resolves.toMatchObject(action === 'session.message.send'
+                    ? { status: 'accepted' } : { stopped: true });
             }
             expect(sessionSendMessage).toHaveBeenCalledTimes(1); expect(sessionStop).toHaveBeenCalledTimes(1);
             owned = true;
-            settings = normalizeActionsSettingsV1({ v: 1, actions: {} });
+            settings = normalizeActionsSettingsV1(ordinaryPolicy);
             await expect(controller.handleRequest({ requestId: 'own-send', method: 'executeAction',
                 payload: { action: 'session.message.send', input: { message: 'Hello' } },
             })).resolves.toMatchObject({ status: 'accepted' });
             await expect(controller.handleRequest({ requestId: 'own-stop', method: 'executeAction',
                 payload: { action: 'session.stop', input: { sessionId: 'session-1' } },
-            })).resolves.toBeDefined();
+            })).resolves.toMatchObject({ stopped: true });
             expect(sessionSendMessage).toHaveBeenCalledTimes(2);
             expect(sessionStop).toHaveBeenCalledTimes(2);
+            expect(approvalsCreate).not.toHaveBeenCalled();
         } finally { controller.dispose(); }
     });
     it('replaces one guest watch across differently scoped Resources without leaving the predecessor live', async () => {
