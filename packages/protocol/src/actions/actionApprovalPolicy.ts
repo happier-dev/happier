@@ -23,6 +23,7 @@ import { isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleCh
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from './invocationAuthority.js';
 import { readExplicitActionApprovalPreferenceFromSettingsV1 } from './actionApprovalPreference.js';
 import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
+import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from './specs/machine/accessActionIdsV1.js';
 export { isSharedRequesterActionV1 } from './actionRequestAttributionV1.js';
 export { isAgentOrUnresolvedSurface } from './actionApprovalSurface.js';
 
@@ -59,6 +60,14 @@ function isOwnUiInvocation(actionId: ActionSettingsActionId, ctx?: ApprovalInvoc
   if (isPresentUserHostInvocation(ctx)) return true;
   const builtIn = ActionIdSchema.safeParse(actionId);
   return builtIn.success && isHomeAdmittedPresentUserHostInvocation(ctx, builtIn.data);
+}
+
+/** A signed CLI Machine share carries the person's direct grant review. */
+export function isSignedCliMachineGrantReviewInvocationV1(actionId: ActionId, ctx?: ApprovalInvocationContext | null): boolean {
+  const binding = ctx?.externalActionExecutionAuthorization?.binding;
+  return actionId === MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 && ctx?.surface === 'cli'
+    && !!binding && binding.accountId === binding.custodianAccountId
+    && isHomeAdmittedPresentUserHostInvocation(ctx, actionId);
 }
 
 export type ResolveActionApprovalRoutingArgs = Readonly<{
@@ -347,8 +356,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const settings = profiled?.settings ?? args.settings;
   const profile = profiled?.profile ?? (args.context?.approvalProfileId
     ? { status: 'missing' as const, requestedId: args.context.approvalProfileId } : undefined);
-  const ownUiInvocation = isOwnUiInvocation(args.actionId, args.context);
-  const explicitPreference = ownUiInvocation && settings ? readExplicitActionApprovalPreferenceV1(
+  const directReviewInvocation = isOwnUiInvocation(args.actionId, args.context)
+    || isSignedCliMachineGrantReviewInvocationV1(args.actionId, args.context);
+  const explicitPreference = directReviewInvocation && settings ? readExplicitActionApprovalPreferenceV1(
     policyActionId, settings, args.context, args.approvalScope) : undefined;
   // Changing the carrier must not escape its selected profile through a broad
   // child-start/Run-control waiver. All carriers share the existing profile
@@ -380,7 +390,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // The person's profile-control Ask joins the carrier's native confirmation;
   // a carrier waiver cannot waive that consequence or create self-approval.
   const preparedReviewRequired = args.reviewRequired === true && !args.reviewAdmitted;
-  const uiConfirmationRequired = !args.inputRequired && ownUiInvocation && (preparedReviewRequired
+  const uiConfirmationRequired = !args.inputRequired && directReviewInvocation && (preparedReviewRequired
     || !args.reviewAdmitted && !args.context?.bypassApprovals
     && (args.requiredByPolicy === true || args.childReviewRequired || profileControlRequired || explicitPreference === true
       // A legacy marker answers only the default; exact admitted consent answers Ask above.
@@ -398,7 +408,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const hasPolicyContext = Boolean(settings || args.approvedOperation || args.context?.externalActionCredential);
   // The person's exact completed review answers Ask, including a saved preference.
   // The executor withholds this admission when a new child consequence needs review.
-  const requiredByPolicy = args.reviewAdmitted === true || ownUiInvocation
+  const requiredByPolicy = args.reviewAdmitted === true || directReviewInvocation
     ? false
     : args.requiredByPolicy === true ? true : computerConsent
     ? explicitComputerApproval
@@ -416,9 +426,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));
   // Approval replay answers the admitted operation once; a profile is never a new authority.
   const required = !isApprovalAction(args.actionId)
-    && (args.inputRequired || !ownUiInvocation && preparedReviewRequired || (args.context?.bypassApprovals === true
+    && (args.inputRequired || !directReviewInvocation && preparedReviewRequired || (args.context?.bypassApprovals === true
       ? false
-      : requiredByPolicy || (!ownUiInvocation && profileControlRequired)));
+      : requiredByPolicy || (!directReviewInvocation && profileControlRequired)));
 
   // The public Action API reports a created approval artifact to its caller;
   // it cannot retain an HTTP or server-relay request as the blocking waiter.

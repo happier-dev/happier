@@ -14050,6 +14050,10 @@ Machine preset contracts.
 
 ## Signed Machine sharing read-back (unreleased 0.3)
 
+The CLI carries a reviewed Machine share in the existing signed requester
+invocation. The receiving executor applies the direct grant review to the
+same-Account CLI request and compares the current review before saving.
+
 A signed `machines.access.grant.set` can read the exact Machine bound to its
 admission for review and key-readiness settlement. Home authenticates the
 bodyless access GET under the original grant-set credential. Current daemons

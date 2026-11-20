@@ -108,7 +108,7 @@ export function isLocalServiceStopActionIdV1(actionId: unknown): actionId is 'lo
 /** Preserve private host invocation facts on same-Account delivery. */
 export function requiresOriginalAccountInvocationMachineProofV1(actionId: string): boolean {
   return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 || actionId === APPROVAL_REQUEST_DECIDE_ACTION_ID_V1
-    || actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
+    || actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 || actionId === MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1;
 }
 
 /** Exact controller lifecycle effects that retain their original requester through Ask. */
@@ -149,7 +149,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { MACHINE_ADD_SSH_ACTION_IDS, MACHINE_PAGE_ACTION_IDS, MACHINE_MANAGED_INSTALLATION_ACTION_IDS, PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActionIdsV1.js';
 import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './specs/localDaemonServiceActionIdsV1.js';
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
-import { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './specs/machine/accessActionIdsV1.js';
+import { MACHINE_ACCESS_ACTION_IDS, MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1, MACHINE_WORK_SUMMARY_ACTION_IDS } from './specs/machine/accessActionIdsV1.js';
 import { MACHINE_VITALS_ACTION_IDS } from './specs/machineVitalsActionIdsV1.js';
 import { MACHINE_SCHEDULED_ACTION_IDS } from '../machines/scheduled/actionIdsV1.js';
 import { MACHINE_PROCESSES_ACTION_IDS } from './specs/machineProcessesActionIdsV1.js';

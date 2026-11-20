@@ -38,11 +38,53 @@ import { startDaemonControlServer } from '@/daemon/controlServer';
 import { createDaemonPatVerifier } from '@/daemon/auth/daemonPatVerifier';
 import { createAccountServerPatIntrospector } from '@/daemon/auth/accountServerPatIntrospector';
 import { resolveLiveDaemonControlTargetForServer } from '@/daemon/multiDaemon';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machine/accessActionIdsV1';
+import { db } from '../../../server/sources/storage/db';
 
 afterEach(() => vi.restoreAllMocks());
 
 // The fixtures share the server process's canonical Home identity cache.
 const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
+
+it('settles one reviewed Team Machine grant through the signed requester route', async () => {
+    const home = await createDeploymentSocketHome({ encryptionMode: 'plain', serverId });
+    let daemon: Awaited<ReturnType<typeof createS0DeploymentDaemonIngress>> | undefined;
+    try {
+        vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
+            () => installationBoundary.getStore() ?? readS0Installation(home));
+        daemon = await createS0DeploymentDaemonIngress({ home });
+        const credentials = readS0ControllerCredentials(home);
+        const executor = createCliActionExecutorFromCredentials({
+            credentials, readCredentials: async () => credentials, externalActionClient: true,
+            machineId: home.machineId, serverId, serverIdentityId: serverId, serverApiUrl: home.baseUrl,
+        });
+        const team = await db.team.create({ data: { name: 'Reviewed Machine grant' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: home.accountId, role: 'owner' } });
+        const action = MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1;
+        const input = { serverId, machineId: home.machineId, principal: { kind: 'team', teamId: team.id }, level: 'view' } as const;
+        const context = { surface: 'cli', authority: 'present_user', actionRequestId: randomUUID(),
+            runtimeAccountId: home.accountId, serverId, serverIdentityId: serverId,
+            externalActionTarget: { kind: 'machine', machineId: home.machineId } } as const;
+        const readGrant = () => db.machineGrant.findFirst({
+            where: { machineId: home.machineId, teamId: team.id }, select: { accessLevel: true },
+        });
+        const review = await executor.execute(action, input, context);
+        expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        if (review.ok || typeof review.details?.reviewDigest !== 'string') throw new Error('No current Machine grant review was returned');
+        expect(await readGrant()).toBeNull();
+        const digest = review.details.reviewDigest;
+        const staleDigest = `${digest[0] === '0' ? '1' : '0'}${digest.slice(1)}`;
+        const stale = await executor.execute(action, input, bindPresentUserActionConfirmationV1(action, input, context, staleDigest));
+        expect(stale).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+        expect(await readGrant()).toBeNull();
+        const settled = await executor.execute(action, input, bindPresentUserActionConfirmationV1(action, input, context, digest));
+        expect(settled).toMatchObject({ ok: true, result: { kind: 'saved' } });
+        expect(await readGrant()).toEqual({ accessLevel: 'view' });
+    } finally {
+        try { await daemon?.close(); } finally { await home.close(); }
+    }
+});
 
 it.each([
     ['controller', 'plain', 'dataKey'], ['targeted-cli', 'plain', 'dataKey'], ['targeted-terminal', 'plain', 'dataKey'],

@@ -375,7 +375,7 @@ import {
 import { projectActionSpecSchemaSections } from './actionSpecSections.js';
 import { parseInputTypeOptionsSourceId } from '../inputs/inputTypes.js';
 import { readInputFieldOptionsSourceId } from '../inputs/inputTypeRuntime.js';
-import { isSharedRequesterActionV1, resolveActionApprovalRouting, type ActionApprovalRoutingDecision } from './actionApprovalPolicy.js';
+import { isSharedRequesterActionV1, isSignedCliMachineGrantReviewInvocationV1, resolveActionApprovalRouting, type ActionApprovalRoutingDecision } from './actionApprovalPolicy.js';
 import { readActionCallerLedSubtreeSessionIds } from './executor/sessionLedSubtree.js';
 import { resolveApprovalRequestApproveAdmission, readPluginInstallApprovalPendingReview } from './actionApprovalPresentation.js';
 import { resolveRequestedSessionModeId } from './sessionModeIds.js';
@@ -3481,7 +3481,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     let contextualUiConfirmation = visualAdmission?.expandsVisualAuthority || widgetMoveWidensAudience || widgetRemovalDeletesContent || homeRemovalDeletesContent ? true : undefined;
     if (!existingAdmission && actionId === 'machines.access.grant.set'
-      && ctx.surface === 'ui' && resolveHostStampedAuthority(ctx) === 'present_user' && deps.machineAccessAction) {
+      && (ctx.surface === 'ui' || isSignedCliMachineGrantReviewInvocationV1(actionId, ctx))
+      && resolveHostStampedAuthority(ctx) === 'present_user' && deps.machineAccessAction) {
       const change = (admittedInput as z.infer<typeof MachineAccessGrantSetInputV1Schema>);
       if (ctx.serverId && !isSameHome(change.serverId, ctx.serverId, ctx)) {
         return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
