@@ -1658,6 +1658,14 @@ export {
   type HappierReviewTone,
 } from '../presentation/work/ReviewSummary.js';
 export {
+  HappierReviewFinding,
+  HappierReviewFindingBody,
+  formatHappierReviewFindingLocation,
+  type HappierReviewFindingProps,
+  type HappierReviewFindingBodyProps,
+  type HappierReviewFindingDecision,
+} from './ReviewFinding.js';
+export {
   buildHappierWorkMap,
   formatHappierWorkMapNodeName,
   resolveHappierWorkMapNodePosition,
