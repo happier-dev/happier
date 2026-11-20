@@ -1,16 +1,17 @@
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
-import { installBundledPluginUiDeclarationsForTests, mountUiManagedMachineDetail } from '@happier-tests/ui-action-client';
+import { connectUiActionClient, installBundledPluginUiDeclarationsForTests, mountUiManagedMachineDetail } from '@happier-tests/ui-action-client';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { TeamSummaryV1Schema, TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedMachinePresetRecipientCensusResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { createManagedMachinePresetAcquireOverrideV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import { ManagedAcceptedV1Schema, ManagedListOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcceptedV1Schema, ManagedDeleteOutputV1Schema, ManagedListOutputV1Schema, unwrapManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
 import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
 import { projectBundledPluginUiDeclaration } from '../../../../apps/cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
@@ -35,10 +36,13 @@ beforeAll(async () => {
   restoreDeclarations = installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiDeclaration({
     packageName: '@happier-dev/plugins-devcontainer', packageVersion: manifest.version, manifest, artifactGraphs: [],
   })]);
-  await mkdir(testDir, { recursive: true });
+  const guestHomeHost = execFileSync('docker', ['network', 'inspect', 'bridge',
+    '--format', '{{(index .IPAM.Config 0).Gateway}}'], { encoding: 'utf8' }).trim();
+  if (!guestHomeHost) throw new Error('The Docker bridge has no Home ingress address');
   postgres = await startDatabaseWorkbenchPostgres({ preloadStatistics: false });
-  fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres', observeActionRequests: true, guestReachableHome: true,
-    serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl } });
+  fixture = await startTeamSetupFFixture({ testDir, dbProvider: 'postgres', observeActionRequests: true,
+    guestReachableHome: { host: guestHomeHost },
+    serverEnv: { DATABASE_URL: postgres.homeDatabaseUrl, HAPPIER_DEV_GUEST_CLI_EXPORT: '1' } });
 }, 0);
 
 afterAll(async () => {
@@ -66,7 +70,7 @@ afterAll(async () => {
   }
 }, 0);
 
-it('TH.J5 creates and archives a Team and lets its member delete their own container with typed lifecycle refusals', async () => {
+it('TH.J5 creates and archives a Team and lets its member delete their own container with typed lifecycle refusals', async ({ onTestFinished }) => {
   if (!fixture) throw new Error('Team container lifecycle fixture did not start');
   const owner = await fixture.createAccount('lifecycle-owner');
   const member = await fixture.createAccount('lifecycle-member');
@@ -79,14 +83,7 @@ it('TH.J5 creates and archives a Team and lets its member delete their own conta
   const ownerId = readAccountIdFromToken(owner.credentials.token);
   const memberId = readAccountIdFromToken(member.credentials.token);
   if (!ownerId || !memberId) throw new Error('Lifecycle fixture Account token identity is missing');
-  // Guest enrollment is outside creator Delete. Substitute only that OS
-  // executable, as in the existing managed-inspect journey; Docker allocation
-  // and the controller's native reports remain real.
-  const payloadRoot = join(testDir, 'non-enrolling-guest-payload');
-  await mkdir(payloadRoot, { recursive: true });
-  await writeFile(join(payloadRoot, 'happier'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const machine = await fixture.enrollDaemon(owner, { env: {
-    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: payloadRoot } });
+  const machine = await fixture.enrollDaemon(owner);
   // A real Session must work on this exact controller before offline and access
   // refusals count: authentication or fixture failure cannot satisfy the case.
   await fixture.assertKnownGoodSessionControl(owner, machine);
@@ -145,10 +142,16 @@ it('TH.J5 creates and archives a Team and lets its member delete their own conta
   expect(response.status).toBe(200);
   const census = ManagedMachinePresetRecipientCensusResultV1Schema.parse(await response.json());
   if (census.kind !== 'ready') throw new Error(`Preset census refused: ${census.code}`);
+  const guestHomeCa = fixture.guestHomeCaCertificatePath;
+  if (!guestHomeCa) throw new Error('The delegated Docker guest needs the fixture Home public CA');
+  const ca = (await readFile(guestHomeCa)).toString('base64');
   const content = { v: 1 as const, name: 'Member container', launch: {
     provider: { pluginId: 'happier.devcontainer', localId: 'devcontainer' }, schemaVersion: 1,
     name: 'Member container', choices: { runtime: 'docker', configuration: {
-      kind: 'image', image: process.env.HAPPIER_TEST_SANDBOX_IMAGE ?? 'codercom/example-base:ubuntu',
+      // Install the fixture Home CA as the image user, just as the native Docker journey does.
+      kind: 'image', image: process.env.HAPPIER_TEST_SANDBOX_IMAGE?.trim()
+        || 'docker.io/library/buildpack-deps@sha256:5bac6b3020afcf0358de87990605d5dc4c3f060629381912266b9b9278375af3',
+      setupScript: `printf '%s' '${ca}' | base64 -d > /usr/local/share/ca-certificates/happier-fixture.crt && update-ca-certificates`,
     } },
   } };
   const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee', content,
@@ -167,9 +170,21 @@ it('TH.J5 creates and archives a Team and lets its member delete their own conta
     accountKey: member.auth.accountMachineKey, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
     randomBytes: length => new Uint8Array(randomBytes(length)) });
   if (!presetContentOverride) throw new Error('Member preset enrollment choices could not be sealed');
-  const acquired = await member.execute('machines.managed.acquire', { presetContentOverride, selection: {
+  const discovery = await fetch(`${fixture.server.baseUrl}/v1/features`);
+  expect(discovery.status).toBe(200);
+  const home = FeaturesResponseSchema.parse(await discovery.json()).homeConnectionDescriptor;
+  if (!home) throw new Error('The fixture Home did not publish its connection descriptor');
+  expect(home.homeServerIdentityId).toBe(fixture.serverId);
+  const ui = await connectUiActionClient({ serverUrl: home.canonicalServerUrl, credentials: member.uiCredentials });
+  onTestFinished(() => ui.close());
+  expect(ui.serverId).toBe(fixture.serverId);
+  const memberUiContext = () => ({ surface: 'ui' as const, authority: 'present_user' as const,
+    actionCaller: { kind: 'host' as const }, serverId: ui.serverId, serverIdentityId: home.homeServerIdentityId,
+    actionRequestId: randomUUID() });
+  await ui.waitForPluginAccountAvailability();
+  const acquired = await ui.executeConfirmed('machines.managed.acquire', { presetContentOverride, selection: {
     kind: 'preset', homeId: fixture.serverId, id: presetId, revision: saved.preset.revision,
-  } }, { presentUserConfirmation: { actionId: 'machines.managed.acquire' } });
+  } }, memberUiContext());
   expect(acquired, JSON.stringify(acquired)).toMatchObject({ ok: true, result: { managedId: expect.any(String) } });
   if (!acquired.ok) throw new Error(acquired.errorCode);
   const acquiredOutput = ManagedAcceptedV1Schema.parse(acquired.result);
@@ -177,10 +192,12 @@ it('TH.J5 creates and archives a Team and lets its member delete their own conta
   ownedManagedIds.add(managedId);
   const waitForOperation = async (operation: typeof acquiredOutput.operation) => {
     if (!operation) return;
-    const result = await member.executeAsPerson('action.operations.get', {
+    // The member can observe this managed resource through Home admission.
+    // A direct Machine RPC would require visibility of the owner's controller.
+    const result = await ui.execute('action.operations.get', {
       serverId: fixture!.serverId, machineId: machine.target.machineId,
       managed: { homeId: fixture!.serverId, managedId }, operationId: operation.operationId, waitForTerminal: true,
-    });
+    }, memberUiContext());
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
     if (!result.ok) throw new Error(`Managed operation unavailable: ${result.errorCode}`);
     const observed = ActionOperationGetV1ResponseSchema.parse(result.result);
@@ -206,16 +223,11 @@ it('TH.J5 creates and archives a Team and lets its member delete their own conta
 
   // The real member UI consumes the same admitted resource. This is the
   // creator Delete regression: their controller is private to the Team owner.
-  const { connectUiPersonActionClient } = await import('@happier-tests/ui-action-client');
-  const ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl,
-    accountSecret: member.auth.accountSigningSeed });
+  const screen = await mountUiManagedMachineDetail({ serverId: ui.serverId, managedId });
   try {
-    const screen = await mountUiManagedMachineDetail({ serverId: ui.serverId, managedId });
-    try {
-      await waitFor(() => screen.readControls().delete, { context: 'Creator Delete control on the member detail' });
-      expect(screen.readControls()).toMatchObject({ stop: false, remove: false });
-    } finally { await screen.close(); }
-  } finally { await ui.close(); }
+    await waitFor(() => screen.readControls().delete, { context: 'Creator Delete control on the member detail' });
+    expect(screen.readControls()).toMatchObject({ stop: false, remove: false });
+  } finally { await screen.close(); }
 
   const inspected = await owner.execute('machines.managed.inspect', { homeId: fixture.serverId, managedId });
   expect(inspected, JSON.stringify(inspected)).toMatchObject({ ok: true });
@@ -228,9 +240,12 @@ it('TH.J5 creates and archives a Team and lets its member delete their own conta
   await machine.restart();
   const deleted = await member.execute('machines.managed.delete', input,
     { presentUserConfirmation: { actionId: 'machines.managed.delete' } });
-  expect(deleted, JSON.stringify(deleted)).toMatchObject({ ok: true, result: { kind: 'accepted' } });
+  expect(deleted, JSON.stringify(deleted)).toMatchObject({ ok: true });
   if (!deleted.ok) throw new Error(deleted.errorCode);
-  const deletion = await waitForOperation(ManagedAcceptedV1Schema.parse(deleted.result).operation);
+  const deleteOutput = ManagedDeleteOutputV1Schema.parse(deleted.result);
+  if (deleteOutput.kind !== 'accepted') throw new Error(`Member Delete did not start: ${JSON.stringify(deleteOutput)}`);
+  expect(deleteOutput.managedId).toBe(managedId);
+  const deletion = await waitForOperation(deleteOutput.operation);
   expect((await read())?.allocation, JSON.stringify(deletion)).toBe('confirmed-absent');
   expect(execFileSync('docker', ['ps', '--all', '--filter', `label=happier.managed-machine=${managedId}`,
     '--format', '{{.ID}}'], { encoding: 'utf8' }).trim()).toBe('');
