@@ -672,8 +672,9 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
         if (result.status === 'cancelled' && (result.completedStepIds.length === 0 || result.restoration)) {
             return { outcome: 'not_applied', reasonCode: 'cancelled', ...(result.restoration ? { restoration: result.restoration } : {}) };
         }
-        // A terminal failure settles the operation even when earlier steps applied.
-        if (result.status === 'failed') {
+        // A confirmed failure stays actionable even when earlier steps applied.
+        const missingPrerequisite = (result.status === 'unavailable' || result.status === 'unsupported') && result.failure !== undefined;
+        if (result.status === 'failed' || missingPrerequisite) {
             return { ...nativeRefused(rememberNativeFailure('native_effect_failed', result.reason, requiredFact, undefined, failureContext)),
                 ...(result.restoration ? { restoration: result.restoration } : {}) };
         }

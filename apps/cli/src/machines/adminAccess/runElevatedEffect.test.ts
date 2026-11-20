@@ -26,6 +26,17 @@ import { buildAgentIsolationProvisioningSteps } from '@/daemon/agentIsolation/pr
 
 afterEach(() => vi.restoreAllMocks());
 
+function spawnRootInterpreter(runNative: (input: machineSetup.MachineSetupNativeCommand) => Promise<machineSetup.MachineSetupNativeCommandResult>): MachineElevationSpawn {
+    return launch => {
+        const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
+        const settled = runMachineSetupEffectInternal(launch.args.slice(launch.args.indexOf('effect-internal') + 1),
+            { stdin, stdout, runNative, readUid: () => 0 }).then(code => {
+            stdout.end(); stderr.end(); return { code, signal: null };
+        });
+        return { stdin, stdout, stderr, settled, terminate: async () => { stdin.destroy(); await settled; } };
+    };
+}
+
 it.skipIf(process.platform !== 'linux')('provisions the first member home through root CHECK then APPLY when its traversal parent does not exist yet', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-member-parent-'));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
@@ -53,15 +64,7 @@ it.skipIf(process.platform !== 'linux')('provisions the first member home throug
         }
         throw new Error(`Unexpected native command ${executable}`);
     };
-    const spawn: MachineElevationSpawn = launch => {
-        const stdin = new PassThrough(), stdout = new PassThrough(), stderr = new PassThrough();
-        const settled = runMachineSetupEffectInternal(launch.args.slice(launch.args.indexOf('effect-internal') + 1),
-            { stdin, stdout, runNative, readUid: () => 0 }).then(code => {
-            stdout.end(); stderr.end(); return { code, signal: null };
-        });
-        return { stdin, stdout, stderr, settled, terminate: async () => { stdin.destroy(); await settled; } };
-    };
-    const dependencies: MachineElevationDependencies = { installationId: 'installation', installedCli: '/managed/happier', spawn,
+    const dependencies: MachineElevationDependencies = { installationId: 'installation', installedCli: '/managed/happier', spawn: spawnRootInterpreter(runNative),
         readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true,
         observe: async () => ({ ...observation, passwordlessSudoToRoot: 'allowed' }), emit: event => { checked.push(event); } };
     const apply = () => runElevatedMachineSetupIntent({ machineId: 'machine-a', operationId: 'first-member',
@@ -73,6 +76,38 @@ it.skipIf(process.platform !== 'linux')('provisions the first member home throug
     expect(checked).toContainEqual(expect.objectContaining({ type: 'machine.setup.checked' }));
     await expect(apply()).resolves.toMatchObject({ outcome: 'applied' });
     expect(aclEffects).toEqual([memberParent]);
+});
+
+it.skipIf(process.platform !== 'linux')('returns a settled ACL repair when a later native check cannot run after account creation', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-legacy-acl-'));
+    onTestFinished(() => rm(root, { recursive: true, force: true }));
+    let memberExists = false;
+    const spawn = spawnRootInterpreter(async ({ executable }) => {
+        if (executable === 'getent') return { code: memberExists ? 0 : 2,
+            stdout: memberExists ? 'happier-agent:x:41001:41000::/home/happier-agent:/usr/sbin/nologin\n' : '', stderr: '' };
+        if (executable === 'useradd') {
+            memberExists = true;
+            return { code: 0, stdout: '', stderr: '' };
+        }
+        if (executable === 'getfacl') return { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
+        throw new Error(`Unexpected native command ${executable}`);
+    });
+    const dependencies: MachineElevationDependencies = { installationId: 'installation', installedCli: '/managed/happier', spawn,
+        readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true,
+        observe: async () => ({ ...observation, passwordlessSudoToRoot: 'allowed' }) };
+    const basis = { kind: 'agentIsolation' as const, machineId: 'machine-a', enabled: true, expectedPolicy: { enabled: false } };
+    const steps: MachineRecipeStepV1[] = [
+        { id: 'agent-account', kind: 'user', username: 'happier-agent' },
+        { id: 'plugin-code-ancestor-0', kind: 'pathTraversal', path: root, agentUsername: 'happier-agent', state: 'absent' },
+    ];
+    const plan = await checkElevatedMachineSetupPlan({ machineId: 'machine-a', operationId: 'review', basis, steps }, dependencies);
+    if (!plan) throw new Error('Root CHECK must return the reviewed isolation plan');
+    expect(memberExists).toBe(false);
+    await expect(runElevatedEffect({ machineId: 'machine-a', operationId: 'apply', effect: { kind: 'setupOperation', plans: [{ plan }] } }, dependencies))
+        .resolves.toMatchObject({ outcome: 'not_applied', reasonCode: 'native_check_unavailable',
+            failure: { requiredFact: 'commandExecutable', stepId: 'plugin-code-ancestor-0',
+                remedy: 'Install the acl package on this Machine, then try again.' } });
+    expect(memberExists).toBe(true);
 });
 
 const observation: MachineAdminAccessObservationV1 = { version: 1, observedAt: 0, daemonUid: 1001, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
