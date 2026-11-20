@@ -229,7 +229,7 @@ describe('activate', () => {
     expect(sourceSetupAction).not.toHaveProperty('placement');
     expect(historyGapResetAction).toMatchObject({
       title: 'Start a new GitHub repository Event baseline',
-      surfaces: ['plugin'],
+      surfaces: ['plugin', 'agent', 'mcp'],
       dangerLevel: 'writesLocal',
       execution: { target: 'daemon' },
       confirmation: {

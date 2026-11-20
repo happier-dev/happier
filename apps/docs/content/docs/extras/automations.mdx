@@ -567,6 +567,11 @@ history gap needs explicit recovery. Switching transports is not proof that
 earlier missed webhook deliveries have been recovered. Verify the resulting
 Run/event evidence for the occurrences you need.
 
+In 0.3 development source, you can ask an agent to start a new baseline for
+the affected GitHub trigger on its watcher Machine. The Action asks for
+approval by default. After approval, the watcher records the current head
+from GitHub and continues from there. Events in the skipped interval stay skipped.
+
 An event trigger can also carry a **filter**, and a maximum observation age —
 past which an event is considered too old to act on rather than triggering a
 run late.

@@ -2439,7 +2439,7 @@ function createGithubPlugin(): GithubPlugin {
     [GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID]: {
       title: 'Start a new GitHub repository Event baseline',
       description: 'Explicitly replaces a GitHub Event history gap with an authenticated current-head baseline. Events in the gap are not replayed.',
-      surfaces: ['plugin'],
+      surfaces: ['plugin', 'agent', 'mcp'],
       confirmation: {
         title: {
           key: 'github.automation.historyGapReset.confirmation.title',

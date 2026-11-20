@@ -28,10 +28,23 @@ import { LOCAL_ACT_ACTION_IDS } from './actions/local/contracts.js';
 import { GITHUB_CI_MOUNTED_ACTION_ID_V1 } from './actions/mounted.js';
 import { GITHUB_OVERVIEW_TARGET_ACTION_ID } from './actions/overviewContracts.js';
 import { GITHUB_RELEASE_ACTION_IDS_V1, GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 } from './releases/contracts.js';
-import { GITHUB_CONNECTED_ACCOUNT_PURPOSE } from './observations/githubProviderContracts.js';
+import { GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID, GITHUB_CONNECTED_ACCOUNT_PURPOSE } from './observations/githubProviderContracts.js';
 import { GITHUB_NATIVE_READ_ACTIONS } from './triage/readActions.js';
 import { GITHUB_FILE_VIEWED_ACTION_IDS_V1 } from './triage/fileViewedContracts.js';
 import { GITHUB_AUTOMATION_EVENT_LOCAL_IDS } from './githubAutomationEvents.js';
+
+it('requires approval before an agent or MCP caller starts a new repository Event baseline', () => {
+  const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+  if (!admitted.ok) throw new Error('Expected the GitHub manifest to be admitted');
+  const action = admitted.manifest.contributes.actions?.find(
+    candidate => candidate.id === GITHUB_AUTOMATION_REPOSITORY_BASELINE_RESET_ACTION_ID,
+  );
+  if (!action) throw new Error('Expected the Event baseline recovery Action');
+  for (const surface of ['agent', 'mcp'] as const) {
+    expect(action.surfaces).toContain(surface);
+    expect(pluginActionRequiresPresentUserIntent(action, surface)).toBe(true);
+  }
+});
 
 it('declares the neutral pull request lifecycle source role for preview enrollment', () => {
   const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
