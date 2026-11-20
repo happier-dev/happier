@@ -66,8 +66,16 @@ status alone does not create a Needs-you request.
 Row context defaults on, showing Project, machine and checkout information when the
 surrounding group does not already explain it. The leading mark defaults to an
 automatic choice, with Agent, Project, combined, avatar and no-mark choices. Explicit
-avatar, Agent-logo and no-mark preferences survive an upgrade. Density, tags and
-Hide inactive remain separate preferences.
+avatar, Agent-logo and no-mark preferences survive an upgrade.
+
+In 0.3 development builds, **Lines** in the Session list's **View** menu controls
+how much space each row can use. Lines 1 is Narrow, Lines 2 is Cozy, and Lines 3
+is Detailed. Narrow is the default. Use **Row details** there or in
+**Settings › Session** to choose which details to show. **Current work** and
+**Progress** start on.
+**Pull request** and **Changes** stay blank until Happier already holds source
+control facts for the Session's checkout and branch. Opening a Session or a
+project can make those details available.
 
 ### Status notes and progress
 

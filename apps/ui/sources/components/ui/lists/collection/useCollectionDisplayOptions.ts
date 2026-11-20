@@ -28,7 +28,10 @@ export const SESSION_COLLECTION_ROW_DETAILS = [
     { id: 'currentWork', labelKey: 'settingsSession.sessionList.detailCurrentWork' },
     { id: 'progress', labelKey: 'settingsSession.sessionList.detailProgress' },
     { id: 'project', labelKey: 'settingsSession.sessionList.detailProject' },
+    { id: 'machine', labelKey: 'newSession.wizardSection.machine' },
     { id: 'branch', labelKey: 'settingsSession.sessionList.detailBranch' },
+    { id: 'pullRequest', labelKey: 'files.sourceControlOperations.update.pullRequest.title' },
+    { id: 'changes', labelKey: 'sessionGitPane.subTabs.changes' },
 ] as const satisfies readonly Readonly<{ id: keyof SessionCollectionRowDetails; labelKey: string }>[];
 
 export function useSessionCollectionRowDetails(): SessionCollectionRowDetails {

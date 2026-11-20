@@ -16,7 +16,7 @@ import {
   type WorkflowRowDetails,
 } from '../library/workflowLibraryCells';
 import { WorkflowRunStripView } from '../library/WorkflowRunStripView';
-import { readWorkflowPluginDetails, type WorkflowListExtensions } from '../library/useWorkflowListExtensions';
+import { readCollectionPluginDetails, type CollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
 import { formatNextScheduledRun } from '../triggers/formatTriggerSummary';
 
@@ -28,7 +28,7 @@ export type WorkflowColumnRowDisplay = Readonly<{
   lines: 1 | 2 | 3;
   details: WorkflowRowDetails;
   stored: Readonly<Record<string, boolean>> | undefined;
-  pluginDetails: WorkflowListExtensions<WorkflowLibraryItem>['details'];
+  pluginDetails: CollectionListExtensions<WorkflowLibraryItem>['details'];
 }>;
 const DEFAULT_DISPLAY: WorkflowColumnRowDisplay = Object.freeze({ lines: 2, details: resolveWorkflowRowDetails(undefined),
   stored: undefined, pluginDetails: Object.freeze([]) });
@@ -63,8 +63,8 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
   const nextRunAt = 'definition' in props.row ? props.row.definition.nextRunAt : null;
   const nextRun = lines === 3 && details.nextRun && nextRunAt !== null ? formatNextScheduledRun(nextRunAt) : null;
   const steps = lines === 3 && details.steps && facts.stepCount !== null ? t('workflows.examples.stepCount', { count: facts.stepCount }) : null;
-  const pluginContext = lines === 1 ? null : readWorkflowPluginDetails(pluginDetails, stored, props.row, 'context');
-  const pluginMark = readWorkflowPluginDetails(pluginDetails, stored, props.row, 'mark');
+  const pluginContext = lines === 1 ? null : readCollectionPluginDetails(pluginDetails, stored, props.row, 'context');
+  const pluginMark = readCollectionPluginDetails(pluginDetails, stored, props.row, 'mark');
   const line = lines === 1 ? null : [trigger, steps, nextRun, pluginContext].filter(Boolean).join(' · ') || null;
   const lastRun = lines === 3 && details.lastRun && facts.lastRunAt !== null
     ? t('workflows.destination.lastRun', { age: formatRelativeTimeShort(facts.lastRunAt, Date.now()) }) : null;

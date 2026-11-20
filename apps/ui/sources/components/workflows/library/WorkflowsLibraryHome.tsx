@@ -58,7 +58,7 @@ import {
     type WorkflowLibraryDefinition,
 } from './workflowLibraryReads';
 import { WorkflowRunStripView } from './WorkflowRunStripView';
-import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkflowListExtensions';
+import { readCollectionPluginDetails, useCollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 import { buildWorkflowLibraryCard, buildWorkflowLibraryFields, readWorkflowLibraryRowFacts, readWorkflowLibraryRowMarks, readWorkflowRowStrip, resolveWorkflowRowDetails, workflowLibraryExtensionFacts, workflowRowDetailChoices,
     WorkflowLibraryStateWord, type WorkflowLibraryRowFacts } from './workflowLibraryCells';
 import { WorkflowMarks } from '../presentation/WorkflowMarks';
@@ -448,14 +448,14 @@ function useLibraryAnatomy(
     openRunRef.current = openRun;
     const rowDetails = React.useMemo(() => resolveWorkflowRowDetails(details), [details]);
     const readableFacts = React.useMemo(() => workflowLibraryExtensionFacts(readFacts), [readFacts]);
-    const extensions = useWorkflowListExtensions('workflow', readableFacts);
+    const extensions = useCollectionListExtensions('workflow', readableFacts);
     const card = React.useMemo(() => {
         const base = buildWorkflowLibraryCard(readFacts, (runId) => openRunRef.current(runId), rowDetails);
         return {
             ...base,
             facts: (row: LibraryRow) => {
-                const context = readWorkflowPluginDetails(extensions.details, details, row, 'context');
-                const mark = readWorkflowPluginDetails(extensions.details, details, row, 'mark');
+                const context = readCollectionPluginDetails(extensions.details, details, row, 'context');
+                const mark = readCollectionPluginDetails(extensions.details, details, row, 'mark');
                 return <>{base.facts?.(row)}{context || mark ? <Text variant="meta">{[context, mark].filter(Boolean).join(' · ')}</Text> : null}</>;
             },
         };
@@ -489,7 +489,7 @@ function useLibraryAnatomy(
         byline: lines === 1 ? undefined : (row) => {
             const trigger = !rowDetails.trigger ? null
                 : readFacts(row).triggerLine ?? (row.group === 'fromPlugins' ? row.plugin.description ?? null : null);
-            const extension = readWorkflowPluginDetails(extensions.details, details, row, 'context');
+            const extension = readCollectionPluginDetails(extensions.details, details, row, 'context');
             return [trigger, extension].filter(Boolean).join(' · ') || null;
         },
         // Lines 3 (scene 8 "Lines × details"): the row's opt-in details on their own line.
@@ -523,7 +523,7 @@ function useLibraryAnatomy(
                 return <>
                     {lines === 1 && facts.state ? <WorkflowLibraryStateWord state={facts.state} needsYouRunId={null} /> : null}
                     {rowDetails.icons ? <WorkflowMarks layout="cluster" marks={readWorkflowLibraryRowMarks(facts, row)} /> : null}
-                    {details ? readWorkflowPluginDetails(extensions.details, details, row, 'mark') : null}
+                    {details ? readCollectionPluginDetails(extensions.details, details, row, 'mark') : null}
                 </>;
             },
         }),

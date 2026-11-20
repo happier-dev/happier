@@ -10,26 +10,28 @@ import { readScmSnapshotCounts, retainScmEntriesDemand, type ScmEntriesDemandSlo
 import { scmStatusSync } from '@/scm/scmStatusSync';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { ALWAYS_ACTIVE, useActiveGatedExternalStore, type ActiveSignal } from '@/utils/react/activeGatedExternalStore';
 
 /** SCM facts are owned and published by ProjectManager, independently of Zustand state. */
-function useScmValue<T>(scope: WorkspaceScopeBase | null, read: (state: StorageState) => T): T {
+function useScmValue<T>(scope: WorkspaceScopeBase | null, read: (state: StorageState) => T, gate = ALWAYS_ACTIVE): T {
     const store = getStorage();
     const key = scope ? tryBuildWorkspaceCacheKey(scope) : null;
-    const subscribe = React.useCallback((listener: () => void) =>
-        projectManager.subscribeScmSnapshots(listener, new Set(key ? [key] : [])), [key]);
+    const subscribe = React.useCallback((listener: () => void) => key
+        ? projectManager.subscribeScmSnapshots(listener, new Set([key]))
+        : () => {}, [key]);
     const select = useShallow(read);
     const getSnapshot = () => select(store.getState());
-    return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    return useActiveGatedExternalStore(gate, subscribe, getSnapshot);
 }
 
 function useSessionScmValue<T>(sessionId: string | null, serverId: string | null | undefined,
-    read: (state: StorageState) => T): T {
+    read: (state: StorageState) => T, gate?: ActiveSignal): T {
     const scope = getStorage()(useShallow(state => {
         if (!sessionId) return null;
         return resolveSessionScmScopeFromState(state, sessionId, serverId)
             ?? (serverId == null ? state.getProjectForSession(sessionId)?.key ?? null : null);
     }));
-    return useScmValue(scope, read);
+    return useScmValue(scope, read, gate);
 }
 
 function useProjectScmValue<T>(projectId: string | null, read: (state: StorageState) => T): T {
@@ -64,10 +66,20 @@ export function useSessionProjectScmSnapshot(sessionId: string | null, serverId?
 
 /** Counts, branch and repository facts (composer instrument, badges, summaries): no list demand. */
 export function useSessionProjectScmSummarySnapshot(sessionId: string | null, serverId?: string | null) {
+    return useSessionProjectScmSummarySelection(sessionId, serverId, snapshot => snapshot);
+}
+
+/** Observe held summary fields through the checkout key without acquiring SCM demand. */
+export function useSessionProjectScmSummarySelection<T>(
+    sessionId: string | null,
+    serverId: string | null | undefined,
+    select: (snapshot: ScmWorkingSnapshot | null) => T,
+    gate?: ActiveSignal,
+): T {
     return useSessionScmValue(sessionId, serverId, state => {
         const snapshot = sessionId ? state.getSessionProjectScmSnapshot(sessionId, serverId) : null;
-        return snapshot ? readScmSnapshotCounts(snapshot) : null;
-    });
+        return select(snapshot ? readScmSnapshotCounts(snapshot) : null);
+    }, gate);
 }
 
 function readSessionEntriesDemandSlot(sessionId: string, serverId: string | null | undefined): ScmEntriesDemandSlot {

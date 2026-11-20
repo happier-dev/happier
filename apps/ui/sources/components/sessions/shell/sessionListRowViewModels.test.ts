@@ -89,7 +89,10 @@ describe('buildSessionListRowViewModels', () => {
             listItems: nestSessionListReports([shelf, grouped, report, onDevbox],
                 (serverId, sessionId) => rowRenderableByKey.get(sessionTagKey(serverId ?? '', sessionId)) ?? null),
             reachableSessionDisplayById: new Map(),
-            reachableSessionDisplayByKey: new Map([[sessionTagKey('home', 'ctx-devbox'), { machineId: 'machine-b', machineLabel: 'devbox', workspaceSubtitle: '', workspaceSubtitleEllipsizeMode: 'head' as const }]]),
+            reachableSessionDisplayByKey: new Map([
+                [sessionTagKey('home', 'ctx-row'), { machineId: 'machine-a', machineLabel: 'local', workspaceSubtitle: '', workspaceSubtitleEllipsizeMode: 'head' as const }],
+                [sessionTagKey('home', 'ctx-devbox'), { machineId: 'machine-b', machineLabel: 'devbox', workspaceSubtitle: '', workspaceSubtitleEllipsizeMode: 'head' as const }],
+            ]),
             rowRenderableByKey,
             relativeNowMs: 1_000, runtimeNowMs: 1_000, 
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
@@ -97,7 +100,7 @@ describe('buildSessionListRowViewModels', () => {
         };
         const [inShelf, inGroup, underLead, elsewhere] = buildSessionListRowViewModels(input);
         // Inside its own Project group: the Agent leads, the Project is implied, the worktree's branch speaks.
-        expect(inGroup?.rowContext).toMatchObject({ leadingMark: 'agent', project: null,
+        expect(inGroup?.rowContext).toMatchObject({ leadingMark: 'agent', project: null, machine: null,
             checkout: { kind: 'branch', label: 'fix-remount' } });
         // The shelf copy identifies its Project through the leading mark before its favicon arrives.
         expect(inShelf?.rowContext).toMatchObject({ leadingMark: 'projectWithAgent', leadingMarkShowsProject: true,
@@ -107,10 +110,10 @@ describe('buildSessionListRowViewModels', () => {
         expect(inGroup?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
         // Neither a different row Machine/checkout nor its shelf placement elects a favicon source.
         expect(elsewhere?.rowContext).toHaveProperty('projectFaviconSource', faviconSource);
-        // Rows never name a Machine, including in their optional path subtitle or accessibility label.
-        expect(elsewhere?.rowContext).toMatchObject({ checkout: null });
+        // A different Machine belongs in its own detail, without repeating it in the path subtitle.
+        expect(elsewhere?.rowContext).toMatchObject({ checkout: null, machine: 'devbox' });
         expect(elsewhere?.subtitleOverride ?? '').not.toContain('devbox');
-        expect(elsewhere?.rowContext?.accessibleLabel).not.toContain('devbox');
+        expect(elsewhere?.rowContext?.accessibleLabel).toContain('devbox');
         // A displayed lead supplies its actual Machine and checkout even away from the baseline.
         expect(underLead?.rowContext).toMatchObject({ checkout: null });
         // Turning optional context off hides it visually but keeps it for assistive technology.

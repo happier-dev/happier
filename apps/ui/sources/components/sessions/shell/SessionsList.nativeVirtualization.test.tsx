@@ -617,6 +617,141 @@ describe('SessionsList (native virtualization)', () => {
         expect(expectPresent(readTargets().get(selectedKey), 'expected reopened bulk target').tags).toEqual(['updated-while-closed']);
     });
 
+    it('projects a declared plugin detail only on mounted Session rows that hold its fact', async () => {
+        const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+        const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
+        const manifest = PluginManifestV2Schema.parse({
+            schemaVersion: 2, id: 'com.acme.release', version: '1.0.0', displayName: 'Release details', runtime: { apiVersion: 1 },
+            contributes: { ui: { listExtensions: [{ id: 'releases', entity: 'sessionWork',
+                filterFields: [{ id: 'release-branch', title: 'Release branch', source: { factKey: 'branch' }, value: { kind: 'set' } }],
+                rowMark: { fieldId: 'release-branch', slot: 'context' },
+            }] } },
+        });
+        const projection = normalizePluginInstalledUiDeclarations(projectPluginPortableUiDeclarationsV1(manifest), 'ios');
+        mockVisibleSessionListViewData = mockVisibleSessionListViewData.map(item => item.type === 'session' && item.session.id === sessionB.id
+            ? { ...item, session: { ...item.session, metadata: { ...item.session.metadata, branch: 'release/next' } } }
+            : item);
+        const screen = await renderSessionsList();
+        try {
+            await act(async () => { realStorage.getState().applySettingsLocal({ sessionListDensity: 'cozy' }); });
+            await screen.update(<AppShellPluginUiProjectionValueProvider value={{
+                pluginUiProjection: projection,
+                pluginBrowserProjection: null, phase: 'current', interactionEnabled: true,
+                machineId: null, serverId: 'srv_server_a', platform: 'ios',
+                accountLifetime: captureActiveServerAccountScopeLifetime(),
+                reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'unavailable', failures: [] },
+                reloadClientExecutables() {},
+            }}><SessionsList /></AppShellPluginUiProjectionValueProvider>);
+            await flushHookEffects();
+            expect(findSessionItem(screen, sessionB.id)?.props.rowViewModel?.rowContext)
+                .toMatchObject({ pluginContext: 'Release branch: release/next', pluginMark: null });
+            expect(findSessionItem(screen, sessionA.id)?.props.rowViewModel?.rowContext)
+                .toMatchObject({ pluginContext: null, pluginMark: null });
+        } finally { await screen.unmount(); }
+    });
+
+    it('renders only the Session whose work note changed in a 200-Session list', async () => {
+        const inlineDrag = await import('./useSessionInlineDrag');
+        const rowRenders = vi.spyOn(inlineDrag, 'useSessionInlineDrag');
+        const rows = Array.from({ length: 200 }, (_, index) => createSessionListRenderableSessionFixture({
+            ...sessionB, id: `note-row-${index}`, encryptionMode: 'plain',
+        }));
+        const edited = rows[0]!;
+        mockVisibleSessionListViewData = [mockVisibleSessionListViewData[0], ...rows.map(session => ({
+            type: 'session', session, groupKey: defaultProjectGroupKey, groupKind: 'project', serverId: 'srv_server_a',
+        }))];
+        const screen = await renderSessionsList();
+        try {
+            await flushHookEffects();
+            expect(screen.findAllByType(SessionItem)).toHaveLength(200);
+            rowRenders.mockClear();
+            await act(async () => { realStorage.getState().applyServerScopedSessionListRows('srv_server_a', [{
+                ...edited, seq: edited.seq + 1, metadataVersion: (edited.metadataVersion ?? 0) + 1,
+                metadata: { ...edited.metadata!, work: { statusReason: 'Verify the retention fix' } },
+            }], { source: 'ordinary', mode: 'append' }); });
+            await flushHookEffects();
+            expect(findSessionItem(screen, edited.id)?.props.rowViewModel?.sessionStatus?.awareness?.nowLine)
+                .toBe('Verify the retention fix');
+            expect(rowRenders.mock.calls.flatMap(([input]) => input.sessionKey ? [input.sessionKey] : []))
+                .toEqual([buildSessionOrganizationSessionKey('srv_server_a', edited.id)]);
+        } finally { rowRenders.mockRestore(); await screen.unmount(); }
+    });
+
+    it('shows held SCM details only for the matching checkout and branch without requesting SCM', async () => {
+        const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+        const { scmRepositoryService } = await import('@/scm/scmRepositoryService');
+        const sessionScm = await import('@/sync/ops/sessionScm');
+        const inlineDrag = await import('./useSessionInlineDrag');
+        const statusForSession = vi.spyOn(scmRepositoryService, 'fetchSnapshotForSession');
+        const statusForCheckout = vi.spyOn(scmRepositoryService, 'fetchSnapshotForMachinePath');
+        const pullRequests = vi.spyOn(sessionScm, 'sessionScmPullRequestList');
+        const rowRenders = vi.spyOn(inlineDrag, 'useSessionInlineDrag');
+        const scope = { serverId: 'srv_server_a', machineId: 'machine-other', rootPath: '/Users/test/held-scm' };
+        const makeRow = (id: string, branch: string, path = scope.rootPath) => createSessionListRenderableSessionFixture({
+            ...sessionB, id, encryptionMode: 'plain',
+            metadata: { ...sessionB.metadata, machineId: scope.machineId, branch, path },
+        });
+        const matching = makeRow('scm-matching', 'fix/held');
+        const otherBranch = makeRow('scm-other-branch', 'fix/other');
+        const otherCheckout = makeRow('scm-other-checkout', 'fix/held', '/Users/test/unrelated-scm');
+        const rows = [matching, otherBranch, otherCheckout];
+        mockVisibleSessionListViewData = [mockVisibleSessionListViewData[0], ...rows.map(session => ({
+            type: 'session', session, groupKey: defaultProjectGroupKey, groupKind: 'project', serverId: scope.serverId,
+        }))];
+        const provider = { id: 'scm.github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com',
+            nameWithOwner: 'happier-dev/happier', remoteName: 'origin' } as const;
+        const snapshot: import('@/sync/domains/state/storageTypes').ScmWorkingSnapshot = {
+            projectKey: 'held-scm', fetchedAt: 100,
+            repo: { isRepo: true, rootPath: scope.rootPath },
+            branch: { head: 'fix/held', upstream: null, ahead: 0, behind: 0, detached: false },
+            hasConflicts: false, entries: [], detail: 'summary',
+            summary: { changedFiles: 2, includedAdded: 0, includedRemoved: 0, pendingAdded: 12, pendingRemoved: 3 },
+            totals: { includedFiles: 0, pendingFiles: 2, untrackedFiles: 0,
+                includedAdded: 0, includedRemoved: 0, pendingAdded: 12, pendingRemoved: 3 },
+            pullRequestStatus: { provider, headBranch: 'fix/held', baseBranch: 'main', openPullRequest: {
+                provider, number: 42, title: 'Keep the row passive', url: 'https://github.com/happier-dev/happier/pull/42',
+                baseBranch: 'main', headBranch: 'fix/held', state: 'open', isDraft: true, checks: { state: 'pending' },
+            } },
+        };
+        await act(async () => {
+            realStorage.getState().applySettingsLocal({
+                sessionListDensity: 'detailed',
+                collectionDisplayPreferencesV1: { sessionWork: { details: { pullRequest: true, changes: true } } },
+            });
+        });
+        const screen = await renderSessionsList();
+        try {
+            await flushHookEffects();
+            const context = (id: string) => expectPresent(findSessionItem(screen, id), 'expected mounted row').props.rowViewModel?.rowContext;
+            expect(context(matching.id)).not.toMatchObject({ pullRequest: expect.anything() });
+            expect(context(matching.id)).not.toMatchObject({ changes: expect.anything() });
+            rowRenders.mockClear();
+            await act(async () => { projectManager.updateWorkspaceScmSnapshot(scope, snapshot); });
+            expect(context(matching.id)).toMatchObject({
+                pullRequest: { number: 42, state: 'draft', checks: 'pending' },
+                changes: { changedFiles: 2, linesAdded: 12, linesRemoved: 3 },
+            });
+            for (const row of [otherBranch, otherCheckout]) {
+                expect(context(row.id)).toMatchObject({ pullRequest: null, changes: null });
+            }
+            expect(rowRenders.mock.calls.flatMap(([input]) => input.sessionKey ? [input.sessionKey] : []))
+                .toEqual([buildSessionOrganizationSessionKey(scope.serverId, matching.id)]);
+            expect(statusForSession).not.toHaveBeenCalled();
+            expect(statusForCheckout).not.toHaveBeenCalled();
+            expect(pullRequests).not.toHaveBeenCalled();
+        } finally {
+            statusForSession.mockRestore();
+            statusForCheckout.mockRestore();
+            pullRequests.mockRestore();
+            rowRenders.mockRestore();
+            await screen.unmount();
+            projectManager.updateWorkspaceScmSnapshot(scope, null);
+        }
+    });
+
     it('keeps unchanged rows unrendered when real-store arrivals shift their list positions', async () => {
         const rowModels = await import('./sessionListRowViewModels');
         const inlineDrag = await import('./useSessionInlineDrag');
@@ -2189,7 +2324,6 @@ describe('SessionsList (native virtualization)', () => {
             virtualizedListState.current?.props?.data,
             'expected active virtualized-list data',
         );
-        const activeExtraData = virtualizedListState.current?.props?.extraData;
         await screen.update(
             <ResolvedSessionsList
                 surfaceOwnership={{
@@ -2226,9 +2360,6 @@ describe('SessionsList (native virtualization)', () => {
             'expected inactive visible virtualized-list data',
         );
         expect(inactiveData).toBe(activeData);
-        expect(virtualizedListState.current?.props?.extraData).not.toBe(activeExtraData);
-        expect(virtualizedListState.current?.props?.extraData?.sessionListSurfaceDataActive).toBe(false);
-        const inactiveExtraData = virtualizedListState.current?.props?.extraData;
 
         await screen.update(
             <ResolvedSessionsList
@@ -2244,8 +2375,6 @@ describe('SessionsList (native virtualization)', () => {
             'expected reactivated virtualized-list data',
         );
         expect(reactivatedData).not.toBe(activeData);
-        expect(virtualizedListState.current?.props?.extraData).not.toBe(inactiveExtraData);
-        expect(virtualizedListState.current?.props?.extraData?.sessionListSurfaceDataActive).toBe(true);
         const hiddenRefreshNodeId = buildSessionListIndexNodeId({
             type: 'session',
             serverId: 'srv_server_a',

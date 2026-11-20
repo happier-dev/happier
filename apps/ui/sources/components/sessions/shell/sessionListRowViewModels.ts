@@ -50,6 +50,9 @@ import {
 } from '../presentation/externalSessionIdentityPresentation';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { resolveEffectiveSessionAppearanceColor, sessionAppearanceColorKey, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { resolveGitPullRequestCardModel } from '../panes/git/pullRequest/gitPullRequestCardModel';
+import { buildSessionScmSummary } from '../sourceControl/status/statusSummary';
 
 function appendUniqueSearchReason(
     reasons: SessionListContextualSearchReason[],
@@ -155,6 +158,11 @@ export type SessionListRowContextPresentation = Readonly<{
     /** The row Project's fixed accepted baseline; mirrors observe the existing favicon resource. */
     projectFaviconSource: Readonly<{ serverId: string; machineId: string; workspacePath: string }> | null;
     checkout: Readonly<{ kind: 'branch' | 'path'; label: string }> | null;
+    machine: string | null;
+    pullRequest: Readonly<Pick<NonNullable<ReturnType<typeof resolveGitPullRequestCardModel>>, 'number' | 'state' | 'checks'>> | null;
+    changes: Readonly<{ changedFiles: number; linesAdded: number; linesRemoved: number }> | null;
+    pluginContext: string | null;
+    pluginMark: string | null;
     /** Project and checkout for assistive technology, even when visual context is off. */
     accessibleLabel: string;
     statusWords: boolean;
@@ -194,6 +202,9 @@ export type SessionListSelectedRowContextInput = Readonly<{
     rowDetailProgress: boolean;
     rowDetailProject: boolean;
     rowDetailBranch: boolean;
+    rowDetailMachine: boolean;
+    rowDetailPullRequest: boolean;
+    rowDetailChanges: boolean;
 }>;
 
 export function selectSessionListRowContextInput(
@@ -220,6 +231,9 @@ export function selectSessionListRowContextInput(
         rowDetailProgress: context.details?.progress !== false,
         rowDetailProject: context.details ? context.details.project : context.enabled,
         rowDetailBranch: context.details ? context.details.branch : context.enabled,
+        rowDetailMachine: context.details ? context.details.machine : context.enabled,
+        rowDetailPullRequest: context.details?.pullRequest === true,
+        rowDetailChanges: context.details?.changes === true,
     };
 }
 
@@ -268,7 +282,32 @@ export type BuildSessionListRowViewModelInput = Readonly<{
     attentionStandingPolicy?: SessionAttentionStandingPolicy;
     existingDraft?: SessionListRowDraft | null;
     rowContext?: SessionListSelectedRowContextInput;
+    scm?: ReturnType<typeof readSessionListScmFacts>;
+    pluginContext?: string | null;
+    pluginMark?: string | null;
 }>;
+
+/** Select only the values the row can show, so unrelated snapshot changes leave it alone. */
+export function readSessionListScmFacts(
+    snapshot: ScmWorkingSnapshot | null,
+    branch: string | null | undefined,
+    pullRequestEnabled: boolean,
+    changesEnabled: boolean,
+) {
+    if (!branch || !snapshot?.repo.isRepo || snapshot.branch.head !== branch) return null;
+    const pullRequest = pullRequestEnabled && snapshot.pullRequestStatus?.headBranch === branch
+        ? resolveGitPullRequestCardModel(snapshot) : null;
+    const changes = changesEnabled ? buildSessionScmSummary(snapshot) : null;
+    if (!pullRequest && !changes?.hasAnyChanges) return null;
+    return {
+        pullRequestNumber: pullRequest?.number ?? null,
+        pullRequestState: pullRequest?.state ?? null,
+        pullRequestChecks: pullRequest?.checks ?? null,
+        changedFiles: changes?.hasAnyChanges ? changes.changedFiles : 0,
+        linesAdded: changes?.linesAdded ?? 0,
+        linesRemoved: changes?.linesRemoved ?? 0,
+    };
+}
 
 function readRowContextFacts(item: Extract<SessionListIndexItem, { type: 'session' }>,
     session: SessionListRenderableSession | null): SessionListRowContextFacts {
@@ -293,6 +332,10 @@ function buildRowContextPresentation(input: Readonly<{
     context: SessionListSelectedRowContextInput;
     facts: SessionListRowContextFacts;
     parent: SessionListRowParentContextFacts | null;
+    reachableDisplay: SessionReachableDisplay | undefined;
+    scm: ReturnType<typeof readSessionListScmFacts>;
+    pluginContext: string | null;
+    pluginMark: string | null;
 }>): SessionListRowContextPresentation {
     const groupProject = input.context.rowContextGroupServerId && input.context.rowContextGroupProjectKey
         ? { serverId: input.context.rowContextGroupServerId, projectKey: input.context.rowContextGroupProjectKey } : null;
@@ -315,9 +358,12 @@ function buildRowContextPresentation(input: Readonly<{
             && basenameOf(input.facts.path) !== basenameOf(baseline.rootPath)
             ? { kind: 'path' as const, label: basenameOf(input.facts.path) }
             : null;
+    const machine = input.context.rowDetailMachine && input.reachableDisplay?.machineId !== baseline?.machineId
+        ? input.reachableDisplay?.machineLabel || null : null;
     const accessibleLabel = [
         (input.facts.project || input.facts.fallbackGroupKey) && !inOwnGroup ? projectTitle : null,
         checkout?.label ?? null,
+        machine,
     ].filter((part): part is string => Boolean(part)).join(', ');
     return {
         leadingMark: resolved.identity.leadingMark,
@@ -333,6 +379,15 @@ function buildRowContextPresentation(input: Readonly<{
                 workspacePath: input.context.rowContextProjectFaviconWorkspacePath }
             : null,
         checkout: input.context.rowDetailBranch && resolved.showCheckout ? checkout : null,
+        machine,
+        pullRequest: input.context.rowDetailPullRequest && input.scm?.pullRequestState ? {
+            number: input.scm.pullRequestNumber, state: input.scm.pullRequestState, checks: input.scm.pullRequestChecks,
+        } : null,
+        changes: input.context.rowDetailChanges && input.scm && input.scm.changedFiles > 0 ? {
+            changedFiles: input.scm.changedFiles, linesAdded: input.scm.linesAdded, linesRemoved: input.scm.linesRemoved,
+        } : null,
+        pluginContext: input.pluginContext,
+        pluginMark: input.pluginMark,
         accessibleLabel,
         statusWords: input.context.rowContextStatusWords,
         currentWork: input.context.rowDetailCurrentWork,
@@ -479,6 +534,10 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
             context: input.rowContext,
             facts: readRowContextFacts(item, session),
             parent: item.reportsParentContext ?? null,
+            reachableDisplay,
+            scm: input.scm ?? null,
+            pluginContext: input.pluginContext ?? null,
+            pluginMark: input.pluginMark ?? null,
         }) : null,
     };
     const signature = buildRowViewModelSignature(rowViewModel);

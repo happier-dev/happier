@@ -7,6 +7,12 @@ description: Contribution families that a plugin can declare for projection and 
 
 ## Common contribution families
 
+In 0.3 development builds, a `ui.listExtensions` declaration for
+`entity: 'sessionWork'` can show the Session's held branch as a detail.
+Declare a field with `source: { factKey: 'branch' }` and `value: { kind: 'set' }`,
+then point `rowMark.fieldId` to that field's ID and set `rowMark.slot` to
+`'context'` or `'mark'`. Rows with no branch omit the detail.
+
 In unreleased 0.3 development source, `ui.listExtensions` can target `service`
 rows and declare a field with `value: { kind: 'number', unit: '{request}' }`.
 Optional `column` metadata supplies `title`, `width`, `align` (`start` or `end`),

@@ -83,11 +83,15 @@ or the viewer's private Project placement. The Runs collection model groups by
 Date, Project or Workflow over the shared Account list window. The collection
 Spaces Action accepts Run-specific filters and saved Spaces.
 Sessions Lines 1, 2 and 3 still write the existing `sessionListDensity` key.
-Session Settings and the View menu offer the same four Row details. Current
-work and Progress default on. Project and Branch inherit the retained context
-choice until set independently. Existing Machine, Pull request and Changes
-preferences remain readable. Artifacts
-use `{ kind: 'artifact', presentation: 'grid' | 'list' | 'folders' }` and fall
+Session Settings and the View menu offer the same seven Row details. Current
+work and Progress default on. Project, Machine and Branch inherit the retained
+context choice until set independently. Machine uses the Session's held
+reachability label and omits the Project group's baseline Machine. Pull request
+and Changes are shown when SCM facts are already held for the checkout and branch.
+A cold list shows neither. The Session list observes by checkout and adds no SCM
+read demand.
+
+Artifacts use `{ kind: 'artifact', presentation: 'grid' | 'list' | 'folders' }` and fall
 back to the previous device preference before an Account choice exists.
 
 ## Model and presentation
@@ -138,6 +142,10 @@ saved selections when a plugin is retired. Admission and evaluation acquire no
 Resources and activate no plugin. Resource-backed loading is available at the
 Services fact adapter; other host-row loading and its dependent host filters
 remain deferred. Row operations use ordinary plugin Actions.
+
+Session rows read `branch` from the row's held Session metadata. A declaration
+with a `rowMark` can use that fact in the `context` or `mark` slot. A row
+without a branch has no detail. Session marks require no Resource read.
 
 The Workflow list reads `stepCount`, `lastRunAt` and `state` from its held
 row facts. Runs expose `createdAt`, `result` and `startedBy`. Extensions can

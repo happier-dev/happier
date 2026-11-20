@@ -33,7 +33,7 @@ import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
 import { describeAccountWorkflowLibraryRecord } from './workflowLibraryCollection';
 import { useWorkflowDefinitionLibrary, useWorkflowRunWindow } from './workflowLibraryReads';
 import { useWorkflowProjectGroupDisplay } from './workflowLibraryProjectGroups';
-import { readWorkflowPluginDetails, useWorkflowListExtensions } from './useWorkflowListExtensions';
+import { readCollectionPluginDetails, useCollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 
 const runDraft = createCollectionSpaceDraftStore<'workflowRun'>();
 const RUN_ICON = { kind: 'icon', name: 'list' } as const;
@@ -68,7 +68,7 @@ export function useWorkflowRunCollection(focused: boolean) {
     const binding = useCollectionSpaceFilter('workflowRun', { lifetime: runs.accountLifetime, draft: runDraft,
         defaultName: t('workflows.destination.allRuns'), defaultFilter: DEFAULT_WORKFLOW_RUN_LIST_FILTER_V1 });
     const display = useWorkflowRunDisplayOptions();
-    const extensions = useWorkflowListExtensions('workflowRun', RUN_EXTENSION_FACTS);
+    const extensions = useCollectionListExtensions('workflowRun', RUN_EXTENSION_FACTS);
     const census = useProjectAccountRows();
     const language = usePreferredLanguage();
     const hasSavedWorkflow = runs.rows.some(run => run.summary?.sourceArtifactId != null);
@@ -213,7 +213,7 @@ export function useWorkflowRunCollection(focused: boolean) {
     React.useEffect(() => focused && lifetime?.isCurrent()
         ? registerWorkflowViewScopeActionOwner(() => latest.current) : undefined, [focused, lifetime]);
     const readPluginDetail = React.useCallback((row: WorkflowRunCollectionRow, slot: 'context' | 'mark') =>
-        readWorkflowPluginDetails(extensions.details, display.details, row, slot), [display.details, extensions.details]);
+        readCollectionPluginDetails(extensions.details, display.details, row, slot), [display.details, extensions.details]);
     return { rows, groups, filter, filterResult, window, runs, display, binding, focused, setSearchQuery, extensions, readPluginDetail };
 }
 

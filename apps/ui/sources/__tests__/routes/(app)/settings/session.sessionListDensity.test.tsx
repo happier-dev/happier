@@ -119,7 +119,7 @@ afterEach(async () => {
 describe('Session settings session list density', () => {
     it('changes a Session row for every displayed Row details switch', async () => {
         const { default: SessionSettingsScreen } = await import('../../../../app/(app)/settings/session');
-        const { buildSessionListRowViewModels } = await import('@/components/sessions/shell/sessionListRowViewModels');
+        const { buildSessionListRowViewModel, selectSessionListRowContextInput } = await import('@/components/sessions/shell/sessionListRowViewModels');
         const { readSessionCollectionRowDetails } = await import('@/components/ui/lists/collection/collectionDisplaySettings');
         const { projectGroupIdentityKey } = await import('@/sync/domains/workspaces/projectGroupDisplay');
         const { buildSessionListServerScopedRowKey } = await import('@/sync/domains/session/listing/sessionListKeyNormalization');
@@ -129,8 +129,11 @@ describe('Session settings session list density', () => {
         const rowKey = buildSessionListServerScopedRowKey(item.serverId, item.sessionId)!;
         const row = () => {
             const settings = storage.getState().settings;
-            return buildSessionListRowViewModels({
-                listItems: [item], reachableSessionDisplayById: new Map(),
+            return buildSessionListRowViewModel({
+                item, reachableSessionDisplayById: new Map([[sessionId, {
+                    machineId: 'machine-a', machineLabel: 'Dev box', workspaceSubtitle: '/repo/example',
+                    workspaceSubtitleEllipsizeMode: 'tail',
+                }]]),
                 rowRenderableByKey: new Map([[rowKey, {
                     id: sessionId, encryptionMode: 'plain', seq: 1, createdAt: 100, updatedAt: 200,
                     active: false, activeAt: 0, metadataVersion: 1, agentStateVersion: 1,
@@ -141,22 +144,25 @@ describe('Session settings session list density', () => {
                 }]]),
                 pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null,
                 showServerBadge: false, showPinnedServerBadge: false, relativeNowMs: 1_000, runtimeNowMs: 1_000,
-                rowContext: {
+                scm: { pullRequestNumber: 42, pullRequestState: 'draft', pullRequestChecks: 'pending',
+                    changedFiles: 2, linesAdded: 12, linesRemoved: 3 },
+                rowContext: selectSessionListRowContextInput(item, {
                     enabled: true, identityDisplay: 'agentLogo', groupProjectByGroupKey: new Map(),
                     projectDisplayByKey: new Map([[projectGroupIdentityKey(project), {
                         project, baseline: null, title: 'Example project', hasCustomLabel: true,
                     }]]),
                     details: readSessionCollectionRowDetails(settings.collectionDisplayPreferencesV1.sessionWork?.details,
                         settings.sessionListRowContextV1),
-                },
-            })[0]?.rowContext;
+                }),
+            }).rowContext;
         };
         const screen = await renderSettingsView(<SessionSettingsScreen />);
         const prefix = 'settings-session:row-detail:';
         const details = screen.findAllByType(Item)
             .map(item => item.props.testID)
             .filter((id): id is string => typeof id === 'string' && id.startsWith(prefix));
-        expect(details.length).toBeGreaterThan(0);
+        expect(details).toEqual(expect.arrayContaining(['machine', 'pullRequest', 'changes'].map(id => `${prefix}${id}`)));
+        expect(row()).toMatchObject({ currentWork: true, progress: true });
         for (const testID of details) {
             const id = testID.slice(prefix.length);
             const before = row();
@@ -166,6 +172,7 @@ describe('Session settings session list density', () => {
             await act(async () => { control.props.onValueChange(enabled); });
             await expectPersistedSettings({ collectionDisplayPreferencesV1: { sessionWork: { details: { [id]: enabled } } } });
             expect(row(), id).not.toEqual(before);
+            if (id === 'machine') expect(row()).toMatchObject({ machine: enabled ? 'Dev box' : null });
         }
     });
 
@@ -187,6 +194,7 @@ describe('Session settings session list density', () => {
     it('defaults to the narrow density option and updates only the canonical density setting', async () => {
         const mod = await import('../../../../app/(app)/settings/session');
         const SessionSettingsScreen = mod.default;
+        const { readSessionCollectionLines } = await import('@/components/ui/lists/collection/collectionDisplaySettings');
 
         const screen = await renderSettingsView(React.createElement(SessionSettingsScreen));
         const dropdowns = screen.findAllByType(DropdownMenu);
@@ -205,11 +213,11 @@ describe('Session settings session list density', () => {
 
         expect(densityTiles.props.options.map((option: any) => option.id)).toEqual(['detailed', 'cozy', 'narrow']);
 
-        await act(async () => {
-            densityTiles.props.onChange('cozy');
-        });
-
-        await expectPersistedSettings({ sessionListDensity: 'cozy' });
+        for (const [density, lines] of [['cozy', 2], ['detailed', 3], ['narrow', 1]] as const) {
+            await act(async () => { densityTiles.props.onChange(density); });
+            await expectPersistedSettings({ sessionListDensity: density });
+            expect(readSessionCollectionLines(storage.getState().settings.sessionListDensity)).toBe(lines);
+        }
 
         await act(async () => {
             headerIdentityDropdown!.props.onSelect('agentLogo');

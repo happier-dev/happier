@@ -21,6 +21,7 @@ import { useSessionListSurfaceDataActiveSignal } from './surface/sessionListSurf
 import {
     buildSessionListRowViewModel,
     readSessionListRowRefreshAtMs,
+    readSessionListScmFacts,
     type SessionReachableDisplay,
     type SessionListRowViewModel,
     type SessionListSelectedRowContextInput,
@@ -45,9 +46,12 @@ import type { SessionItemProps } from './SessionItem';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useEffectiveSessionAppearanceColor } from '@/hooks/session/useSessionAppearance';
 import { readSessionAppearanceWorkspaceKey } from '@/sync/domains/session/organization/appearanceWorkspaceKey';
+import { useSessionProjectScmSummarySelection } from '@/sync/store/scmHooks';
+import { readCollectionPluginDetails, type CollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 
 export type SessionListRowViewModelBoundaryProps = Readonly<{
     audience?: SessionAudiencePresentation | null;
+    pluginDetails?: CollectionListExtensions<string>['details'];
     /** This row's exact-Home list currentness, from the canonical per-Home observation owner. */
     homeObservation?: SessionListHomeObservation | null;
     activeColorMode?: 'activityAndAttention' | 'attentionOnly' | 'allActive' | null;
@@ -118,6 +122,19 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
     const appearanceColor = useEffectiveSessionAppearanceColor(props.item.serverId, props.item.sessionId,
         readSessionAppearanceWorkspaceKey(props.item), surfaceDataActive);
     const session = rowKey ? rowRenderableByKey.get(rowKey) ?? null : null;
+    const branch = session?.metadata?.branch;
+    const pluginContext = branch && props.pluginDetails
+        ? readCollectionPluginDetails(props.pluginDetails, undefined, branch, 'context', true) : null;
+    const pluginMark = branch && props.pluginDetails
+        ? readCollectionPluginDetails(props.pluginDetails, undefined, branch, 'mark', true) : null;
+    const showPullRequest = props.rowDetailPullRequest === true;
+    const showChanges = props.rowDetailChanges === true;
+    const scm = useSessionProjectScmSummarySelection(
+        props.item.serverId && (showPullRequest || showChanges) ? props.item.sessionId : null,
+        props.item.serverId,
+        snapshot => readSessionListScmFacts(snapshot, branch, showPullRequest, showChanges),
+        surfaceDataActive,
+    );
     const standing = props.item.serverId
         ? props.attentionStandingPolicy.overridesBySessionKey[sessionTagKey(props.item.serverId, props.item.sessionId)]
         : undefined;
@@ -173,6 +190,9 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         attentionStandingEnabled: props.attentionStandingEnabled,
         attentionStandingPolicy: props.attentionStandingPolicy,
         existingDraft: draft,
+        scm,
+        pluginContext,
+        pluginMark,
         rowContext: props.rowContextEnabled === undefined ? undefined : {
             rowContextEnabled: props.rowContextEnabled,
             rowContextIdentityDisplay: props.rowContextIdentityDisplay,
@@ -189,6 +209,9 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             rowDetailProgress: props.rowDetailProgress,
             rowDetailProject: props.rowDetailProject,
             rowDetailBranch: props.rowDetailBranch,
+            rowDetailMachine: props.rowDetailMachine,
+            rowDetailPullRequest: props.rowDetailPullRequest,
+            rowDetailChanges: props.rowDetailChanges,
         },
     }), [
         appearanceColor,
@@ -207,6 +230,9 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         props.rowDetailProgress,
         props.rowDetailProject,
         props.rowDetailBranch,
+        props.rowDetailMachine,
+        props.rowDetailPullRequest,
+        props.rowDetailChanges,
         props.audience,
         props.homeObservation,
         props.activeColorMode,
@@ -227,6 +253,9 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         rowKey,
         rowRenderableByKey,
         runtimeNowMs,
+        scm,
+        pluginContext,
+        pluginMark,
         props.unscopedSelectionIsUnique,
     ]);
 

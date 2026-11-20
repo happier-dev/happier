@@ -4,6 +4,7 @@ import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { CollectionRowOrder } from '@/components/ui/lists/collection/CollectionList';
+import { useCollectionListExtensions, type CollectionListExtensions } from '@/components/ui/lists/collection/useCollectionListExtensions';
 
 import { SessionListHeaderItem } from './sessionListHeaderItem';
 import type { SessionListProjectHeaderViewModelState } from './sessionListProjectHeaderViewModels';
@@ -45,14 +46,18 @@ export type SessionListRowSelection = Readonly<{
 }>;
 
 type SessionListRowSessionAddress = Readonly<{ sessionId: string; serverId?: string | null }>;
+const SESSION_EXTENSION_FACTS = new Map([['branch', (branch: string) => branch]]);
 
 function isSelectedSessionRow(selection: SessionListRowSelection, row: SessionListRowSessionAddress): boolean {
     return selection.sessionId !== null && selection.sessionId === row.sessionId
         && (selection.serverId === null || selection.serverId === (row.serverId ?? null));
 }
 
+type SessionListRowFactsWithExtensions = SessionListRowFacts & Readonly<{
+    pluginDetails: CollectionListExtensions<string>['details'] | undefined;
+}>;
 type SessionListRowFactsSource = Readonly<{
-    get: () => SessionListRowFacts;
+    get: () => SessionListRowFactsWithExtensions;
     subscribe: (listener: () => void) => () => void;
 }>;
 
@@ -63,20 +68,24 @@ const SessionListRowFactsContext = React.createContext<SessionListRowFactsSource
  * current facts, mounted rows hear about a change after commit and render only if their own entry moved.
  */
 export function SessionListRowFactsProvider(props: React.PropsWithChildren<Readonly<{ value: SessionListRowFacts }>>) {
+    const { details } = useCollectionListExtensions('sessionWork', SESSION_EXTENSION_FACTS);
+    const value = React.useMemo(() => ({
+        ...props.value, pluginDetails: details.length ? details : undefined,
+    }), [props.value, details]);
     const [owner] = React.useState(() => {
-        let current = props.value;
+        let current = value;
         const listeners = new Set<() => void>();
         return {
             source: {
                 get: () => current,
                 subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
             } satisfies SessionListRowFactsSource,
-            assign: (next: SessionListRowFacts) => { current = next; },
+            assign: (next: SessionListRowFactsWithExtensions) => { current = next; },
             notify: () => { for (const listener of [...listeners]) listener(); },
         };
     });
-    owner.assign(props.value);
-    React.useLayoutEffect(owner.notify, [owner, props.value]);
+    owner.assign(value);
+    React.useLayoutEffect(owner.notify, [owner, value]);
     return <SessionListRowFactsContext.Provider value={owner.source}>{props.children}</SessionListRowFactsContext.Provider>;
 }
 
@@ -87,7 +96,7 @@ function useSessionListRowFactsSource(): SessionListRowFactsSource {
 }
 
 /** One reader's selection of the facts; it renders only when `equal` says the selection changed. */
-function useSessionListRowFactsSelection<T>(select: (facts: SessionListRowFacts) => T, equal: (left: T, right: T) => boolean): T {
+function useSessionListRowFactsSelection<T>(select: (facts: SessionListRowFactsWithExtensions) => T, equal: (left: T, right: T) => boolean): T {
     const source = useSessionListRowFactsSource();
     const last = React.useRef<{ value: T } | null>(null);
     const getSnapshot = () => {
@@ -113,7 +122,7 @@ export type SessionListRowContextChoices = Omit<SessionListRowContextInput, 'pro
 
 /** A Session row that reads its own reachable display and Project context from the row facts. */
 export function SessionListSessionRowWithFacts(props: Readonly<
-    Omit<SessionListRowViewModelBoundaryProps, 'reachableSessionDisplay' | 'selectedSessionId' | 'selectedSessionServerId'
+    Omit<SessionListRowViewModelBoundaryProps, 'pluginDetails' | 'reachableSessionDisplay' | 'selectedSessionId' | 'selectedSessionServerId'
         | 'unscopedSelectionIsUnique' | keyof SessionListSelectedRowContextInput> & {
         item: SessionRowItem;
         rowContextChoices: SessionListRowContextChoices;
@@ -122,11 +131,12 @@ export function SessionListSessionRowWithFacts(props: Readonly<
     const { rowContextChoices, ...boundaryProps } = props;
     const { item } = props;
     // This row's own entries: a facts change for other rows (or an equal rebuild) does not render it.
-    const selected = useSessionListRowFactsSelection(React.useCallback((facts: SessionListRowFacts) => {
+    const selected = useSessionListRowFactsSelection(React.useCallback((facts: SessionListRowFactsWithExtensions) => {
         const { projectDisplayByKey, groupProjectByGroupKey } = facts.projectHeaderViewModelState;
         // Only the selected row sees the selection: the other rows' inputs stay equal when it moves.
         const own = facts.selection.sessionId === item.sessionId;
         return {
+            pluginDetails: facts.pluginDetails,
             selectedSessionId: own ? facts.selection.sessionId : null,
             selectedSessionServerId: own ? facts.selection.serverId : null,
             unscopedSelectionIsUnique: own && facts.selection.unscopedSelectionIsUnique,
