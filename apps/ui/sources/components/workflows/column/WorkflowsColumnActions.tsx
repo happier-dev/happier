@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -42,6 +43,9 @@ export const WorkflowsColumnActions = React.memo(function WorkflowsColumnActions
         if (!lifetime) return;
         setBuilder((current) => ({ lifetime, key: (current?.key ?? 0) + 1 }));
     };
+    useCurrentUiContextLocalCommands([{
+        key: 'new-automation', title: t('workflows.triggers.editor.title'), invoke: openTrigger,
+    }]);
     React.useEffect(() => {
         if (!addOpenerRef || !canCreate) return;
         addOpenerRef.current = () => setAddOpen(true);

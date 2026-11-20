@@ -50,6 +50,10 @@ vi.mock('@/components/ui/popover', async importOriginal =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal,
         { maxHeight: 600, maxWidth: 400, placement: 'bottom' }));
 
+vi.mock('@/components/ui/popover/Popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal,
+        { maxHeight: 600, maxWidth: 400, placement: 'bottom' }));
+
 // Radix owns browser focus/event listeners; the renderer has no DOM. Modal admission stays real.
 vi.mock('@/utils/web/radixCjs', async importOriginal => {
     const actual = await importOriginal<typeof import('@/utils/web/radixCjs')>();
@@ -184,6 +188,36 @@ describe('mounted current-context descendant commands', () => {
             expect(nativeChartCallbacks.length).toBeGreaterThanOrEqual(4 * 12);
         } finally { inspector.disconnect(); }
     });
+    it('continues the sentence builder in the full editor through its mounted Agent command', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://workflow-builder-command.test', accountId: 'account-a' }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        const authority = captureActiveServerAccountScopeLifetime();
+        if (!authority) throw new Error('Expected builder Account');
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        const { WorkflowSentenceBuilder } = await import('@/components/workflows/sentence/WorkflowSentenceBuilder');
+        let closed = false;
+        await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+                    <CurrentUiContextCommandsProvider authority={authority}>
+                        <Publication /><WorkflowSentenceBuilder accountLifetime={authority} anchorRef={{ current: null }}
+                            intent={{ name: 'Keep this sentence' }} onRequestClose={() => { closed = true; }} />
+                    </CurrentUiContextCommandsProvider>
+                </PluginSurfaceFocusEligibilityProvider>
+            </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        const command = reader!.readCurrentUiContext()!.commands.find(candidate => candidate.title === t('workflows.sentence.builder.openInEditor'));
+        expect(command).toBeDefined();
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        await act(async () => { expect(await executor.execute('ui.current_context.command.invoke',
+            { commandId: command!.id }, { surface: 'agent' })).toMatchObject({ ok: true }); });
+        expect(closed).toBe(true);
+        expect(router.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ definitionDraftSeedId: expect.any(String) }) }));
+    });
+
     it('keeps the presented page mount address after Apply closes over its phone details pane', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://page-dialog-binding.test', accountId: 'account-a' }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });

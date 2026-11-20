@@ -175,6 +175,43 @@ describe('WorkflowsColumn', () => {
         await pressView(screen, 'runs');
         expect(order()[0]).toBe('workflows-column:header');
     });
+    it('opens a new sentence builder through the mounted New automation command', async () => {
+        const { WorkflowsColumnActions } = await import('./WorkflowsColumnActions');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        let commands: ReturnType<typeof useCurrentUiContextComposedCommands> = [];
+        function Commands() { commands = useCurrentUiContextComposedCommands(); return null; }
+        const authority = captureActiveServerAccountScopeLifetime();
+        const screen = await renderScreen(<CurrentUiContextCommandsProvider authority={authority}>
+            <Commands /><WorkflowsColumnActions canCreate />
+        </CurrentUiContextCommandsProvider>, { wrapper: TestAuth });
+        const create = commands.find(row => row.title === 'workflows.triggers.editor.title');
+        expect(create?.command.kind).toBe('hostLocal');
+        if (create?.command.kind !== 'hostLocal') throw new Error('New automation command unavailable');
+        await act(async () => { expect(await create.command.invoke({ signal: new AbortController().signal,
+            context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
+        expect(screen.findHostByTestId('workflow-builder')).not.toBeNull();
+    });
+    it('opens New automation from the sidebar menus when the current context cannot resolve their command', async () => {
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { WorkflowsColumnActions } = await import('./WorkflowsColumnActions');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { CurrentUiContextCommandsProvider } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        const authority = captureActiveServerAccountScopeLifetime();
+        const tree = (canCreate: boolean) => <CurrentUiContextCommandsProvider authority={authority}>
+            <WorkflowsColumnActions canCreate={canCreate} />
+        </CurrentUiContextCommandsProvider>;
+        const screen = await renderScreen(tree(true), { wrapper: TestAuth });
+        const select = async (menuId: string) => {
+            const menu = screen.findAllByType(DropdownMenu).find(node => node.props.testID === menuId)!;
+            await act(async () => { menu.props.onSelect('trigger'); });
+            expect(screen.findHostByTestId('workflow-builder')).not.toBeNull();
+        };
+        await select('workflows-column:add:menu');
+        await screen.pressByTestIdAsync('workflow-builder-cancel');
+        await screen.update(tree(false));
+        await select('workflows-column:more:menu');
+    });
     it('heads the phone page with the space as its title, search behind the magnifier and the bar "+" (owner 11-11)', async () => {
         // A phone-sized window: the window-size adapters are the boundary; the column decides from them.
         phoneWindow.on = true;

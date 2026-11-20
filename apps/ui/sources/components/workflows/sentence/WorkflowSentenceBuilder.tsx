@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useActionFieldOptionsForMachine } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import {
   RoundButton,
@@ -191,10 +192,16 @@ function WorkflowSentenceBuilderBody(
   };
   const openEditor = () => {
     const route = sentence.openInEditor();
-    if (route === null) return;
+    if (route === null) return false;
     close();
     router.push(route);
+    return true;
   };
+  useCurrentUiContextLocalCommands([{
+    key: 'open-in-editor',
+    title: t('workflows.sentence.builder.openInEditor'),
+    invoke: openEditor,
+  }], { foregroundOverlay: true, contextKey: draftStore.get().draftId });
   const canSave = step !== null && validation.valid && !sentence.saving;
   const nameField = (
     <FieldTextInput
