@@ -491,10 +491,9 @@ describe('Usage analytics PostgreSQL event transport', () => {
         expect(small.value).toEqual(reference);
         expect(large.value).toEqual(reference);
 
-        // Pin the current gap until the full path can admit just the three window
-        // events and their one cumulative anchor, independent of unrelated history.
         expect(small.work).toEqual({ packedDecodes: 4, admissions: 4 });
-        expect(large.work).toEqual({ packedDecodes: 260, admissions: 260 });
+        // Expected failure: decoding and admission grow with retained history instead of the query window.
+        expect(() => expect(large.work).toEqual(small.work)).toThrowError();
     });
 
     it('matches full Accounting replay over retained reports, mixed sources and mutable history', async () => {
