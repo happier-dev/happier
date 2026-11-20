@@ -3,7 +3,7 @@ import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessi
 import { ActionApprovalRequestCreatedResultSchema, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionSessionFanoutResultV1Schema } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
-import { filterExistingSessionStageTargets, type ExistingSessionChangePlan, type ExistingSessionStageTargetResult } from '@happier-dev/protocol/sessions/authoring/existingSessionPlanner';
+import type { ExistingSessionChangePlan } from '@happier-dev/protocol/sessions/authoring/existingSessionPlanner';
 import type { createDefaultActionExecutor, UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 
@@ -74,9 +74,7 @@ export async function executeBulkSessionChanges(input: Readonly<{
     context?: UiActionExecutorContext;
     onResult?: (row: BulkSessionChangeRow) => void;
 }>): Promise<readonly BulkSessionChangeRow[]> {
-    const previous: ExistingSessionStageTargetResult[] = [];
     const rows = new Map<string, BulkSessionChangeRow>();
-    const switches = new Map<string, Readonly<{ switchedFrom?: string; switchedTo?: string }>>();
     for (const skipped of input.plan.skippedTargets) {
         const row: BulkSessionChangeRow = {
             target: skipped.address, actionId: 'session.message.send', state: 'skipped', code: skipped.reason, reason: skipped.reason,
@@ -84,34 +82,34 @@ export async function executeBulkSessionChanges(input: Readonly<{
         rows.set(bulkChangeTargetKey(skipped.address), row);
         input.onResult?.(row);
     }
-    for (const planned of input.plan.stages) {
-        const stage = filterExistingSessionStageTargets(planned, previous);
-        if (!stage.targets.length) continue;
+    for (const stage of input.plan.stages) {
+        const targets = stage.targets.filter(target => {
+            const state = rows.get(bulkChangeTargetKey(target))?.state;
+            return state !== 'failed' && state !== 'waking' && state !== 'approval_pending';
+        });
+        if (!targets.length) continue;
         const completed = new Set<string>();
         const accept = (target: ActionSessionAddressV1, result: ActionExecuteResult) => {
             const key = bulkChangeTargetKey(target);
             if (completed.has(key)) return;
             completed.add(key);
             const projected = projectRow(target, stage.actionId, result);
-            if (projected.state === 'switched') {
-                const selection = readRecord(stage.input.selection);
-                switches.set(key, {
-                    ...(typeof stage.input.expectedCurrentAgentId === 'string' ? { switchedFrom: stage.input.expectedCurrentAgentId } : {}),
-                    ...(typeof selection.agentId === 'string' ? { switchedTo: selection.agentId } : {}),
-                });
-            }
-            const row: BulkSessionChangeRow = { ...projected, ...switches.get(key) };
+            const prior = rows.get(key);
+            if (projected.state === 'skipped' && projected.code === 'no_change' && prior) return;
+            const selection = projected.state === 'switched' ? readRecord(stage.input.selection) : undefined;
+            const switchedFrom = selection ? stage.input.expectedCurrentAgentId : prior?.switchedFrom;
+            const switchedTo = selection ? selection.agentId : prior?.switchedTo;
+            const row: BulkSessionChangeRow = { ...projected,
+                ...(typeof switchedFrom === 'string' ? { switchedFrom } : {}),
+                ...(typeof switchedTo === 'string' ? { switchedTo } : {}),
+            };
             rows.set(key, row);
-            previous.push({ ...target, actionId: stage.actionId,
-                ok: row.state === 'sent' || row.state === 'applied' || row.state === 'switched'
-                    || (row.state === 'skipped' && row.code === 'no_change'),
-                ...(result.ok ? { result: result.result } : {}) });
             input.onResult?.(row);
         };
         let result: ActionExecuteResult;
         try {
             result = await input.executeConfirmed(stage.actionId, { ...stage.input,
-                sessionId: { selector: 'sessions', addresses: stage.targets } }, { ...input.context,
+                sessionId: { selector: 'sessions', addresses: targets } }, { ...input.context,
                 onSessionTargetResult: event => {
                     input.context?.onSessionTargetResult?.(event);
                     accept(event.target, event.result);
@@ -122,7 +120,7 @@ export async function executeBulkSessionChanges(input: Readonly<{
         }
         const fanout = result.ok ? ActionSessionFanoutResultV1Schema.safeParse(result.result) : null;
         if (fanout?.success) for (const leaf of fanout.data.results) accept(leaf.target, leaf.result);
-        else for (const target of stage.targets) accept(target, result);
+        else for (const target of targets) accept(target, result);
     }
     return orderBulkSessionChangeRows([...rows.values()]);
 }

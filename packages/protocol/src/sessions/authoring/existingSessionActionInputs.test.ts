@@ -3,9 +3,20 @@ import { describe, expect, it } from 'vitest';
 import { SessionModeSetInputSchema } from '../../actions/specs/session/interaction.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { SessionAgentTransitionRequestV1Schema } from '../agentTransition.js';
-import { buildExistingSessionAgentTransitionActionInput, buildExistingSessionModeActionInput } from './existingSessionActionInputs.js';
+import { buildExistingSessionAgentTransitionActionInput, buildExistingSessionMessageActionInput, buildExistingSessionModeActionInput } from './existingSessionActionInputs.js';
 
 describe('existing Session Action inputs', () => {
+    it('carries the permission from message metadata through the same Action operand as a staged override', () => {
+        const message = { sessionId: 'session', message: 'Continue' };
+        const { messageMeta, ...single } = buildExistingSessionMessageActionInput({
+            ...message, messageMeta: { permissionMode: 'read-only', displayText: 'Review' },
+        });
+        expect(single).toEqual(buildExistingSessionMessageActionInput({ ...message, permissionModeOverride: 'read-only' }));
+        expect(messageMeta).toEqual({ permissionMode: 'read-only', displayText: 'Review' });
+        expect(buildExistingSessionMessageActionInput({ ...message, messageMeta, permissionModeOverride: 'default' }))
+            .toMatchObject({ permissionModeOverride: 'default' });
+    });
+
     it('clears a synthetic default while preserving advertised modes', () => {
         const build = (modeId: string, availableModeIds: readonly string[]) => SessionModeSetInputSchema.parse(
             buildExistingSessionModeActionInput({ sessionId: 'session', modeId, availableModeIds }),

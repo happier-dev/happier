@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { buildConfiguredAcpAgentSelectionV1 } from '../../agents/executionTargetV1.js';
-import { planExistingSessionChanges, filterExistingSessionStageTargets } from './existingSessionPlanner.js';
+import { formatLegacyConfiguredAcpAgentId } from '../../backends/targets/compat/customAcp.js';
+import {
+  buildExistingSessionAgentTransitionActionInput, buildExistingSessionCapabilitiesActionInput,
+  buildExistingSessionConfigOptionActionInput, buildExistingSessionConnectedServicesAuthActionInput,
+  buildExistingSessionMessageActionInput, buildExistingSessionModeActionInput,
+  buildExistingSessionModelActionInput, buildExistingSessionPermissionModeActionInput,
+} from './existingSessionActionInputs.js';
+import { planExistingSessionChanges } from './existingSessionPlanner.js';
 
 const targets = [
   { address: { serverId: 'home-a', sessionId: 's1' }, agentId: 'happier.agent.claude/claude', machineId: 'm1' },
@@ -9,6 +16,35 @@ const targets = [
 ];
 
 describe('existing Session change planner', () => {
+  it('adds only the target selector to the same operands as single-Session authoring', () => {
+    const current = { ...targets[0]!, availableModeIds: ['code'],
+      sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1, overrides: { effort: { value: 'high', updatedAt: 1 } } } };
+    const { sessionId, serverId } = current.address;
+    const bindings = { v: 2 as const, bindingsByServiceId: {} };
+    const skill = { kind: 'skill', id: 'review', state: 'off' } as const;
+    const mcp = { kind: 'mcp', id: 'checks', state: 'on' } as const;
+    const plan = planExistingSessionChanges({ acpSessionModeId: 'default', sessionConfigOptionOverrides: null,
+      connectedServices: bindings, capabilityDeltas: [skill, mcp], permissionMode: 'read-only',
+      modelSelection: null }, [current], 'hello', 'original-input');
+    expect(plan.stages.map(stage => ({ ...stage.input, sessionId }))).toEqual([
+      buildExistingSessionModeActionInput({ sessionId, modeId: 'default', availableModeIds: ['code'] }),
+      buildExistingSessionConfigOptionActionInput({ sessionId, configId: 'effort', valueId: null }),
+      buildExistingSessionConnectedServicesAuthActionInput({ sessionId, serverId, machineId: current.machineId, agentId: current.agentId, bindings }),
+      buildExistingSessionCapabilitiesActionInput({ sessionId, ...skill }),
+      buildExistingSessionCapabilitiesActionInput({ sessionId, ...mcp }),
+      buildExistingSessionPermissionModeActionInput({ sessionId, permissionMode: 'read-only' }),
+      buildExistingSessionModelActionInput({ sessionId, modelId: 'default', providerConnectionId: null }),
+      buildExistingSessionMessageActionInput({ sessionId, message: 'hello', localId: 'original-input', permissionModeOverride: 'read-only',
+        modelOverride: null, providerConnectionId: null }),
+    ]);
+    const engine = buildConfiguredAcpAgentSelectionV1('review-bot');
+    const switchPlan = planExistingSessionChanges({ agentTarget: engine.agentTarget }, [current]);
+    expect(switchPlan.stages.map(stage => ({ ...stage.input, sessionId }))).toEqual([
+      buildExistingSessionAgentTransitionActionInput({ sessionId, expectedCurrentAgentId: current.agentId,
+        selection: { v: 1, agentId: formatLegacyConfiguredAcpAgentId('review-bot') } }),
+    ]);
+  });
+
   it('sends without transitioning the current configured engine and addresses other engines by definition', () => {
     const selected = buildConfiguredAcpAgentSelectionV1('review-bot');
     const other = buildConfiguredAcpAgentSelectionV1('build-bot');
@@ -73,27 +109,8 @@ describe('existing Session change planner', () => {
     expect(planExistingSessionChanges({}, targets).stages).toEqual([]);
   });
 
-  it('excludes failures from later stages using the full Session address', () => {
-    const stage = planExistingSessionChanges({}, targets, 'hello').stages[0];
-    const next = filterExistingSessionStageTargets(stage, [{ ...targets[0].address, actionId: 'session.message.send', ok: false }, { ...targets[2].address, actionId: 'session.message.send', ok: true }]);
-    expect(next.targets).toEqual([targets[1].address, targets[2].address]);
-    expect(stage.targets).toHaveLength(3);
-  });
-
-  it('drops domain-rejected and partially-applied transitions even when Action transport succeeded', () => {
-    const stage = planExistingSessionChanges({}, targets, 'hello').stages[0];
-    expect(filterExistingSessionStageTargets(stage, [
-      { ...targets[0].address, actionId: 'session.agent.transition', ok: true, result: { type: 'rejected', code: 'target_unavailable', sourceEffect: 'none' } },
-      { ...targets[1].address, actionId: 'session.agent.transition', ok: true, result: { type: 'partially_applied', localId: 'transition', applied: 'source_stopped', code: 'context_unavailable' } },
-      { ...targets[2].address, actionId: 'session.agent.transition', ok: true, result: { type: 'accepted', localId: 'transition' } },
-    ]).targets).toEqual([targets[2].address]);
-  });
-
   it('enables a Skill and disables an MCP server on both targets without writing their other overrides', () => {
-    const selected = [
-      { ...targets[0], capabilitySelection: { skills: { v: 1 as const, forceIncludeSkillIds: ['other-skill'], forceExcludeSkillIds: ['review'], excludeNativeSkillNames: [] } } },
-      { ...targets[1], capabilitySelection: { mcp: { v: 1 as const, managedServersEnabled: true, forceIncludeServerIds: ['linear', 'other-server'], forceExcludeServerIds: [] } } },
-    ];
+    const selected = targets.slice(0, 2);
     const plan = planExistingSessionChanges({ capabilityDeltas: [
       { kind: 'skill', id: 'review', state: 'on' },
       { kind: 'mcp_server', id: 'linear', state: 'off' },

@@ -56,7 +56,6 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
     const planningTarget: ExistingSessionPlanningTarget | null = reason === null && agentId && snapshot?.agentTarget && machineId ? {
         address, agentId, agentTarget: snapshot.agentTarget, machineId,
         ...(modeControl ? { availableModeIds: modeControl.options.map(mode => mode.id) } : {}),
-        ...(snapshot?.capabilitySelection ? { capabilitySelection: snapshot.capabilitySelection } : {}),
         ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
     } : null;
     // Hydration publishes changes to these facts. Keep runtime catalog observations
@@ -74,7 +73,6 @@ export function projectBulkSessionAuthoringFact(address: ActionSessionAddressV1,
         modelId: snapshot?.modelId ?? null,
         permissionMode: snapshot?.permissionMode ?? null,
         connectedServices: snapshot?.connectedServices ?? null,
-        capabilitySelection: snapshot?.capabilitySelection ?? null,
         sessionConfigOptionOverrides,
         values,
         planningTarget,

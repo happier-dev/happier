@@ -1,20 +1,18 @@
 import type { ActionId } from '../../actions/actionIds.js';
 import { SESSION_AGENT_TRANSITION_ACTION_ID_V1 } from '../../actions/sessionAgentTransitionActionIdsV1.js';
 import type { ActionSessionAddressV1 } from '../../actions/sessionAddressV1.js';
-import { readRecord } from '../../inputs/inputRecords.js';
 import type { WorkflowSessionAuthoringSelectionFieldId } from '../../workflows/workflowV1.js';
 import type { AcpConfigOptionOverridesV1 } from '../metadata/metadataOverridesV1.js';
 import { projectSessionModelRefToExecutionModelSelection } from '../../providers/selection/v2.js';
 import { buildQualifiedPluginContributionKey } from '../../plugins/contributionKey.js';
 import type { AgentExecutionTargetV1 } from '../../agents/executionTargetV1.js';
 import type { SessionAgentTransitionSelectionV1 } from '../agentTransition.js';
-import type { SessionCapabilitySelectionV1 } from '../../reach/sessionCapabilitySelectionV1.js';
 import { buildExistingSessionTransitionAgentId, EXISTING_SESSION_FIELD_APPLICATIONS, resolveExistingSessionAgentTargetApplication, type ExistingSessionChangeSet } from './existingSessionFieldApplication.js';
 import {
   buildExistingSessionModeActionInput, buildExistingSessionConfigOptionActionInput,
   buildExistingSessionPermissionModeActionInput, buildExistingSessionModelActionInput,
   buildExistingSessionConnectedServicesAuthActionInput, buildExistingSessionCapabilitiesActionInput,
-  buildExistingSessionAgentTransitionActionInput,
+  buildExistingSessionAgentTransitionActionInput, buildExistingSessionMessageActionInput,
 } from './existingSessionActionInputs.js';
 
 export type ExistingSessionPlanningTarget = Readonly<{
@@ -25,7 +23,6 @@ export type ExistingSessionPlanningTarget = Readonly<{
   agentTarget?: AgentExecutionTargetV1;
   machineId: string;
   availableModeIds?: readonly string[];
-  capabilitySelection?: SessionCapabilitySelectionV1;
   sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
 }>;
 export type ExistingSessionChangeStage = Readonly<{
@@ -40,28 +37,12 @@ export type ExistingSessionChangePlan = Readonly<{
   skippedTargets: readonly Readonly<{ address: ActionSessionAddressV1; reason: string }>[];
 }>;
 
-export type ExistingSessionStageTargetResult = Readonly<ActionSessionAddressV1 & {
-  actionId: ActionId;
-  ok: boolean;
-  result?: unknown;
-}>;
-
-/** Only accepted transitions advance; equal ids on different Homes stay distinct. */
-export function filterExistingSessionStageTargets(
-  stage: ExistingSessionChangeStage,
-  previousResults: readonly ExistingSessionStageTargetResult[],
-): ExistingSessionChangeStage {
-  const failed = new Set(previousResults.filter(result => !result.ok
-    || (result.actionId === SESSION_AGENT_TRANSITION_ACTION_ID_V1 && readRecord(result.result).type !== 'accepted'))
-    .map(result => JSON.stringify([result.serverId, result.sessionId])));
-  return { ...stage, targets: stage.targets.filter(target => !failed.has(JSON.stringify([target.serverId, target.sessionId]))) };
-}
-
 /** Pure pending-change projection. Action admission and effects remain at the executor. */
 export function planExistingSessionChanges(
   selection: ExistingSessionChangeSet,
   targets: readonly ExistingSessionPlanningTarget[],
   message?: string,
+  messageLocalId?: string,
 ): ExistingSessionChangePlan {
   const unsupportedFields: { field: WorkflowSessionAuthoringSelectionFieldId; reason: string }[] = [];
   for (const field of Object.keys(EXISTING_SESSION_FIELD_APPLICATIONS) as WorkflowSessionAuthoringSelectionFieldId[]) {
@@ -131,10 +112,11 @@ export function planExistingSessionChanges(
       sessionId, modelId: flatModel.modelId, providerConnectionId: flatModel.providerConnectionId,
     }), target.address);
     if (hasMessage) {
-      add(5, 'session.message.send', { message,
+      add(5, 'session.message.send', buildExistingSessionMessageActionInput({ sessionId, message,
+        ...(messageLocalId === undefined ? {} : { localId: messageLocalId }),
         ...(selection.permissionMode === undefined ? {} : { permissionModeOverride: selection.permissionMode ?? 'default' }),
         ...(flatModel ? { modelOverride: selection.modelSelection === null ? null : flatModel.modelId, providerConnectionId: flatModel.providerConnectionId } : {}),
-      }, target.address);
+      }), target.address);
     }
   }
   return { stages: [...phases.entries()].sort(([a], [b]) => a - b).flatMap(([, groups]) => [...groups.values()]), unsupportedFields, skippedTargets: [] };

@@ -4,14 +4,15 @@ import { planExistingSessionChanges, type ExistingSessionChangePlan, type Existi
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { UiActionExecutorContext } from '@/sync/ops/actions/defaultActionExecutor';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { randomUUID } from '@/platform/randomUUID';
 import { useComposerTextSelector, useComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 import { bulkChangeTargetKey, executeBulkSessionChanges, isBulkSessionRetryable, orderBulkSessionChangeRows, projectBulkSessionInitialRows, summarizeBulkSessionChanges, type BulkSessionChangeRow } from './executeBulkSessionChanges';
 
 type Submission = Readonly<{ selection: ExistingSessionChangeSet; text: string; targets: readonly ExistingSessionPlanningTarget[];
-    skippedTargets: ExistingSessionChangePlan['skippedTargets'] }>;
+    skippedTargets: ExistingSessionChangePlan['skippedTargets']; messageLocalId?: string }>;
 
 function planSubmission(snapshot: Submission): ExistingSessionChangePlan {
-    const planned = planExistingSessionChanges(snapshot.selection, snapshot.targets, snapshot.text);
+    const planned = planExistingSessionChanges(snapshot.selection, snapshot.targets, snapshot.text, snapshot.messageLocalId);
     return { ...planned, skippedTargets: [...snapshot.skippedTargets, ...planned.skippedTargets] };
 }
 const hasMessageText = (text: string) => text.length > 0;
@@ -47,11 +48,9 @@ export function useBulkSessionComposer(input: Readonly<{
     // Consequences depend on empty/nonempty text. The exact text is read only by Send.
     const consequencePlan = useMemo(getPlan, [getPlan, hasMessage]);
     const consequences = useMemo(() => summarizeBulkSessionChanges(consequencePlan), [consequencePlan]);
-    const run = useCallback(async (snapshot: Submission) => {
-        if (running.current) return;
+    const run = useCallback(async (snapshot: Submission, planned: ExistingSessionChangePlan) => {
         running.current = true;
         setSubmitting(true);
-        const planned = planSubmission(snapshot);
         const initialRows = projectBulkSessionInitialRows(planned, snapshot.targets.map(target => target.address));
         const keys = new Set(initialRows.map(row => bulkChangeTargetKey(row.target)));
         setRows(previous => orderBulkSessionChangeRows([
@@ -69,15 +68,19 @@ export function useBulkSessionComposer(input: Readonly<{
         }
     }, [input.executeConfirmed, input.context, frontDoor]);
     const send = useCallback(() => {
-        const plan = getPlan();
-        if (running.current || plan.unsupportedFields.length || !plan.stages.length) return Promise.resolve();
-        const snapshot = { selection, text: textStore.getPrompt(), targets: input.targets, skippedTargets: input.skippedTargets ?? [] };
+        if (running.current) return Promise.resolve();
+        const text = textStore.getPrompt();
+        const snapshot: Submission = { selection, text, targets: input.targets, skippedTargets: input.skippedTargets ?? [],
+            // The Home deduplicates local IDs within each Session, including after an ambiguous send.
+            ...(hasMessageText(text) ? { messageLocalId: randomUUID() } : {}) };
+        const plan = planSubmission(snapshot);
+        if (plan.unsupportedFields.length || !plan.stages.length) return Promise.resolve();
         submitted.current = snapshot;
-        return run(snapshot);
-    }, [run, selection, textStore, input.targets, input.skippedTargets, getPlan]);
+        return run(snapshot, plan);
+    }, [run, selection, textStore, input.targets, input.skippedTargets]);
     const retryFailed = useCallback((onlyTarget?: BulkSessionChangeRow['target']) => {
         const snapshot = submitted.current;
-        if (!snapshot) return Promise.resolve();
+        if (!snapshot || running.current) return Promise.resolve();
         const failed = new Set(rows.filter(row => isBulkSessionRetryable(row)
             && (!onlyTarget || bulkChangeTargetKey(row.target) === bulkChangeTargetKey(onlyTarget))).map(row => bulkChangeTargetKey(row.target)));
         const submittedKeys = new Set(snapshot.targets.map(target => bulkChangeTargetKey(target.address)));
@@ -85,7 +88,9 @@ export function useBulkSessionComposer(input: Readonly<{
         // A successful engine switch must not be requested again with its old expected Agent.
         const targets = input.targets.filter(target => submittedKeys.has(bulkChangeTargetKey(target.address))
             && failed.has(bulkChangeTargetKey(target.address)));
-        return targets.length ? run({ ...snapshot, targets }) : Promise.resolve();
+        if (!targets.length) return Promise.resolve();
+        const retry = { ...snapshot, targets };
+        return run(retry, planSubmission(retry));
     }, [rows, run, input.targets]);
     return { textStore, setText: textStore.setPrompt, selection, setSelection, setCapabilityItem, rows, submitting, getPlan, consequences, agentSwitchingEnabled,
         canSend: !submitting && consequencePlan.stages.length > 0 && consequencePlan.unsupportedFields.length === 0,

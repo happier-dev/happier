@@ -99,6 +99,40 @@ describe('bulk Send', () => {
             switchedFrom: 'agent', switchedTo: 'happier.agent.claude/claude' })]);
     });
 
+    it('keeps an accepted engine switch when the later account route is unchanged', async () => {
+        const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
+        const plan = planExistingSessionChanges({ agentTarget, connectedServices: null }, [targets[0]!]);
+        const updates: unknown[] = [];
+        const results = await executeBulkSessionChanges({ plan, onResult: row => updates.push(row), executeConfirmed: async id => ({
+            ok: true, result: id === 'session.agent.transition' ? { type: 'accepted' }
+                : { ok: true, action: 'unchanged', normalizedBindings: { v: 2, bindingsByServiceId: {} } },
+        }) });
+        const switched = expect.objectContaining({ target: a, actionId: 'session.agent.transition', state: 'switched',
+            switchedTo: 'happier.agent.claude/claude' });
+        expect(results).toEqual([switched]);
+        expect(updates).toEqual([switched]);
+    });
+
+    it('stops rejected and partial transitions without stopping the same Session ID on another Home', async () => {
+        const otherHome = { serverId: 'other-home', sessionId: a.sessionId };
+        const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'acme.agent', localId: 'agent' } };
+        const plan = planExistingSessionChanges({ agentTarget }, [...targets, { ...targets[0]!, address: otherHome }], 'hello');
+        const results = await executeBulkSessionChanges({ plan, executeConfirmed: async (id, input) => {
+            if (id === 'session.agent.transition') return { ok: true, result: { kind: 'fanout', results: [
+                { target: a, result: { ok: true, result: { type: 'rejected', code: 'target_unavailable' } } },
+                { target: b, result: { ok: true, result: { type: 'partially_applied', code: 'context_unavailable' } } },
+                { target: otherHome, result: { ok: true, result: { type: 'accepted' } } },
+            ] } };
+            expect(input).toMatchObject({ sessionId: { selector: 'sessions', addresses: [otherHome] } });
+            return { ok: true, result: { status: 'accepted', localId: 'sent-a' } };
+        } });
+        expect(results).toMatchObject([
+            { target: a, state: 'failed', code: 'target_unavailable' },
+            { target: b, state: 'failed', code: 'context_unavailable' },
+            { target: otherHome, state: 'sent', switchedTo: 'acme.agent/agent' },
+        ]);
+    });
+
     it('summarizes settings-only work from planner stages, counting distinct addresses', () => {
         const plan = planExistingSessionChanges({ connectedServices: null, permissionMode: 'yolo' }, targets);
         expect(summarizeBulkSessionChanges(plan)).toMatchObject({ restarts: 2, engineSwitches: 0, messages: 0, skipped: 0 });

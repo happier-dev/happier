@@ -29,9 +29,7 @@ it('keeps the host quiet while nonempty message text changes and sends the lates
 
 it('sends the latest per-item intent and leaves other overrides outside the Action payload', async () => {
     const address = { serverId: 'home', sessionId: 'active' };
-    const targets = [{ address, agentId: 'agent', machineId: 'machine', capabilitySelection: {
-        skills: { v: 1 as const, forceIncludeSkillIds: ['existing'], forceExcludeSkillIds: [], excludeNativeSkillNames: [] },
-    } }];
+    const targets = [{ address, agentId: 'agent', machineId: 'machine' }];
     const payloads: unknown[] = [];
     const hook = await renderHook(() => useBulkSessionComposer({ targets, executeConfirmed: async (id, input) => {
         payloads.push({ id, input });
@@ -99,7 +97,7 @@ it('settles the unchanged peer while an empty-draft Agent switch is still runnin
     expect(hook.getCurrent().rows.map(row => row.state)).toEqual(['switched', 'skipped']);
 });
 
-it('keeps changes pending until Send and retries failures using the captured message and selection', async () => {
+it('retries an ambiguous message on the failed address with its original input identity and selection', async () => {
     const a = { serverId: 'home', sessionId: 'a' };
     const b = { serverId: 'home', sessionId: 'b' };
     const targets = [a, b].map(address => ({ address, agentId: 'agent', machineId: 'machine' }));
@@ -110,17 +108,20 @@ it('keeps changes pending until Send and retries failures using the captured mes
             if (actionId === 'session.permission_mode.set') return { ok: true, result: {} };
             return { ok: true, result: { kind: 'fanout', results: calls.length === 2 ? [
                 { target: a, result: { ok: true, result: { status: 'accepted', localId: 'a-input' } } },
-                { target: b, result: { ok: false, errorCode: 'target_unavailable', error: 'offline' } },
+                { target: b, result: { ok: false, errorCode: 'send_outcome_unknown', error: 'response lost' } },
             ] : [{ target: b, result: { ok: true, result: { status: 'accepted', localId: 'b-input' } } }] } };
         } }));
     await act(async () => hook.getCurrent().setSelection({ permissionMode: 'yolo' }));
     expect(calls).toEqual([]);
     await act(async () => { await hook.getCurrent().send(); });
+    const admitted = calls[1] as { input: { localId?: string } };
+    expect(admitted.input.localId).toEqual(expect.any(String));
     await act(async () => { hook.getCurrent().setText('edited'); hook.getCurrent().setSelection({ permissionMode: 'read-only' }); });
     await act(async () => { await hook.getCurrent().retryFailed(); });
     expect(calls.slice(2)).toEqual([
         { actionId: 'session.permission_mode.set', input: { permissionMode: 'yolo', sessionId: { selector: 'sessions', addresses: [b] } } },
-        { actionId: 'session.message.send', input: { message: 'original', permissionModeOverride: 'yolo', sessionId: { selector: 'sessions', addresses: [b] } } },
+        { actionId: 'session.message.send', input: { message: 'original', permissionModeOverride: 'yolo',
+            localId: admitted.input.localId, sessionId: { selector: 'sessions', addresses: [b] } } },
     ]);
     expect(hook.getCurrent().rows.map(row => row.state)).toEqual(['sent', 'sent']);
 });

@@ -2,6 +2,7 @@ import { createFrontDoorActionExecute, requireActionSuccess } from './frontDoorR
 import { completeActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildExistingSessionMessageActionInput } from '@happier-dev/protocol/sessions/authoring/existingSessionActionInputs';
 import { readSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import { buildOutgoingUserTextRecord } from '@/sync/domains/messages/outgoingUserMessage';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
@@ -67,17 +68,16 @@ export async function submitUiSessionMessage(port: SessionSubmitPort, options: S
                 ...(options.hostAdmissionOrigin ? { hostAdmissionOrigin: options.hostAdmissionOrigin } : {}) });
             const selection = readSessionMessageModelSelectionV1(record.meta);
             if (selection.status === 'invalid') throw new HappyError('Invalid model selection', false, { code: 'invalid_parameters' });
-            return {
+            return buildExistingSessionMessageActionInput({
                 sessionId: options.sessionId, message: options.text,
                 ...(options.metaOverrides?.happierStructuredInputV1 !== undefined ? { structuredInput: options.metaOverrides.happierStructuredInputV1 } : {}),
                 messageMeta: record.meta,
-                ...(record.meta?.permissionMode ? { permissionModeOverride: record.meta.permissionMode } : {}),
                 ...(selection.status === 'valid' ? { modelSelection: selection.selection }
                     : typeof record.meta?.model === 'string' || record.meta?.model === null ? { modelOverride: record.meta.model } : {}),
                 ...(options.localId ? { localId: options.localId } : {}),
                 ...(options.recipient ? { recipient: options.recipient } : {}),
                 ...(options.requestedAction ? { requestedAction: options.requestedAction } : {}),
-            };
+            });
         },
         sessionSendMessage: async (args, delivery) => {
             const { permissionModeOverride, context } = args;
