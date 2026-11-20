@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { PixelRatio } from 'react-native';
 import { Canvas, Picture, type SkPicture } from '@shopify/react-native-skia';
-import { useSharedValue } from 'react-native-reanimated';
+import { makeMutable, type SharedValue } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 import { createGlyphFrameSampler } from '@happier-dev/brand/glyph-scene';
 
@@ -30,7 +30,8 @@ export const GlyphSurface = React.memo(function GlyphSurface({
     const painterRef = React.useRef<Painter | null>(null);
     const [prepared, setPrepared] = React.useState(false);
     const [lowPower, setLowPower] = React.useState<boolean | null>(null);
-    const picture = useSharedValue<SkPicture | null>(null);
+    const [picture, setPicture] = React.useState<SharedValue<SkPicture> | null>(null);
+    const pictureRef = React.useRef<SharedValue<SkPicture> | null>(null);
     const previousPicture = React.useRef<SkPicture | null>(null);
     const sample = React.useMemo(createGlyphFrameSampler, []);
     const onReadyRef = React.useRef(onReady);
@@ -46,6 +47,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
     React.useEffect(() => {
         let disposed = false;
         setPrepared(false);
+        setPicture(null);
         paintedStatus.current = null;
         const grid = { cell: [Math.round(cellW * dpr), Math.round(cellH * dpr)] as const, cols: 0, rows: 0, origin: [0, 0] as const };
         void import('./glyphPainter.native').then(backend => backend.createNativeGlyphPainter(grid, dpr)).then((painter) => {
@@ -58,13 +60,13 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         });
         return () => {
             disposed = true;
-            picture.value = null;
+            pictureRef.current = null;
             previousPicture.current?.dispose();
             previousPicture.current = null;
             painterRef.current?.dispose();
             painterRef.current = null;
         };
-    }, [cellH, cellW, dpr, picture]);
+    }, [cellH, cellW, dpr]);
 
     React.useEffect(() => {
         let active = true;
@@ -81,19 +83,28 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         const next = composePicture
             ? composePicture(canvas => { if (frame && painter) painter.draw(canvas, frame); }, previousPicture.current)
             : frame && painter ? painter.paint(frame) : null;
-        picture.value = next;
-        previousPicture.current?.dispose();
-        previousPicture.current = next;
+        if (next) {
+            const published = pictureRef.current;
+            if (published) published.value = next;
+            else {
+                // Skia materializes the shared value when Picture mounts.
+                const initial = makeMutable(next);
+                pictureRef.current = initial;
+                setPicture(initial);
+            }
+            previousPicture.current?.dispose();
+            previousPicture.current = next;
+        }
         if (readiness && paintedStatus.current !== readiness) {
             paintedStatus.current = readiness;
             onReadyRef.current?.(readiness);
         }
         onPaint?.();
-    }, [cellH, cellW, composePicture, dpr, height, onPaint, picture, readiness, sample, scene, theme, width]);
+    }, [cellH, cellW, composePicture, dpr, height, onPaint, readiness, sample, scene, theme, width]);
     React.useImperativeHandle(drawAtRef, () => readiness ? paint : (() => {}), [paint, readiness]);
     useGlyphClock(motion, readiness, paint, warmWhenHidden, viewport, digitCadence);
 
     return <Canvas pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" testID={testID} style={[style, { width, height }]}>
-        {prepared ? <Picture picture={picture as unknown as { value: SkPicture }} /> : null}
+        {picture ? <Picture picture={picture} /> : null}
     </Canvas>;
 });
