@@ -1219,13 +1219,13 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
     credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const, account } }] });
   const created = selection({ kind: 'create', name: 'docs.happier.dev' });
   const adopted = selection({ kind: 'adopt', tunnelId: 'tunnel-1', name: 'office' });
-  async function findChoices(existing: readonly unknown[], automaticSelection = false) {
+  async function findChoices(existing: readonly unknown[], previewDomainDns?: () => Promise<never>, automaticSelection = false) {
     const inspectPlatformTarget = vi.fn<DomainIngressInspection>(async (_action, input) => (input as { zoneId?: string }).zoneId
       ? { ok: true, value: { kind: 'ready', options: existing, createOption: { label: 'docs.happier.dev', selection: created } } }
       : { ok: true, value: { kind: 'ready', zones: [{ zoneId: 'zone-1', name: 'happier.dev' }], options: [] } } as never);
     const base = createDeploymentEnvironmentDetailV1();
     const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
-    const actions = { ...domainActions(detail), inspectPlatformTarget };
+    const actions = { ...domainActions(detail), inspectPlatformTarget, previewDomainDns };
     const rendered = await renderDomains(detail, [], actions);
     expect(await rendered.settle(id)).not.toBeNull();
     await rendered.screen.pressByTestIdAsync(id);
@@ -1259,7 +1259,7 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
   };
 
   it('preselects only the unique eligible target and finds zones once the hostname is entered', async () => {
-    const { screen, controller, actions } = await findChoices([], true);
+    const { screen, controller, actions } = await findChoices([], undefined, true);
     try {
       expect(actions.inspectPlatformTarget.mock.calls[0]?.[1]).toMatchObject({ credentialRef: account, hostname: 'docs.happier.dev' });
       expect((await tunnelSelect(screen))?.props.selectedId).not.toBeNull();
@@ -1288,6 +1288,23 @@ describe('Environment → Domains: one Find, then a tunnel Happier can create (r
       expect((await tunnelSelect(screen))?.props.selectedId ?? null).toBeNull();
       await screen.pressByTestIdAsync(`${id}.save`);
       expect(actions.addDomain).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+  it('never offers a Machine DNS preview for a tunnel Domain even when the Action is available', async () => {
+    const previewDomainDns = vi.fn(async () => { throw new Error('Tunnel preview is not supported'); });
+    const { screen, controller } = await findChoices([], previewDomainDns);
+    try {
+      await vi.waitFor(async () => expect((await tunnelSelect(screen))?.props.selectedId).not.toBeNull());
+      expect(screen.findByTestId(`${id}.dns.action`)).toBeNull();
+      expect(previewDomainDns).not.toHaveBeenCalled();
+      const facts = await import('@happier-dev/deployments');
+      const checkPlan = Reflect.get(facts, 'projectDeploymentDomainDraftCheckV1');
+      expect(checkPlan).toBeTypeOf('function');
+      expect(checkPlan(undefined, 'cloudflareTunnel')).toEqual({
+        kind: 'cloudflareTunnel',
+        record: { type: 'CNAME', proxied: true, destination: 'tunnel' },
+        probe: 'outsideHttp',
+      });
     } finally { await screen.unmount(); controller.retire(); }
   });
 });

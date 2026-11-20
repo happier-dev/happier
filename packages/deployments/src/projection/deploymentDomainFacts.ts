@@ -1,9 +1,31 @@
 import type { ActionOperationGetV1Response, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import type { DeploymentIngressV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { isDeploymentDomainAddActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentCurrentDomainObservationV1, DeploymentDomainHealthFactsV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+
+export type DeploymentDomainDraftCheckV1 =
+    | Readonly<{ kind: 'machineDns' }>
+    | Readonly<{ kind: 'provider' }>
+    | Readonly<{
+        kind: 'cloudflareTunnel';
+        record: Readonly<{ type: 'CNAME'; proxied: true; destination: 'tunnel' }>;
+        probe: 'outsideHttp';
+    }>;
+
+/** The check that belongs to the draft's placement. Tunnel provisioning owns the record; the Domain verifies reachability. */
+export function projectDeploymentDomainDraftCheckV1(
+    targetKind: DeploymentDomainContentV1['target']['kind'],
+    ingressKind: DeploymentIngressV1['kind'] | undefined,
+): DeploymentDomainDraftCheckV1 {
+    if (targetKind === 'provider') return { kind: 'provider' };
+    if (ingressKind === 'cloudflareTunnel') {
+        return { kind: 'cloudflareTunnel', record: { type: 'CNAME', proxied: true, destination: 'tunnel' }, probe: 'outsideHttp' };
+    }
+    return { kind: 'machineDns' };
+}
 
 export type DeploymentDomainFactsV1 = Readonly<{
     state: DeploymentDomainHeaderV1['state'] | 'cancelled' | 'outcome_unknown';

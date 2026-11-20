@@ -41,7 +41,7 @@ import { useDeploymentDomainIngressFields, type DomainIngressInspection } from '
 import { DeploymentTabState } from './DeploymentTabState';
 import { readDeploymentComposeServiceFacts } from './deploymentPreflightWarnings';
 import { useDeploymentEnvironmentDomains } from './useDeploymentReads';
-import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
+import { isDeploymentDomainAttachedV1, projectDeploymentDomainDnsReadinessV1, projectDeploymentDomainDraftCheckV1, type DeploymentDomainDnsReadinessV1 } from '@happier-dev/deployments';
 import { DeploymentDomainsList, type DeploymentDomainRowActions, type DomainCredentialRole, type DomainItem } from './DeploymentDomainRow';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 
@@ -522,7 +522,10 @@ function DomainAddForm(
       ...(props.credentials && user ? { basicAuth: { username: user } } : {}),
     };
   };
-  const dnsDraft = !provider && props.checkDns ? draft() : null;
+  const checkDraft = draft();
+  const checkPlan = checkDraft && projectDeploymentDomainDraftCheckV1(checkDraft.target.kind,
+    needsSelection ? 'cloudflareTunnel' : props.recordedIngress?.kind);
+  const dnsDraft = checkPlan?.kind === 'machineDns' ? checkDraft : null;
   return (
     <InlineAddExpander
       isOpen

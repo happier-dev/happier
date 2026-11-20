@@ -1,5 +1,6 @@
 import { DeploymentActionOutputSchemasV1, DeploymentDomainDnsChildRpcV1Schema,
     type ActionExecutorContext, type DeploymentDomainPreviewInputV1 } from '@happier-dev/protocol';
+import { projectDeploymentDomainDraftCheckV1 } from '@happier-dev/deployments';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { createOwnServerDomainActions } from './ownServerDomainActions';
 import { readDomainIngressMembersForHost, resolveDomainIngress } from './domainRouteSelection';
@@ -18,8 +19,9 @@ export async function previewOwnServerDomainDns(input: DeploymentDomainPreviewIn
         return projectDeploymentFailure('deployment_conflict');
     const resolved = resolveDomainIngress(input.content, environment.content.ingress);
     if (resolved.status !== 'ready') return projectDeploymentFailure(resolved.reason);
-    if (link.source.kind !== 'host' || link.targetKind !== 'ownServer' || input.content.target.kind === 'provider'
-        || resolved.ingress?.kind === 'cloudflareTunnel') return projectDeploymentFailure('native_route_unavailable');
+    const check = projectDeploymentDomainDraftCheckV1(input.content.target.kind, resolved.ingress?.kind);
+    if (link.source.kind !== 'host' || link.targetKind !== 'ownServer' || check.kind !== 'machineDns')
+        return projectDeploymentFailure('native_route_unavailable');
     let destination: { machineId: string; installationId: string };
     if (resolved.ingress?.kind === 'edgeCaddy') {
         const machineId = resolved.ingress.edgeMachineId;
