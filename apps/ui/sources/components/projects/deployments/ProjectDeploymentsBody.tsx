@@ -302,13 +302,15 @@ const ProjectDeploymentsPage = React.memo(
       items.find((item) => item.environment.id === environmentId)?.title ??
       null;
     // A variable reference names its sibling Environment from this page's own list, never a second read.
-    const titles = React.useMemo(
-      () => new Map(items.map((item) => [item.environment.id, item.title])),
+    const referenceEnvironments = React.useMemo(
+      () => new Map(items.map(item => [item.environment.id, {
+        name: item.title, machineIds: item.runtimeTargetLink?.machines ?? [],
+      }])),
       [items],
     );
     const environmentTitle = React.useCallback(
-      (id: string) => titles.get(id) ?? null,
-      [titles],
+      (id: string) => referenceEnvironments.get(id)?.name ?? null,
+      [referenceEnvironments],
     );
     const back = React.useCallback(() => {
       const current = selectionRef.current;
@@ -576,7 +578,7 @@ const ProjectDeploymentsPage = React.memo(
           deploy={props.actions?.deploy ?? null}
           review={review}
           environmentTitle={environmentTitle}
-          environmentTitles={titles}
+          referenceEnvironments={referenceEnvironments}
           lifetime={props.lifetime}
           setBindings={props.actions?.setBindings ?? null}
           disposition={disposition}

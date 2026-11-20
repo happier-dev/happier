@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
+import { createDeploymentReadControllerV1, type DeploymentReadTransportV1 } from '@happier-dev/deployments';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
@@ -7,6 +8,8 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/te
 import { createDeploymentSecretVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { measureMountedCollections } from '@/dev/testkit/render/renderInCollectionLayout';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -17,6 +20,9 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { t } from '@/text';
+import type { VariableReferenceEnvironments } from './DeploymentVariablesPanel';
+import type { EnvironmentBindingsCommit } from './useEnvironmentSecretBindingsDraft';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -47,7 +53,8 @@ afterEach(async () => {
 
 async function mount(phone = true, referenceTargets?: readonly unknown[],
   rotation?: Readonly<{ secretRevisions: readonly unknown[]; onDeploy?: () => void; bindingRevision?: number;
-    additionalBindings?: readonly EnvironmentSecretBindingV1[] }>, referenceEnvironments?: ReadonlyMap<string, string>) {
+    additionalBindings?: readonly EnvironmentSecretBindingV1[] }>, referenceEnvironments?: VariableReferenceEnvironments,
+  reference?: Readonly<{ readEnvironment: DeploymentReadTransportV1['readEnvironment']; setBindings: EnvironmentBindingsCommit }>) {
   home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }),
     handleRequest: async path => path === '/v1/account/saved-secrets/resources/activity'
       ? Response.json({ historyEntryId: 'disclosure-entry' }) : null });
@@ -57,6 +64,12 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
   const base = createDeploymentEnvironmentDetailV1();
   const detail = { ...base, content: { ...base.content, bindings: [binding, ...(rotation?.additionalBindings ?? [])] } };
   const scope = home.scope;
+  const controller = reference ? createDeploymentReadControllerV1({ scope, transport: {
+    readEnvironment: reference.readEnvironment,
+    listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+    listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+    readReceipt: async () => ({ ok: false, failure: { code: 'not_found', retryable: false } }),
+  } }) : null;
   const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
   const { useEnvironmentSecretBindingsDraft } = await import('./useEnvironmentSecretBindingsDraft');
   const { DeploymentVariablesPanel } = await import('./DeploymentVariablesPanel');
@@ -66,12 +79,13 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
   let readBindings: () => readonly EnvironmentSecretBindingV1[] = () => detail.content.bindings;
   function Page() {
     const draft = useEnvironmentSecretBindingsDraft({ environmentId: detail.environment.id, lifetime,
-      snapshot: { status: 'ready', value: detail, failure: null }, setBindings: actions.setBindings });
+      snapshot: { status: 'ready', value: detail, failure: null }, setBindings: reference?.setBindings ?? actions.setBindings });
     readBindings = () => draft.editor.rows.map(row => row.binding);
     return <DeploymentVariablesPanel draft={draft} phone={phone} environmentName={() => null} sealedOn={null}
       review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id} scope={scope} lifetime={lifetime}
       referenceTargets={referenceTargets as never}
       referenceEnvironments={referenceEnvironments}
+      domainRead={controller ? { controller, demand: { mounted: true, visible: true, focused: true } } : undefined}
       secretRevisions={rotation?.secretRevisions as never} onDeploy={rotation?.onDeploy} />;
   }
   const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><Page /></ListPresentationProvider></ModalProvider>, {
@@ -81,7 +95,7 @@ async function mount(phone = true, referenceTargets?: readonly unknown[],
   });
   await act(async () => refreshSavedSecretCatalog(scope, { includeMaterial: false }));
   await measureMountedCollections(screen);
-  return { screen, entry, scope, readBindings: () => readBindings() };
+  return { screen, entry, scope, readBindings: () => readBindings(), controller, environmentId: detail.environment.id };
 }
 const prefix = 'project-deployments.environment.variable.API_KEY';
 
@@ -169,7 +183,8 @@ it('asks for the Environment first, this one leading, when the Project has other
   const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
   const base = createDeploymentEnvironmentDetailV1();
   const { screen } = await mount(false, [], undefined,
-    new Map([['environment-data', 'Data'], [base.environment.id, 'Production']]));
+    new Map([['environment-data', { name: 'Data', machineIds: [] }],
+      [base.environment.id, { name: 'Production', machineIds: [] }]]));
   const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.popoverAccessibilityLabel !== undefined
     && node.props.items?.some((item: { id: string }) => item.id === 'reference'));
   // Another Environment can share a service, so the pointer is offered although this one shares none.
@@ -180,6 +195,84 @@ it('asks for the Environment first, this one leading, when the Project has other
   expect(environments.props.items.map((item: { id: string }) => item.id)).toEqual([base.environment.id, 'environment-data']);
   // This Environment shares nothing: the step says where to share one instead of an empty menu.
   expect(screen.findByTestId('project-deployments.environment.variables.add.referenceNone')).not.toBeNull();
+});
+
+it('opens Variables with no private reads and resolves only the other Environment the person chooses', async () => {
+  const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+  const base = createDeploymentEnvironmentDetailV1();
+  const database = { key: 'database', service: 'db', containerPort: 5432,
+    scheme: 'postgres', exposure: 'loopback' as const, transport: { kind: 'iroh' as const } };
+  const readEnvironment = vi.fn<DeploymentReadTransportV1['readEnvironment']>(async (scope, environmentId) => ({
+    ok: true, value: {
+      ...base, environment: { ...base.environment, serverId: scope.serverId, id: environmentId }, targetLinks: [],
+      content: { ...base.content, ownServer: { rollout: 'recreate', autoRestorePreviousRelease: false,
+        serviceExports: [
+          { key: 'unshared', service: 'redis', containerPort: 6379, scheme: 'redis', exposure: 'loopback' },
+          ...(environmentId === 'environment-data' ? [database] : []),
+        ] } },
+    },
+  }));
+  // The write transport acknowledges one revision. The real form and the draft owner construct its patch.
+  const setBindings = vi.fn<EnvironmentBindingsCommit>(async input => ({
+    ok: true, environmentId: input.environmentId, revision: input.expectedRevision + 1,
+  }));
+  const { screen, readBindings, controller, environmentId, scope } = await mount(false, [], undefined, new Map([
+    ['environment-data', { name: 'Data', machineIds: ['data-machine'] }],
+    ['environment-empty', { name: 'Empty', machineIds: [] }],
+    [base.environment.id, { name: 'Current app', machineIds: [] }],
+  ]), { readEnvironment, setBindings });
+  await act(() => publishMachineInventoryForTest(scope, [createMachineFixture({ id: 'data-machine',
+    metadata: createMachineMetadataFixture({ displayName: 'Database host' }),
+  })]));
+  const prefix = 'project-deployments.environment.variables.add';
+  const choice = (suffix: string) => screen.findAllByType(DropdownMenu).find(node => node.props.testID === `${prefix}.${suffix}`);
+  const open = async () => {
+    const menu = screen.findAllByType(DropdownMenu).find(node => node.props.items?.some((item: { id: string }) => item.id === 'reference'));
+    expect(menu).toBeDefined();
+    await act(async () => menu?.props.onSelect('reference'));
+  };
+  try {
+    expect(readEnvironment).not.toHaveBeenCalled();
+    await open();
+    expect(readEnvironment).not.toHaveBeenCalled();
+    expect(choice('referenceEnvironment')?.props.selectedId).toBe(environmentId);
+    expect(choice('referenceEnvironment')?.props.items.map((item: { id: string }) => item.id))
+      .toEqual([environmentId, 'environment-data', 'environment-empty']);
+
+    await act(async () => choice('referenceEnvironment')?.props.onSelect('environment-empty'));
+    await vi.waitFor(() => {
+      expect(screen.findByTestId(`${prefix}.referenceLoading`)).toBeNull();
+      expect(choice('reference')?.props.items ?? []).toEqual([]);
+      expect(screen.findByTestId(`${prefix}.referenceNone`)).not.toBeNull();
+    });
+    expect(readEnvironment.mock.calls.map(([, id]) => id)).toEqual(['environment-empty']);
+
+    expect(choice('referenceEnvironment')?.props.items).toContainEqual(expect.objectContaining({
+      id: 'environment-data', title: 'Data', subtitle: 'Database host',
+    }));
+    await act(async () => choice('referenceEnvironment')?.props.onSelect('environment-data'));
+    await vi.waitFor(() => expect(choice('reference')?.props.items.map((item: { id: string }) => item.id)).toEqual([JSON.stringify(['environment-data', 'database'])]));
+    expect(readEnvironment.mock.calls.map(([, id]) => id)).toEqual(['environment-empty', 'environment-data']);
+    expect(choice('reference')?.props.items[0].subtitle).toBe(t('projects.deployments.settingsSections.privateSharingHappierNetwork'));
+    await act(async () => choice('reference')?.props.onSelect(JSON.stringify(['environment-data', 'database'])));
+    await act(async () => screen.changeTextByTestId(`${prefix}.name`, 'database_url'));
+    await screen.pressByTestIdAsync(`${prefix}.save`);
+    const binding = {
+      purpose: 'variable', name: 'DATABASE_URL', phase: 'runtime',
+      source: { kind: 'reference', environmentId: 'environment-data', export: 'database', via: 'auto' },
+    };
+    expect(readBindings()).toContainEqual(expect.objectContaining(binding));
+    expect(choice('reference')).toBeUndefined();
+    await screen.pressByTestIdAsync('project-deployments.environment.variables.save');
+    await vi.waitFor(() => expect(setBindings.mock.calls.map(([write]) => ({ environmentId: write.environmentId, set: write.set })))
+      .toEqual([{ environmentId, set: [expect.objectContaining(binding)] }]));
+    await open();
+    expect(choice('referenceEnvironment')?.props.selectedId).toBe(environmentId);
+    expect(readEnvironment.mock.calls.map(([, id]) => id)).toEqual(['environment-empty', 'environment-data']);
+  } finally {
+    await screen.unmount();
+    controller?.retire();
+  }
 });
 
 it('offers no service pointer when there is no declared export to point at', async () => {

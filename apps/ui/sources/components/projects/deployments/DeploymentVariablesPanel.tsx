@@ -52,7 +52,9 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import type { DeploymentSecretControlTarget } from './DeploymentWithdrawnSecretControl';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
 import { DeploymentEnvironmentDomainSelect } from './DeploymentEnvironmentDomainSelect';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { privateServiceExportReachLabel } from './DeploymentPrivateServiceExports';
+import { isPrivateServiceExport } from './privateServiceExport';
 import { useDeploymentEnvironmentRecord } from './useDeploymentReads';
 import { useDeploymentProviderVariables } from './useDeploymentProviderVariables';
 import type { DeploymentTargetVariableMetadataV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -87,7 +89,7 @@ export type VariableReferenceTarget = Readonly<{ environmentId: string; export: 
   /** Where the export is published: Happier network or the joined network's name (DEPLOY-UI-LOGIC-B 10:25Z contract). */
   network?: string }>;
 /** The Environments a reference can point into, by id and name, the current one first (the page's held list). */
-export type VariableReferenceEnvironments = ReadonlyMap<string, string>;
+export type VariableReferenceEnvironments = ReadonlyMap<string, Readonly<{ name: string; machineIds: readonly string[] }>>;
 const NO_REFERENCE_TARGETS: readonly VariableReferenceTarget[] = Object.freeze([]);
 const NO_REFERENCE_ENVIRONMENTS: VariableReferenceEnvironments = new Map();
 /** Without the page's read, another Environment's record is not read at all. */
@@ -575,6 +577,7 @@ export const DeploymentVariablesPanel = React.memo(
             currentEnvironmentId={props.environmentId}
             environments={props.referenceEnvironments ?? NO_REFERENCE_ENVIRONMENTS}
             read={props.domainRead ?? null}
+            serverId={props.scope?.serverId ?? props.controlTarget?.serverId}
             environmentName={props.environmentName}
             onCancel={() => setAdding(null)}
             onAdd={(name, target) => {
@@ -945,6 +948,7 @@ function AddReferenceVariable(
     currentEnvironmentId: string;
     environments: VariableReferenceEnvironments;
     read: Pick<React.ComponentProps<typeof DeploymentEnvironmentDomainSelect>, 'controller' | 'demand'> | null;
+    serverId?: string;
     environmentName: (environmentId: string) => string | null;
     onCancel: () => void;
     onAdd: (name: string, target: VariableReferenceTarget) => boolean;
@@ -960,20 +964,27 @@ function AddReferenceVariable(
     props.read?.demand ?? HIDDEN_REFERENCE_READ);
   const otherDetail = other ? record.snapshot.value : null;
   const targets = React.useMemo<readonly VariableReferenceTarget[]>(() => !other ? props.targets
-    : (otherDetail?.content.ownServer?.serviceExports ?? []).map(entry => ({ environmentId, export: entry.key,
+    : (otherDetail?.content.ownServer?.serviceExports ?? []).filter(isPrivateServiceExport).map(entry => ({ environmentId, export: entry.key,
         service: entry.service, network: privateServiceExportReachLabel(entry) })),
   [environmentId, other, otherDetail, props.targets]);
   const keyFor = (target: VariableReferenceTarget) => JSON.stringify([target.environmentId, target.export]);
   const target = targets.find(item => keyFor(item) === targetKey) ?? null;
   const trimmed = name.trim();
   const duplicate = props.taken.some((row) => row.name === trimmed);
-  const environmentTitle = props.environments.get(environmentId) ?? props.environmentName(environmentId) ?? '';
+  const environmentTitle = props.environments.get(environmentId)?.name ?? props.environmentName(environmentId) ?? '';
   const loading = other && otherDetail === null && record.snapshot.status !== 'unavailable';
   const unreadable = other && otherDetail === null && record.snapshot.status === 'unavailable';
+  const machineIds = React.useMemo(() => Array.from(props.environments.values()).flatMap(entry => entry.machineIds),
+    [props.environments]);
+  const machineNames = useMachineDisplayNamesById(machineIds, { serverId: props.serverId });
   const environmentItems = React.useMemo(() => {
-    const ids = [props.currentEnvironmentId, ...[...props.environments.keys()].filter(id => id !== props.currentEnvironmentId)];
-    return ids.map(id => ({ id, title: props.environments.get(id) ?? props.environmentName(id) ?? id }));
-  }, [props.currentEnvironmentId, props.environments, props.environmentName]);
+    const ids = [props.currentEnvironmentId, ...Array.from(props.environments.keys()).filter(id => id !== props.currentEnvironmentId)];
+    return ids.map(id => {
+      const environment = props.environments.get(id);
+      const subtitle = environment?.machineIds.flatMap(machineId => machineNames[machineId] ? [machineNames[machineId]] : []).join(', ');
+      return { id, title: environment?.name ?? props.environmentName(id) ?? id, subtitle: subtitle || undefined };
+    });
+  }, [machineNames, props.currentEnvironmentId, props.environments, props.environmentName]);
   return (
     <InlineAddExpander
       isOpen

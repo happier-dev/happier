@@ -221,7 +221,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       /** Names a sibling Environment a variable reference points at, from the page's Environment list. */
       environmentTitle?: (environmentId: string) => string | null;
       /** This Project's Environments by id and name (the page's held list): where a variable reference may point. */
-      environmentTitles?: ReadonlyMap<string, string>;
+      referenceEnvironments?: React.ComponentProps<typeof DeploymentVariablesPanel>['referenceEnvironments'];
       /** The captured Home/Account the Variables draft writes under; absent while it is not current. */
       lifetime?: ServerAccountScopeLifetime | null;
       workspaceRef?: WorkspaceRefV1 | null;
@@ -1292,7 +1292,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               secretRevisions={detail.secretRevisions}
               onDeploy={deployBlocked || !ready ? null : () => { void pressDeploy(); }}
               referenceTargets={referenceTargets}
-              referenceEnvironments={props.environmentTitles}
+              referenceEnvironments={props.referenceEnvironments}
               domainRead={{ controller: props.controller, demand: props.demand }}
             />
             </>
