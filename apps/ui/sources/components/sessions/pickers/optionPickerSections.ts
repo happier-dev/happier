@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import type { OptionPickerOption, OptionPickerSection } from './OptionPickerOverlay';
 
-type OptionVisuals = Pick<SelectionListOption, 'icon' | 'rightAccessory' | 'rightAccessoryOutsidePressable'>;
+type OptionVisuals = Pick<SelectionListOption, 'icon' | 'titleAccessory' | 'rightAccessory' | 'rightAccessoryOutsidePressable'>;
 
 /** A section-level status/recovery row has no selectable value or model identity. */
 export function optionPickerOptionKey<TValue>(
@@ -42,7 +42,6 @@ export function useOptionPickerSections<TValue>(input: Readonly<{
                     id: valueKey,
                     testID: `${optionTestIDPrefix}:${valueKey}`,
                     label: option.label,
-                    titleAccessory: option.titleAccessory,
                     ...(option.labelSuffix ? { titleQualifier: option.labelSuffix } : {}),
                     searchText: [option.searchText, option.labelSuffix].filter(Boolean).join(' '),
                     onPressIn,

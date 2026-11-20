@@ -19,6 +19,7 @@ import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 import type {
     SessionConfigOptionControl,
@@ -252,6 +253,18 @@ function defaultValueKey<TValue>(value: TValue): string {
     return value;
 }
 
+/**
+ * Whether the list's quick-action modifier (Command or Control) is held, as SelectionList reports it.
+ * A context, so holding the key repaints only the slot hints and never rebuilds the option sections.
+ */
+const OptionPickerModifierHeldContext = React.createContext(false);
+
+/** A favourite's shortcut digit at the end of its name line, drawn only while the modifier is held. */
+function FavoriteSlotHint(props: Readonly<{ slot: number; testID: string }>) {
+    const held = React.useContext(OptionPickerModifierHeldContext);
+    return held ? <KeyHint label={String(props.slot)} testID={props.testID} /> : null;
+}
+
 function OptionTrailingAccessory<TValue>(props: Readonly<{
     option: OptionPickerOption<TValue>;
     valueKey: string;
@@ -393,6 +406,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
         ? selectedString
         : '';
     const customValueScopeKey = `${selectedValueKey}\u0000${selectedCustomValue.length > 0 ? 'custom' : 'listed'}`;
+    const [modifierHeld, setModifierHeld] = React.useState(false);
     const [customDraft, setCustomDraft] = React.useState<Readonly<{
         scopeKey: string;
         value: string;
@@ -502,7 +516,14 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                 optionTestIDPrefix={optionTestIDPrefix} favoriteOptions={props.favoriteOptions} card={multiColumn} />;
         };
         const rightAccessoryOutsidePressable: SelectionListOption['rightAccessoryOutsidePressable'] = row => canToggleFavorite(row?.selected === true);
+        // The digit SelectionList dispatches for this favourite (one binding owner), named while the modifier is held.
+        const slot = props.favoriteOptions?.shortcutSlotByKey?.get(valueKey);
+        const slotHint = slot === undefined ? null
+            : <FavoriteSlotHint slot={slot} testID={`${optionTestIDPrefix}-slot-hint:${valueKey}`} />;
         return {
+            titleAccessory: slotHint === null || !option.titleAccessory ? slotHint ?? option.titleAccessory : (
+                <View style={styles.optionTitleAccessoryRow}>{normalizeNodeForView(option.titleAccessory)}{slotHint}</View>
+            ),
             icon: option.icon ? (
                 <View testID={`${optionTestIDPrefix}-icon:${valueKey}`} style={styles.optionCardIconSlot}>
                     {normalizeNodeForView(option.icon)}
@@ -744,6 +765,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
 
     return (
         <OptionPickerSelectedControlsContext.Provider value={controlsContextValue}>
+        <OptionPickerModifierHeldContext.Provider value={modifierHeld}>
         <View
             testID="model-picker-overlay"
             style={[styles.section, props.fillAvailableSpace ? styles.sectionFill : null]}
@@ -777,6 +799,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
                     }}
                     onRequestClose={props.onRequestClose ?? (() => {})}
                     quickActionShortcuts={props.quickActionShortcuts}
+                    onQuickActionModifierHeldChange={props.favoriteOptions?.shortcutSlotByKey ? setModifierHeld : undefined}
                     keyboardHintsEnabled={false}
                     autoFocusInputOnWeb={props.autoFocusInputOnWeb ?? false}
                     disableTransitions
@@ -830,6 +853,7 @@ export function OptionPickerOverlay<TValue = string>(props: OptionPickerOverlayP
             )}
             {wholePaneScrolls ? null : notesNode}
         </View>
+        </OptionPickerModifierHeldContext.Provider>
         </OptionPickerSelectedControlsContext.Provider>
     );
 }
@@ -878,6 +902,7 @@ const styles = StyleSheet.create((theme) => ({
     paneLines: { gap: theme.space.s4, paddingHorizontal: SELECTION_LIST_CARD_CONTENT_INSET_PX },
     noteText: { ...Typography.variant('meta'), color: theme.colors.text.tertiary },
     optionCardIconSlot: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+    optionTitleAccessoryRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
     optionSelectionStatus: { alignItems: 'center', justifyContent: 'flex-start', gap: theme.space.s2 },
     optionAttribution: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
     optionSelectionMark: { width: 20, height: 14, alignItems: 'center', justifyContent: 'center' },
