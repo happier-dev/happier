@@ -69,6 +69,17 @@ automatic choice, with Agent, Project, combined, avatar and no-mark choices. Exp
 avatar, Agent-logo and no-mark preferences survive an upgrade. Density, tags and
 Hide inactive remain separate preferences.
 
+### Status notes and progress
+
+In 0.3 development, a Session row can show a status note and progress count.
+An Agent or plugin can set these through the [Host Actions reference](/plugins/api/host-actions).
+Once you've read the Session, a completed count disappears from the row.
+
+Open the Session row menu and choose **Clear status** to remove the note and
+the explicitly set count. If the Session has a task list or managed work,
+the row can still show progress from that work. Archiving hides the note
+and count. Unarchiving can show them again.
+
 ## Permission mode timing (development)
 
 In 0.3 development source, choosing a permission mode **from the next prompt**
