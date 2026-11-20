@@ -1,7 +1,9 @@
 // @happier-test-preparation source-condition
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +27,7 @@ async function createServerFixture(root, provider, witness) {
     createServer((_request,response)=>{
       response.setHeader('content-type','application/json');
       response.end(JSON.stringify({status:'ok',service:'happier-server'}));
-    }).listen(Number(process.env.PORT),'127.0.0.1');
+    }).listen(Number(process.env.PORT),'127.0.0.1', () => console.log('API ready on port http://localhost:' + process.env.PORT));
   `);
   return {
     identity: `${provider}-candidate`,
@@ -38,6 +40,60 @@ async function createServerFixture(root, provider, witness) {
     migration: { mode: 'disabled' },
   };
 }
+
+test('concurrent source reloads both boot their own smoke listener', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-concurrent-smoke-' });
+  const waiting = [];
+  const barrier = createServer(socket => {
+    waiting.push(socket);
+    if (waiting.length === 2) {
+      for (const peer of waiting) peer.end();
+    }
+  });
+  barrier.listen(0, '127.0.0.1');
+  await once(barrier, 'listening');
+  t.after(() => {
+    for (const peer of waiting) peer.destroy();
+    return new Promise(resolve => barrier.close(resolve));
+  });
+  const candidates = await Promise.all(['first', 'second'].map(async name => {
+    const root = fixture.path(name);
+    const witness = join(root, 'bound-port');
+    const server = await createServerFixture(root, 'sqlite', witness);
+    await writeFile(server.entrypoint, `
+      import {createServer} from 'node:http';
+      import {connect} from 'node:net';
+      import {once} from 'node:events';
+      import {writeFileSync, openSync, closeSync} from 'node:fs';
+      try {
+        closeSync(openSync(${JSON.stringify(join(root, 'first-attempt'))}, 'wx'));
+        const socket = connect(${barrier.address().port}, '127.0.0.1');
+        socket.resume();
+        await once(socket, 'end');
+      } catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+      }
+      const http = createServer((_request, response) => {
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({status:'ok',service:'happier-server'}));
+      });
+      http.listen(Number(process.env.PORT), '127.0.0.1', () => {
+        const { port } = http.address();
+        writeFileSync(${JSON.stringify(witness)}, String(port));
+        console.log('API ready on port http://localhost:' + port);
+      });
+    `);
+    return { server, witness };
+  }));
+  const outcomes = await Promise.allSettled(candidates.map(({ server }) => smokeSourceRuntimeReload({
+    components: { server }, env: { ...process.env, HAPPIER_STACK_SERVER_READY_TIMEOUT_MS: '10000' },
+  })));
+  for (const outcome of outcomes) {
+    if (outcome.status === 'rejected') throw outcome.reason;
+  }
+  const ports = await Promise.all(candidates.map(({ witness }) => readFile(witness, 'utf8')));
+  assert.notEqual(...ports);
+});
 
 test('source reload probes local database server code on isolated scratch data', async (t) => {
   for (const provider of ['sqlite', 'pglite']) {
@@ -95,7 +151,7 @@ test('PostgreSQL replacement migrates, boots and serves /health on a scratch Pos
     createServer((_request,response)=>{
       response.setHeader('content-type','application/json');
       response.end(JSON.stringify({status:'ok',service:'happier-server'}));
-    }).listen(Number(process.env.PORT),'127.0.0.1');
+    }).listen(Number(process.env.PORT),'127.0.0.1', () => console.log('API ready on port http://localhost:' + process.env.PORT));
   `);
   server.migration = { mode: 'external', command: migrate, args: [], cwd: server.serverDir };
   await writeFile(fixture.path('retained.env'), [
@@ -129,6 +185,7 @@ test('source reload isolates its health smoke on loopback despite inherited serv
     });
     http.listen(Number(process.env.PORT), process.env.HAPPIER_SERVER_HOST ?? '0.0.0.0', () => {
       writeFileSync(${JSON.stringify(witness)}, http.address().address);
+      console.log('API ready on port http://localhost:' + process.env.PORT);
     });
   `);
   await smokeSourceRuntimeReload({ components: { server },

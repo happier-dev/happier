@@ -197,6 +197,7 @@ export async function waitForServerReady(url, {
   intervalMs = 300,
   signal = null,
   childProcess = null,
+  canProbe = () => true,
   startupDeadline = null,
   env = null,
   cliHomeDir = null,
@@ -247,32 +248,34 @@ export async function waitForServerReady(url, {
         onTimeoutCheckpoint?.({ phase: deadline.getPhase(), timeoutMs, url });
         deadline.extendCurrentPhase();
       }
-      // Signed-in Homes wait for descriptor publication. Missing or refused
-      // client sign-in settles separately from server availability.
-      // eslint-disable-next-line no-await-in-loop
-      const health = await fetchServerObservation(url, {
-        signal,
-        timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline.getDeadlineMs() - Date.now())),
-        ...(home?.headers ? { path: '/v1/features/authenticated', headers: home.headers } : {}),
-      });
-      throwIfAborted();
-      const readiness = home ? resolveHomeDescriptorReadiness(health, home)
-        : { status: health.ready ? 'ready' : 'pending' };
-      if (readiness.status !== 'pending') {
-        if (readiness.status === 'sign-in-required') {
-          console.warn('[stack] server ready; CLI sign-in-required');
-        }
-        return readiness;
-      }
-      if (!home) {
-        try {
-          const res = await fetch(url, { method: 'GET', signal });
-          const text = await res.text();
-          if (res.ok && text.includes('Welcome to Happier Server!')) {
-            return { status: 'ready' };
+      if (canProbe()) {
+        // Signed-in Homes wait for descriptor publication. Missing or refused
+        // client sign-in settles separately from server availability.
+        // eslint-disable-next-line no-await-in-loop
+        const health = await fetchServerObservation(url, {
+          signal,
+          timeoutMs: Math.min(STACK_LISTENER_OBSERVATION_TIMEOUT_MS, Math.max(1, deadline.getDeadlineMs() - Date.now())),
+          ...(home?.headers ? { path: '/v1/features/authenticated', headers: home.headers } : {}),
+        });
+        throwIfAborted();
+        const readiness = home ? resolveHomeDescriptorReadiness(health, home)
+          : { status: health.ready ? 'ready' : 'pending' };
+        if (readiness.status !== 'pending') {
+          if (readiness.status === 'sign-in-required') {
+            console.warn('[stack] server ready; CLI sign-in-required');
           }
-        } catch {
-          // ignore
+          return readiness;
+        }
+        if (!home) {
+          try {
+            const res = await fetch(url, { method: 'GET', signal });
+            const text = await res.text();
+            if (res.ok && text.includes('Welcome to Happier Server!')) {
+              return { status: 'ready' };
+            }
+          } catch {
+            // ignore
+          }
         }
       }
       try {

@@ -3434,7 +3434,7 @@ const reloadHttpServerSource = `
       response.setHeader('content-type', asset.endsWith('.js') ? 'text/javascript' : 'text/html');
       response.end(await readFile(join(process.env.HAPPIER_SERVER_UI_DIR,asset)));
     } catch { response.statusCode=404; response.end(); }
-  }).listen(Number(process.env.PORT),process.env.HOST);
+  }).listen(Number(process.env.PORT),process.env.HOST, () => console.log('API ready on port http://localhost:' + process.env.PORT));
 `;
 
 test('source reload validates replacement health on scratch data while preserving incumbent data and loaded state', async t => {

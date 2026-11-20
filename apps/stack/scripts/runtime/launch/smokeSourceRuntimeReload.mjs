@@ -1,16 +1,15 @@
 import { EventEmitter } from 'node:events';
-import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { runQaBrowserSession, runQaBrowserWorker } from '../../utils/dev_targets/qa_browser.mjs';
 import { resolveControlledQaBrowserTarget } from '../../utils/dev_targets/service_placement.mjs';
 import { pickNextFreeTcpPort } from '../../utils/net/ports.mjs';
-import { killProcessTree, runCapture } from '../../utils/proc/proc.mjs';
+import { killProcessTree } from '../../utils/proc/proc.mjs';
 import { buildServerRuntimeEnv } from '../../utils/server/server_env.mjs';
 import { applyServerLightEnvDefaults } from '../../utils/server/apply_server_light_env_defaults.mjs';
 import { applyRuntimeServerDatabaseEnv, applySharedDatabaseSourceEnv } from '../../utils/server/apply_runtime_server_database_env.mjs';
@@ -47,9 +46,6 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
   signal?.addEventListener('abort', cancel, { once: true });
   let smokeComponent = 'server';
   try {
-    // Reuse port allocation/availability policy; never stop an occupant.
-    const port = await pickNextFreeTcpPort(40_000);
-    const url = `http://127.0.0.1:${port}`;
     // Resolve the real launch's existing secret before dropping shared-source
     // references. Carry only that credential into the scratch storage layout.
     const runtimeEnv = { ...env, ...server.env };
@@ -60,7 +56,6 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       HAPPIER_SERVER_LIGHT_FILES_DIR: join(scratch, 'files'),
       HAPPIER_SERVER_LIGHT_PRIVATE_FILES_DIR: join(scratch, 'private-files'),
       HAPPIER_SERVER_LIGHT_DB_DIR: join(scratch, 'pglite'),
-      HAPPIER_CANONICAL_SERVER_URL: url, HAPPIER_PUBLIC_SERVER_URL: url,
       HAPPIER_DB_PROVIDER: dbProvider, DATABASE_URL: '', HANDY_MASTER_SECRET: runtimeEnv.HANDY_MASTER_SECRET,
       HAPPIER_SQLITE_AUTO_MIGRATE: '1', HAPPY_SQLITE_AUTO_MIGRATE: '1',
       HAPPIER_STACK_SHARED_DB_SOURCE_STACK: '', HAPPIER_STACK_SHARED_DB_SOURCE_ENV_FILE: '',
@@ -75,31 +70,18 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
       database = await startScratchPostgres({ dir: join(scratch, 'postgres') });
       isolated.DATABASE_URL = database.url;
     }
-    const serverEnv = buildServerRuntimeEnv({ baseEnv: isolated, serverPort: port,
-      canonicalServerUrl: url, publicServerUrl: url, serveUi: Boolean(ui), uiRequired: Boolean(ui),
-      uiBuildDir: ui?.uiDir ?? '', uiBuildDirExists: Boolean(ui), uiPrefix: '/' });
-    applyServerLightEnvDefaults({ baseEnv: isolated, serverEnv, baseDir: scratch });
-    applyRuntimeServerDatabaseEnv({ env: serverEnv, serverDir: server.serverDir });
-    const spec = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: server });
-    const processChild = await spawnRuntimeServerAfterMigration({ serverLaunchSpec: spec, env: serverEnv,
-      children, isCancellationRequested: () => cancellation.signal.aborted });
-    const cancelChild = () => { void killProcessTree(processChild, 'SIGTERM').catch(() => {}); };
-    cancellation.signal.addEventListener('abort', cancelChild, { once: true });
-    try {
-      const timeout = Number(env.HAPPIER_STACK_SERVER_READY_TIMEOUT_MS);
-      await waitForServerReady(url, { childProcess: processChild, signal: cancellation.signal,
-        timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : Infinity, continueWhileChildAlive: false });
-      const health = await fetchHappierHealth(url, { signal: cancellation.signal });
-      if (!health.ok) throw new Error('[reload] replacement server did not expose canonical /health');
-      if (ui) {
-        smokeComponent = 'ui';
-        await assertWebArtifactPayload({ payloadDir: ui.uiDir, entrypoint: ui.entrypoint ?? 'index.html' });
-        await smokeSourceWebBoot({ repoDir: env.HAPPIER_STACK_REPO_DIR, url, env: isolated, signal: cancellation.signal });
-      }
-      if (processChild.exitCode != null || processChild.signalCode != null) throw new Error('[reload] smoke server exited before admission');
-    } finally {
-      cancellation.signal.removeEventListener('abort', cancelChild);
+    const { url, processChild } = await startSmokeServer({ server, ui, env, isolated, scratch, children,
+      signal: cancellation.signal });
+    const health = await fetchHappierHealth(url, { signal: cancellation.signal });
+    if (!health.ok) throw new Error('[reload] replacement server did not expose canonical /health');
+    if (ui) {
+      smokeComponent = 'ui';
+      await assertWebArtifactPayload({ payloadDir: ui.uiDir, entrypoint: ui.entrypoint ?? 'index.html' });
+      await smokeSourceWebBoot({ repoDir: env.HAPPIER_STACK_REPO_DIR, url, env: {
+        ...isolated, HAPPIER_CANONICAL_SERVER_URL: url, HAPPIER_PUBLIC_SERVER_URL: url,
+      }, signal: cancellation.signal });
     }
+    if (processChild.exitCode != null || processChild.signalCode != null) throw new Error('[reload] smoke server exited before admission');
   } catch (error) {
     await diagnoseSourceReloadFailure(error, { component: smokeComponent,
       repoDir: env.HAPPIER_STACK_REPO_DIR, env, signal });
@@ -112,6 +94,44 @@ export async function smokeSourceRuntimeReload({ components, ui, env = process.e
     // Its server is gone: release the scratch PostgreSQL before its directory.
     await database?.stop();
     await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+async function startSmokeServer({ server, ui, env, isolated, scratch, children, signal }) {
+  const spec = resolveServerRuntimeLaunchSpec({ sourceRuntimeLaunch: server });
+  const timeout = Number(env.HAPPIER_STACK_SERVER_READY_TIMEOUT_MS);
+  let nextPort = 40_000;
+  for (;;) {
+    signal.throwIfAborted();
+    const port = await pickNextFreeTcpPort(nextPort);
+    const url = `http://127.0.0.1:${port}`;
+    const serverEnv = buildServerRuntimeEnv({ baseEnv: isolated, serverPort: port,
+      canonicalServerUrl: url, publicServerUrl: url, serveUi: Boolean(ui), uiRequired: Boolean(ui),
+      uiBuildDir: ui?.uiDir ?? '', uiBuildDirExists: Boolean(ui), uiPrefix: '/' });
+    applyServerLightEnvDefaults({ baseEnv: isolated, serverEnv, baseDir: scratch });
+    applyRuntimeServerDatabaseEnv({ env: serverEnv, serverDir: server.serverDir });
+    // Health alone could come from the reload that won the bind. Enable the
+    // candidate's own API-ready log before opening the HTTP probe.
+    serverEnv.HAPPIER_SERVER_LOG_LEVEL = 'info';
+    let bound = false;
+    let portInUse = false;
+    const processChild = await spawnRuntimeServerAfterMigration({ serverLaunchSpec: spec, env: serverEnv, children,
+      isCancellationRequested: () => signal.aborted,
+      onServerLine({ stream, line }) {
+        if (stream === 'stdout' && line.includes(`API ready on port http://localhost:${port}`)) bound = true;
+        if (stream === 'stderr' && line.endsWith(`listen EADDRINUSE: address already in use 127.0.0.1:${port}`)) portInUse = true;
+      },
+    });
+    try {
+      await waitForServerReady(url, { childProcess: processChild, signal, canProbe: () => bound,
+        timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : Infinity, continueWhileChildAlive: false });
+      return { url, processChild };
+    } catch (error) {
+      if (processChild.exitCode == null) throw error;
+      await processChild.completion;
+      if (signal.aborted || bound || !portInUse) throw error;
+      nextPort = port + 1;
+    }
   }
 }
 
@@ -137,45 +157,6 @@ async function startScratchPostgres({ dir }) {
       await db.close();
     },
   };
-}
-
-async function serveSourceWebArtifactForSmoke({ ui, env, signal }) {
-  const root = resolve(ui.uiDir);
-  const entrypoint = ui.entrypoint ?? 'index.html';
-  const server = createServer(async (request, response) => {
-    try {
-      const pathname = decodeURIComponent(new URL(request.url ?? '/', 'http://127.0.0.1').pathname);
-      const requested = pathname === '/' ? entrypoint : pathname.replace(/^\/+/, '');
-      const file = resolve(root, requested);
-      const fromRoot = relative(root, file);
-      if (fromRoot === '..' || fromRoot.startsWith(`..${sep}`)) {
-        response.writeHead(403).end();
-        return;
-      }
-      const body = await readFile(file);
-      const contentType = new Map([
-        ['.css', 'text/css'], ['.html', 'text/html'], ['.js', 'text/javascript'],
-        ['.json', 'application/json'], ['.svg', 'image/svg+xml'], ['.wasm', 'application/wasm'],
-      ]).get(extname(file));
-      if (contentType) response.setHeader('content-type', contentType);
-      response.end(body);
-    } catch {
-      response.writeHead(404).end();
-    }
-  });
-  const cancel = () => server.close();
-  signal?.addEventListener('abort', cancel, { once: true });
-  try {
-    const port = await pickNextFreeTcpPort(40_000);
-    await new Promise((resolveReady, reject) => {
-      server.once('error', reject);
-      server.listen(port, '127.0.0.1', resolveReady);
-    });
-    await smokeSourceWebBoot({ repoDir: env.HAPPIER_STACK_REPO_DIR, url: `http://127.0.0.1:${port}`, env, signal });
-  } finally {
-    signal?.removeEventListener('abort', cancel);
-    await new Promise(resolveClosed => server.close(resolveClosed));
-  }
 }
 
 /** With `observeApiOrigin`, also returns the origin the loaded QA URL names for its server (its `server` parameter,
