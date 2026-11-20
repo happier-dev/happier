@@ -2881,6 +2881,7 @@ export async function startDaemon(
       resolveManagedPurposeBindingIntent:
         connectedAccountPurposeBindingRuntime.resolveBindingIntent,
       resolveManagedPurposeBindingIntentSelection: connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
+      prepareConnectedAccountOperationSelection: connectedAccountPurposeBindingRuntime.owner.prepareOperationSelection,
       projectProviderModels: async (request, signal, context) => {
         const producer = providerOperationsProducer;
         if (!producer) throw new Error('provider_source_projection_unavailable');

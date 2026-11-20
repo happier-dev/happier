@@ -4463,8 +4463,11 @@ cross that seam; raw remote URLs and credentials do not. Missing repository fact
 a detached branch when inherited, or an unsupported managed Source refuse before
 destination cloning. An explicit repository or branch keeps its selected value.
 Enrolled and native destinations consume the same concrete resolution before
-materialization and Git Account credential selection; SCM’s host-side
-`repositoryTransport` remains the credential owner. Private Source facts are read
+materialization and Git Account credential selection. For a managed clone, the
+controller uses the existing finite operation binding from the requester Session
+runtime or its own Account when it is the requester. Missing custody returns
+`project_files_connected_account_selection_unavailable` before cloning. SCM’s
+host-side `repositoryTransport` remains the credential owner. Private Source facts are read
 in the captured requester checkout child; its finite result never causes a
 controller traversal. An unchanged creation-key retry reuses its authenticated
 retained repository and branch without reopening Source or cloning again. Explicit

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { resolveSpawnTerminalPresentationHost } from '@/daemon/platform/windows/windowsSessionConsoleMode';
 import type { OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
@@ -243,6 +244,7 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     connectedAccountRequestAuthHttpPort?: number;
     resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    prepareConnectedAccountOperationSelection?: ConnectedAccountPurposeBindingOwner['prepareOperationSelection'];
     managedProviderAccountAuthority?: import('@/plugins/runtime/providerBindings/runtimeTypes').ManagedProviderInvocationAccountAuthority | null;
     activateSessionPurposeBindings?: ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
     activatePurposeBindings?: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
@@ -306,7 +308,8 @@ export async function executeSpawnSessionRequest(
             activatePurposeBindings: requesterRuntime.activatePurposeBindings };
     }
     const requesterAttribution = options.requesterSessionBootstrap?.attribution ?? options.requesterWorkAttributionV1;
-    const requesterAccountId = requesterAttribution?.accountId ?? readAccountIdFromToken(params.credentials.token) ?? null;
+    const credentialAccountId = readAccountIdFromToken(params.credentials.token);
+    const requesterAccountId = requesterAttribution?.accountId ?? credentialAccountId;
     const requesterAdmissionFailure = await resolveRequesterLaunchAdmissionFailure(options);
     if (requesterAdmissionFailure) {
         const detail = requesterAdmissionFailure.errorDetail;
@@ -1526,28 +1529,26 @@ export async function executeSpawnSessionRequest(
             if (sessionTarget && effectiveOptionsForSpawn.managedTargetPlacement) {
                 // The launch step: this Session's own Agent material and CLI into the target, then the placement to the runner.
                 try {
-                    const prepareCloneAccountSelection =
-                        requesterRuntime?.connectedAccountsOwner
-                            .prepareOperationSelection;
-                    if (
-                        projectFilesGitAccount
-                        && projectFilesScmAuthorization
-                        && !prepareCloneAccountSelection
-                    ) {
-                        throw new Error(
-                            'project_files_connected_account_selection_unavailable',
-                        );
-                    }
-                    const cloneAccountSelection = projectFilesGitAccount
-                        && projectFilesScmAuthorization
-                        && prepareCloneAccountSelection
-                        ? await prepareCloneAccountSelection({
+                    let cloneAccountSelection: Awaited<ReturnType<ConnectedAccountPurposeBindingOwner['prepareOperationSelection']>> | undefined;
+                    if (projectFilesGitAccount && projectFilesScmAuthorization) {
+                        const prepareCloneAccountSelection = requesterRuntime
+                            ? requesterRuntime.connectedAccountsOwner.prepareOperationSelection
+                            : requesterAccountId === credentialAccountId
+                                ? params.prepareConnectedAccountOperationSelection : undefined;
+                        if (!prepareCloneAccountSelection) {
+                            throw new PluginError({
+                                code: 'project_files_connected_account_selection_unavailable',
+                                message: 'The selected Git account is unavailable for this Project checkout',
+                                retryable: false,
+                            });
+                        }
+                        cloneAccountSelection = await prepareCloneAccountSelection({
                             ...projectFilesScmAuthorization,
                             account: projectFilesGitAccount,
                             operationId: sessionTarget.sessionKey,
                             signal: sessionTarget.signal,
-                        })
-                        : undefined;
+                        });
+                    }
                     try {
                     const committedRecipe = launchSessionAttachPayload?.snapshot?.ownerMetadata?.system?.sessionCreationCorrespondenceV1?.recipe;
                     const retainedOrigin = committedRecipe?.projectFilesOrigin;

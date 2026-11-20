@@ -4,6 +4,7 @@ import { z } from 'zod/mini';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { ManagedSessionTarget, ManagedSessionTargetRequest } from '@/machines/managed/acquire';
 
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
@@ -3029,7 +3030,7 @@ describe('executeSpawnSessionRequest', () => {
     }));
   });
 
-  it('binds the retained enrolled Git account from the Session recipe without a native target placement', async () => {
+  it.each(['enrolled', 'managed', 'missing managed owner', 'foreign managed requester'] as const)('binds the Git account from the retained Session recipe for %s', async placement => {
     const hostingProvider = (GITHUB_PLUGIN_MANIFEST.contributes.scmHostingProviders ?? [])[0]!;
     const gitAccount = {
       service: {
@@ -3066,6 +3067,8 @@ describe('executeSpawnSessionRequest', () => {
         env: Object.fromEntries(request.keys.map(key => [key, `token:${account.accountId}`])),
       };
     });
+    const resolveTarget: ConnectedAccountPurposeBindingOwnerDependencies['resolveTarget'] = vi.fn(async target =>
+      target.kind === 'account' ? { displayName: target.account.accountId, account: target.account } : null);
     const purposeBindingOwner = createConnectedAccountPurposeBindingOwner({
       store: {
         read: async () => durableBindings,
@@ -3078,9 +3081,7 @@ describe('executeSpawnSessionRequest', () => {
       selectTarget: async () => {
         throw new Error('The Session recipe supplies the explicit Git account');
       },
-      resolveTarget: async target => target.kind === 'account'
-        ? { displayName: target.account.accountId, account: target.account }
-        : null,
+      resolveTarget,
       materializeAccount,
       projectTargetAccounts: async () => {
         throw new Error('The selected Git account does not need a list operation');
@@ -3207,23 +3208,69 @@ describe('executeSpawnSessionRequest', () => {
       };
     });
 
-    await expect(executeSpawnSessionRequest({
+    const managed = placement !== 'enrolled';
+    const ownerAccountId = 'host-account';
+    const hostToken = `header.${Buffer.from(JSON.stringify({ sub: ownerAccountId })).toString('base64url')}.signature`;
+    // A new guest workspace needs a clone. Stop at the native clone-parent
+    // boundary, after the production spawn and SCM dispatch select its account.
+    const nativeExec: ManagedSessionTarget['exec'] = vi.fn(async command => {
+      if (command.startsWith('if [ -L ')) return { status: 0, stdout: 'copy', stderr: '' };
+      expect(command).toContain('mkdir -p');
+      return { status: 1, stdout: '', stderr: '' };
+    });
+    const result = await executeSpawnSessionRequest({
       ...createParams(),
+      ...(managed ? {
+        credentials: { ...createParams().credentials, token: hostToken },
+        openManagedSessionTarget: async ({ lifetime }: ManagedSessionTargetRequest): Promise<ManagedSessionTarget> => ({
+          id: 'managed:guest',
+          lifetime,
+          holderPath: '/guest/holder',
+          helperPath: '/guest/helper',
+          socketDirectory: '/guest/run',
+          home: '/guest',
+          platform: { os: 'linux' as const, arch: 'x64' as const, home: '/guest' },
+          exec: nativeExec,
+          putFile: async () => undefined,
+          ensureWorkspaceRuntime: async () => ({ binaryPath: '/guest/happier' }),
+          openChannel: () => { throw new Error('The test stops at the native clone-parent boundary'); },
+        }),
+        ...(placement === 'missing managed owner' ? {} : {
+          prepareConnectedAccountOperationSelection: purposeBindingOwner.prepareOperationSelection,
+        }),
+      } : {}),
       options: {
         ...createParams().options,
         existingSessionId: 'enrolled-session-1',
         resume: undefined,
+        ...(managed ? { managedTargetPlacement: { managedId: 'guest', workspaceRoot: '/guest/project' } } : {}),
+        ...(placement === 'foreign managed requester' ? { requesterWorkAttributionV1: {
+          serverId: 'fixture-home', machineId: 'fixture-machine', installationId: 'fixture-installation',
+          accountId: 'other-account',
+        } } : {}),
       },
       resolveManagedPurposeBindingIntentSelection:
         purposeBindingOwner.resolveBindingIntentSelection,
       activateSessionPurposeBindings:
         purposeBindingOwner.activateSessionPurposeBindings,
-    })).resolves.toEqual({
+    });
+    if (managed) {
+      expect(result).toMatchObject({ type: 'error', errorDetail: { kind: 'launch_error',
+        code: placement === 'managed' ? 'workspace_source_operation_unavailable'
+          : 'project_files_connected_account_selection_unavailable',
+      } });
+      expect(nativeExec).toHaveBeenCalledTimes(placement === 'managed' ? 2 : 0);
+      if (placement === 'managed') {
+        expect(resolveTarget).toHaveBeenLastCalledWith(
+          { kind: 'account', account: gitAccount }, expect.anything());
+      }
+      return;
+    }
+    expect(result).toEqual({
       type: 'error',
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       errorMessage: 'fixture launch refusal',
     });
-
   });
 
   // The legacy service-keyed request-auth certificate is host-private and
@@ -3855,6 +3902,7 @@ describe('executeSpawnSessionRequest', () => {
         archived: true,
       }));
     });
+
   });
 
   it('propagates canonicalized connected-service group bindings into the spawn environment and tracked state', async () => {

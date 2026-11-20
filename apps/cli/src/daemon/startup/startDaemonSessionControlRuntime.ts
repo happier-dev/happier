@@ -1406,6 +1406,7 @@ export async function startDaemonSessionControlRuntime(
       typeof executeSpawnSessionRequest
     >[0]['resolveManagedPurposeBindingIntent'];
     resolveManagedPurposeBindingIntentSelection?: import('@/providers/modelManagement/connectedAccountCatalog').ResolveManagedProviderPurposeBindingIntentSelection;
+    prepareConnectedAccountOperationSelection?: ConnectedAccountPurposeBindingOwner['prepareOperationSelection'];
     activateSessionPurposeBindings?: Parameters<
       typeof executeSpawnSessionRequest
     >[0]['activateSessionPurposeBindings'];
@@ -4583,6 +4584,7 @@ export async function startDaemonSessionControlRuntime(
                     }
                   : {}),
                 ...(spawnParams.resolveManagedPurposeBindingIntentSelection ? { resolveManagedPurposeBindingIntentSelection: spawnParams.resolveManagedPurposeBindingIntentSelection } : {}),
+                prepareConnectedAccountOperationSelection: spawnParams.prepareConnectedAccountOperationSelection,
                 managedProviderAccountAuthority: spawnParams.managedProviderAccountAuthority,
                 ...(spawnParams.activateSessionPurposeBindings
                   ? {
