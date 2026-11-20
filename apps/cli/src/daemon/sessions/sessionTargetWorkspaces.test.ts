@@ -91,43 +91,51 @@ describe.skipIf(process.platform !== 'linux' || !holderExecutable || !helperExec
         expect(opened).toBe(2);
     });
 
-    it('F2: overlapping managed workspace requests reuse one holder and the last release closes it', async () => {
+    it('reuses the holder while demanded and replaces a dropped channel only on the next request', async () => {
         const lifetime = new AbortController();
         const workspace = {
             v: 2 as const, kind: 'managed' as const, workspaceId: 'managed-project', managedId: 'row-2', serverId: 'home',
             controller: { machineId: 'machine', installationId: 'install' }, rootPath: guestRoot,
         };
         const exits: Promise<number | null>[] = [];
-        let openChannels = 0;
+        const channels: Duplex[] = [];
         try {
             registerManagedWorkspaceTarget({ workspace, requesterAccountId: 'owner', target: {
                 lifetime: lifetime.signal, holderPath: holderExecutable!, helperPath: helperExecutable!,
                 openChannel(argv) {
-                    openChannels += 1;
                     const child = spawn(argv[0]!, argv.slice(1), { stdio: ['pipe', 'pipe', 'ignore'] });
                     exits.push(new Promise((resolve, reject) => {
                         child.once('error', reject);
                         child.once('exit', resolve);
                     }));
-                    return Duplex.from({ readable: child.stdout!, writable: child.stdin! });
+                    const channel = Duplex.from({ readable: child.stdout!, writable: child.stdin! });
+                    channels.push(channel);
+                    return channel;
                 },
             } });
-            expect(openChannels).toBe(0);
+            expect(channels).toHaveLength(0);
             const source = resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner' });
             expect(source?.kind).toBe('target');
             expect(resolveSessionTargetWorkspace({ requesterAccountId: 'owner', workspace: { ...workspace, controller: { ...workspace.controller,
                 installationId: 'other-install' } } })).toBeNull();
             expect(resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner', sessionId: 'unrelated-session' })).toBeNull();
-            expect(openChannels).toBe(0);
+            expect(channels).toHaveLength(0);
 
             const request = () => runWithWorkspaceSourceDemand(source!, () => source!.readFile(join(guestRoot, 'a.txt')));
             const content = Buffer.from('in the target\n');
             await expect(Promise.all([request(), request(), request()])).resolves.toEqual([content, content, content]);
-            expect(openChannels).toBe(1);
+            expect(channels).toHaveLength(1);
             await expect(exits[0]).resolves.toBe(0);
-            await expect(request()).resolves.toEqual(content);
-            expect(openChannels).toBe(2);
-            await expect(exits[1]).resolves.toBe(0);
+            await runWithWorkspaceSourceDemand(source!, async () => {
+                await expect(request()).resolves.toEqual(content);
+                expect(channels).toHaveLength(2);
+                channels[1]!.end();
+                await expect(exits[1]).resolves.toBe(0);
+                expect(channels).toHaveLength(2);
+                await expect(Promise.all([request(), request()])).resolves.toEqual([content, content]);
+                expect(channels).toHaveLength(3);
+            });
+            await expect(exits[2]).resolves.toBe(0);
             lifetime.abort();
             expect(resolveSessionTargetWorkspace({ workspace, requesterAccountId: 'owner' })).toBeNull();
         } finally { lifetime.abort(); }
