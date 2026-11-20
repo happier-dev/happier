@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import type {
   SessionSystemRecordReadRequestV1,
@@ -392,6 +392,10 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
   });
 
   it('retries headline publishing after a metadata write failure without advancing from tracker input', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS', '500');
+    vi.stubEnv('HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS', '0');
+    onTestFinished(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
     const systemRecordCalls: SystemRecordCall[] = [];
     let metadata: Record<string, unknown> = {};
     let headlineAttempts = 0;
@@ -419,10 +423,13 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
       workflowProgress: TWO_AGENT_PROGRESS,
     }));
 
-    await waitForCondition(() => headlineAttempts === 1);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(headlineAttempts).toBe(1);
     expect(metadata.sessionWorkflowActivityHeadlineV1).toBeUndefined();
 
     await runtime.flush();
+    expect(headlineAttempts).toBe(1);
+    await vi.advanceTimersByTimeAsync(500);
 
     const headline = metadata.sessionWorkflowActivityHeadlineV1 as
       | { activeRuns: Array<{ runId: string; recordRevision: string }> }
@@ -719,6 +726,10 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
   );
 
   it('contains a failed startup metadata flush and retries the stale-run reconciliation', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS', '500');
+    vi.stubEnv('HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS', '0');
+    onTestFinished(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
     let metadataAttempts = 0;
     let metadata: Record<string, unknown> = {};
     const loggedErrors: Array<{ message: string; error: unknown }> = [];
@@ -765,8 +776,10 @@ describe('createClaudeUnifiedWorkflowRuntime live bind', () => {
     });
 
     try {
-      await waitForCondition(() => metadataAttempts >= 2);
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(metadataAttempts).toBe(1);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(metadataAttempts).toBe(2);
 
       expect(unhandled).toEqual([]);
       expect(loggedErrors).toContainEqual({
