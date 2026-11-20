@@ -59,7 +59,6 @@ const presetControlFields: ActionInputFieldHint[] = [
 
 export const MACHINE_PRESET_INPUT_FIELDS = {
   'machines.presets.list': [home, owner,
-    { path: 'search', title: 'Search', widget: 'text' },
     { path: 'includeArchived', title: 'Include archived presets', widget: 'boolean' },
     { path: 'cursor', title: 'Page cursor', widget: 'text' }],
   'machines.presets.get': [home, preset],

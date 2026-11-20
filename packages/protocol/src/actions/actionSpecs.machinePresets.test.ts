@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MACHINE_PRESET_HTTP_ACTION_IDS_V1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '../machines/managed/machinePresetActionsV1.js';
 import { ACTION_IDS } from './actionIds.js';
+import { actionSpecToActionDefinitionV1 } from './actionCatalog.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { resolveApprovalRequestApproveAdmission } from './actionApprovalPresentation.js';
 import { createActionExecutor } from './actionExecutor.js';
@@ -8,6 +9,17 @@ import type { ApprovalRequestV2 } from '../approvals/approvalRequestV1.js';
 import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, listActionCliCommandDeclarations, listVoiceToolActionSpecs, PLUGIN_INVOCABLE_ACTION_IDS, PUBLIC_ACTION_IDS } from './actionSpecs.js';
 
 describe('personal and Team Machine preset Actions', () => {
+  it('advertises the Team filter accepted by the preset list Action', () => {
+    const spec = getActionSpec('machines.presets.list');
+    const definition = actionSpecToActionDefinitionV1(spec, { surface: 'agent' });
+    const fields = definition.inputHints?.fields.map(field => field.path);
+    expect(fields).toContain('sharedWithTeamId');
+    expect(fields).not.toContain('search');
+    expect(spec.inputSchema.parse({ homeId: 'home', sharedWithTeamId: 'team' })).toEqual({
+      homeId: 'home', sharedWithTeamId: 'team',
+    });
+  });
+
   it('delegates private preset content only to the admitted native Archive host', () => {
     const request = { actionId: 'machines.presets.archive', input: { homeId: 'home', id: 'preset', expectedRevision: 1 } };
     expect(doesExternalActionConsumeRequesterAccountContentV1(request)).toBe(false);
