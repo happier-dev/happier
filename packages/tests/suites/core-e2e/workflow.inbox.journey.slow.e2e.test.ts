@@ -1,14 +1,22 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import axios from 'axios';
+import { DeploymentActionOutputSchemasV1, MachineServicesListResultV1Schema } from '@happier-dev/protocol';
+import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { createCredentialedAccountArtifactStore } from '../../../../apps/cli/src/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
+import { createOwnServerDockerBoundary } from '../../../../apps/cli/src/deployments/targets/ownServer/ownServerDeployment.testkit';
 import { seedCurrentLocalPathPluginFixture } from '../../../../apps/cli/src/plugins/store/registry/currentState.testkit';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ActionApprovalRequestCreatedResultSchema, projectExternalActionExecutionResultV1, type ActionExecuteResult } from '@happier-dev/protocol/actions';
 import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
+import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ACCOUNT_NOTICE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema,
   WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -71,6 +79,116 @@ it('J7 Notify me removes a failed sender from real option discovery after attemp
     expect(await readFile(marker, 'utf8')).toBe('activated\n');
     expect(await options()).toMatchObject({ options: expect.not.arrayContaining([expect.objectContaining({ value: channelId })]) });
   } finally { await ui.close(); }
+});
+
+it('J7 a stopped native service produces a mounted Inbox notice with working Restart and Dismiss', async () => {
+  if (!fixture) throw new Error('Inbox journey Home did not start');
+  const actor = await fixture.createAccount('native-notice-owner');
+  await fixture.claimHomeOwner(actor);
+  const toolsDir = run.testDir('native-service-tools');
+  // Docker is the external process boundary. Deployment admission, retained
+  // service identity, health observation, notices and recovery Actions are real.
+  const docker = await createOwnServerDockerBoundary(toolsDir);
+  const machine = await fixture.enrollDaemon(actor, { env: { ...process.env,
+    PATH: `${toolsDir}${delimiter}${process.env.PATH ?? ''}` } });
+  const call = (actionId: ActionId, input: unknown) => actor.execute(actionId, input, {
+    presentUserConfirmation: { actionId }, externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
+  });
+  const settle = async (result: ActionExecuteResult) => {
+    if (!result.ok) throw new Error(result.errorCode);
+    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
+    if (!approval.success) return result.result;
+    const decision = await call('approval.request.decide', { artifactId: approval.data.artifactId, decision: 'approve' });
+    if (!decision.ok) throw new Error(decision.errorCode);
+    const settlement = decision.result;
+    const execution = settlement && typeof settlement === 'object' && 'execution' in settlement
+      ? projectExternalActionExecutionResultV1(settlement.execution) : null;
+    if (!execution) throw new Error('Native service approval did not return a settled execution');
+    if (!execution.ok) throw new Error(execution.errorCode);
+    return execution.result;
+  };
+  const invoke = async (actionId: ActionId, input: unknown) => settle(await call(actionId, input));
+  const source = ProjectSourcesReadOutputV1Schema.parse(await invoke('projects.sources.create', {
+    serverId: fixture.serverId, name: 'Native Inbox service', requestKey: randomUUID(),
+  }));
+  if (!source.ok) throw new Error(source.error);
+  const image = await docker.registerImage('app', 'inbox-native-service');
+  const document = JSON.stringify({ services: { app: { image: image.registryReference } } });
+  const content = DeploymentEnvironmentContentV1Schema.parse({ name: 'Native Inbox service', retainPreviousDeployments: 1,
+    definition: { kind: 'stored', document, contentRevision: 1,
+      composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`, profiles: [], services: ['app'] },
+    bindings: [], ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } });
+  const store = runWithServerHttpBaseUrl(fixture.server.baseUrl, () => createCredentialedAccountArtifactStore(actor.credentials));
+  const artifact = async (kind: typeof DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 | typeof DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, body: string) => {
+    const created = await runWithServerHttpBaseUrl(fixture!.server.baseUrl,
+      () => store.create({ header: { kind, title: content.name }, body }));
+    return { contentArtifactId: created.artifactId, contentHeaderVersion: created.revision.headerVersion,
+      contentBodyVersion: created.revision.bodyVersion };
+  };
+  const environment = DeploymentActionOutputSchemasV1['deployments.environments.create'].parse(await invoke('deployments.environments.create', {
+    serverId: fixture.serverId, projectSourceId: source.source.id, requestKey: randomUUID(),
+    protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+    controllerMachineId: machine.target.machineId, buildMachineId: machine.target.machineId,
+    ...await artifact(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, JSON.stringify(content)),
+  }));
+  if (!('ok' in environment) || !environment.ok) throw new Error('Environment creation did not persist');
+  const identity = MachineInstallationIdentityV1Schema.parse(JSON.parse(await readFile(join(machine.homeDir, 'installation-identity.json'), 'utf8')));
+  const target = DeploymentActionOutputSchemasV1['deployments.targets.link'].parse(await invoke('deployments.targets.link', {
+    serverId: fixture.serverId, environmentId: environment.environmentId, expectedRevision: environment.revision,
+    requestKey: randomUUID(), targetId: 'own-server', role: 'runtime',
+    machines: [{ machineId: machine.target.machineId, installationId: identity.installationId }],
+    ...await artifact(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, '{}'),
+  }));
+  if (!target.ok) throw new Error(target.error);
+  const deployed = DeploymentActionOutputSchemasV1['deployments.deploy'].parse(await invoke('deployments.deploy', {
+    serverId: fixture.serverId, environmentId: environment.environmentId, targetLinkId: target.targetLinkId,
+  }));
+  expect(deployed.ok).toBe(true);
+  const services = async () => {
+    const value = MachineServicesListResultV1Schema.parse(await invoke('machines.services.list', {
+      serverId: fixture!.serverId, machineId: machine.target.machineId, environmentId: environment.environmentId,
+    }));
+    if (value.kind !== 'snapshot') throw new Error(`Native service inventory unavailable: ${value.reason}`);
+    return value.services;
+  };
+  await waitFor(async () => (await services()).some(service => service.native?.phase === 'running'),
+    { context: 'Real deployment reaches a running native service' });
+  const running = (await services()).find(service => service.native?.phase === 'running');
+  expect(running?.generation).toBeTruthy();
+  const ui = await connectUiPersonActionClient({ serverUrl: fixture.actionServerApiUrl, accountSecret: actor.auth.accountSigningSeed });
+  let inbox: Awaited<ReturnType<typeof mountUiInboxJourney>> | undefined;
+  try {
+    inbox = await mountUiInboxJourney();
+    const notice = () => inbox?.getCurrent()?.openAccountNotices.find(entry => entry.header.source.kind === 'host'
+      && entry.header.source.topic === 'service_health' && entry.header.source.subject.kind === 'deployment'
+      && entry.header.source.subject.environmentId === environment.environmentId);
+    await docker.stopCurrentContainers();
+    await waitFor(async () => (await services()).some(service => service.serviceId === running!.serviceId && service.native?.phase === 'stopped'),
+      { context: 'Native stop is observed by the canonical service owner' });
+    await waitFor(() => notice() !== undefined, { context: 'Service failure arrives in mounted Inbox through real sync' });
+    const entry = notice()!;
+    const model = inbox.getCurrent()!;
+    const choice = model.noticeInvestigation.readRecoveryChoices(entry).findIndex(item => item.actionId === 'deployments.restart');
+    expect(choice).toBeGreaterThanOrEqual(0);
+    const restarted = await model.noticeInvestigation.runRecoveryChoice(entry, choice, {
+      externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
+    });
+    await settle(restarted);
+    await waitFor(async () => (await services()).some(service => service.serviceId === running!.serviceId
+      && service.generation === running!.generation && service.native?.phase === 'running'),
+    { context: 'Inbox Restart restores the same native generation' });
+    // Produce another real failure so Dismiss always acts on an open notice.
+    await docker.stopCurrentContainers();
+    await waitFor(async () => (await services()).some(service => service.serviceId === running!.serviceId && service.native?.phase === 'stopped'),
+      { context: 'Second native stop is observed' });
+    await waitFor(() => notice() !== undefined, { context: 'Open service notice is available to dismiss' });
+    const dismissed = notice()!;
+    await inbox.getCurrent()!.dismissAccountNotice(dismissed);
+    await waitFor(() => inbox?.getCurrent()?.openAccountNotices.some(item => item.artifact.id === dismissed.artifact.id) === false,
+      { context: 'Dismiss removes the exact service notice from the mounted Inbox' });
+    const persisted = ArtifactActionOutputSchemasV1['artifact.get'].parse(await invoke('artifact.get', { artifactId: dismissed.artifact.id }));
+    expect(persisted.artifact?.header).toMatchObject({ status: 'dismissed' });
+  } finally { try { await inbox?.unmount(); } finally { await ui.close(); } }
 });
 
 it('J7 headless inbox.get reads the persisted notice index once and opens selected bodies in one batch', async () => {
