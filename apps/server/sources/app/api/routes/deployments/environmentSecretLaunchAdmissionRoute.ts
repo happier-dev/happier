@@ -1,4 +1,6 @@
 import { z } from 'zod/mini';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { warn } from '@/utils/logging/log';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -10,6 +12,14 @@ import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { readDeploymentExecutionBindingFromRequest } from '@/app/deployments/deploymentAcceptedExecution';
 import type { Fastify } from '../../types';
 import { PresentUserRequiredResponseSchema } from '../../utils/requirePresentUser';
+
+function warnDataRoleRefusal(value: unknown, requestId: string): void {
+    const diagnostic = readActionOutputDiagnostic(value);
+    if (diagnostic?.phase?.startsWith('deployment.secret_launch.data_role.')) {
+        try { warn({ phase: diagnostic.phase, reason: diagnostic.causeKind, requestId }); }
+        catch { /* Logging cannot replace the original refusal. */ }
+    }
+}
 
 /** Host-private installed delivery and Account manager preparation, excluded from ordinary bindings/list. */
 export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): void {
@@ -45,6 +55,7 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
         // Authentication already verified the exact native or generic child
         // purpose. A caller-authored header is not an admitted child result.
         const binding = readDeploymentExecutionBindingFromRequest(request);
+        const requestId = request.externalActionExecutionRequestId ?? request.id;
         const native = binding?.deploymentNativeAdmission;
         const readAdmission = binding?.deploymentReadAdmission;
         const admittedDataQuery = readAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
@@ -55,8 +66,10 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
             && !(request.externalActionReviewedChildAdmission?.actionId === 'deployments.bindings.set'
                 && request.externalActionReviewedChildAdmission.environmentId === request.params.environmentId)) {
             const dataRole = !request.validationError && !('kind' in request.body) && request.body.materialization.kind === 'dataRole';
-            return reply.code(403).send(deploymentFailure('deployment_access_denied', dataRole
-                ? { phase: 'deployment.secret_launch.data_role.api_token_admission', causeKind: 'binding_missing' } : undefined));
+            const refusal = deploymentFailure('deployment_access_denied', dataRole
+                ? { phase: 'deployment.secret_launch.data_role.api_token_admission', causeKind: 'binding_missing' } : undefined);
+            if (dataRole) warnDataRoleRefusal(refusal, requestId);
+            return reply.code(403).send(refusal);
         }
         if (request.validationError || request.params.environmentId !== request.body.environmentId) {
             return reply.code(400).send({ ok: false, error: 'deployment_invalid' });
@@ -78,6 +91,7 @@ export function registerEnvironmentSecretLaunchAdmissionRoute(app: Fastify): voi
                 return reply.code(403).send({ ok: false, error: 'deployment_access_denied' });
             }
         }
+        if (!value.ok) warnDataRoleRefusal(value, requestId);
         const status = value.ok ? 200 : value.error === 'deployment_access_denied' ? 403
             : value.error === 'deployment_conflict' ? 409 : value.error === 'deployment_invalid' ? 400 : 404;
         return reply.code(status).send(value);

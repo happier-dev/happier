@@ -1008,12 +1008,14 @@ describe('private installed Environment secret launch transport', () => {
             const wrongProof = request({}, authorization, otherActor);
             const warn = vi.spyOn(serverLog, 'warn');
             try {
-                const refused = await app.inject(wrongProof);
+                const refused = await app.inject({ ...wrongProof, headers: { ...wrongProof.headers,
+                    'x-request-id': 'untrusted-request-header' } });
                 expect(refused.statusCode).toBe(403);
                 expect(refused.json()).toEqual({ ok: false, error: 'deployment_access_denied' });
-                expect(warn).toHaveBeenCalledWith({ phase: 'deployment.secret_launch.data_role.installation_proof',
-                    reason: 'access_denied' });
+                expect(warn.mock.calls).toContainEqual([{ phase: 'deployment.secret_launch.data_role.installation_proof',
+                    reason: 'access_denied', requestId: authorization.binding.requestId }]);
                 const warnings = JSON.stringify(warn.mock.calls);
+                expect(warnings).not.toContain('untrusted-request-header');
                 expect(warnings).not.toContain(otherActor);
                 expect(warnings).not.toContain(wrongProof.payload.proof.signature);
                 expect(warnings).not.toContain(f.grant.sealedContent);
