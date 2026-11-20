@@ -113,6 +113,8 @@ import {
 import {
   SessionCreationCorrespondenceConflictError,
 } from './session/sessionCreationCorrespondenceConflictError';
+import { readSessionCreationTerminalSpawnErrorDetail } from './session/sessionCreationTerminalSpawnErrorDetail';
+import { SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import { transformSessionInputThroughPluginHooks } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
 import { publishSessionFollowWakeInvalidation } from '@/agent/runtime/session/follow/sessionFollowWakeSignal';
 import {
@@ -914,7 +916,8 @@ export class ApiClient {
         if (opts.signal?.aborted) {
           throw unresolvedCreationError ?? opts.signal.reason ?? error;
         }
-        if (error instanceof SessionCreationCorrespondenceConflictError) {
+        if (error instanceof SessionCreationCorrespondenceConflictError
+          || readSessionCreationTerminalSpawnErrorDetail(error)?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY) {
           throw error;
         }
         const upgradeRequired = readCliClientUpgradeRequired(error);

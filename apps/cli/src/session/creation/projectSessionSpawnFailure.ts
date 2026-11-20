@@ -1,5 +1,5 @@
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
-import { isConnectedServiceResumeUnreachableSpawnErrorDetail, isConnectedServiceUxDiagnosticSpawnErrorDetail, normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
+import { isConnectedServiceResumeUnreachableSpawnErrorDetail, isConnectedServiceUxDiagnosticSpawnErrorDetail, normalizeSpawnSessionErrorDetail, SessionCreationTerminalSpawnErrorDetailSchema, SessionSpawnLaunchErrorV1Schema, SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readSessionPreparationFailureCode, readSessionRuntimeFailureCause, readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
@@ -19,6 +19,11 @@ export function projectSessionSpawnFailure(input: Readonly<{
 }>): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
   const normalized = normalizeSpawnSessionNonceResolution({ status: 'error', ...input });
   const creationFailure = SessionCreationTerminalSpawnErrorDetailSchema.safeParse(input.errorDetail);
+  if (creationFailure.success && creationFailure.data.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY) {
+    return { type: 'error', code: 'spawn_failed', retryable: true,
+      launchError: { kind: 'launch_error', code: creationFailure.data.code,
+        message: 'The shared sandbox already has a Session. Retry to acquire an available sandbox.' } };
+  }
   if (creationFailure.success && creationFailure.data.kind === 'session_creation_currentness_unavailable') {
     const { kind: _kind, code, ...currentnessFailure } = creationFailure.data;
     return { type: 'error', code: 'spawn_failed', retryable: currentnessFailure.retryable,

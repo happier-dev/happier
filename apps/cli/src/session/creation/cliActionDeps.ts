@@ -1440,6 +1440,11 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         if (initialTriggerRefusal?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED) {
           return { type: 'error', code: initialTriggerRefusal.code === 'feature_disabled' ? 'target_unavailable' : initialTriggerRefusal.code, retryable: false };
         }
+        const busy = spawnErrorDetails.find(detail => detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY);
+        if (busy) {
+          return projectSessionSpawnFailure({ errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+            errorMessage: readRecord(error).message, errorDetail: busy });
+        }
         const initialAccessFailure = projectSessionInitialAccessEnvelopeHostErrorResult(error);
         if (initialAccessFailure) return initialAccessFailure;
         const code = error && typeof error === 'object'

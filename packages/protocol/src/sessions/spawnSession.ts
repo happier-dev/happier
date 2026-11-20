@@ -150,6 +150,7 @@ export const SPAWN_SESSION_ERROR_DETAIL_KINDS = {
    * placement and must terminate the losing creation attempt.
    */
   SESSION_CREATION_CORRESPONDENCE_CONFLICT: 'session_creation_correspondence_conflict',
+  SESSION_CREATION_MANAGED_TARGET_BUSY: 'session_creation_managed_target_busy',
   /**
    * The Home's typed no-effect refusal of access-bearing creation (for example
    * Session sharing off). It carries the protocol-owned Session-access code only.
@@ -219,6 +220,8 @@ export type SessionCreationCorrespondenceConflictSpawnErrorDetail = z.infer<
   typeof SessionCreationCorrespondenceConflictSpawnErrorDetailSchema
 >;
 
+export const SESSION_MANAGED_TARGET_BUSY_CODE = 'session-managed-target-busy';
+
 /**
  * Safe terminal result emitted when the Home's atomic create refused the
  * requested initial access with a protocol-owned Session-access code.
@@ -240,6 +243,10 @@ export const SessionCreationTerminalSpawnErrorDetailSchema = lazyZodSchema(() =>
   }),
   SessionCreationOrganizationInvalidSpawnErrorDetailSchema,
   SessionCreationCorrespondenceConflictSpawnErrorDetailSchema,
+  z.strictObject({
+    kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY),
+    code: z.literal(SESSION_MANAGED_TARGET_BUSY_CODE),
+  }),
   SessionCreationAccessRefusedSpawnErrorDetailSchema,
   z.strictObject({
     kind: z.literal(SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_INITIAL_TRIGGER_REFUSED),

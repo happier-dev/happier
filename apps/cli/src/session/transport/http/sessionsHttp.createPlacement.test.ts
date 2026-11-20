@@ -32,7 +32,7 @@ describe('getOrCreateSessionByTag creation placement transport', () => {
     vi.doUnmock('@/api/session/resolveSessionCreateEncryptionMode');
   });
 
-  it.each(['resolved', 'rejected'] as const)('preserves a busy managed target as the existing creation conflict (%s)', async delivery => {
+  it.each(['resolved', 'rejected'] as const)('preserves confirmed managed birth contention (%s)', async delivery => {
     const response = { status: 409, data: { error: 'session-managed-target-busy' } };
     const post = vi.spyOn(axios, 'post');
     if (delivery === 'resolved') post.mockResolvedValueOnce(response);
@@ -41,8 +41,8 @@ describe('getOrCreateSessionByTag creation placement transport', () => {
     const { readSessionCreationTerminalSpawnErrorDetail } = await import('@/api/session/sessionCreationTerminalSpawnErrorDetail');
     const error = await postSessionCreationRequest({ serverUrl: 'https://server.example.test', token: 'synthetic', body: {} })
       .catch((cause: unknown) => cause);
-    expect(error).toMatchObject({ code: 'creation_conflict' });
-    expect(readSessionCreationTerminalSpawnErrorDetail(error)).toEqual({ kind: 'session_creation_correspondence_conflict', code: 'creation_conflict' });
+    expect(error).toMatchObject({ code: 'session-managed-target-busy' });
+    expect(readSessionCreationTerminalSpawnErrorDetail(error)).toEqual({ kind: 'session_creation_managed_target_busy', code: 'session-managed-target-busy' });
     expect(post).toHaveBeenCalledOnce();
   });
 

@@ -1,4 +1,4 @@
-import { SessionCreationTerminalSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
+import { SESSION_MANAGED_TARGET_BUSY_CODE, SPAWN_SESSION_ERROR_DETAIL_KINDS, SessionCreationTerminalSpawnErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
 import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol';
 
 import { isSessionCreationCorrespondenceConflictError } from './sessionCreationCorrespondenceConflictError';
@@ -10,6 +10,7 @@ import { isSessionCreationPlacementError } from './sessionCreationPlacementError
 import { SessionCreationInitialTriggerError } from './sessionCreationInitialTriggerError';
 import { AccountEncryptionCurrentnessUnavailableError } from '../client/accountEncryptionCurrentness';
 import { classifyServerEndpointError } from '../client/classifyServerEndpointError';
+import { HttpStatusError } from '../client/httpStatusError';
 
 /**
  * The exact no-effect refusal a Session create-or-load failure carries to a
@@ -36,6 +37,9 @@ export function readSessionCreationTerminalSpawnErrorDetail(
   }
   if (isSessionCreationCorrespondenceConflictError(error)) {
     return { kind: 'session_creation_correspondence_conflict', code: 'creation_conflict' };
+  }
+  if (error instanceof HttpStatusError && 'code' in error && error.code === SESSION_MANAGED_TARGET_BUSY_CODE) {
+    return { kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY, code: error.code };
   }
   if (error instanceof SessionInitialAccessServerError) {
     return { kind: 'session_creation_access_refused', code: error.code };

@@ -42,6 +42,7 @@ import type { AcquireSessionIsolationSandbox } from '@/session/actions/cliAction
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { SESSION_MANAGED_TARGET_BUSY_CODE } from '@happier-dev/protocol/spawnSession';
 import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { managedCreationAcquisition, readManagedWorkflowContinuationResultPort,
     type ManagedCreationAcquisitionOptions, type ManagedCreationAcquisitionContext } from '@/machines/managed/creationContinuation';
@@ -376,9 +377,14 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 ...(configured?.lifecycle === 'shared-kept' ? { reuseIdle: true } : {}),
             };
             let consumed = false;
+            const operation = request.context.operationAcceptance;
+            // A confirmed busy birth had no effect. The existing fresh root operation
+            // lets this reviewed child acquire again without replaying the occupied row.
+            const context = operation?.previousSessionCreationFailure?.launchError?.code === SESSION_MANAGED_TARGET_BUSY_CODE
+                ? { ...request.context, actionRequestId: operation.operationId } : request.context;
             const result = await invokeHostReviewedChildV1({
                 parent: { ...request.parent, input: projectNativeJsonValueForTransport(request.parent.input) as Record<string, JsonValue> },
-                context: request.context,
+                context,
                 child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-session-sandbox', input: projectNativeJsonValueForTransport(acquisition) },
                 execute: (_input, context) => request.executeSessionIsolationAcquire(acquisition, { ...context,
                     [managedCreationAcquisition]: { input: acquisition, take: () => {

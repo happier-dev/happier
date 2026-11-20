@@ -5,6 +5,7 @@ import {
   SPAWN_SESSION_ERROR_CODES,
 } from '@/session/shared/spawnSessionContract';
 import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import { logger } from '@/ui/logger';
 import { readStoredCredentials } from '@/persistence';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
@@ -270,6 +271,10 @@ export function buildSessionCreationTerminalSpawnErrorResult(
     return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       errorMessage: `Session creation could not proceed: Account encryption currentness is unavailable (${errorDetail.reason}).`,
       errorDetail };
+  }
+  if (errorDetail.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_MANAGED_TARGET_BUSY) {
+    return { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+      errorMessage: 'The shared sandbox already has a Session', errorDetail };
   }
   return {
     type: 'error',

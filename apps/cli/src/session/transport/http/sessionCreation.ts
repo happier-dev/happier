@@ -3,13 +3,14 @@ import { type AxiosResponse } from 'axios';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { SESSION_CREATION_AUTHORIZATION_HEADER_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { classifyHomeDomainHttpMutationFailureV1, readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
+import { SESSION_MANAGED_TARGET_BUSY_CODE } from '@happier-dev/protocol/spawnSession';
 import type { AccountEncryptionCurrentnessResponse, SessionInitialAccessDraftV1, SessionManagerV1, SessionOrganizationPlacementV1, SessionTeamCredentialBindingIntentListV1, V2SessionByIdResponse } from '@happier-dev/protocol';
 
 import type { StoredCredentials } from '@/persistence';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { readSessionCreationInitialTriggerError } from '@/api/session/sessionCreationInitialTriggerError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
+import { createAuthenticationHttpStatusError, createHttpStatusError, isAuthenticationStatus, readHttpStatus, readServerRefusalCode } from '@/api/client/httpStatusError';
 import { readNormalizedConnectionErrorCode } from '@/api/client/classifyServerEndpointError';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders, readCliClientUpgradeRequired } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -20,7 +21,6 @@ import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '
 import { encodeBase64 } from '@/api/encryption';
 import { buildSessionMetadataEnvelopeCreateFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { addSessionInitialAccessTeamShareStatement, buildSessionInitialAccessCreateFields, materializeSessionInitialAccessCreateFields, prepareSessionInitialAccessDataKeyEnvelopes, readSessionTeamCredentialBindingUpdateRequiredError, readSessionInitialAccessServerError } from '@/api/session/sessionCreationInitialAccess';
-import { SessionCreationCorrespondenceConflictError } from '@/api/session/sessionCreationCorrespondenceConflictError';
 import type { SessionCreationAuthorizationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationAuthorizationV1';
 
 /** One HTTP boundary for the API client's and seeded creator's Session birth. */
@@ -40,9 +40,8 @@ export async function postSessionCreationRequest<T>(params: Readonly<{
   const creationAuthorizationProof = await params.prepareCreationAuthorizationProof?.(params.body);
   const body = creationAuthorizationProof ? { ...params.body, creationAuthorizationProof } : params.body;
   const refuseConfirmedRollback = (status: number, data: unknown): void => {
-    if (status === 409 && data !== null && typeof data === 'object'
-      && 'error' in data && data.error === 'session-managed-target-busy') {
-      throw new SessionCreationCorrespondenceConflictError();
+    if (status === 409 && readServerRefusalCode(data) === SESSION_MANAGED_TARGET_BUSY_CODE) {
+      throw createHttpStatusError(status, 'The shared sandbox already has a Session', SESSION_MANAGED_TARGET_BUSY_CODE);
     }
     const rollback = readHomeDomainConfirmedRollbackV1(status, data);
     if (rollback) throw createHttpStatusError(status, 'Session creation transaction rolled back', rollback.code);

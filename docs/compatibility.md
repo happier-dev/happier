@@ -4310,6 +4310,12 @@ Current managed creation requires the matching development Home; silently droppi
 the carrier is not an older-server creation adapter. The immutable private recipe
 remains the retry-meaning owner, not a second writer of the server relationship.
 
+Resource-bound Session birth may return HTTP 409 `session-managed-target-busy`
+when another Session won binding to the same shared guest. Matching 0.3 CLI and
+daemon readers preserve that code in the retryable spawn result. Retry retains the
+original creation key and performs a new reviewed acquire after that confirmed
+refusal. Immutable creation correspondence still returns `creation_conflict`.
+
 Machine-policy placement records optional `managedCreationOrigin: machine_policy`
 and, only when the native-sandbox value was defaulted,
 `nativeSandboxOrigin: machine_policy` in that same immutable private recipe.

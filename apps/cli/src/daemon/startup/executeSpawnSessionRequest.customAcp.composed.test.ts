@@ -581,6 +581,9 @@ function readFixtureCatalogResponse(path: string) {
 describe('Custom ACP fresh daemon launch composition', () => {
   it('refuses a busy local guest at Session birth before any target preparation or runner launch', async () => {
     const effects: string[] = [];
+    const previousGet = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation((url, config) => new URL(String(url)).pathname === '/v1/account/profile'
+      ? Promise.resolve(homeResponse({ id: 'df38-owner' })) : previousGet(url, config));
     const originalFetch = globalThis.fetch;
     onTestFinished(() => { vi.stubGlobal('fetch', originalFetch); });
     vi.stubGlobal('fetch', async (input: string | URL | Request) => {
@@ -614,7 +617,8 @@ describe('Custom ACP fresh daemon launch composition', () => {
     const result = await executeSpawnSessionRequest({ ...launch, options: { ...launch.options,
       sessionCreationTag, sessionCreationCorrespondence: correspondence,
       managedTargetPlacement: { managedId: 'busy-local', workspaceRoot: '/workspace' } } });
-    expect(result).toMatchObject({ type: 'error', errorDetail: { code: 'creation_conflict' } });
+    expect(result, JSON.stringify({ result, effects })).toMatchObject({ type: 'error',
+      errorDetail: { kind: 'session_creation_managed_target_busy', code: 'session-managed-target-busy' } });
     expect(effects).toEqual(['birth']);
   });
   it.each(['failure', 'transport-disconnect', 'person-cancel'] as const)(
