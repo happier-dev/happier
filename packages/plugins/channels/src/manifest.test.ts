@@ -254,7 +254,7 @@ describe('Channels core manifest', () => {
       id: 'happier.channels',
       version: '0.0.0',
       displayName: 'Conversation Channels',
-      entrypoints: { daemon: './.happier-plugin/daemon.js' },
+      entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     });
     expect(Object.keys(CHANNELS_PLUGIN.manifest.contributes).sort()).toEqual([
       'accountCollections',
@@ -263,6 +263,8 @@ describe('Channels core manifest', () => {
       'composerAttachments',
       'composerControls',
       'events',
+      'inputTypes',
+      'machineRoles',
       'notifications',
       'pluginContributionPoints',
       'resources',
@@ -488,89 +490,6 @@ describe('Channels core manifest', () => {
     ]);
     expect(collections?.find(({ id }) => id === CHANNEL_STATE_COLLECTION_ID)).toMatchObject({
       id: CHANNEL_STATE_COLLECTION_ID,
-      schemaVersion: 21,
-      readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
-      migrations: [{
-        id: 'channel-state-v1-to-v2',
-        fromSchemaVersion: 1,
-        toSchemaVersion: 2,
-      }, {
-        id: 'channel-state-v2-to-v3',
-        fromSchemaVersion: 2,
-        toSchemaVersion: 3,
-      }, {
-        id: 'channel-state-v3-to-v4',
-        fromSchemaVersion: 3,
-        toSchemaVersion: 4,
-      }, {
-        id: 'channel-state-v4-to-v5',
-        fromSchemaVersion: 4,
-        toSchemaVersion: 5,
-      }, {
-        id: 'channel-state-v5-to-v6',
-        fromSchemaVersion: 5,
-        toSchemaVersion: 6,
-      }, {
-        id: 'channel-state-v6-to-v7',
-        fromSchemaVersion: 6,
-        toSchemaVersion: 7,
-      }, {
-        id: 'channel-state-v7-to-v8',
-        fromSchemaVersion: 7,
-        toSchemaVersion: 8,
-      }, {
-        id: 'channel-state-v8-to-v9',
-        fromSchemaVersion: 8,
-        toSchemaVersion: 9,
-      }, {
-        id: 'channel-state-v9-to-v10',
-        fromSchemaVersion: 9,
-        toSchemaVersion: 10,
-      }, {
-        id: 'channel-state-v10-to-v11',
-        fromSchemaVersion: 10,
-        toSchemaVersion: 11,
-      }, {
-        id: 'channel-state-v11-to-v12',
-        fromSchemaVersion: 11,
-        toSchemaVersion: 12,
-      }, {
-        id: 'channel-state-v12-to-v13',
-        fromSchemaVersion: 12,
-        toSchemaVersion: 13,
-      }, {
-        id: 'channel-state-v13-to-v14',
-        fromSchemaVersion: 13,
-        toSchemaVersion: 14,
-      }, {
-        id: 'channel-state-v14-to-v15',
-        fromSchemaVersion: 14,
-        toSchemaVersion: 15,
-      }, {
-        id: 'channel-state-v15-to-v16',
-        fromSchemaVersion: 15,
-        toSchemaVersion: 16,
-      }, {
-        id: 'channel-state-v16-to-v17',
-        fromSchemaVersion: 16,
-        toSchemaVersion: 17,
-      }, {
-        id: 'channel-state-v17-to-v18',
-        fromSchemaVersion: 17,
-        toSchemaVersion: 18,
-      }, {
-        id: 'channel-state-v18-to-v19',
-        fromSchemaVersion: 18,
-        toSchemaVersion: 19,
-      }, {
-        id: 'channel-state-v19-to-v20',
-        fromSchemaVersion: 19,
-        toSchemaVersion: 20,
-      }, {
-        id: 'channel-state-v20-to-v21',
-        fromSchemaVersion: 20,
-        toSchemaVersion: 21,
-      }],
       rowIdField: CHANNEL_STATE_FIELD.id,
       serverReadable: [
         CHANNEL_STATE_FIELD.recordKind,

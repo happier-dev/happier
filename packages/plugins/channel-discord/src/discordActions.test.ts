@@ -17,6 +17,7 @@ import {
   DISCORD_BOT_CONNECTED_ACCOUNT_ID,
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_BOT_TOKEN_ENVIRONMENT_KEY,
+  DISCORD_CHANNEL_ACTION_IDS,
 } from './discordPluginConstants.js';
 
 const credentialRef = {
@@ -94,6 +95,45 @@ function channelsCallerContext(input: Readonly<{
 }
 
 describe('Discord Channels provider Actions', () => {
+  it('resolves an exact guild member through the registered provider Action', async () => {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const resolve = kit.registration('actions', DISCORD_CHANNEL_ACTION_IDS.principalResolve);
+      expect(resolve).toBeTypeOf('function');
+      if (!resolve) throw new Error('Missing Discord principal resolver');
+      const { context } = channelsCallerContext({ async request(request) {
+        if (request.url.endsWith('/channels/1000')) return jsonResponse({ id: '1000', type: 0, guild_id: '2000', permission_overwrites: [] });
+        if (request.url.endsWith('/guilds/2000/members/3000')) return jsonResponse({ user: { id: '3000', username: 'Alice' }, roles: [] });
+        throw new Error(`Unexpected Discord request: ${request.url}`);
+      } });
+      const input = { v: 1, connectionId: 'connection-1', providerConnectionKey: 'discord:application:application-1',
+        providerConfigVersion: 1, providerConfig: { applicationId: 'application-1', botUserId: 'discord-bot-1' }, credentialRef,
+        endpoint: { id: 'discord:channel:1000', kind: 'shared', audience: 'shared' }, query: '<@3000>' };
+      await expect(resolve(input, context)).resolves.toEqual({ kind: 'resolved', candidates: [{ id: 'discord:user:3000', label: 'Alice', kind: 'human' }] });
+      await expect(resolve({ ...input, query: 'Alice' }, context)).resolves.toEqual({ kind: 'resolved', candidates: [] });
+    } finally { await kit.dispose(); }
+  });
+
+  it.each([
+    { body: { user: { id: '3000', username: 'Robot', bot: true }, roles: [] }, expected: { kind: 'resolved', candidates: [{ id: 'discord:user:3000', label: 'Robot', kind: 'bot' }] } },
+    { body: {}, status: 404, expected: { kind: 'resolved', candidates: [] } },
+    { body: { user: { id: '4000', username: 'Other' }, roles: [] }, expected: { kind: 'notReady', reason: 'invalidConfiguration' } },
+    { body: { roles: [] }, expected: { kind: 'notReady', reason: 'invalidConfiguration' } },
+  ])('uses verified member identity for Discord principal resolution', async ({ body, status, expected }) => {
+    const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
+    try {
+      const resolve = kit.registration('actions', DISCORD_CHANNEL_ACTION_IDS.principalResolve);
+      if (!resolve) throw new Error('Missing Discord principal resolver');
+      const { context } = channelsCallerContext({ async request(request) {
+        if (request.url.endsWith('/channels/1000')) return jsonResponse({ id: '1000', type: 0, guild_id: '2000', permission_overwrites: [] });
+        if (request.url.endsWith('/guilds/2000/members/3000')) return jsonResponse(body, status);
+        throw new Error(`Unexpected Discord request: ${request.url}`);
+      } });
+      await expect(resolve({ v: 1, connectionId: 'connection-1', providerConnectionKey: 'discord:application:application-1',
+        providerConfigVersion: 1, providerConfig: { applicationId: 'application-1', botUserId: 'discord-bot-1' }, credentialRef,
+        endpoint: { id: 'discord:channel:1000', kind: 'shared', audience: 'shared' }, query: '3000' }, context)).resolves.toMatchObject(expected);
+    } finally { await kit.dispose(); }
+  });
   it('delivers a registered host notification through the saved connection without a Channels Action caller', async () => {
     const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     try {

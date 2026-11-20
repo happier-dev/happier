@@ -64,6 +64,7 @@ import {
   defineUiSurface,
   type PluginActionExecution,
   type PluginUiFocusTarget,
+  isPluginActionConfirmationDeclined,
   useExecutePluginAction,
   useLivePluginResource,
   usePluginBrandDisplayNameResolver,
@@ -14316,8 +14317,10 @@ function SessionConversationActions(props: Readonly<{
     const settled = await remove.execute({ bindingId: binding.bindingId, expectedRevision: binding.revision });
     if (settled.status === 'success') props.onRefresh();
   }, [binding.bindingId, binding.revision, props, remove]);
-  const failed = setEnabled.execution.status === 'error' || setEnabled.execution.status === 'outcomeUnknown'
-    || remove.execution.status === 'error' || remove.execution.status === 'outcomeUnknown';
+  const failed = [setEnabled.execution, remove.execution].some((execution) =>
+    execution.status === 'outcomeUnknown'
+    || (execution.status === 'error' && !isPluginActionConfirmationDeclined(execution)),
+  );
 
   return (
     <Stack gap="small">

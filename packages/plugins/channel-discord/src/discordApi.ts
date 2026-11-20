@@ -59,6 +59,7 @@ export type DiscordGatewayBotInfo = Readonly<{
 /** Immutable role evidence for the authenticated bot's current guild member. */
 export type DiscordGuildMemberRoleEvidence = Readonly<{
   roleIds: readonly string[];
+  user?: Readonly<{ id: string; label: string; isBot: boolean }>;
 }>;
 
 export type DiscordApiFailure = Readonly<{
@@ -336,7 +337,12 @@ function parseGuildMemberRoleEvidence(
     if (roleId === null) return null;
     roleIds.push(roleId);
   }
-  return { roleIds };
+  const memberUser = isRecord(value.user) ? value.user : null;
+  const username = memberUser ? nonEmptyString(memberUser.username) : null;
+  const userEvidence = memberUser && username && (memberUser.bot === undefined || typeof memberUser.bot === 'boolean')
+    ? { id: expectedUserId, label: nonEmptyString(value.nick) ?? nonEmptyString(memberUser.global_name) ?? username, isBot: memberUser.bot === true }
+    : undefined;
+  return { roleIds, ...(userEvidence ? { user: userEvidence } : {}) };
 }
 
 function parseGuildRolePermissionEvidence(value: unknown): readonly DiscordGuildRolePermissionEvidence[] | null {

@@ -24,6 +24,7 @@ import {
   deliverDiscordMessage,
   fetchDiscordAttachment,
   resolveDiscordEndpoint,
+  resolveDiscordPrincipal,
   setupDiscordChannels,
   testDiscordConnection,
   DISCORD_SETUP_INPUT_PROTOCOL_SCHEMA,
@@ -55,6 +56,7 @@ const discordProviderOperations = discordProviderProtocol.operations;
 
 const connectionTestOperation = discordProviderOperations.connectionTest;
 const endpointResolveOperation = discordProviderOperations.endpointResolve;
+const principalResolveOperation = discordProviderOperations.principalResolve;
 const messageDeliverOperation = discordProviderOperations.messageDeliver;
 const attachmentFetchOperation = discordProviderOperations.attachmentFetch;
 const automationEventAdmitOperation = discordProviderOperations.automationEventAdmit;
@@ -384,6 +386,16 @@ function createDiscordPlugin() {
       }],
       run: resolveDiscordEndpoint,
     },
+    [DISCORD_CHANNEL_ACTION_IDS.principalResolve]: {
+      title: 'Resolve Discord member',
+      surfaces: principalResolveOperation.declaration.surfaces,
+      dangerLevel: principalResolveOperation.declaration.dangerLevel,
+      inputSchema: principalResolveOperation.declaration.input.schema.jsonSchema,
+      resultSchema: principalResolveOperation.declaration.resultSchema.jsonSchema,
+      hostAccess: ['discord-rest', DISCORD_BOT_CREDENTIAL_PURPOSE],
+      connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: DISCORD_BOT_CREDENTIAL_PURPOSE }],
+      run: resolveDiscordPrincipal,
+    },
     [DISCORD_CHANNEL_ACTION_IDS.messageDeliver]: {
       title: 'Deliver Discord message',
       description: 'Delivers a message to the selected Discord destination.',
@@ -470,6 +482,7 @@ function createDiscordPlugin() {
             notificationDestinationSetup: discordProviderOperations.notificationDestinationSetup.bind(DISCORD_CHANNEL_ACTION_IDS.notificationSetup),
       connectionTest: discordProviderOperations.connectionTest.bind(DISCORD_CHANNEL_ACTION_IDS.connectionTest),
             endpointResolve: discordProviderOperations.endpointResolve.bind(DISCORD_CHANNEL_ACTION_IDS.endpointResolve),
+            principalResolve: discordProviderOperations.principalResolve.bind(DISCORD_CHANNEL_ACTION_IDS.principalResolve),
             automationEventAdmit: discordProviderOperations.automationEventAdmit.bind(
               DISCORD_AUTOMATION_MESSAGE_ADMIT_ACTION_ID,
             ),

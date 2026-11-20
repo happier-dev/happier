@@ -25,6 +25,7 @@ export const DISCORD_CHANNEL_ACTION_IDS = Object.freeze({
   setup: 'discord/prepare-bot',
   connectionTest: 'discord/inspect-connection',
   endpointResolve: 'discord/choose-channel',
+  principalResolve: 'discord/resolve-user',
   messageDeliver: 'discord/post-message',
   attachmentFetch: 'discord/fetch-attachment',
 });
@@ -39,6 +40,10 @@ export const DISCORD_CHANNEL_ENDPOINT_ID_PREFIX = 'discord:channel:';
 
 export function createDiscordChannelEndpointId(channelId: string): string {
   return `${DISCORD_CHANNEL_ENDPOINT_ID_PREFIX}${channelId}`;
+}
+
+export function createDiscordUserPrincipalId(userId: string): string {
+  return `discord:user:${userId}`;
 }
 
 export function readDiscordChannelEndpointId(endpointId: string): string | null {

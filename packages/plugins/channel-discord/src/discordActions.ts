@@ -16,6 +16,8 @@ import {
   ConversationDeliveryInputV1Schema,
   ConversationEndpointResolveInputV1Schema,
   ConversationEndpointResolveResultV1Schema,
+  ConversationPrincipalResolveInputV1Schema,
+  ConversationPrincipalResolveResultV1Schema,
   MAX_CONVERSATION_RESOLUTION_CANDIDATES,
   ConversationProviderConnectionInputV1Schema,
   ConversationProviderSetupResultV1Schema,
@@ -23,6 +25,7 @@ import {
   type ConversationAttachmentFetchResultV1,
   type ConversationDeliveryResultV1,
   type ConversationEndpointResolveResultV1,
+  type ConversationPrincipalResolveResultV1,
   type ConversationProviderFailureV1,
   type ConversationProviderSetupResultV1,
 } from '@happier-dev/channels-protocol/v1';
@@ -51,6 +54,7 @@ import {
 } from './discordSetup.js';
 import {
   createDiscordChannelEndpointId,
+  createDiscordUserPrincipalId,
   DISCORD_BOT_CONNECTED_ACCOUNT_ID,
   DISCORD_BOT_CREDENTIAL_PURPOSE,
   DISCORD_BOT_TOKEN_ENVIRONMENT_KEY,
@@ -410,6 +414,32 @@ export async function testDiscordConnection(input: unknown, context: PluginInvoc
 export async function resolveDiscordEndpoint(input: unknown, context: PluginInvocationContext): Promise<ConversationEndpointResolveResultV1> {
   assertDiscordChannelsCoreCaller(context);
   return resolveDiscordHostEndpoint(input, context);
+}
+
+export async function resolveDiscordPrincipal(input: unknown, context: PluginInvocationContext): Promise<ConversationPrincipalResolveResultV1> {
+  assertDiscordChannelsCoreCaller(context);
+  const request = ConversationPrincipalResolveInputV1Schema.parse(input);
+  const channelId = readDiscordChannelEndpointId(request.endpoint.id);
+  if (!channelId) return invalidConfiguration('The Discord channel identity is invalid.');
+  const query = request.query.trim();
+  const match = /^(?:<@!?(\d+)>|(?:discord:user:)?(\d+))$/.exec(query);
+  const userId = match?.[1] ?? match?.[2];
+  if (!userId) return { kind: 'resolved', candidates: [] };
+  const ready = await readyConnection(context, request);
+  if ('kind' in ready) return ready;
+  const channel = await ready.api.getChannel({ channelId }, { signal: context.signal });
+  context.signal.throwIfAborted();
+  if (channel === null) return invalidConfiguration('Discord did not confirm the selected channel.');
+  if (channel.kind === 'notReady') return failureFromApi(channel);
+  if (!channel.guildId) return { kind: 'notReady', reason: 'unsupported', diagnostic: 'Discord member lookup requires a guild channel.' };
+  const member = await ready.api.getGuildMember({ guildId: channel.guildId, userId }, { signal: context.signal });
+  context.signal.throwIfAborted();
+  if (member === null) return { kind: 'resolved', candidates: [] };
+  if ('kind' in member) return failureFromApi(member);
+  if (!member.user) return invalidConfiguration('Discord did not confirm the requested member identity.');
+  return ConversationPrincipalResolveResultV1Schema.parse({ kind: 'resolved', candidates: [{
+    id: createDiscordUserPrincipalId(member.user.id), label: member.user.label.normalize('NFC'), kind: member.user.isBot ? 'bot' : 'human',
+  }] });
 }
 
 /** Shared provider transport; the caller admits either a Channels operation or a host notification. */

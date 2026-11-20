@@ -5,7 +5,7 @@ import type {
 } from '@happier-dev/channels-protocol/v1';
 import { createConversationAttachmentIdV1 } from '@happier-dev/channels-protocol/v1';
 
-import { createDiscordChannelEndpointId } from './discordPluginConstants.js';
+import { createDiscordChannelEndpointId, createDiscordUserPrincipalId } from './discordPluginConstants.js';
 
 export type DiscordChannelAddress = Readonly<{
   kind: 'direct' | 'shared' | 'thread';
@@ -232,13 +232,13 @@ function readActor(payload: JsonRecord, context: DiscordMessageParseContext): Di
   const presentation = label === null ? {} : { label: label.normalize('NFC') };
   if (author?.bot === true) {
     return {
-      principalId: `discord:user:${authorId}`,
+      principalId: createDiscordUserPrincipalId(authorId),
       ...presentation,
       kind: 'bot',
       isIntegrationSelf: authorId === context.botUserId,
     };
   }
-  return { principalId: `discord:user:${authorId}`, ...presentation, kind: 'human', isIntegrationSelf: false };
+  return { principalId: createDiscordUserPrincipalId(authorId), ...presentation, kind: 'human', isIntegrationSelf: false };
 }
 
 function endpointForChannel(channel: DiscordChannelAddress): ConversationResolvedEndpointV1 | null {
