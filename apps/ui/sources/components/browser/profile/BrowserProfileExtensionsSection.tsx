@@ -25,6 +25,7 @@ import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolve
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 
 type MutationActionId =
@@ -159,7 +160,7 @@ export function BrowserProfileExtensionsSection(
     );
   }, [run]);
 
-  const browse = React.useCallback(() => {
+  const browse = React.useCallback(async () => {
     const href = buildPluginsHomeRoute('app', {
       view: 'kind',
       kind: 'browserExtension',
@@ -168,9 +169,8 @@ export function BrowserProfileExtensionsSection(
         ? { machine: { serverId: props.serverId, machineId } }
         : {}),
     });
-    const result = runGuardedNavigation(() => router.push(href as never));
-    if (result !== true)
-      fireAndForget(result, { tag: 'BrowserProfileExtensionsSection.browse' });
+    const allowed = await runGuardedNavigation(() => router.push(href as never));
+    return allowed ? { ok: true as const } : { ok: false as const, code: 'denied' as const };
   }, [machineId, profileId, props.serverId, router]);
 
   const coverage = inventory.coverage;
@@ -186,6 +186,9 @@ export function BrowserProfileExtensionsSection(
     failure?.reason.kind === 'browser' &&
     failure.reason.value.code === 'profile_not_found';
   const usable = !failure || notCreated;
+  const commands = useCurrentUiContextLocalCommands(usable ? [{ key: 'browse',
+    title: t('capabilities.store.browserExtensionProfile.browse'), invoke: browse,
+  }] : [], { contextKey: JSON.stringify([props.serverId, machineId, profileId]), unbound: 'local' });
 
   return (
     <>
@@ -207,7 +210,7 @@ export function BrowserProfileExtensionsSection(
             testID={`${testID}.browse`}
             title={t('capabilities.store.browserExtensionProfile.browse')}
             destination
-            onPress={browse}
+            onPress={() => { void commands.invoke('browse'); }}
           />
         ) : undefined
       }

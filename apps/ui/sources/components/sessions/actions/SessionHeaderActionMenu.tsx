@@ -132,6 +132,7 @@ import { emitSessionResumeRequest } from '@/components/sessions/model/sessionRes
 import { useResumeCapabilityOptions } from '@/agents/hooks/useResumeCapabilityOptions';
 import { supportsExternalSessionBackgroundFollow } from '@/components/sessions/external/browse/resolveExternalSessionBrowseSourceOptions';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { openSessionFollowDestinationPicker } from '@/components/sessions/follow/openSessionFollowDestinationPicker';
 import { useSessionCompanionController } from '@/components/sessions/companion/state/useSessionCompanionController';
 import {
@@ -1149,6 +1150,8 @@ function SessionHeaderActionMenuInner(props: SessionHeaderActionMenuProps) {
     () => normalizeSessionAddress(sessionServerId, props.sessionId),
     [props.sessionId, sessionServerId],
   );
+  useCurrentUiContextLocalCommands(!open ? [{ key: 'session.menu.open', title: t('session.actionMenu.openA11y'),
+    invoke: () => handleOpenChange(true) }] : [], { contextKey: JSON.stringify(companionAddress) });
   const companionRevealPort = useSessionCompanionRevealPort(companionAddress);
   const openCompanionFullSurface = React.useCallback(() => {
     companionRevealPort?.openFullSurface();
