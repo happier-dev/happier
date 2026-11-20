@@ -2514,6 +2514,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // A child is a new authored invocation. Only transport of the same spawn
       // retains its captured creation context.
       const { sessionCreationDefaults: _parentCreationDefaults,
+        sessionCreationPresetPlacement: _parentPresetPlacement,
+        managedContinuationSessionCreationTag: _parentContinuationCreationTag,
         actionAutomationAdmission: _parentAutomationAdmission,
         prepareAdmittedExecutionOrigin: _parentExecutionOrigin, ...caller } = inheritedCaller;
       const childCaller = childSessionContext(childId, childInput, caller);
@@ -3296,7 +3298,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       // Reuse this invocation's target-owner read for spawn. Deferred approval
       // stores only its proof; replay starts a new execution and prepares again.
-      ctx = { ...ctx, sessionCreationPreparedTarget: directoryPreflight.preparedTarget };
+      ctx = { ...ctx, sessionCreationPreparedTarget: directoryPreflight.preparedTarget,
+        sessionCreationPresetPlacement: directoryPreflight.presetPlacement };
       if (directoryPreflight.type === 'approval_required') {
         const replayedApproval = SessionCreationDirectoryApprovalV1Schema.safeParse(
           ctx.sessionCreationDirectoryApproval,

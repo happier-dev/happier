@@ -18,6 +18,7 @@ import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
 import { admitPresentUserConfirmationV1, recordPresentUserApprovalV1 } from '../../actions/executor/approvalReview.js';
 import { createHostReviewedChildPortV1 } from '../../actions/executor/deploymentRoleChild.js';
 import { SessionPlacementSelectionV1Schema } from './sessionPlacementSelectionV1.js';
+import { deriveSessionCreationTagV1, SessionCreationKeyV1Schema } from './sessionCreationIdentityV1.js';
 
 const request = {
   kind: 'requester_session_bootstrap_v1',
@@ -291,6 +292,44 @@ describe('requester bootstrap installation confidentiality', () => {
     expect(ExternalActionRequestEnvelopeV2Schema.safeParse({ v: 2, requestId: 'child', target: { kind: 'machine', machineId: 'guest' },
       payload: { t: 'encrypted', c: 'sealed' }, managedCreationCodec: { kind: 'installation_sealed_v1',
         installationId: 'guest-installation', ciphertext: encodeBase64(new Uint8Array(100), 'base64url') } }).success).toBe(true);
+  });
+  it('continues the original Session birth tag only through its qualified installed guest', () => {
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(21));
+    const controller = { machineId: 'controller', installationId: 'controller-installation' };
+    const actionId = 'session.spawn_new';
+    const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root-home-proof', binding: {
+      accountId: 'requester', custodianAccountId: 'company', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'srv_home', ...controller, accountEncryptionMode: 'plain', actionId, requestId: 'create',
+      requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: controller.machineId },
+      sessionPresetAcquisition: { controller, selection: { kind: 'preset', homeId: 'srv_home', id: 'preset', revision: 1 },
+        admission: { preset: { id: 'preset', homeId: 'srv_home', revision: 1, owner: { kind: 'account', accountId: 'company' },
+          controller, contentEncryptionMode: 'plain' }, presetContent: { content: { t: 'plain', v: {} }, recipients: [] }, delegated: true } },
+    } });
+    const recipient = { machineId: 'guest', installationId: 'guest-installation',
+      installationPublicKey: encodeBase64(installation.publicKey, 'base64url') };
+    const managedContinuation = { managedId: 'managed', creationRequestId: 'create', expectedIntentRevision: 3 };
+    const target = { kind: 'machine' as const, machineId: recipient.machineId };
+    const rawEnvelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'create', target, input: {} });
+    const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user',
+      creationKey: SessionCreationKeyV1Schema.parse('original-session-key') });
+    const seal = { authorization: parent, actionId, continuation: managedContinuation, envelope: rawEnvelope,
+      recipient, sessionCreationTag, randomBytes: tweetnacl.randomBytes } as const;
+    const envelope = bootstrap.sealManagedCreationActionCodecV1(seal);
+    const authorization = { v: 1, token: 'guest-home-proof', binding: {
+      accountId: parent.binding.accountId, authentication: { kind: 'account', tokenEpoch: 1 },
+      custodianAccountId: parent.binding.accountId, accountEncryptionMode: 'plain', serverIdentityId: parent.binding.serverIdentityId,
+      machineId: recipient.machineId, installationId: recipient.installationId, actionId, requestId: 'create', target,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+      managedContinuation: { ...managedContinuation, controller, acquireRequestEnvelopeDigest: parent.binding.requestEnvelopeDigest },
+    } };
+    const open = { authorization, envelope, machineId: recipient.machineId, installationId: recipient.installationId,
+      serverIdentityId: parent.binding.serverIdentityId, installationPrivateKey: installation.secretKey, includeInvocation: true } as const;
+    expect(bootstrap.openManagedCreationActionCodecV1(open)).toEqual({ material: null, sessionCreationTag });
+    expect(() => bootstrap.sealManagedCreationActionCodecV1({ ...seal, sessionCreationTag: undefined })).toThrow('managed_creation_codec_root_mismatch');
+    expect(() => bootstrap.sealManagedCreationActionCodecV1({ ...seal, authorization: { ...parent,
+      binding: { ...parent.binding, sessionPresetAcquisition: undefined } } })).toThrow('managed_creation_codec_root_mismatch');
+    expect(bootstrap.openManagedCreationActionCodecV1({ ...open, authorization: { ...authorization, binding: { ...authorization.binding,
+      managedContinuation: { ...authorization.binding.managedContinuation, expectedIntentRevision: 4 } } } })).toBeNull();
   });
   it.each((['plain', 'e2ee'] as const).flatMap(mode =>
     (['machines.managed.acquire', 'machines.managed.bootstrap.retry', 'machines.managed.inspect'] as const)

@@ -286,6 +286,16 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
 
     return readSessionCreationTargetPreparationResultV1(rawPreparedTarget);
   };
+  const readPreparedPresetPlacement = async (context?: ActionExecutorContext) => {
+    if (context?.sessionCreationPresetPlacement) return context.sessionCreationPresetPlacement;
+    const binding = context?.externalActionExecutionAuthorization?.binding;
+    const acquisition = context?.sessionCreationDefaults?.managedPresetAcquisition;
+    if (binding?.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || !binding.sessionPresetAcquisition?.admission
+      || !acquisition || !isManagedPresetAcquireInputV1(acquisition)) return undefined;
+    return await params.acquireSessionIsolationSandbox?.preparePresetPlacement?.({
+      acquisition, binding, ...(context?.signal ? { signal: context.signal } : {}),
+    });
+  };
   return {
     prepareSessionSpawnNewInput: createPrepareSessionSpawnInput(params, {
       serverId: projectHomeId, serverHttpBaseUrl: machineReferenceServerUrl,
@@ -310,13 +320,15 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         };
       }
       const placement = params.sessionSpawnBirthContext?.sessionPlacement ?? input.sessionPlacement;
+      const presetPlacement = await readPreparedPresetPlacement(context);
+      if (presetPlacement?.placement.kind === 'remote') return { type: 'not_required' as const, presetPlacement };
       if (placement?.kind === 'in_place' || needsEnrolledSessionProjectFilesOpenV1({
         placement,
         projectFiles: params.sessionSpawnBirthContext?.projectFiles, executionTarget: input.executionTarget,
       })
         || !needsSessionCreationDirectoryApprovalPreflightV1(input)) {
         // The managed target or Project files owner supplies the execution directory.
-        return { type: 'not_required' as const };
+        return { type: 'not_required' as const, presetPlacement };
       }
 
       const preparation = await prepareSessionSpawnTarget({
@@ -330,8 +342,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
       }
       const approval = projectSessionCreationDirectoryApprovalV1(input.executionTarget, preparation.preparedTarget);
       const preparedTarget = preparation.preparedTarget;
-      return approval ? { type: 'approval_required' as const, approval, preparedTarget }
-        : { type: 'not_required' as const, preparedTarget };
+      return approval ? { type: 'approval_required' as const, approval, preparedTarget, presetPlacement }
+        : { type: 'not_required' as const, preparedTarget, presetPlacement };
     },
     sessionSpawnNew: async (input, continuation) => {
       const reviewedOpinionSpawn = input.context?.externalActionExecutionAuthorization?.binding.actionId === 'discussion.second_opinion.start';
@@ -364,6 +376,24 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
               failureCause: projectActionFailureCauseV1(error, 'session.requester_dispatch') };
           }
         }
+      }
+      const preparedPreset = await readPreparedPresetPlacement(input.context);
+      if (preparedPreset?.placement.kind === 'remote') {
+        const context = input.context;
+        const acquisition = context?.sessionCreationDefaults?.managedPresetAcquisition;
+        if (!context || !acquisition || !isManagedPresetAcquireInputV1(acquisition) || !input.admittedInput
+          || !input.executeSessionIsolationAcquire || !params.acquireSessionIsolationSandbox) {
+          return { type: 'error', code: 'target_unavailable', retryable: false };
+        }
+        const started = await params.acquireSessionIsolationSandbox({
+          acquisition, executeSessionIsolationAcquire: input.executeSessionIsolationAcquire,
+          parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: input.admittedInput },
+          enrolledSession: { input: { ...input.admittedInput, creationKey: input.creationKey }, tag: input.sessionCreationTag },
+          context: { ...context, sessionCreationPresetPlacement: preparedPreset },
+          ...(input.signal ? { signal: input.signal } : {}),
+        });
+        if (!started.sessionResult) return { type: 'error', code: 'target_unavailable', retryable: false };
+        return started.sessionResult.ok ? started.sessionResult.result : started.sessionResult;
       }
       const {
       context,
@@ -814,7 +844,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         ...(signal ? { signal } : {}),
       });
       // The receiving daemon was admitted once; organization placement can refuse it.
-      if (defaults.placement.lock && (defaults.placement.value?.kind === 'machine'
+      if (defaults.placement.lock && !context?.managedContinuationSessionCreationTag && (defaults.placement.value?.kind === 'machine'
         ? !sameStrictJsonValue(defaults.placement.value.target, executionTarget)
         : !context?.sessionCreationDefaults?.managedPresetAcquisition)) {
         return { type: 'error', code: 'permission_denied', retryable: false };
@@ -1064,18 +1094,20 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           }
           return agentSandbox.value;
         };
-        let acquired: Awaited<ReturnType<NonNullable<typeof params.acquireSessionIsolationSandbox>>> | undefined;
+        let acquired: Extract<Awaited<ReturnType<NonNullable<typeof params.acquireSessionIsolationSandbox>>>,
+          { managedCreation: unknown }> | undefined;
         if (presetAcquisition) {
           if (!isManagedPresetAcquireInputV1(presetAcquisition) || !context || !params.acquireSessionIsolationSandbox
             || !input.admittedInput || !input.executeSessionIsolationAcquire) {
             throw Object.assign(new Error('Selected preset acquisition is unavailable'), { code: 'target_unavailable' });
           }
-          acquired = await params.acquireSessionIsolationSandbox({ acquisition: presetAcquisition,
+          const result = await params.acquireSessionIsolationSandbox({ acquisition: presetAcquisition,
             executeSessionIsolationAcquire: input.executeSessionIsolationAcquire,
             parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: input.admittedInput },
             ...(effectiveProjectFiles ? { projectFiles: effectiveProjectFiles } : {}),
-            resolveNativeSandbox, context, ...(signal ? { signal } : {}),
+            resolveNativeSandbox, context: { ...context, sessionCreationPresetPlacement: preparedPreset }, ...(signal ? { signal } : {}),
           });
+          if ('managedCreation' in result) acquired = result;
         } else if (sandboxChoice) {
           if (authoredManagedCreation) {
             throw Object.assign(new Error('Authored managed placement conflicts with Machine sandbox policy'),
@@ -1085,7 +1117,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             || !input.admittedInput || !input.executeSessionIsolationAcquire) {
             throw Object.assign(new Error('Machine sandbox acquisition is unavailable'), { code: 'target_unavailable' });
           }
-          acquired = await params.acquireSessionIsolationSandbox({
+          const result = await params.acquireSessionIsolationSandbox({
             executeSessionIsolationAcquire: input.executeSessionIsolationAcquire,
             parent: { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1, input: input.admittedInput },
             configuredSandbox: isolation.configuredSandbox, lifecycle: sandboxChoice.lifecycle,
@@ -1093,6 +1125,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             resolveNativeSandbox,
             context, ...(signal ? { signal } : {}),
           });
+          if ('managedCreation' in result) acquired = result;
         }
         const projectFilesChoice = acquired?.projectFiles ?? projectFiles?.projectFiles ?? effectiveProjectFiles
           ?? (acquired ? { kind: 'copy_once' as const } : undefined);

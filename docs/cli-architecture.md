@@ -1438,6 +1438,10 @@ existing remote Machine acquisition before the run's workspace is admitted.
 The canonical creation owner checks existing creation correspondence before
 allocating a policy-selected target. Local placement uses the incumbent managed
 acquire/reconcile owner in resource-bound mode, without enrolling another daemon.
+An inherited remote preset uses the same enrolled acquisition continuation as
+Workflow placement. Home binds the reviewed Session child to the selected preset
+revision. The enrolled daemon re-enters `session.spawn_new` with the original
+requester and Session creation tag, and prepares the workspace on that Machine.
 For a Can-use member, the installed controller opens its Account-owned configured
 preset. Home binds acquisition to the signed Session child and its exact
 controller, and the member remains the Session requester.

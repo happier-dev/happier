@@ -4,7 +4,6 @@ import type {
   ActionOperationSnapshotV1,
 } from '@happier-dev/protocol/actions';
 import type { ProjectSetupConsentFailureDetailsV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import type { WorkflowRunStartResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { z } from 'zod/mini';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ActionActorV1Schema } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -14,8 +13,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ExternalSessionOperationAccountAdmission } from '@/session/actions/externalSessions/operationRecordStore';
 
 /** Actual guest continuation outcome, retained privately with its acquisition invocation. */
-export type ManagedWorkflowContinuationResult = ActionExecuteResult &
-  (Readonly<{ ok: false }> | Readonly<{ ok: true; result: WorkflowRunStartResultV1 }>);
+export type ManagedCreationContinuationResult = ActionExecuteResult;
 
 export type HostActionOperationExecute = (context: Readonly<{
   actionRequestId?: string;

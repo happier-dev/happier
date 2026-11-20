@@ -1,4 +1,5 @@
-import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetGetResultV1Schema, type ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import type { ManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ManagedWorkspaceLocatorV2, ManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
@@ -129,11 +130,10 @@ async function qualifyManagedPresetAcquire(input: ManagedMachineAcquisitionDrive
     return provider;
 }
 
-async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInput,
+async function withManagedPresetDefinition<T>(input: ManagedMachineAcquisitionDriverInput,
     acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
-    hydrator: ManagedPresetHydrator, delegated: boolean, accept: (policy: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
-        provisioner: MachineProvisionerContributionV1, open: ManagedPresetDefinitionOpener) => Promise<ManagedMachineFullV1>, signal?: AbortSignal,
-    localPlacement?: Pick<ManagedMachineExecutionOptions, 'expectedProvisioner' | 'onLocalSessionPlacement'>,
+    hydrator: ManagedPresetHydrator, read: (preset: ManagedMachinePresetV1,
+        opened: ManagedMachinePresetContentV1, open: ManagedPresetDefinitionOpener) => Promise<T>, signal?: AbortSignal,
     admittedRoot?: ExternalActionExecutionAuthorizationV1['binding']) {
     const scoped = admittedRoot?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? admittedRoot.sessionPresetAcquisition : undefined;
     const snapshot = scoped?.admission;
@@ -148,27 +148,37 @@ async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInp
         return read.preset;
     })();
     if (preset.revision !== acquisition.selection.revision) throw new ManagedMachineControllerError('request_conflict');
-    return await hydrator.withPresetDefinition(preset, async (opened, open) => {
+    return await hydrator.withPresetDefinition(preset, (opened, open) => read(preset, opened, open), signal);
+}
+
+async function withManagedPresetPolicy(input: ManagedMachineAcquisitionDriverInput,
+    acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
+    hydrator: ManagedPresetHydrator, delegated: boolean, accept: (policy: Omit<ReturnType<typeof resolveMachineRetentionPolicyV1>, 'category'>,
+        provisioner: MachineProvisionerContributionV1, open: ManagedPresetDefinitionOpener) => Promise<ManagedMachineFullV1>,
+    options: ManagedMachineExecutionOptions) {
+    const admittedRoot = options.context?.externalActionExecutionAuthorization?.binding;
+    const preparedPlacement = options.sessionPresetPlacement;
+    return await withManagedPresetDefinition(input, acquisition, hydrator, async (preset, opened, open) => {
         if (!opened.launch) throw new ManagedMachineControllerError('credential_unavailable');
-        const provisioner = await qualifyManagedPresetAcquire(input, { launch: opened.launch });
-        if (localPlacement) {
-            const expected = localPlacement.expectedProvisioner;
+        const provisioner = preparedPlacement?.provisioner ?? await qualifyManagedPresetAcquire(input, { launch: opened.launch });
+        if (options.acquisitionMode === 'resource-bound') {
+            const expected = options.expectedProvisioner;
             if (expected && (expected.pluginId !== opened.launch.provider.pluginId || expected.localId !== opened.launch.provider.localId)) {
                 throw new ManagedMachineControllerError('invalid_request');
             }
-            const placement = readMachineProvisionerSessionPlacementV1(provisioner, opened.launch.choices);
+            const placement = preparedPlacement?.placement ?? readMachineProvisionerSessionPlacementV1(provisioner, opened.launch.choices);
             if (placement?.kind !== 'controller-local') throw new ManagedMachineControllerError('provider_unavailable');
-            localPlacement.onLocalSessionPlacement?.(placement, opened.projectFiles);
+            options.onLocalSessionPlacement?.(placement, opened.projectFiles);
         }
         const prepared = await prepareManagedOpaquePresetAcquireV1({ content: preset.content,
             override: acquisition.presetContentOverride, provisioner, open });
         if (!prepared) throw new ManagedMachineControllerError('credential_unavailable');
         const { category: _category, ...policy } = resolveMachineRetentionPolicyV1({ billing: provisioner.billing,
             nativeCapabilities: provisioner.retention, presetOverride: preset,
-            ...((snapshot?.delegated ?? delegated) ? {} : { machineOverride: { retention: acquisition.retention,
+            ...((admittedRoot?.sessionPresetAcquisition?.admission?.delegated ?? delegated) ? {} : { machineOverride: { retention: acquisition.retention,
                 wakeOnAcceptedMessage: acquisition.wakeOnAcceptedMessage } }) });
         return await accept(policy, provisioner, open);
-    }, signal);
+    }, options.signal, admittedRoot);
 }
 
 async function openManagedPresetAdmissionWithHydrator(params: Readonly<{
@@ -234,6 +244,7 @@ export type ManagedMachineExecutionOptions = Readonly<{
     runAgentStart?: (input: Readonly<{ machine: ManagedMachineFullV1; projectFiles?: SessionProjectFilesV1 }>) => Promise<void>;
     /** Original admitted Workflow continuation on its ordinary enrolled Machine. */
     runCreationContinuation?: (input: Readonly<{ machine: ManagedMachineFullV1; projectFiles?: SessionProjectFilesV1 }>) => Promise<void>;
+    sessionPresetPlacement?: ActionExecutorContext['sessionCreationPresetPlacement'];
     runEnvironmentSetup?: (input: Readonly<{ machine: ManagedMachineFullV1; isCurrent(): Promise<boolean> }>) => Promise<ManagedMachineV1>;
     /** Content-free installed Account socket; every wake re-reads the signed row. */
     subscribeEnvironmentSetupChanges?: (callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
@@ -260,6 +271,9 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
         }
         return projection;
     }
+    // The remote preset spends the reviewed Acquire child proof. Its signed
+    // row owns currentness and native reports once Home admits creation.
+    const usesReviewedSessionAcquire = options.sessionPresetPlacement?.placement.kind === 'remote';
     async function isOriginCurrent(): Promise<boolean> {
         const projection = originProjection();
         return !projection || await projection.isCurrent();
@@ -358,7 +372,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             const effectActionId = effectOverride ?? (action === 'machines.managed.get' && path === '/v1/machines/managed/actions/get'
                 ? options.context?.externalActionExecutionAuthorization?.binding.actionId ?? action : action);
             const projection = originProjection();
-            if (projection && !(action === MANAGED_RESIZE_ACTION_ID_V1 && path === '/v1/machines/managed/controller/report-resize'
+            if (projection && !usesReviewedSessionAcquire && !(action === MANAGED_RESIZE_ACTION_ID_V1 && path === '/v1/machines/managed/controller/report-resize'
                 || options.context?.externalActionExecutionAuthorization?.binding.workflowActionOrigin
                     && path === '/v1/machines/managed/controller/report-intent')) {
                 const headers = await projection.createRequestHeaders({ effectActionId, method: 'POST', path, body, signal: signal ?? undefined });
@@ -471,7 +485,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             if (reviewedFacts && !opaquePreset) hydrator.rememberReviewedFacts(machine, reviewedFacts);
             const body = { ...correlation(captured.machine), result,
                 ...(reviewedFacts === undefined ? {} : { configurationFacts: reviewedFacts }) };
-            if (!originProjection()) return await row(reportPath, body, null);
+            if (usesReviewedSessionAcquire || !originProjection()) return await row(reportPath, body, null);
             const authorization = options.context?.externalActionExecutionAuthorization;
             const target = options.context?.externalActionTarget;
             if (!authorization || !target || !input.externalActionMachineRequestPrivateKey
@@ -1013,6 +1027,20 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 await prepared.bridge?.dispose?.();
             }
         },
+        async readSessionPresetPlacement(acquisition: Extract<ManagedAcquireInputV1, { selection: { kind: 'preset' } }>,
+            binding: ExternalActionExecutionAuthorizationV1['binding'], signal?: AbortSignal):
+            Promise<NonNullable<ActionExecutorContext['sessionCreationPresetPlacement']>> {
+            if (binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || !binding.sessionPresetAcquisition?.admission) {
+                throw new ManagedMachineControllerError('admission_unavailable');
+            }
+            return withManagedPresetDefinition(input, acquisition, createManagedPresetHydrator(input), async (_preset, opened) => {
+                if (!opened.launch) throw new ManagedMachineControllerError('credential_unavailable');
+                const provisioner = await qualifyManagedPresetAcquire(input, { launch: opened.launch });
+                const placement = readMachineProvisionerSessionPlacementV1(provisioner, opened.launch.choices);
+                // Legacy cloud and conditional local provisioners use the existing enrolled path.
+                return { provisioner, placement: placement ?? { kind: 'remote' } };
+            }, signal, binding);
+        },
         async execute(action: ManagedMachineActionIdV1, body: unknown, options: ManagedMachineExecutionOptions): Promise<JsonValue | null> {
             const parsed = ManagedMachineActionInputSchemasV1[action].parse(body);
             const review = 'selection' in parsed ? resolveManagedAcquireReviewV1(ManagedAcquireInputV1Schema.parse(parsed)) : parsed;
@@ -1353,7 +1381,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 let openedRequiresEnrollmentRead = false;
                 const delegated = options.context?.externalActionExecutionAuthorization?.binding.managedAcquireDelegation === true;
                 const needsPresetPolicy = isManagedPresetAcquireInputV1(acquisition)
-                    && (options.acquisitionMode === 'resource-bound' || delegated || acquisition.retention === undefined || acquisition.wakeOnAcceptedMessage === undefined);
+                    && (options.acquisitionMode === 'resource-bound' || options.sessionPresetPlacement || delegated
+                        || acquisition.retention === undefined || acquisition.wakeOnAcceptedMessage === undefined);
                 if ((needsPresetPolicy || options.runCreationContinuation) && !options.context?.originalActionEnvelope) throw new ManagedMachineControllerError('admission_unavailable');
                 const guestCli = options.acquisitionMode === 'resource-bound' ? undefined
                     : await readManagedGuestCliIdentity({ homeUrl: input.serverUrl, signal: options.signal,
@@ -1381,9 +1410,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         };
                         const machine = needsPresetPolicy && isManagedPresetAcquireInputV1(acquisition)
                             ? await withManagedPresetPolicy(input, acquisition, hydrator, delegated,
-                                (policy, provisioner, open) => admit(policy, { provisioner, open }), options.signal,
-                                options.acquisitionMode === 'resource-bound' ? options : undefined,
-                                options.context?.externalActionExecutionAuthorization?.binding)
+                                (policy, provisioner, open) => admit(policy, { provisioner, open }), options)
                             : await admit();
                         if (hasAttendedEnrollmentRequirement(machine.enrollmentIdentity)) {
                             throw new ManagedMachineControllerError('enrollment_attendance_required');

@@ -98,14 +98,16 @@ export async function readAdmittedManagedCreationChildInTx(reader: Tx, binding: 
 /** The exact signed parent retains its creator while the existing creation remains active. */
 export async function hasAdmittedManagedCreationRootInTx(reader: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1): Promise<boolean | null> {
-    const acquiring = binding.actionId === 'machines.managed.acquire';
+    const enrollingForSession = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        && binding.sessionPresetAcquisition?.admission !== undefined;
+    const acquiring = binding.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 || enrollingForSession;
     if (!acquiring && !isManagedEnrollmentRecoveryChildV1(binding.actionId, 'machines.agentIsolation.preview')) return null;
     // Custodian Inspect uses current credentials, not the creator's retained job.
     if (binding.actionId === 'machines.managed.inspect' && binding.accountId === binding.custodianAccountId) return null;
     const recovery = ExternalActionManagedRecoveryAdmissionV1Schema.safeParse(binding.managedAdmission);
     if (!acquiring && !(recovery.success && recovery.data.actionId === binding.actionId)) return null;
     try {
-        const row = binding.actionId === 'machines.managed.acquire'
+        const row = acquiring
             ? await readExternalActionManagedAcquireResourceInTx(reader, binding)
             : recovery.success ? await readManagedMachineInTx(reader, recovery.data.input) : null;
         if (!row) return null;
@@ -113,7 +115,7 @@ export async function hasAdmittedManagedCreationRootInTx(reader: Tx,
         if (readManagedEnrollmentAccountId(row) !== binding.accountId || row.custodianAccountId !== binding.custodianAccountId
             || row.controllerMachineId !== null && (row.controllerMachineId !== binding.machineId
                 || row.controllerInstallationId !== binding.installationId)
-            || binding.actionId === 'machines.managed.acquire' && retainedDigest !== undefined
+            || acquiring && retainedDigest !== undefined
                 && retainedDigest !== binding.requestEnvelopeDigest) return false;
         const revision = recovery.success && 'expectedIntentRevision' in recovery.data.input
             ? recovery.data.input.expectedIntentRevision : row.intentRevision;
@@ -197,8 +199,10 @@ export async function qualifyExternalActionManagedAccountExecutorInTx(reader: Tx
 export async function readExternalActionManagedAcquireResourceInTx(reader: Tx,
     binding: ExternalActionExecutionAuthorizationBindingV1,
     reviewedChild?: Readonly<{ managedId: string; requestId?: string; inputDigest: string }>): Promise<StoredManagedMachine | null> {
-    if (reviewedChild ? binding.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 && binding.actionId !== WORKFLOW_RUN_START_ACTION_ID_V1
-        : binding.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1) return null;
+    const session = binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
+    if (reviewedChild ? !session && binding.actionId !== WORKFLOW_RUN_START_ACTION_ID_V1
+        : binding.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1
+            && !(session && binding.sessionPresetAcquisition?.admission)) return null;
     const row = reviewedChild
         ? await reader.managedMachine.findUnique({ where: { id: reviewedChild.managedId } })
         : await reader.managedMachine.findUnique({ where: { homeId_admittedActionRequestId: {
@@ -211,6 +215,8 @@ export async function readExternalActionManagedAcquireResourceInTx(reader: Tx,
             || retained.requestEnvelopeDigest !== binding.requestEnvelopeDigest || !retained.computeInput
             || computeActionInputApprovalDigestV1(MANAGED_ACQUIRE_ACTION_ID_V1, retained.computeInput) !== reviewedChild.inputDigest) return null;
     }
+    if (!reviewedChild && session && row
+        && readManagedAdmissionState(row.admittedInput).continuation?.requestEnvelopeDigest !== binding.requestEnvelopeDigest) return null;
     if (!row || row.custodianAccountId !== binding.custodianAccountId
         || (row.controllerMachineId === null ? resolveManagedMachineRole(row, binding.accountId) !== 'manage'
             : row.controllerMachineId !== binding.machineId || row.controllerInstallationId !== binding.installationId)

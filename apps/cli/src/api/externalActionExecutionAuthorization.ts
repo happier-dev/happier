@@ -15,7 +15,7 @@ import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, proj
 import { isAgentInitiatedApprovalRequiredByDefault } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
-import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isMachineSetupPlanOrApplyActionIdV1, MACHINE_SETUP_PLAN_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { DaemonAgentInstallStartRequestSchema, DaemonAgentInstallReadRequestSchema } from '@happier-dev/protocol/daemon/agentInstallJobs';
 import { buildMachineAgentsDetectRequest, MachineAcpInventoryRequestSchema } from '@happier-dev/protocol/capabilities/machineAgentInventory';
@@ -2354,6 +2354,7 @@ function isManagedChildTransportAvailable(params: Readonly<{
 
 type ManagedChildDispatchParams = Readonly<{
   input: SessionSpawnNewTargetedAuthoringInputV2;
+  sessionCreationTag?: import('@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1').SessionCreationTagV1;
   /** Host-local caller and parent projection only; never a serialized executor context. */
   context?: ActionExecutorContext;
   observeRecordedApprovalExecution?: (args: RecordedApprovalExecutionObservationArgs) => Promise<ActionExecuteResult>;
@@ -2407,11 +2408,20 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
   const fail = (code: string): ActionExecuteFailure => ({ ok: false, errorCode: code, error: code });
   const root = params.authorization.binding;
   const reviewedParent = readHostReviewedParentV1(params.context);
-  const invocation = params.context ? readExternalActionRequesterInvocation(params.context) : params.invocation;
+  let invocation = params.context ? readExternalActionRequesterInvocation(params.context) : params.invocation;
+  if (root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && invocation?.sessionCreationDefaults) {
+    const { sessionCreationDefaults, ...origin } = invocation;
+    // The controller already consumed the bound placement. Carry the requester's
+    // captured launch defaults to the guest without its controller operand.
+    const { managedPresetAcquisition: _preset, managedPresetControllerAccess: _controller, ...launchDefaults } = sessionCreationDefaults;
+    invocation = params.sessionCreationTag ? { ...origin, sessionCreationDefaults: launchDefaults } : origin;
+  }
   const managedChildCodec = isManagedChildFreshCodec(root);
-  const carriesInvocation = managedChildCodec || invocation !== undefined || reviewedParent !== null;
+  const carriesInvocation = managedChildCodec || invocation !== undefined || reviewedParent !== null
+    || root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
   if (!isManagedChildTransportAvailable(params)
-    || root.actionId === 'machines.managed.acquire' && root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
+    || (root.actionId === MANAGED_ACQUIRE_ACTION_ID_V1 || root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1)
+      && root.requestId !== params.continuation.creationRequestId) return fail('admission_unavailable');
   if (params.signal?.aborted) return fail('cancelled');
   let actionInput: unknown;
   let sessionInput: SessionSpawnNewTargetedAuthoringInputV2 | undefined;
@@ -2470,10 +2480,15 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
     const body = { homeId: root.serverIdentityId, managedId: params.continuation.managedId,
       expectedIntentRevision: params.continuation.expectedIntentRevision,
       controller: { machineId: root.machineId, installationId: root.installationId }, includeEnrollmentInstallation: true as const };
+    const reviewedChild = root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+      ? readHostAdmittedReviewedChildHttpProofV1(params.context) : undefined;
+    if (root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && reviewedChild?.actionId !== MANAGED_ACQUIRE_ACTION_ID_V1)
+      return fail('admission_unavailable');
     try {
       const response = await axios.post<unknown>(`${params.serverHttpBaseUrl}${path}`, body, {
         headers: createExternalActionAuthorizedRequestHeaders({ authorization: params.authorization,
-          effectActionId: root.actionId, target: root.target, installationId: params.installationId,
+          effectActionId: reviewedChild?.actionId ?? root.actionId, target: root.target, installationId: params.installationId,
+          ...(reviewedChild ? { reviewedChild } : {}),
           method: 'POST', path, body, privateKey: params.privateKey }),
         ...(params.signal ? { signal: params.signal } : {}), validateStatus: () => true,
       });
@@ -2495,6 +2510,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
       continuation: params.continuation, envelope: baseEnvelope, recipient,
       ...(managedChildCodec && childMaterial ? { material: childMaterial } : {}), randomBytes,
       ...(invocation ? { invocation } : {}),
+      ...(params.sessionCreationTag ? { sessionCreationTag: params.sessionCreationTag } : {}),
       ...(reviewedParent ? { reviewedParent } : {}) }) : baseEnvelope;
   const body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: target.machineId,
     envelope, managedContinuation: params.continuation });

@@ -1749,6 +1749,13 @@ The inspected `../0.2` frontier at
 carrier at this source seam, including scoped staged and unstaged changes.
 No wire epoch, migration or predecessor adapter is introduced.
 
+A receiving Session that continues on an enrolled guest carries its existing
+`sessionCreationTag` in the strict, installation-sealed managed creation codec.
+The guest uses that tag to preserve creation identity across controller and
+guest profile aliases. This private field is present for Session-to-Session
+continuations. The matching Protocol and daemon readers reload together under
+the unpublished 0.3 direct cut.
+
 Session creation also carries the creation owner's optional `sessionCreationDefaults`
 inside this existing private invocation. The captured selected-scope context and
 original authored target and placement choices, plus any already-bound preset

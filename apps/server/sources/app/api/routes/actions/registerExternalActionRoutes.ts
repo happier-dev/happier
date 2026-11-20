@@ -560,7 +560,10 @@ async function readManagedGuestContinuation(
     if (!root || !isManagedCreationContinuationRootV1(root.actionId, actionId)
         || request.externalActionEffectActionId !== root.actionId
         || root.accountId !== request.userId
-        || root.actionId === 'machines.managed.acquire' && root.requestId !== body.managedContinuation.creationRequestId
+        || (root.actionId === 'machines.managed.acquire' || root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1)
+            && root.requestId !== body.managedContinuation.creationRequestId
+        || root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+            && (body.envelope.requestId !== root.requestId || !body.envelope.managedCreationCodec)
         || body.envelope.target?.kind !== 'machine' || body.envelope.target.machineId !== body.machineId) return null;
     const principal = await verifyCurrentExternalActionPrincipal(root);
     if (!principal) return null;

@@ -14,6 +14,7 @@ import { readRequestedIntentPluginIds } from '@/testkit/http/accountPluginAvaila
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountApiTokensListActionOutputV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { ManagedPolicyAdmissionInputV1Schema, ManagedPolicyAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 
 import { configuration } from '@/configuration';
@@ -47,6 +48,7 @@ import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionC
 import { registerSessionCreationDirectoryPreflightRpc } from '@/session/creation/registerSessionCreationTargetPreparationRpc';
 import { authorizeMachineRpcRequest, readMachineRpcAdmissionCurrent } from '@/api/machine/machineRpcAuthorization';
 import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema as ChildRequestSchema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { applyTrackedSessionTurnLifecycle } from '../sessions/applyTrackedSessionTurnLifecycle';
 import { authorizeTrackedRunnerAgentDaemonServiceOperation } from '../agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
@@ -63,7 +65,8 @@ import { decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } fr
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema, resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1, deriveManagedDeleteApprovalSubjectKeyV1,
     managedDeleteApprovalIndexedKindV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { projectSessionSpawnNewActionAuthoringInputV2, SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { loadPromptLibraryCatalogV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
@@ -585,8 +588,11 @@ describe('daemon managed Machine Action factory', () => {
         { nativeSandbox: 'failed', overrideProjectFiles: false, authoredPreset: false },
         { nativeSandbox: 'supported', overrideProjectFiles: false, authoredPreset: true },
         { nativeSandbox: 'failed', overrideProjectFiles: false, authoredPreset: true },
+        { nativeSandbox: 'remote', overrideProjectFiles: false, authoredPreset: true },
     ] as const)(
       'runs a reviewed Session preset through native qualification ($nativeSandbox, override=$overrideProjectFiles, authored=$authoredPreset)', async ({ nativeSandbox, overrideProjectFiles, authoredPreset }) => {
+        const remote = nativeSandbox === 'remote';
+        if (remote) await storeHome('srv_home');
         const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account', tokenEpoch: 0,
             provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
         const accountCredentials = { token, encryption: null };
@@ -601,9 +607,20 @@ describe('daemon managed Machine Action factory', () => {
             content: { v: 1, name: launch.name, launch, projectFiles: { kind: 'sync', mode: 'keep_synced' } } });
         const preset = { id: 'isolation-preset', homeId: 'srv_home', revision: 1, owner: { kind: 'account', accountId: 'account' },
             controller, contentEncryptionMode: 'plain', ...content };
+        const { content: _presetContent, recipients: _recipients, ...presetMetadata } = preset;
+        const acquisition = { selection: { kind: 'preset' as const, homeId: preset.homeId, id: preset.id, revision: preset.revision }, controller };
+        const resource = { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'native' } };
+        const enrolledContent = remote ? { ...content, content: replaceManagedMachinePresetLaunchNameV1({
+            presetId: preset.id, mode: 'plain', content: content.content, launchName: launch.name,
+            reviewedFacts: ManagedConfigurationFactsV1Schema.parse({ launch, optionStatus: 'current', prerequisites: [],
+                billing: { location: 'cloud', stoppedBilling: 'unknown' }, retentionCapabilities: { supportedIntents: ['delete'] },
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false }),
+            nativeResult: { kind: 'bound', resource },
+        })! } : undefined;
         let machine = ManagedMachineV1Schema.parse({ id: 'isolation-resource', homeId: 'srv_home', custodianAccountId: 'account',
-            controller, preset: { id: preset.id, revision: 1, contentEncryptionMode: 'plain' }, acquisitionMode: 'resource-bound',
-            allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            controller, preset: { id: preset.id, revision: 1, contentEncryptionMode: 'plain' },
+            ...(remote ? { enrolledMachineId: 'actual-guest' } : { acquisitionMode: 'resource-bound' }),
+            allocation: remote ? 'bound' : 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const roles: string[] = [];
         const nativeInputs: unknown[] = [];
@@ -614,6 +631,13 @@ describe('daemon managed Machine Action factory', () => {
         let notifyAcquireAccepted!: () => void;
         const acquireAccepted = new Promise<void>(resolve => { notifyAcquireAccepted = resolve; });
         onTestFinished(() => releaseAcquire());
+        if (remote) {
+            releaseAcquire();
+            vi.mocked(globalThis.fetch).mockImplementation(async () => Response.json(FeaturesResponseSchema.parse({
+                features: {}, capabilities: { serverIdentity: { serverIdentityId: 'srv_home' },
+                    guestCli: { source: 'public-release', line: '0.3', channel: 'publicdev' } },
+            })));
+        }
         const native = nativeFixture({ privateNative: true, credentialPurposes: [], onNativeRole: async (role, input) => {
             roles.push(role);
             nativeInputs.push({ role, input });
@@ -625,16 +649,20 @@ describe('daemon managed Machine Action factory', () => {
         } });
         const registry = { ...native.runtimeRegistry, contributes: { ...native.runtimeRegistry.contributes,
             machineProvisioners: native.runtimeRegistry.contributes.machineProvisioners?.map(entry => ({ ...entry,
-                definition: { ...entry.definition, sessionPlacement: { kind: 'controller-local' as const,
+                definition: { ...entry.definition, sessionPlacement: { kind: remote ? 'remote' as const : 'controller-local' as const,
                     supportsAgentNativeSandbox: nativeSandbox !== 'unsupported' } } })) } };
         // Home persistence, installed-machine RPC and native plugin effects are
         // system boundaries. Session defaults, admission, preset opening,
         // controller custody and native role qualification remain real.
         vi.spyOn(axios, 'request').mockImplementation(async request => {
+            if (new URL(String(request.url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200,
+                data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
             if (new URL(String(request.url)).pathname === '/v1/home/governance/get') return { status: 200, data: { homeDefaults: null } };
             throw new Error(`Unexpected isolation Home request ${String(request.url)}`);
         });
         vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (new URL(String(url)).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200,
+                data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
             if (new URL(String(url)).pathname.endsWith('/connected-accounts/purposes')) return { status: 200,
                 data: { status: 'present', revision: 1, content: { t: 'plain', v: { key: 'purposes',
                     value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } } };
@@ -651,23 +679,29 @@ describe('daemon managed Machine Action factory', () => {
         });
         const isolationAdmissions: unknown[] = [];
         const isolationReports: unknown[] = [];
+        const projectHomeAuthorization = (envelope: Parameters<typeof computeExternalActionRequestEnvelopeDigestV1>[0]) =>
+            ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'isolation-root-proof', binding: {
+                accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+                accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', ...controller, actionId: 'session.spawn_new',
+                requestId: envelope.requestId, target: { kind: 'machine', machineId: 'controller' },
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                ...(remote ? { sessionPresetAcquisition: { ...acquisition,
+                    admission: { preset: presetMetadata, presetContent: content, delegated: false } } } : {}),
+            } });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
             const path = new URL(String(url)).pathname;
             if (path.endsWith('/execution-authorization')) {
                 const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-                return { status: 200, data: { v: 1, token: 'isolation-root-proof', binding: { accountId: 'account', custodianAccountId: 'account',
-                    authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain', serverIdentityId: 'srv_home',
-                    ...controller, actionId: 'session.spawn_new', requestId: request.envelope.requestId,
-                    target: { kind: 'machine', machineId: 'controller' }, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope) } } };
+                return { status: 200, data: projectHomeAuthorization(request.envelope) };
             }
             if (path.endsWith('/verify')) return { status: 200, data: { ok: true } };
             if (path.endsWith('/presets/get')) return { status: 200, data: { kind: 'found', preset } };
             if (path.endsWith('/lookup-by-tags')) return { status: 200, data: { sessions: [] } };
             if (path.endsWith('/admit')) {
                 isolationAdmissions.push(body);
-                return { status: 200, data: { machine, presetContent: content, replayed: false } };
+                return { status: 200, data: { machine, presetContent: enrolledContent ?? content, replayed: remote } };
             }
-            if (path.endsWith('/current')) return { status: 200, data: { machine, current: true } };
+            if (path.endsWith('/current')) return { status: 200, data: { machine } };
             if (path.endsWith('/submit')) {
                 machine = ManagedMachineV1Schema.parse({ ...machine, allocation: 'may-exist' });
                 return { status: 200, data: { machine, submitted: true } };
@@ -696,13 +730,24 @@ describe('daemon managed Machine Action factory', () => {
         vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(request => nativeRpc(request.method));
         vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(request => nativeRpc(request.method));
         const launched: unknown[] = [];
+        const guestStarts: unknown[] = [];
+        const guestExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), sessionSpawnNew: async input => {
+            guestStarts.push(input);
+            return SessionSpawnNewResultV1Schema.parse({ type: 'success', disposition: 'created', sessionId: 'guest-session',
+                executionTarget: input.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+                initialInput: { status: 'notRequested' } });
+        } });
         const isolationChildResults: unknown[] = [];
         const isolationQualifications: boolean[] = [];
         let isolationFailure: unknown;
         let nextIsolationOperationId = 0;
         const operations = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'account',
             generateOperationId: () => `isolation-operation-${nextIsolationOperationId++}` });
-        const managed = adapter(true, undefined, undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined,
+        const managed = adapter(true, remote ? (input, context, _machine, tag) => guestExecutor.execute('session.spawn_new', projectSessionSpawnNewActionAuthoringInputV2(input), {
+            surface: context.surface, authority: context.authority, actionCaller: context.actionCaller,
+            actionsSettings: context.actionsSettings, runtimeAccountId: context.runtimeAccountId,
+            actionRequestId: 'guest-start', serverId: 'guest-specific-profile', managedContinuationSessionCreationTag: tag,
+        }) : undefined, remote ? async () => true : undefined, signing.secretKey, accountCredentials, undefined, undefined, undefined,
             registry, 'installation', operations.runner.waitForCompletion);
         const deps = createCliActionDeps({ credentials: accountCredentials, token, sessionId: '', mode: 'plain', ctx: null,
             serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
@@ -713,16 +758,14 @@ describe('daemon managed Machine Action factory', () => {
                     loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network', scopeKey: resolveAccountSettingsScopeKey(accountCredentials),
                     whenRefreshed: null, connectedPurposeCatalog: { status: 'ready', revision: 1, record: { key: 'purposes',
                         value: ConnectedPurposeCatalogV1Schema.parse({ v: 1, bindings: [] }) } } } }),
-            acquireSessionIsolationSandbox: async request => {
+            acquireSessionIsolationSandbox: Object.assign(async (request: Parameters<typeof managed.acquireSessionIsolationSandbox>[0]) => {
                 try {
                     const resolveNativeSandbox = request.resolveNativeSandbox;
                     // Authored placement was bound before Session admission; the receiving
                     // acquisition owner consumes it without selecting its Pool again.
                     const { configuredSandbox: _configured, lifecycle: _lifecycle, ...sharedRequest } =
                         'configuredSandbox' in request ? request : { ...request, configuredSandbox: undefined, lifecycle: undefined };
-                    const acquisitionRequest = authoredPreset ? { ...sharedRequest, acquisition: {
-                        selection: { kind: 'preset' as const, homeId: preset.homeId, id: preset.id, revision: preset.revision }, controller,
-                    } } : request;
+                    const acquisitionRequest = authoredPreset ? { ...sharedRequest, acquisition } : request;
                     return await managed.acquireSessionIsolationSandbox({ ...acquisitionRequest,
                         ...(resolveNativeSandbox ? { resolveNativeSandbox: supports => {
                             isolationQualifications.push(supports);
@@ -739,13 +782,22 @@ describe('daemon managed Machine Action factory', () => {
                     isolationFailure = error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error;
                     throw error;
                 }
-            },
+            }, { preparePresetPlacement: async (request: Parameters<typeof managed.acquireSessionIsolationSandbox.preparePresetPlacement>[0]) => {
+                try { return await managed.acquireSessionIsolationSandbox.preparePresetPlacement(request); }
+                catch (error) {
+                    isolationFailure = error instanceof Error ? { name: error.name, message: error.message, stack: error.stack } : error;
+                    throw error;
+                }
+            } }),
             sessionSpawnDirectTargetTransport: { machineId: 'controller', readMachineMetadataSnapshot: () => ({ status: 'ready', metadataVersion: 1,
                 metadata: { isolationPolicyV1: { agentNativeSandboxEnabled: true,
                     configuredSandboxes: { local: { provisioner: launch.provider, presetId: preset.id } },
                     workKinds: { sessions: { kind: 'sandbox', configuredSandboxId: 'local', lifecycle: 'fresh' },
                         botsChannels: { kind: 'directly' }, automationsWorkflows: { kind: 'directly' } } } } }),
-                prepare: async () => ({ ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null }),
+                prepare: async () => {
+                    if (remote) throw new Error('Remote preset must prepare the directory on the enrolled guest');
+                    return { ok: true, directory: '/tmp', directoryKind: 'path', directoryCreationRequired: false, checkout: null };
+                },
                 spawnedSession: { spawn: async request => { launched.push(request);
                     // The real Home refuses Session birth until its managed resource is bound.
                     if (machine.allocation !== 'bound') return { type: 'error', errorMessage: 'session-origin-forbidden' };
@@ -757,15 +809,23 @@ describe('daemon managed Machine Action factory', () => {
         const executor = createActionExecutor({ ...deps, managedMachineAction: managed,
             runActionOperation: operations.runActionOperation });
         const input = SessionSpawnNewInputV2Schema.parse({ creationKey: 'isolation-spawn',
-            executionTarget: { serverId: configuration.activeServerId, machineId: 'controller' }, directory: { kind: 'path', path: '/tmp' },
+            executionTarget: { serverId: remote ? preset.homeId : configuration.activeServerId, machineId: 'controller' }, directory: { kind: 'path', path: '/tmp' },
+            ...(remote ? { sessionPlacement: { kind: 'preset', homeId: preset.homeId, presetId: preset.id } } : {}),
             ...(overrideProjectFiles ? { sessionPlacement: { kind: 'machine',
                 target: { serverId: configuration.activeServerId, machineId: 'controller' }, projectFiles: { kind: 'copy_once' } } } : {}),
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, memoryEnabled: false,
             configuration: { mode: { value: null, updatedAtMs: 1 },
                 model: { value: null, updatedAtMs: 1, selectionSource: 'inherited' },
                 permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } });
-        const authorization = await prepareExternalActionRequesterAccountAuthorization({ actionId: 'session.spawn_new', input,
-            requestId: 'isolation-spawn', target: { kind: 'machine', machineId: 'controller' }, machineId: 'controller',
+        const target = { kind: 'machine' as const, machineId: 'controller' };
+        const envelope = { v: 1 as const, requestId: 'isolation-spawn', target, input,
+            ...(remote ? { sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(input, { managedPresetAcquisition: acquisition }) } : {}) };
+        const authorization = remote ? await projectExternalActionRequesterHttpAuthorization({
+            authorization: projectHomeAuthorization(envelope), target, rootAdmitted: true,
+            serverId: configuration.activeServerId, serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl,
+            installationId: 'installation', privateKey: signing.secretKey, isCurrent: async () => true,
+        }) : await prepareExternalActionRequesterAccountAuthorization({ actionId: 'session.spawn_new', input,
+            requestId: 'isolation-spawn', target, machineId: 'controller',
             accountId: 'account', accountEncryptionMode: 'plain', tokenEpochHint: 0, token, serverId: configuration.activeServerId,
             serverIdentityId: 'srv_home', serverHttpBaseUrl: serverUrl, installationId: 'installation', privateKey: signing.secretKey });
         if (!authorization) throw new Error('Home did not admit the Session isolation root');
@@ -775,15 +835,16 @@ describe('daemon managed Machine Action factory', () => {
             ownCredentials: accountCredentials, isCurrent: async () => true, createExecutor: () => executor });
         if (!requester) throw new Error('The receiving host must open its admitted requester custody');
         onTestFinished(() => requester.dispose());
-        const rootContext: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+        const rootContext: ActionExecutorContext = { surface: 'cli', authority: remote ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' },
             actionsSettings: normalizeActionsSettingsV1(settings.actionsSettingsV1), runtimeAccountId: 'account', actionRequestId: 'isolation-spawn',
             serverId: configuration.activeServerId, externalActionExecutionAuthorization: requester.authorization, externalActionTarget: authorization.binding.target,
-            originalActionEnvelope: { v: 1, requestId: 'isolation-spawn', target: authorization.binding.target, input } };
+            ...(remote ? { sessionCreationDefaults: { context: {}, authoredChoices: {}, managedPresetAcquisition: acquisition } } : {}),
+            originalActionEnvelope: envelope };
         const pendingResult = operations.observeExecution({ actionId: 'session.spawn_new', input, actionRequestId: 'isolation-spawn',
             actionContext: rootContext,
             execute: operation => executor.execute('session.spawn_new', input, { ...rootContext, ...operation }) });
         let launchedWhileAcquiring: unknown[] = [];
-        if (nativeSandbox !== 'unsupported') {
+        if (nativeSandbox !== 'unsupported' && !remote) {
             await acquireAccepted;
             expect(isolationChildResults).toMatchObject([{ ok: true }]);
             await acquireStarted;
@@ -793,11 +854,27 @@ describe('daemon managed Machine Action factory', () => {
             releaseAcquire();
         }
         const result = await pendingResult;
-        const isolationChildOperation = nativeSandbox !== 'unsupported'
+        const isolationChildOperation = nativeSandbox !== 'unsupported' && !remote
             ? await operations.handlers.getV2({ operationId: 'isolation-operation-1', waitForTerminal: true })
             : undefined;
         const diagnostic = JSON.stringify({ result, isolationChildResults, isolationQualifications, isolationFailure,
             isolationAdmissions, isolationReports, isolationChildOperation, roles, launched });
+        if (remote) {
+            expect(result, diagnostic).toMatchObject({ ok: true, result: { type: 'success',
+                disposition: 'created', sessionId: 'guest-session', executionTarget: { machineId: 'actual-guest' },
+                organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } });
+            expect(launched).toEqual([]);
+            expect(roles).not.toContain('acquire');
+            expect(isolationAdmissions).toEqual([expect.objectContaining({ continuationPresent: true })]);
+            expect(guestStarts).toMatchObject([{ creationKey: input.creationKey,
+                sessionCreationTag: deriveSessionCreationTagV1({
+                    callerCreationNamespace: JSON.stringify(['cli', configuration.activeServerId, 'account']), creationKey: input.creationKey!,
+                }),
+                sessionPlacement: { kind: 'managed', projectFiles: { kind: 'sync', mode: 'keep_synced' } },
+                managedCreation: { managedId: machine.id, controller },
+            }]);
+            return;
+        }
         if (nativeSandbox === 'unsupported') {
             expect(result, diagnostic).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { type: 'error', code: 'target_unavailable',
                 failureCause: { nativeErrorReason: 'not_available_in_sandbox_type' } } });

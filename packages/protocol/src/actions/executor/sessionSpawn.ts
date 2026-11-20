@@ -112,7 +112,7 @@ export function buildSessionSpawnNewArgs(
     ? deriveWorkflowSessionCreationTag(normalizeId(ctx.serverId), ctx.actionCaller.runId, creationKey) : null;
   const prepareIdentity = ctx.externalActionExecutionAuthorization
     ? deriveDeploymentPrepareSessionCreationIdentityV1(ctx.externalActionExecutionAuthorization.binding) : null;
-  const sessionCreationTag = prepareIdentity?.sessionCreationTag ?? workflowCreationTag ?? (callerCreationNamespace
+  const sessionCreationTag = ctx.managedContinuationSessionCreationTag ?? prepareIdentity?.sessionCreationTag ?? workflowCreationTag ?? (callerCreationNamespace
     ? deriveSessionCreationTagV1({ callerCreationNamespace, creationKey }) : null);
   if (!sessionCreationTag) return null;
   const args: Record<string, unknown> = {

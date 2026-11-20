@@ -158,10 +158,10 @@ export const MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 = [
   'session.spawn_new', 'workflow.run.start', 'machines.setup.plan', 'machines.setup.apply', ...MANAGED_ENROLLMENT_POLICY_CHILD_ACTION_IDS_V1,
 ] as const;
 
-/** A saved Workflow continues its enrolled creation; Session starts remain Acquire children. */
+/** An enrolled creation continues only the same kind of Work on its guest. */
 export function isManagedCreationContinuationRootV1(rootActionId: string, childActionId: string): boolean {
   if (!MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1.some(id => id === childActionId)) return false;
-  if (rootActionId === 'machines.managed.acquire') return childActionId !== 'workflow.run.start';
+  if (rootActionId === 'machines.managed.acquire' || rootActionId === 'session.spawn_new') return childActionId !== 'workflow.run.start';
   if (rootActionId === 'workflow.run.start') return childActionId !== 'session.spawn_new';
   return isManagedEnrollmentRecoveryChildV1(rootActionId, childActionId);
 }

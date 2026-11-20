@@ -29,6 +29,8 @@ import { bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionE
     prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2,
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealManagedCreationActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { deriveSessionCreationTagV1, SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
@@ -982,8 +984,11 @@ describe('composed CLI managed Action origination', () => {
     it.each([{ mode: 'plain', mutation: 'none', presetMode: 'plain' }, { mode: 'e2ee', mutation: 'none', presetMode: 'plain' },
         { mode: 'plain', mutation: 'archive', presetMode: 'plain' }, { mode: 'e2ee', mutation: 'archive', presetMode: 'plain' },
         { mode: 'plain', mutation: 'edit', presetMode: 'plain' }, { mode: 'e2ee', mutation: 'edit', presetMode: 'plain' },
-        { mode: 'e2ee', mutation: 'archive', presetMode: 'e2ee' }] as const)(
-      'admits a $mode Session through its exact shared preset without controller Use after $mutation ($presetMode preset)', async ({ mode, mutation, presetMode }) => {
+        { mode: 'e2ee', mutation: 'archive', presetMode: 'e2ee' },
+        { mode: 'plain', mutation: 'archive', presetMode: 'plain', enrolled: true }] as const)(
+      'admits a $mode Session through its exact shared preset without controller Use after $mutation ($presetMode preset, enrolled: $enrolled)', async fixtureOptions => {
+        const { mode, mutation, presetMode } = fixtureOptions;
+        const enrolled = 'enrolled' in fixtureOptions;
         const selected = await fixture(true, presetMode);
         const requester = await fixture(true, mode);
         const team = await db.team.create({ data: { name: 'Session compute' } });
@@ -1086,13 +1091,14 @@ describe('composed CLI managed Action origination', () => {
             await expect(admitManagedAcquire({ ...unboundAdmission, sessionPresetAcquisition: {
                 ...acquisition, selection: { ...acquisition.selection, revision: 1 },
             } })).rejects.toMatchObject({ code: 'invalid_request' });
-            const child = async (input: typeof childInput) => {
-                const body = { requestId: authorization.binding.requestId, input, acquisitionMode: 'resource-bound',
-                    continuationPresent: false, originalActionEnvelope: issued.envelope };
+            const child = async (input: typeof childInput, root = authorization, envelope = issued.envelope,
+                requestId = root.binding.requestId) => {
+                const body = { requestId, input, ...(enrolled ? {} : { acquisitionMode: 'resource-bound' }),
+                    continuationPresent: enrolled, originalActionEnvelope: envelope };
                 const path = '/v1/machines/managed/controller/admit';
                 return instance.inject({ method: 'POST', url: path, payload: body,
-                    headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: 'machines.managed.acquire',
-                        target: authorization.binding.target, installationId: selected.controller.installationId,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization: root, effectActionId: 'machines.managed.acquire',
+                        target: root.binding.target, installationId: selected.controller.installationId,
                         privateKey: selected.keys.secretKey, method: 'POST', path, body,
                         reviewedChild: { actionId: 'machines.managed.acquire', role: 'acquire-session-sandbox',
                             inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', input) } }) });
@@ -1101,6 +1107,23 @@ describe('composed CLI managed Action origination', () => {
                 selection: { ...acquisition.selection, revision: 1 } }));
             expect(substitutedChild.statusCode).toBe(401);
             expect(substitutedChild.json()).toMatchObject({ error: 'invalid_token' });
+            if (enrolled) {
+                // This controller cannot enroll for a Session root without the admitted preset, even for its own Account.
+                const ownRoot = ExternalActionExecutionAuthorizationV1Schema.parse(control.response.json());
+                const unboundInput = ManagedAcquireInputV1Schema.parse({ ...childInput, controller: requester.controller });
+                const path = '/v1/machines/managed/controller/admit';
+                const body = { requestId: ownRoot.binding.requestId, input: unboundInput, continuationPresent: true,
+                    originalActionEnvelope: control.envelope };
+                const withoutPreset = await instance.inject({ method: 'POST', url: path, payload: body,
+                    headers: createExternalActionAuthorizedRequestHeaders({ authorization: ownRoot, effectActionId: 'machines.managed.acquire',
+                        target: ownRoot.binding.target, installationId: requester.controller.installationId,
+                        privateKey: requester.keys.secretKey, method: 'POST', path, body,
+                        reviewedChild: { actionId: 'machines.managed.acquire', role: 'acquire-session-sandbox',
+                            inputDigest: computeActionInputApprovalDigestV1('machines.managed.acquire', unboundInput) } }) });
+                expect(withoutPreset.statusCode).toBe(401);
+                const wrongRequest = await child(childInput, authorization, issued.envelope, crypto.randomUUID());
+                expect(wrongRequest.statusCode).toBe(401);
+            }
             // The admitted Session retains its exact snapshot through its first allocation.
             const change = { accountId: selected.account.id, authentication: { authenticationAuthority: 'present_user' as const },
                 input: { homeId, id: presetId, expectedRevision: 0 } };
@@ -1110,6 +1133,40 @@ describe('composed CLI managed Action origination', () => {
             expect(admittedChild.statusCode).toBe(200);
             expect(admittedChild.json()).toMatchObject({ replayed: false, machine: { enrollmentAccountId: requester.account.id,
                 custodianAccountId: selected.account.id, preset: { id: presetId, revision: 0 }, wakeOnAcceptedMessage: false } });
+            if (enrolled) {
+                const { machine } = ManagedAdmissionOutputV1Schema.parse(admittedChild.json());
+                const guestId = requester.controller.machineId;
+                // Native allocation and enrollment publish the retained actual Guest.
+                await db.managedMachine.update({ where: { id: machine.id }, data: { allocation: 'bound', enrolledMachineId: guestId } });
+                const continuation = { managedId: machine.id, creationRequestId: authorization.binding.requestId,
+                    expectedIntentRevision: machine.intentRevision };
+                const guestInput = { agentTarget, executionTarget: { serverId: homeId, machineId: guestId }, directory: { kind: 'managed' } } as const;
+                const plainEnvelope = { v: 1 as const, requestId: authorization.binding.requestId,
+                    target: { kind: 'machine' as const, machineId: guestId }, input: guestInput,
+                    sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(guestInput) };
+                const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'user',
+                    creationKey: SessionCreationKeyV1Schema.parse('original-creation') });
+                const guestEnvelope = sealManagedCreationActionCodecV1({ authorization, actionId, continuation, envelope: plainEnvelope,
+                    recipient: { ...requester.controller, installationPublicKey: Buffer.from(requester.keys.publicKey).toString('base64url') },
+                    sessionCreationTag, randomBytes: tweetnacl.randomBytes });
+                const relay = async (envelope = guestEnvelope, managedContinuation = continuation) => {
+                    const path = bindExternalActionExecutionAuthorizationHttpPathV1(actionId);
+                    const body = { v: 1 as const, machineId: guestId, envelope, managedContinuation };
+                    return instance.inject({ method: 'POST', url: path, payload: body,
+                        headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                            target: authorization.binding.target, installationId: selected.controller.installationId,
+                            privateKey: selected.keys.secretKey, method: 'POST', path, body }) });
+                };
+                const guest = await relay();
+                expect(guest.statusCode, guest.body).toBe(200);
+                expect(ExternalActionExecutionAuthorizationV1Schema.parse(guest.json()).binding).toMatchObject({
+                    accountId: requester.account.id, custodianAccountId: requester.account.id, machineId: guestId,
+                    managedContinuation: { ...continuation, controller: selected.controller,
+                        acquireRequestEnvelopeDigest: authorization.binding.requestEnvelopeDigest },
+                });
+                expect((await relay(plainEnvelope)).statusCode).not.toBe(200);
+                expect((await relay(guestEnvelope, { ...continuation, expectedIntentRevision: machine.intentRevision + 1 })).statusCode).not.toBe(200);
+            }
             const absent = await issue(spawn, projectApiTokenSessionSpawnAdmissionV1(spawn));
             expect(absent.response.statusCode).toBe(409);
             for (const altered of [

@@ -1,9 +1,9 @@
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
-import { isMachineAgentInventoryReadActionIdV1, REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isMachineAgentInventoryReadActionIdV1, REVIEW_START_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { projectSessionSpawnNewActionInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
+import { projectSessionSpawnNewActionAuthoringInputV2 } from "@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2";
 import { isManagedControllerCodecRootV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { prepareManagedMachineSetupApplyInput } from '@happier-dev/cli-common/machines/managed';
@@ -923,7 +923,8 @@ resolveServerFeaturesSnapshot?: () =>
             const root = context.externalActionExecutionAuthorization?.binding;
             if (
               !root ||
-              root.actionId !== 'machines.managed.acquire' ||
+              (root.actionId !== 'machines.managed.acquire' &&
+                !(root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && root.sessionPresetAcquisition?.admission)) ||
               root.machineId !== params.machineId ||
               root.installationId !==
                 externalActionInstallationIdentity?.installationId ||
@@ -969,7 +970,7 @@ resolveServerFeaturesSnapshot?: () =>
               })
             );
           },
-          executeSessionStart: async (input, context, machine) => {
+          executeSessionStart: async (input, context, machine, sessionCreationTag) => {
             const authorization = context.externalActionExecutionAuthorization;
             if (authorization) {
               if (
@@ -1010,6 +1011,7 @@ resolveServerFeaturesSnapshot?: () =>
                 observeRecordedApprovalExecution,
                 input,
                 authorization,
+                ...(sessionCreationTag ? { sessionCreationTag } : {}),
                 authority: context.authority,
                 context,
                 continuation: {
@@ -1031,7 +1033,7 @@ resolveServerFeaturesSnapshot?: () =>
               isSessionActionCallerCurrent,
               input.executionTarget.machineId,
               requesterRuntime,
-            ).execute('session.spawn_new', projectSessionSpawnNewActionInputV2(input), context);
+            ).execute('session.spawn_new', projectSessionSpawnNewActionAuthoringInputV2(input), context);
           },
           executeWorkflowStart: async (input, project, context, machine) => {
             const authorization = context.externalActionExecutionAuthorization;

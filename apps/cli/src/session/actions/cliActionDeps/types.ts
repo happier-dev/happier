@@ -97,18 +97,39 @@ export type AcquireSessionIsolationSandbox = (request: Readonly<{
     input: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionSpawnNewInputV2;
   }>;
   projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
-  configuredSandbox: import('@happier-dev/protocol/machines/machineIsolationV1').MachineIsolationPolicyV1['configuredSandboxes'][string];
-  lifecycle: 'fresh' | 'shared-kept';
   /** Finalize native intent from the qualified preset before admission or provision. */
   resolveNativeSandbox?: (sandboxTypeSupportsNativeSandbox: boolean) => 'on' | 'off' | undefined;
   context: ActionExecutorContext;
   signal?: AbortSignal;
-}>) => Promise<Readonly<{
+}> & (Readonly<{
+  configuredSandbox: import('@happier-dev/protocol/machines/machineIsolationV1').MachineIsolationPolicyV1['configuredSandboxes'][string];
+  lifecycle: 'fresh' | 'shared-kept';
+}> | Readonly<{
+  /** Canonical fresh-placement preparation already selected this exact controller. */
+  acquisition: Extract<import('@happier-dev/protocol/machines/managed/actionsV1').ManagedAcquireInputV1,
+    { selection: { kind: 'preset' } }>;
+  enrolledSession?: Readonly<{
+    input: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionSpawnNewInputV2;
+    tag: import('@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1').SessionCreationTagV1;
+  }>;
+}>)) => Promise<Readonly<{
   managedCreation: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionManagedCreationV1;
-  projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
   sandboxTypeSupportsNativeSandbox: boolean;
+  projectFiles?: import('@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1').SessionProjectFilesV1;
   nativeSandbox?: 'on' | 'off';
+  sessionResult?: never;
+}> | Readonly<{
+  sessionResult: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteResult;
 }>>;
+
+export type SessionIsolationSandboxAcquisition = AcquireSessionIsolationSandbox & Readonly<{
+  preparePresetPlacement?: (request: Readonly<{
+    acquisition: Extract<import('@happier-dev/protocol/machines/managed/actionsV1').ManagedAcquireInputV1,
+      { selection: { kind: 'preset' } }>;
+    binding: NonNullable<ActionExecutorContext['externalActionExecutionAuthorization']>['binding'];
+    signal?: AbortSignal;
+  }>) => Promise<NonNullable<ActionExecutorContext['sessionCreationPresetPlacement']>>;
+}>;
 
 /** The daemon's already authenticated Machine socket; never the Account user socket. */
 export type SessionActionRpcTransport = (request: Readonly<{
@@ -323,7 +344,7 @@ export type CliActionDepsParams = Readonly<{
       /** The original startup owner retains exact launch-retirement evidence. */
       projectCreationFailure?: (error: unknown) => import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1').SessionSpawnNewResultV1;
     }>;
-  acquireSessionIsolationSandbox?: AcquireSessionIsolationSandbox;
+  acquireSessionIsolationSandbox?: SessionIsolationSandboxAcquisition;
   acquireWorkflowPlacement?: ActionExecutorDeps['acquireWorkflowPlacement'];
   machineActionDirectTargetTransport?: MachineActionDirectTargetTransport;
   /** The receiving daemon's native setup plan for its own Machine. The combined setup owner

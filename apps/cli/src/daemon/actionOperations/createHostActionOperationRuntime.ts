@@ -12,7 +12,7 @@ import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/re
 import { createActionOperationRpcHandlers, resolveActionOperationScope, type ActionOperationRpcContext } from './actionOperationRpcHandlers';
 import { createActionOperationRunner } from './actionOperationRunner';
 import { createActionOperationStore, type DeploymentBackupOperationTarget } from './actionOperationStore';
-import { readManagedWorkflowContinuationResultPort, type ManagedWorkflowContinuationResultPort } from '@/machines/managed/creationContinuation';
+import { readManagedCreationContinuationResultPort, type ManagedCreationContinuationResultPort } from '@/machines/managed/creationContinuation';
 import { readDeploymentTokenOperationOrigin } from './deploymentTokenOrigin';
 import type { ActionOperationCancellation, ActionOperationDomainOwner, ActionOperationProgressUpdate, HostActionOperationExecute } from './actionOperationTypes';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
@@ -245,7 +245,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     operation?: ActionOperationDeclarationV1;
     response?: 'admission';
     joinEarlierActive?: Parameters<typeof runner.observe>[0]['joinEarlierActive'];
-    workflowContinuationResult?: ManagedWorkflowContinuationResultPort;
+    creationContinuationResult?: ManagedCreationContinuationResultPort;
     actionRequestId?: import('@happier-dev/protocol').ActionExecutorContext['actionRequestId'];
     sessionId?: string;
     /** Already admitted receiving-host context, never a public Action input. */
@@ -363,7 +363,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     let observedOperationId: string | undefined;
     const execution = runner.observe({
       actionId: request.actionId,
-      ...(request.workflowContinuationResult ? { readWorkflowContinuationResult: request.workflowContinuationResult.read } : {}),
+      ...(request.creationContinuationResult ? { readCreationContinuationResult: request.creationContinuationResult.read } : {}),
       ...(request.response ? { response: request.response } : {}),
       ...(request.joinEarlierActive ? { joinEarlierActive: request.joinEarlierActive } : {}),
       ...(request.operation || request.actionId === DEPLOYMENT_DEPLOY_ACTION_ID_V1 || request.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? { action: { actionId: spec.id,
@@ -470,9 +470,9 @@ export function createHostActionOperationRuntime(deps: Readonly<{
     const result = await (request.actionId === 'session.spawn_new'
       ? observeUntilCallerAbort(execution, request.rpcContext?.signal)
       : execution);
-    if (request.workflowContinuationResult && observedOperationId) {
-      const retained = store.readWorkflowContinuationResult(scope, observedOperationId);
-      if (retained) request.workflowContinuationResult.restore(retained);
+    if (request.creationContinuationResult && observedOperationId) {
+      const retained = store.readCreationContinuationResult(scope, observedOperationId);
+      if (retained) request.creationContinuationResult.restore(retained);
     }
     const serverId = deps.custodyBinding?.serverId ?? deps.serverId;
     if (request.actionId === 'session.spawn_new' && result.ok && serverId && observedOperationId) {
@@ -679,10 +679,10 @@ export async function runHostActionOperation(
   const workflowCaller = context.actionCaller?.kind === 'workflowRun'
     || Boolean(context.externalActionExecutionAuthorization?.binding.workflowActionOrigin);
   const workflowOperationReceipt = isMachineSetupOperationActionIdV1(request.actionId);
-  const workflowContinuationResult = readManagedWorkflowContinuationResultPort(context);
+  const creationContinuationResult = readManagedCreationContinuationResultPort(context);
   return observeExecution({ actionId: request.actionId, input: request.input, semanticInput: request.semanticInput,
     rpcContext: rpcContext ?? context, actionContext: context,
-    ...(workflowContinuationResult ? { workflowContinuationResult } : {}),
+    ...(creationContinuationResult ? { creationContinuationResult } : {}),
     ...((context.surface === 'agent' || context.surface === 'mcp') && !context.approvedActionReplay
       // Setup completion retains this host receipt before observing terminal
       // output. Other Workflow Actions retain their own declared result shape.

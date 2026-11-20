@@ -336,6 +336,7 @@ async function executeExternalActionRequest(input: Readonly<{
   let envelopeCodecMaterial: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }> | null = null;
   let controllerInvocation: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').ExternalActionRequesterInvocationV1 | undefined;
   let managedReviewedParent: HostReviewedParentV1 | undefined;
+  let managedSessionCreationTag: ActionExecutorContext['managedContinuationSessionCreationTag'];
   // The opening target Home already proved for this root; an unchanged resolved
   // target spends that one admission rather than repeating the same POST.
   let rootAdmittedTarget: ExternalActionTargetV1 | undefined;
@@ -382,6 +383,7 @@ async function executeExternalActionRequest(input: Readonly<{
       errorCode: current && !current.ok && current.executionFailure ? current.executionFailure.errorCode
         : envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope', requestId: envelope.data.requestId };
     managedReviewedParent = opened.reviewedParent;
+    managedSessionCreationTag = opened.sessionCreationTag;
     rootAdmittedTarget = authorization?.binding.target;
   }
   let pluginRuntimeLease: PluginRuntimeRegistryLease | null = null;
@@ -654,6 +656,7 @@ async function executeExternalActionRequest(input: Readonly<{
   // Surface selects this Account's Require and a named Session opens delegated
   // decisions, so those facts come only from this Account's own admitted invocation.
   const ownInvocation = envelope.data.managedCreationCodec ? requesterContext?.invocation : invocation;
+  const sessionCreationDefaults = managedSessionCreationTag ? controllerInvocation?.sessionCreationDefaults : ownInvocation?.sessionCreationDefaults;
   const actionSurface = sessionActionOrigin || workflowActionOrigin ? 'agent' : apiTokenPrincipal ? 'api'
     : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, ownInvocation?.surface ?? input.surface);
   const placementContext = { actionCaller: sessionActionOrigin?.caller ?? invocation?.caller, surface: actionSurface };
@@ -948,6 +951,7 @@ async function executeExternalActionRequest(input: Readonly<{
   const logsGeneration = logsOperands.machineServiceLogsGeneration?.expectedGeneration
     ?? (logsReference?.hostRead === 'machines.services.logs' ? logsReference.expectedGeneration : undefined);
   const context: RpcActionExecutorContext = {
+    ...(managedSessionCreationTag ? { managedContinuationSessionCreationTag: managedSessionCreationTag } : {}),
     ...(input.operationOwnerUpdate ? { operationOwnerUpdate: input.operationOwnerUpdate } : {}),
     ...(!admittedAuthorization && !input.machineAdmission && !accountPrincipal && !apiTokenPrincipal
       && !pluginCaller
@@ -985,7 +989,7 @@ async function executeExternalActionRequest(input: Readonly<{
       ...(invocation.callerInputConstraints ? { callerInputConstraints: invocation.callerInputConstraints } : {}),
       ...(invocation.workspaceWrites ? { workspaceWrites: invocation.workspaceWrites } : {}),
       ...(ownInvocation?.defaultSessionId ? { defaultSessionId: ownInvocation.defaultSessionId } : {}),
-      ...(ownInvocation?.sessionCreationDefaults ? { sessionCreationDefaults: ownInvocation.sessionCreationDefaults } : {}),
+      ...(sessionCreationDefaults ? { sessionCreationDefaults } : {}),
     } : {}),
     ...(admittedAuthorization ? projectExternalActionWorkflowSessionLeafContextV1(admittedAuthorization) : {}),
     ...(sessionActionOrigin ? {

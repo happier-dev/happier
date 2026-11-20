@@ -73,7 +73,7 @@ export async function admitManagedAcquire(params: Readonly<{
     try {
         const request = ManagedAdmissionInputV1Schema.parse(params.input);
         const review = resolveManagedAcquireReviewV1(request.input);
-        const admittedSessionPreset = request.acquisitionMode === 'resource-bound' && params.sessionPresetAcquisition !== undefined
+        const admittedSessionPreset = params.sessionPresetAcquisition !== undefined
             && sameManagedInput({ selection: params.sessionPresetAcquisition.selection, controller: params.sessionPresetAcquisition.controller },
                 { selection: request.input.selection, controller: review.controller });
         const crossAccount = params.custodianAccountId !== params.requesterAccountId;

@@ -37,7 +37,8 @@ import { DeploymentChildRpcV1Schema, readDeploymentChildRpcV1 } from '../../depl
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '../../machines/managed/actionsV1.js';
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
 import { MACHINE_SETUP_APPLY_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationContinuationRootV1, isManagedCreationMutationActionIdV1 } from '../../machines/managed/actionIdsV1.js';
-import { ActionIdSchema, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../../actions/actionIds.js';
+import { ActionIdSchema, SESSION_SPAWN_NEW_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '../../actions/actionIds.js';
+import { SessionCreationTagV1Schema, type SessionCreationTagV1 } from './sessionCreationIdentityV1.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
 import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '../../local/services/actionIdsV1.js';
 import { isPresentUserHostInvocation, isPluginActionInvokeConfirmationV1 } from '../../actions/invocationAuthority.js';
@@ -255,6 +256,7 @@ const ManagedCreationCodecPlaintextV1Schema = lazyZodSchema(() => z.strictObject
   invocation: z.optional(ExternalActionRequesterInvocationV1Schema),
   /** Existing parent facts; meaningful only after the source-signed domain continuation is admitted. */
   reviewedParent: z.optional(WorkflowApprovedOperationParentV1Schema),
+  sessionCreationTag: z.optional(SessionCreationTagV1Schema),
   purpose: z.strictObject({ kind: z.literal('managed_creation_codec'),
     actionId: z.enum(MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1),
     continuation: ExternalActionManagedContinuationV1Schema,
@@ -279,6 +281,7 @@ type SealManagedCreationActionCodecInput = Readonly<{
   actionId: typeof MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1[number];
   invocation?: ExternalActionRequesterInvocationV1;
   reviewedParent?: z.infer<typeof WorkflowApprovedOperationParentV1Schema>;
+  sessionCreationTag?: SessionCreationTagV1;
   continuation: Pick<z.infer<typeof ExternalActionManagedContinuationV1Schema>, 'managedId' | 'creationRequestId' | 'expectedIntentRevision'>;
   envelope: ExternalActionRequestEnvelope;
   recipient: z.infer<typeof ManagedEnrollmentInstallationV1Schema>;
@@ -295,16 +298,20 @@ export function sealManagedCreationActionCodecV1(input: SealManagedCreationActio
   const recipient = ManagedEnrollmentInstallationV1Schema.parse(input.recipient);
   const envelope = ExternalActionRequestEnvelopeSchema.parse(input.envelope);
   const needsCodecMaterial = root.accountEncryptionMode === 'e2ee' && root.accountId !== root.custodianAccountId;
+  const continuesSession = root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
   if (!isManagedCreationCodecParent(root, input.actionId) || envelope.managedCreationCodec
     || envelope.target?.kind !== 'machine' || envelope.target.machineId !== recipient.machineId
     || envelope.requestId !== root.requestId
-    || root.actionId === 'machines.managed.acquire' && input.continuation.creationRequestId !== root.requestId
+    || (root.actionId === 'machines.managed.acquire' || root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1)
+      && input.continuation.creationRequestId !== root.requestId
+    || continuesSession !== (input.sessionCreationTag !== undefined)
     || !root.accountEncryptionMode || !isExternalActionRequestVersionAllowedForAccountModeV1({ accountEncryptionMode: root.accountEncryptionMode, envelopeVersion: envelope.v })
     || needsCodecMaterial && !input.material)
     throw new Error('managed_creation_codec_root_mismatch');
   const plaintext = ManagedCreationCodecPlaintextV1Schema.parse({ v: 1, authorization,
     ...(input.invocation ? { invocation: input.invocation } : {}),
     ...(input.reviewedParent ? { reviewedParent: input.reviewedParent } : {}),
+    ...(input.sessionCreationTag ? { sessionCreationTag: input.sessionCreationTag } : {}),
     purpose: { kind: 'managed_creation_codec', actionId: input.actionId,
       continuation: { ...input.continuation, controller: { machineId: root.machineId, installationId: root.installationId },
         acquireRequestEnvelopeDigest: root.requestEnvelopeDigest },
@@ -318,6 +325,7 @@ export function sealManagedCreationActionCodecV1(input: SealManagedCreationActio
 function isManagedCreationCodecParent(root: ExternalActionExecutionAuthorizationV1['binding'], actionId: string) {
   return 'authentication' in root && (root.accountEncryptionMode === 'plain' || root.accountEncryptionMode === 'e2ee')
     && root.target.kind === 'machine' && root.target.machineId === root.machineId
+    && (root.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1 || root.sessionPresetAcquisition?.admission !== undefined)
     && isManagedCreationContinuationRootV1(root.actionId, actionId);
 }
 
@@ -328,7 +336,7 @@ type OpenManagedCreationActionCodecInput = Readonly<{
 }>;
 export function openManagedCreationActionCodecV1(input: OpenManagedCreationActionCodecInput & Readonly<{ includeInvocation: true }>):
   Readonly<{ material: ManagedControllerCodecMaterial | null; invocation?: ExternalActionRequesterInvocationV1;
-    reviewedParent?: z.infer<typeof WorkflowApprovedOperationParentV1Schema> }> | null;
+    reviewedParent?: z.infer<typeof WorkflowApprovedOperationParentV1Schema>; sessionCreationTag?: SessionCreationTagV1 }> | null;
 export function openManagedCreationActionCodecV1(input: OpenManagedCreationActionCodecInput): ManagedControllerCodecMaterial | null;
 export function openManagedCreationActionCodecV1(input: OpenManagedCreationActionCodecInput & Readonly<{ includeInvocation?: boolean }>) {
   try {
@@ -347,6 +355,7 @@ export function openManagedCreationActionCodecV1(input: OpenManagedCreationActio
     const plaintext = openInstallationSealedContext(sealed, input.installationPrivateKey);
     if (!plaintext || !hasManagedCodecPurpose(plaintext, 'managed_creation_codec')) return null;
     const parent = plaintext.authorization.binding;
+    const continuesSession = parent.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && root.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
     // The final Home-signed digest includes the box. Its internal base digest
     // commits all other envelope bytes, avoiding a circular digest definition.
     const { managedCreationCodec: _codec, ...baseEnvelope } = envelope;
@@ -360,6 +369,8 @@ export function openManagedCreationActionCodecV1(input: OpenManagedCreationActio
       || plaintext.purpose.continuation.acquireRequestEnvelopeDigest !== parent.requestEnvelopeDigest
       || createCanonicalJsonSigningInput(plaintext.purpose.continuation) !== createCanonicalJsonSigningInput(root.managedContinuation)
       || plaintext.reviewedParent && plaintext.reviewedParent.actionId !== parent.actionId
+      || continuesSession !== (plaintext.sessionCreationTag !== undefined)
+      || continuesSession && root.managedContinuation.creationRequestId !== parent.requestId
       || plaintext.purpose.requestEnvelopeDigest !== computeExternalActionRequestEnvelopeDigestV1(baseEnvelope)) return null;
     if (parent.actionId === WORKFLOW_RUN_START_ACTION_ID_V1) {
       if (parent.target.kind !== 'machine' || !parent.target.project) return null;
@@ -380,6 +391,7 @@ export function openManagedCreationActionCodecV1(input: OpenManagedCreationActio
       ? { type: 'dataKey', machineKey: decodeBase64(plaintext.codec.machineKey) } : null;
     return input.includeInvocation ? { material,
       ...('reviewedParent' in plaintext && plaintext.reviewedParent ? { reviewedParent: plaintext.reviewedParent } : {}),
+      ...(plaintext.sessionCreationTag ? { sessionCreationTag: plaintext.sessionCreationTag } : {}),
       ...('invocation' in plaintext && plaintext.invocation ? { invocation: plaintext.invocation } : {}) } : material;
   } catch { return null; }
 }

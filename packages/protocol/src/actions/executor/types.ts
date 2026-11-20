@@ -1133,6 +1133,13 @@ export type ActionExecutorContext = Readonly<{
 
   /** Target-owner preparation retained only within this spawn execution; never approval/RPC input. */
   sessionCreationPreparedTarget?: Extract<import('../../sessions/creation/sessionCreationTargetPreparationV1.js').SessionCreationTargetPreparationResultV1, { ok: true }>;
+  /** Qualified receiving-host preset placement, held only for this Action. */
+  sessionCreationPresetPlacement?: Readonly<{
+    provisioner: import('../../plugins/contributions/machineProvisioners.js').MachineProvisionerContributionV1;
+    placement: NonNullable<import('../../plugins/contributions/machineProvisioners.js').MachineProvisionerContributionV1['sessionPlacement']>;
+  }>;
+  /** The original Session's tag on an admitted installation-sealed continuation. */
+  managedContinuationSessionCreationTag?: import('../../sessions/creation/sessionCreationIdentityV1.js').SessionCreationTagV1;
 
   /** Exact host-only non-empty handoff target proof recovered from approval. */
   handoffTargetReplacementApproval?: HandoffTargetReplacementApprovalV1 | null;
@@ -2198,11 +2205,13 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<
-    | Readonly<{ type: 'not_required'; preparedTarget?: ActionExecutorContext['sessionCreationPreparedTarget'] }>
+    | Readonly<{ type: 'not_required'; preparedTarget?: ActionExecutorContext['sessionCreationPreparedTarget'];
+        presetPlacement?: ActionExecutorContext['sessionCreationPresetPlacement'] }>
     | Readonly<{
         type: 'approval_required';
         approval: SessionCreationDirectoryApprovalV1;
         preparedTarget?: ActionExecutorContext['sessionCreationPreparedTarget'];
+        presetPlacement?: ActionExecutorContext['sessionCreationPresetPlacement'];
       }>
     | Readonly<{
         type: 'error';

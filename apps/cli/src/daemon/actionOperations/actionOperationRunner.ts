@@ -52,7 +52,7 @@ import type {
   ActionOperationReviewContinuation,
   ActionOperationSetupDecision,
   DeploymentTokenOperationOrigin,
-  ManagedWorkflowContinuationResult,
+  ManagedCreationContinuationResult,
 } from './actionOperationTypes';
 
 type ActiveInvocation = Readonly<{
@@ -137,7 +137,7 @@ export function createActionOperationRunner(deps: Readonly<{
     /** Observation only: admission returns early; terminal waits for the handler result. */
     response?: 'admission' | 'terminal';
     /** Captured by the admitted host-only Workflow acquisition continuation. */
-    readWorkflowContinuationResult?: () => ManagedWorkflowContinuationResult | undefined;
+    readCreationContinuationResult?: () => ManagedCreationContinuationResult | undefined;
     requestId?: string;
     /** Original carried confirmation retries observe an existing proposal, not its decision. */
     rejoinPendingApproval?: true;
@@ -612,8 +612,8 @@ export function createActionOperationRunner(deps: Readonly<{
           }
           throw error;
         } finally {
-          const workflowResult = request.readWorkflowContinuationResult?.();
-          if (workflowResult) deps.store.retainWorkflowContinuationResult(request.scope, operationId, workflowResult);
+          const continuationResult = request.readCreationContinuationResult?.();
+          if (continuationResult) deps.store.retainCreationContinuationResult(request.scope, operationId, continuationResult);
           // An indeterminate Move retains an observation, not an executing
           // coordinator. Its retired AbortController cannot clean up an unknown
           // native instance; do not advertise a cancellation owner that is gone.
@@ -803,12 +803,12 @@ export function createActionOperationRunner(deps: Readonly<{
     cancel,
     /** Join the admitted executor without requesting cancellation or trusting an early terminal projection. */
     async waitForCompletion(scope: ActionOperationQueryScope, operationId: string,
-      receiveWorkflowResult?: (result: ManagedWorkflowContinuationResult) => void) {
+      receiveCreationResult?: (result: ManagedCreationContinuationResult) => void) {
       const snapshot = deps.store.get(scope, operationId);
       if (!snapshot) return null;
       await active.get(operationId)?.result.catch(() => undefined);
-      const workflowResult = deps.store.readWorkflowContinuationResult(scope, operationId);
-      if (workflowResult) receiveWorkflowResult?.(workflowResult);
+      const continuationResult = deps.store.readCreationContinuationResult(scope, operationId);
+      if (continuationResult) receiveCreationResult?.(continuationResult);
       return deps.store.get(scope, operationId);
     },
     requestCancellation,

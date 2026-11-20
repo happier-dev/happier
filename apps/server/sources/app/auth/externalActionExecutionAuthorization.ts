@@ -1550,11 +1550,17 @@ async function isReviewedManagedAcquirePurpose(binding: ExternalActionExecutionA
         || root === undefined
         || !isExternalActionAuthorizationBoundToEnvelope(binding, { actionId: binding.actionId, machineId: binding.machineId, envelope: root })
         || proof.reviewedChild.inputDigest !== computeActionInputApprovalDigestV1(MANAGED_ACQUIRE_ACTION_ID_V1, input)) return false;
-    if (session) return parsed.data.acquisitionMode === 'resource-bound' && parsed.data.continuationPresent === false
-        && (binding.sessionPresetAcquisition === undefined || sameManagedInput({ selection: binding.sessionPresetAcquisition.selection,
-            controller: binding.sessionPresetAcquisition.controller }, {
-            selection: input.selection, controller: input.controller,
-        }));
+    if (session) {
+        const selectedPreset = binding.sessionPresetAcquisition;
+        const exactPreset = selectedPreset !== undefined && sameManagedInput({
+            selection: selectedPreset.selection, controller: selectedPreset.controller,
+        }, { selection: input.selection, controller: input.controller });
+        if (parsed.data.acquisitionMode === 'resource-bound') {
+            return !parsed.data.continuationPresent && (selectedPreset === undefined || exactPreset);
+        }
+        return exactPreset && selectedPreset?.admission !== undefined
+            && parsed.data.continuationPresent && parsed.data.requestId === binding.requestId;
+    }
     const placement = binding.target.kind === 'machine' ? binding.target.project?.sessionPlacement : undefined;
     if (parsed.data.acquisitionMode !== undefined || !parsed.data.continuationPresent
         || placement?.kind !== 'preset' || placement.homeId !== input.selection.homeId || placement.presetId !== input.selection.id
@@ -4450,7 +4456,9 @@ export async function verifyExternalActionDomainExecutionRequest(
         // The Session transport must admit persisted requester Account mode
         // before opening owner metadata. verifyCommon has already rechecked
         // the signed placement, Machine installation and principal.
-    } else if (isAdmittedRootRelay || verified.binding.handoffPreflight) {
+    } else if (isAdmittedRootRelay || verified.binding.handoffPreflight
+        || verified.binding.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && verified.binding.sessionPresetAcquisition?.admission
+            && isManagedCreationChildHttpPurpose(verified, proof)) {
         // Exact root re-entry is not a family grant or a new originator.
     } else if (isManagedEnrollmentPolicyChildActionIdV1(verified.binding.actionId) && verified.binding.managedContinuation
         && verified.effectActionId === verified.binding.actionId

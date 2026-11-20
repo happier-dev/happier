@@ -9,6 +9,7 @@ import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliAction
 import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { openManagedMachineRead } from '@/machines/managed/readManagedMachine';
+import type { SessionSpawnNewTargetedAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import type { SessionProjectFilesV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -44,14 +45,14 @@ import { ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/
 import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { SESSION_MANAGED_TARGET_BUSY_CODE } from '@happier-dev/protocol/spawnSession';
 import { invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { managedCreationAcquisition, readManagedWorkflowContinuationResultPort,
+import { managedCreationAcquisition, readManagedCreationContinuationResultPort,
     type ManagedCreationAcquisitionOptions, type ManagedCreationAcquisitionContext } from '@/machines/managed/creationContinuation';
 import axios from 'axios';
 import { prepareMachinePresetOnHost } from './machinePresetPreparation';
 import { WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { WorkflowRunStartResultV1Schema, type WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
-import type { ManagedWorkflowContinuationResult } from '../actionOperations/actionOperationTypes';
+import type { ManagedCreationContinuationResult } from '../actionOperations/actionOperationTypes';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 /** The incumbent daemon factory binds the current controller to its driver. */
@@ -63,7 +64,8 @@ type ManagedMachineActionAdapterParams = Readonly<{
     serverBaseUrl: string;
     serverId: string;
     readGuestHomeHostIdentity?: import('@/machines/managed/acquire').ManagedMachineAcquisitionDriverInput['readGuestHomeHostIdentity'];
-    executeSessionStart?: (input: SessionSpawnNewInputV2, context: ActionExecutorContext, machine: ManagedMachineV1) => Promise<ActionExecuteResult>;
+    executeSessionStart?: (input: SessionSpawnNewTargetedAuthoringInputV2, context: ActionExecutorContext, machine: ManagedMachineV1,
+        creationTag?: import('@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1').SessionCreationTagV1) => Promise<ActionExecuteResult>;
     executeWorkflowStart?: (input: WorkflowRunStartRequestV1, project: WorkflowProjectTargetV1,
         context: ActionExecutorContext, machine: ManagedMachineFullV1) => Promise<ActionExecuteResult>;
     executeEnvironmentSetup?: (machine: ManagedMachineFullV1, context: ActionExecutorContext, isCurrent: () => Promise<boolean>) => Promise<ActionExecuteResult>;
@@ -226,15 +228,6 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             context = { ...context, externalActionExecutionAuthorization: authorization, externalActionTarget: target };
         }
         const agentStart = actionId === 'machines.managed.acquire' ? ManagedAcquireInputV1Schema.parse(input).agentStart : undefined;
-        const executeSessionStart = params.executeSessionStart;
-        if (agentStart && (!executeSessionStart || !context.operationOwnerUpdate
-            || (context.externalActionCredential && !context.externalActionExecutionAuthorization)
-            // A Session continuation needs a private reader owned by the
-            // requester Account, not another resource custodian's credentials.
-            || (context.externalActionExecutionAuthorization && context.actionCaller?.kind === 'session' && !params.observeRecordedApprovalExecution)
-            || (context.externalActionExecutionAuthorization && (!params.preflightSessionStart || !await params.preflightSessionStart(context))))) {
-            throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-        }
         const isolation = (context as ManagedCreationAcquisitionContext)[managedCreationAcquisition];
         if (isolation && (actionId !== MANAGED_ACQUIRE_ACTION_ID_V1
             || !sameStrictJsonValue(isolation.input, input)
@@ -242,6 +235,15 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             throw new ManagedMachineControllerError('admission_unavailable');
         }
         const isolationOptions = isolation?.take(context);
+        const executeSessionStart = params.executeSessionStart;
+        if ((agentStart || isolationOptions?.sessionPresetPlacement?.placement.kind === 'remote')
+            && (!executeSessionStart || !context.operationOwnerUpdate
+                || (context.externalActionCredential && !context.externalActionExecutionAuthorization)
+                || (context.externalActionExecutionAuthorization && context.actionCaller?.kind === 'session' && !params.observeRecordedApprovalExecution)
+                || (context.externalActionExecutionAuthorization && (!params.preflightSessionStart
+                    || !await params.preflightSessionStart({ ...context, actionRequestId: isolationOptions?.requestId ?? context.actionRequestId }))))) {
+            throw new ManagedMachineControllerError('admission_unavailable');
+        }
         const result = await withBoundDriver(params, signal, async (driver, controllerCredentials) => await driver.execute(actionId, input, { requestId, context, signal,
                 ...isolationOptions,
                 ...(params.subscribeEnvironmentSetupChanges ? { subscribeEnvironmentSetupChanges: callbacks => params.subscribeEnvironmentSetupChanges!(context, callbacks) } : {}),
@@ -313,9 +315,9 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         // port; it remains read-only and creates no operation of its own.
         if (!context.operationAcceptance && (observesNativeSettlement || (getActionSpec(actionId).operation && (runId || observe)))) {
             if (!context.actionRequestId || !observe) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
-            const workflowContinuationResult = readManagedWorkflowContinuationResultPort(context);
+            const creationContinuationResult = readManagedCreationContinuationResultPort(context);
             const observed = await observe({ actionId, input, actionRequestId: context.actionRequestId,
-                ...(workflowContinuationResult ? { workflowContinuationResult } : {}),
+                ...(creationContinuationResult ? { creationContinuationResult } : {}),
                 execute: async operation => {
                     if (runId && actionId !== 'machines.managed.inspect' && !operation.operationAcceptance) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
                     // A detached Ask replay is only the admission carrier. Once
@@ -336,7 +338,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
     return Object.assign(actionAdapter, {
         preparePreset: (async request => await withBoundDriver(params, request.signal, async (_driver, _credentials, host) =>
             await prepareMachinePresetOnHost(request, { ...host, machineId: params.machineId, serverBaseUrl: params.serverBaseUrl }))) satisfies NonNullable<ActionExecutorDeps['machinePresetPrepare']>,
-        acquireSessionIsolationSandbox: (async request => {
+        acquireSessionIsolationSandbox: Object.assign((async request => {
             const origin = await params.resolveCurrentMachineExecutionOriginContext?.(request.signal);
             if (!origin || !params.installationIdentity) throw new ManagedMachineControllerError('controller_unavailable');
             const homeId = origin.serverIdentityId;
@@ -366,8 +368,30 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             let sandboxTypeSupportsNativeSandbox = false;
             let presetProjectFiles: SessionProjectFilesV1 | undefined;
             let nativeSandbox: 'on' | 'off' | undefined;
-            const options: ManagedCreationAcquisitionOptions = {
+            const enrolledSession = 'enrolledSession' in request ? request.enrolledSession : undefined;
+            const preparedPlacement = request.context.sessionCreationPresetPlacement;
+            let continuationContext = request.context;
+            let sessionResult: ActionExecuteResult | undefined;
+            const executeSession = params.executeSessionStart;
+            const options: ManagedCreationAcquisitionOptions = enrolledSession && executeSession ? {
+                sessionPresetPlacement: preparedPlacement,
+                requestId: request.context.externalActionExecutionAuthorization?.binding.requestId,
+                runCreationContinuation: async ({ machine, projectFiles }) => {
+                    if (!machine.enrolledMachineId) throw new ManagedMachineControllerError('intent_changed');
+                    const authoredPlacement = enrolledSession.input.sessionPlacement;
+                    const source = authoredPlacement?.kind === 'preset' ? authoredPlacement : undefined;
+                    const result = await executeSession({ ...enrolledSession.input,
+                        executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
+                        sessionPlacement: { kind: 'managed', projectFiles: source?.projectFiles ?? projectFiles,
+                            projectFilesSource: source?.projectFilesSource },
+                        managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },
+                    }, continuationContext, machine, enrolledSession.tag);
+                    sessionResult = result.ok ? completeSpawnActionResult(result.result) : result;
+                    if (!sessionResult.ok) throw ManagedMachineControllerError.fromActionFailure(sessionResult, request.parent.actionId);
+                },
+            } : {
                 acquisitionMode: 'resource-bound',
+                ...(preparedPlacement ? { sessionPresetPlacement: preparedPlacement } : {}),
                 ...(configured ? { expectedProvisioner: configured.configuredSandbox.provisioner } : {}),
                 onLocalSessionPlacement: (placement, projectFiles) => {
                     presetProjectFiles = projectFiles;
@@ -376,6 +400,8 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 },
                 ...(configured?.lifecycle === 'shared-kept' ? { reuseIdle: true } : {}),
             };
+            if (enrolledSession && (!executeSession || preparedPlacement?.placement.kind !== 'remote'
+                || !options.requestId)) throw new ManagedMachineControllerError('admission_unavailable');
             let consumed = false;
             const operation = request.context.operationAcceptance;
             // A confirmed busy birth had no effect. The existing fresh root operation
@@ -387,28 +413,46 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 context,
                 child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-session-sandbox', input: projectNativeJsonValueForTransport(acquisition) },
                 execute: (_input, context) => request.executeSessionIsolationAcquire(acquisition, { ...context,
-                    [managedCreationAcquisition]: { input: acquisition, take: () => {
+                    [managedCreationAcquisition]: { input: acquisition,
+                        ...(enrolledSession ? { creationContinuationResult: {
+                            read: () => sessionResult, restore: (result: ActionExecuteResult) => { sessionResult = result; },
+                        } } : {}), take: (admittedContext: ActionExecutorContext) => {
                         if (consumed) throw new ManagedMachineControllerError('admission_unavailable');
+                        continuationContext = admittedContext;
                         consumed = true;
                         return options;
                     } },
                 } as ManagedCreationAcquisitionContext),
             });
-            if (!result.ok) throw ManagedMachineControllerError.fromActionFailure(result, MANAGED_ACQUIRE_ACTION_ID_V1);
+            if (!result.ok) {
+                if (enrolledSession) return { sessionResult: sessionResult ?? result };
+                throw ManagedMachineControllerError.fromActionFailure(result, MANAGED_ACQUIRE_ACTION_ID_V1);
+            }
             const accepted = ManagedAcceptedV1Schema.parse(result.result);
             if (accepted.operation) {
                 const waitForCompletion = params.waitForActionOperationCompletion;
                 const accountId = request.context.externalActionExecutionAuthorization?.binding.accountId ?? request.context.runtimeAccountId;
                 if (!waitForCompletion || !accountId) throw new ManagedMachineControllerError('admission_unavailable');
-                const completed = await waitForCompletion({ accountId, machineId: params.machineId }, accepted.operation.operationId);
+                const completed = await waitForCompletion({ accountId, machineId: params.machineId }, accepted.operation.operationId,
+                    enrolledSession ? result => { sessionResult = result; } : undefined);
                 const terminal = completed ? readActionOperationTerminalResultV1(completed) : null;
                 if (!terminal) throw new ManagedMachineControllerError('admission_unavailable');
-                if (!terminal.ok) throw ManagedMachineControllerError.fromActionFailure(terminal, MANAGED_ACQUIRE_ACTION_ID_V1);
+                if (!terminal.ok) {
+                    if (enrolledSession) return { sessionResult: sessionResult ?? terminal };
+                    throw ManagedMachineControllerError.fromActionFailure(terminal, MANAGED_ACQUIRE_ACTION_ID_V1);
+                }
             }
+            if (enrolledSession) return { sessionResult: sessionResult ?? {
+                ok: false, errorCode: 'continuation_unavailable', error: 'continuation_unavailable',
+            } };
             return { managedCreation: { homeId, managedId: accepted.managedId, controller }, sandboxTypeSupportsNativeSandbox,
                 projectFiles: request.projectFiles ?? presetProjectFiles,
                 ...(nativeSandbox ? { nativeSandbox } : {}) };
-        }) satisfies AcquireSessionIsolationSandbox,
+        }) satisfies AcquireSessionIsolationSandbox, {
+            preparePresetPlacement: ({ acquisition, binding, signal }: Parameters<NonNullable<
+                import('@/session/actions/cliActionDeps/types').SessionIsolationSandboxAcquisition['preparePresetPlacement']>>[0]) =>
+                withBoundDriver(params, signal, driver => driver.readSessionPresetPlacement(acquisition, binding, signal)),
+        }),
         acquireWorkflowPlacement: (async request => {
             const preparation = request.context.workflowPreparation;
             const authorization = request.context.externalActionExecutionAuthorization;
@@ -418,7 +462,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             if (!preparation || !authorization || !executeChild || !executeWorkflow || !waitForCompletion) {
                 return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
             }
-            let workflowResult: ManagedWorkflowContinuationResult | undefined;
+            let workflowResult: ManagedCreationContinuationResult | undefined;
             let continuationContext = request.context;
             let consumed = false;
             const acquisition = preparation.acquisition;
@@ -439,7 +483,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 child: { action: MANAGED_ACQUIRE_ACTION_ID_V1, role: 'acquire-workflow-placement', input: projectNativeJsonValueForTransport(acquisition) },
                 execute: (_input, context) => {
                     return executeChild(MANAGED_ACQUIRE_ACTION_ID_V1, acquisition, { ...context,
-                        [managedCreationAcquisition]: { input: acquisition, workflowContinuationResult: {
+                        [managedCreationAcquisition]: { input: acquisition, creationContinuationResult: {
                             read: () => workflowResult, restore: result => { workflowResult = result; },
                         }, take: admittedContext => {
                             if (consumed) throw new ManagedMachineControllerError('admission_unavailable');
