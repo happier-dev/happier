@@ -17,6 +17,7 @@ import { useSessionTerminalAction } from "@/components/sessions/terminal/useSess
 import { useFeatureDecision } from "@/hooks/server/useFeatureDecision";
 import { getRightSidebarBuiltinTab } from "@/components/appShell/rightSidebar/rightSidebarTabRegistry";
 import { PaneHeaderScrollScope } from "@/components/appShell/panes/paneHeaderScroll";
+import { SessionHeaderSandboxChip } from '@/components/sessions/shell/view/SessionHeaderSandboxChip';
 import { SessionLineageBreadcrumb } from "@/components/sessions/work/SessionLineageBreadcrumb";
 import { PhoneOpenTabsRail } from "@/components/appShell/workspace/PhoneOpenTabsRail";
 import { SessionAllTabsOpenerBridge } from "@/components/sessions/shell/useSessionAllTabsOpener";
@@ -1790,6 +1791,8 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
                 // Wide headers show the root-first breadcrumb; a phone header names only who it reports to,
                 // one tappable line, as the desktop peek does (DA3 D15).
                 lineage={<SessionLineageBreadcrumb sessionId={sessionId} serverId={currentSessionRouteServerId || null} presentation={isTablet ? 'breadcrumb' : 'manager'} />}
+                // A Session that runs in a sandbox names it after the folder and opens its detail (lab firstsend-chip).
+                sandbox={<SessionHeaderSandboxChip sessionId={sessionId} serverId={currentSessionRouteServerId || null} />}
                 onBackPress={handleBackPress}
                 showBackButton={!isTablet}
                 includeTopInset={headerSafeAreaTopMode !== 'external'}

@@ -51,6 +51,8 @@ export type SessionPaneHeaderProps = Readonly<{
     flavor?: string | null;
     /** Where a reporting Session comes from (its leads), after the folder under the title (a leaf that draws nothing for a root). */
     lineage?: React.ReactNode;
+    /** The sandbox the Session runs in, after the folder (a leaf that draws nothing for a Session that runs directly). */
+    sandbox?: React.ReactNode;
     /** The header's controls: Next, attention, Follow, ⋯, the pane's Hide. */
     rightElement?: React.ReactNode;
     /** A phone screen's Back; absent beside a permanent sidebar, where there is no stack to pop. */
@@ -151,10 +153,11 @@ const SessionPaneHeaderBand = React.memo(function SessionPaneHeaderBand(props: S
                 </PullTarget>
             ) : undefined}
             titleControl={titleControl}
-            metaLeading={props.badges?.length || props.subtitle || props.lineage ? (
+            metaLeading={props.badges?.length || props.subtitle || props.lineage || props.sandbox ? (
                 <SessionScreenTestIdView dataSet={themeSurfaceDataSet('chat-header', 'facts', 'default')}
                     style={[styles.metadataRow, themeSurfaceStyles.surface(surfaceOverridesEnabled ? { surface: 'chat-header', part: 'facts' } : undefined)]} sessionScreenTestId="session-header-metadata">
                     {props.subtitle ? <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} /> : null}
+                    {props.sandbox}
                     {props.lineage}
                     {props.badges?.map((badge, index) => (
                         <SessionHeaderBadge key={`${badge}:${index}`} label={badge} index={index} />
