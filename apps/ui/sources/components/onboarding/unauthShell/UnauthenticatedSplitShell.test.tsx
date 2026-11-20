@@ -274,10 +274,8 @@ describe('UnauthenticatedSplitShell', () => {
         expect(workflowStyle.paddingBottom).toBe(62);
 
         const transitionHost = screen.findByTestId('unauth-shell-step-transition');
-        expect(flattenStyle(transitionHost?.props.style).flex).toBe(1);
-        const transitionLayer = transitionHost?.children[0] as { props?: { style?: unknown } } | undefined;
-        expect(flattenStyle(transitionLayer?.props?.style).flex).toBe(1);
-        expect(flattenStyle(transitionLayer?.props?.style).minHeight).toBe(0);
+        expect(flattenStyle(transitionHost?.props.style)).toMatchObject({ flex: 1, minHeight: 0 });
+        expect(screen.findAllByTestId('fake-step-body')).toHaveLength(1);
     });
 
     it('lets scanner-style mobile workflow steps render full-bleed without shell padding', async () => {

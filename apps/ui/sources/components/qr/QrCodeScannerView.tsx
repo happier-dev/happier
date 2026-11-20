@@ -24,8 +24,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...StyleSheet.absoluteFillObject,
         paddingHorizontal: theme.space.s20,
         paddingTop: 18,
-        paddingBottom: 18,
-        justifyContent: 'space-between',
     },
     topRow: {
         flexDirection: 'row',
@@ -64,6 +62,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         width: '100%',
         alignItems: 'center',
         gap: theme.space.s10,
+    },
+    cameraFooter: {
+        position: 'absolute',
+        left: theme.space.s20,
+        right: theme.space.s20,
+        bottom: 18,
+        width: 'auto',
     },
     footerButton: {
         width: '100%',
@@ -194,13 +199,21 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
     const bodyStyle = embedded ? styles.embeddedPermissionsBody : styles.permissionsBody;
     const footerStyle = embedded ? styles.embeddedFooter : styles.footer;
     const onCancel = props.onCancel;
+    const cameraVisible = canUseCamera && permission?.granted === true;
+    // Permission changes may move this footer, including while Back has focused one of its controls.
+    const footer = props.footer ? (
+        <View key="scanner-footer" style={cameraVisible ? [styles.footer, styles.cameraFooter] : footerStyle}
+            pointerEvents={cameraVisible ? 'box-none' : undefined}>
+            {props.footer}
+        </View>
+    ) : null;
 
     if (!canUseCamera) {
         return (
             <View style={stateStyle}>
                 {embedded ? null : <Text style={styles.permissionsTitle}>{props.title}</Text>}
                 <Text style={bodyStyle}>{props.unavailableMessage ?? t('modals.qrScannerUnavailable')}</Text>
-                {props.footer ? <View style={footerStyle}>{props.footer}</View> : null}
+                {footer}
                 {onCancel ? (
                     <View style={styles.footerButton}>
                         <RoundButton
@@ -225,7 +238,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                  * Pasting the pairing link and leaving must stay reachable exactly as they
                  * are once the answer is "denied"; a spinner is not an exit.
                  */}
-                {props.footer ? <View style={footerStyle}>{props.footer}</View> : null}
+                {footer}
                 {onCancel ? (
                     <View style={styles.footerButton}>
                         <RoundButton
@@ -281,7 +294,7 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                         />
                     </View>
                 ) : null}
-                {props.footer ? <View style={footerStyle}>{props.footer}</View> : null}
+                {footer}
             </View>
         );
     }
@@ -340,10 +353,8 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                     <View style={styles.spacer} pointerEvents="none" />
                 </View>
 
-                <View style={styles.footer} pointerEvents="box-none">
-                    {props.footer}
-                </View>
             </View>
+            {footer}
         </View>
     );
 });

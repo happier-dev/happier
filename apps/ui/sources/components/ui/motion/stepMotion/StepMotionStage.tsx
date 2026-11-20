@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { AppState, Dimensions, Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { AppState, Dimensions, Platform, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
 import normalizeColor from '@react-native/normalize-colors';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,6 +8,7 @@ import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferen
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 
 import { captureElementFlightRect } from '../rectFlight';
+import { readNativeStepAnchor } from './capturePressedElement.native';
 import { findPressedWebControl, readWebStepAnchor } from './capturePressedElement.web';
 import type { StepGrammar } from './stepMotionChoreography';
 import type { StepAnimation } from './stepMotionScene';
@@ -78,6 +79,7 @@ function createStepMotionStage(
     const layers = new Set<StepMotionLayerHandle>();
     const anchors = new Map<string, Array<StepAnchor | undefined>>();
     const pointerCommits = new Map<number, number>();
+    const handledNativeTouches = new WeakSet<GestureResponderEvent['nativeEvent']>();
     const committedSteps = new WeakSet<StepMotionLayerHandle>();
     const laidOutLayers = new WeakSet<StepMotionLayerHandle>();
     let pressed: StepAnchor | null = null;
@@ -383,10 +385,15 @@ function createStepMotionStage(
             laidOutLayers.add(layer);
             if (pending?.layoutReady) enter(layer);
         },
-        nativeInput(anchor: StepAnchor) {
+        nativeTouch(event: GestureResponderEvent, layer?: View) {
+            if (!layer && !pending && !active) return;
+            // The closest layer handles the press first, before it bubbles to app chrome.
+            if (handledNativeTouches.has(event.nativeEvent)) return;
+            handledNativeTouches.add(event.nativeEvent);
+            const anchor = readNativeStepAnchor(event, layer ?? event.currentTarget);
             if (isBackControl(anchor.testID)) return;
             settle();
-            pressed = anchor;
+            pressed = layer ? anchor : null;
         },
         nativeTyping() {
             if (active || pending) settle();
@@ -527,7 +534,7 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
         durationS: paints.duration, onSettled: paints.finish,
     }) : null, [paints]);
     return <StageContext.Provider value={stage}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1 }} onTouchStart={Platform.OS === 'web' ? undefined : stage.nativeTouch}>
             {children}
             {warming && renderer ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants" aria-hidden

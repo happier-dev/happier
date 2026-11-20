@@ -4,7 +4,7 @@ import { Animated, Easing, Platform, View, type GestureResponderEvent, type Styl
 import { restoreFocusToBestTarget, type FocusReturnTarget } from '@/keyboard/focusReturn';
 
 import { motionTokens } from '../motionTokens';
-import { findNativeStepAnchor, readNativeStepAnchor } from './capturePressedElement.native';
+import { findNativeStepAnchor } from './capturePressedElement.native';
 import { findWebStepAnchor } from './capturePressedElement.web';
 import { useStepMotionStage } from './StepMotionStage';
 import type { StepMotionLayerHandle } from './stepMotionTypes';
@@ -19,14 +19,18 @@ export type StepMotionLayerProps = React.PropsWithChildren<Readonly<{
     retainContent?: boolean;
     warmOnMount?: boolean;
     notice?: boolean;
+    shareFocalWithParent?: boolean;
     style?: StyleProp<ViewStyle>;
 }>>;
 
 export function StepMotionLayer(props: StepMotionLayerProps) {
     const stage = useStepMotionStage();
     const root = React.useRef<View>(null);
-    const heading = React.useRef<FocusReturnTarget>(null);
-    const focal = React.useRef<FocusReturnTarget>(null);
+    const ownHeading = React.useRef<FocusReturnTarget>(null);
+    const ownFocal = React.useRef<FocusReturnTarget>(null);
+    const parentFocals = React.useContext(StepFocalContext);
+    const heading = props.shareFocalWithParent && parentFocals ? parentFocals.heading : ownHeading;
+    const focal = props.shareFocalWithParent && parentFocals ? parentFocals.focal : ownFocal;
     const [fadeOpacity] = React.useState(() => new Animated.Value(1));
     const [surfaceOpacity, setSurfaceOpacity] = React.useState<Animated.Value | Animated.AnimatedInterpolation<number>>(fadeOpacity);
     const webElement = React.useCallback(() => {
@@ -85,12 +89,12 @@ export function StepMotionLayer(props: StepMotionLayerProps) {
             animation.start(({ finished }) => { if (finished) onSettled(); });
             return () => { animation.stop(); fadeOpacity.setValue(1); };
         },
-    }), [layerKey, backTestID, compact, fadeOpacity, notice, warmOnMount, webElement]);
-    const focals = React.useMemo(() => ({ heading, focal }), []);
+    }), [layerKey, backTestID, compact, fadeOpacity, focal, heading, notice, warmOnMount, webElement]);
+    const focals = React.useMemo(() => ({ heading, focal }), [heading, focal]);
     React.useLayoutEffect(() => stage?.attach(layer), [stage, layer]);
     React.useLayoutEffect(() => { stage?.commit(layer); }, [stage, layer, props.stepKey]);
     const onTouchStart = React.useCallback((event: GestureResponderEvent) => {
-        if (root.current) stage?.nativeInput(readNativeStepAnchor(event, root.current));
+        if (root.current) stage?.nativeTouch(event, root.current);
     }, [stage]);
     const contentKey = props.retainContent ? undefined : props.stepKey;
     return (

@@ -71,7 +71,7 @@ it.each([false, true])('selects the native presentation in layout order (capture
         current.stage = useStepMotionStage();
         return null;
     }
-    await renderScreen(<StepMotionStage><NativeHostFixture /></StepMotionStage>);
+    const screen = await renderScreen(<StepMotionStage><NativeHostFixture /></StepMotionStage>);
     const stage = current.stage;
     if (!stage) throw new Error('The root must mount its motion stage');
 
@@ -115,10 +115,26 @@ it.each([false, true])('selects the native presentation in layout order (capture
 
         if (early) {
             const detachBack = stage.attach({ ...layer(), key: 'method', backTestID: 'method-back' });
-            // The outer view also sees this touch as it bubbles from the method form.
-            await act(async () => { stage.nativeInput({ testID: 'method-back', rect }); });
+            const app = screen.findAll(node => typeof node.props.onTouchStart === 'function')[0];
+            expect(app?.props.onTouchStart).toBeTypeOf('function');
+            const back = {
+                target: { id: 'method-back' },
+                nativeEvent: { pageX: 24, pageY: 200 },
+            } as unknown as GestureResponderEvent;
+            await act(async () => {
+                // The outer view also sees this touch as it bubbles from the method form.
+                stage.nativeTouch(back, nativeView);
+                app.props.onTouchStart(back);
+            });
             expect(dispose).not.toHaveBeenCalled();
             detachBack();
+
+            // The footer is outside the outgoing motion layer but still inside the app.
+            await act(async () => app.props.onTouchStart({
+                target: { id: 'preauth-updates-entry' },
+                nativeEvent: { pageX: 24, pageY: 440 },
+            }));
+            expect(dispose).toHaveBeenCalledOnce();
         }
 
         await act(async () => { stage.settle(); });

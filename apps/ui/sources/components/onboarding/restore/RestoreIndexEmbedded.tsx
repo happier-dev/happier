@@ -5,6 +5,8 @@ import { isRunningOnMac } from '@/utils/platform/platform';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { isWebMobileLikeQrScannerHost } from '@/utils/platform/webMobileHeuristics';
+import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 
 import { RestoreQrView } from '@/components/account/restore/RestoreQrView';
 import {
@@ -16,10 +18,13 @@ import type { HomeQrEntryIntent } from '@/auth/pairing/homeQrEntryIntent';
 import { resolveReverseQrTargetProfileId } from './loginWays';
 import { RestoreSignInWays } from './RestoreSignInWays';
 
+type RestoreView = 'qr' | 'scanner' | 'paste';
+const RESTORE_WAY_LAYER = 'restore-way';
+
 export type RestoreIndexEmbeddedProps = Readonly<{
     entryIntent: HomeQrEntryIntent;
     /** `paste` when the entry the person chose promised link entry (a device that cannot scan). */
-    initialView?: 'qr' | 'scanner' | 'paste';
+    initialView?: RestoreView;
     reverseTargetProfileId?: string | null;
     onBack: () => void;
     onOpenSecretKeyLogin?: () => void;
@@ -71,53 +76,56 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
         || !reverseTargetProfileId
         || isNativePhone
         || isWebPhoneWithCamera;
-    const [currentView, setCurrentView] = React.useState<'qr' | 'scanner' | 'paste' | null>(null);
+    const [currentView, setCurrentView] = React.useState<RestoreView | null>(null);
     const defaultView = props.initialView ?? (showScannerFirst ? 'scanner' : 'qr');
     const activeView = currentView ?? defaultView;
-    const openPasteEntry = React.useCallback(() => setCurrentView('paste'), []);
+    const openWay = (view: RestoreView) => runStepMove({ layer: RESTORE_WAY_LAYER, kind: 'step', commit: () => setCurrentView(view) });
+    const openPasteEntry = () => openWay('paste');
+    const openScanner = canUseScanner ? () => openWay('scanner') : undefined;
+    const openQr = reverseTargetProfileId ? () => openWay('qr') : undefined;
 
     const submitPastedPairingLink = React.useCallback(async (link: string) => {
-        setPastedPairingLink(link);
-        setCurrentView('scanner');
+        runStepMove({ layer: RESTORE_WAY_LAYER, kind: 'step', commit: () => {
+            setPastedPairingLink(link);
+            setCurrentView('scanner');
+        } });
         return true;
     }, []);
 
-    // Login's one screen (and link entry from the scanner or the QR): every way in, each explained, with
-    // the camera and the QR this device can show one press away instead of a separate way back.
-    if (activeView === 'paste') {
-        return (
-            <RestoreSignInWays
-                onSubmitLink={submitPastedPairingLink}
-                onOpenScanner={canUseScanner ? () => setCurrentView('scanner') : undefined}
-                onShowQr={reverseTargetProfileId ? () => setCurrentView('qr') : undefined}
-                offerSecretKey={props.entryIntent === 'enter_home'}
+    return <StepMotionLayer layerKey={RESTORE_WAY_LAYER} stepKey={activeView} shareFocalWithParent>
+        {activeView === 'paste' ? (
+            <>
+                <RestoreSignInWays
+                    onSubmitLink={submitPastedPairingLink}
+                    onOpenScanner={openScanner}
+                    onShowQr={openQr}
+                    offerSecretKey={props.entryIntent === 'enter_home'}
+                />
+            </>
+        ) : activeView === 'scanner' ? (
+            <RestoreScanComputerQrView
+                entryIntent={props.entryIntent}
+                embedded
+                initialPairingLink={pastedPairingLink ?? props.initialPairingLink}
+                onBack={props.onBack}
+                showBack={false}
+                onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+                onOpenPairingLinkEntry={openPasteEntry}
+                onShowQrInstead={openQr}
+                onNavigationLockChange={props.onNavigationLockChange}
+                onInviteDirectionChange={props.onInviteDirectionChange}
             />
-        );
-    }
-
-    return activeView === 'scanner' ? (
-        <RestoreScanComputerQrView
-            entryIntent={props.entryIntent}
-            embedded
-            initialPairingLink={pastedPairingLink ?? props.initialPairingLink}
-            onBack={props.onBack}
-            showBack={false}
-            onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
-            onOpenPairingLinkEntry={openPasteEntry}
-            onShowQrInstead={reverseTargetProfileId ? () => setCurrentView('qr') : undefined}
-            onNavigationLockChange={props.onNavigationLockChange}
-            onInviteDirectionChange={props.onInviteDirectionChange}
-        />
-    ) : (
-        <RestoreQrView
-            entryIntent={props.entryIntent}
-            targetProfileId={reverseTargetProfileId}
-            embedded
-            onBack={props.onBack}
-            onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
-            onOpenScanQr={canUseScanner ? () => setCurrentView('scanner') : undefined}
-            onOpenPairingLinkEntry={openPasteEntry}
-            onNavigationLockChange={props.onNavigationLockChange}
-        />
-    );
+        ) : (
+            <RestoreQrView
+                entryIntent={props.entryIntent}
+                targetProfileId={reverseTargetProfileId}
+                embedded
+                onBack={props.onBack}
+                onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+                onOpenScanQr={openScanner}
+                onOpenPairingLinkEntry={openPasteEntry}
+                onNavigationLockChange={props.onNavigationLockChange}
+            />
+        )}
+    </StepMotionLayer>;
 });

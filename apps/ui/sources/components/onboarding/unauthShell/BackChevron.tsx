@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -23,12 +24,14 @@ export const BackChevron = React.memo(function BackChevron(props: BackChevronPro
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const feedback = usePressFeedback({ glyph: true });
+    const testID = props.testID ?? UNAUTH_BACK_TEST_ID;
     return (
         <HappierPressable
             onPress={props.onPress}
             accessibilityRole="button"
             accessibilityLabel={props.accessibilityLabel}
-            testID={props.testID ?? UNAUTH_BACK_TEST_ID}
+            testID={testID}
+            nativeID={Platform.OS === 'web' ? undefined : testID}
             onPressIn={feedback.onPressIn}
             onPressOut={feedback.onPressOut}
             style={styles.button}

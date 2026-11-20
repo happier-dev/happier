@@ -449,4 +449,22 @@ describe('QrCodeScannerView', () => {
         await undetermined.root.findByProps({ testID: 'test-cancel' }).props.action();
         expect(onCancel).toHaveBeenCalledTimes(1);
     });
+
+    it('keeps the same manual-entry control as the camera permission changes', async () => {
+        const { QrCodeScannerView } = await import('./QrCodeScannerView');
+        const render = () => <QrCodeScannerView embedded title="t" permissionRequiredMessage="perm"
+            onScan={vi.fn()} footer={React.createElement('ManualEntry', { testID: 'test-enter-url' })} testIDPrefix="test" />;
+        cameraState.permission = null;
+        const screen = await renderScreen(render());
+        const original = screen.findHostByTestId('test-enter-url');
+        expect(original).not.toBeNull();
+
+        cameraState.permission = { granted: false };
+        await screen.update(render());
+        expect(screen.findHostByTestId('test-enter-url')).toBe(original);
+
+        cameraState.permission = { granted: true };
+        await screen.update(render());
+        expect(screen.findHostByTestId('test-enter-url')).toBe(original);
+    });
 });
