@@ -2192,9 +2192,13 @@ export function ConnectedAccountServiceView() {
     );
     const [machineRequired, setMachineRequired] = React.useState(false);
     const onMachineRequirementChange = React.useCallback((required: boolean) => setMachineRequired(required), []);
+    // Native-only accounts need a peer to discover their description. Account-hosted
+    // descriptions can resolve placement first, so an idle detail need not observe Machines.
+    const needsNativeDescription = focusedRoute?.focus?.kind === 'account'
+        && !getConnectedAccountAuthentication(focusedRoute.service, connectedServicesRegistry)?.account;
     const targetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.connectedAccounts,
-        { enabled: machineRequired || focusedRoute?.focus?.kind === 'account' },
+        { enabled: machineRequired || needsNativeDescription },
     );
     const controllerKey = [
         activeAccountScope

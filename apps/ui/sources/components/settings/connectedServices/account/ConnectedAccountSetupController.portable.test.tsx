@@ -927,6 +927,41 @@ it.each(['configurationRequired', 'awaitingManual'] as const)('recovers Vercel f
     } finally { await screen.unmount(); }
 });
 
+it('keeps an idle Vercel account detail mounted without doing more reads', () => withPortableSheetBrowser(async () => {
+    const fixture = await restorePortableFixture(vercel, false, undefined, 'online');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const account = { service: vercel, accountId: 'work-vercel' };
+    const row = QualifiedConnectedAccountProfileV4Schema.parse({
+        ref: account, authenticationModeId: 'token', revisionSemantics: 'revisioned', status: 'connected',
+        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true,
+        configurationRevision: 'configured-vercel',
+    });
+    homes.answer(fixture.serverId, '/v4/connect/qualified/accounts', { body: { service: vercel, accounts: [row] } });
+    storage.getState().applyProfile({ ...storage.getState().profile, connectedAccountsV4: [row] });
+    route.params = { ...vercel, accountId: account.accountId };
+    vi.useFakeTimers();
+    const screen = await renderScreen(<InjectedAuthProvider credentials={fixture.credentials}>
+        <AppShellPluginUiProjectionProvider><ConnectedAccountServiceView /></AppShellPluginUiProjectionProvider>
+    </InjectedAuthProvider>);
+    try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('qualified-account-detail:configuration')).not.toBeNull());
+        await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+        const detail = screen.findHostByTestId('qualified-account-detail');
+        const pathsBeforeIdle = fixture.paths.length;
+        const rpcsBeforeIdle = fixture.machineRpcs;
+        for (let minute = 1; minute <= 3; minute += 1) {
+            await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+            expect(screen.findHostByTestId('qualified-account-detail')).toBe(detail);
+        }
+        // Machine presence can age visibly in Works on without refreshing the Account.
+        expect(fixture.paths.slice(pathsBeforeIdle)).toEqual([]);
+        expect(fixture.machineRpcs - rpcsBeforeIdle).toBe(0);
+    } finally {
+        await screen.unmount();
+        vi.useRealTimers();
+    }
+}));
+
 it('verifies Replace before rotating the held Vercel token and clearing needs sign-in', () => withPortableSheetBrowser(async () => {
     const invalidToken = 'fixture-vercel-invalid';
     const replacement = 'fixture-vercel-replacement';
