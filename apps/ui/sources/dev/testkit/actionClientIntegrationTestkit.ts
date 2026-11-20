@@ -111,6 +111,22 @@ export async function readUiMachineProjection(params: Readonly<{
     return loadDaemonMergedProjectionCacheEntry({ ...params, accountLifetime });
 }
 
+export async function createUiTeamSharedSecretReference(teamId: string,
+    content: Extract<import('@happier-dev/protocol/account/settings/savedSecretResourceContentSchemaV1').SavedSecretResourceContentV1, { v: 2 }>) {
+    const [{ createSavedSecretResource }, { runTeamAction }] = await Promise.all([
+        import('@/sync/ops/settings/savedSecretResourceOperations'),
+        import('@/sync/ops/teams/teamActionClient'),
+    ]);
+    const scope = getActiveServerAccountScope();
+    if (!scope) throw new Error('Owner Account unavailable for sharing');
+    const shared = await createSavedSecretResource({ scope, name: content.name, kind: content.kind, source: content.source,
+        accountGrants: [], teamGrants: [teamId], groupGrants: [],
+        executeAdmittedMutation: request => runTeamAction({ ...request, approval: 'surface_confirmed' }),
+    });
+    if (!shared.ok) throw new Error(`Reference sharing failed: ${shared.reason}`);
+    return { resourceRef: shared.resourceRef, revision: shared.revision };
+}
+
 /** Real UI client for cross-app journeys, including the App's Home/Account lifecycle. */
 export async function connectUiActionClient(params: Readonly<{ serverUrl: string; publicEndpoint?: string; addressAnchorUrl?: string; credentials: AuthCredentials;
     /** A Person client mounts this lifecycle in its existing AppShell instead. */

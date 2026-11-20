@@ -8,7 +8,7 @@ import {
   type SavedSecretCatalogResourceInputV1,
   type SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
-import { readSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
+import { readSavedSecretMaterializerForOperation, SavedSecretOperationAdmissionError, type SavedSecretCatalogRefreshInputV1 } from '@/settings/secrets/savedSecretCatalogRead';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { LaunchSecretReferenceOverlayError, materializeSavedSecretReferenceBinding } from '@/settings/secrets/secretReferenceOverlay';
 export { LaunchSecretReferenceOverlayError, createLaunchSecretReferenceOverlayProviderErrorV1, resolveSecretReferenceOverlayEnvironment, resolveProjectSecretReferenceEnvironment } from '@/settings/secrets/secretReferenceOverlay';
@@ -187,6 +187,7 @@ export async function resolveLaunchProfileSavedSecretEnvironment(
   params: Omit<Parameters<typeof materializeLaunchProfileSavedSecretEnvironment>[0], 'requireEveryRequiredBinding' | 'savedSecretMaterializer'> & Readonly<{
     expectedScopeKey: string;
     operationContext?: SavedSecretOperationContextV1;
+    secretSources: SavedSecretCatalogRefreshInputV1['secretSources'];
     signal?: AbortSignal;
   }>,
 ): Promise<Readonly<Record<string, string>>> {
@@ -205,6 +206,7 @@ export async function resolveLaunchProfileSavedSecretEnvironment(
     expectedScopeKey: params.expectedScopeKey,
     references: demanded.map(([name, binding]) => ({ ...binding, required: requiredNames.has(name) || exactNames.has(name) })),
     operationContext: params.operationContext,
+    secretSources: params.secretSources,
     signal: params.signal,
   }).catch((error: unknown) => {
     params.signal?.throwIfAborted();

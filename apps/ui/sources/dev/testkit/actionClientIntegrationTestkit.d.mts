@@ -161,6 +161,10 @@ export function readUiMachineProjection(params: Readonly<{
     sections: readonly string[];
 }>): Promise<import('../../agents/backendCatalog/daemonMergedProjectionCache.js').ProjectionCacheEntry | null>;
 
+export function createUiTeamSharedSecretReference(teamId: string,
+    content: Extract<import('@happier-dev/protocol/account/settings/savedSecretResourceContentSchemaV1').SavedSecretResourceContentV1, { v: 2 }>,
+): Promise<Readonly<{ resourceRef: string; revision: number }>>;
+
 export function connectUiActionClient(params: Readonly<{
     serverUrl: string;
     publicEndpoint?: string;

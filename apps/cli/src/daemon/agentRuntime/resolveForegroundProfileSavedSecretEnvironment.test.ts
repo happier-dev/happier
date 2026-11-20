@@ -21,6 +21,7 @@ describe('resolveForegroundProfileSavedSecretEnvironment', () => {
     await expect(resolveLaunchProfileSavedSecretEnvironment({
       profile: { ...profile, envVarRequirements: [] }, accountSettings: {}, settingsSecretsReadKeys: [],
       foregroundSatisfiedSecretRequirementNames: [], expectedScopeKey: 'standalone:no-references',
+      secretSources: undefined,
     })).resolves.toEqual({});
   });
   it('consumes the admitted launch materializer for a selected profile binding', () => {

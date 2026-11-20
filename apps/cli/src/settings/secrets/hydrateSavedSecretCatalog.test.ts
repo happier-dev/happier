@@ -935,7 +935,7 @@ describe('Saved Secret catalog hydration', () => {
       const ambient = getActiveAccountSettingsSnapshot();
       const input = { profile, accountSettings: snapshot.settings, settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys,
         savedSecretResources: snapshot.savedSecretResources, foregroundSatisfiedSecretRequirementNames: [],
-        expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token), operationContext };
+        expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token), operationContext, secretSources: undefined };
       const launch = Promise.resolve().then(() => resolveLaunchProfileSavedSecretEnvironment(input));
       if (state === 'revoked') {
         await expect(launch).rejects.toMatchObject({ reason: 'reference_forbidden', requirementName: 'PROFILE_SECRET' });
@@ -1396,6 +1396,7 @@ describe('Saved Secret catalog hydration', () => {
         envVarRequirements: [{ name: 'API_KEY', kind: 'secret', required: true }] }), secretBindings: { API_KEY: ref } },
       accountSettings: refreshed.settings, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [],
       expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
+      secretSources: undefined,
       isCurrent: () => { throw new Error('The admitted materializer owns lifetime'); },
     })).resolves.toEqual({ API_KEY: 'current-value' });
     expect(axios.get).toHaveBeenCalledTimes(2);

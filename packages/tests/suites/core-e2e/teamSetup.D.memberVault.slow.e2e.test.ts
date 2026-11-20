@@ -2,12 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { connectUiActionClient } from '@happier-tests/ui-action-client';
+import { connectUiActionClient, createUiTeamSharedSecretReference } from '@happier-tests/ui-action-client';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { TeamInvitationCreateResultV1Schema } from '@happier-dev/protocol/teams/invitation';
-import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
-import { SharedSavedSecretMutationOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { SavedSecretResourceContentV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceContentSchemaV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -34,15 +33,23 @@ describe('Team setup member-local vault references', () => {
     const testDir = run.testDir('member-vault');
     fixture = await startTeamSetupFFixture({ testDir });
     const baseUrl = fixture.server.baseUrl;
+    const connect = async (account: Awaited<ReturnType<TeamSetupFFixture['createAccount']>>) => {
+      const ui = await connectUiActionClient({ serverUrl: baseUrl, credentials: account.uiCredentials });
+      clients.push(ui);
+      await waitFor(() => ui.isAccountReady(), { timeoutMs: 60_000 });
+      return ui;
+    };
+    const close = async (ui: Awaited<ReturnType<typeof connectUiActionClient>>) => {
+      await ui.close();
+      clients.splice(clients.indexOf(ui), 1);
+    };
     const member = async (name: string, invitationToken?: string) => {
       const directory = join(testDir, name);
       const bin = join(directory, 'bin');
       const workspace = join(directory, 'workspace');
       await Promise.all([mkdir(bin, { recursive: true }), mkdir(workspace, { recursive: true })]);
       const account = await fixture!.createAccount(name);
-      const ui = await connectUiActionClient({ serverUrl: baseUrl, credentials: account.uiCredentials });
-      clients.push(ui);
-      await waitFor(() => ui.isAccountReady(), { timeoutMs: 60_000 });
+      const ui = await connect(account);
       if (invitationToken) {
         expect(await ui.executeConfirmed('teams.invitations.accept', { v: 1, token: invitationToken }, {
           surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId: ui.serverId,
@@ -56,6 +63,7 @@ describe('Team setup member-local vault references', () => {
       const enrolled = await fixture!.enrollDaemon(account, { env: {
         PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`, HAPPIER_CLAUDE_PATH: agent.executablePath,
       } });
+      await fixture!.assertKnownGoodSessionControl(account, enrolled);
       const machineId = enrolled.target.machineId;
       await waitFor(() => ui.isAccountReady() && ui.isMachineActive(machineId), { timeoutMs: 60_000 });
       return { account, ui, machineId, workspace, agent, sentinel, opPath: join(bin, 'op') };
@@ -82,12 +90,6 @@ describe('Team setup member-local vault references', () => {
         account: 'team.1password.com', reference: 'op://Development/API/token',
         metadata: { vault: { id: 'development', name: 'Development' }, item: { id: 'api', title: 'API' },
           field: { id: 'token', title: 'token', kind: 'CONCEALED' } } } });
-    const resourceId = randomUUID();
-    const shared = await ui.executeConfirmed('secrets.shared.create', { resourceId, displayName: content.name, kind: content.kind,
-      encryptionMode: 'plain', storedContent: { t: 'plain', v: content }, teamGrants: [team.id] }, context);
-    expect(shared).toMatchObject({ ok: true });
-    if (!shared.ok) throw new Error(`Reference sharing failed: ${shared.errorCode}`);
-    expect(SharedSavedSecretMutationOutputV1Schema.parse(shared.result)).toMatchObject({ resourceId, revision: 1 });
     const invitation = await ui.executeConfirmed('teams.invitations.create', { v: 1, teamId: team.id,
       role: 'member', historyAccess: 'from_membership', recipientEmail: null, requestKey: randomUUID() }, context);
     expect(invitation.ok).toBe(true);
@@ -96,38 +98,63 @@ describe('Team setup member-local vault references', () => {
     if (!joinUrl) throw new Error('Invitation join URL missing');
     const token = new URL(joinUrl).pathname.split('/').at(-1);
     if (!token) throw new Error('Invitation token missing');
-    const launchWithOwnVault = async (requester: Awaited<ReturnType<typeof member>>, unavailable = false) => {
+    await close(first.ui);
+    const second = await member('member-b', token);
+    await close(second.ui);
+    first.ui = await connect(first.account);
+    if (content.v !== 2) throw new Error('Vault reference fixture did not parse as an external Source');
+    const shared = await createUiTeamSharedSecretReference(team.id, content);
+    expect(shared).toMatchObject({ revision: 1 });
+    const createVaultLaunchProfile = async (requester: Awaited<ReturnType<typeof member>>) => {
+      await waitFor(() => requester.ui.isMachineActive(requester.machineId), { timeoutMs: 60_000 });
       const requesterContext = { ...context, serverId: requester.ui.serverId };
       const profileId = randomUUID();
       const profile = await requester.ui.executeConfirmed('launch_profiles.create', { expectedRevision: 'absent',
         profile: { v: 2, id: profileId, name: 'Member vault task', createdAt: 1, updatedAt: 1,
           envVarRequirements: [{ name: 'TEAM_VAULT_SENTINEL', kind: 'secret', required: true }] } }, requesterContext);
       expect(profile).toMatchObject({ ok: true, result: { status: 'updated' } });
+      return profileId;
+    };
+    const launchWithOwnVault = async (requester: Awaited<ReturnType<typeof member>>, profileId: string, unavailable = false) => {
+      const requesterContext = { ...context, serverId: requester.ui.serverId };
+      const launchStartedAt = Date.now();
       const launched = await requester.ui.executeConfirmed('session.spawn_new', {
         executionTarget: { serverId: requester.ui.serverId, machineId: requester.machineId },
         directory: { kind: 'path', path: requester.workspace }, profileId,
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
         terminal: { mode: 'plain' }, secretReferenceOverlay: { v: 1,
-          bindings: { TEAM_VAULT_SENTINEL: { ref: formatSharedSavedSecretRefV1(resourceId), revision: 1 } } },
+          bindings: { TEAM_VAULT_SENTINEL: { ref: shared.resourceRef, revision: shared.revision } } },
       }, requesterContext);
+      const spawn = SessionSpawnNewActionResultV1Schema.safeParse(launched.ok ? launched.result : launched.details).data;
       if (unavailable) {
-        expect(launched).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
-          providerError: { code: 'provider_secret_unavailable', savedSecretReason: 'reference_unavailable' } } });
+        expect(launched).toMatchObject({ ok: false, errorCode: 'spawn_failed' });
+        expect(spawn).toMatchObject({ type: 'error', code: 'spawn_failed',
+          providerError: { code: 'provider_secret_unavailable', savedSecretReason: 'reference_unavailable' } });
         return;
       }
-      expect(launched).toMatchObject({ ok: true, result: { type: 'success' } });
-      const invocation = await waitForFakeClaudeInvocation(requester.agent.logPath, value => value.mode === 'sdk');
+      if (!launched.ok || spawn?.type !== 'success') {
+        const code = launched.ok ? spawn?.type : launched.errorCode;
+        const launchCode = spawn?.type === 'error' ? spawn.launchError?.code : undefined;
+        const providerCode = spawn?.type === 'error' ? spawn.providerError?.code : undefined;
+        const secretReason = spawn?.type === 'error' ? spawn.providerError?.savedSecretReason : undefined;
+        throw new Error(`Member vault launch refused (${[code, launchCode, providerCode, secretReason].filter(Boolean).join(', ')})`,
+          { cause: launched.ok ? undefined : launched.failureCause });
+      }
+      expect(await requester.account.execute('session.message.send', { sessionId: spawn.sessionId,
+        message: 'Reply ready.', reply: 'none' })).toMatchObject({ ok: true, result: { status: 'accepted' } });
+      const invocation = await waitForFakeClaudeInvocation(requester.agent.logPath, value =>
+        value.mode === 'sdk' && typeof value.ts === 'number' && value.ts >= launchStartedAt);
       expect(invocation.environmentAttestation).toMatchObject({ TEAM_VAULT_SENTINEL: {
         present: true, sha256: createHash('sha256').update(requester.sentinel).digest('hex'),
       } });
     };
-    await launchWithOwnVault(first);
-    await first.ui.close();
-    clients.splice(clients.indexOf(first.ui), 1);
-    const second = await member('member-b', token);
-    await launchWithOwnVault(second);
+    await launchWithOwnVault(first, await createVaultLaunchProfile(first));
+    await close(first.ui);
+    second.ui = await connect(second.account);
+    const secondProfile = await createVaultLaunchProfile(second);
+    await launchWithOwnVault(second, secondProfile);
     // A's available vault must never rescue B's failed native acquisition.
     await writeFile(second.opPath, `#!${process.execPath}\nprocess.exit(1);\n`, { mode: 0o700 });
-    await launchWithOwnVault(second, true);
-  });
+    await launchWithOwnVault(second, secondProfile, true);
+  }, 0);
 });

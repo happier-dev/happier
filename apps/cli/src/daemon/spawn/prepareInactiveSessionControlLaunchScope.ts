@@ -93,6 +93,7 @@ export async function prepareInactiveSessionControlLaunchScope(
       if (selected?.length !== 1 || !snapshot) unavailable();
       const secrets = await resolveLaunchProfileSavedSecretEnvironment({ profile: selected[0]!, accountSettings: snapshot.settings,
         expectedScopeKey: snapshot.scopeKey ?? '', operationContext: admission.savedSecretOperationContext, signal,
+        secretSources: registry.secretSources,
         settingsSecretsReadKeys: snapshot.settingsSecretsReadKeys, savedSecretResources: snapshot.savedSecretResources,
         foregroundSatisfiedSecretRequirementNames: [], secretReferenceOverlay: options.secretReferenceOverlay });
       snapshot = admission.readAccountSettingsSnapshot();

@@ -526,65 +526,6 @@ export async function executeSpawnSessionRequest(
         launchResourceScope.register(
             providerDiagnosticRedactionLease.close,
         );
-        let profileLaunchEnvironment = environmentVariablesValidation.env;
-        if (options.profileId) {
-            if (!profilesSnapshot) throw new ProfileCatalogUnavailableError('unavailable');
-            const matchingProfiles = profilesSnapshot.visibleProfiles.filter((profile) => profile.id === options.profileId);
-            if (matchingProfiles.length === 1 && activeAccountSettingsSnapshot) {
-                try {
-                    const savedSecretEnvironment =
-                        await resolveLaunchProfileSavedSecretEnvironment({
-                            profile: matchingProfiles[0]!,
-                            expectedScopeKey: activeAccountSettingsSnapshot.scopeKey ?? '',
-                            operationContext: requesterRuntime?.bootstrap.savedSecretOperationContext,
-                            signal: preparationSignal,
-                            accountSettings:
-                                activeAccountSettingsSnapshot.settings,
-                            settingsSecretsReadKeys:
-                                activeAccountSettingsSnapshot
-                                    .settingsSecretsReadKeys,
-                            savedSecretResources:
-                                activeAccountSettingsSnapshot
-                                    .savedSecretResources,
-                            foregroundSatisfiedSecretRequirementNames: [],
-                            ...(options.secretReferenceOverlay
-                                ? {
-                                    secretReferenceOverlay:
-                                        options.secretReferenceOverlay,
-                                }
-                                : {}),
-                        });
-                    activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
-                    profileLaunchEnvironment = Object.freeze({
-                        ...profileLaunchEnvironment,
-                        ...savedSecretEnvironment,
-                    });
-                    providerDiagnosticRedactionLease.add(
-                        Object.values(savedSecretEnvironment),
-                    );
-                } catch (error) {
-                    if (!(error instanceof LaunchSecretReferenceOverlayError)) {
-                        throw error;
-                    }
-                    await launchResourceScope.retire();
-                    return buildProviderSpawnErrorResult(createLaunchSecretReferenceOverlayProviderErrorV1(
-                        error.reason,
-                        { sourceProfileId: options.profileId },
-                    ));
-                }
-            } else if (options.secretReferenceOverlay) {
-                await launchResourceScope.retire();
-                return buildProviderSpawnErrorResult(createProviderErrorV1(
-                    'provider_settings_invalid',
-                    { sourceProfileId: options.profileId },
-                ));
-            }
-        } else if (options.secretReferenceOverlay) {
-            await launchResourceScope.retire();
-            return buildProviderSpawnErrorResult(createProviderErrorV1(
-                'provider_settings_invalid',
-            ));
-        }
         const pluginRuntimeLease = createSpawnPluginRuntimeLease(launchResourceScope, async registry => {
             const operationContext = requesterRuntime?.bootstrap.savedSecretOperationContext;
             const scopesByPluginId = requesterRuntime
@@ -681,6 +622,61 @@ export async function executeSpawnSessionRequest(
                 ?? null;
             const appliedPluginRuntimeLease = await pluginRuntimeLease.acquire();
             recordPreparationPhase('plugin_runtime');
+            let profileLaunchEnvironment = environmentVariablesValidation.env;
+            if (options.profileId) {
+                if (!profilesSnapshot) throw new ProfileCatalogUnavailableError('unavailable');
+                const matchingProfiles = profilesSnapshot.visibleProfiles.filter((profile) => profile.id === options.profileId);
+                if (matchingProfiles.length === 1 && activeAccountSettingsSnapshot) {
+                    try {
+                        const savedSecretEnvironment =
+                            await resolveLaunchProfileSavedSecretEnvironment({
+                                profile: matchingProfiles[0]!,
+                                expectedScopeKey: activeAccountSettingsSnapshot.scopeKey ?? '',
+                                operationContext: requesterRuntime?.bootstrap.savedSecretOperationContext,
+                                secretSources: appliedPluginRuntimeLease.registry.secretSources,
+                                signal: preparationSignal,
+                                accountSettings:
+                                    activeAccountSettingsSnapshot.settings,
+                                settingsSecretsReadKeys:
+                                    activeAccountSettingsSnapshot
+                                        .settingsSecretsReadKeys,
+                                savedSecretResources:
+                                    activeAccountSettingsSnapshot
+                                        .savedSecretResources,
+                                foregroundSatisfiedSecretRequirementNames: [],
+                                ...(options.secretReferenceOverlay
+                                    ? {
+                                        secretReferenceOverlay:
+                                            options.secretReferenceOverlay,
+                                    }
+                                    : {}),
+                            });
+                        activeAccountSettingsSnapshot = requesterRuntime?.readAccountSettingsSnapshot() ?? getActiveAccountSettingsSnapshot();
+                        profileLaunchEnvironment = Object.freeze({
+                            ...profileLaunchEnvironment,
+                            ...savedSecretEnvironment,
+                        });
+                        providerDiagnosticRedactionLease.add(
+                            Object.values(savedSecretEnvironment),
+                        );
+                    } catch (error) {
+                        if (!(error instanceof LaunchSecretReferenceOverlayError)) {
+                            throw error;
+                        }
+                        return await refuseSpawn(buildProviderSpawnErrorResult(createLaunchSecretReferenceOverlayProviderErrorV1(
+                            error.reason,
+                            { sourceProfileId: options.profileId },
+                        )));
+                    }
+                } else if (options.secretReferenceOverlay) {
+                    return await refuseSpawn(buildProviderSpawnErrorResult(createProviderErrorV1(
+                        'provider_settings_invalid',
+                        { sourceProfileId: options.profileId },
+                    )));
+                }
+            } else if (options.secretReferenceOverlay) {
+                return await refuseSpawn(buildProviderSpawnErrorResult(createProviderErrorV1('provider_settings_invalid')));
+            }
             let teamModelRow: NormalizedSessionTeamCredentialLaunch['teamModelRow'] = null;
             const retainedTeamBinding = sessionAttachPayload?.snapshot?.acceptedTeamCredentialBinding;
             const hasTeamSelection = options.teamCredentialBindings?.some(binding => (
