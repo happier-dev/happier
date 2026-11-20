@@ -75,7 +75,6 @@ export const LINEAR_ACCOUNT_ACTIONS = {
             { path: 'fields.dueDate', title: 'Due date' },
             { path: 'fields.estimate', title: 'Estimate' },
             { path: 'fields.parent', title: 'Parent' },
-            { path: 'placeId', title: 'Place' },
             { path: 'initialStatusId', title: 'Initial status' },
           ],
         },

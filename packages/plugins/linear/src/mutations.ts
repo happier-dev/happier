@@ -99,7 +99,7 @@ async function confirmIssue(input: EntryInput, fields: TriageTaskFieldsV1, conte
 
 export async function createLinearIssue(input: unknown, context: LinearSourceContext): Promise<LinearWriteResult> {
   const parsed = TriageTaskCreateInputV1Schema.parse(input);
-  if (parsed.initialStatusId !== undefined) return { kind: 'refused', reason: 'linear/unsupportedField' };
+  if (parsed.placeId !== undefined || parsed.initialStatusId !== undefined) return { kind: 'refused', reason: 'linear/unsupportedField' };
   const refusal = refusedFields(parsed.fields, true);
   if (refusal || parsed.kindId !== 'issue') return { kind: 'refused', reason: refusal ?? 'linear/kindUnsupported' };
   try {

@@ -73,6 +73,11 @@ describe('registered GitHub task writes at the provider HTTP boundary', () => {
       });
       const created = TriageTaskWriteResultV1Schema.parse(createdRaw);
       expect(created).toMatchObject({ kind: 'applied', observation: { kind: 'present', snapshot: { title: 'Created task', scopeUnitId: route } } });
+      const beforeRefusal = transport.requests.length;
+      expect(await plugin.invokeAction('github/issue/create', { v: 1, instance, kindId: 'issue',
+        placeId: 'octo-org/other-app', fields: { title: 'Must not create', scopeId: route },
+      })).toEqual({ kind: 'refused', reason: 'unsupported_field' });
+      expect(transport.requests).toHaveLength(beforeRefusal);
       const edited = TriageTaskWriteResultV1Schema.parse(await plugin.invokeAction('github/issue/edit', {
         v: 1, instance, localRef, lastKnownLocator: locator,
         fields: { title: 'Updated task', body: 'Changed', assigneeIds: ['new-owner'], labelIds: ['new-label'] },

@@ -56,6 +56,10 @@ describe('Linear native writes', () => {
         .toMatchObject({ kind: 'applied', observation: { localRef, snapshot: { title: 'New work' } } });
       expect(h.request.mock.calls.filter(([request]) => new TextDecoder().decode(request.body).includes('mutation LinearCreate'))).toHaveLength(1);
       h.request.mockClear();
+      expect(await kit.invokeAction(LINEAR_ACTIONS.create, { v: 1, instance, kindId: 'issue',
+        placeId: 'other-team', fields: { scopeId: 'team-1', title: 'New work', body: 'Native description', priority: 1 },
+      })).toEqual({ kind: 'refused', reason: 'linear/unsupportedField' });
+      expect(h.request).not.toHaveBeenCalled();
       h.materializeListedAccount.mockRejectedValue(new Error('selected account unavailable'));
       expect(await kit.invokeAction(LINEAR_ACTIONS.create, { v: 1, instance, kindId: 'issue', fields: { title: 'Another issue' } }))
         .toMatchObject({ kind: 'failed', failure: { class: 'authentication' } });

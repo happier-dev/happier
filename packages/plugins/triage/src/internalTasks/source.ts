@@ -298,6 +298,7 @@ function writeResult(result: HostWriteResult | ActionApprovalRequestCreatedResul
 
 export async function createInternalTask(input: TriageTaskCreateInputV1, context: TriageDataActionContext): Promise<TriageTaskWriteResultV1> {
   if (!isInternalTaskConfiguredInstanceV1(input.instance) || input.kindId !== 'task') return { kind: 'refused', reason: 'unsupportedKind' };
+  if (input.placeId !== undefined) return { kind: 'refused', reason: 'unsupportedField' };
   const state = INTERNAL_TASK_STATES_V1.find(candidate => candidate === input.initialStatusId);
   if (input.initialStatusId !== undefined && state === undefined) return { kind: 'refused', reason: 'unsupportedTransition' };
   const fields = fieldsFrom(input.fields);

@@ -634,6 +634,10 @@ describe('registered internal Happier task source', () => {
         sourceInstanceId: instance.instance.sourceInstanceId, kindId: 'task', initialStatusId: 'unknown-status',
         fields: { title: 'Must not create' },
       }, invocation())).toEqual({ kind: 'refused', reason: 'unsupportedTransition' });
+      expect(await kit.invokeAction('tasks/create-v1', { v: 1, source,
+        sourceInstanceId: instance.instance.sourceInstanceId, kindId: 'task', placeId: 'other-project',
+        fields: { title: 'Must not create' },
+      }, invocation())).toEqual({ kind: 'refused', reason: 'unsupportedField' });
       expect(rows.has('todo.new-task')).toBe(false);
       const capabilities = INTERNAL_TASK_DESCRIPTOR_V1.kinds[0]!.taskCapabilities!;
       const defaults = capabilities.initialStatuses!.filter(status => status.isDefault === true);

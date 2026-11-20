@@ -875,6 +875,9 @@ write. Personal tasks use the existing Todo create/transition semantics and
 atomic task/index writer, including completed or canceled creation; no second
 transition Action runs after creation. GitHub, Linear and Jira currently omit
 this catalog and refuse explicit initial status before provider access.
+Jira supplies a `placeId` for the chosen project and issue type. GitHub and
+Linear route through `fields.scopeId`. GitHub, Linear and Happier tasks refuse
+a supplied `placeId`.
 
 The same contribution protocol declares optional `create`, `edit` and
 `transition` roles for task kinds. They bind ordinary source Actions with closed

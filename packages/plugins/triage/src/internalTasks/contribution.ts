@@ -77,7 +77,6 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
         { path: 'fields.dueDate', title: 'Due date' },
         { path: 'fields.parent', title: 'Parent' },
         { path: 'fields.blockedBy', title: 'Blocked by' },
-        { path: 'placeId', title: 'Place' },
         { path: 'initialStatusId', title: 'Initial status' },
       ],
     },

@@ -122,7 +122,7 @@ export async function createGithubIssueAction(input: unknown, context: PluginInv
   if (!parsed.success) return failed(INVALID_INPUT_FAILURE);
   const request = parsed.data;
   if (request.kindId !== 'issue') return { kind: 'refused', reason: 'unsupported_kind' };
-  if (request.initialStatusId !== undefined) return { kind: 'refused', reason: 'unsupported_field' };
+  if (request.placeId !== undefined || request.initialStatusId !== undefined) return { kind: 'refused', reason: 'unsupported_field' };
   if (!taskFieldsSupported(request.fields, true)) return { kind: 'refused', reason: 'unsupported_field' };
   const resolved = resolveGithubTriageInstance(request.instance);
   if (!resolved.ok) return failed(resolved.failure);
