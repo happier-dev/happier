@@ -1,11 +1,15 @@
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
+import { writeFile } from 'node:fs/promises';
 import { createServer, type IncomingMessage } from 'node:http';
+import { join } from 'node:path';
 import { TLSSocket } from 'node:tls';
+import { pathToFileURL } from 'node:url';
 
 import {
   createEphemeralTlsServerFixture,
 } from '../tls/ephemeralTlsServerFixture.mjs';
+import { repoRootDir } from '../paths';
 
 const MAX_RECORDED_REQUEST_BYTES = 512 * 1024;
 
@@ -38,6 +42,31 @@ export type ConnectedAccountTlsRecordingProxy = Readonly<{
   clear(): void;
   stop(): Promise<void>;
 }>;
+
+/** Installs the same external socket fixture in a spawned Node process. */
+export async function writeConnectedAccountTlsProxyPreload(
+  directory: string,
+  proxy: Pick<ConnectedAccountTlsRecordingProxy, 'url' | 'caCertPath'>,
+  hosts: readonly string[],
+): Promise<string> {
+  const preload = join(directory, 'provider-tls-preload.mjs');
+  const cliPackage = pathToFileURL(join(repoRootDir(), 'apps/cli/package.json')).href;
+  await writeFile(preload, `import { readFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+const undici = createRequire(${JSON.stringify(cliPackage)})('undici/index.js');
+const dispatcher = new undici.ProxyAgent({ uri: ${JSON.stringify(proxy.url)}, requestTls: { ca: await readFile(${JSON.stringify(proxy.caCertPath)}) } });
+const hosts = new Set(${JSON.stringify(hosts)});
+const external = input => {
+  const url = typeof input === 'object' && input !== null && 'url' in input ? input.url : String(input);
+  return hosts.has(new URL(url).hostname);
+};
+const originalUndiciFetch = undici.fetch;
+const originalFetch = globalThis.fetch;
+undici.fetch = (input, init) => originalUndiciFetch(input, external(input) ? { ...init, dispatcher } : init);
+globalThis.fetch = (input, init) => external(input) ? originalUndiciFetch(input, { ...init, dispatcher }) : originalFetch(input, init);
+`);
+  return pathToFileURL(preload).href;
+}
 
 function assert(condition: unknown, code: string): asserts condition {
   if (!condition) throw new Error(code);
