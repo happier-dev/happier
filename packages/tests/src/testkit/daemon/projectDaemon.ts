@@ -231,7 +231,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
               }
               return await ui.executeConfirmed(actionId, input, { ...context, surface: 'ui', authority: 'present_user',
                 actionCaller: { kind: 'host' }, serverId: ui.serverId, serverIdentityId: serverId,
-                actionRequestId: randomUUID() });
+                actionRequestId: context.actionRequestId ?? randomUUID() });
             } finally { await ui.close(); }
           },
         };
