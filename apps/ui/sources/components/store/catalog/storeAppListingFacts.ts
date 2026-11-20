@@ -1,3 +1,6 @@
+import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
+import { parseDocument } from 'yaml';
+
 /** A catalog pin identifies template content rather than an App release. */
 const CATALOG_PIN = /^(?:sha\d+:)?[0-9a-f]{7,}$/i;
 
@@ -25,4 +28,19 @@ export function appListingProse(input: Readonly<{ summary?: string | null; about
   const fits = summary !== null && summary.length <= PURPOSE_FITS;
   const about = input.about?.trim() || null;
   return { purpose: fits ? summary : null, about: fits && about === summary ? null : about ?? (fits ? null : summary) };
+}
+
+/** Read the explicit tag of the main service; catalog pins and digest-only references have no display tag. */
+export function appListingImageTag(compose: DeploymentTemplateV1['compose']): string | null {
+  const service = compose.primaryService ?? (compose.services.length === 1 ? compose.services[0] : undefined);
+  if (!service) return null;
+  const document = parseDocument(compose.document);
+  if (document.errors.length > 0) return null;
+  const image = document.getIn(['services', service, 'image']);
+  if (typeof image !== 'string' || image.includes('$')) return null;
+  const name = image.split('@', 1)[0]!;
+  const colon = name.lastIndexOf(':');
+  if (colon <= name.lastIndexOf('/')) return null;
+  const tag = name.slice(colon + 1);
+  return /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(tag) ? tag : null;
 }

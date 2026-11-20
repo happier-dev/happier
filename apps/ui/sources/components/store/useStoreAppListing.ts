@@ -21,6 +21,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import type { StoreDemand } from './catalog/storeKinds';
 import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { readStoreAppTemplateRef } from './presets/storePresetDoor';
+import { appListingImageTag } from './catalog/storeAppListingFacts';
 
 function recoveryForPartial(progress: DeploymentPartialResult): DeploymentEnvironmentTabV1 | 'deploy' {
     return progress.phase === 'deploy'
@@ -46,6 +47,7 @@ type CatalogListingFacts = Readonly<{
     item: RegistryItemV1;
     catalogRef: Extract<RegistryItemPayloadV1, { kind: 'app' }>['ref'];
     license: string | null;
+    imageTag: string | null;
 }>;
 
 export type StoreAppListingState = ReadFacts & (
@@ -93,13 +95,14 @@ export function useStoreAppListing(input: Readonly<{
         if (!item || item.payload.kind !== 'app') return null;
         const listing = { item, catalogRef: item.payload.ref, license: item.summary.license ?? null };
         if (item.payload.state === 'needs_review') return {
-            ...listing, kind: 'needs_review' as const, diagnostics: item.payload.diagnostics,
+            ...listing, kind: 'needs_review' as const, imageTag: null, diagnostics: item.payload.diagnostics,
             reviewSource: item.payload.reviewSource, correctMappings,
         };
         const templateRef = readStoreAppTemplateRef(item)!;
         const execute = createFrontDoorActionExecute();
         return {
-            ...listing, kind: 'ready' as const, app: item.payload.app, templateRef, appMappingCorrection,
+            ...listing, kind: 'ready' as const, imageTag: appListingImageTag(item.payload.app.compose),
+            app: item.payload.app, templateRef, appMappingCorrection,
             prepare: (operand: StoreAppPreparationInput, signal?: AbortSignal) => prepareCatalogApp({
                 ...operand, serverId: input.lifetime.scope.serverId, templateRef, ...(appMappingCorrection ? { appMappingCorrection } : {}),
             }, signal),

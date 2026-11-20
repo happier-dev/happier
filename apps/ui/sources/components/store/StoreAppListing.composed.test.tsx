@@ -74,7 +74,7 @@ afterEach(standardCleanup);
 
 let sequence = 0;
 async function createFixture(extraDomains: ReadonlyArray<{ key: string; required: boolean }> = [],
-  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; receivingTemplate?: boolean; templateInputs?: boolean; machineCatalogs?: boolean; ports?: boolean }> = {}) {
+  options: Readonly<{ teams?: boolean; domains?: ReturnType<typeof DeploymentTemplateV1Schema.parse>['domains']; receivingTemplate?: boolean; templateInputs?: boolean; machineCatalogs?: boolean; catalogLicense?: string; ports?: boolean }> = {}) {
   const serverUrl = `https://store-app-presenter-${++sequence}.test`;
   const catalogUrl = `${serverUrl}/apps.json`;
   const sourceId = deriveMarketplaceSourceId(catalogUrl);
@@ -152,7 +152,10 @@ async function createFixture(extraDomains: ReadonlyArray<{ key: string; required
           getBytes: async () => { throw new Error('Unexpected byte read'); } } });
       const result = await host.fetchRequest({ op: 'read', kind: 'app', sourceId, itemId: 'uptime-kuma' });
       if (result.op !== 'read') throw new Error('Expected Machine catalog item');
-      machineItems.set(machineId, result.item);
+      machineItems.set(machineId, options.catalogLicense === undefined ? result.item : RegistryItemV1Schema.parse({
+        ...result.item,
+        summary: { ...result.item.summary, license: options.catalogLicense },
+      }));
     }
     const rpc = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc');
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
@@ -659,14 +662,15 @@ it('shows the ports and names the App declares in the person’s install review 
   }
 });
 
-it('renders the exact catalog pin in Versions for an App without a release version', async () => {
+it.each([null, 'MIT'])('supplies the exact catalog pin, literal image tag and optional licence %s for Versions', async license => {
   const { StoreAppListing } = await import('./StoreAppListing');
-  const fixture = await createFixture();
+  const fixture = await createFixture([], license ? { machineCatalogs: true, catalogLicense: license } : {});
   const captured: { listing?: ReturnType<typeof useStoreAppListing> } = {};
   function Listing() {
     const state = useStoreAppListing({
       selection: { sourceId: fixture.sourceId, itemId: 'uptime-kuma' },
       lifetime: fixture.lifetime, demand: { presented: true },
+      ...(license ? { installMachineId: 'target' } : {}),
     });
     captured.listing = state;
     return state.kind === 'ready' ? <StoreAppListing state={state} lifetime={fixture.lifetime}
@@ -679,7 +683,7 @@ it('renders the exact catalog pin in Versions for an App without a release versi
     if (listing?.kind !== 'ready') throw new Error('Expected the selected App listing');
     const ref = listing.templateRef.ref;
     if (ref.kind !== 'content') throw new Error('Expected the catalog content digest');
-    expect(listing).toMatchObject({ catalogRef: listing.templateRef.ref, license: null });
+    expect(listing).toMatchObject({ catalogRef: listing.templateRef.ref, imageTag: '2', license });
     expect(screen.findHostByTestId('store.app.listing.versions')).toBeTruthy();
     expect(screen.getTextContent()).toContain(ref.digest);
   } finally {
