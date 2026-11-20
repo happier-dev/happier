@@ -1,4 +1,5 @@
-import { PluginError } from '../errors.js';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isPluginError, PluginError } from '../errors.js';
 import type { HttpRequest, HttpStreamResponse } from './contracts.js';
 import type { PluginHttpRuntimeAdapter } from './service.js';
 import { readBoundedPluginHttpResponseBody, readDecodedFetchResponseHeaders } from './responseBody.js';
@@ -14,7 +15,15 @@ export function createFetchPluginHttpRuntime(fetch: Fetch): PluginHttpRuntimeAda
         const init: FetchInit & { cache: 'no-cache' } = { method: request.method ?? 'GET', headers: request.headers,
             ...(request.body === undefined ? {} : { body: request.body as FetchInit['body'] }),
             redirect: request.redirect, credentials: 'omit', cache: 'no-cache', ...(signal ? { signal } : {}) };
-        const response = await fetch(request.url, init);
+        let response: Response;
+        try { response = await fetch(request.url, init); }
+        catch (error) {
+            if (isPluginError(error)) throw error;
+            // Fetch has no acknowledgement; cancellation after dispatch cannot
+            // establish whether the remote request took effect.
+            throw new PluginError({ code: 'outcome_unknown',
+                failureCause: projectActionFailureCauseV1(error, 'plugin.http.execute') });
+        }
         if (response.type === 'opaqueredirect' || response.status === 0
             || (response.redirected && request.redirect !== 'follow')) {
             await response.body?.cancel().catch(() => undefined);

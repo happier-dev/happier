@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFetchPluginHttpRuntime } from './fetchTransport.js';
 import { createPluginHttpService } from './service.js';
+import { PluginError } from '../errors.js';
 
 const servers: Server[] = [];
 afterEach(async () => {
@@ -20,6 +21,36 @@ async function listen(handler: RequestListener) {
     if (!address || typeof address === 'string') throw new Error('Missing fixture address');
     return `http://127.0.0.1:${address.port}`;
 }
+
+describe.each(['request', 'requestStream'] as const)('%s Fetch acknowledgement', operation => {
+    it.each(['disconnect', 'cancel'] as const)('keeps an accepted request uncertain after %s', async failure => {
+        const cancellation = new AbortController();
+        let accepted = false;
+        const origin = await listen((request, _response) => {
+            accepted = true;
+            if (failure === 'cancel') cancellation.abort();
+            else request.socket.destroy();
+        });
+        const runtime = createFetchPluginHttpRuntime(globalThis.fetch);
+        await expect(runtime[operation]({ url: origin, method: operation === 'request' ? 'POST' : 'GET', redirect: 'error' },
+            { signal: cancellation.signal })).rejects.toMatchObject({ code: 'outcome_unknown', data: {
+                failureCause: { phase: 'plugin.http.execute' },
+            } });
+        expect(accepted).toBe(true);
+    });
+
+    it('preserves pre-dispatch cancellation and known transport refusals', async () => {
+        const cancellation = new AbortController();
+        cancellation.abort();
+        let attempted = false;
+        const refusal = new PluginError({ code: 'plugin_fetch_redirect_refused' });
+        const runtime = createFetchPluginHttpRuntime(async () => { attempted = true; throw refusal; });
+        await expect(runtime[operation]({ url: 'https://fixture.example.test', redirect: 'error' },
+            { signal: cancellation.signal })).rejects.toBe(cancellation.signal.reason);
+        expect(attempted).toBe(false);
+        await expect(runtime[operation]({ url: 'https://fixture.example.test', redirect: 'error' })).rejects.toBe(refusal);
+    });
+});
 
 it.each(['runtime', 'service'] as const)('preserves a completed portable native response after final-read cancellation (%s)', async owner => {
     const expected = new TextEncoder().encode('{"resourceId":"created-portable-resource"}');
