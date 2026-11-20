@@ -978,13 +978,26 @@ export async function fetchAndApplyMachines(params: {
         }
     };
 
+    // Once every name is open, none waits for a batch to fill behind held daemon reads.
+    let metadataOpensRemaining = 0;
+    const releaseOpenedNames = () => { if (metadataOpensRemaining === 0) hydrationPublication.flushMetadataNow(); };
     const decryptMachine = async (machine: FetchedMachineRow): Promise<Machine | null> => {
         // Queue every Machine's key/metadata phase before daemon phases. A
         // pending daemon cannot hold an offline peer's display metadata slot.
-        const opened = await hydrateContent(() => openMachineMetadata(machine));
-        if (!opened || !opened.encryption) return opened?.machine ?? null;
+        metadataOpensRemaining += 1;
+        let opened: Awaited<ReturnType<typeof openMachineMetadata>>;
+        try {
+            opened = await hydrateContent(() => openMachineMetadata(machine));
+        } finally {
+            metadataOpensRemaining -= 1;
+        }
+        if (!opened || !opened.encryption) {
+            releaseOpenedNames();
+            return opened?.machine ?? null;
+        }
         const machineEncryption = opened.encryption;
         if (machine.daemonState) hydrationPublication.enqueue(opened.machine, true);
+        releaseOpenedNames();
         try {
             const daemonStateCipher = machine.daemonState;
             const daemonState = daemonStateCipher ? await hydrateContent(async () => {

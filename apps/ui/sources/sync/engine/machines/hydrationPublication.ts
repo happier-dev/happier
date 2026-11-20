@@ -58,5 +58,7 @@ export function createHydrationPublication(params: Readonly<{
         flushDue: () => { if (isDue(pending.size)) flush(); },
         /** Opened names do not wait behind a daemon read once their batch is due, or at the tail. */
         flushMetadata: () => { if (isDue(countMetadataOnly())) flush(true); },
+        /** Every name has opened: the rest publish now rather than behind held daemon reads. */
+        flushMetadataNow: () => flush(true),
     };
 }
