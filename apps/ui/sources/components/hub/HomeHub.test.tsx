@@ -37,7 +37,7 @@ import { Text } from '@/components/ui/text/Text';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { decryptArtifactWithBody } from '@/sync/engine/artifacts/syncArtifacts';
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
-import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
+import { GlyphSurface, type GlyphSurfaceProps } from '@/components/atmosphere/glyph/GlyphSurface';
 import { HomeCompletedBots } from './HomeCompletedBots';
 import { HomeBotFaces } from './HomeBotFaces';
 import { HOME_HUB_COMPOSER_SECTION_ID } from './HomeHubSectionList';
@@ -73,11 +73,15 @@ const settings = vi.hoisted(() => ({
     belowHeroTop: 0,
 }));
 const atmospherePaints = vi.hoisted(() => ({ count: 0, font: {} }));
+vi.mock('@/components/atmosphere/glyph/glyphAtlas.native', async () => ({
+    glyphAtlas: (await import('@/dev/testkit/mocks/reactNativeSkia')).createGlyphAtlasRasterMock,
+}));
 vi.mock('@shopify/react-native-skia', async () => ({
-    ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
+    ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaGlyphMock({
+        onPicture: () => { atmospherePaints.count++; },
+    }),
     // Font readiness and physical picture allocation are native boundaries.
     useTypeface: () => atmospherePaints.font,
-    createPicture: () => { atmospherePaints.count++; return { dispose() {} }; },
 }));
 installDisconnectedServerSocketBoundary();
 let artifact = createHomeHubArtifactHttpBoundary('account-home');
@@ -276,7 +280,7 @@ async function renderHome(request = artifact.request, initial: 'stored' | 'missi
     if (settings.measureAtmosphere) {
         storage.setState(state => ({ ...state,
         settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
-            source: 'planet', moments: { ...state.settings.homeAtmosphere.moments, welcome: true, loading: false },
+            source: 'planet', moments: { ...state.settings.homeAtmosphere.moments, loading: false },
         } },
         }));
     }
@@ -383,7 +387,7 @@ describe('HomeHub', () => {
             settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
                 showOn: shown ? ['home', 'projects'] : ['projects'],
                 planet: { ...state.settings.homeAtmosphere.planet, digits: false },
-                moments: { ...state.settings.homeAtmosphere.moments, welcome: false, loading: false },
+                moments: { ...state.settings.homeAtmosphere.moments, loading: false },
             } },
         })));
         const focus = async (home: boolean) => act(async () => {
@@ -426,7 +430,7 @@ describe('HomeHub', () => {
         } finally { await screen.unmount(); }
     });
 
-    it("ends Rise's body above the first thing under the hero, so Done while you were away is on the page and not the planet", async () => {
+    it('ends the Horizon planet above Done while you were away', async () => {
         const before = storage.getState();
         settings.measureAtmosphere = true;
         settings.viewport = { width: 1100, height: 900 };
@@ -436,14 +440,22 @@ describe('HomeHub', () => {
         try {
             await act(async () => storage.setState(state => ({ ...state,
                 settings: { ...state.settings, homeAtmosphere: { ...state.settings.homeAtmosphere,
-                    planet: { ...state.settings.homeAtmosphere.planet, placement: 'rise' },
-                    moments: { ...state.settings.homeAtmosphere.moments, welcome: false, loading: false },
+                    moments: { ...state.settings.homeAtmosphere.moments, loading: false },
                 } },
             })));
             await vi.waitFor(() => expect(screen.findByTestId('home-hero')).not.toBeNull());
             // Only the acknowledged layout places the composer in the hero, which brings this list under it.
             await vi.waitFor(() => expect(screen.findHostByTestId('home-hub.below-hero')?.findAllByType(HomeCompletedBots.type)).toHaveLength(1));
-            await vi.waitFor(() => expect(screen.findByType(PlanetCanvas).props.fade?.to).toBe(settings.belowHeroTop - 6));
+            await act(async () => {
+                screen.findHostByTestId('home-hub.below-hero')?.props.onLayout({ nativeEvent: {
+                    layout: { x: 0, y: settings.belowHeroTop, ...settings.viewport },
+                } });
+            });
+            await vi.waitFor(() => {
+                const { scene } = screen.findByType(GlyphSurface).props as GlyphSurfaceProps;
+                const layers = typeof scene === 'function' ? scene(0) : scene;
+                expect(layers.find(layer => layer.kind === 'planet')?.fade?.to).toBeLessThan(settings.belowHeroTop);
+            });
         } finally {
             await screen.unmount();
             await act(async () => storage.setState(state => ({ ...state, settings: { ...state.settings, homeAtmosphere: before.settings.homeAtmosphere } })));
@@ -718,7 +730,7 @@ describe('HomeHub', () => {
         expect(holdsText(moved.findByTestId('home-hero')!, 'section:start')).toBe(false);
         // Moved lower it still stands over the atmosphere: its suggestions keep the hero's presentation,
         // never the plain page's tiles.
-        expect(widgets.composerSuggestions.at(-1)).toBe('links');
+        expect(widgets.composerSuggestions.at(-1)).toBe('pills');
     });
 
     it('presents the composer\'s suggestions as tiles only on the plain page', async () => {

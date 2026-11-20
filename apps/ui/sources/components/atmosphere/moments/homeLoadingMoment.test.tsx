@@ -15,27 +15,14 @@ vi.mock('react-native', async () => {
 });
 
 const pixels = vi.hoisted(() => ({ body: null as Uint8Array | null }));
-vi.mock('../glyph/glyphAtlas.native', () => ({
-  glyphAtlas: async ({ w, h, chars }: { w: number; h: number; chars: string }, dpr: number) => {
-    const cw = Math.round(w * dpr), ch = Math.round(h * dpr);
-    return { cw, ch, chars, masks: new Uint8Array(cw * ch * chars.length) };
-  },
+vi.mock('../glyph/glyphAtlas.native', async () => ({
+  glyphAtlas: (await import('@/dev/testkit/mocks/reactNativeSkia')).createGlyphAtlasRasterMock,
 }));
 vi.mock('@shopify/react-native-skia', async () => {
-  const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock();
-  const dispose = () => undefined;
-  return { ...boundary, BlendMode: { Modulate: 1, DstIn: 2 },
-    Skia: { ...boundary.Skia,
-      Data: { fromBytes: (bytes: Uint8Array) => ({ bytes, dispose }) },
-      Image: { MakeImage: (info: { width: number; height: number }, { bytes }: { bytes: Uint8Array }) => {
-        if (info.width === Math.ceil(pane.width / 8)) pixels.body = bytes.slice();
-        return { dispose };
-      } },
-      Paint: () => ({ dispose, setAntiAlias() {}, setBlendMode() {}, setShader() {} }),
-      Path: { Make: () => ({ dispose }) },
-    },
-    createPicture: () => ({ dispose }),
-  };
+  const { createReactNativeSkiaGlyphMock } = await import('@/dev/testkit/mocks/reactNativeSkia');
+  return createReactNativeSkiaGlyphMock({ onImage: (info, bytes) => {
+    if (info.width === Math.ceil(pane.width / 8)) pixels.body = bytes.slice();
+  } });
 });
 
 const pane = { width: 1150, height: 900 };
@@ -75,6 +62,7 @@ function Home(
     theme: 'dark',
     pane,
     home,
+    cover: null,
   });
   props.seen.push({ hold: moment.hold, layer: moment.layer !== null });
   return <View testID="home">{moment.layer}</View>;
@@ -91,6 +79,7 @@ async function frames(ms: number) {
 
 describe('Home loading moment', () => {
   beforeEach(() => {
+    pixels.body = null;
     vi.useFakeTimers({
       toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'],
     });
