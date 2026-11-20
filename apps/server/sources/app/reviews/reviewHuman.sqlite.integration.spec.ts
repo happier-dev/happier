@@ -4,6 +4,11 @@ import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { encodeArtifactKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { REVIEW_HUMAN_ACTION_IDS_V1, isReviewHumanActionIdV1 } from '@happier-dev/protocol/actions/actionIdsReviewHumanV1';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { createReviewHumanActionExecutorV1 } from '@happier-dev/protocol/reviews/reviewHumanTransportV1';
+import { createActionToolExecutorBridge } from '../../../../cli/src/agent/tools/happierTools/createActionToolExecutorBridge';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { db } from '@/storage/db';
@@ -78,6 +83,51 @@ describe('Review requested-person HTTP flow', () => {
                 expect(denied.json()).toMatchObject({ error: 'present_user_required' });
                 expect(publications()).toEqual([reviewChange, reviewChange, reviewChange]);
                 expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } })).toEqual(changed);
+                // Exercise the real Agent/MCP ingress and core admission. Approval
+                // policy and the host's approved-continuation flag cannot turn
+                // this person-only Action into an Agent verdict.
+                for (const surface of ['agent', 'mcp'] as const) {
+                    for (const policy of ['ask', 'waived', 'approved'] as const) {
+                        const settings = ActionsSettingsV1Schema.parse({ v: 1,
+                            ...(policy === 'waived' ? { approvalWaivedSurfaces: {
+                                [REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict]: [surface],
+                            } } : {}),
+                        });
+                        const executor = createActionExecutor({ homeDomainAction: async ({ actionId, input, context }) => {
+                            if (!isReviewHumanActionIdV1(actionId)) throw new Error('Unexpected Home family');
+                            return createReviewHumanActionExecutorV1({ accountId: person.id,
+                                request: async (method, path, body) => {
+                                    const response = await app.inject({ method: method as 'GET' | 'POST', url: path,
+                                        headers: { authorization: `Bearer ${personToken}`,
+                                            ...(context.authority === 'account_automation'
+                                                ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) }, payload: body });
+                                    if (response.statusCode !== 200) throw Object.assign(new Error('Home refused verdict'),
+                                        { code: response.json().error });
+                                    return response.json();
+                                },
+                                resolveResource: async () => { throw new Error('A prose-free verdict needs no Artifact codec'); },
+                            })(actionId, input);
+                        } });
+                        const context = { surface, authority: 'account_automation' as const,
+                            actionsSettings: settings, ...(policy === 'approved' ? { bypassApprovals: true } : {}) };
+                        const bridge = createActionToolExecutorBridge({ surface, actionsSettings: settings,
+                            executor: { execute: (actionId, input, origin) => executor.execute(actionId, input,
+                                { ...origin, ...context }) } });
+                        const input = { reviewId: review.id, roundOrdinal: 2, verdict: 'approve' };
+                        if (surface === 'agent' && policy === 'ask') {
+                            const personResult = await executor.execute(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict,
+                                { ...input, verdict: 'request_changes' }, { surface: 'cli', authority: 'present_user', bypassApprovals: true });
+                            expect(personResult, JSON.stringify(personResult)).toMatchObject({ ok: true, result: { verdicts: [expect.objectContaining({ verdict: 'request_changes', revision: 2 })] } });
+                        }
+                        expect(await bridge.executeActionByToolName('action_execute', {
+                            actionId: REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict, input,
+                        }, undefined)).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+                        expect(await executor.execute(REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict, input, context))
+                            .toMatchObject({ ok: false, errorCode: 'action_disabled' });
+                        expect(await db.reviewVerdict.findFirstOrThrow({ where: { reviewId: review.id } })).toEqual(changed);
+                        expect(publications()).toEqual([reviewChange, reviewChange, reviewChange]);
+                    }
+                }
             } finally { eventRouter.removeConnection(person.id, connection); }
         }, { authentication: 'real' });
     });
