@@ -79,7 +79,7 @@ describe('resolveObservableAgentNativeTranscriptPath', () => {
     }
   });
 
-  it('uses the current Agent candidate from canonical identity and descriptor, then rejects a symlink escape', async () => {
+  it.each(['codex', 'happier.agent.codex/codex'])('uses the current Agent candidate for descriptor %s, then rejects a symlink escape', async (descriptorAgentId) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-native-transcript-root-'));
     const outsideRoot = await mkdtemp(join(tmpdir(), 'happier-native-transcript-outside-'));
     try {
@@ -106,7 +106,7 @@ describe('resolveObservableAgentNativeTranscriptPath', () => {
           codexSessionId: 'thread-1',
           runtimeDescriptorV1: {
             v: 1,
-            agentId: 'codex',
+            agentId: descriptorAgentId,
             agent: { homePath: root },
           },
         },
@@ -116,7 +116,7 @@ describe('resolveObservableAgentNativeTranscriptPath', () => {
         identity: { v: 1, vendorResumeId: 'thread-1' },
         runtimeDescriptorV1: {
           v: 1,
-          agentId: 'codex',
+          agentId: descriptorAgentId,
           agent: { homePath: root },
         },
       });
@@ -139,7 +139,7 @@ describe('resolveObservableAgentNativeTranscriptPath', () => {
           codexSessionId: 'thread-1',
           runtimeDescriptorV1: {
             v: 1,
-            agentId: 'codex',
+            agentId: descriptorAgentId,
             agent: { homePath: root },
           },
         },

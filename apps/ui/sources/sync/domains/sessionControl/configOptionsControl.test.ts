@@ -26,6 +26,21 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('computeSessionConfigOptionControls', () => {
+    it('admits the same bundled Agent’s config catalogs across routing and qualified IDs', () => {
+        const agentId = 'happier.agent.opencode/opencode';
+        const configOptions = [
+            { id: 'native-model', name: 'Native model', category: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a', name: 'A' }] },
+            { id: 'effort', name: 'Effort', type: 'select', currentValue: 'auto', options: [{ value: 'auto', name: 'Auto' }] },
+        ];
+        const metadata = createMetadata({
+            sessionConfigOptionsV1: { v: 1, agentId: 'opencode', updatedAt: 1, configOptions, modelConfigOptionId: 'native-model' },
+            sessionModelsV1: { v: 1, agentId, updatedAt: 1, currentModelId: 'a', availableModels: [{ id: 'a', name: 'A' }] },
+        });
+        expect(computeSessionConfigOptionControls({ agentId, metadata })?.map(control => control.option.id)).toEqual(['effort']);
+        expect(computeSessionConfigOptionControls({ agentId: 'opencode', metadata })?.map(control => control.option.id)).toEqual(['effort']);
+        expect(computeSessionConfigOptionControls({ agentId: 'acme.agent/opencode', metadata })).toBeNull();
+    });
+
     it('retains the native extended model identity from Session metadata through toggle selection', () => {
         const extendedContextModelId = ' native/model[1m] ';
         const metadata = MetadataSchema.parse(JSON.stringify({ path: '/tmp', host: 'h', sessionModelsV1: {

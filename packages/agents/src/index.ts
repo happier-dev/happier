@@ -176,6 +176,7 @@ export type {
 } from './runtime/terminal/control.js';
 export { resolveAgentIdFromFlavor, resolveCanonicalAgentIdFromFlavor } from './resolveAgentIdFromFlavor.js';
 export {
+  normalizeBundledAgentRoutingId,
   resolveAgentIdFromSessionMetadata,
   resolveBundledAgentIdFromContributionIdentity,
   resolveAgentExecutionTargetFromSessionMetadata,

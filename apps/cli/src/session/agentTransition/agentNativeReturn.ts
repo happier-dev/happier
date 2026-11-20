@@ -4,6 +4,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 
 import {
   evaluateVendorResumeEligibility,
+  normalizeBundledAgentRoutingId,
   projectCurrentAgentSessionView,
   readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata,
   resolveAgentNativeResumeIdentityFromSessionMetadata,
@@ -186,7 +187,7 @@ export async function resolveObservableAgentNativeTranscriptPath(params: Readonl
   const runtimeDescriptorV1 = readAgentSurfaceRuntimeDescriptorV1FromSessionMetadata(
     params.metadata,
   );
-  if (!runtimeDescriptorV1 || runtimeDescriptorV1.agentId !== params.agentId) {
+  if (!runtimeDescriptorV1 || normalizeBundledAgentRoutingId(runtimeDescriptorV1.agentId) !== normalizeBundledAgentRoutingId(params.agentId)) {
     const derivedCandidate = await resolveAgentNativeSessionLogPathForAgent(params.agentId, {
       vendorResumeId: identity.vendorResumeId,
     }).catch(() => null);

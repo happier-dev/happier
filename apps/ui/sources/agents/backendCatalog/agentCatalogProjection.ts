@@ -12,7 +12,7 @@ import type { AcpCatalogSnapshotV1 } from '@happier-dev/protocol/acp/catalog/cat
 import { AgentExecutionTargetV1Schema, CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 import { AGENT_IDS, getAgentCore, getBundledAgentDeclaration, isBundledAgentId, type AgentId } from '@/agents/catalog/catalog';
-import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from '@happier-dev/agents';
+import { getAgentSessionModeDescriptor, normalizeBundledAgentRoutingId, type AgentSessionModeDescriptor } from '@happier-dev/agents';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/agentLocalAuthCatalog';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
@@ -91,6 +91,7 @@ function normalizeAgentId(agentId: string | null | undefined): string {
         else if (!target.definitionId) trimmed = resolveBundledAgentIdFromContributionIdentity(target.identity)
             ?? buildQualifiedPluginContributionKey(target.identity);
     }
+    trimmed = normalizeBundledAgentRoutingId(trimmed);
     if (isBundledAgentId(trimmed)) return trimmed;
     return CANONICAL_AGENT_ID_BY_NORMALIZED.get(trimmed.toLowerCase()) ?? trimmed;
 }

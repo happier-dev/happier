@@ -34,6 +34,12 @@ export function resolveBundledAgentIdFromContributionIdentity(identity: unknown)
   }) ?? null;
 }
 
+/** Normalize the qualified spelling of a bundled Agent for comparison with its host routing id. */
+export function normalizeBundledAgentRoutingId(agentId: string): string {
+  if (!agentId.includes('/')) return agentId;
+  return resolveBundledAgentIdFromContributionIdentity(parseQualifiedPluginContributionKey(agentId)) ?? agentId;
+}
+
 /**
  * A declared Session identity is an open Agent contribution identity.
  *

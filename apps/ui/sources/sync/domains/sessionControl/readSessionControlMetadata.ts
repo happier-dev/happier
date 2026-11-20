@@ -1,6 +1,7 @@
 import {
     LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,
+    normalizeBundledAgentRoutingId,
     readMetadataAliasValue,
     readSessionModelSelectionV2FromMetadata,
     SESSION_CONFIG_OPTIONS_STATE_KEY,
@@ -38,6 +39,11 @@ export function readSessionModelsState(metadata: ComposerOptionsInputV1 | null |
         SESSION_MODELS_STATE_KEY,
         LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     ) ?? null;
+}
+
+export function isSessionModelCatalogForAgent(state: SessionModelsState | null, agentId: string): state is SessionModelsState {
+    return typeof state?.agentId === 'string'
+        && normalizeBundledAgentRoutingId(state.agentId) === normalizeBundledAgentRoutingId(agentId);
 }
 
 export function readSessionConfigOptionsState(metadata: Metadata | null | undefined): SessionConfigOptionsState | null {

@@ -4,6 +4,7 @@ import {
     LEGACY_ACP_CONFIG_OPTION_OVERRIDES_KEY,
     LEGACY_ACP_SESSION_MODELS_STATE_KEY,
     LEGACY_ACP_SESSION_MODES_STATE_KEY,
+    normalizeBundledAgentRoutingId,
     readAcpConfigOptionIntentFromMetadata,
     readMetadataAliasValue,
     SESSION_CONFIG_OPTIONS_STATE_KEY,
@@ -320,8 +321,6 @@ type ModelDescriptorWithConfigOptions = Readonly<{
 }>;
 
 function buildSessionConfigOptionControls(params: Readonly<{
-    agentId: string;
-    stateAgentId: string | null;
     configOptions: ReadonlyArray<SessionConfigOptionInput>;
     overrides?: Readonly<Record<string, Readonly<{ value: unknown }>>> | null;
     hideModeOption: boolean;
@@ -329,8 +328,6 @@ function buildSessionConfigOptionControls(params: Readonly<{
     modelConfigOptionId?: string | null;
     modelDescriptors?: ReadonlyArray<ModelDescriptorWithConfigOptions> | null;
 }>): SessionConfigOptionControl[] | null {
-    if (params.stateAgentId !== params.agentId) return null;
-
     // Scope is a producer fact, not a category/name heuristic or the draft selection.
     const modelScopedIds = new Set(params.modelDescriptors?.flatMap((model) => model.modelOptions?.map((option) => option.id) ?? []) ?? []);
 
@@ -443,34 +440,31 @@ export function computeSessionConfigOptionControls(params: {
     const state = parseSessionConfigOptionsState(
         readMetadataAliasValue(params.metadata ?? {}, SESSION_CONFIG_OPTIONS_STATE_KEY, LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY),
     );
-    if (!state) return null;
-    if (state.agentId !== params.agentId) return null;
-    if (state.configOptions.length === 0) return null;
+    const agentId = normalizeBundledAgentRoutingId(params.agentId);
+    if (!state?.configOptions.length || normalizeBundledAgentRoutingId(state.agentId) !== agentId) return null;
 
     const sessionModes = parseSessionModesState(
         readMetadataAliasValue(params.metadata ?? {}, SESSION_MODES_STATE_KEY, LEGACY_ACP_SESSION_MODES_STATE_KEY),
     );
-    const hasDedicatedModeControl = sessionModes?.agentId === params.agentId && sessionModes.availableModes.length > 0;
+    const hasDedicatedModeControl = !!sessionModes?.availableModes.length && normalizeBundledAgentRoutingId(sessionModes.agentId) === agentId;
 
     const sessionModels = parseSessionModelsState(
         readMetadataAliasValue(params.metadata ?? {}, SESSION_MODELS_STATE_KEY, LEGACY_ACP_SESSION_MODELS_STATE_KEY),
     );
-    const hasDedicatedModelControl =
-        sessionModels?.agentId === params.agentId && sessionModels.availableModels.length > 0;
+    const modelDescriptors = sessionModels && normalizeBundledAgentRoutingId(sessionModels.agentId) === agentId
+        ? sessionModels.availableModels : null;
 
     const overrides = resolveSessionConfigOptionOverridesFromMetadata({
         metadata: params.metadata,
         configOptions: state.configOptions,
     });
     return buildSessionConfigOptionControls({
-        agentId: params.agentId,
-        stateAgentId: state.agentId,
         configOptions: state.configOptions,
         overrides,
         hideModeOption: hasDedicatedModeControl,
-        hideModelOption: hasDedicatedModelControl,
+        hideModelOption: !!modelDescriptors?.length,
         modelConfigOptionId: state.modelConfigOptionId,
-        modelDescriptors: params.modelDescriptors ?? (sessionModels?.agentId === params.agentId ? sessionModels.availableModels : null),
+        modelDescriptors: params.modelDescriptors ?? modelDescriptors,
     });
 }
 
@@ -485,8 +479,6 @@ export function computeSessionConfigOptionControlsForProvider(params: Readonly<{
 }>): SessionConfigOptionControl[] | null {
     if (!Array.isArray(params.configOptions) || params.configOptions.length === 0) return null;
     return buildSessionConfigOptionControls({
-        agentId: params.providerId,
-        stateAgentId: params.providerId,
         configOptions: params.configOptions,
         overrides: params.overrides ?? null,
         hideModeOption: params.hideModeOption ?? false,

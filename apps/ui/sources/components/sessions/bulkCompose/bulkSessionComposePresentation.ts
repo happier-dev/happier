@@ -1,7 +1,8 @@
 import type { BulkSessionChangeRow } from '@/components/sessions/authoring/bulk/executeBulkSessionChanges';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { SessionAgentTransitionRejectedCodeV1Schema } from '@happier-dev/protocol/sessions/agentTransition';
 import type { SessionAskTargetRowState } from '@/components/sessions/transcript/askRecord/SessionAskRecord';
-import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { normalizeAgentCatalogId, resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { isBundledAgentId } from '@/agents/registry/registryCore';
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
@@ -90,7 +91,7 @@ export function describeBulkRowState(
 /** The reason line under a row: the owner's own sentence when it gave one, else what the state means for the person. */
 export function describeBulkRowReason(
   row: BulkSessionChangeRow,
-  /** The Machine-scoped catalog's Agent titles (`useBulkSessionAgentTitles`), keyed by `bulkSwitchCatalogAgentId`. */
+  /** The Machine-scoped catalog's Agent titles (`useBulkSessionAgentTitles`), keyed by catalog Agent id. */
   agentTitles?: ReadonlyMap<string, string>,
 ): string | null {
   if (row.state === 'skipped') return describeBulkSkipReason(row.code);
@@ -124,20 +125,14 @@ export function describeBulkRowReason(
   return null;
 }
 
-/** The id the Machine-scoped Agent catalog knows a switch's qualified Agent id ("happier.agent.claude/claude") by. */
-export function bulkSwitchCatalogAgentId(agentId: string): string {
-  const localId = agentId.slice(agentId.lastIndexOf('/') + 1);
-  return isBundledAgentId(localId) ? localId : agentId;
-}
-
 /** A switch's Agent in the catalog's own words (installed and contributed Agents keep their names), as the To rows. */
 function describeAgentId(agentId: string, agentTitles: ReadonlyMap<string, string> | undefined): string {
-  const catalogId = bulkSwitchCatalogAgentId(agentId);
+  const catalogId = normalizeAgentCatalogId(agentId);
   const title = agentTitles?.get(catalogId);
   if (title) return title;
   return isBundledAgentId(catalogId)
     ? resolveAgentCatalogTitle(catalogId)
-    : formatAgentLikeIdForDisplay(agentId.slice(agentId.lastIndexOf('/') + 1));
+    : formatAgentLikeIdForDisplay(parseQualifiedPluginContributionKey(agentId)?.localId ?? agentId);
 }
 
 type BulkSessionResultSummary = Readonly<Record<BulkSessionChangeRow['state'], number>>;

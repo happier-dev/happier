@@ -64,7 +64,8 @@ import {
 } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 
 import { BulkSessionResults } from './BulkSessionResults';
-import { bulkSwitchCatalogAgentId, describeBulkSkipReason } from './bulkSessionComposePresentation';
+import { normalizeAgentCatalogId } from '@/agents/backendCatalog/agentCatalogProjection';
+import { describeBulkSkipReason } from './bulkSessionComposePresentation';
 import {
   resolveBulkTargetCatalogAgentId,
   useBulkSessionAgentTitles,
@@ -165,7 +166,7 @@ function BulkSessionComposer(
     const switched = composer.rows.flatMap((row) => {
       const machineId = facts.find((fact) => fact.address.sessionId === row.target.sessionId)?.machineId ?? null;
       return [row.switchedFrom, row.switchedTo].flatMap((agentId) =>
-        agentId ? [{ agentId: bulkSwitchCatalogAgentId(agentId), machineId }] : []);
+        agentId ? [{ agentId: normalizeAgentCatalogId(agentId), machineId }] : []);
     });
     return switched.length > 0 ? [...current, ...switched] : current;
   }, [facts, composer.rows]);

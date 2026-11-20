@@ -1,5 +1,5 @@
 import type { Metadata } from '@happier-dev/session-core/state';
-import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
+import { isSessionModelCatalogForAgent, readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import { readSessionModelSelectionV2FromMetadata } from '@happier-dev/agents';
 import { readExactSessionActiveModelSelection } from '@happier-dev/protocol/providers/active-model-selection';
 import { readSessionModelSelectionIntentFromMetadata } from '@/sync/domains/models/readSessionModelSelectionIntent';
@@ -98,7 +98,7 @@ export function resolveSessionModelSelectionDisposition(params: Readonly<{
     const exactSelection = exactFact?.selection ?? null;
 
     const sessionModels = readSessionModelsState(params.metadata);
-    const fallbackModelId = sessionModels?.agentId === params.agentId
+    const fallbackModelId = isSessionModelCatalogForAgent(sessionModels, params.agentId)
         ? normalizeModelId(sessionModels.currentModelId)
         : '';
     const nativeFallbackSelection: ProviderBoundModelRef = {

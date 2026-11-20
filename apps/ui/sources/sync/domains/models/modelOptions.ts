@@ -7,7 +7,7 @@ import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { readAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import { applySessionConfigOptionOverrideRules, computeSessionConfigOptionControls, computeSessionConfigOptionControlsFromOverride, normalizeAcpConfigOptionsArray, resolveSessionConfigOptionOverridesFromMetadata, type AcpConfigOption, type SessionConfigOptionControl } from '@/sync/domains/sessionControl/configOptionsControl';
-import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
+import { isSessionModelCatalogForAgent, readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import {
     getAgentStaticModels,
     getAgentModelConfig,
@@ -196,7 +196,7 @@ export function getModelOptionsForPreflightModelList(list: PreflightModelList): 
 function readDynamicSessionModelList(agentType: AgentType, metadata: ComposerOptionsInputV1 | null | undefined) {
     if (!supportsDynamicSessionModelList(agentType)) return null;
     const state = readSessionModelsState(metadata);
-    return state && state.agentId === agentType && state.updatedAt > 0 && Array.isArray(state.availableModels)
+    return isSessionModelCatalogForAgent(state, agentType) && state.updatedAt > 0 && Array.isArray(state.availableModels)
         ? state
         : null;
 }

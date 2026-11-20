@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { describeEffectiveModelMode, readAppliedModelSelection } from './describeEffectiveModelMode';
+import { getModelOptionsForSession } from './modelOptions';
 import { getAgentCore } from '@/agents/catalog/catalog';
 import type { Metadata } from '@happier-dev/session-core/state';
 
@@ -15,6 +16,20 @@ function buildMetadata(overrides: Partial<Metadata> = {}): Metadata {
 describe('describeEffectiveModelMode', () => {
     afterEach(() => {
         vi.doUnmock('@/agents/catalog/catalog');
+    });
+
+    it.each([
+        { owner: 'happier.agent.codex/codex', visible: true },
+        { owner: 'acme.coder/codex', visible: false },
+    ])('shows a model catalog owned by the exact Agent ($owner)', ({ owner, visible }) => {
+        const metadata = buildMetadata({ flavor: 'codex', sessionModelsV1: {
+            v: 1, agentId: owner, updatedAt: 10, currentModelId: 'published-model',
+            availableModels: [{ id: 'published-model', name: 'Published model' }],
+        } });
+        expect(getModelOptionsForSession('codex', metadata).some(option => option.value === 'published-model')).toBe(visible);
+        const actual = describeEffectiveModelMode({ agentType: 'codex', selectedModelId: 'default', metadata });
+        expect(actual.appliedModelId).toBe(visible ? 'published-model' : null);
+        expect(actual.appliedModelStatus).toBe(visible ? 'last_reported' : null);
     });
 
     it('treats Claude model overrides as next-prompt', () => {

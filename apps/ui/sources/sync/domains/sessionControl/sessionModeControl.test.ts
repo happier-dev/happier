@@ -18,6 +18,17 @@ function createMetadata(overrides: Partial<Metadata> = {}): Metadata {
 }
 
 describe('sessionModeControl', () => {
+  it('uses bundled modes across routing and qualified IDs without borrowing another contribution’s modes', () => {
+    const metadata = createMetadata({
+      sessionModesV2: { v: 2, agentId: 'opencode', updatedAt: 1, currentModeId: 'build',
+        availableModes: [{ id: 'build', name: 'Build' }, { id: 'plan', name: 'Plan' }] },
+      sessionModeOverrideV1: { v: 1, updatedAt: 2, modeId: 'plan' },
+    });
+    expect(computeSessionModePickerControl({ agentId: 'happier.agent.opencode/opencode', metadata }))
+      .toMatchObject({ currentModeId: 'build', requestedModeId: 'plan', isPending: true });
+    expect(computeSessionModePickerControl({ agentId: 'acme.agent/opencode', metadata })).toBeNull();
+  });
+
   it('keeps CodeBuddy native Default separate from clearing its permission override after custom runtime publication', () => {
     const native = [{ id: 'default', name: 'Native default' }];
     expect(getSessionModePickerOptions(native, 'codebuddy').map(option => option.id)).toEqual(['', 'default']);

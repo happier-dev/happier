@@ -7,7 +7,7 @@ import { readAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUnivers
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { hasDynamicModelListForSession, getSelectableModelIdsForSession, supportsFreeformModelSelectionForSession } from '@/sync/domains/models/modelOptions';
-import { readSessionModelsState, readSessionModesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
+import { isSessionModelCatalogForAgent, readSessionModelsState, readSessionModesState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 import {
     SessionAppliedModelV1Schema,
     type ProviderBoundModelRef,
@@ -89,7 +89,7 @@ export function describeEffectiveModelMode(params: {
         currentRunnerProcessIdentity: params.currentRunnerProcessIdentity ?? null,
     });
     const appliedModelId = sessionModels?.agentId !== undefined
-        ? sessionModels.agentId === agentId ? normalizeModelId(sessionModels.currentModelId) || null : null
+        ? isSessionModelCatalogForAgent(sessionModels, agentId) ? normalizeModelId(sessionModels.currentModelId) || null : null
         : agentTargetKey === null ? null : readAppliedModelSelection({
             agentId, agentTargetKey, metadata: params.metadata,
         })?.modelId ?? null;

@@ -90,10 +90,10 @@ describe('BulkSessionResults', () => {
   it('names a contributed Agent in a switch reason by the catalog title the To rows use', async () => {
     const screen = await renderScreen(
       <BulkSessionResults
-        rows={[{ ...row('a', 'sent'), switchedFrom: 'happier.agent.claude/claude', switchedTo: 'acme.coder/coder' }]}
+        rows={[{ ...row('a', 'sent'), switchedFrom: 'happier.agent.claude/claude', switchedTo: 'acme.coder/codex' }]}
         text="Rebase." submitting={false} compact={false} onRetry={() => {}} onRetryFailed={() => {}}
         onDone={() => {}} onOpenSession={() => {}}
-        agentTitles={new Map([['acme.coder/coder', 'Acme Coder']])}
+        agentTitles={new Map([['acme.coder/codex', 'Acme Coder']])}
       />,
     );
     expect(screen.getTextContent()).toMatch(/Claude.*Acme Coder/);
