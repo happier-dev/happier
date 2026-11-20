@@ -13,6 +13,8 @@ import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBa
 import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
 import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TEST_ID, useStepBackSlot, WIDE_STEP_COLUMN_PX, WideStepColumnContext } from './stepBack';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+
 import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
 import { ShellCornerContext, ShellCornerNoteContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
@@ -319,10 +321,10 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                                         <View style={styles.cornerNote}>
                                             {cornerNote ? (
                                                 // It stands over the planet's limb, so it reads on the corner pill's surface.
-                                                <View style={[styles.cornerNoteSurface, {
-                                                    backgroundColor: theme.colors.surface.base,
-                                                    borderColor: theme.colors.border.default,
-                                                }]}>
+                                                <View style={[styles.cornerNoteSurface, { borderColor: theme.colors.border.default }]}>
+                                                    {/* An Element over the planet: glass, its exact solid paint under Reduce Transparency. */}
+                                                    <GlassSurface surfaceGroup="card" nested finishRole={null}
+                                                        solidColor={theme.colors.surface.base} style={styles.cornerNoteGround} />
                                                     <RelayRetentionDisclosure testID="welcome-retention"
                                                         disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
                                                 </View>
@@ -460,7 +462,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     // The retention line on the bottom-right corner grid, right-aligned beside the footer's own control.
     cornerNote: {
-        maxWidth: 320,
+        maxWidth: 400,
         alignItems: 'flex-end',
         gap: theme.space.s8,
     },
@@ -469,6 +471,15 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderRadius: theme.borderRadius.lg,
         paddingVertical: theme.space.s8,
         paddingHorizontal: theme.space.s12,
+    },
+    cornerNoteGround: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        borderRadius: theme.borderRadius.lg,
+        pointerEvents: 'none',
     },
     cornerDoor: {
         position: 'absolute',

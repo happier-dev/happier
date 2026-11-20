@@ -4,6 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
+import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -78,9 +79,10 @@ export const OsCommandBlock = React.memo(function OsCommandBlock(props: Readonly
                         <Text style={styles.linePrompt} accessibilityElementsHidden importantForAccessibility="no">
                             {lineOs === 'windows' ? '>' : '$'}
                         </Text>
-                        <Text testID={`${props.testID}.code`} style={styles.lineCode} numberOfLines={1} ellipsizeMode="tail" selectable>
-                            {lineCommand}
-                        </Text>
+                        {/* One line that gives up its middle, so the command's start and its flags stay readable. */}
+                        <View style={styles.lineCodeSlot}>
+                            <MiddleEllipsisText testID={`${props.testID}.code`} value={lineCommand} style={styles.lineCode} />
+                        </View>
                         <CopyIconButton testID={`${props.testID}.copy`} text={lineCommand} />
                     </GlassSurface>
                 )}
@@ -149,11 +151,13 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.mono(),
         color: theme.colors.text.tertiary,
     },
+    lineCodeSlot: {
+        flex: 1,
+        minWidth: 0,
+    },
     lineCode: {
         ...Typography.variant('label'),
         ...Typography.mono(),
-        flex: 1,
-        minWidth: 0,
         color: theme.colors.text.primary,
     },
     detected: {

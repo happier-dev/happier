@@ -32,6 +32,7 @@ import { applyConfiguredSshHostSuggestionToDraft, createDefaultSshCredentialsDra
 import { filterConfiguredSshHostSuggestions, type SshConfiguredHostSuggestion } from '@/components/ssh/filterConfiguredSshHostSuggestions';
 import { useConfiguredSshHostSuggestions } from '@/components/ssh/useConfiguredSshHostSuggestions';
 import { SshConfiguredHostPicker, SshHostChip } from '@/components/ssh/SshConfiguredHostPicker';
+import { useWideStepColumn } from '@/components/onboarding/unauthShell/stepBack';
 import { resolveRemoteRelayCompletionUrl } from '@/components/systemTasks/remoteSshBootstrap/remoteSshBootstrapTask';
 
 import { buildRemoteSshChecklistItems } from './buildRemoteSshChecklistItems';
@@ -166,6 +167,8 @@ export const RemoteSshChecklistStep = React.memo(function RemoteSshChecklistStep
     }>) => void;
     onCancel?: () => void;
 }>) {
+    // The step's title ("Create a Personal Home on a remote machine") reads on one line in the wide step column.
+    useWideStepColumn();
     const styles = remoteSshChecklistStyles;
     const copy = React.useMemo(() => getRemoteSshChecklistCopy(props.mode), [props.mode]);
     const [phase, setPhase] = React.useState<RemoteSshChecklistPhase>('credentials');

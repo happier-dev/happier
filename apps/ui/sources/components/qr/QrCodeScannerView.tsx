@@ -11,6 +11,7 @@ import { Typography } from '@/constants/Typography';
 import { canUseCurrentDeviceQrScanner } from '@/utils/platform/qrScannerSupport';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
+import { StepQuietAction } from '@/components/onboarding/unauthShell/StepFormParts';
 
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
@@ -21,6 +22,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...StyleSheet.absoluteFillObject,
     },
     // A host-sized preview is a window on the page: the camera's dark before the first frame, the card radius.
+    // Without a camera the window keeps its size and radius on the page's own surface, so its words read.
+    deniedWindow: {
+        backgroundColor: theme.colors.surface.base,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: theme.space.s12,
+        paddingHorizontal: theme.space.s24,
+    },
+    deniedText: {
+        ...Typography.variant('reading'),
+        textAlign: 'center',
+        maxWidth: 320,
+    },
     hostedPreview: {
         flexGrow: 0,
         flexShrink: 0,
@@ -283,6 +299,34 @@ export const QrCodeScannerView = React.memo(function QrCodeScannerView(props: Qr
                         />
                     </View>
                 ) : null}
+            </View>
+        );
+    }
+
+    if (!permission.granted && embedded && props.previewHeight != null) {
+        // A step keeps its camera window (lab direction A "Point at your computer"): the reason inside it, and Retry
+        // as the window's quiet way, so nothing jumps when the camera answers.
+        return (
+            <View style={styles.embeddedPermissions}>
+                <View testID={`${props.testIDPrefix}-denied`} style={[styles.hostedPreview, styles.deniedWindow, { height: props.previewHeight }]}>
+                    <Icon name="camera" size={24} color={theme.colors.text.secondary} />
+                    <Text style={[styles.deniedText, { color: theme.colors.text.secondary }]}>
+                        {props.permissionRequiredMessage}
+                    </Text>
+                    <StepQuietAction
+                        testID={`${props.testIDPrefix}-retry-permission`}
+                        label={t('common.retry')}
+                        onPress={() => { void requestPermission().catch(() => {}); }}
+                    />
+                    {Platform.OS !== 'web' ? (
+                        <StepQuietAction
+                            testID={`${props.testIDPrefix}-open-settings`}
+                            label={t('modals.openSettings')}
+                            onPress={() => { void Linking.openSettings().catch(() => {}); }}
+                        />
+                    ) : null}
+                </View>
+                {footer}
             </View>
         );
     }

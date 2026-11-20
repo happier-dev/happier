@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { StepFieldHelp, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { useWideStepColumn } from '@/components/onboarding/unauthShell/stepBack';
 import { OsCommandBlock, type CommandOs } from '@/components/ui/code/blocks/OsCommandBlock';
 import { t } from '@/text';
 
@@ -36,6 +37,8 @@ export function WebDesktopCommandHandoff(props: Readonly<{
     help?: string;
     desktopLabel?: string;
 }>) {
+    // The owner's title ("Create a Personal Home on your machine") reads on one line in the wide step column.
+    useWideStepColumn();
     return (
         <View testID={props.testID} style={styles.root}>
             <View style={styles.command}>
@@ -51,8 +54,11 @@ export function WebDesktopCommandHandoff(props: Readonly<{
 }
 
 const styles = StyleSheet.create((theme) => ({
+    // The body keeps the step's reading width inside the wide column (lab: the command row a little wider than the "or").
     root: {
         width: '100%',
+        maxWidth: 520,
+        alignSelf: 'center',
         alignItems: 'center',
         gap: theme.space.s16,
     },

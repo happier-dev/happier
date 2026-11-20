@@ -18,7 +18,9 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
-import { StepFieldGroup, StepFieldHelp, StepFieldLabel, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepFieldGroup, StepFieldHelp, StepFieldLabel, StepOrDivider, StepForm } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepActions } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
+import { StepPrimaryButton } from '@/components/onboarding/unauthShell/stepBack';
 import { JourneyPanePresentationContext, PaneHeader } from './journeyPaneKit';
 import {
     confirmCanonicalHomeUrl,
@@ -198,7 +200,58 @@ export function DirectHomePathPane(props: Readonly<{
                 </StepFieldGroup>
                 <StepOrDivider label={t('common.or')} />
             </> : null}
-            <StepFieldGroup>
+            {isStep ? (
+                // A step (lab direction A "Your Home's address"): the address centred in the step's form, its one line
+                // under it, then Back beside a centred Connect.
+                <>
+                    <StepForm>
+                        <StepFieldGroup>
+                            <FieldTextInput
+                                testID="already-use-happier.home-address"
+                                value={address}
+                                onChangeText={(value) => {
+                                    setAddress(value);
+                                    props.onAddressChange?.(value);
+                                    if (addressState.kind === 'failed') setAddressState({ kind: 'idle' });
+                                }}
+                                accessibilityLabel={t('homesJourneys.byAddressLabel')}
+                                placeholder={t('homesJourneys.homeAddressPlaceholder')}
+                                autoCapitalize="none"
+                                keyboardType="url"
+                                returnKeyType="go"
+                                onSubmitEditing={submitAddress}
+                                monospace
+                                textAlign="center"
+                            />
+                            <View style={styles.centredLine}>
+                                {addressState.kind === 'failed' ? (
+                                    <StepFieldHelp tone="error" testID="already-use-happier.home-address-error">{addressState.message}</StepFieldHelp>
+                                ) : (
+                                    <StepFieldHelp>{t('setupOnboarding.homeAddressStep.pairingHelp')}</StepFieldHelp>
+                                )}
+                            </View>
+                            {remediation ? (
+                                <ServerReachabilityRemediationCard
+                                    remediation={remediation}
+                                    taskSnapshot={remediationController.taskSnapshot}
+                                    onAction={remediationController.onAction}
+                                />
+                            ) : null}
+                            {remediationController.error ? (
+                                <StepFieldHelp tone="error">{remediationController.error}</StepFieldHelp>
+                            ) : null}
+                        </StepFieldGroup>
+                    </StepForm>
+                    <StepActions>
+                        <StepPrimaryButton
+                            testID="already-use-happier.home-connect"
+                            title={t('homesJourneys.connect')}
+                            loading={addressState.kind === 'connecting'}
+                            onPress={submitAddress}
+                        />
+                    </StepActions>
+                </>
+            ) : <StepFieldGroup>
                 {!isStep ? <StepFieldLabel nativeID={ADDRESS_LABEL_ID}>{t('homesJourneys.byAddressLabel')}</StepFieldLabel> : null}
                 <View style={styles.fieldRow}>
                     <FieldTextInput
@@ -241,7 +294,7 @@ export function DirectHomePathPane(props: Readonly<{
                 {remediationController.error ? (
                     <StepFieldHelp tone="error">{remediationController.error}</StepFieldHelp>
                 ) : null}
-            </StepFieldGroup>
+            </StepFieldGroup>}
         </View>
     );
 }
@@ -261,5 +314,9 @@ const styles = StyleSheet.create((theme) => ({
     fieldInput: {
         flex: 1,
         minWidth: 0,
+    },
+    // A step's line under its centred field sits on the column's axis too.
+    centredLine: {
+        alignItems: 'center',
     },
 }));

@@ -166,7 +166,8 @@ describe('RestoreQrView known-target requester QR', () => {
     it('renders the exact known-target requester QR with no code or approval controls', async () => {
         const screen = await mount();
         expect(parseHomeQrInviteDeepLink(link)?.invite.home).toEqual(descriptor);
-        expect(screen.getTextContent()).toContain('known-home.example.test');
+        // The step's heading says where to approve; no raw host line stands over the code (lab direction A).
+        expect(screen.getTextContent()).not.toContain('known-home.example.test');
         expect(screen.findByTestId('restore-scan-confirm-code')).toBeNull();
         expect(screen.findByTestId('restore-approve')).toBeNull();
         expect(screen.findByTestId('restore-reject')).toBeNull();

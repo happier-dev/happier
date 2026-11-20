@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -8,7 +8,8 @@ import type { SshAuthMode, SshCredentialsDraft } from '@/components/ssh/SshCrede
 import { SshCredentialsFields } from '@/components/ssh/SshCredentialsFields';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SelectableRow } from '@/components/ui/lists/SelectableRow';
-import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
+import { Switch } from '@/components/ui/forms/Switch';
+import { Typography } from '@/constants/Typography';
 
 import type { RemoteSshChecklistCopy } from './copy';
 import { remoteSshChecklistStyles } from './styles';
@@ -55,17 +56,19 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
         icon: IconName;
         onPress: () => void;
     }>) => (
-        // One option F card that is checked or not (multiple selection over a single option reads as a checkbox).
-        <SelectionTiles
-            variant="card"
-            selectionMode="multiple"
-            accessibilityLabel={params.title}
-            options={[{ id: 'on', testID: params.testID, icon: params.icon, title: params.title, subtitle: params.subtitle }]}
-            value={params.selected ? ['on'] : []}
-            onChange={params.onPress}
-            maximumColumns={1}
-        />
-    ), []);
+        // One saved-or-not choice is a switch on its label's line (lab direction A "Save this host"); what saving
+        // means stays the switch's hint.
+        <View style={toggleStyles.row}>
+            <Text style={[toggleStyles.label, { color: theme.colors.text.primary }]}>{params.title}</Text>
+            <Switch
+                testID={params.testID}
+                accessibilityLabel={params.title}
+                accessibilityHint={params.subtitle}
+                value={params.selected}
+                onValueChange={() => params.onPress()}
+            />
+        </View>
+    ), [theme]);
 
     return (
         // The step's fields in its 420 px form column (lab direction A "New host"), groups 16 px apart.
@@ -151,3 +154,17 @@ export const RemoteSshChecklistCredentialsPhase = React.memo(function RemoteSshC
         </StepForm>
     );
 });
+
+const toggleStyles = StyleSheet.create((theme) => ({
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: theme.space.s12,
+        minHeight: 40,
+    },
+    label: {
+        ...Typography.variant('label'),
+        flexShrink: 1,
+    },
+}));

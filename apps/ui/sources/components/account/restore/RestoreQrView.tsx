@@ -393,7 +393,8 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                     {presentation.activity && approvedCode === null && !pendingCode ? (
                         <ActivitySpinner size="small" />
                     ) : null}
-                    {pendingCode || visibleTargetLabel ? (
+                    {/* On the step the heading already says where to approve; the raw host line is the card's only. */}
+                    {!embedded && (pendingCode || visibleTargetLabel) ? (
                         <Text testID="restore-requester-host" aria-hidden={pendingCode || undefined} style={[styles.targetName, embedded ? styles.embeddedTargetName : null]}>
                             {visibleTargetLabel ?? '\u00a0'}
                         </Text>
