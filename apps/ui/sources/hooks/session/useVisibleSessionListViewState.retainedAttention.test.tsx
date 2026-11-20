@@ -98,6 +98,7 @@ await import('./useVisibleSessionListViewState');
 await import('@/sync/ops/sessions');
 const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
 const { useSessionListViewState } = await import('@/components/sessions/shell/useSessionListViewState');
+const { SessionListRowFactsProvider } = await import('@/components/sessions/shell/sessionListRowFacts');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { CommandPaletteProvider } = await import('@/components/appShell/commandPalette/CommandPaletteProvider');
@@ -257,7 +258,7 @@ describe('visible session-list retained attention through real state', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('limits real row commits to changed base and mirror occurrences across 1000 Sessions and 139 Machines', async () => {
+    it.each([192, 1000])('limits real row commits to changed base and mirror occurrences across %i Sessions and 139 Machines', async (sessionCount) => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
         const { buildPerfProfile, perfFixtureId } = await import('../../../../../packages/tests/src/testkit/stress/scenarios/perfProfile');
@@ -278,7 +279,7 @@ describe('visible session-list retained attention through real state', () => {
         });
         const makeSession = (index: number, requesting: boolean) => {
             const template = profile.sessions[index % profile.sessions.length]!;
-            const machineIndex = index === 1000 ? 137 : index % profile.machines.length;
+            const machineIndex = index === sessionCount ? 137 : index % profile.machines.length;
             const machine = machines[machineIndex]!;
             const separator = machine.metadata!.platform === 'win32' ? '\\' : '/';
             return createSessionFixture({ id: `mounted-perf-${index}`, serverId, owner: 'u1', seq: 1,
@@ -297,7 +298,7 @@ describe('visible session-list retained attention through real state', () => {
                     homeDir: machine.metadata!.homeDir, host: machine.metadata!.host },
             });
         };
-        const sessions = Array.from({ length: 1000 }, (_, index) => makeSession(index, index === 0));
+        const sessions = Array.from({ length: sessionCount }, (_, index) => makeSession(index, index === 0));
         listedSessions = sessions;
         snapshotResponse.resolve();
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
@@ -324,8 +325,11 @@ describe('visible session-list retained attention through real state', () => {
         function MountedList() {
             useRenderCommitCounter(listCounter);
             const state = useSessionListViewState('all', { pathname: '/' });
-            return React.createElement(React.Fragment, null, state.nodes.map((item, index) => React.createElement(
-                React.Fragment, { key: item.id }, state.renderVirtualizedItem({ item, index }))));
+            return <SessionListRowFactsProvider value={state.rowFacts}>
+                {state.nodes.map((item, index) => <React.Fragment key={item.id}>
+                    {state.renderVirtualizedItem({ item, index })}
+                </React.Fragment>)}
+            </SessionListRowFactsProvider>;
         }
         const screen = await renderScreen(<InjectedAuthProvider credentials={account!.credentials}>
             <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider><MountedList /></CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
@@ -334,7 +338,7 @@ describe('visible session-list retained attention through real state', () => {
         const assertPhase = (phase: string, changed: readonly string[], expectedOwnCommits?: number) => {
             const counts = [...mountedRowCost.counters].map(([id, counter]) => [id, counter.read()] as const);
             const unchanged = counts.filter(([id]) => !changed.includes(id));
-            console.info('SESSION_LIST_MOUNTED_1000_COST', JSON.stringify({ phase, list: listCounter.read(),
+            console.info('SESSION_LIST_MOUNTED_COST', JSON.stringify({ sessionCount, phase, list: listCounter.read(),
                 changed: changed.map((id, index) => ({ role: index === 0 ? 'base' : 'needsYou', ...mountedRowCost.counters.get(id)!.read() })),
                 unchangedRenders: unchanged.reduce((sum, [, count]) => sum + count.renders, 0),
                 unchangedCommits: unchanged.reduce((sum, [, count]) => sum + count.commits, 0) }));
@@ -352,8 +356,8 @@ describe('visible session-list retained attention through real state', () => {
             await flushHookEffects({ cycles: 4, turns: 3 });
             const mountedIds = screen.root.findAll(node => typeof node.type === 'string'
                 && mountedRowCost.counters.has(String(node.props.testID ?? ''))).map(node => String(node.props.testID));
-            expect(mountedIds).toHaveLength(1001);
-            expect(new Set(mountedIds).size).toBe(1001);
+            expect(mountedIds).toHaveLength(sessionCount + 1);
+            expect(new Set(mountedIds).size).toBe(sessionCount + 1);
             expect(changedIds.every(id => mountedRowCost.counters.get(id)!.read().commits > 0)).toBe(true);
             // Retained predecessor fields are not live row presentation inputs.
             // Publish them directly to isolate subscription cost from ingress stripping.
@@ -381,14 +385,32 @@ describe('visible session-list retained attention through real state', () => {
             });
             changedIds.forEach((id, index) => expect(screen.findHostByTestId(id)?.props.accessibilityLabel).not.toBe(statusLabels[index]));
             assertPhase('status', changedIds, 1);
+            const authoredSessionId = sessions[100]!.id;
+            const authoredRowId = rowId(authoredSessionId);
+            const applyAuthoredStatus = async (work: NonNullable<typeof currentSession.metadata>['work']) => {
+                reset();
+                const session = storage.getState().sessions[authoredSessionId]!;
+                await act(async () => storage.getState().applySessions([{
+                    ...session,
+                    metadataVersion: session.metadataVersion + 1,
+                    metadata: { ...session.metadata!, work },
+                }]));
+                await flushHookEffects();
+            };
+            await applyAuthoredStatus({ statusReason: 'Checking snapshots' });
+            expect(screen.findHostByTestId(authoredRowId)?.props.accessibilityLabel).toContain('Checking snapshots');
+            assertPhase('authoredNote', [authoredRowId], 1);
+            await applyAuthoredStatus({ statusReason: 'Checking snapshots', statusProgress: { done: 1, total: 24 } });
+            expect(screen.findHostByTestId(authoredRowId)?.props.accessibilityLabel).toContain('done=1,total=24');
+            assertPhase('authoredProgress', [authoredRowId], 1);
             reset();
             await act(async () => storage.getState().applyMachines([{ ...machines[138]!, metadataVersion: 2,
                 metadata: { ...machines[138]!.metadata!, displayName: 'Unrelated Machine renamed' } }]));
             await flushHookEffects();
             assertPhase('unrelatedMachine', []);
-            for (const [arrivalIndex, phase] of [[1000, 'ordinaryArrival'], [1001, 'newProjectArrival']] as const) {
+            for (const [arrivalIndex, phase] of [[sessionCount, 'ordinaryArrival'], [sessionCount + 1, 'newProjectArrival']] as const) {
                 const template = makeSession(arrivalIndex, true);
-                const arrival = arrivalIndex === 1000 ? template : { ...template, projectKey: 'new-cost-project',
+                const arrival = arrivalIndex === sessionCount ? template : { ...template, projectKey: 'new-cost-project',
                     metadata: { ...template.metadata!, path: `${template.metadata!.homeDir}/projects/new-cost-project` } };
                 listedSessions = [...listedSessions, arrival];
                 const arrivalIds = [rowId(arrival.id), rowId(arrival.id, 'needsYou')];
@@ -451,10 +473,12 @@ describe('visible session-list retained attention through real state', () => {
         mountedRowCost.os = 'ios';
         function ComposedList() {
             const state = useSessionListViewState('all', { pathname: '/' });
-            return React.createElement(SessionListVirtualizedContent, { nodes: state.nodes,
-                rowHeight: state.rowHeight, rowDensity: state.rowDensity, safeAreaBottom: 0,
-                renderItem: state.renderVirtualizedItem, rowExtraData: state.virtualizedRowExtraData,
-                scheduledSection, scheduledRead, showReminders: false, onStopScrollEventPropagationOnWeb: () => {} });
+            return <SessionListRowFactsProvider value={state.rowFacts}>
+                <SessionListVirtualizedContent nodes={state.nodes} rowHeight={state.rowHeight}
+                    rowDensity={state.rowDensity} safeAreaBottom={0} renderItem={state.renderVirtualizedItem}
+                    rowExtraData={state.virtualizedRowExtraData} scheduledSection={scheduledSection}
+                    scheduledRead={scheduledRead} showReminders={false} onStopScrollEventPropagationOnWeb={() => {}} />
+            </SessionListRowFactsProvider>;
         }
         const screen = await renderScreen(<InjectedAuthProvider credentials={account!.credentials}>
             <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider><ComposedList /></CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
@@ -510,7 +534,7 @@ describe('visible session-list retained attention through real state', () => {
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
         await getSyncSingleton().refreshSessions({ awaitSessionListHydration: true });
         storage.getState().applySettingsLocal({ sessionListLayoutV1: 'recent_activity', sessionListAttentionPlacementV1: 'inPlace',
-            sessionListRowContextV1: true, sessionListIdentityDisplay: 'auto', hideInactiveSessions: false });
+            sessionListDensity: 'cozy', sessionListRowContextV1: true, sessionListIdentityDisplay: 'auto', hideInactiveSessions: false });
         storage.getState().applyMachines([createMachineFixture({ id: 'shared-machine' }), createMachineFixture({ id: 'other-machine' })], true);
         storage.getState().applySessions(sessions);
         storage.getState().applyServerScopedSessionListRows(serverId, sessions.map(session =>
@@ -523,8 +547,11 @@ describe('visible session-list retained attention through real state', () => {
         mountedRowCost.counters.set(`session-list-item-${occurrenceId('context-other')}`, otherCounter);
         function List() {
             const state = useSessionListViewState('all', { pathname: '/' });
-            return React.createElement(React.Fragment, null, state.nodes.map((item, index) => React.createElement(
-                React.Fragment, { key: item.id }, state.renderVirtualizedItem({ item, index }))));
+            return <SessionListRowFactsProvider value={state.rowFacts}>
+                {state.nodes.map((item, index) => <React.Fragment key={item.id}>
+                    {state.renderVirtualizedItem({ item, index })}
+                </React.Fragment>)}
+            </SessionListRowFactsProvider>;
         }
         const screen = await renderScreen(<InjectedAuthProvider credentials={account!.credentials}>
             <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider><List /></CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>

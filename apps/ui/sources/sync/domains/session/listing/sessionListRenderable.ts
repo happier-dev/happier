@@ -1283,9 +1283,8 @@ export function didSessionListRenderableProjectGroupingFieldsChange(
     return false;
 }
 
-function hasExplicitActiveReachabilityTarget(session: SessionListRenderableSession): boolean {
-    return session.active === true
-        && String(session.metadata?.machineId ?? '').trim().length > 0
+function hasExplicitReachabilityTarget(session: SessionListRenderableSession): boolean {
+    return String(session.metadata?.machineId ?? '').trim().length > 0
         && String(session.metadata?.path ?? '').trim().length > 0;
 }
 
@@ -1297,7 +1296,7 @@ export function didSessionListRenderableReachabilityPeerFieldsChange(
     if (previous.active !== next.active) return true;
     if (
         previous.metadataVersion !== next.metadataVersion
-        && (!hasExplicitActiveReachabilityTarget(previous) || !hasExplicitActiveReachabilityTarget(next))
+        && (!hasExplicitReachabilityTarget(previous) || !hasExplicitReachabilityTarget(next))
     ) {
         return true;
     }
