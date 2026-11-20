@@ -478,7 +478,7 @@ if (command === 'daemon' && action === 'start') {
   const child = spawnDaemonLikeProcess({ cliHomeDir: process.env.HAPPIER_HOME_DIR,
     statePaths: [${JSON.stringify(join(cliHomeDir, 'servers', `stack_${stackName}__id_default`, 'daemon.state.json'))}],
     internalServerUrl: process.env.HAPPIER_SERVER_URL,
-    env: { HAPPIER_TEST_RELOAD_CATALOG: ${JSON.stringify(JSON.stringify({ kind: 'available', plugins: [{ contributionIntrospection: { contributions: Array.from({ length: identity === 'source-b' && readinessCase === 'agent-drop' ? 1 : 2 }, (_, i) => ({ contribution: { family: 'agents', localId: String(i) }, registration: { state: 'bound' } })) } }] }))} } });
+    env: { HAPPIER_TEST_RELOAD_CATALOG: ${JSON.stringify(JSON.stringify({ kind: 'available', plugins: [{ contributionIntrospection: { contributions: Array.from({ length: identity === 'source-b' && readinessCase === 'agent-drop' ? 1 : 2 }, (_, i) => ({ contribution: { family: 'agents', localId: String(i) }, registration: { state: identity === 'source-b' && readinessCase === 'ready' && i === 1 ? 'declared' : 'bound' } })) } }] }))} } });
   mkdirSync(${JSON.stringify(join(cliHomeDir, 'logs'))}, { recursive: true });
   ${identity === 'source-b' && readinessCase === 'ready' ? `
   writeFileSync(${JSON.stringify(join(cliHomeDir, 'logs'))} + '/' + child.pid + '-daemon.log', 'Starting');

@@ -2451,8 +2451,10 @@ export async function startLocalDaemonWithAuth({
     if (catalog?.kind !== 'available' || !Array.isArray(catalog.plugins)) {
       throw new Error('loaded Agent catalog unavailable');
     }
+    // Agents stay dormant through cold start and bind on first demand, so a
+    // fresh daemon is compared by the Agents it declares, not the ones bound.
     return catalog.plugins.reduce((count, plugin) => count + (plugin.contributionIntrospection?.contributions ?? [])
-      .filter(row => row.contribution.family === 'agents' && row.registration.state === 'bound').length, 0);
+      .filter(row => row.contribution.family === 'agents').length, 0);
   };
   let incumbentAgentCount = 0;
   const waitForRunningStable = async ({
@@ -2828,7 +2830,7 @@ export async function startLocalDaemonWithAuth({
         if (!log.includes('Machine registered')) return 'Machine registered has not appeared in the replacement daemon log';
         try {
           const count = await readLoadedAgentCount();
-          if (count < incumbentAgentCount) return `loaded Agent count dropped from ${incumbentAgentCount} to ${count}`;
+          if (count < incumbentAgentCount) return `declared Agent count dropped from ${incumbentAgentCount} to ${count}`;
         } catch { return 'loaded Agent catalog unavailable'; }
         // One read per replacement, using the same server-scoped identity as
         // this daemon. Preserve its failure through the existing readiness wait.
