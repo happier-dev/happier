@@ -4,7 +4,13 @@ import { spawnSync } from 'node:child_process';
 const statePath = process.env.PROVIDER_CONFORMANCE_STATE;
 const read = () => JSON.parse(readFileSync(statePath, 'utf8'));
 const write = value => writeFileSync(statePath, JSON.stringify(value));
-function available() { if (read().failure) throw new Error(process.env.MODAL_TOKEN_SECRET); }
+function available() {
+    const failure = read().failure;
+    // A rejected token: modal-js surfaces gRPC UNAUTHENTICATED (status 16) as a nice-grpc ClientError.
+    if (failure === 'credential') throw Object.assign(new Error('/modal.client.ModalClient/ClientHello UNAUTHENTICATED: Invalid token'),
+        { name: 'ClientError', '@@nice-grpc:ClientError': true, code: 16, details: 'Invalid token' });
+    if (failure) throw new Error(process.env.MODAL_TOKEN_SECRET);
+}
 const sandbox = (sandboxId = 'sb-conformance') => ({
     sandboxId,
     async poll() { available(); return read()[sandboxId === 'sb-foreign' ? 'foreignPresent' : 'present'] ? null : 0; },
