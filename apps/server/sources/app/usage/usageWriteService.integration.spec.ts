@@ -159,7 +159,7 @@ describe("usageWriteService", () => {
         expect(stored.observedAt.getTime()).toBe(100);
         expect(stored.metadata).toMatchObject({ usageAccounting: { runtimeEventOrder: { runtimeIncarnationId: 'runtime-A', sequence: 2 } } });
         const query = UsageAnalyticsQueryRequestSchema.parse({ filters: { sessionIds: [session.id] },
-            includeSeries: true, includeActivity: true, includeInsights: true, includeModelTimeline: true });
+            includeSeries: true, includeActivity: true, includeInsights: true, includeModelTimeline: true, includePriceCatalog: true });
         const maintained = await queryUsageAnalytics(account.id, query);
         const scalar = await inTx(async tx => {
             const captured = await captureUsageAnalyticsInTx(tx, account.id, query);

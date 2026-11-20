@@ -440,7 +440,7 @@ describe('Usage snapshot transaction lifetime', () => {
             yieldCount++;
         };
         try {
-            const query = UsageAnalyticsQueryRequestSchema.parse({ includeSeries: true });
+            const query = UsageAnalyticsQueryRequestSchema.parse({ includeSeries: true, includePriceCatalog: true });
             if (surface === 'service') {
                 const result = await queryUsageAnalytics('account', query);
                 expect(result.totals.tokens.total).toBe(7);
@@ -615,7 +615,7 @@ describe('Usage snapshot transaction lifetime', () => {
             }
             expect(batch).not.toHaveProperty('priceCatalog');
             const raw = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
-                headers: { 'x-test-user-id': 'account' }, payload: { queries: [current, other], includeContributions: true } });
+                headers: { 'x-test-user-id': 'account' }, payload: { queries: [{ ...current, includePriceCatalog: true }, other], includeContributions: true } });
             expect(raw.statusCode, raw.body).toBe(200);
             expect(raw.json().priceCatalog).toBeDefined();
             for (const result of raw.json().results) {
@@ -623,9 +623,10 @@ describe('Usage snapshot transaction lifetime', () => {
                 expect(result.value.totals.tokens.total).toBe(14);
                 expect(result.value).not.toHaveProperty('priceCatalog');
             }
+            const withCatalog = { ...current, includePriceCatalog: true };
             const streamed = await app.inject({ method: 'POST', url: '/v2/usage/query-batch',
                 headers: { 'x-test-user-id': 'account', accept: 'application/x-ndjson' },
-                payload: { queries: [current, other, current], includeContributions: true } });
+                payload: { queries: [withCatalog, other, withCatalog], includeContributions: true } });
             expect(streamed.statusCode, streamed.body).toBe(200);
             expect(streamed.headers['content-type']).toContain('application/x-ndjson');
             const streamedBody: string = streamed.body;
