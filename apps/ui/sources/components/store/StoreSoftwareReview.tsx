@@ -186,7 +186,7 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
     if (next.ok) setPrepared(next);
     else setError(describeMachineSetupPlanFailure(next, nameOf));
   }, [prepareOn, replanning, nameOf]);
-  const reviewSelection = async (machineId: string, removeItemKeys: string[] = []) => {
+  const reviewSelection = async (machineId: string, removeItemKeys?: string[]) => {
     if ((!row && !preset) || !binding?.isCurrent() || binding.accountId !== props.scope.accountId) return;
     const homeId = getServerProfileById(props.scope.serverId)?.serverIdentityId;
     if (!homeId) return;
@@ -198,7 +198,8 @@ function StoreSoftwareReview(props: ReviewProps & CustomModalInjectedProps) {
     try {
       const request = { executeAction: execute,
         context: { surface: 'ui' as const, serverId: props.scope.serverId, expectedAccountId: props.scope.accountId, signal: controller.signal },
-        homeId, machineId, removeItemKeys, isCurrent: () => binding.isCurrent() && !controller.signal.aborted };
+        homeId, machineId, ...(removeItemKeys === undefined ? {} : { removeItemKeys }),
+        isCurrent: () => binding.isCurrent() && !controller.signal.aborted };
       const next = preset ? await prepareMachineSetupPresetApplyInput({ ...request, preset })
         : await prepareMachineSetupSoftwareRemoveInput({ ...request, setup: { items: [{ kind: 'softwareRecipe', selection: row!.native }] } });
       if (controller.signal.aborted || !binding.isCurrent()) return;

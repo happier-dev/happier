@@ -240,12 +240,9 @@ it.each([2, 1])('reviews removal of one explicit installed Software Machine (%i 
         planned,
     }, JSON.stringify({ actionPaths: account.home.requests.filter(request => request.path.includes('machines.setup')).map(request => request.path), text: modal.getTextContent() })).toMatchObject({ reviews: 1, error: undefined, planned: expect.arrayContaining([selected]) }); });
     expect(new Set(planned)).toEqual(new Set([selected]));
-    expect(modal.findByType(MachineSetupPlanReview).props.prepared.input).toMatchObject({ machineId: selected, removeItemKeys: [], removalPlans: [] });
+    expect(modal.findByType(MachineSetupPlanReview).props.prepared.input).toMatchObject({ machineId: selected, removeItemKeys: [machineSetupItemKeyV1(item)] });
     const switchId = `store.software.review.remove.${selected}.${machineSetupItemKeyV1(item)}.switch`;
-    expect(modal.findByTestId(switchId)?.props.value).toBe(false);
-    await act(async () => { modal.findByTestId(switchId)!.props.onValueChange(true); });
-    await waitForHomeGovernance(async () => { await flushHookEffects(); expect(modal.findByType(MachineSetupPlanReview).props.prepared.input.removeItemKeys).toEqual([machineSetupItemKeyV1(item)]); });
-    expect(new Set(planned)).toEqual(new Set([selected]));
+    expect(modal.findByTestId(switchId)?.props.value).toBe(true);
     expect(modal.findByType(MachineSetupPlanReview).props.prepared.input.removalPlans[0].plan.steps[0].executable).toBe('remove-owned');
     const reviewedInput = modal.findByType(MachineSetupPlanReview).props.prepared.input;
     if (count > 1) {
@@ -256,6 +253,11 @@ it.each([2, 1])('reviews removal of one explicit installed Software Machine (%i 
         expect(removals[0]).not.toHaveProperty('targets');
         await waitForHomeGovernance(async () => { await flushHookEffects(); expect(modal.findByTestId('store.software.review.waiting')).not.toBeNull(); });
     } else {
+        await act(async () => { modal.findByTestId(switchId)!.props.onValueChange(false); });
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(modal.findByType(MachineSetupPlanReview).props.prepared.input).toMatchObject({ removeItemKeys: [], removalPlans: [] });
+        });
         await modal.pressByTestIdAsync('store.software.review.cancel');
         expect(close).toHaveBeenCalledOnce();
         expect(removals).toEqual([]);

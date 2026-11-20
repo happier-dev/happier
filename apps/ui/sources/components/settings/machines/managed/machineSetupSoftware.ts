@@ -78,13 +78,29 @@ export async function prepareMachineSetupSoftwareApplyInput(params: SoftwarePlan
     return prepareMachineSetupSourcesApplyInput({ ...params, combined: true, targets, unavailableTargets });
 }
 
-/** Secondary Remove on one installed Software row: review first, with every removal initially unselected. */
+/** Review an installed Software row with its eligible items selected by default. */
 export async function prepareMachineSetupSoftwareRemoveInput(params: Omit<Parameters<typeof prepareMachineSetupSoftwareApplyInput>[0],
     'intent' | 'targets' | 'selectedMachineId' | 'removeItemKeys'> & Readonly<{ removeItemKeys?: string[] }>): Promise<MachineSetupPreparedRemove> {
-    const prepared = await prepareMachineSetupSoftwareApplyInput({ ...params, intent: 'remove',
-        targets: [{ homeId: params.homeId, machineId: params.machineId }], selectedMachineId: params.machineId,
-        removeItemKeys: { [params.machineId]: params.removeItemKeys ?? [] } });
+    const targets = [{ homeId: params.homeId, machineId: params.machineId }];
+    const selectedMachineId = params.machineId;
+    const observed = params.currentPlan ? { ok: true as const, plan: params.currentPlan }
+        : await readMachineSetupSoftwareCurrentPlan({ ...params, targets, selectedMachineId });
+    if (!observed.ok) return observed;
+    const prepare = (removeItemKeys: string[]) => prepareMachineSetupSoftwareApplyInput({
+        ...params, intent: 'remove', currentPlan: observed.plan, targets, selectedMachineId,
+        removeItemKeys: { [selectedMachineId]: removeItemKeys },
+    });
+    let prepared = await prepare(params.removeItemKeys ?? []);
     if (!prepared.ok) return prepared;
+    if (params.removeItemKeys === undefined) {
+        const rowKeys = new Set((params.setup.items ?? []).filter(isMachineSetupRecipeItemV1).map(machineSetupItemKeyV1));
+        const eligibleKeys = prepared.facts[0]?.removalOffers
+            ?.filter(offer => offer.status === 'eligible' && rowKeys.has(offer.itemKey)).map(offer => offer.itemKey) ?? [];
+        if (eligibleKeys.length > 0) {
+            prepared = await prepare(eligibleKeys);
+            if (!prepared.ok) return prepared;
+        }
+    }
     const target = prepared.input.targets[0]!;
     return { ...prepared, input: MachineSetupRemoveInputV1Schema.parse({
         homeId: target.homeId, machineId: target.machineId, sources: target.sources,
