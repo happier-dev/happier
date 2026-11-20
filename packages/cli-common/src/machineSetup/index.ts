@@ -423,7 +423,10 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
                     if (isUnconfirmedNativeProcessStop(error)) throw error;
                     return result('outcome_unknown', step.id, input.signal?.aborted ? 'cancelled' : 'required_fact_unavailable');
                 }
-                if (observed.status === 'unsupported' || observed.status === 'unavailable') return result(observed.status, step.id, observed.reason);
+                if (observed.status === 'unsupported' || observed.status === 'unavailable') {
+                    const failure = readMachineSetupObservationFailureV1(observed);
+                    return result(observed.status, step.id, observed.reason, failure?.requiredFact, failure);
+                }
                 captureHostKey(planIndex, observed);
                 if (observed.status === 'satisfied' && !establishesAdministrator) continue;
                 // chpasswd establishes the verifier before the full locked:false user

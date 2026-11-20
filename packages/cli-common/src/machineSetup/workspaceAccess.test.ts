@@ -33,6 +33,35 @@ describe('reviewed workspace access at the setup interpreter', () => {
         } finally { await rm(root, { recursive: true, force: true }); }
     });
 
+    it.skipIf(process.platform !== 'linux')('names the missing ACL tool when account creation makes retirement require an ACL read', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-legacy-acl-'));
+        try {
+            let memberExists = false;
+            const backend = createMachineSetupNativeBackend({ run: async ({ executable }) => {
+                if (executable === 'getent') return { code: memberExists ? 0 : 2,
+                    stdout: memberExists ? 'member:x:41001:41000::/home/member:/usr/sbin/nologin\n' : '', stderr: '' };
+                if (executable === 'useradd') {
+                    memberExists = true;
+                    return { code: 0, stdout: '', stderr: '' };
+                }
+                if (executable === 'getfacl') return { code: null, stdout: '', stderr: '', errorCode: 'ENOENT' };
+                throw new Error(`Unexpected native command ${executable}`);
+            } });
+            const steps: MachineRecipeStepV1[] = [
+                { id: 'member-user', kind: 'user', username: 'member' },
+                { id: 'plugin-code-ancestor-0', kind: 'pathTraversal', path: root, agentUsername: 'member', state: 'absent' },
+            ];
+            const basis = { kind: 'agentIsolation' as const, machineId: 'machine', enabled: true, expectedPolicy: { enabled: false } };
+            const plan = await checkMachineSetupEffectPlan({ basis, steps, backend });
+            expect(plan.nativeFacts.map(fact => fact.status)).toEqual(['drifted', 'satisfied']);
+            await expect(applyMachineSetupEffectPlan({ plan, backend })).resolves.toMatchObject({
+                status: 'unavailable', stepId: 'plugin-code-ancestor-0', completedStepIds: ['member-user'],
+                failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
+                    remedy: 'Install the acl package on this Machine, then try again.' },
+            });
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
     it.skipIf(process.platform !== 'linux')('removes only the selected traversal ACL and converges without changing other access', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-traversal-removal-'));
         try {
