@@ -1,153 +1,91 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
-import childProcess from 'node:child_process';
-import { tmpdir } from 'node:os';
-import https from 'node:https';
-import { syncBuiltinESMExports } from 'node:module';
+import { chmod, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { AGENT_IDS } from '@happier-dev/agents';
-import { AGY_ACP_SERVER_VERSION } from '@happier-dev/protocol/installables';
 import type { DetectCliSnapshot } from '@/capabilities/snapshots/cliSnapshot';
 import { agent as agyEntry } from '@/backends/agy';
-import { resolveAgyAcpReleaseAsset } from '@/runtime/managedTools/providers/agyAcpRelease';
-import { configuration } from '@/configuration';
+import { withIsolatedHappierHome } from '@/backends/agy/acp/pinnedAgyAcpServer.testkit';
 import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import { probeAcpCatalogs } from './probeAcpCatalogs';
 
+const CONNECTED_ACCOUNT_ENV = {
+  HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'selected' }]),
+};
+
+function discover(entryPoint: 'catalog' | 'backend' | 'session', home: string, env: NodeJS.ProcessEnv) {
+  return entryPoint === 'catalog'
+    ? probeAcpCatalogs({ agentId: 'agy', cwd: home, timeoutMs: 10_000, processEnv: env })
+    : createCatalogAcpBackend('agy', { cwd: home, env, ...(entryPoint === 'session' ? {} : { readinessOnly: true }) });
+}
+
 describe('ACP catalog prerequisite readiness', () => {
-  it.each(['catalog', 'backend', 'session'] as const)('applies the existing managed prerequisite policy for %s', async (entryPoint) => {
-    // Patch the real OS HTTP adapter, including native ESM bindings in external dependencies.
-    const downloadRequest = vi.spyOn(https, 'request').mockImplementation(() => { throw new Error('Unexpected catalog installation download'); });
-    syncBuiltinESMExports();
-    const home = await mkdtemp(join(tmpdir(), 'happier-agy-catalog-readiness-'));
-    const keys = ['happyHomeDir', 'logsDir', 'settingsFile'] as const;
-    const descriptors = keys.map((key) => Object.getOwnPropertyDescriptor(configuration, key)!);
-    Object.defineProperties(configuration, {
-      happyHomeDir: { value: home, configurable: true },
-      logsDir: { value: join(home, 'logs'), configurable: true },
-      settingsFile: { value: join(home, 'settings.json'), configurable: true },
-    });
-    try {
-      const discovery = entryPoint === 'catalog'
-        ? probeAcpCatalogs({ agentId: 'agy', cwd: home, timeoutMs: 10_000, processEnv: {} })
-        : createCatalogAcpBackend('agy', { cwd: home, env: {}, ...(entryPoint === 'session' ? {} : { readinessOnly: true }) });
-      await expect(discovery).rejects.toThrow(entryPoint === 'session'
-        ? 'Unexpected catalog installation download'
+  it.each(['catalog', 'backend', 'session'] as const)('applies the managed prerequisite policy to connected accounts for %s', async (entryPoint) => {
+    await withIsolatedHappierHome(async (home, downloadRequest) => {
+      await expect(discover(entryPoint, home, CONNECTED_ACCOUNT_ENV)).rejects.toThrow(entryPoint === 'session'
+        ? 'Unexpected installation download'
         : 'Agy ACP server is unavailable:');
       expect(downloadRequest).toHaveBeenCalledTimes(entryPoint === 'session' ? 1 : 0);
       if (entryPoint !== 'session') {
         await expect(readdir(join(home, 'tools', 'agy-acp-server'))).rejects.toMatchObject({ code: 'ENOENT' });
       }
-    } finally {
-      keys.forEach((key, index) => Object.defineProperty(configuration, key, descriptors[index]));
-      downloadRequest.mockRestore();
-      syncBuiltinESMExports();
-      await rm(home, { recursive: true, force: true });
-    }
+    });
+  });
+
+  it.each(['catalog', 'backend', 'session'] as const)('requires the agy CLI for native login without installing the pinned server for %s', async (entryPoint) => {
+    await withIsolatedHappierHome(async (home, downloadRequest) => {
+      await expect(discover(entryPoint, home, { HAPPIER_AGY_PATH: join(home, 'missing-agy') }))
+        .rejects.toThrow('Agy CLI (agy) is unavailable');
+      expect(downloadRequest).not.toHaveBeenCalled();
+      await expect(readdir(join(home, 'tools', 'agy-acp-server'))).rejects.toMatchObject({ code: 'ENOENT' });
+    });
   });
 });
 
 describe('Antigravity ACP capability launch', () => {
-  const release = (() => {
-    try {
-      return resolveAgyAcpReleaseAsset();
-    } catch {
-      return null;
-    }
-  })();
-  for (const installed of [true, false]) {
-    it.skipIf(installed && !release)(`uses only the existing managed server (installed=${installed})`, async () => {
-      const home = await mkdtemp(join(tmpdir(), 'happier-agy-capability-readiness-'));
-      const keys = ['happyHomeDir', 'logsDir', 'settingsFile'] as const;
-      const descriptors = keys.map((key) => Object.getOwnPropertyDescriptor(configuration, key)!);
-      Object.defineProperties(configuration, {
-        happyHomeDir: { value: home, configurable: true },
-        logsDir: { value: join(home, 'logs'), configurable: true },
-        settingsFile: { value: join(home, 'settings.json'), configurable: true },
-      });
-      const installDir = join(home, 'tools', 'agy-acp-server');
-      const managedPath = join(installDir, 'current', release?.executableSubpath ?? 'unavailable-managed-server');
+  it('probes the interactive agy CLI ACP server without installing the pinned server', async () => {
+    await withIsolatedHappierHome(async (home, downloadRequest) => {
       const argvPath = join(home, 'probe-argv.json');
       const methodsPath = join(home, 'probe-methods.jsonl');
-      const originalSpawn = childProcess.spawn;
-      // Redirect the native managed-server executable at the OS boundary to a real scripted ACP process.
-      const spawn = vi.spyOn(childProcess, 'spawn').mockImplementation((...args: Parameters<typeof childProcess.spawn>) => {
-        return args[0] === managedPath
-          ? originalSpawn(process.execPath, [managedPath, ...(args[1] ?? [])], args[2])
-          : originalSpawn(...args);
-      });
-      const downloadRequest = vi.spyOn(https, 'request').mockImplementation(() => {
-        throw new Error('Unexpected capability installation download');
-      });
-      syncBuiltinESMExports();
-      try {
-        if (installed) {
-          const source = String.raw`
-            const { writeFileSync, appendFileSync } = require('node:fs');
-            writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(process.argv.slice(2)));
-            require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
-              const request = JSON.parse(line);
-              appendFileSync(${JSON.stringify(methodsPath)}, JSON.stringify(request.method) + '\n');
-              if (request.method === 'initialize') {
-                process.stdout.write(JSON.stringify({
-                  jsonrpc: '2.0', id: request.id,
-                  result: { protocolVersion: 1, authMethods: [], agentCapabilities: { loadSession: true } },
-                }) + '\n');
-              }
-            });
-          `;
-          await mkdir(join(installDir, 'current'), { recursive: true });
-          await writeFile(managedPath, source);
-          await chmod(managedPath, 0o755);
-          const metadata = await stat(managedPath);
-          await writeFile(join(installDir, 'install-state.json'), JSON.stringify({
-            installedVersion: AGY_ACP_SERVER_VERSION,
-            executableSha256: createHash('sha256').update(source).digest('hex'),
-            executableSize: metadata.size,
-            executableMtimeMs: metadata.mtimeMs,
-          }));
-        }
-        const interactivePath = join(home, 'interactive-agy');
-        // Snapshot identities remain interactive CLI facts; the ACP launcher is provider-owned.
-        const clis = Object.fromEntries(AGENT_IDS.map((id) => [id, { available: false }])) as DetectCliSnapshot['clis'];
-        const context = {
-          cliSnapshot: {
-            path: null,
-            clis: { ...clis, agy: { available: true, resolvedPath: interactivePath } },
-            tmux: { available: false },
-            windowsTerminal: { available: false },
-          },
-        };
-        const getCapability = agyEntry.getCliCapabilityOverride;
-        if (!getCapability) throw new Error('Expected the catalog ACP capability hook');
-        const capability = await getCapability();
-        const result = await capability.detect({
-          request: { id: 'cli.agy', params: { includeAcpCapabilities: true } },
-          context,
+      const interactivePath = join(home, 'agy');
+      // A real scripted ACP process stands in for the vendor CLI at the OS boundary.
+      await writeFile(interactivePath, String.raw`#!${process.execPath}
+        const { writeFileSync, appendFileSync } = require('node:fs');
+        writeFileSync(${JSON.stringify(argvPath)}, JSON.stringify(process.argv.slice(2)));
+        require('node:readline').createInterface({ input: process.stdin }).on('line', (line) => {
+          const request = JSON.parse(line);
+          appendFileSync(${JSON.stringify(methodsPath)}, JSON.stringify(request.method) + '\n');
+          if (request.method === 'initialize') {
+            process.stdout.write(JSON.stringify({
+              jsonrpc: '2.0', id: request.id,
+              result: { protocolVersion: 1, authMethods: [], agentCapabilities: { loadSession: true } },
+            }) + '\n');
+          }
         });
-        expect(result).toMatchObject({
-          available: true,
-          resolvedPath: interactivePath,
-          acp: installed ? { ok: true, loadSession: true }
-            : { ok: false, error: { message: expect.stringContaining('Agy ACP server is unavailable:') } },
-        });
-        expect(downloadRequest).not.toHaveBeenCalled();
-        if (installed) {
-          expect(JSON.parse(await readFile(argvPath, 'utf8'))).toEqual(release?.args);
-          expect((await readFile(methodsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))).toEqual(['initialize']);
-        } else {
-          expect(spawn).not.toHaveBeenCalled();
-          await expect(readdir(installDir)).rejects.toMatchObject({ code: 'ENOENT' });
-        }
-      } finally {
-        keys.forEach((key, index) => Object.defineProperty(configuration, key, descriptors[index]));
-        spawn.mockRestore();
-        downloadRequest.mockRestore();
-        syncBuiltinESMExports();
-        await rm(home, { recursive: true, force: true });
-      }
+      `);
+      await chmod(interactivePath, 0o755);
+      const clis = Object.fromEntries(AGENT_IDS.map((id) => [id, { available: false }])) as DetectCliSnapshot['clis'];
+      const context = {
+        cliSnapshot: {
+          path: null,
+          clis: { ...clis, agy: { available: true, resolvedPath: interactivePath } },
+          tmux: { available: false },
+          windowsTerminal: { available: false },
+        },
+      };
+      const getCapability = agyEntry.getCliCapabilityOverride;
+      if (!getCapability) throw new Error('Expected the catalog ACP capability hook');
+      const capability = await getCapability();
+      const result = await capability.detect({
+        request: { id: 'cli.agy', params: { includeAcpCapabilities: true } },
+        context,
+      });
+
+      expect(result).toMatchObject({ available: true, resolvedPath: interactivePath, acp: { ok: true, loadSession: true } });
+      expect(JSON.parse(await readFile(argvPath, 'utf8'))).toEqual(['acp']);
+      expect((await readFile(methodsPath, 'utf8')).trim().split('\n').map((line) => JSON.parse(line))).toEqual(['initialize']);
+      expect(downloadRequest).not.toHaveBeenCalled();
+      await expect(readdir(join(home, 'tools', 'agy-acp-server'))).rejects.toMatchObject({ code: 'ENOENT' });
     });
-  }
+  });
 });

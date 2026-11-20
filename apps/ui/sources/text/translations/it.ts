@@ -5757,7 +5757,7 @@ export const it: TranslationStructure = {
         installTitle: "Installare il server ACP di Agy?",
         updateTitle: "Aggiornare il server ACP di Agy?",
         reinstallTitle: "Reinstallare il server ACP di Agy?",
-        description: "Questo installa il server ACP ufficiale e bloccato di Agy usato per le sessioni Agy. La CLI interattiva agy resta installata separatamente.",
+        description: "Questo installa il server ACP ufficiale e bloccato di Agy usato per le sessioni Agy con un account connesso. Le sessioni con il tuo accesso agy usano la CLI agy, installata separatamente.",
     },
         githubCliBanner: {
             title: 'GitHub CLI',

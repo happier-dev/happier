@@ -11,7 +11,7 @@ export const agyCloudConnect: CloudConnectTarget = {
   authenticate: authenticateAgy,
   importServiceId: 'antigravity',
   importSources: [
-    { id: 'acp', label: 'Antigravity ACP login (Keychain read only on macOS)' },
+    { id: 'acp', label: 'Pinned Antigravity ACP server login (Keychain read only on macOS)' },
     ...(['linux', 'darwin'].includes(process.platform) ? [{ id: 'cli', label: 'Antigravity CLI login' }] : []),
     { id: 'cli-file', label: 'Antigravity CLI file login' },
   ],

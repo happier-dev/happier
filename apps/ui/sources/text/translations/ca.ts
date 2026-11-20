@@ -5078,7 +5078,7 @@ deps: {
             installTitle: "Instal·lar el servidor ACP d'Agy?",
             updateTitle: "Actualitzar el servidor ACP d'Agy?",
             reinstallTitle: "Reinstal·lar el servidor ACP d'Agy?",
-            description: "Això instal·la el servidor ACP oficial i fixat d'Agy que s'utilitza per a les sessions d'Agy. La CLI interactiva agy s'instal·la per separat.",
+            description: "Això instal·la el servidor ACP oficial i fixat d'Agy que s'utilitza per a les sessions d'Agy amb un compte connectat. Les sessions amb el teu propi inici de sessió d'agy s'executen amb la CLI agy, que s'instal·la per separat.",
         },
         githubCliBanner: {
             title: 'GitHub CLI',

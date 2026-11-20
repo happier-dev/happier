@@ -5685,7 +5685,7 @@ localTailscale: {
         installTitle: "Agy ACP サーバーをインストールしますか？",
         updateTitle: "Agy ACP サーバーを更新しますか？",
         reinstallTitle: "Agy ACP サーバーを再インストールしますか？",
-        description: "Agy セッションで使用する公式の固定版 Agy ACP サーバーをインストールします。対話型の agy CLI は個別にインストールしたままです。",
+        description: "接続済みアカウントを使う Agy セッション用に、公式の固定版 Agy ACP サーバーをインストールします。ご自身の agy ログインを使うセッションは、個別にインストールした agy CLI で実行されます。",
     },
         githubCliBanner: {
             title: 'GitHub CLI',

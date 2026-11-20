@@ -5020,7 +5020,7 @@ export const de: TranslationStructure = {
             installTitle: "Agy-ACP-Server installieren?",
             updateTitle: "Agy-ACP-Server aktualisieren?",
             reinstallTitle: "Agy-ACP-Server neu installieren?",
-            description: "Damit wird der offizielle, gepinnte Agy-ACP-Server installiert, der für Agy-Sitzungen verwendet wird. Die interaktive agy-CLI bleibt separat installiert.",
+            description: "Damit wird der offizielle, gepinnte Agy-ACP-Server installiert, der für Agy-Sitzungen mit einem verbundenen Konto verwendet wird. Sitzungen mit deiner eigenen agy-Anmeldung laufen über die separat installierte agy-CLI.",
         },
         githubCliBanner: {
             title: 'GitHub CLI',

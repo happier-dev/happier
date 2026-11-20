@@ -1,13 +1,12 @@
-import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import axios, { type AxiosAdapter } from 'axios';
 import { describe, expect, it, vi } from 'vitest';
-import { AGY_ACP_SERVER_VERSION, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { installPinnedAgyAcpServerFixture } from '@/backends/agy/acp/pinnedAgyAcpServer.testkit';
 import { configuration } from '@/configuration';
-import { resolveAgyAcpReleaseAsset } from '@/runtime/managedTools/providers/agyAcpRelease';
 import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
@@ -69,16 +68,10 @@ describe('selected AGY discovery process and temporary-state custody', () => {
           } else if(r.id!==undefined)send({id:r.id,result:{}});
         }});
       `;
-      const install = join(cwd, 'tools', 'agy-acp-server');
-      const executable = join(install, 'current', resolveAgyAcpReleaseAsset().executableSubpath);
-      await mkdir(join(install, 'current'), { recursive: true });
-      await writeFile(executable, fixture);
-      await chmod(executable, 0o755);
-      const metadata = await stat(executable);
-      await writeFile(join(install, 'install-state.json'), JSON.stringify({ installedVersion: AGY_ACP_SERVER_VERSION,
-        executableSha256: createHash('sha256').update(fixture).digest('hex'), executableSize: metadata.size, executableMtimeMs: metadata.mtimeMs }));
+      const { command: executable } = await installPinnedAgyAcpServerFixture(fixture);
       await expect(verifyExistingAgyAcpManagedBinPath()).resolves.toBe(executable);
-      const validation = await validateCatalogAcpProbeSpawn('agy', { processEnv: process.env, cwd });
+      const validation = await validateCatalogAcpProbeSpawn('agy', { processEnv: { ...process.env,
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: JSON.stringify([{ kind: 'profile', serviceId: 'antigravity', profileId: 'a' }]) }, cwd });
       expect(validation, JSON.stringify(validation)).toMatchObject({ ok: true });
       const controller = new AbortController();
       const { manager } = createEncryptedRpcTestClient({ scopePrefix: 'agy-auth-discovery', registerHandlers: registerCapabilitiesHandlers });

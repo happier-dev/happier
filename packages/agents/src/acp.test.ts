@@ -58,10 +58,10 @@ describe('built-in ACP config', () => {
     });
   });
 
-  it('declares Agy through negotiated generic ACP controls without a permission override', () => {
+  it('declares Agy through the CLI ACP server and negotiated controls without a permission override', () => {
     expect(getBuiltInAcpConfig('agy')).toEqual({
       agentId: 'agy',
-      launcher: { command: 'agy', args: [] },
+      launcher: { command: 'agy', args: ['acp'] },
       transportProfile: 'generic',
       supportsLoadSession: true,
       supportsModes: 'auto',

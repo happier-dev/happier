@@ -36,6 +36,31 @@ describe('getNewSessionRelevantInstallableDepKeys', () => {
             resumeSessionId: 'x1',
         })).toEqual([]);
     });
+
+    it('returns the pinned Agy ACP server only when Agy defaults to a connected account', () => {
+        const native = makeSettings();
+        expect(getNewSessionRelevantInstallableDepKeys({
+            agentId: 'agy',
+            settings: native,
+            experiments: getAgentResumeExperimentsFromSettings('agy', native),
+            resumeSessionId: '',
+        })).toEqual([]);
+
+        const connected = makeSettings({
+            connectedServicesAdditionalDefaultAuthByAgentIdV1: {
+                v: 1,
+                bindingsByAgentId: {
+                    agy: { v: 1, bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'work' } } },
+                },
+            },
+        });
+        expect(getNewSessionRelevantInstallableDepKeys({
+            agentId: 'agy',
+            settings: connected,
+            experiments: getAgentResumeExperimentsFromSettings('agy', connected),
+            resumeSessionId: '',
+        })).toEqual([INSTALLABLE_KEYS.AGY_ACP_SERVER]);
+    });
 });
 
 describe('getNewSessionPreflightIssues', () => {
