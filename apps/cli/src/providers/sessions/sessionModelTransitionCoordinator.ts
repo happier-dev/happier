@@ -1106,10 +1106,20 @@ export function createSessionModelTransitionCoordinator(params: Readonly<{
     }
     if (proposal.captureBefore) proposal.capturedBefore = activeTarget.selection;
 
+    const qualifiedTeamPrompt = carriesActiveTeamSelection && explicitModel?.ref.source === 'team_resource'
+      ? explicitModel.ref : null;
+    const retainedIntent = qualifiedTeamPrompt ? params.readModelSelectionIntent()?.ref : null;
+    const carriesRetainedTeamIntent = qualifiedTeamPrompt !== null
+      && retainedIntent?.source === 'team_resource'
+      && retainedIntent.modelId === qualifiedTeamPrompt.modelId
+      && sameTeamResourceBinding(retainedIntent, activeTeam)
+      && resolveRetainedTeamProviderBindingRevisionV1(qualifiedTeamPrompt, retainedIntent) !== null;
     // Metadata proposals are observations of an intent that already won the
-    // durable CAS. Republishing them would mint a newer timestamp and feed the
-    // metadata synchronizer back into this coordinator indefinitely.
-    if (proposal.source !== 'metadata' && (!carriesActiveTeamSelection || explicitModel !== null)) {
+    // durable CAS. A resumed prompt can also carry that intent and an already
+    // opened binding. Republishing it can send an older revision to Home as
+    // a new binding mutation.
+    if (proposal.source !== 'metadata'
+      && (!carriesActiveTeamSelection || (explicitModel !== null && !carriesRetainedTeamIntent))) {
       // A durable CAS that has started must finish, but it is not the runtime
       // effect boundary. A newer proposal may still supersede this one; the
       // newer CAS runs afterward so accepted intent order remains preserved.

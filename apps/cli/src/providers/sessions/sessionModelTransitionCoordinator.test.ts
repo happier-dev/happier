@@ -747,6 +747,37 @@ describe('createSessionModelTransitionCoordinator', () => {
     } finally { await harness.coordinator.dispose(); }
   });
 
+  it.each([4, 6])('dispatches a resumed Workflow prompt through opened revision 6 with retained intent at revision %s', async retainedRevision => {
+    const selection = { ...native('muse-spark-1.3-contributor'), agentTargetKey: 'agent:happier.agent.codex/codex' };
+    const ref = { source: 'team_resource' as const, teamId: 'team-1', resourceId: 'muse-resource',
+      deliveryMode: 'brokered' as const, expectedResourceRevision: 4, agentTargetKey: selection.agentTargetKey,
+      modelId: selection.modelId };
+    const metadata = { v: 2 as const, updatedAt: 42, ref: { ...ref, expectedResourceRevision: retainedRevision } };
+    const { source: _source, ...opened } = { ...ref, expectedResourceRevision: 6 };
+    const initialTarget = { ...authorized(selection), readAppliedTeamCredentialModel: () => ({
+      ...opened, kind: 'team_credential_provider_model' as const,
+    }) };
+    const harness = createHarness({ initialTarget, readModelSelectionIntent: () => metadata,
+      publishIntent: async requested => {
+        // Home's metadata commit requires the exact current resource revision.
+        if ('source' in requested && requested.source === 'team_resource'
+          && requested.expectedResourceRevision !== opened.expectedResourceRevision) {
+          throw Object.assign(new Error('Team credential binding was rejected by current Session policy'),
+            { code: 'session_team_credential_binding_rejected', reason: 'resource_changed' });
+        }
+        return { accepted: true, updatedAt: 43 };
+      },
+    });
+    const dispatch = vi.fn(async () => undefined);
+    try {
+      await expect(harness.coordinator.submit(ref, { source: 'prompt', runWithActiveSelection: async transfer => {
+        await transfer({ abortSignal: new AbortController().signal, dispatch });
+      } })).resolves.toMatchObject({ ok: true, status: 'already_active' });
+      expect(dispatch).toHaveBeenCalledOnce();
+      expect(harness.publishIntent).not.toHaveBeenCalled();
+    } finally { await harness.coordinator.dispose(); }
+  });
+
   it.each([false, true])('compares the startup Team metadata echo with its opened source (changed: %s)', async changed => {
     const selection = native('same-model');
     const team = { kind: 'team_credential_provider_model' as const,
