@@ -2,7 +2,6 @@ import type { JsonValue } from '@happier-dev/protocol';
 import { describe, expect, it } from 'vitest';
 import { ManagedMachineFullV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { executeManagedMachinePowerIntent } from './power.js';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 
 const machine = ManagedMachineFullV1Schema.parse({
@@ -120,7 +119,7 @@ describe('shared admitted native power', () => {
         expect(value.result).toEqual({ kind: 'confirmed' });
         expect(value.observation).toMatchObject({ power: 'running' });
         expect(value.guestStartupError).toMatchObject({ code: 'native_boot_unconfirmed' });
-        const projected = normalizeActionExecutorThrownError(value.guestStartupError);
+        const projected = value.guestStartupError?.toActionFailure('machines.managed.power.set');
         expect(projected).toMatchObject({ errorCode: 'native_boot_unconfirmed',
             failureCause: { phase: 'machines.managed.power.set', errorCode: source === 'native' ? 'EACCES' : 'provider_unavailable',
                 httpStatus: 403 },

@@ -6,7 +6,6 @@ import { ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema, M
     type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { isManagedOpaquePresetMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiManagedAccountHome, createUiManagedAccountHomeRequest,
@@ -118,7 +117,7 @@ export async function executeUiManagedAccountControl(params: Readonly<{
         }
     } catch (error) {
         if (error instanceof ManagedMachineControllerError) {
-            return { ok: false, ...normalizeActionExecutorThrownError(error, control.action) };
+            return error.toActionFailure(control.action);
         }
         throw error;
     }

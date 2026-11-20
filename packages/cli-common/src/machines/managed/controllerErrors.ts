@@ -1,6 +1,6 @@
 import { ManagedMachineFailureDetailsV1Schema, type ManagedMachineFailureDetailsV1, type ManagedNativeFailureDetailsV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineProvisionerNativeCauseV1Schema, type MachineProvisionerNativeCauseV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
-import { projectActionFailureCauseV1,
+import { parseActionExecuteFailure, projectActionFailureCauseV1, readActionFailureCauseV1,
     type ActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { isSessionSpawnNewActionIdV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -17,6 +17,19 @@ export class ManagedMachineControllerError extends Error {
         readonly failureCause?: ActionFailureCauseV1, cause?: unknown) {
         super(code, cause ? { cause } : undefined);
         this.name = 'ManagedMachineControllerError';
+    }
+
+    /** This owner authors its public code; the shared adapter still filters native details. */
+    toActionFailure(phase: string): ActionExecuteFailure {
+        let publicChild: ActionExecuteFailure | null = null;
+        try { publicChild = parseActionExecuteFailure(this.cause); }
+        catch { /* A private cause accessor must not replace the original failure. */ }
+        const normalized = normalizeActionExecutorThrownError(this, phase);
+        if (publicChild) return { ok: false, ...normalized };
+        return { ok: false, ...normalized, errorCode: this.code,
+            failureCause: this.failureCause === undefined
+                ? readActionFailureCauseV1({ ...normalized.failureCause, errorCode: this.code })
+                : normalized.failureCause };
     }
 
     /** Reporting failure must not erase a native cause or turn uncertainty into refusal. */
