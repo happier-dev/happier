@@ -410,12 +410,7 @@ pub(crate) fn ensure_overlay_window<R: Runtime>(
 pub(crate) fn set_keyboard_wanted<R: Runtime>(window: &WebviewWindow<R>, wanted: bool) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let native_window = window.clone();
-        return crate::desktop_panel::run_on_main_thread(window.app_handle(), move || {
-            let panel = crate::desktop_panel::ensure_panel(&native_window)?;
-            crate::desktop_panel::set_keyboard_wanted(panel.as_panel(), wanted);
-            Ok(())
-        }, "Overlay keyboard request did not return")?;
+        crate::desktop_panel::request_window_keyboard(window, wanted)
     }
     #[cfg(target_os = "windows")]
     {

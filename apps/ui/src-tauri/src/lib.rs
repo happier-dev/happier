@@ -135,6 +135,8 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     happier_desktop_native::capture::macos::initialize_frontmost_tracking();
     let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.on_web_content_process_terminate(first_open::on_web_content_process_terminate);
     #[cfg(desktop)]
     let builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
         #[cfg(target_os = "windows")]

@@ -4,6 +4,7 @@ import { Animated, StyleSheet } from 'react-native';
 import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
 import { usePrepareStepBuild } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import type { StepBuildResult } from '@/components/ui/motion/stepMotion/stepMotionTypes';
 import { getDesktopHostWindowLabel, invokeDesktopHost, listenDesktopHostEvent } from '@/utils/platform/desktopHost';
 
 import type { FirstOpenPlacement } from './FirstOpenScene';
@@ -17,12 +18,13 @@ export function FirstOpenOverlayRoute() {
     const [start, setStart] = useState<Start | null>(null);
     const [sceneReady, setSceneReady] = useState<GlyphSurfaceReadiness | null>(null);
     const [buildReady, setBuildReady] = useState(false);
+    const [settling, setSettling] = useState(false);
     const [opacity] = useState(() => new Animated.Value(1));
     const fade = useRef<Animated.CompositeAnimation | undefined>(undefined);
     const swapping = useRef(false);
     const readySent = useRef(false);
     // The stage keeps the shared glyph renderer available through the build after admission.
-    usePrepareStepBuild(prepared !== null && !swapping.current, setBuildReady);
+    usePrepareStepBuild(prepared !== null && !settling, setBuildReady);
     const unavailable = useCallback(() => {
         void invokeDesktopHost('desktop_first_open_overlay_unavailable').catch(() => {});
     }, []);
@@ -32,6 +34,7 @@ export function FirstOpenOverlayRoute() {
     const swap = useCallback(() => {
         if (swapping.current) return;
         swapping.current = true;
+        setSettling(true);
         prepared?.Presentation.skipFirstOpenDestination();
         void invokeDesktopHost('desktop_first_open_swap').then(() => {
             const animation = Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: false });
@@ -39,6 +42,11 @@ export function FirstOpenOverlayRoute() {
             animation.start(({ finished }) => { if (finished) close(); });
         }, close);
     }, [close, opacity, prepared]);
+    const buildSettled = useCallback((outcome: StepBuildResult) => {
+        if (swapping.current) return;
+        if (outcome === 'settled') swap();
+        else unavailable();
+    }, [swap, unavailable]);
 
     useEffect(() => {
         if (getDesktopHostWindowLabel() !== 'first_open_overlay') return;
@@ -96,7 +104,7 @@ export function FirstOpenOverlayRoute() {
         <Animated.View style={[StyleSheet.absoluteFillObject, { opacity }]}>
             {start ? (
                 <FirstOpenOverlayReplica welcome={start.welcome} epoch={start.epoch} windowRect={start.windowRect}
-                    onSettled={swap} />
+                    onSettled={buildSettled} />
             ) : null}
             <FirstOpenScene epoch={start?.epoch ?? null} placement={prepared.placement} onReady={setSceneReady} />
         </Animated.View>

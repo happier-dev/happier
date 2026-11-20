@@ -5,6 +5,7 @@ import { UnauthenticatedSplitShell } from '@/components/onboarding/unauthShell/U
 import { useUnauthShellLayout } from '@/components/onboarding/unauthShell/useUnauthShellLayout';
 import { visualAt } from '@/components/ui/motion/stepMotion/stepMotionChoreography';
 import { stepMotionTiming } from '@/components/ui/motion/stepMotion/stepMotionTiming';
+import type { StepBuildResult } from '@/components/ui/motion/stepMotion/stepMotionTypes';
 
 import { FirstOpenWelcomeEpoch } from './FirstOpenWelcomeModelContext';
 import { buildFirstOpenDestination, type FirstOpenPlacement } from './FirstOpenScene';
@@ -20,7 +21,7 @@ export const FirstOpenOverlayReplica: ComponentType<Readonly<{
     windowRect: FirstOpenPlacement['windowRect'];
     epoch: number;
     welcome: WelcomeEntryViewModel;
-    onSettled: () => void;
+    onSettled: (outcome: StepBuildResult) => void;
 }>> = function FirstOpenOverlayReplica({ windowRect, epoch, welcome, onSettled }) {
     const { x, y, width, height } = windowRect;
     const frame = useRef<HTMLDivElement>(null);
@@ -39,13 +40,11 @@ export const FirstOpenOverlayReplica: ComponentType<Readonly<{
             duration, delay: epoch + openingClimbSeconds * 1000 - performance.now(), fill: 'both',
         });
         let mounted = true;
-        void buildFirstOpenDestination(epoch).then(() => {
+        const finish = (outcome: StepBuildResult) => {
             wipe?.cancel();
-            if (mounted) onSettled();
-        }, () => {
-            wipe?.cancel();
-            if (mounted) onSettled();
-        });
+            if (mounted) onSettled(outcome);
+        };
+        void buildFirstOpenDestination(epoch).then(finish, () => finish('skipped'));
         return () => {
             mounted = false;
             wipe?.cancel();

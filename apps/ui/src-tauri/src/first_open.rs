@@ -20,6 +20,21 @@ enum FirstContent {
     PlayOverlay,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(desktop, derive(serde::Serialize))]
+#[cfg_attr(desktop, serde(rename_all = "kebab-case"))]
+enum Settlement {
+    Completed,
+    Fallback,
+    Interrupted,
+}
+
+impl Settlement {
+    fn after_swap(shown: bool) -> Self {
+        if shown { Self::Completed } else { Self::Fallback }
+    }
+}
+
 impl Handoff {
     fn prepare() -> Self {
         Self::Preparing { play: false, ready: false }
@@ -60,6 +75,10 @@ impl Handoff {
 
     fn close(&mut self) -> bool {
         std::mem::replace(self, Self::Closed) == Self::Playing
+    }
+
+    fn dismiss(&mut self, outcome: Settlement) -> Option<Settlement> {
+        self.close().then_some(outcome)
     }
 }
 
@@ -126,5 +145,21 @@ mod tests {
         assert_eq!(handoff.first_content(true, || true), FirstContent::PlayOverlay);
         assert!(handoff.close());
         assert!(!handoff.close());
+    }
+
+    #[test]
+    fn failed_swap_and_interruption_settle_only_the_opening_that_owns_main() {
+        let mut handoff = Handoff::prepare();
+        assert!(handoff.decide(true));
+        handoff.overlay_ready();
+        assert_eq!(handoff.first_content(true, || true), FirstContent::PlayOverlay);
+        assert!(handoff.swap());
+        assert_eq!(Settlement::after_swap(false), Settlement::Fallback);
+        assert_eq!(Settlement::after_swap(true), Settlement::Completed);
+        assert_eq!(handoff.dismiss(Settlement::Interrupted), None);
+
+        let mut handoff = Handoff::Playing;
+        assert_eq!(handoff.dismiss(Settlement::Interrupted), Some(Settlement::Interrupted));
+        assert!(!handoff.swap());
     }
 }

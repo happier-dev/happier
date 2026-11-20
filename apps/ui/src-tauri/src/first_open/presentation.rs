@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-use super::{FirstContent, Handoff};
+use super::{FirstContent, Handoff, Settlement};
 use crate::{
     desktop_panel,
     desktop_window::MAIN_WINDOW_LABEL,
@@ -42,7 +42,7 @@ struct Start {
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum Host {
     Overlay { epoch: f64 },
-    None,
+    Settled { outcome: Settlement },
 }
 
 fn notify_main(app: &AppHandle, host: Host) {
@@ -96,10 +96,72 @@ fn create_overlay(app: &AppHandle, placement: &Placement, scale: f64) -> Result<
                 collection_behavior: tauri_nspanel::CollectionBehavior::new(),
             })?;
         }
+        #[cfg(target_os = "linux")]
+        {
+            use webkit2gtk::WebViewExt;
+            let app = app.clone();
+            overlay.with_webview(move |webview| {
+                webview.inner().connect_web_process_terminated(move |_, _| {
+                    overlay_process_failed(&app);
+                });
+            }).map_err(|error| error.to_string())?;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let app = app.clone();
+            overlay.with_webview(move |webview| {
+                if let Err(error) = observe_overlay_process(&app, webview) {
+                    log::warn!("Could not observe opening renderer: {error}");
+                    overlay_process_failed(&app);
+                }
+            }).map_err(|error| error.to_string())?;
+        }
         Ok(())
     })();
     if result.is_err() { let _ = overlay.destroy(); }
     result
+}
+
+fn overlay_process_failed(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        close_with(&app, MainWindowRevealRequest::App, Settlement::Fallback);
+    });
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn on_web_content_process_terminate(webview: &tauri::Webview) {
+    if webview.label() == OVERLAY {
+        overlay_process_failed(webview.app_handle());
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn observe_overlay_process(app: &AppHandle, webview: tauri::webview::PlatformWebview) -> Result<(), String> {
+    use webview2_com::{
+        Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED,
+            COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED,
+        },
+        ProcessFailedEventHandler,
+    };
+
+    let native_webview = unsafe { webview.controller().CoreWebView2() }.map_err(|error| error.to_string())?;
+    let app = app.clone();
+    let handler = ProcessFailedEventHandler::create(Box::new(move |_, args| {
+        if let Some(args) = args {
+            let mut kind = Default::default();
+            unsafe { args.ProcessFailedKind(&mut kind)? };
+            if kind == COREWEBVIEW2_PROCESS_FAILED_KIND_BROWSER_PROCESS_EXITED
+                || kind == COREWEBVIEW2_PROCESS_FAILED_KIND_RENDER_PROCESS_EXITED
+            {
+                overlay_process_failed(&app);
+            }
+        }
+        Ok(())
+    }));
+    let mut token = 0;
+    unsafe { native_webview.add_ProcessFailed(&handler, &mut token) }.map_err(|error| error.to_string())
 }
 
 /// Called once on cold startup, after sizing has restored or computed the main frame.
@@ -161,7 +223,7 @@ pub async fn desktop_first_open_overlay_ready(window: WebviewWindow) -> Result<(
 #[tauri::command]
 pub async fn desktop_first_open_overlay_unavailable(window: WebviewWindow) -> Result<(), String> {
     ensure_caller(&window, OVERLAY)?;
-    close(window.app_handle(), MainWindowRevealRequest::App);
+    close_with(window.app_handle(), MainWindowRevealRequest::App, Settlement::Fallback);
     Ok(())
 }
 
@@ -172,7 +234,7 @@ pub(crate) fn on_main_content(main: &WebviewWindow, request: MainWindowRevealReq
         let state = app.state::<FirstOpenState>();
         let mut opening = state.0.lock().unwrap();
         if opening.placement.is_none() {
-            if welcome.is_some() { notify_main(app, Host::None); }
+            if welcome.is_some() { notify_main(app, Host::Settled { outcome: Settlement::Fallback }); }
             return false;
         }
         // Only the startup owner can prepare a normal-launch overlay. macOS also supplies
@@ -182,6 +244,7 @@ pub(crate) fn on_main_content(main: &WebviewWindow, request: MainWindowRevealReq
         log::info!("first_open: main content, {decision:?}");
         opening.placement.take().filter(|_| decision == FirstContent::PlayOverlay)
     };
+    let attempting_overlay = placement.is_some();
     let start = (|| {
         let placement = placement?;
         let welcome = welcome?;
@@ -198,14 +261,20 @@ pub(crate) fn on_main_content(main: &WebviewWindow, request: MainWindowRevealReq
             placement, epoch, welcome,
         }).ok()?;
         overlay.show().ok()?;
+        #[cfg(target_os = "macos")]
+        desktop_panel::request_window_keyboard(&overlay, true).ok()?;
+        #[cfg(not(target_os = "macos"))]
         overlay.set_focus().ok()?;
         notify_main(app, Host::Overlay { epoch });
         log::info!("first_open: start {epoch}");
         Some(())
     })();
     if start.is_some() { return true; }
-    notify_main(app, Host::None);
-    close(app, request)
+    let revealed = close_with(app, request, Settlement::Fallback);
+    if !attempting_overlay {
+        notify_main(app, Host::Settled { outcome: Settlement::Fallback });
+    }
+    revealed
 }
 
 #[tauri::command]
@@ -222,7 +291,14 @@ pub async fn desktop_first_open_welcome(window: WebviewWindow, welcome: Value) -
 fn reveal_main(app: &AppHandle, request: MainWindowRevealRequest) -> Result<(), String> {
     let Some(main) = app.get_webview_window(MAIN_WINDOW_LABEL) else { return Ok(()); };
     #[cfg(target_os = "macos")]
-    desktop_panel::set_window_alpha(&main, 1.)?;
+    {
+        if let Some(overlay) = app.get_webview_window(OVERLAY) {
+            if let Err(error) = desktop_panel::request_window_keyboard(&overlay, false) {
+                log::warn!("Could not release opening keyboard request: {error}");
+            }
+        }
+        desktop_panel::set_window_alpha(&main, 1.)?;
+    }
     window_chrome::reveal_main_window(app, &main, request).map_err(|error| error.to_string())
 }
 
@@ -232,7 +308,7 @@ pub async fn desktop_first_open_swap(window: WebviewWindow) -> Result<(), String
     let app = window.app_handle();
     if app.state::<FirstOpenState>().0.lock().unwrap().handoff.swap() {
         let result = reveal_main(app, MainWindowRevealRequest::App);
-        notify_main(app, Host::None);
+        notify_main(app, Host::Settled { outcome: Settlement::after_swap(result.is_ok()) });
         log::info!("first_open: swap");
         result?;
     }
@@ -247,33 +323,38 @@ pub async fn desktop_first_open_close(window: WebviewWindow) -> Result<(), Strin
 }
 
 pub(crate) fn close(app: &AppHandle, request: MainWindowRevealRequest) -> bool {
-    let revealed = dismissed(app, request);
+    close_with(app, request, Settlement::Interrupted)
+}
+
+fn close_with(app: &AppHandle, request: MainWindowRevealRequest, outcome: Settlement) -> bool {
+    let revealed = dismissed(app, request, outcome);
     if let Some(overlay) = app.get_webview_window(OVERLAY) {
         let _ = overlay.destroy();
     }
     revealed
 }
 
-fn dismissed(app: &AppHandle, request: MainWindowRevealRequest) -> bool {
-    let reveal = {
+fn dismissed(app: &AppHandle, request: MainWindowRevealRequest, outcome: Settlement) -> bool {
+    let outcome = {
         let state = app.state::<FirstOpenState>();
         let mut opening = state.0.lock().unwrap();
         opening.placement = None;
-        opening.handoff.close()
+        opening.handoff.dismiss(outcome)
     };
-    if !reveal { return false; }
-    notify_main(app, Host::None);
+    let Some(outcome) = outcome else { return false; };
     if let Err(error) = reveal_main(app, request) {
+        notify_main(app, Host::Settled { outcome: Settlement::Fallback });
         log::warn!("Could not restore main after the opening: {error}");
         return false;
     }
+    notify_main(app, Host::Settled { outcome });
     true
 }
 
 pub(crate) fn on_window_event(app: &AppHandle, label: &str, event: &tauri::WindowEvent) {
     if label != OVERLAY { return; }
     match event {
-        tauri::WindowEvent::Destroyed => { dismissed(app, MainWindowRevealRequest::App); }
+        tauri::WindowEvent::Destroyed => { dismissed(app, MainWindowRevealRequest::App, Settlement::Fallback); }
         tauri::WindowEvent::Focused(false)
             if app.state::<FirstOpenState>().0.lock().unwrap().handoff == Handoff::Playing
                 && !window_chrome::app_is_active(app) => {

@@ -310,6 +310,17 @@ pub(crate) fn set_keyboard_wanted(panel: &objc2_app_kit::NSPanel, wanted: bool) 
     });
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn request_window_keyboard<R: Runtime>(window: &WebviewWindow<R>, wanted: bool) -> Result<(), String> {
+    let app = window.app_handle().clone();
+    let window = window.clone();
+    run_on_main_thread(&app, move || {
+        let panel = ensure_panel(&window)?;
+        set_keyboard_wanted(panel.as_panel(), wanted);
+        Ok(())
+    }, "Panel keyboard request did not return")?
+}
+
 /// Place converted panels synchronously before presentation. Tao's queued position/size setters
 /// can otherwise constrain a newly key selector below the menu bar while resizing it.
 #[cfg(target_os = "macos")]

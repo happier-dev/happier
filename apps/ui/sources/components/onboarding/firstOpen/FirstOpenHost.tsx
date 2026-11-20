@@ -15,7 +15,9 @@ import type { FirstOpenDecision } from './resolveFirstOpen';
 type SceneModule = typeof import('./FirstOpenScene');
 type Phase = 'preparing' | 'still' | 'settled' | { epoch: number };
 const FirstOpenContentLayout = createContext<((event: LayoutChangeEvent) => WelcomeEntryViewModel | undefined) | null>(null);
-type OverlayHost = { kind: 'overlay'; epoch: number } | { kind: 'none' };
+type OverlayHost =
+    | { kind: 'overlay'; epoch: number }
+    | { kind: 'settled'; outcome: 'completed' | 'fallback' | 'interrupted' };
 
 export function useFirstOpenContentLayout() {
     return useContext(FirstOpenContentLayout);
@@ -27,6 +29,7 @@ export function FirstOpenHost({ decision, children }: Readonly<{
     children: ReactNode;
 }>) {
     const seen = useRef(false);
+    const activePlay = useRef(false);
     const readiness = useRef<GlyphSurfaceReadiness | null>(null);
     const [scene, setScene] = useState<SceneModule | null>(null);
     const [phase, setPhase] = useState<Phase>('preparing');
@@ -51,10 +54,17 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         setPhase('still');
     }, [opacity]);
     const skip = useCallback(() => {
-        if (!playing || !scene) return;
+        if (!activePlay.current || !scene) return;
+        activePlay.current = false;
         fadeToRest();
         scene.skipFirstOpenDestination();
-    }, [fadeToRest, playing, scene]);
+    }, [fadeToRest, scene]);
+    const interrupt = useCallback(() => {
+        if (!activePlay.current || !scene) return;
+        activePlay.current = false;
+        settle();
+        scene.skipFirstOpenDestination();
+    }, [scene, settle]);
     const updateReady = useCallback((result: GlyphSurfaceReadiness) => {
         readiness.current = result;
         if (result === 'still') skip();
@@ -65,10 +75,11 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         let listening = true;
         let unlisten: (() => void) | undefined;
         void listenDesktopHostEvent<OverlayHost>('first_open:host', (host) => {
-            if (host.kind === 'none') {
+            if (host.kind === 'settled') {
                 replicaLive.current = false;
-                // The ambient field keeps its phase as the overlay fades away.
                 setReplicaClosed(true);
+                if (host.outcome === 'fallback') fadeToRest();
+                else settle();
                 return;
             }
             replicaLive.current = true;
@@ -77,13 +88,17 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         }).then(stop => {
             if (listening) unlisten = stop;
             else stop();
-        }).catch(() => setReplicaClosed(true));
+        }).catch(() => {
+            if (!listening) return;
+            setReplicaClosed(true);
+            fadeToRest();
+        });
         return () => {
             listening = false;
             replicaLive.current = false;
             unlisten?.();
         };
-    }, [publishWelcome, waitingForReplica]);
+    }, [fadeToRest, publishWelcome, settle, waitingForReplica]);
 
     useEffect(() => {
         if (decision !== 'in-app') return;
@@ -110,13 +125,18 @@ export function FirstOpenHost({ decision, children }: Readonly<{
         if (scene && (isDesktopHost() || readHostActivelyViewed())
             && resolveInAppFirstFrame(decision, readiness.current, readBuildReady()) === 'play') {
             const epoch = performance.now();
+            activePlay.current = true;
             setPhase({ epoch });
-            const finishBuild = () => setPhase(current => current === 'still' ? current : 'settled');
-            void scene.buildFirstOpenDestination(epoch).then(finishBuild, finishBuild);
+            void scene.buildFirstOpenDestination(epoch).then(outcome => {
+                if (!activePlay.current) return;
+                activePlay.current = false;
+                if (outcome === 'settled') settle();
+                else fadeToRest();
+            }, skip);
             return;
         }
         fadeToRest();
-    }, [decision, fadeToRest, readBuildReady, scene, settle]);
+    }, [decision, fadeToRest, readBuildReady, scene, settle, skip]);
 
     useEffect(() => {
         if (phase !== 'still') return;
@@ -128,14 +148,14 @@ export function FirstOpenHost({ decision, children }: Readonly<{
     useEffect(() => {
         if (!playing || !scene) return;
         if (Platform.OS !== 'web') {
-            const appState = AppState.addEventListener('change', (state) => { if (state !== 'active') skip(); });
+            const appState = AppState.addEventListener('change', (state) => { if (state !== 'active') interrupt(); });
             return () => appState.remove();
         }
         if (typeof document === 'undefined') return;
         const key = (event: KeyboardEvent) => {
             if (event.key === 'Escape') { event.preventDefault(); skip(); }
         };
-        const visibility = () => { if (document.hidden) skip(); };
+        const visibility = () => { if (document.hidden) interrupt(); };
         document.addEventListener('keydown', key, true);
         document.addEventListener('pointerdown', skip, true);
         document.addEventListener('visibilitychange', visibility);
@@ -144,7 +164,7 @@ export function FirstOpenHost({ decision, children }: Readonly<{
             document.removeEventListener('pointerdown', skip, true);
             document.removeEventListener('visibilitychange', visibility);
         };
-    }, [playing, scene, skip]);
+    }, [interrupt, playing, scene, skip]);
 
     const skipTouch = playing && Platform.OS !== 'web' ? skip : undefined;
     const Scene = scene?.FirstOpenScene;
