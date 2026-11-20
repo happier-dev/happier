@@ -1817,6 +1817,16 @@ export async function prepareRunnerDaemonPluginServices(
         },
     } satisfies PluginServices['http']);
     const fs: PluginServices['fs'] = Object.freeze({
+        async getPluginDataDirectory(input) {
+            assertAvailable('fs');
+            return await dispatch<string>({
+                kind: 'plugin_fs.get_plugin_data_directory_v1',
+                ...requestBase(),
+                ...(input?.relativePath !== undefined
+                    ? { relativePath: input.relativePath }
+                    : {}),
+            }, input?.signal ? { signal: input.signal } : undefined);
+        },
         observeMachinePath: PLUGIN_SERVICE_DESCRIPTORS.fs.createUnavailable().observeMachinePath,
         async prepareDownload(input, options) {
             assertAvailable('fs');

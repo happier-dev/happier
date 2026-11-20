@@ -23,6 +23,7 @@ import { AGENT_START_REFUSAL_CODES_V1 } from '@happier-dev/protocol/account/sett
 import { WorkflowTargetUnavailableReasonV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { readRetainedReviewFindings } from '@/agent/reviews/normalize/readRetainedReviewFindings';
 import { bindApprovalProfileV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { isRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
 import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
@@ -1206,7 +1207,7 @@ export function createExecutionRunRpcActionExecutor(
       const hostRoleStart = context?.authority === 'present_user'
         || context?.authority === 'account_automation' && context.surface === 'rpc'
           && (!context.actionCaller || context.actionCaller.kind === 'host');
-      if (hostRoleStart && context && isAgentStartActionV1(actionId) && input && typeof input === 'object') {
+      if (hostRoleStart && context && isAgentStartActionV1(actionId) && isRecord(input)) {
         const prepared = await prepareRoleStartContext(context, input, params.context.resolveAgentStartContext);
         if (!prepared.ok) return prepared;
         context = prepared.context;

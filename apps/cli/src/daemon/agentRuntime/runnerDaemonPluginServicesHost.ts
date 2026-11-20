@@ -2225,6 +2225,16 @@ export function createRunnerDaemonPluginServicesHost(input: Readonly<{
                         operationOptions,
                     ),
                 );
+            case 'plugin_fs.get_plugin_data_directory_v1':
+                return result(
+                    operation,
+                    await services.fs.getPluginDataDirectory({
+                        ...(operation.relativePath !== undefined
+                            ? { relativePath: operation.relativePath }
+                            : {}),
+                        ...operationOptions,
+                    }),
+                );
             case 'plugin_fs.prepare_download_v1':
                 return result(
                     operation,

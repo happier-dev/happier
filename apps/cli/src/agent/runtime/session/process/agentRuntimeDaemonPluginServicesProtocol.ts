@@ -902,6 +902,12 @@ export const RUNNER_DAEMON_PLUGIN_SERVICE_OPERATION_V1_SCHEMAS = [
         request: RunnerDaemonPluginServiceWireValueV1Schema,
     })),
     lazyZodSchema(() => z.strictObject({
+        kind: z.literal('plugin_fs.get_plugin_data_directory_v1'),
+        ...OperationBaseSchema,
+        ...OptionalWitnessSchema,
+        relativePath: z.optional(z.string()),
+    })),
+    lazyZodSchema(() => z.strictObject({
         kind: z.literal('plugin_fs.prepare_download_v1'),
         ...OperationBaseSchema,
         ...OptionalWitnessSchema,

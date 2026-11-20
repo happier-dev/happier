@@ -79,7 +79,7 @@ import type { ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/a
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { PluginInvocationServicesSeed } from '@/plugins/runtime/invocation/services/types';
 
@@ -236,6 +236,58 @@ const witness = Object.freeze({
     turnId: 'turn-1',
     userMessageSeq: 1,
     userMessageSeqs: [1],
+});
+
+it('reopens native plugin data through the runner bridge as the same logical filesystem bytes', async () => {
+    await withTempDir('runner-plugin-data-', async directory => {
+        await mkdir(join(directory, 'fixture.plugin'));
+        const unavailable = createUnavailablePluginServices();
+        const lifetime = new AbortController();
+        const host = createRunnerDaemonPluginServicesHost({ async createInvocation({ signal }) {
+            const services = createPluginInvocationServicesFromDescriptors({
+                plugin: { id: 'fixture.plugin', version: '1.0.0' },
+                contribution: { id: 'review', qualifiedId: 'fixture.plugin/actions/review' },
+                occurrenceId: 'runner-plugin-data', correlationId: 'runner-plugin-data', surface: 'agent',
+                signal, isOccurrenceCurrent: () => true,
+            }, createPluginInvocationServiceBinding('runner-plugin-data', 'runner-plugin-data-binding'), {
+                loggerSink: { write() {} },
+                filesystemRoots: { pluginData: join(directory, 'fixture.plugin'), projects: new Map() },
+            });
+            return { services, resourceDescriptors: {},
+                subscriptionCapabilities: { settingsWatch: false, eventSubscriptions: [], resourceWatches: [], notificationPreferencesWatch: false },
+                dispose() {}, authorizeOperation: () => true, executeCurrentGlobalAction: services.actions.execute,
+                currentGlobalMcp: services.mcp, currentGlobalExternalSessions: services.sessions.external };
+        } });
+        const prepare = (invocationId: string) => prepareRunnerDaemonPluginServices({ invocationId,
+            signal: lifetime.signal, local: unavailable, readActiveTurnAdmissionWitness: () => witness,
+            dispatch: async (operation, options) => decodeRunnerDaemonPluginServiceWireValueV1((await host.dispatch({
+                ...direct, operation: RunnerDaemonPluginServiceOperationV1Schema.parse(operation), signal: options?.signal,
+            })).value),
+        });
+        try {
+            const services = await prepare('runner-plugin-data-first');
+            // Control: the same bridge reaches the real filesystem before exercising the missing operation.
+            const bytes = new Uint8Array([0, 255, 128, 10]);
+            const path = { root: 'pluginData' as const, relativePath: 'config-one/native-state/run.bin' };
+            await services.fs.writeFile(path, bytes);
+            await expect(services.fs.readFile(path)).resolves.toEqual(bytes);
+            const root = await services.fs.getPluginDataDirectory();
+            const nativePath = await services.fs.getPluginDataDirectory({ relativePath: 'config-one/native-state' });
+            expect(nativePath).toBe(join(root, 'config-one', 'native-state'));
+            expect(new Uint8Array(await readFile(join(nativePath, 'run.bin')))).toEqual(bytes);
+            const reopened = await prepare('runner-plugin-data-second');
+            await expect(reopened.fs.getPluginDataDirectory({ relativePath: 'config-one/native-state' })).resolves.toBe(nativePath);
+            await expect(services.fs.getPluginDataDirectory({ relativePath: '../outside' }))
+                .rejects.toMatchObject({ code: 'plugin_fs_path_denied' });
+            const cancellation = new AbortController();
+            cancellation.abort();
+            await expect(services.fs.getPluginDataDirectory({ relativePath: 'cancelled', signal: cancellation.signal }))
+                .rejects.toMatchObject({ code: 'plugin_fs_aborted' });
+        } finally {
+            lifetime.abort();
+            await host.dispose();
+        }
+    });
 });
 
 it('delivers admitted download bytes through the runner bridge and preserves custody refusal and cancellation', async () => {

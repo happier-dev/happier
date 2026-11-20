@@ -221,7 +221,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         result = await callMachineAction({ machineId: target.machineId, method,
           request: { ...request, sessionId }, effectActionId: 'execution.run.action',
           context: { ...opts, surface: opts?.surface ?? 'cli', callerPermissionMode: opts?.effectiveCallerPermissionMode },
-          authority: opts?.authority, serverId: opts?.serverId, timeoutMs: null,
+          authority: opts?.authority, serverId: opts?.serverId ?? undefined, timeoutMs: null,
           ...(opts?.signal ? { signal: opts.signal } : {}),
         });
       } else {
