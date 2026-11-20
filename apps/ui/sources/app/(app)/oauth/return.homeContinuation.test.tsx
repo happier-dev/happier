@@ -17,6 +17,7 @@ import { executeHomeAuthentication } from '@/auth/flows/executeHomeAuthenticatio
 import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { setActiveServerAndSwitch } from '@/sync/domains/server/activeServerSwitch';
 
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn(), params: {
@@ -173,13 +174,9 @@ it.each(['access_denied', 'oauth_not_configured'])('returns a failed Team connec
     boundary.params.error_description = 'provider details must stay out of the page';
     boundary.request.mockRejectedValue(new Error('A canceled connect must not finalize'));
     screen = await renderScreen(<AuthProvider initialCredentials={null}><OAuthProviderReturn /></AuthProvider>);
-    if (error !== 'access_denied') {
-        await vi.waitFor(() => expect(screen!.findByTestId('oauth-external-failure')).not.toBeNull());
-        expect(screen.getTextContent()).not.toContain(boundary.params.error_description);
-        expect(router.replace).not.toHaveBeenCalled();
-        await screen.pressByTestIdAsync('oauth-external-start-again');
-    }
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith(returnTo));
+    if (error === 'access_denied') expect(Modal.alert).not.toHaveBeenCalled();
+    else expect(Modal.alert).toHaveBeenCalledWith(t('common.error'), expect.not.stringContaining(boundary.params.error_description));
     expect(await TokenStorage.getPendingExternalConnect()).toBeNull();
     expect(boundary.request).not.toHaveBeenCalled();
 });
@@ -275,7 +272,6 @@ it('starts a fresh OAuth request on the same Home only after Start again', async
         source: 'account-directory',
         descriptorAuthority: 'current_connection_observation',
     });
-    await setActiveServerId(home.id, { scope: 'device' });
     boundary.request.mockImplementation(async (endpoint: string, path: string, init?: RequestInit) => {
         if (path.startsWith('/v1/auth/external/oidc-northwind/params?')) {
             return Response.json({ url: 'https://idp.northwind.example/authorize?state=northwind' });
@@ -290,6 +286,8 @@ it('starts a fresh OAuth request on the same Home only after Start again', async
         }
         return fixture.request(endpoint, path, init);
     });
+    // Give the focused descriptor-backed Home the normal runtime transport publication.
+    await expect(setActiveServerAndSwitch({ serverId: home.id, scope: 'device' })).resolves.toBe('switched');
     // The browser is the one boundary the start hands off to.
     const assign = vi.fn();
     const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
