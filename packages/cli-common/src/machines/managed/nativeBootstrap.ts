@@ -107,7 +107,7 @@ export async function probeManagedNativeGuestPlatform(
 ): Promise<ManagedGuestPlatform> {
     const platform = await exec({ command: 'uname -s; uname -m; printf "%s\\n" "$HOME"', signal });
     if (platform.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Native guest platform could not be observed.');
-    const [os, arch, home] = platform.stdout.replace(/\r?\n$/u, '').split(/\r?\n/u);
+    const [os, arch, home] = platform.stdout.trim().split(/\r?\n/u);
     let platformIdentity: Omit<ManagedGuestPlatform, 'home'>;
     try {
         platformIdentity = { os: normalizeRemoteReleaseOs(os), arch: normalizeRemoteReleaseArch(arch) };
@@ -115,7 +115,7 @@ export async function probeManagedNativeGuestPlatform(
         if (!forSessionHolder) throw error;
         throw new SystemTaskExecutionError('session_holder_unavailable', 'This guest platform does not support a Session holder.');
     }
-    if (!home?.startsWith('/') || home.includes('\0')) throw new SystemTaskExecutionError('provider_unavailable', 'Native guest home could not be observed.');
+    if (!home?.startsWith('/')) throw new SystemTaskExecutionError('provider_unavailable', 'Native guest home could not be observed.');
     return { ...platformIdentity, home };
 }
 

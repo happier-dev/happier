@@ -777,11 +777,11 @@ describe('runManagedMachineEnrollment', () => {
         enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }),
       native: { exec: async ({ command }) => {
         commands.push(command);
-        return { status: 0, stdout: command.includes('uname -s') ? 'Linux\nx86_64\n/native/home \n' : '', stderr: '' };
+        return { status: 0, stdout: command.includes('uname -s') ? 'Linux\nx86_64\n/native/home\n' : '', stderr: '' };
       }, putFile: async () => { throw new Error('Must reuse the installed native guest'); } },
     })).resolves.toEqual({ machineId: 'ordinary-machine' });
     expect(commands.filter(command => command.includes('uname -s'))).toHaveLength(1);
-    expect(commands.at(-1)).toContain("'/native/home /.happier/cli/current/happier' 'daemon' 'start-sync'");
+    expect(commands.at(-1)).toContain("'/native/home/.happier/cli/current/happier' 'daemon' 'start-sync'");
   });
   it('refuses retired enrollment without sending a private payload to the guest', async () => {
     let nativeCalls = 0;
