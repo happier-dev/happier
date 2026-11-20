@@ -74,7 +74,7 @@ export const telemetryRegressionActions = {
     [databaseActionLocalIdV1(TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1)]: {
         ...metadata(TELEMETRY_REGRESSIONS_SCHEDULE_ACTION_ID_V1), inputSchema: regressionScheduleInputSchema,
         resultSchema: regressionScheduleResultSchema,
-        async run(value: unknown, context: PluginInvocationContext) {
+        async run(value: unknown, context: PluginInvocationContext): Promise<ReturnType<typeof regressionScheduleResultSchema.parse>> {
             const input = regressionScheduleInputSchema.parse(value);
             const receipt = await context.services.actions.execute('deployments.receipts.get', {
                 serverId: input.serverId, deploymentId: input.deploymentId,
