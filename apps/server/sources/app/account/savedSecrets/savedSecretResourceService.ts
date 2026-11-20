@@ -2,6 +2,7 @@ import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } f
 import { formatSharedSavedSecretRefV1, SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { isSessionEncryptionModeAllowedByStoragePolicy } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 import { isTeamPrincipalRoleV1, TeamRoleV1Schema } from '@happier-dev/protocol/teams';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { SavedSecretCatalogEntryV1Schema, type SavedSecretCatalogEntryV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogResultV1, type SavedSecretResourceEnvelopeCensusRecipientV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
@@ -66,7 +67,8 @@ import { acquireAccountChangePublicationLocksInTx, beforeAccountChangePublicatio
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import {
     RESOURCE_RECIPIENT_ACCOUNT_SELECT,
-    projectSavedSecretRecipientEnvelopeCensusRecipientsV1,
+    projectResourceRecipientReadinessV1,
+    projectStoredResourceRecipientEnvelopeCensusV1,
     readResourceRecipientEnvelopeRejectionV1,
     readTargetOwnerRecipientEnvelopeRejectionV1,
     resolveSavedSecretAudienceAccountIdsInTx,
@@ -99,6 +101,11 @@ import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv } from '@/storage/prisma';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import {
+    readOwedSavedSecretCandidateAccountIdsInTx,
+    readOwedSavedSecretRecipientsInTx,
+    readSavedSecretAuthorizedAccountIdsInTx,
+} from './savedSecretRecipientAudience';
 
 type StoredResourceRow = Readonly<{
     id: string;
@@ -488,63 +495,7 @@ export async function listAuthorizedAccountIdsForResourcesInTx(
     tx: Tx,
     resourceIds: readonly string[],
 ): Promise<readonly string[]> {
-    return [...new Set([...(await listAuthorizedAccountIdsByResourceInTx(tx, resourceIds)).values()].flat())];
-}
-
-/** Each resource's authorized Accounts (owner, direct grants, principal Team members, Group members). */
-async function listAuthorizedAccountIdsByResourceInTx(
-    tx: Tx,
-    resourceIds: readonly string[],
-): Promise<ReadonlyMap<string, readonly string[]>> {
-    const byResource = new Map<string, readonly string[]>();
-    for (const ids of portableQueryChunks({ values: [...new Set(resourceIds)], bindingsPerValue: 1 })) {
-        const rows = await tx.savedSecretResource.findMany({
-            where: { id: { in: [...ids] } },
-            select: {
-                id: true,
-                ownerAccountId: true,
-                accountGrants: { select: { accountId: true } },
-                teamGrants: {
-                    where: ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE,
-                    select: {
-                        team: {
-                            select: {
-                                memberships: {
-                                    where: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
-                                    select: { accountId: true, role: true },
-                                },
-                            },
-                        },
-                    },
-                },
-                groupGrants: {
-                    where: ACTIVE_SAVED_SECRET_GROUP_GRANT_WHERE,
-                    select: {
-                        teamGroup: {
-                            select: {
-                                memberships: {
-                                    where: { teamMembership: ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE },
-                                    select: { teamMembership: { select: { accountId: true } } },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        });
-        for (const row of rows) byResource.set(row.id, [...new Set([
-            row.ownerAccountId,
-            ...row.accountGrants.map((grant) => grant.accountId),
-            ...row.teamGrants.flatMap((grant) => grant.team.memberships
-                .filter((member) => {
-                    const role = TeamRoleV1Schema.safeParse(member.role);
-                    return role.success && isTeamPrincipalRoleV1(role.data);
-                })
-                .map((member) => member.accountId)),
-            ...row.groupGrants.flatMap((grant) => grant.teamGroup.memberships.map((member) => member.teamMembership.accountId)),
-        ])]);
-    }
-    return byResource;
+    return await readSavedSecretAuthorizedAccountIdsInTx(tx, resourceIds);
 }
 
 async function listAuthorizedAccountIdsForResourceInTx(tx: Tx, resourceId: string): Promise<readonly string[]> {
@@ -1138,47 +1089,45 @@ async function refuseSavedSecretNonOwnerInTx(tx: Tx, input: Readonly<{
     return retained.rows.length > 0 ? "forbidden" : "resource_not_found";
 }
 
-/**
- * The custodian's owed envelopes in one read (the Saved Secrets surface's repair sweep): every owned E2EE resource
- * with an authorized recipient who can hold an envelope but has no current one, and only those recipients. The same
- * per-recipient projection as the single-resource census decides readiness and envelope status.
- */
+/** A custodian receives only the current recipients and revisions which need envelopes. */
 export async function listOwedSavedSecretResourceEnvelopesInTx(
     tx: Tx,
     input: Readonly<{ accountId: string }>,
 ): Promise<readonly Readonly<{ resourceId: string; revision: number; recipients: readonly SavedSecretResourceEnvelopeCensusRecipientV1[] }>[]> {
-    const resources = await tx.savedSecretResource.findMany({
-        where: { ownerAccountId: input.accountId, encryptionMode: "e2ee" },
-        select: { id: true, revision: true },
-        orderBy: { id: "asc" },
-    });
-    if (resources.length === 0) return [];
-    const resourceIds = resources.map((resource) => resource.id);
-    const authorizedByResource = await listAuthorizedAccountIdsByResourceInTx(tx, resourceIds);
-    const accountIds = [...new Set([...authorizedByResource.values()].flat())];
-    const accountsById = new Map<string, ResourceRecipientAccountRow>();
-    for (const ids of portableQueryChunks({ values: accountIds, bindingsPerValue: 1 })) {
-        const accounts = await tx.account.findMany({ where: { id: { in: [...ids] }, status: "active" }, select: RESOURCE_RECIPIENT_ACCOUNT_SELECT });
-        for (const account of accounts) accountsById.set(account.id, account);
-    }
-    const envelopesByResource = new Map<string, ResourceRecipientEnvelopeRow[]>();
-    for (const ids of portableQueryChunks({ values: resourceIds, bindingsPerValue: 1 })) {
-        const envelopes = await tx.savedSecretResourceKeyEnvelope.findMany({ where: { resourceId: { in: [...ids] } },
-            select: { resourceId: true, recipientAccountId: true, encryptedDataKey: true, recipientContentPublicKeyFingerprint: true } });
-        for (const envelope of envelopes) {
-            const rows = envelopesByResource.get(envelope.resourceId) ?? [];
-            rows.push({ accountId: envelope.recipientAccountId, encryptedDataKey: envelope.encryptedDataKey,
-                recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint });
-            envelopesByResource.set(envelope.resourceId, rows);
+    const ids = await readOwedSavedSecretCandidateAccountIdsInTx(tx, input.accountId);
+    const candidatesById = new Map<string, ResourceRecipientAccountRow>();
+    const fingerprints: { accountId: string; fingerprint: string }[] = [];
+    for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1 })) {
+        const accounts = await tx.account.findMany({ where: { id: { in: [...chunk] } }, select: RESOURCE_RECIPIENT_ACCOUNT_SELECT });
+        for (const account of accounts) {
+            if (account.contentPublicKey === null) continue;
+            candidatesById.set(account.id, account);
+            fingerprints.push({ accountId: account.id, fingerprint: computeContentPublicKeyFingerprint(account.contentPublicKey) });
         }
     }
-    return resources.flatMap((resource) => {
-        const accounts = (authorizedByResource.get(resource.id) ?? []).flatMap((accountId) => accountsById.get(accountId) ?? [])
-            .sort((left, right) => left.id.localeCompare(right.id));
-        const recipients = projectSavedSecretRecipientEnvelopeCensusRecipientsV1({ accounts, envelopes: envelopesByResource.get(resource.id) ?? [] })
-            .filter((recipient) => recipient.readiness.status === "available" && recipient.envelopeStatus !== "prepared");
-        return recipients.length > 0 ? [{ resourceId: resource.id, revision: resource.revision, recipients }] : [];
-    });
+    if (fingerprints.length === 0) return [];
+    // A fingerprint match can only eliminate work. Never disclose a candidate
+    // binding without the canonical cross-person verification below.
+    const owed = await readOwedSavedSecretRecipientsInTx(tx, input.accountId, fingerprints);
+    const projectedById = new Map<string, ReturnType<typeof projectResourceRecipientReadinessV1>>();
+    const byResource = new Map<string, { resourceId: string; revision: number; recipients: SavedSecretResourceEnvelopeCensusRecipientV1[] }>();
+    for (const row of owed) {
+        let projected = projectedById.get(row.recipient_id);
+        if (!projected) {
+            const account = candidatesById.get(row.recipient_id);
+            if (!account) continue;
+            projected = projectResourceRecipientReadinessV1(account);
+            projectedById.set(row.recipient_id, projected);
+        }
+        if (projected.readiness.status !== "available") continue;
+        let resource = byResource.get(row.resource_id);
+        if (!resource) {
+            resource = { resourceId: row.resource_id, revision: row.revision, recipients: [] };
+            byResource.set(row.resource_id, resource);
+        }
+        resource.recipients.push({ ...projected, envelopeStatus: row.current_fingerprint === null ? "missing" : "stale" });
+    }
+    return [...byResource.values()];
 }
 
 export async function listSavedSecretResourceEnvelopeCensusInTx(
@@ -1203,19 +1152,14 @@ export async function listSavedSecretResourceEnvelopeCensusInTx(
             ...RESOURCE_RECIPIENT_ACCOUNT_SELECT,
             savedSecretResourceKeyEnvelopes: {
                 where: { resourceId: input.resourceId },
-                select: { encryptedDataKey: true, recipientContentPublicKeyFingerprint: true },
+                select: { recipientContentPublicKeyFingerprint: true },
             },
         },
         orderBy: { id: "asc" },
     });
-    const recipients = projectSavedSecretRecipientEnvelopeCensusRecipientsV1({
-        accounts,
-        envelopes: accounts.flatMap((account) => account.savedSecretResourceKeyEnvelopes.map((envelope) => ({
-            accountId: account.id,
-            encryptedDataKey: envelope.encryptedDataKey,
-            recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint,
-        }))),
-    });
+    const recipients = accounts.map(account => projectStoredResourceRecipientEnvelopeCensusV1(
+        account, account.savedSecretResourceKeyEnvelopes[0]?.recipientContentPublicKeyFingerprint ?? null,
+    ));
     return {
         ok: true,
         value: {

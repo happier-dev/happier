@@ -2,19 +2,24 @@ import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { createSignedAccountContentBinding } from "@/testkit/accountEncryption";
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { sealEncryptedDataKeyEnvelopeV1 } from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
+import * as envelopeFormat from "@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1";
+import * as accountKeyBinding from "@happier-dev/protocol/crypto/accountContentKeyBindingV1";
 import { SavedSecretResourceOwedEnvelopeCensusResponseV1Schema } from "@happier-dev/protocol/account/settings/savedSecretCatalogV1";
 import tweetnacl from "tweetnacl";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SavedSecretResourceMaterialsResponseV1Schema } from "@happier-dev/protocol";
 import { registerSavedSecretResourceRoutes } from "@/app/api/routes/account/registerSavedSecretResourceRoutes";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
+import { readDatabaseTransactionConfigFromEnv } from "@/config/databaseTransactions";
 import { db } from "@/storage/db";
+import { createDbMaintenanceClient, onDbClientQuery } from "@/storage/prisma";
 import { inTx } from "@/storage/inTx";
 import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import {
     createSavedSecretResourceInTx,
+    listOwedSavedSecretResourceEnvelopesInTx,
     listSavedSecretResourceEnvelopeCensusInTx,
     listSavedSecretResourceMaterialsForAccountInTx,
     setSavedSecretResourceGrantsInTx,
@@ -335,17 +340,63 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
         await resource("unshared", owner.id, "e2ee", [], [envelopeFor(owner)]);
         await resource("plain_shared", owner.id, "plain", [ready.id], []);
         await resource("someone_elses", other.id, "e2ee", [ready.id], [envelopeFor(other)]);
+        const team = await db.team.create({ data: { name: "Prepared recipients at scale" } });
+        const members = Array.from({ length: 198 }, () => ({ id: crypto.randomUUID(), encryptionMode: "plain" }));
+        await db.account.createMany({ data: members });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: ready.id, role: "member" },
+            ...members.map(({ id }) => ({ teamId: team.id, accountId: id, role: "member" as const })),
+        ] });
+        const preparedIds = Array.from({ length: 1_001 }, (_, index) => `large_prepared_${index}`);
+        await db.savedSecretResource.createMany({ data: preparedIds.map(id => ({
+            id, ownerAccountId: owner.id, displayName: id, kind: "token", encryptionMode: "e2ee", storedContent: "{}",
+        })) });
+        await db.savedSecretTeamGrant.createMany({ data: preparedIds.map(resourceId => ({
+            resourceId, teamId: team.id, createdByAccountId: owner.id,
+        })) });
+        const ownerEnvelope = envelopeFor(owner);
+        const memberEnvelope = envelopeFor(ready);
+        await db.savedSecretResourceKeyEnvelope.createMany({ data: preparedIds.flatMap(resourceId => [
+            { resourceId, ...ownerEnvelope }, { resourceId, ...memberEnvelope },
+        ]) });
         const app = createAuthenticatedTestApp({ authentication: "real" });
         registerSavedSecretResourceRoutes(app);
+        const authorization = `Bearer ${await createAccountTokenForTests(owner.id, { kind: "account", authority: "present_user" })}`;
+        const queries: string[] = [];
+        const client = await createDbMaintenanceClient("sqlite", undefined, { log: [{ emit: "event", level: "query" }] });
+        onDbClientQuery(client, event => queries.push(event.query));
+        // Start with a different binding in the admission owner's one-entry reuse slot.
+        envelopeFor(other);
+        const bindings = vi.spyOn(accountKeyBinding, "verifyAccountContentKeyBindingV1");
+        const envelopes = vi.spyOn(envelopeFormat, "parseEncryptedDataKeyEnvelopeV1");
         try {
-            const response = await app.inject({ method: "GET", url: "/v1/account/saved-secrets/resources/envelope-census/owed",
-                headers: { authorization: `Bearer ${await createAccountTokenForTests(owner.id, { kind: "account", authority: "present_user" })}` } });
-            expect(response.statusCode).toBe(200);
-            const census = SavedSecretResourceOwedEnvelopeCensusResponseV1Schema.parse(response.json());
+            // Bind query events to the same SQLite client that actually runs the read.
+            // The HTTP route owns a separate production read-only connection.
+            const timing = readDatabaseTransactionConfigFromEnv(process.env, "sqlite");
+            const resources = await client.$transaction(tx => listOwedSavedSecretResourceEnvelopesInTx(tx, { accountId: owner.id }),
+                { maxWait: timing.maxWaitMs, timeout: timing.timeoutMs });
+            const census = SavedSecretResourceOwedEnvelopeCensusResponseV1Schema.parse({ resources });
             expect(census.resources.map(row => ({ resourceId: row.resourceId, recipients: row.recipients.map(recipient => recipient.account.accountId) })))
                 .toEqual([{ resourceId: "owes_ready", recipients: [ready.id] }]);
             expect(census.resources[0]).toMatchObject({ revision: 1, recipients: [{ readiness: { status: "available" }, envelopeStatus: "missing" }] });
+            const reads = queries.filter(query => /^\s*(SELECT|WITH)\b/i.test(query));
+            expect({ statements: reads.length, bindings: bindings.mock.calls.length, envelopeParses: envelopes.mock.calls.length })
+                .toEqual({ statements: 3, bindings: 1, envelopeParses: 0 });
+            expect(reads.some(query => query.includes('"encryptedDataKey"'))).toBe(false);
+            const response = await app.inject({ method: "GET", url: "/v1/account/saved-secrets/resources/envelope-census/owed",
+                headers: { authorization } });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual(census);
+            await db.savedSecretResourceKeyEnvelope.create({ data: { resourceId: "owes_ready", ...memberEnvelope } });
+            bindings.mockClear();
+            const settled = await app.inject({ method: "GET", url: "/v1/account/saved-secrets/resources/envelope-census/owed",
+                headers: { authorization } });
+            expect(settled.json()).toEqual({ resources: [] });
+            expect(bindings).not.toHaveBeenCalled();
         } finally {
+            bindings.mockRestore();
+            envelopes.mockRestore();
+            await client.$disconnect();
             await app.close();
         }
     });

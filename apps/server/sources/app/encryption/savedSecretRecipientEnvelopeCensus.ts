@@ -220,10 +220,42 @@ export function readRequiredResourceRecipientEnvelopeRejectionV1(
         : "recipient_set_mismatch";
 }
 
+/** Project one captured Account binding, before expanding it across any resource audience. */
+export function projectResourceRecipientReadinessV1(
+    account: ResourceRecipientAccountRow,
+): Omit<SavedSecretResourceEnvelopeCensusRecipientV1, "envelopeStatus"> {
+    const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
+    return {
+        account: { kind: "account", accountId: account.id, ...projectAccountDisplayProfileV1(account) },
+        readiness: readiness.status === "available"
+            ? {
+                status: "available",
+                contentPublicKey: privacyKit.encodeBase64(readiness.binding.contentPublicKey),
+                contentPublicKeyFingerprint: readiness.binding.contentPublicKeyFingerprint,
+            }
+            : readiness,
+    };
+}
+
+/** A stored envelope's bytes were admitted by its writer. This census only needs its binding. */
+export function projectStoredResourceRecipientEnvelopeCensusV1(
+    account: ResourceRecipientAccountRow,
+    fingerprint: string | null,
+): SavedSecretResourceEnvelopeCensusRecipientV1 {
+    const recipient = projectResourceRecipientReadinessV1(account);
+    return {
+        ...recipient,
+        envelopeStatus: fingerprint === null
+            ? "missing"
+            : recipient.readiness.status === "available" && fingerprint === recipient.readiness.contentPublicKeyFingerprint
+                ? "prepared"
+                : "stale",
+    };
+}
+
 /**
- * The Saved Secret wire census is reused by every client-side rewrap path.
- * Existing resource adapters pass their persisted envelopes; fresh labels pass
- * none and therefore receive `missing` for every ready recipient.
+ * Other resource adapters still own normalization of their persisted envelopes;
+ * do not infer that their stored bytes passed Saved Secret's write admission.
  */
 export function projectSavedSecretRecipientEnvelopeCensusRecipientsV1(
     input: Readonly<{
@@ -233,33 +265,12 @@ export function projectSavedSecretRecipientEnvelopeCensusRecipientsV1(
 ): readonly SavedSecretResourceEnvelopeCensusRecipientV1[] {
     const envelopesByAccountId = new Map(input.envelopes.map((envelope) => [envelope.accountId, envelope]));
     return input.accounts.map((account): SavedSecretResourceEnvelopeCensusRecipientV1 => {
-        const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
-        const envelope = envelopesByAccountId.get(account.id) ?? null;
-        const usableEnvelope = envelope && parseEncryptedDataKeyEnvelopeV1(new Uint8Array(envelope.encryptedDataKey)) !== null
-            ? envelope
-            : null;
-        const envelopeStatus = !envelope
-            ? "missing" as const
-            : !usableEnvelope
-                ? "invalid" as const
-                : readiness.status === "available"
-                    && readiness.binding.contentPublicKeyFingerprint === usableEnvelope.recipientContentPublicKeyFingerprint
-                    ? "prepared" as const
-                    : "stale" as const;
-        return {
-            account: {
-                kind: "account",
-                accountId: account.id,
-                ...projectAccountDisplayProfileV1(account),
-            },
-            readiness: readiness.status === "available"
-                ? {
-                    status: "available",
-                    contentPublicKey: privacyKit.encodeBase64(readiness.binding.contentPublicKey),
-                    contentPublicKeyFingerprint: readiness.binding.contentPublicKeyFingerprint,
-                }
-                : readiness,
-            envelopeStatus,
-        };
+        const envelope = envelopesByAccountId.get(account.id);
+        const recipient = projectStoredResourceRecipientEnvelopeCensusV1(
+            account, envelope?.recipientContentPublicKeyFingerprint ?? null,
+        );
+        return envelope && parseEncryptedDataKeyEnvelopeV1(envelope.encryptedDataKey) === null
+            ? { ...recipient, envelopeStatus: "invalid" }
+            : recipient;
     });
 }
