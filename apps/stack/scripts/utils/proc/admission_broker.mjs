@@ -854,7 +854,7 @@ export function createAdmissionBroker({ root,
     // A capacity-only wake is cheap. Before it can offer work, refresh memory
     // if the arrival or CPU-blocked request skipped its normal observation.
     if (!memoryObserved && waiting.some(item => !item.slot && !item.blocked
-      && (item === newArrival || item.waitingForCpu) && minimumCpuCores(item) <= cpuHeadroom)) {
+      && (item === newArrival || item.waitingForCpu) && (slots.size === 0 || minimumCpuCores(item) <= cpuHeadroom))) {
       await observe();
       cpuPressureCores = readCpuPressureForOffer();
     }
@@ -868,6 +868,11 @@ export function createAdmissionBroker({ root,
     let lendableKiB = 0;
     let headStartAt;
     orderWaiting();
+    // Outside runnable pressure can persist indefinitely. Only the eligible
+    // queue head can start without CPU headroom, and only with no live offer.
+    const idleHead = slots.size === 0 ? waiting.find(item => !item.slot && !item.blocked && !item.socket.destroyed
+      && (item.floorOptions?.at(-1).floorKiB ?? item.floorKiB) <= sample.totalMemoryKiB
+      && minimumCpuCores(item) <= totalCpuCores) : undefined;
     const pledgingHead = waiting.find(item => canReserveHead(item, budget.memoryWithinBoundKiB, now));
     const reservation = headReservation(pledgingHead);
     // Coordination 2026-11-13 11:22Z: source bundles (including stack reloads)
@@ -901,8 +906,11 @@ export function createAdmissionBroker({ root,
         refuse(item, 'HSTACK_CPU_CAPACITY');
         continue;
       }
-      const fitting = item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB
-        && accountedCpuCores(item, option.workers) <= availableCpuCores);
+      const offerCpuCores = item === idleHead && slots.size === 0 ? totalCpuCores : availableCpuCores;
+      const fittingFor = cpuCores => item.floorOptions?.find(option => option.floorKiB <= availableMemoryKiB
+        && accountedCpuCores(item, option.workers) <= cpuCores);
+      const fitting = fittingFor(availableCpuCores)
+        ?? (offerCpuCores > availableCpuCores ? fittingFor(offerCpuCores) : undefined);
       // A job projected to finish before the head can start may borrow the
       // head's pledged memory; its release returns it before it is needed.
       const borrowKiB = !item.floorOptions && headStartAt !== undefined
@@ -919,7 +927,7 @@ export function createAdmissionBroker({ root,
         headPledge.memoryKiB = Math.min(headPledge.memoryKiB, headReservation(head).memoryKiB) - borrowKiB;
       }
       item.waitingForMemory = minimumFloorKiB > availableMemoryKiB;
-      if (item.floorOptions ? !fitting : item.waitingForMemory || accountedCpuCores(item) > availableCpuCores) {
+      if (item.floorOptions ? !fitting : item.waitingForMemory || accountedCpuCores(item) > offerCpuCores) {
         item.waitingForCpu = !item.waitingForMemory;
         if (item.noWait) refuse(item, item.waitingForMemory ? 'HSTACK_MEMORY_BUSY' : 'HSTACK_CPU_BUSY');
         else {
@@ -954,7 +962,7 @@ export function createAdmissionBroker({ root,
         arrivedAt: item.arrivedAt, arrivalOrder: item.arrivalOrder };
       slots.set(address, slot);
       availableMemoryKiB -= floorKiB;
-      availableCpuCores -= cpuCores;
+      availableCpuCores = Math.max(0, availableCpuCores - cpuCores);
       item.slot = slot;
       if (hostBoundFirst.has(item) && headPledge?.item === pledgingHead) {
         headPledge.lastHostBoundAdmissionKiB = floorKiB;

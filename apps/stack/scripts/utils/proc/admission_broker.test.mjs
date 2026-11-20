@@ -388,6 +388,37 @@ test('memory-fitting CPU-heavy waiters admit up to cores minus runnable pressure
   assert.equal(broker.status().reservedCpuCores, 12);
 });
 
+test('an idle host starts only its memory-fitting head under outside CPU pressure', { ...linux, timeout: 6000 }, async t => {
+  const clock = captureRecoveryClock(t);
+  let availableMemoryKiB = 20;
+  const { root } = await fixture(t, {
+    cpuCores: 8,
+    readCpuPressure: () => 12,
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 100 }),
+  });
+  const head = await acquire(root, 40, t, { className: 'package-dist', requestedCpuCores: 4 });
+  const second = await acquire(root, 10, t, { className: 'package-dist', requestedCpuCores: 4 });
+  const memoryBlocked = await requestAdmissionSample(root);
+  assert.equal(memoryBlocked.activeCount, 0, 'the smaller second request must not get the idle exception');
+  assert.equal(memoryBlocked.waitingCount, 2);
+
+  availableMemoryKiB = 100;
+  await clock.tick();
+  const offered = await requestAdmissionSample(root);
+  assert.equal(offered.activeCount, 1, 'outside pressure must not block the sole memory-fitting head');
+  assert.equal(offered.waitingCount, 1, 'the first offer consumes the exception before the client sends ready');
+  assert.equal(offered.reservedCpuCores, 4);
+  assert.equal(offered.cpuPressureCores, 12);
+  assert.equal(offered.unreservedCpuCores, 0);
+
+  const held = await head.admit();
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 1);
+  await held.release();
+  const next = await second.admit();
+  assert.equal(next.admitted.cpuCores, 4);
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 0);
+});
+
 test('admitted scope runnable threads leave remaining cores available', linux, async t => {
   const uid = process.getuid();
   const scope = `/user.slice/user-${uid}.slice/user@${uid}.service/happier.slice/happier-jobs.slice/happier-jobs-${process.pid}-fixture.scope`;

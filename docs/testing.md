@@ -625,10 +625,14 @@ FIFO ordering with head-floor reservation and backfill. CPU reservations share
 that queue and each slot's lifetime with memory. The broker reads the OS's
 available logical-core count once at startup. Each offer pass subtracts held
 reservations and the current Linux runnable count, excluding the sampling broker
-itself. This counts work outside admission, such as database and stack activity,
-and can also count runnable threads from already admitted jobs. Existing slot and
-resource events wake CPU waiters. The resource catch-up also checks external CPU
-pressure while it blocks a waiter and refreshes memory before making an offer.
+and runnable threads attributed to admitted job scopes. This counts work outside
+admission, such as database and stack activity. When the broker has no active slot
+or outstanding offer, the queue head can start if its memory and physical CPU
+requirements fit even when outside pressure uses the remaining CPU budget. That
+offer reserves memory and CPU immediately. Further offers subtract outside pressure.
+Existing slot and resource events wake CPU waiters. The resource catch-up also
+checks external CPU pressure while it blocks a waiter and refreshes memory before
+making an offer.
 A request larger than the host receives
 `HSTACK_CPU_CAPACITY`; a nonwaiting request without current room receives
 `HSTACK_CPU_BUSY`.
