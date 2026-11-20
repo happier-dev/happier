@@ -109,7 +109,6 @@ describe('Promote', () => {
       expect(promote).toHaveBeenNthCalledWith(
         1,
         expect.objectContaining({ artifact: 'image' }),
-        expect.anything(),
       );
       expect(
         screen.findByTestId('project-deployments.promote.rebuild'),
@@ -120,7 +119,6 @@ describe('Promote', () => {
       expect(promote).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({ artifact: 'rebuild' }),
-        expect.anything(),
       );
     } finally {
       await screen.unmount();

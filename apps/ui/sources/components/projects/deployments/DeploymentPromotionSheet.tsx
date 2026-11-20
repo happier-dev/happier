@@ -85,7 +85,7 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
     if (!destination) return;
     setArtifact(choice);
     void press.press(() => props.promote({ environmentId: destination, sourceEnvironmentId: props.sourceEnvironmentId,
-      sourceDeploymentId: props.sourceDeploymentId, artifact: choice }, { confirmed: true }));
+      sourceDeploymentId: props.sourceDeploymentId, artifact: choice }));
   };
   const confirm = () => request('image');
   const exactImageUnavailable = artifact === 'image' && press.outcome?.kind === 'refused'
