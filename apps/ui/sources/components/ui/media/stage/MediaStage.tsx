@@ -819,10 +819,17 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const pictureAnnotatable = isPicture(item) && currentPreview !== null && phase === 'open';
   const frameAnnotatable = item.kind === 'video' && videoControls !== null && phase === 'open';
   const annotatable = pictureAnnotatable || frameAnnotatable;
+  // Reading a paused frame can take seconds on a long video: the entry shows progress and ignores a second press.
+  const [readingFrame, setReadingFrame] = React.useState(false);
+  const readingFrameRef = React.useRef(false);
   const annotateFrame = React.useCallback(async () => {
-    if (!videoControls || item.kind !== 'video') return;
+    if (!videoControls || item.kind !== 'video' || readingFrameRef.current) return;
+    readingFrameRef.current = true;
+    setReadingFrame(true);
     videoControls.playback?.pause();
     const frame = await videoControls.readFrame().catch(() => null);
+    readingFrameRef.current = false;
+    setReadingFrame(false);
     if (!frame) return;
     const frameTime = formatPlaybackTime(frame.timeSeconds);
     setHeldFrame({ index: gallery.index, timeSeconds: frame.timeSeconds, item: {
@@ -1171,6 +1178,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
                 <StageAnnotateEntry
                   tooltip={withShortcut(t('files.annotate.annotate'), annotateShortcut)}
                   onPress={enterAnnotate}
+                  busy={readingFrame}
                 />
               ) : null}
               {zoomPercent !== null && !phone ? (
@@ -1345,7 +1353,7 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
                 />
               ) : null}
               {annotatable ? (
-                <StageAnnotateEntry tooltip={t('files.annotate.annotate')} onPress={enterAnnotate} phone />
+                <StageAnnotateEntry tooltip={t('files.annotate.annotate')} onPress={enterAnnotate} phone busy={readingFrame} />
               ) : null}
               {item.openFile ? (
                 <Pressable

@@ -16,6 +16,7 @@ import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionT
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
 import { Icon } from '@/components/ui/icons/Icon';
+import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -78,7 +79,9 @@ export function useStageCapsuleLayout() {
 }
 
 /** The way in, named in words because nothing else on the stage says marks are possible (lab `ia · I1`). */
-export function StageAnnotateEntry(props: Readonly<{ tooltip: string; onPress: () => void; phone?: boolean }>) {
+export function StageAnnotateEntry(props: Readonly<{ tooltip: string; onPress: () => void; phone?: boolean;
+  /** A paused video's frame is still being read: the entry shows progress and takes no second press. */
+  busy?: boolean }>) {
   const { theme } = useUnistyles();
   return (
     <>
@@ -86,11 +89,13 @@ export function StageAnnotateEntry(props: Readonly<{ tooltip: string; onPress: (
         <HappierPressable
           accessibilityRole="button"
           accessibilityLabel={t('files.annotate.annotate')}
+          busy={props.busy === true}
           onPress={props.onPress}
           testID="media-stage-annotate"
           style={({ hovered }) => [styles.entry, hovered ? { backgroundColor: theme.colors.surface.hover } : null]}
         >
-          <Icon name="pencil-circle" size={ENTRY_ICON_SIZE} color={theme.colors.text.primary} />
+          {props.busy ? <ActivitySpinner size="small" color={theme.colors.text.secondary} />
+            : <Icon name="pencil-circle" size={ENTRY_ICON_SIZE} color={theme.colors.text.primary} />}
           <Text variant="body" emphasis="medium" style={{ color: theme.colors.text.primary }}>
             {t('files.annotate.annotate')}
           </Text>

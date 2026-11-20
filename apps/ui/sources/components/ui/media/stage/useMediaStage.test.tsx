@@ -47,6 +47,28 @@ describe('canonical media stage opener', () => {
             expect(screen.findByTestId('media-stage-previous')!.props.disabled).toBe(true);
         } finally { windowSize.width = 1024; windowSize.height = 900; await screen.unmount(); }
     });
+    it('reads a paused received video frame once, shows progress meanwhile, then holds the frame to mark', async () => {
+        const { openMediaStage } = await import('./useMediaStage');
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}><ModalProvider><></></ModalProvider></InjectedAuthProvider>);
+        try {
+            await act(async () => { openMediaStage([{ kind: 'video', title: 'checkout-1440.mp4',
+                source: { enabled: true, source: { kind: 'uri', uri: 'blob:clip' } } }], 0); });
+            // The player (a media element boundary) hands the stage its transport once it is mounted.
+            let release: (frame: { uri: string; width: number; height: number; timeSeconds: number }) => void = () => {};
+            let reads = 0;
+            const controls = { seekTo: () => {}, playback: { play: () => {}, pause: () => {}, readTime: () => 18, subscribe: () => () => {} },
+                readFrame: () => { reads += 1; return new Promise<{ uri: string; width: number; height: number; timeSeconds: number }>(resolve => { release = resolve; }); } };
+            const player = screen.find(node => node.props.testID === 'media-stage-video' && typeof node.props.props?.onVideoControls === 'function');
+            await act(async () => { player.props.props.onVideoControls(controls); });
+            await act(async () => { screen.findByTestId('media-stage-annotate')!.props.onPress(); });
+            expect(screen.find(node => node.props.testID === 'media-stage-annotate' && node.props.busy !== undefined).props.busy).toBe(true);
+            await act(async () => { screen.findByTestId('media-stage-annotate')!.props.onPress(); });
+            expect(reads).toBe(1);
+            await act(async () => { release({ uri: 'data:image/png;base64,AQID', width: 40, height: 30, timeSeconds: 18 }); });
+            expect(screen.findByTestId('media-stage-video')).toBeFalsy();
+            expect(screen.findByTestId('media-stage-image')!.props.source).toEqual({ uri: 'data:image/png;base64,AQID' });
+        } finally { await screen.unmount(); }
+    });
     it('lets a pointer hide the controls and bring them back while they are hidden', async () => {
         const { openMediaStage } = await import('./useMediaStage');
         const screen = await renderScreen(<InjectedAuthProvider credentials={null}><ModalProvider><></></ModalProvider></InjectedAuthProvider>);
