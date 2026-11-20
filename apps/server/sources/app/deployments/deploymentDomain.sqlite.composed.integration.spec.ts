@@ -17,6 +17,7 @@ import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { projectDeploymentDomainHeader, projectDeploymentDomainMachineReferences, prepareDeploymentTeardownDomainsInTx,
     readAcceptedDeploymentTeardownDomainContentInTx, readMemberDeploymentDomainContentInTx, createDeploymentDomainInTx } from './deploymentDomainService';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
@@ -326,6 +327,58 @@ describe('public Domain storage and native custody', () => {
                     domain: { state: 'active', revision: 2, contentBodyVersion: 2 } });
             });
         } finally { await kit.dispose(); }
+    });
+
+    it('scopes teardown replay to an admitted Environment before returning its receipt', async () => {
+        const original = await fixture();
+        const other = await fixture();
+        const reference = await original.content('deployment-receipt.v1');
+        const team = await db.team.create({ data: { name: 'Teardown replay' } });
+        const teammate = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: original.owner.id, role: 'owner' },
+            { teamId: team.id, accountId: teammate.id, role: 'admin' },
+        ] });
+        await db.projectSource.update({ where: { id: original.environment.projectSourceId },
+            data: { owner: { kind: 'team', teamId: team.id } } });
+        await db.artifactGrant.create({ data: { artifactId: reference.contentArtifactId, ...teamResourceGrantFixture({
+            teamId: team.id, accessLevel: 'admin', createdByAccountId: original.owner.id,
+        }) } });
+        await db.machineGrant.create({ data: { machineId: original.machine.id, ...teamResourceGrantFixture({
+            teamId: team.id, accessLevel: 'view', createdByAccountId: original.owner.id,
+        }) } });
+        const input = { serverId, environmentId: original.environment.id, targetLinkId: original.target.id,
+            expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), reason: 'manual', ...reference };
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const request = (accountId: string, payload: typeof input) => app.inject({ method: 'POST',
+                url: `/v1/deployments/environments/${payload.environmentId}/teardown`,
+                headers: { 'x-test-user-id': accountId }, payload });
+            const first = await request(original.owner.id, input);
+            expect(first.statusCode, first.body).toBe(200);
+            expect(first.json()).toMatchObject({ ok: true, state: 'queued', deploymentId: expect.any(String) });
+            const replay = { ...input, actionOperationId: crypto.randomUUID() };
+            expect((await request(original.owner.id, replay)).json()).toEqual(first.json());
+            // An authorized teammate resolves the same receipt. Home still owns
+            // Environment admission and reevaluates it on a new replay request.
+            expect((await request(teammate.id, replay)).json()).toEqual(first.json());
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: team.id, accountId: teammate.id } } });
+            const withdrawn = await request(teammate.id, replay);
+            expect(withdrawn.statusCode).toBe(404);
+            expect(withdrawn.json()).toMatchObject({ ok: false, error: 'deployment_unavailable' });
+
+            const foreign = await request(original.foreign.id, replay);
+            expect(foreign.statusCode).toBe(404);
+            expect(foreign.json()).toMatchObject({ ok: false, error: 'deployment_unavailable' });
+
+            const unrelated = await request(other.owner.id, { ...replay, environmentId: other.environment.id,
+                targetLinkId: other.target.id });
+            expect(unrelated.json()).toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
+            expect(await db.deployment.findMany({ where: { requestKey: input.requestKey }, select: {
+                environmentId: true, requestedByAccountId: true, actionOperationId: true,
+            } })).toEqual([{ environmentId: input.environmentId, requestedByAccountId: original.owner.id,
+                actionOperationId: input.actionOperationId }]);
+        });
     });
 
     it.each(['plain', 'e2ee'] as const)('captures retained provider Domains under the existing teardown admission in %s', async mode => {
