@@ -153,7 +153,6 @@ async function pruneGenerated(dir, keep) {
  * checkout's clients follow its (possibly uncommitted) schema, so a tree never borrows them.
  */
 async function prepareGeneratedInputs({ git, tree, dir, installDir, root, env, signal }) {
-  const { deriveRevisionGeneratedInputs } = await import(new URL('apps/stack/scripts/build/source_revision.mjs', tooling).href);
   const blobs = GENERATOR_INPUTS.map(path => { try { return git(['rev-parse', `${tree}:${path}`]).toString().trim(); } catch { return null; } });
   let prisma = null;
   try { prisma = realpathSync(dirname(createRequire(join(installDir, 'apps/server/package.json')).resolve('@prisma/client/package.json'))); } catch { /* no server */ }
@@ -165,7 +164,7 @@ async function prepareGeneratedInputs({ git, tree, dir, installDir, root, env, s
   // which must stay inside the tree. Entry loads only read them; a matching stamp makes derivation a no-op.
   const { cloneTree } = await import(new URL('apps/stack/scripts/build/source_revision_install.mjs', tooling).href);
   if (!tracked && existsSync(cached)) await cloneTree(cached, join(dir, GENERATED));
-  const derived = await deriveRevisionGeneratedInputs({ captureDir: dir, sourceDir: installDir, env, signal });
+  await deriveTreeGeneratedInputs({ dir, installDir, env, signal });
   const own = join(dir, GENERATED);
   if (!tracked && !existsSync(cached) && (await lstat(own).catch(() => null))?.isDirectory()) {
     await mkdir(cacheDir, { recursive: true });
@@ -178,7 +177,7 @@ async function prepareGeneratedInputs({ git, tree, dir, installDir, root, env, s
     await cloneTree(cached, own);
     await pruneGenerated(cacheDir, 3);
   }
-  return { derived, generatedKey: key };
+  return key;
 }
 
 function childCpuMs() {
@@ -246,12 +245,16 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
     at = mark('extractMs', at);
     // The shared installation stays published while the tree consumes it.
     const results = await withDependencyConsumption({ installDir, env, signal }, async () => {
-      const { generatedKey } = await prepareGeneratedInputs({ git, tree, dir, installDir, root, env, signal });
-      timings.generatedKey = generatedKey.slice(0, 12);
-      at = mark('generatedMs', at);
       const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(workspace => relative(dir, workspace.root)).filter(Boolean);
-      await mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs });
+      const mount = () => mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs, capturedOnly: true });
+      await mount();
       at = mark('mountMs', at);
+      const generatedKey = await prepareGeneratedInputs({ git, tree, dir, installDir, root, env, signal });
+      timings.generatedKey = generatedKey.slice(0, 12);
+      // Prisma generation releases the borrowed tools in the root and server
+      // modules. Rebind those tool links before running the entry graphs.
+      await mount();
+      at = mark('generatedMs', at);
       const harnessIds = ids.filter(id => id !== SERVER_ROUTES_GRAPH);
       const output = harnessIds.length ? await runTreeHarness({ dir, selected: harnessIds, env, signal }) : [];
       if (ids.includes(SERVER_ROUTES_GRAPH)) output.push(await runServerRoutes({ dir, env, signal }));
@@ -278,12 +281,36 @@ function waitForTreeChild(child) {
   });
 }
 
+const treeEnvironment = (dir, env) => ({ ...env, HAPPIER_STACK_REPO_DIR: dir, HAPPIER_STACK_TOOLING_PACKAGES: 'live' });
+
+/** Load preparation through the judged tree's loader and workspace packages. */
+async function deriveTreeGeneratedInputs({ dir, installDir, env, signal }) {
+  const entry = pathToFileURL(join(dir, 'apps/stack/scripts/build/source_revision.mjs')).href;
+  const generator = join(dir, 'packages/protocol/scripts/generate-embedded-feature-policies.mjs');
+  // Some imports of the revision preparation module already load Protocol.
+  // Materialize its exact policy input before loading that wider graph.
+  const primePolicy = existsSync(generator) ? `
+    const { writeEmbeddedFeaturePolicies } = await import(${JSON.stringify(pathToFileURL(generator).href)});
+    if (writeEmbeddedFeaturePolicies) await writeEmbeddedFeaturePolicies({ repoRoot: process.cwd() });
+  ` : '';
+  const code = `${primePolicy}
+const { deriveRevisionGeneratedInputs } = await import(${JSON.stringify(entry)});
+await deriveRevisionGeneratedInputs({ captureDir: process.cwd(), sourceDir: process.argv[1] });`;
+  const child = spawn(process.execPath, ['--import', join(dir, 'packages/cli-common/registerSourceRuntime.mjs'),
+    '--input-type=module', '-e', code, installDir],
+  { cwd: dir, env: treeEnvironment(dir, env), signal, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-1600); });
+  const status = await waitForTreeChild(child);
+  if (status !== 0) throw new Error(`tree generated inputs exited ${status}: ${stderr.trim()}`);
+}
+
 async function runTreeHarness({ dir, selected, env, signal }) {
   const code = `const { ENTRY_GRAPHS, loadEntryGraph } = await import(${JSON.stringify(pathToFileURL(join(dir, ENTRY_LOAD_PATH)).href)});
 const ids = ${JSON.stringify(selected)};
 for (const graph of ENTRY_GRAPHS.filter(graph => ids.includes(graph.id))) console.log('ENTRY_RESULT ' + JSON.stringify(await loadEntryGraph(graph)));`;
   // The tree is the commit: its packages load as they are, never through the checkout's HEAD pin.
-  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: dir, env: { ...env, HAPPIER_STACK_TOOLING_PACKAGES: 'live' }, signal, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--input-type=module', '-e', code], { cwd: dir, env: treeEnvironment(dir, env), signal, stdio: ['ignore', 'pipe', 'pipe'] });
   let stdout = ''; let stderr = '';
   child.stdout.on('data', chunk => { stdout += chunk; });
   child.stderr.on('data', chunk => { stderr += chunk; });
@@ -335,7 +362,7 @@ async function runServerRoutes({ dir, env, signal }) {
     await writeFile(probe, SERVER_ROUTES_PROBE);
     const child = spawn(process.execPath, ['--import', join(dir, 'packages/cli-common/registerSourceRuntime.mjs'), probe, dir], {
       cwd: join(dir, 'apps/server'), signal, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...env, HAPPIER_STACK_TOOLING_PACKAGES: 'live', TSX_TSCONFIG_PATH: join(dir, 'apps/server/tsconfig.json'), TSX_DISABLE_CACHE: '1',
+      env: { ...treeEnvironment(dir, env), TSX_TSCONFIG_PATH: join(dir, 'apps/server/tsconfig.json'), TSX_DISABLE_CACHE: '1',
         HAPPIER_HOME_DIR: home, HAPPIER_SERVER_LIGHT_DATA_DIR: home, HAPPIER_STACK_CLI_HOME_DIR: home } });
     let stdout = ''; let stderr = '';
     child.stdout.on('data', chunk => { stdout += chunk; });

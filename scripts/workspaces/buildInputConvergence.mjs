@@ -214,19 +214,21 @@ export async function mountInstalledNodeModules({ sourceModules, targetModules, 
  * Reuse installed tools, resolving captured first-party packages inside the
  * capture and tooling-only workspaces through their existing source owners.
  * Publishers must never write through a link into live node_modules.
- * @param {{ sourceDir: string, captureDir: string, workspaceDirs: string[], capturedFiles?: string[] }} input
+ * @param {{ sourceDir: string, captureDir: string, workspaceDirs: string[], capturedFiles?: string[], capturedOnly?: boolean }} input
  */
-export async function mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs, capturedFiles = [] }) {
+export async function mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs, capturedFiles = [], capturedOnly = false }) {
   const workspaces = new Map();
   for (const dir of workspaceDirs) {
     const capturedDir = join(captureDir, dir);
     const metadata = JSON.parse(await readFile(join(capturedDir, 'package.json'), 'utf8'));
-    if (typeof metadata.name === 'string' && metadata.name.startsWith('@happier-dev/')) workspaces.set(metadata.name, capturedDir);
+    if (typeof metadata.name === 'string' && metadata.name.startsWith('@happier-dev/')) {
+      workspaces.set(metadata.name, capturedOnly ? await realpath(capturedDir) : capturedDir);
+    }
   }
   // Copied build tooling has workspace imports beyond the package build graph.
   // Reuse its installed source owners, just like other unrelated workspaces;
   // captured packages always take precedence over those live tooling links.
-  if (capturedFiles.length) {
+  if (!capturedOnly && capturedFiles.length) {
     const packages = await readWorkspacePackages(sourceDir);
     for (const file of capturedFiles) {
       if (!/\.[cm]?[jt]sx?$/.test(file)) continue;
@@ -250,11 +252,17 @@ export async function mountCapturedWorkspaceDependencies({ sourceDir, captureDir
     const modules = join(captureDir, dir, 'node_modules');
     await mountInstalledNodeModules({ sourceModules, targetModules: modules, excludedNames: ['@happier-dev'] });
     await mkdir(join(modules, '@happier-dev'), { recursive: true });
-    const installedWorkspaces = await readdir(join(sourceModules, '@happier-dev')).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
+    const installedWorkspaces = capturedOnly ? [] : await readdir(join(sourceModules, '@happier-dev')).catch(error => { if (error.code === 'ENOENT') return []; throw error; });
     for (const name of installedWorkspaces) if (!workspaces.has(`@happier-dev/${name}`)) {
       await symlink(join(sourceModules, '@happier-dev', name), join(modules, '@happier-dev', name), process.platform === 'win32' ? 'junction' : 'dir');
     }
-    for (const [name, capturedDir] of workspaces) await symlink(capturedDir, join(modules, name), process.platform === 'win32' ? 'junction' : 'dir');
+    for (const [name, capturedDir] of workspaces) {
+      const target = join(modules, name);
+      // Generation can temporarily remove borrowed tool links, while the
+      // separately mounted captured workspace aliases remain in place.
+      if (capturedOnly && await realpath(target).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error)) === capturedDir) continue;
+      await symlink(capturedDir, target, process.platform === 'win32' ? 'junction' : 'dir');
+    }
   }
 }
 

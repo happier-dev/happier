@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -117,4 +118,94 @@ test('selects only the entry graphs whose workspace closure owns a changed path'
   assert.ok(!ui.selected.includes('server'), JSON.stringify(ui));
   assert.ok(!ui.selected.includes('server-routes'), JSON.stringify(ui));
   assert.ok(!ui.selected.includes('protocol-service-placement-actions'), JSON.stringify(ui));
+});
+
+
+function miniatureRevision(t, files) {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'p03-revision-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const env = { ...process.env };
+  for (const name of ['GIT_INDEX_FILE', 'GIT_DIR', 'GIT_WORK_TREE']) delete env[name];
+  const git = (...args) => execFileSync('git', args, { cwd: repo, env, encoding: 'utf8' }).trim();
+  const write = (name, bytes) => {
+    fs.mkdirSync(path.dirname(path.join(repo, name)), { recursive: true });
+    fs.writeFileSync(path.join(repo, name), bytes);
+  };
+  git('init', '-q');
+  git('config', 'user.name', 'fixture');
+  git('config', 'user.email', 'fixture@example.invalid');
+  write('package.json', '{"private":true,"type":"module"}');
+  write('.gitignore', 'node_modules/\ndist/\n');
+  write('pnpm-workspace.yaml', 'packages: ["packages/*", "packages/plugins/*"]\n');
+  for (const [name, bytes] of Object.entries(files)) write(name, bytes);
+  git('add', '.');
+  git('commit', '-qm', 'selected revision');
+  return { repo, tree: git('rev-parse', 'HEAD'), write };
+}
+
+test('revision bundles resolve candidate-only entry points and never load primary workspace dist', async t => {
+  const entry = 'packages/plugins/machine-ssh/src/index.ts';
+  const stale = 'packages/plugins/machine-ssh/dist/stale.js';
+  const { repo, tree, write } = miniatureRevision(t, {
+    [entry]: "import { value } from '@happier-dev/protocol'; export default value;",
+    'packages/protocol/package.json': '{"name":"@happier-dev/protocol","exports":{".":{"happier-source":"./src/index.ts","default":"./dist/index.js"}}}',
+    'packages/protocol/src/index.ts': 'export const value = "judged revision";',
+    'packages/plugins/machine-ssh/src/stale.ts': "export { value } from '../dist/stale.js';",
+    'packages/cli-common/package.json': '{"name":"@happier-dev/cli-common"}',
+  });
+  fs.rmSync(path.join(repo, entry));
+  write('packages/protocol/src/index.ts', 'export const value = "primary checkout";');
+  write(stale, 'export const value = "primary dist only";');
+  const require = createRequire(import.meta.url);
+  fs.mkdirSync(path.join(repo, 'node_modules'));
+  fs.symlinkSync(path.dirname(require.resolve('esbuild/package.json')), path.join(repo, 'node_modules/esbuild'), 'junction');
+  // The resolver used to be imported from the primary checkout. The implementation
+  // is the same production module, supplied through its real path in this fixture.
+  fs.symlinkSync(path.join(real, 'packages/cli-common/sourceRuntimeEntries.mjs'),
+    path.join(repo, 'packages/cli-common/sourceRuntimeEntries.mjs'), 'file');
+  const { revisionSourceBundler } = await import('./revisionSourceBundle.mjs');
+  const bundle = await revisionSourceBundler({ repo, rev: tree, preloadRoots: ['packages'] });
+  const build = name => bundle.esbuild.build({ absWorkingDir: repo, entryPoints: [path.join(repo, name)],
+    bundle: true, write: false, format: 'esm', logLevel: 'silent', plugins: [bundle.plugin] });
+  const selected = await build(entry);
+  assert.match(selected.outputFiles[0].text, /judged revision/);
+  assert.doesNotMatch(selected.outputFiles[0].text, /primary checkout/);
+  await build('packages/plugins/machine-ssh/src/stale.ts').catch(() => {});
+  assert.ok(bundle.missing.some(line => line.includes(stale)), 'a primary dist file cannot satisfy an import');
+});
+
+test('entry graph generation and workspace resolution stay inside the judged tree', async t => {
+  const { repo, tree, write } = miniatureRevision(t, {
+    'apps/stack/scripts/perf/entry-graphs.mjs': "export const ENTRY_GRAPHS = [{ id: 'isolated', entry: 'packages/protocol/src/index.mjs' }];",
+    'apps/stack/scripts/perf/entry-load.mjs': `
+      import { readFile } from 'node:fs/promises';
+      export { ENTRY_GRAPHS } from './entry-graphs.mjs';
+      export async function loadEntryGraph() {
+        const { selected } = await import('@happier-dev/protocol');
+        const generated = await readFile('generated-by-tree', 'utf8').catch(() => 'missing');
+        const absent = await import('@happier-dev/primary-only').then(() => false, () => true);
+        const status = selected === 'judged' && generated === 'judged' && absent ? 'passed' : 'failed';
+        return { graph: 'isolated', status, entry: 'packages/protocol/src/index.mjs', elapsedMs: 1,
+          loadError: { message: JSON.stringify({ selected, generated, absent }) } };
+      }
+    `,
+    'apps/stack/scripts/build/source_revision.mjs': `
+      import { writeFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      import { selected } from '@happier-dev/protocol';
+      export async function deriveRevisionGeneratedInputs({ captureDir }) {
+        await writeFile(join(captureDir, 'generated-by-tree'), selected);
+      }
+    `,
+    'packages/cli-common/registerSourceRuntime.mjs': '',
+    'packages/protocol/package.json': '{"name":"@happier-dev/protocol","type":"module","exports":"./src/index.mjs"}',
+    'packages/protocol/src/index.mjs': "export const selected = 'judged';",
+  });
+  write('node_modules/@happier-dev/primary-only/package.json', '{"type":"module","exports":"./index.mjs"}');
+  write('node_modules/@happier-dev/primary-only/index.mjs', "export const selected = 'primary';");
+  write('packages/protocol/src/index.mjs', "export const selected = 'primary';");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p03-isolated-load-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const result = await commitTreeEntryLoads({ repo, base: tree, tree, graphIds: ['isolated'], root });
+  assert.deepEqual(result.results.map(row => row.status), ['passed'], JSON.stringify(result));
 });
