@@ -11,7 +11,6 @@ import {
 } from '@/dev/testkit/harness/popoverHarness';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { renderScreen } from '@/dev/testkit';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 
@@ -178,52 +177,6 @@ describe('Popover (web)', () => {
             throw new Error('Expected numeric z-index values for backdrop and content');
         }
         expect(contentZ).toBeGreaterThan(backdropZ);
-    });
-
-    it('keeps closing content mounted until the shared exit animation finishes', async () => {
-        vi.useFakeTimers();
-
-        const { Popover } = await import('./Popover');
-
-        const anchorRef = { current: null } as any;
-
-        const screen = await renderScreen(React.createElement(
-            Popover,
-            {
-                open: true,
-                anchorRef,
-                backdrop: false,
-                onRequestClose: () => {},
-                children: () => React.createElement('PopoverChild'),
-            },
-        ));
-
-        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
-
-        await act(async () => {
-            await screen.update(React.createElement(
-                Popover,
-                {
-                    open: false,
-                    anchorRef,
-                    backdrop: false,
-                    onRequestClose: () => {},
-                    children: () => React.createElement('PopoverChild'),
-                },
-            ));
-        });
-
-        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
-
-        await act(async () => {
-            vi.advanceTimersByTime(motionTokens.overlay.popover.exitMs - 1);
-        });
-        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(1);
-
-        await act(async () => {
-            vi.advanceTimersByTime(1);
-        });
-        expect(screen.findAllByType('PopoverChild' as any)).toHaveLength(0);
     });
 
     it('wraps portal-to-body popovers in a Radix DismissableLayer Branch so underlying Vaul/Radix layers don’t treat it as “outside”', async () => {

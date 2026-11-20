@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { installPopoverCommonModuleMocks } from './popoverTestHelpers';
 
 const viewport = vi.hoisted(() => ({ width: 1440, height: 1000 }));
@@ -67,6 +68,9 @@ describe('Popover content across its anchored and sheet presentations', () => {
                 expect(document.querySelectorAll('[data-testid="demand-body"]')).toHaveLength(1);
                 expect(dimensionSubscriptions.size).toBe(onePresentationSubscriptions);
                 expect(unlisten.mock.calls.slice(beforeClose).filter(([event]) => event === 'focusout')).toHaveLength(0);
+                await act(async () => { await vi.advanceTimersByTimeAsync(motionTokens.overlay.popover.exitMs - 1); });
+                expect(document.querySelectorAll('[data-testid="demand-body"]')).toHaveLength(1);
+                await act(async () => { await vi.advanceTimersByTimeAsync(1); });
             }
             await settle();
             expect(document.querySelector('[data-testid="demand-body"]')).toBeNull();
