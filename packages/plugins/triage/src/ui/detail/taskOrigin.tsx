@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { Button, Stack, Status, usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
-import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorResultV1Schema,
+import { TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1, TriageTaskOriginResourceResultV1Schema,
   type TriageTaskOriginErrorV1Schema } from '../../actions/taskOriginProtocol.js';
-import { TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TriageReadTaskOriginReviewResultV1Schema,
-  type TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
+import type { TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
 import { openTriageLinkedEntry } from '../navigation/openLinkedEntry.js';
 import { isHostCancellation } from '../../hostCancellation.js';
 import { presentTriageMountedUiActionFailure } from '../mountedActions.js';
@@ -43,14 +42,11 @@ export function TriageTaskOrigin(props: Readonly<{ entryRef: TriageEntryRefV1; r
     setOriginReview(null);
     setFailed(false);
     const input = { v: 1, entryRef: props.entryRef };
-    const options = { signal: controller.signal };
-    void Promise.all([
-      host.executeAction(TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, input, options)
-        .then(raw => TriageReadTaskOriginErrorResultV1Schema.parse(raw).originError),
-      host.executeAction(TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, input, options)
-        .then(raw => TriageReadTaskOriginReviewResultV1Schema.parse(raw).originReview),
-    ])
-      .then(([error, review]) => { if (!controller.signal.aborted) { setOrigin(error); setOriginReview(review); } })
+    void host.readResource(TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1, { input, signal: controller.signal })
+      .then(content => TriageTaskOriginResourceResultV1Schema.parse(JSON.parse(new TextDecoder().decode(content.bytes))))
+      .then(({ originError, originReview }) => {
+        if (!controller.signal.aborted) { setOrigin(originError); setOriginReview(originReview); }
+      })
       .catch(async (error: unknown) => {
         if (isHostCancellation(error, controller.signal)) return;
         setFailed(true);

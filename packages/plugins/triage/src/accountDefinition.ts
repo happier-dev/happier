@@ -14,6 +14,8 @@ import { createTriageCreateTaskActionHandler, createTriageEditTaskActionHandler,
 import { createTriageReadTaskOriginReviewActionHandler, createTriageSetTaskOriginReviewActionHandler } from './actions/taskReview.js';
 import { TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TriageReadTaskOriginReviewInputV1Schema, TriageReadTaskOriginReviewResultV1Schema, TriageSetTaskOriginReviewInputV1Schema, TriageSetTaskOriginReviewResultV1Schema } from './actions/taskReviewProtocol.js';
 import { createTriageReadTaskOriginErrorActionHandler, createTriageSetTaskOriginErrorActionHandler } from './actions/taskOrigin.js';
+import { TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1 } from './actions/taskOriginProtocol.js';
+import { TRIAGE_TASK_ORIGIN_RESOURCE_RUNTIME } from './actions/taskOriginResource.js';
 import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorInputV1Schema, TriageReadTaskOriginErrorResultV1Schema, TriageSetTaskOriginErrorInputV1Schema, TriageSetTaskOriginErrorResultV1Schema } from './actions/taskOriginProtocol.js';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1, TriageCreateTaskActionInputV1Schema, TriageCreateTaskActionResultV1Schema, TriageEditTaskActionInputV1Schema, TriageTransitionTaskActionInputV1Schema } from './actions/tasksProtocol.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesInputV1Schema, TriageListEntriesResultV1Schema } from './actions/listEntriesProtocol.js';
@@ -582,6 +584,11 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
 } as const;
 export const TRIAGE_ACCOUNT_RESOURCES = {
   ...TRIAGE_ISSUE_OPTIONS_RESOURCES,
+[TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1]: {
+        source: 'dynamic', kind: 'config', scope: 'surface', contentType: 'application/json',
+        hostAccess: ['account-storage'], execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        runtime: TRIAGE_TASK_ORIGIN_RESOURCE_RUNTIME,
+      },
 [TRIAGE_SESSION_LINKS_RESOURCE_LOCAL_ID_V1]: {
         source: 'dynamic',
         kind: 'config',

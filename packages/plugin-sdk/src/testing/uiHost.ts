@@ -425,6 +425,7 @@ export type PluginUiTestkitExecuteActionInput = Readonly<{
 
 export type PluginUiTestkitReadResourceInput = Readonly<{
     resource: PluginUiResourceReference;
+    input?: JsonValue;
     signal: AbortSignal;
 }>;
 
@@ -1476,6 +1477,7 @@ async function createPluginUiTestkitInternal<TSurface>(
                 const payload = requireRecord(message.payload, 'readResource payload');
                 return encodeResource(await handlers.readResource({
                     resource: readResourceReference(payload.resource, 'resource'),
+                    ...(payload.input === undefined ? {} : { input: payload.input }),
                     signal,
                 }));
             }

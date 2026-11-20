@@ -1523,6 +1523,7 @@ describe('createPluginUiTestkit', () => {
 
     it('mounts a strict public context and routes real public host operations through supplied boundaries', async () => {
         const semantic = createSemanticAdapter();
+        const resourceInputs: unknown[] = [];
         let resource = {
             contentType: 'application/json',
             digest: firstDigest,
@@ -1555,8 +1556,9 @@ describe('createPluginUiTestkit', () => {
                     expect(signal.aborted).toBe(false);
                     return { kind: 'cancelled' };
                 },
-                readResource: async ({ resource: requested }) => {
+                readResource: async ({ resource: requested, input }) => {
                     calls.push(`resource:${typeof requested === 'string' ? requested : 'hostRead' in requested ? requested.hostRead : requested.localId}`);
+                    resourceInputs.push(input);
                     return resource;
                 },
                 watchResource: ({ resource: requested, signal }) => {
@@ -1618,8 +1620,9 @@ describe('createPluginUiTestkit', () => {
                 action: { pluginId: 'com.acme.provider', localId: 'setup' },
             },
         })).resolves.toEqual({ kind: 'cancelled' });
-        await expect(fixture.context.hostApi.readResource('review'))
+        await expect(fixture.context.hostApi.readResource('review', { input: { reviewId: 'review-7' } }))
             .resolves.toMatchObject({ contentType: 'application/json', digest: firstDigest, bytes: new Uint8Array([1, 2, 3]) });
+        expect(resourceInputs).toEqual([{ reviewId: 'review-7' }]);
         await fixture.context.hostApi.openSurface('review-detail', { reviewId: 'review-7' }, {
             subPath: 'details',
             instanceKey: 'review-7',
