@@ -14050,7 +14050,8 @@ settingsSession: {
         deployments: {
             services: {
                 checkEditUnavailableOnMachine: ({ machine }: { machine: string }) => `目前無法在 ${machine} 上編輯這項檢查。上方顯示已儲存的值。`,
-                checkEditSourceUnreachable: "無法連線到已儲存的事件來源。",
+                checkEditSourceUnreachable: "無法讀取此檢查已儲存的設定。",
+                checkMachineOffline: ({ machine }: { machine: string }) => `${machine} 已離線。請讓它重新上線，或改由另一台 Machine 檢查。`,
             },
             databaseQuery: {
                 title: "唯讀查詢", database: "資料庫名稱", run: "執行查詢", sql: "SQL", parameters: "參數 (JSON)",

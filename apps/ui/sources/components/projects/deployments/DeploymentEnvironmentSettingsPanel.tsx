@@ -458,7 +458,8 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
 
         {/* dSettings KEEP order: private sharing follows the registry credentials. */}
         <View ref={revealHost('sharing')} collapsable={false}>
-          <DeploymentPrivateServiceExports detail={detail} editing={editing} environments={props.referenceEnvironments} />
+          <DeploymentPrivateServiceExports detail={detail} editing={editing} environments={props.referenceEnvironments}
+            lifetime={props.lifetime ?? null} />
         </View>
 
         <ItemGroup

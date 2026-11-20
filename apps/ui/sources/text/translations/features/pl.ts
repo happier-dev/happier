@@ -498,7 +498,7 @@ const deploymentSettingsTranslations = {
     privateSharingTitle: "Udostępnianie prywatne",
     privateSharingBody: "Udostępnij usługę prywatnie. Zmiany obowiązują od następnego wdrożenia.",
     privateSharingAdd: "Udostępnij usługę",
-    privateSharingRepository: "Zmień plik Compose w repozytorium, aby udostępnić usługę prywatnie, a następnie skonfiguruj eksport z agentem.",
+    privateSharingRepository: "To środowisko uruchamia plik Compose ze swojego repozytorium, więc usługę udostępnia się w tym pliku. Przygotuj z agentem otwiera sesję w repozytorium; powiedz mu, którą usługę udostępnić prywatnie.",
     privateSharingUnsupported: "Poproś agenta o zmianę tych eksportów z zachowaniem obecnego dostępu.",
     privateSharingMultipleMachines: "Ten edytor może skonfigurować dostęp prywatny tylko dla środowiska działającego na jednej maszynie.",
     privateSharingNetworkMissing: "Na maszynie środowiska otwórz Sieć → Sieci prywatne, połącz Tailscale i dołącz do sieci drugiej aplikacji.",

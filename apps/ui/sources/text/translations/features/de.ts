@@ -497,7 +497,7 @@ const deploymentSettingsTranslations = {
     privateSharingTitle: "Private Freigabe",
     privateSharingBody: "Gib einen Dienst privat frei. Änderungen gelten ab dem nächsten Deployment.",
     privateSharingAdd: "Dienst freigeben",
-    privateSharingRepository: "Bearbeite die Compose-Datei im Repository für eine private Veröffentlichung und richte den Dienstexport mit einem Agenten ein.",
+    privateSharingRepository: "Diese Umgebung führt die Compose-Datei ihres Repositorys aus, daher wird ein Dienst in dieser Datei geteilt. „Mit einem Agenten vorbereiten“ öffnet eine Sitzung im Repository; sag ihr, welchen Dienst sie privat teilen soll.",
     privateSharingUnsupported: "Lass einen Agenten diese Exporte bearbeiten, damit bestehende Zugriffe erhalten bleiben.",
     privateSharingMultipleMachines: "Dieser Editor kann die private Freigabe nur für eine Umgebung auf einer einzelnen Maschine einrichten.",
     privateSharingNetworkMissing: "Öffne auf der Laufzeitmaschine Netzwerk → Private Netzwerke, verbinde Tailscale und tritt dem Netzwerk der anderen App bei.",

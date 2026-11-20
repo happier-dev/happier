@@ -374,7 +374,8 @@ export function ServiceCheckDetail(
     {submitted?.error ? showRecovery(submitted.error.message, {
       label: t('common.retry'), onPress: () => saveSource(submitted.trigger),
     }) : submitted ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} />
-      : offlineObserver && editField !== 'from' ? showRecovery(t('automations.detail.event.watcherMachineOffline'), {
+      // Name the Machine and the way out, not the mechanism (PAGE-ACCEPT-176 R9-D3).
+      : offlineObserver && editField !== 'from' ? showRecovery(t(`${k}.checkMachineOffline`, { machine: observer ?? t('approvals.machineNotKnown') }), {
         label: t('runs.openMachine'),
         onPress: () => router.push(machinePageHref({ door: 'rail', target: { machineId: offlineObserver, serverId } })),
       })

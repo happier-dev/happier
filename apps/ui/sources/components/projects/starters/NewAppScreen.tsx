@@ -574,9 +574,10 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const stepIndex = deployStep ? 1 + DEPLOY_STEPS.indexOf(deployStep) : step === 'auto' ? 0 : STEPS.indexOf(step);
   // The source step already counts the deploy path's four dots, so choosing a source fills a dot instead of adding one
   // (PAGE-ACCEPT-176 R2-D5); only Describe your app, the other way in, has its own three.
-  // One count per path (PAGE-ACCEPT-176 R8-D8): a starter chosen on the source step already counts its own three, so
-  // Continue fills the next dot of the same stepper instead of dropping one.
-  const starterPath = step === 'describe' || step === 'create'
+  // One count per path (PAGE-ACCEPT-176 R8-D8, R9): a starter chosen on the source step already counts its own three, so
+  // Continue fills the next dot of the same stepper instead of dropping one. Describe your app suggests a starter and
+  // continues to its Configure, so it counts the same three.
+  const starterPath = step === 'describe' || step === 'create' || step === 'auto'
     || (step === 'start' && starter !== null && codeSourceId === null && door === null && pastedRepository === null);
   const stepCount = starterPath ? STEPS.length : 1 + DEPLOY_STEPS.length;
   // With nothing to pick, the state's own next step (Add a computer, Retry) is the only action. Your code continues
@@ -1114,9 +1115,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             scrollHost: 'body' as const,
             title: headingTitle,
             subtitle: headingDescription,
-            // Describe your app comes before its path is known (a starter's three steps or a deploy's four): it draws no
-            // count rather than one it may have to take back.
-            actions: step === 'auto' ? null : <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,
+            actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={stepCount} />,
             footer: (
               <ModalCardFooterActions note={footerNote}>
                 {step === 'start' && !addingMachine ? (

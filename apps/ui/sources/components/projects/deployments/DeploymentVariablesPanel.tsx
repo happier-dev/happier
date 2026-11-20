@@ -1063,7 +1063,8 @@ function AddReferenceVariable(
               testID="project-deployments.environment.variables.add.reference"
               label={t('projects.deployments.editors.referenceTarget')}
               items={targets.map(item => ({ id: keyFor(item),
-                title: `${item.service} · ${item.export}`,
+                // A service shared under its own name says it once.
+              title: item.service === item.export ? item.service : `${item.service} · ${item.export}`,
                 ...(item.network ? { subtitle: item.network } : {}) }))}
               selectedId={targetKey}
               onSelect={setTargetKey}

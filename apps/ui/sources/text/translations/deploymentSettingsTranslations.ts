@@ -273,7 +273,7 @@ export const deploymentSettingsTranslations = {
     privateSharingTitle: "Private sharing",
     privateSharingBody: "Share a service privately. Saved changes apply on the next deploy.",
     privateSharingAdd: "Share a service",
-    privateSharingRepository: "Edit this repository’s Compose file to publish a service privately, then configure its service export with an agent.",
+    privateSharingRepository: "This Environment runs its repository’s Compose file, so a service is shared from that file. Prepare with an agent opens a Session on the repository; tell it which service to share privately.",
     privateSharingUnsupported: "These exports need an agent to edit them without replacing existing access.",
     privateSharingMultipleMachines: "This editor can configure private sharing only for an Environment running on one Machine.",
     privateSharingNetworkMissing: "On the runtime Machine, open Network → Private networks, connect Tailscale, then join the same network as the other app.",

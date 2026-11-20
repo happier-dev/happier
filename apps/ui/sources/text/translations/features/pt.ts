@@ -501,7 +501,7 @@ const deploymentSettingsTranslations = {
     privateSharingTitle: "Partilha privada",
     privateSharingBody: "Partilhe um serviço em privado. As alterações aplicam-se no próximo deploy.",
     privateSharingAdd: "Partilhar serviço",
-    privateSharingRepository: "Edite o ficheiro Compose do repositório para publicar o serviço de forma privada e configure a exportação com um agente.",
+    privateSharingRepository: "Este ambiente executa o ficheiro Compose do seu repositório, por isso um serviço é partilhado a partir desse ficheiro. Preparar com um agente abre uma sessão no repositório; diga-lhe que serviço partilhar em privado.",
     privateSharingUnsupported: "Peça a um agente para editar estas exportações mantendo o acesso existente.",
     privateSharingMultipleMachines: "Este editor só pode configurar a partilha privada de um ambiente em execução numa única máquina.",
     privateSharingNetworkMissing: "Na máquina do ambiente, abra Rede → Redes privadas, ligue o Tailscale e entre na mesma rede da outra aplicação.",

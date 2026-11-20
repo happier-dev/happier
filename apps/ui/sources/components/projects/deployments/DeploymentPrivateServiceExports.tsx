@@ -29,6 +29,8 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import type { VariableReferenceEnvironments } from './DeploymentVariablesPanel';
+import { DeploymentPreparationEntry } from './DeploymentPreparation';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { buildPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
   readPrivateServiceSharingScheme, type PrivateServiceExportAuthoring, type PrivateServiceExportReach } from './privateServiceExport';
 
@@ -50,6 +52,8 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
   editing: DeploymentEnvironmentEditing | null;
   /** The Project's Environments (the Variables picker's list): the others are where this service is used from. */
   environments?: VariableReferenceEnvironments;
+  /** The captured Home/Account the repository's agent entry runs under; absent while it is not current. */
+  lifetime?: ServerAccountScopeLifetime | null;
 }>) {
   const exports = props.detail.content.ownServer?.serviceExports ?? [];
   const editing = props.editing;
@@ -70,7 +74,15 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
       title={t('projects.deployments.settingsSections.privateSharingAdd')} onPress={open} /> : undefined}>
     {exports.map(entry => <Item key={entry.key} testID={`${id}.export:${entry.key}`} title={entry.key}
       subtitle={`${entry.service}:${entry.containerPort}`} detail={privateServiceExportReachLabel(entry)} mode="info" />)}
-    {authoring.kind === 'unavailable' && privateServiceExportUnavailableReason(authoring.reason)
+    {/* A repository-defined Environment shares a service from its Compose file: the row leads to the agent that edits
+        that file (the Environment's own Prepare with an agent), so sharing never ends at a sentence (PAGE-ACCEPT-176 R9-D2). */}
+    {authoring.kind === 'unavailable' && authoring.reason === 'repository' && props.lifetime
+      ? <Item testID={`${id}.repository`} title={t('projects.deployments.settingsSections.privateSharingAdd')}
+        subtitle={privateServiceExportUnavailableReason('repository')!} subtitleLines={0}
+        showChevron={false} rightElement={<DeploymentPreparationEntry lifetime={props.lifetime}
+          projectSourceId={props.detail.environment.projectSourceId} environmentId={props.detail.environment.id}
+          mode="prepare" emphasis="secondary" />} />
+      : authoring.kind === 'unavailable' && privateServiceExportUnavailableReason(authoring.reason)
       ? <Item testID={`${id}.${authoring.reason}`} title={privateServiceExportUnavailableReason(authoring.reason)!} mode="info" /> : null}
   </ItemGroup>;
 }
@@ -134,6 +146,7 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
     hostAddress: string | null; networkName: string }> | null>(null);
   const [invalid, setInvalid] = React.useState(false);
   const [advanced, setAdvanced] = React.useState(false);
+  const [reviewDetails, setReviewDetails] = React.useState(false);
   // Happier forwarding needs no joined network; an explicitly chosen network retains its observed identity.
   const chosen = reachId ?? HAPPIER_NETWORK;
   const selectedNetwork: MachinePrivateNetworkObservationV1 | undefined = networks.find(network => networkReachId(network) === chosen);
@@ -204,18 +217,26 @@ function PrivateServiceExportSheet(props: SheetInput & CustomModalInjectedProps)
       onChangeText={onChangeText} autoCapitalize="none" placeholder={placeholder}
       {...(name === 'containerPort' || name === 'hostPort' ? { keyboardType: 'number-pad' as const } : {})} /></FieldItem>;
   return <ListPresentationProvider value="page" pageInsets="contained"><View style={deploymentSheetStyles.body}>
+    {/* Review says what is shared, with whom, and that it stays off the internet; the values a developer checks wait in
+        one disclosure (PAGE-ACCEPT-176 R9-D1). */}
     {reviewed ? <ItemGroup title={t('projects.deployments.settingsSections.privateSharingReview')}
-      description={t(reviewed.hostAddress === null ? 'projects.deployments.settingsSections.privateSharingReviewBodyHappier'
-        : 'projects.deployments.settingsSections.privateSharingReviewBody')}>
-      <Item title={t('projects.deployments.settingsSections.privateSharingService')} detail={`${service}:${containerPort}`} mode="info" />
-      <Item title={t('projects.deployments.settingsSections.privateSharingKey')} detail={key} mode="info" />
-      <Item title={t('projects.deployments.settingsSections.privateSharingScheme')} detail={scheme} mode="info" />
+      description={reviewed.hostAddress === null
+        ? t('projects.deployments.settingsSections.privateSharingOutcomeHappier', { service })
+        : t('projects.deployments.settingsSections.privateSharingOutcomeNetwork', { service, network: reviewed.networkName })}>
+      <Item title={t('projects.deployments.settingsSections.privateSharingService')} detail={service} mode="info" />
       <Item title={t('projects.deployments.settingsSections.privateSharingWho')}
         detail={reviewed.networkName} mode="info" />
-      {reviewed.hostAddress === null ? null : <Item testID={`${id}.reviewAddress`}
-        title={t('projects.deployments.settingsSections.privateSharingAddress')} detail={reviewed.hostAddress} mode="info" />}
-      <Item testID={`${id}.reviewHostPort`} title={t('projects.deployments.settingsSections.privateSharingHostPort')}
-        detail={explicitHostPort || automaticHostPort} mode="info" />
+      <ExpandableItem testID={`${id}.reviewDetails`} expanded={reviewDetails} onExpandedChange={setReviewDetails}
+        header={state => <Item {...state.headerProps} title={t('newApp.details')}
+          subtitle={[key, containerPort, scheme, reviewed.hostAddress, explicitHostPort || automaticHostPort].filter(Boolean).join(' · ')} />}>
+        <Item title={t('projects.deployments.settingsSections.privateSharingKey')} detail={key} mode="info" />
+        <Item title={t('projects.deployments.settingsSections.privateSharingPort')} detail={containerPort} mode="info" />
+        <Item title={t('projects.deployments.settingsSections.privateSharingScheme')} detail={scheme} mode="info" />
+        {reviewed.hostAddress === null ? null : <Item testID={`${id}.reviewAddress`}
+          title={t('projects.deployments.settingsSections.privateSharingAddress')} detail={reviewed.hostAddress} mode="info" />}
+        <Item testID={`${id}.reviewHostPort`} title={t('projects.deployments.settingsSections.privateSharingHostPort')}
+          detail={explicitHostPort || automaticHostPort} mode="info" />
+      </ExpandableItem>
     </ItemGroup> : <>
       {services.length === 0 ? <SurfaceStateCard size="line" kind="unavailable"
           title={t('projects.deployments.settingsSections.privateSharingInvalid')} />

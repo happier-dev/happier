@@ -498,7 +498,7 @@ const deploymentSettingsTranslations = {
     privateSharingTitle: "プライベート共有",
     privateSharingBody: "サービスを非公開で共有します。保存内容は次のデプロイで適用されます。",
     privateSharingAdd: "サービスを共有",
-    privateSharingRepository: "リポジトリの Compose ファイルを編集してサービスを非公開で公開し、エージェントにサービスのエクスポートを設定してもらってください。",
+    privateSharingRepository: "この環境はリポジトリの Compose ファイルを実行するため、サービスはそのファイルから共有します。「エージェントで準備」はリポジトリでセッションを開きます。どのサービスを非公開で共有するか伝えてください。",
     privateSharingUnsupported: "既存のアクセスを維持するため、これらのエクスポートはエージェントに編集を依頼してください。",
     privateSharingMultipleMachines: "このエディターでは、1台のマシンで実行される環境のみプライベート共有を設定できます。",
     privateSharingNetworkMissing: "実行マシンで「ネットワーク → プライベートネットワーク」を開き、Tailscale を接続して、他のアプリと同じネットワークに参加してください。",

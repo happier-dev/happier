@@ -448,7 +448,9 @@ export function DeploymentDatabasePage(
   const setBindings = props.setBindings;
   // Sharing is authored in Settings › Private sharing; its owner decides whether this viewer can do it here.
   const sharing = privateServiceExportAuthoring(detail, detail.environment.capabilities.role === 'manager');
-  const openSharing = sharing.kind === 'ready'
+  // A repository-defined Environment shares from its Compose file; Settings › Private sharing holds the agent that edits
+  // it, so Share leads there too instead of stopping at the reason (PAGE-ACCEPT-176 R9-D2).
+  const openSharing = sharing.kind === 'ready' || (sharing.kind === 'unavailable' && sharing.reason === 'repository')
     ? () => props.onNavigate({ tab: 'settings', section: 'sharing' }) : null;
   const sharingBlocked = sharing.kind === 'unavailable' ? privateServiceExportUnavailableReason(sharing.reason) : null;
   const openConnect = database.kind === 'selfHosted' && setBindings && controller ? () => showDeploymentSheet({

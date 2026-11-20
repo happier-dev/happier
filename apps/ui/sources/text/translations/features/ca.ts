@@ -501,7 +501,7 @@ const deploymentSettingsTranslations = {
     privateSharingTitle: "Accés privat",
     privateSharingBody: "Comparteix un servei de manera privada. Els canvis s’apliquen al pròxim desplegament.",
     privateSharingAdd: "Compartir servei",
-    privateSharingRepository: "Edita el fitxer Compose del repositori per publicar el servei en privat i configura’n l’exportació amb un agent.",
+    privateSharingRepository: "Aquest entorn executa el fitxer Compose del seu repositori, així que un servei es comparteix des d’aquest fitxer. Prepara amb un agent obre una sessió al repositori; digues-li quin servei vols compartir de manera privada.",
     privateSharingUnsupported: "Demana a un agent que editi aquestes exportacions conservant l’accés actual.",
     privateSharingMultipleMachines: "Aquest editor només pot configurar l’accés privat d’un entorn que s’executa en una sola màquina.",
     privateSharingNetworkMissing: "A la màquina de l’entorn, obre Xarxa → Xarxes privades, connecta Tailscale i uneix-te a la xarxa de l’altra aplicació.",

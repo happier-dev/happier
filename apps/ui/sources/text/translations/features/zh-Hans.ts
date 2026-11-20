@@ -493,7 +493,7 @@ const deploymentSettingsTranslations = {
     privateSharingTitle: "私有共享",
     privateSharingBody: "私密共享服务。保存的更改将在下次部署时生效。",
     privateSharingAdd: "共享服务",
-    privateSharingRepository: "编辑仓库中的 Compose 文件以私有方式发布服务，然后请智能体配置服务导出。",
+    privateSharingRepository: "此环境运行其仓库中的 Compose 文件，因此服务需要在该文件中共享。“用代理准备”会在仓库上打开一个会话；告诉它要私下共享哪个服务。",
     privateSharingUnsupported: "请智能体编辑这些导出，以保留现有访问方式。",
     privateSharingMultipleMachines: "此编辑器只能为在单台机器上运行的环境配置私有共享。",
     privateSharingNetworkMissing: "在运行环境的机器上，打开“网络 → 私有网络”，连接 Tailscale，再加入另一应用所在的网络。",

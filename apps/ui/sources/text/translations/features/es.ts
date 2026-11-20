@@ -500,7 +500,7 @@ const deploymentSettingsTranslations = {
     privateSharingTitle: "Acceso privado",
     privateSharingBody: "Comparte un servicio de forma privada. Los cambios se aplican en el próximo despliegue.",
     privateSharingAdd: "Compartir servicio",
-    privateSharingRepository: "Edita el archivo Compose del repositorio para publicar el servicio de forma privada y configura su exportación con un agente.",
+    privateSharingRepository: "Este entorno ejecuta el archivo Compose de su repositorio, así que un servicio se comparte desde ese archivo. Preparar con un agente abre una sesión en el repositorio; dile qué servicio compartir de forma privada.",
     privateSharingUnsupported: "Pide a un agente que edite estas exportaciones conservando el acceso actual.",
     privateSharingMultipleMachines: "Este editor solo puede configurar el acceso privado de un entorno que se ejecuta en una máquina.",
     privateSharingNetworkMissing: "En la máquina del entorno, abre Red → Redes privadas, conecta Tailscale y únete a la misma red que la otra aplicación.",

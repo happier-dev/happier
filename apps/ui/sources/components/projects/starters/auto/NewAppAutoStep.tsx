@@ -172,7 +172,9 @@ export function NewAppAutoStep(
           accessibilityLabel={t('newApp.auto.descriptionLabel')}
           placeholder={t('newApp.auto.descriptionPlaceholder')}
           multiline
-          minLines={props.phone ? 5 : 4}
+          // Alone on the step, the description takes the sheet's height rather than sitting above an empty sheet
+          // (PAGE-ACCEPT-176 R9); once questions or progress join it, it steps back to a few lines.
+          minLines={view.kind === 'describe' ? (props.phone ? 12 : 26) : props.phone ? 5 : 4}
           growWithText
           editable={view.kind !== 'working'}
           autoFocus={view.kind === 'describe' && !props.phone}
