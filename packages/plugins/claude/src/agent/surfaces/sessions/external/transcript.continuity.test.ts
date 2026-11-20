@@ -298,23 +298,23 @@ describe('Claude external transcript continuity evidence', () => {
         expect(advanced.readAfterOutcome).toBeUndefined();
     });
 
-    it.each([false, true])('reports an oversized valid UTF-8 row as incomplete with newer row=%s', async (withNewerRow) => {
+    it.each([false, true])('reports a typed refusal for an oversized valid UTF-8 row with newer row=%s', async (withNewerRow) => {
         const fixture = await createTranscript(0, 0);
         await writeFile(fixture.transcriptPath, JSON.stringify({ type: 'assistant', uuid: 'oversized',
             message: { content: [{ type: 'text', text: 'answer' }] }, pad: '🙂'.repeat(2_100_000) }) + '\n');
         if (withNewerRow) await appendFile(fixture.transcriptPath, transcriptLine(1, 40));
         const request = { source: fixture.source, env: fixture.env, providerSessionId: fixture.remoteSessionId,
             direction: 'older' as const, projection: 'terminal' as const, maxBytes: 64 * 1024, maxItems: 10 };
-        const initial = await pageClaudeExternalSessionTranscript(request);
         if (withNewerRow) {
+            const initial = await pageClaudeExternalSessionTranscript(request);
             expect(initial.items.length).toBeGreaterThan(0);
             expect(initial).toMatchObject({ hasMore: true, nextCursor: expect.any(String) });
+            await expect(pageClaudeExternalSessionTranscript({ ...request, cursor: initial.nextCursor! }))
+                .rejects.toMatchObject({ code: 'JSONL_RECORD_TOO_LARGE' });
+        } else {
+            await expect(pageClaudeExternalSessionTranscript(request))
+                .rejects.toMatchObject({ code: 'JSONL_RECORD_TOO_LARGE' });
         }
-        const page = withNewerRow
-            ? await pageClaudeExternalSessionTranscript({ ...request, cursor: initial.nextCursor! })
-            : initial;
-        expect(page).toMatchObject({ items: [], truncated: true, hasMore: false, nextCursor: null });
-        expect(page.tailCursor).toEqual(expect.any(String));
     });
 
     it.each([false, true])('reports bounded continuation with result budgeting %s', async (withBudget) => {
