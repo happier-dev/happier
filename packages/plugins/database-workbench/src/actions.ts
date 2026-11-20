@@ -4,6 +4,7 @@ import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import * as database from '@happier-dev/database-protocol';
 import * as databaseAbi from '@happier-dev/plugin-sdk/database';
+import { databaseOperationActions } from './operationActions.js';
 import { exportSelectedRows } from './selectedExport.js';
 import { FileDownloadResultV1ProtocolSchema, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 
@@ -101,8 +102,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         };
     }
     const executeOperation = producers.executeOperation;
-    if (executeOperation) for (const [qualifiedId, inputSchema] of Object.entries(database.DATABASE_OPERATION_ACTION_INPUT_SCHEMAS_V1)) {
-        const actionId = qualifiedId as keyof typeof database.DATABASE_OPERATION_ACTION_INPUT_SCHEMAS_V1;
+    if (executeOperation) for (const { id: actionId, inputSchema } of Object.values(databaseOperationActions)) {
         const metadata = databaseActionMetadata[actionId];
         actions[database.databaseActionLocalIdV1(actionId)] = {
             ...common, ...metadata, inputSchema,

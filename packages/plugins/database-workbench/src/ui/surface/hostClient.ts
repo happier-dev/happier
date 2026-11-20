@@ -3,7 +3,6 @@ import {
     DATABASE_PLUGIN_ID_V1,
     DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
     DatabaseDemandSnapshotV1Schema,
-    DATABASE_OPERATION_ACTION_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
     type DatabaseDemandSnapshotV1,
 } from '@happier-dev/database-protocol';
@@ -20,6 +19,7 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { encodeWorkbenchRootSubPath, encodeWorkbenchSubPath } from './subPath.js';
 import type { WorkbenchClient } from '../models.js';
+import { databaseOperationActions } from '../../operationActions.js';
 import { workbenchTargetKey } from '../../targetIdentity.js';
 
 type HostOptions = Readonly<{
@@ -129,7 +129,7 @@ export function createHostWorkbenchClient(
       await held.ready;
       signal.throwIfAborted();
       const result = await hostApi.executeAction(
-        databaseActionLocalIdV1(DATABASE_OPERATION_ACTION_ID_V1[input.operation]),
+        databaseActionLocalIdV1(databaseOperationActions[input.operation].id),
         projectNativeJsonValueForTransport({ ...input, subscriptionId: held.subscriptionId() }),
         { signal },
       );

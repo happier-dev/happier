@@ -1,19 +1,3 @@
-/** Database business schemas consume the dependency-neutral qualified Action identity owner. */
-import {
-    DATABASE_DESCRIBE_ACTION_ID_V1,
-    DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
-    DATABASE_RELATIONS_LIST_ACTION_ID_V1,
-    DATABASE_STRUCTURE_READ_ACTION_ID_V1,
-    DATABASE_ROWS_READ_ACTION_ID_V1,
-    DATABASE_CELL_READ_ACTION_ID_V1,
-    DATABASE_STATEMENT_RUN_ACTION_ID_V1,
-    DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
-    DATABASE_EDITS_APPLY_ACTION_ID_V1,
-    DATABASE_STATS_READ_ACTION_ID_V1,
-    type DatabaseActionIdV1,
-} from '@happier-dev/plugin-sdk/database';
-import type { DatabaseOperationInputV1 } from '@happier-dev/plugin-sdk/database';
-
 export {
     DATABASE_PLUGIN_ID_V1,
     DATABASE_TARGETS_LIST_ACTION_ID_V1,
@@ -62,17 +46,3 @@ export {
     type DatabaseActionIdV1,
 } from '@happier-dev/plugin-sdk/database';
 export { databaseActionLocalIdV1, isDatabaseActionIdV1 } from '@happier-dev/plugin-sdk/actions';
-
-/** The one Action each P1 operation runs through; hosts and renderers never pair them by hand. */
-export const DATABASE_OPERATION_ACTION_ID_V1 = {
-    'describe': DATABASE_DESCRIBE_ACTION_ID_V1,
-    'schemas.list': DATABASE_SCHEMAS_LIST_ACTION_ID_V1,
-    'relations.list': DATABASE_RELATIONS_LIST_ACTION_ID_V1,
-    'relation.structure': DATABASE_STRUCTURE_READ_ACTION_ID_V1,
-    'rows.read': DATABASE_ROWS_READ_ACTION_ID_V1,
-    'cell.read': DATABASE_CELL_READ_ACTION_ID_V1,
-    'statement.run': DATABASE_STATEMENT_RUN_ACTION_ID_V1,
-    'statement.explain': DATABASE_STATEMENT_EXPLAIN_ACTION_ID_V1,
-    'edits.apply': DATABASE_EDITS_APPLY_ACTION_ID_V1,
-    'stats.read': DATABASE_STATS_READ_ACTION_ID_V1,
-} as const satisfies Record<DatabaseOperationInputV1['operation'], DatabaseActionIdV1>;

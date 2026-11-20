@@ -1,5 +1,4 @@
 export * from './actionIdsDatabaseV1.js';
-export * from './databaseActionSchemas.js';
 export * from './databaseTargetActions.js';
 export * from './databaseDemand.js';
 export * from './databaseCapture.js';
