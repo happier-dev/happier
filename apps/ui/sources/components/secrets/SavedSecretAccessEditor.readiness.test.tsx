@@ -1,4 +1,3 @@
-import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
 import * as React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -14,7 +13,7 @@ import type { ShareSheetActions, ShareSheetModel } from '@/components/sharing/sh
 const announce = vi.hoisted(() => vi.fn());
 const confirm = vi.hoisted(() => vi.fn(async () => true));
 // Native accessibility, navigation, HTTP and Socket are genuine host boundaries.
-installApprovalCommonModuleMocks({ modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true, spies: { confirm } }).module, reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
+installApprovalCommonModuleMocks({ modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ spies: { confirm } }).module, reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
     .createReactNativeNativeMock({ platformOS: 'ios' }, { AccessibilityInfo: { announceForAccessibility: announce, isScreenReaderEnabled: async () => false, isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) } }) });
 vi.mock('expo-crypto', async original => ({ ...await original<typeof import('expo-crypto')>(), randomUUID: (await import('node:crypto')).randomUUID }));
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -33,7 +32,7 @@ const { settingsParse } = await import('@/sync/domains/settings/settings');
 const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
 const { SavedSecretAccessEditor } = await import('./SavedSecretAccessEditor');
 const { ShareSheet } = await import('@happier-dev/plugin-ui/components');
-const { ModalProvider } = await import('@/modal');
+const { SHARE_SHEET_HOST } = await import('@/components/sharing/shareSheetHost');
 const { createDocumentShareAdapter } = await import('@/components/sharing/documents/documentShareAdapter');
 beforeAll(loadSyncSingletonForTests);
 let account: SecretSettingsTestHarness | null = null;
@@ -65,7 +64,7 @@ async function mount(options: { mode?: 'plain' | 'e2ee'; ask?: boolean; handleRe
         return open ? <SavedSecretAccessEditor target={{ kind: 'shared', entry: decoded }} scope={scope}
             onClose={() => { setOpen(false); closed(); }} onSaved={async () => {}} onMakeHomeManaged={converted} /> : null;
     }
-    const screen = await renderScreen(<><ModalProvider /><Host /></>);
+    const screen = await renderScreen(<Host />);
     return { screen, closed, converted, account };
 }
 
@@ -84,15 +83,19 @@ describe('SavedSecretAccessEditor recipient readiness', () => {
         await screen.pressByTestIdAsync('saved-secret-access-remove:account:account-ready');
         const save = async (accept = true) => {
             const attemptsBefore = attempts;
+            const confirmsBefore = confirm.mock.calls.length;
+            const decision = createDeferred<boolean>();
+            if (ask) confirm.mockImplementationOnce(() => decision.promise);
             screen.pressByTestId('saved-secret-access-save');
             if (ask) {
-                await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-approve')).not.toBeNull());
-                expect(attempts).toBe(attemptsBefore);
-                expect(announce).not.toHaveBeenCalled();
-                expect(closed).not.toHaveBeenCalled();
-                await screen.pressByTestIdAsync(accept
-                    ? 'actions.confirmation-review.decision-approve'
-                    : 'actions.confirmation-review.decision-reject');
+                try {
+                    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(confirmsBefore + 1));
+                    expect(attempts).toBe(attemptsBefore);
+                    expect(announce).not.toHaveBeenCalled();
+                    expect(closed).not.toHaveBeenCalled();
+                } finally {
+                    await act(async () => { decision.resolve(accept); });
+                }
             }
         };
         if (ask) {

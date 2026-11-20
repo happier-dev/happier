@@ -31,7 +31,8 @@ let home: Awaited<ReturnType<typeof serveSavedSecretEditorHomes>> | null = null;
 let testScope = { serverId: '', accountId: 'account-owner' };
 beforeEach(async () => {
     home = await serveSavedSecretEditorHomes({
-        homes: [{ key: 'home-a', serverUrl: 'https://saved-secret-access.test', accountId: 'account-owner' }],
+        homes: [{ key: 'home-a', serverUrl: 'https://saved-secret-access.test',
+            accountId: 'account-owner', serverIdentityId: 'srv_saved_secret_access' }],
         route: request => {
             if (request.path === '/v1/user/search') return Response.json({ users: [
                 { id: 'account-new', firstName: 'New', lastName: 'Person', username: 'new-person', avatar: null, bio: null, status: 'none', publicKey: null },

@@ -29,7 +29,7 @@ import { materializeSavedSecretResources } from '@/sync/engine/settings/material
 import { applySavedSecretCatalogEntryAcknowledgement } from '@/sync/engine/settings/savedSecretCatalogEngine';
 import { decryptSecretValueWithKeys, deriveSettingsSecretsKeySet } from '@/sync/encryption/secretSettings';
 import { resolveSettingsSecretsKeySet } from '@/sync/encryption/resolveSettingsSecretsKeySet';
-import { resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
+import { AccountStorageCurrentnessUnavailableError, resolveAccountStorageContext } from '@/sync/encryption/accountStorageContext';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import type { ProfileRecordV1, ProfileRowV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import type { ProfileCatalogSnapshotV1 } from '@happier-dev/protocol/profiles/profileCatalogV1';
@@ -108,14 +108,25 @@ export function projectSavedSecretResourceUpdateFailure(failure: HomeDomainFailu
     return projectSavedSecretResourceOperationFailure(failure);
 }
 
-function projectSavedSecretResourceUpdateError(error: unknown): Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>> {
+function readSavedSecretResourceOperationError(error: unknown): HomeDomainFailure<string> | null {
     if (error instanceof HappyError && error.code) {
-        return projectSavedSecretResourceUpdateFailure(homeDomainFailureFromActionFailure({
+        return homeDomainFailureFromActionFailure({
             errorCode: error.code, details: { ...readSafeFailureDetails(error.details),
                 ...(error.status === undefined ? {} : { httpStatus: error.status }) },
-        }));
+        });
     }
-    return { ok: false, reason: 'failed' };
+    return error instanceof AccountStorageCurrentnessUnavailableError
+        ? homeDomainFailureFromActionFailure({ errorCode: error.code }) : null;
+}
+
+export function projectSavedSecretResourceOperationError(error: unknown): Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>> {
+    const failure = readSavedSecretResourceOperationError(error);
+    return failure ? projectSavedSecretResourceOperationFailure(failure) : { ok: false, reason: 'failed' };
+}
+
+function projectSavedSecretResourceUpdateError(error: unknown): Exclude<SavedSecretResourceUpdateResult, Readonly<{ ok: true }>> {
+    const failure = readSavedSecretResourceOperationError(error);
+    return failure ? projectSavedSecretResourceUpdateFailure(failure) : { ok: false, reason: 'failed' };
 }
 
 export type SavedSecretPromotionResult =
@@ -1102,7 +1113,7 @@ export async function createSavedSecretResource(params: Readonly<{
                             return { ok: false, reason: 'outcome_unknown' };
                         }
                     }
-                    return { ok: false, reason: operationFailureReason(outcome.failure.kind) };
+                    return projectSavedSecretResourceOperationFailure(outcome.failure);
                 }
                 return await finishCreated(outcome.value.revision);
             } finally {
@@ -1117,7 +1128,7 @@ export async function createSavedSecretResource(params: Readonly<{
         if (error instanceof Error && 'code' in error && error.code === 'recipient_mode_unsupported') {
             return { ok: false, reason: 'recipient_mode_unsupported' };
         }
-        return { ok: false, reason: 'failed' };
+        return projectSavedSecretResourceOperationError(error);
     }
 }
 
@@ -1163,7 +1174,8 @@ export async function promotePersonalSavedSecretResource(params: SavedSecretPers
         });
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
-        return { ok: false, reason: 'unavailable' };
+        const failure = readSavedSecretResourceOperationError(error);
+        return failure ? projectSavedSecretResourceOperationFailure(failure) : { ok: false, reason: 'unavailable' };
     }
 }
 
@@ -1423,7 +1435,8 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
                 }
                 if (outcome.failure.kind === 'conflict') return { status: 'conflict' };
                 if (outcome.failure.kind === 'outcome_unknown') return { status: 'outcomeUnknown' };
-                return { status: 'rejected', error: new Error(`saved_secret_promotion_${outcome.failure.kind}`) };
+                return { status: 'rejected', error: new HappyError('Saved Secret promotion declined', outcome.failure.retryable,
+                    { code: outcome.failure.code ?? undefined }) };
             },
         } });
         if (mutation?.status === 'invalid') requireOneShotAccountSettingsMutationApplied(mutation);
@@ -1450,7 +1463,7 @@ async function promoteSavedSecretSourceResourceInContext(context: ProfileAccount
         return { ok: false, reason: 'outcome_unknown' };
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
-        return { ok: false, reason: 'failed' };
+        return projectSavedSecretResourceOperationError(error);
     } finally {
         promotionDataKey.value?.fill(0);
     }
@@ -2016,7 +2029,7 @@ export async function setSavedSecretResourceGrants(params: Readonly<{
             ...(params.onApprovalFailed ? { onApprovalFailed: params.onApprovalFailed } : {}),
         });
         if (outcome.kind !== 'succeeded') {
-            return { ok: false, reason: operationFailureReason(outcome.failure.kind) };
+            return projectSavedSecretResourceOperationFailure(outcome.failure);
         }
         if (params.encryptionMode === 'e2ee' && resourceDataKey) {
             await repairSavedSecretResourceEnvelopesBestEffort({
@@ -2029,7 +2042,7 @@ export async function setSavedSecretResourceGrants(params: Readonly<{
         return { ok: true };
     } catch (error) {
         if (isTeamActionApprovalPendingError(error)) throw error;
-        return { ok: false, reason: 'failed' };
+        return projectSavedSecretResourceOperationError(error);
     } finally {
         resourceDataKey?.fill(0);
     }

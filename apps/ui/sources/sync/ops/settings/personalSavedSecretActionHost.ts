@@ -7,7 +7,6 @@ import { createSavedSecretResource, updateSavedSecretResource, deleteSavedSecret
     type SavedSecretAdmittedMutationExecute } from './savedSecretResourceOperations';
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretUsedBy } from '@/sync/store/settings/savedSecretUsedBy';
-import { readProfileTransferSourceInContext } from '@/sync/api/account/apiProfileCatalog';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listSavedSecretVaultFieldsInContext, linkSavedSecretVaultItemsInContext, exportSavedSecretsToVaultInContext,
     storeSavedSecretValueInVaultInContext } from './savedSecretVaultOperations';
@@ -101,13 +100,14 @@ export function createUiPersonalSavedSecretActionExecute(account: LazyActionAcco
                 return { revision: args.expectedUpdatedAt + 1 };
             },
             delete: async args => {
-                const baseline = await readProfileTransferSourceInContext(account);
                 const result = await deleteSavedSecretResource({ scope, resourceId: args.secretId, expectedRevision: args.expectedUpdatedAt,
-                    expectedSettingsVersion: baseline.source.version, executeAdmittedMutation,
+                    executeAdmittedMutation,
                     ...(args.confirmedUnreadableReferences === undefined ? {} : { confirmedUnreadableReferences: args.confirmedUnreadableReferences }) });
                 if (!result.ok) {
-                    if (result.failure) refusal(result.failure.code, result.failure.context);
-                    refusal(result.reason, 'references' in result ? { references: result.references } : undefined);
+                    refusal(result.failure?.code ?? result.reason,
+                        'references' in result && result.references.length > 0
+                            ? { ...result.failure?.context, references: result.references }
+                            : result.failure?.context);
                 }
             },
         });

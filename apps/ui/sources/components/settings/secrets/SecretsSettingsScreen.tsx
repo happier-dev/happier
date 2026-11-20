@@ -31,6 +31,7 @@ import {
 } from '@/sync/ops/settings/savedSecretResourceOperations';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
@@ -38,8 +39,10 @@ import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDra
 
 function alertSavedSecretOperationFailure(reason: string,
     failure?: Exclude<SavedSecretResourceOperationResult, Readonly<{ ok: true }>>['failure']) {
-    alertActionFailure({ code: failure?.code ?? reason, context: failure?.context,
-        reason: reason === 'outcome_unknown' ? t('secrets.catalog.outcomeUnknown') : t('secrets.catalog.operationFailed') });
+    const code = failure?.code ?? reason;
+    alertActionFailure({ code, context: failure?.context,
+        reason: reason === 'outcome_unknown' ? t('secrets.catalog.outcomeUnknown')
+            : resolveActionExecutionErrorMessage({ code }, t('secrets.catalog.operationFailed')) });
 }
 
 /**
@@ -199,7 +202,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                 return true;
             }
             setSharedMutationPending(false);
-            Modal.alert(t('common.error'), t('secrets.catalog.operationFailed'));
+            Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(cause, t('secrets.catalog.operationFailed')));
         }
     }, [approval, catalog, scope, scopeKey, sharedMutationPending]);
 
@@ -246,7 +249,7 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
     ) => {
         // The warning was already presented by the deletion confirmation; cancelling keeps the record.
         if (result.reason === 'unreadable_references') return;
-        if (result.reason === 'in_use') {
+        if (result.reason === 'in_use' && result.references.length > 0) {
             Modal.alert(t('secrets.catalog.inUseTitle'), t('secrets.catalog.inUseBody', {
                 places: result.references.map((reference) => {
                     const { title, subtitle } = savedSecretUsedByCopy(reference);
@@ -264,11 +267,6 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
         shared: boolean;
     }>) => {
         if (!scope) return;
-        // Deleting runs the owner reference census, which reads the owner's own
-        // current Account Settings; without a known version it cannot run.
-        const settings = getStorage().getState();
-        if (!areServerAccountScopesEqual(settings.settingsScope, scope) || settings.settingsVersion === null) return;
-        const settingsVersion = settings.settingsVersion;
         if (sharedMutationPending || approval.approvalPending) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, scope) || !lifetime.isCurrent()) return;
@@ -283,12 +281,11 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                 return;
             }
             setSharedMutationPending(false);
-            Modal.alert(t('common.error'), t('secrets.catalog.operationFailed'));
+            Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(cause, t('secrets.catalog.operationFailed')));
         };
         try {
             const operation = {
                 scope, resourceId, expectedRevision,
-                expectedSettingsVersion: settingsVersion,
                 // The deletion owner combines census warnings with the ordinary Action confirmation.
                 confirmDeletion: (warning?: SavedSecretUnreadableReferencesWarningV1) => Modal.confirm(
                     t('secretsSettings.deleteConfirmTitle', { name: confirmation.name ?? t('secrets.catalog.unavailableName') }),

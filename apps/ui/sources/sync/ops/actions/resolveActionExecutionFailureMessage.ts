@@ -174,6 +174,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'client_required') return t('errors.clientRequired');
     if (code === 'secret_save_client_required') return t('errors.secretSaveClientRequired');
     if (code === 'secret_use_client_required') return t('errors.secretUseClientRequired');
+    if (code === 'resource_in_use') return t('secrets.catalog.inUseTitle');
     if (code === 'role_policy_unenforceable') return t('errors.rolePolicyUnenforceable');
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
@@ -200,7 +201,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'account_settings_mutation_outcome_unknown') return t('errors.tryAgain');
     if (code === 'setting_not_bound' || code === 'action_account_scope_changed'
         || code === 'account_settings_mutation_conflict') return t('settings.writeContextChanged');
-    if (code === 'mcp_catalog_conflict' || code === 'acp_catalog_conflict' || code === 'revision_conflict') {
+    if (code === 'mcp_catalog_conflict' || code === 'acp_catalog_conflict' || code === 'revision_conflict'
+        || code === 'resource_changed' || code === 'settings_conflict' || code === 'references_conflict') {
         return t('approvals.conflictFailure');
     }
     if (code === 'version_mismatch' || code === 'version-mismatch') return t('artifacts.browser.conflict.title');

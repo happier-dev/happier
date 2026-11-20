@@ -13,6 +13,8 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { Modal } from '@/modal';
+import { HappyError } from '@/utils/errors/errors';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import {
   awaitActionApprovalResult,
@@ -42,6 +44,7 @@ import {
 import {
   deleteSavedSecretResource,
   updateSavedSecretResource,
+  projectSavedSecretResourceOperationFailure,
   projectSavedSecretResourceUpdateFailure,
   type SavedSecretCreationResult,
   type SavedSecretResourceDeleteResult,
@@ -398,21 +401,13 @@ export function useSavedSecretCatalog(
       ) {
         return { ok: false, reason: 'unavailable' };
       }
-      // The owner reference census reads this Account's own current Settings,
-      // so an unknown version fails the repair closed rather than deleting a
-      // resource other Settings may still reference.
-      const current = getStorage().getState();
-      if (
-        !areServerAccountScopesEqual(current.settingsScope, scope) ||
-        current.settingsVersion === null
-      ) {
+      if (!areServerAccountScopesEqual(getStorage().getState().settingsScope, scope)) {
         return { ok: false, reason: 'unavailable' };
       }
       const result = await deleteSavedSecretResource({
         scope,
         resourceId: entry.repair.resourceId,
         expectedRevision: entry.repair.expectedRevision,
-        expectedSettingsVersion: current.settingsVersion,
       });
       if (!result.ok && result.reason === 'outcome_unknown') {
         await refreshSavedSecretCatalog(scope).catch(() => undefined);
@@ -457,7 +452,7 @@ export function useSavedSecretCatalog(
       } catch (error) {
         Modal.alert(
           t('common.error'),
-          error instanceof Error ? error.message : t('errors.operationFailed'),
+          resolveActionExecutionErrorMessage(error, t('secrets.catalog.operationFailed')),
         );
         return false;
       }
@@ -521,15 +516,7 @@ export function useSavedSecretCatalog(
         if (result.kind === 'failed') noteDeclinedApproval(result.failure.code);
         return result.kind === 'succeeded'
           ? { ok: true, resourceRef: result.value.secretRef, revision: 1 }
-          : {
-              ok: false,
-              reason:
-                result.failure.kind === 'outcome_unknown'
-                  ? 'outcome_unknown'
-                  : result.failure.kind === 'conflict'
-                    ? 'changed'
-                    : 'failed',
-            };
+          : projectSavedSecretResourceOperationFailure(result.failure);
       };
       const result = approval
         ? await awaitActionApprovalResult<
@@ -549,7 +536,7 @@ export function useSavedSecretCatalog(
             succeeded: (value) => value,
             failed: (code) => {
               noteDeclinedApproval(code);
-              return { ok: false, reason: 'failed' };
+              return projectSavedSecretResourceOperationFailure(homeDomainFailureFromActionFailure({ errorCode: code }));
             },
             aborted: () => ({ ok: false, reason: 'changed' }),
           })
@@ -558,6 +545,9 @@ export function useSavedSecretCatalog(
         await refreshSavedSecretCatalog(scope, { includeMaterial }).catch(
           () => undefined,
         );
+      if (!result.ok && result.failure && !isActionApprovalDeclinedErrorCode(result.failure.code)) {
+        throw new HappyError('Saved Secret creation refused', false, { code: result.failure.code });
+      }
       return result.ok ? result.resourceRef : null;
     },
     [scope, scopeIsActive, catalogEnabled, includeMaterial],
@@ -606,11 +596,7 @@ export function useSavedSecretCatalog(
   const deletePersonal = React.useCallback(
     async (secret: SavedSecret) => {
       if (!scope || !scopeIsActive || !catalogEnabled) return false;
-      const current = getStorage().getState();
-      if (
-        !areServerAccountScopesEqual(current.settingsScope, scope) ||
-        current.settingsVersion === null
-      )
+      if (!areServerAccountScopesEqual(getStorage().getState().settingsScope, scope))
         return false;
       const reference = parseSavedSecretRefV1(secret.id);
       const entry = sharedEntries.find(

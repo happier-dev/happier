@@ -10,6 +10,7 @@ import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/acco
 import { MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { ProfileRowsListResponseV1Schema, PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
@@ -106,7 +107,8 @@ async function mount(editAccess = true, initializeSync = false, beforeRender?: (
             request: (input, init) => harness.request(input, init),
         });
     }
-    const scope = { serverId, accountId: 'account-owner' };
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'account-owner' };
     const entries = [entry('secret-a'), entry('secret-b')];
     const { storage } = await import('@/sync/domains/state/storage');
     if (initializeSync) {
@@ -531,15 +533,51 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         expect(screen.findByType(SecretsSettingsPage).props.accessEditor.element.props.target.expectedSettingsVersion).toBe(30);
     });
 
-    it('honors waived shared-secret deletion without a caller confirmation', async () => {
+    it.each(['ready', 'unread', 'stale'] as const)('sends confirmed deletion using the Home census when local Settings are %s', async localSettings => {
         const { screen, scope, entries } = await mount(false, true, scope => initializeRemovalSettings(scope, true));
+        const { storage } = await import('@/sync/domains/state/storage');
         const secret = entries[0]!;
         const path = '/v1/account/saved-secrets/resources/delete';
+        const homeVersion = storage.getState().settingsVersion;
+        expect(homeVersion).not.toBeNull();
         harness.answer(scope.serverId, path, { body: { resourceId: 'secret-a' } });
         await openSecretPage(secret.ref);
+        if (localSettings !== 'ready') {
+            await act(async () => storage.setState({ settingsVersion: localSettings === 'unread' ? null : homeVersion! + 1 }));
+        }
         await screen.pressByTestIdAsync(`saved-secret:${secret.ref}:delete`);
         await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(1));
+        expect(harness.requestsFor(path)[0]?.input).toMatchObject({ expectedSettingsVersion: homeVersion });
         expect(confirm).not.toHaveBeenCalled();
+    });
+    it('defers a former Connected Account reference to the Home deletion authority', async () => {
+        const { screen, scope, entries } = await mount(false, true, scope => initializeRemovalSettings(scope, true));
+        const { storage } = await import('@/sync/domains/state/storage');
+        await act(async () => storage.getState().applyProfile(AccountProfileSchema.parse({
+            ...storage.getState().profile,
+            connectedAccountsV4: [{
+                ref: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel' }, accountId: 'vercel-fixture' },
+                authenticationModeId: 'token', status: 'connected', revisionSemantics: 'revisioned',
+                credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true,
+                configurationRevision: 'fixture-configuration', savedSecretResourceIds: ['secret-a'],
+            }],
+        })));
+        const path = '/v1/account/saved-secrets/resources/delete';
+        harness.answer(scope.serverId, path, { status: 400, body: { error: 'resource_in_use' } });
+        await openSecretPage(entries[0]!.ref);
+        await screen.pressByTestIdAsync(`saved-secret:${entries[0]!.ref}:delete`);
+        await vi.waitFor(() => expect(alert).toHaveBeenCalledWith('common.error', 'secrets.catalog.inUseTitle', expect.any(Array)));
+        expect(harness.requestsFor(path)).toHaveLength(1);
+        expect(screen.findByTestId(`saved-secret:${entries[0]!.ref}:delete`)).not.toBeNull();
+    });
+    it('keeps a grant draft open and presents a typed Home refusal', async () => {
+        const { screen, scope } = await mount(true, true, scope => initializeRemovalSettings(scope, false, true));
+        const path = '/v1/account/saved-secrets/resources/grants';
+        harness.answer(scope.serverId, path, { status: 409, body: { error: 'resource_changed' } });
+        await screen.pressByTestIdAsync('saved-secret-access-save');
+        await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('approvals.conflictFailure'));
+        expect(screen.findByTestId('saved-secret-access-editor-body')).not.toBeNull();
     });
     it('captures the current deletion version at the gesture and refuses a retired Account callback', async () => {
         const { screen, scope, entries } = await mount(false, true, scope => initializeRemovalSettings(scope, true));
@@ -562,7 +600,12 @@ describe('Saved Secrets editor continuity through the settings screen', () => {
         await act(async () => remove(entries[0]!));
         await vi.waitFor(() => expect(harness.requestsFor(path)).toHaveLength(1));
         expect(harness.requestsFor(path)[0]?.input).toMatchObject({ expectedSettingsVersion: currentVersion });
-        await act(async () => storage.setState({ settingsScope: { ...scope, accountId: 'another-account' } }));
+        await act(async () => {
+            await harness.switchAccount(scope.serverId, 'account-next');
+            const nextScope = { ...scope, accountId: 'account-next' };
+            storage.getState().activateProfileScope(nextScope);
+            await storage.getState().activateSettingsScope(nextScope);
+        });
         await act(async () => remove(entries[1]!));
         expect(harness.requestsFor(path)).toHaveLength(1);
     });

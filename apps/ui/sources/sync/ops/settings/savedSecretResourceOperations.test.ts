@@ -1,5 +1,4 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { connectedEntitySubjectKeyV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import tweetnacl from 'tweetnacl';
 import React from 'react';
 import { act } from 'react-test-renderer';
@@ -44,7 +43,6 @@ import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domain
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { storage } from '@/sync/domains/state/storage';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
-import { applyAcknowledgedConnectedMetadata } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -3215,7 +3213,7 @@ describe('Saved Secret operations through their real Account and Action owners',
                 }] },
             } },
         });
-        account.setEffect(() => Response.json({ resourceId: 'referenced-resource' }));
+        account.setEffect(() => Response.json({ error: 'resource_in_use' }, { status: 400 }));
         account.catalogReadPaths.length = 0;
         const result = await deleteSavedSecretResource({ scope: account.scope, resourceId: 'referenced-resource',
             expectedRevision: 3, expectedSettingsVersion: account.settingsVersion });
@@ -3234,9 +3232,9 @@ describe('Saved Secret operations through their real Account and Action owners',
         const context = await captureLazyActionAccountContext(account.scope.serverId);
         const execute = createUiPersonalSavedSecretActionExecute(context, createHomeDomainActionExecutorForScope(account.scope));
         await expect(execute({ actionId: 'secrets.delete', input: { secretId: 'referenced-resource', expectedUpdatedAt: 3 },
-            context: { surface: 'ui' } })).resolves.toMatchObject({ ok: false, errorCode: 'in_use',
+            context: { surface: 'ui' } })).resolves.toMatchObject({ ok: false, errorCode: 'resource_in_use',
             details: { references: [{ owner: 'connectedAccountConfiguration' }] } });
-        expect(account.writes).toEqual([]);
+        expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(2);
     });
     it.each([{ status: 'present', mode: 'plain' }, { status: 'present', mode: 'e2ee' },
         { status: 'absent', mode: 'plain' }, { status: 'deleted', mode: 'plain' }] as const)(
@@ -3253,7 +3251,7 @@ describe('Saved Secret operations through their real Account and Action owners',
             ? { status, revision: 12, content }
             : status === 'deleted' ? { status, revision: 12 } : { status });
         if (status === 'present') {
-            account.setEffect(() => Response.json({ resourceId: 'notification-signing-resource' }));
+            account.setEffect(() => Response.json({ error: 'resource_in_use' }, { status: 400 }));
             expect(await deleteSavedSecretResource({ scope: account.scope, resourceId: 'notification-signing-resource',
                 expectedRevision: 4, expectedSettingsVersion: 7 })).toMatchObject({ ok: false, reason: 'in_use',
                 references: [{ owner: 'notificationChannel', path: 'notificationChannelsCatalog.channels[0].signingSecretRef' }] });
@@ -3265,9 +3263,9 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(captured.catalogs.notificationChannels).toEqual(status === 'present' ? record : status === 'deleted' ? null : undefined);
         expect(captured.referenceCensus.notificationChannels).toEqual({ revision: status === 'absent' ? 'absent' : 12,
             resourceRefs: status === 'present' ? [ref] : [] });
-        expect(account.writes).toEqual([]);
+        expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(status === 'present' && mode === 'plain' ? 1 : 0);
     });
-    it.each(['plain', 'e2ee'] as const)('captures registry tokens and refuses deletion before dispatch in %s', async mode => {
+    it.each(['plain', 'e2ee'] as const)('reports the registry binding from the owner that can open it in %s', async mode => {
         const account = await openAccount(mode);
         const resourceId = 'registry-captured-token';
         const ref = `happier:shared-secret:v1:${resourceId}`;
@@ -3281,14 +3279,17 @@ describe('Saved Secret operations through their real Account and Action owners',
             captureSavedSecretReferenceStateInContext(context, accountMode));
         expect(captured).toMatchObject({ ok: true, catalogs: { registrySources: record },
             referenceCensus: { catalogs: { registrySources: 12 } } });
-        account.setEffect(() => Response.json({ resourceId }));
+        account.setEffect(() => Response.json({ error: 'resource_in_use' }, { status: 400 }));
         expect(await deleteSavedSecretResource({ scope: account.scope, resourceId, expectedRevision: 1,
             expectedSettingsVersion: account.settingsVersion })).toMatchObject({ ok: false, reason: 'in_use',
             references: [{ owner: 'registrySource', path: 'registrySourcesCatalog.sources[0].token.secretRef' }] });
-        expect(account.writes).toEqual([]);
+        expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(mode === 'plain' ? 1 : 0);
     });
 
-    it.each(['plain', 'e2ee'] as const)('refuses deleting a key record a Connected Account still uses, naming that account (%s)', async mode => {
+    it.each([
+        { mode: 'plain', linked: false }, { mode: 'plain', linked: true },
+        { mode: 'e2ee', linked: false }, { mode: 'e2ee', linked: true },
+    ] as const)('uses the $mode Home credential reference over the profile projection (linked: $linked)', async ({ mode, linked }) => {
         const account = await openAccount(mode);
         const resourceId = 'anthropic-key';
         const connected = { service: { pluginId: 'happier.agent.claude', localId: 'anthropic' }, accountId: 'work' };
@@ -3296,20 +3297,17 @@ describe('Saved Secret operations through their real Account and Action owners',
             ref: connected, status: 'connected', authenticationModeId: 'api-key', revisionSemantics: 'revisioned',
             credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationReady: true, configurationRevision: null, scopes: [],
             savedSecretResourceIds: [resourceId] } satisfies (typeof profileDefaults.connectedAccountsV4)[number];
-        storage.getState().applyProfileForScope(account.scope, { ...profileDefaults, id: account.scope.accountId, connectedAccountsV4: [{ ...credential, displayName: 'Work credential' },
-            { ...credential, ref: { ...connected, accountId: 'private-routing-handle' } }] });
-        applyAcknowledgedConnectedMetadata(account.scope, { kind: 'presentation', record: { v: 1, entries: [{ v: 1,
-            subject: { kind: 'account', account: connected }, label: 'Chosen credential' }] } }, 1, true);
-        account.setEffect(() => Response.json({ resourceId }));
-        expect(await deleteSavedSecretResource({ scope: account.scope, resourceId, expectedRevision: 1,
-            expectedSettingsVersion: account.settingsVersion })).toMatchObject({ ok: false, reason: 'in_use',
-            references: [{ owner: 'connectedAccountCredential', path: 'connectedAccountCredentials["happier.agent.claude"].anthropic.work',
-                referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account: connected }), displayName: 'Chosen credential' } },
-            { owner: 'connectedAccountCredential',
-                // The incumbent approval harness renders translation keys; the canonical presenter owns this fallback.
-                referrer: { kind: 'connectedAccountCredential', id: connectedEntitySubjectKeyV1({ kind: 'account', account: { ...connected, accountId: 'private-routing-handle' } }),
-                    displayName: 'connectedServicesCollection.accountLabel' } }] });
-        expect(account.writes).toEqual([]);
+        storage.getState().applyProfileForScope(account.scope, {
+            ...profileDefaults, id: account.scope.accountId, connectedAccountsV4: [credential],
+        });
+        account.setEffect(() => linked
+            ? Response.json({ error: 'resource_in_use' }, { status: 400 })
+            : Response.json({ resourceId }));
+        const result = await deleteSavedSecretResource({ scope: account.scope, resourceId, expectedRevision: 1 });
+        expect(account.writes.filter(write => write.path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.delete'])).toHaveLength(1);
+        expect(result).toMatchObject(linked
+            ? { ok: false, reason: 'in_use', failure: { code: 'resource_in_use' } }
+            : { ok: true });
     });
 
     it('full reference capture refuses an incomplete notification channel before deletion dispatch', async () => {
@@ -3344,7 +3342,7 @@ describe('Saved Secret operations through their real Account and Action owners',
             ? { status, revision: 14, content }
             : status === 'deleted' ? { status, revision: 14 } : { status });
         if (status === 'present') {
-            account.setEffect(() => Response.json({ resourceId: 'remote-host-password' }));
+            account.setEffect(() => Response.json({ error: 'resource_in_use' }, { status: 400 }));
             expect(await deleteSavedSecretResource({ scope: account.scope, resourceId: 'remote-host-password',
                 expectedRevision: 4, expectedSettingsVersion: 7 })).toMatchObject({ ok: false, reason: 'in_use',
                 references: [{ owner: 'remoteHost' }] });
@@ -3356,7 +3354,7 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(captured.catalogs.remoteHostRecords).toEqual(status === 'present' ? record.hosts : status === 'deleted' ? null : undefined);
         expect(captured.referenceCensus.remoteHosts).toEqual({ revision: status === 'absent' ? 'absent' : 14,
             resourceRefs: status === 'present' ? [ref] : [] });
-        expect(account.writes).toEqual([]);
+        expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(status === 'present' && mode === 'plain' ? 1 : 0);
     });
     it('full reference capture refuses a partial RemoteHost before deletion dispatch', async () => {
         const account = await openAccount();
@@ -3947,11 +3945,13 @@ describe('Saved Secret operations through their real Account and Action owners',
     it.each([false, true])('deletes only after the real owner reference census (in use: %s)', async inUse => {
         const account = await openAccount('plain', { raw: inUse ? { mcpServersSettingsV1: { v: 1, strictMode: false,
             servers: [{ id: 'server-a', env: { TOKEN: { t: 'savedSecret', secretId: 'happier:shared-secret:v1:resource-a' } } }], bindings: [] } } : {} });
-        account.setEffect(() => Response.json({ resourceId: 'resource-a' }));
+        account.setEffect(() => inUse
+            ? Response.json({ error: 'resource_in_use' }, { status: 400 })
+            : Response.json({ resourceId: 'resource-a' }));
         expect(await deleteSavedSecretResource({ scope: account.scope, resourceId: 'resource-a',
             expectedRevision: 3, expectedSettingsVersion: 7 })).toMatchObject(inUse ? { ok: false, reason: 'in_use' } : { ok: true });
-        expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(inUse ? 0 : 1);
-        if (!inUse) expect(account.writes[0]!.body).toMatchObject({ resourceId: 'resource-a', expectedRevision: 3,
+        expect(account.writes.filter(write => write.path.endsWith('/delete'))).toHaveLength(1);
+        expect(account.writes[0]!.body).toMatchObject({ resourceId: 'resource-a', expectedRevision: 3,
             expectedSettingsVersion: 7, referenceCensus: { accountMode: 'plain', profiles: { referenceGuardRevision: 3, rows: [] } } });
     });
 

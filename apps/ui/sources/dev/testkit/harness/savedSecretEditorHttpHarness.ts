@@ -13,6 +13,8 @@ import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happie
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 import { createRootLayoutFeaturesResponse } from '../fixtures/featureFixtures';
 import { createArtifactStoreBoundary } from './artifactStoreBoundary';
@@ -76,6 +78,10 @@ export async function serveSavedSecretEditorHomes(params: Readonly<{
                 complete: true, referenceGuardRevision: 0, transferControl: { status: 'absent' }, diagnostics: [] });
             if (request.path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 0 });
             if (request.path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
+            if (request.path === machinePresetActionEndpointPathV1('machines.presets.list')) {
+                return Response.json(MachinePresetActionOutputSchemasV1['machines.presets.list'].parse({ kind: 'listed', presets: [] }));
+            }
+            if (request.path === '/v1/machines/managed/actions/list') return Response.json(ManagedListOutputV1Schema.parse({ machines: [] }));
             if ([REMOTE_HOST_ROWS_ROUTE_V1, NOTIFICATION_CHANNELS_ROUTE_V1,
                 '/v1/account/entity-rows/mcp', '/v1/account/entity-rows/acp',
                 '/v1/account/entity-rows/provider-connections', '/v1/account/entity-rows/connected-accounts/configurations',

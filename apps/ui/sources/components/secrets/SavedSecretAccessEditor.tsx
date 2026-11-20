@@ -16,8 +16,8 @@ import {
     promotePersonalSavedSecretResource,
     readSavedSecretResourceRecipientReadiness,
     setSavedSecretResourceGrants,
-    type SavedSecretResourceOperationResult,
 } from '@/sync/ops/settings/savedSecretResourceOperations';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { isTeamActionApprovalPendingError, runTeamAction } from '@/sync/ops/teams/teamActionClient';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
@@ -136,7 +136,8 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
     const dirty = !sameSavedSecretGrantDraft(draft, baselineDraft);
     React.useEffect(() => { props.onDirtyChange?.(dirty); }, [dirty, props.onDirtyChange]);
     const [saving, setSaving] = React.useState(false);
-    const [failure, setFailure] = React.useState<Extract<SavedSecretResourceOperationResult, { ok: false }>['reason'] | null>(null);
+    const [failure, setFailure] = React.useState<string | null>(null);
+    const operationFailed = t('secrets.catalog.operationFailed');
     /** Confirmation belongs to the revision the person reviewed before submission. */
     const targetKey = entry === null
         ? `${props.scope.serverId}:${props.scope.accountId}:personal:${target.kind === 'personal' ? target.secret.id : ''}`
@@ -191,7 +192,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         return (
             <View style={styles.body}>
                 <Text accessibilityRole="alert" style={[styles.notice, { color: theme.colors.state.danger.textForeground }]}>
-                    {t('secrets.catalog.operationFailed')}
+                    {operationFailed}
                 </Text>
                 <View style={styles.actions}>
                     <RoundButton size="small" display="secondary" title={t('common.cancel')} onPress={props.onClose} />
@@ -224,7 +225,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                     [entry.ref], undefined, { expectedRevision: basis ?? entry.revision!, requireManage: true,
                         isCurrent: () => currentTargetKey.current === requestedTargetKey }))
                 : null;
-            if (referenceDisclosure && !referenceDisclosure.ok) { setFailure(referenceDisclosure.reason); return; }
+            if (referenceDisclosure && !referenceDisclosure.ok) { setFailure(operationFailed); return; }
             const content = referenceDisclosure?.ok ? referenceDisclosure.contents.get(entry!.ref)?.content : undefined;
             const source = content?.v === 2 && content.source.kind === 'external' ? content.source : undefined;
             const target = t('secrets.catalog.shareDisclosureTargetCount', { count: nextGrantCount });
@@ -252,10 +253,10 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                 if (targetMounted.current && currentTargetIdentity.current === targetIdentity) setSaving(false);
             }
         };
-        const onApprovalFailed = () => {
+        const onApprovalFailed = (code: string) => {
             if (!targetMounted.current || currentTargetIdentity.current !== targetIdentity) return;
             setSaving(false);
-            setFailure('failed');
+            setFailure(resolveActionExecutionErrorMessage({ code }, operationFailed));
         };
         // One write either way: the personal target becomes a
         // shared resource carrying these grants, and the shared
@@ -286,7 +287,9 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         if (!targetMounted.current || currentTargetIdentity.current !== targetIdentity) return;
         if (!result.ok) {
             setSaving(false);
-            setFailure(result.reason);
+            setFailure(result.reason === 'outcome_unknown'
+                ? t('secrets.catalog.outcomeUnknown')
+                : resolveActionExecutionErrorMessage(result.failure, operationFailed));
             if (result.reason === 'outcome_unknown') {
                 await props.onSaved().catch(() => undefined);
             }
@@ -295,8 +298,10 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
         announceSavedAudience();
         try {
             await props.onSaved();
-        } catch {
-            if (targetMounted.current && currentTargetIdentity.current === targetIdentity) setFailure('failed');
+        } catch (cause) {
+            if (targetMounted.current && currentTargetIdentity.current === targetIdentity) {
+                setFailure(resolveActionExecutionErrorMessage(cause, operationFailed));
+            }
             return;
         }
         if (targetMounted.current && currentTargetIdentity.current === targetIdentity) props.onClose();
@@ -307,7 +312,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                 return;
             }
             setSaving(false);
-            setFailure('failed');
+            setFailure(resolveActionExecutionErrorMessage(cause, operationFailed));
         } finally {
             // The same editor owns the completed request's busy state.
             if (targetMounted.current && currentTargetIdentity.current === targetIdentity) setSaving(false);
@@ -325,22 +330,18 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                 parse: value => SharedSavedSecretRepairOutputV1Schema.parse(value),
                 onApprovalSucceeded: () => readiness.reload(),
             });
-            if (outcome.kind !== 'succeeded') setFailure('failed');
+            if (outcome.kind !== 'succeeded') setFailure(resolveActionExecutionErrorMessage(outcome.failure, operationFailed));
         } catch (cause) {
             if (isTeamActionApprovalPendingError(cause)) {
                 props.requestApproval?.(cause.registration);
-            } else setFailure('failed');
+            } else setFailure(resolveActionExecutionErrorMessage(cause, operationFailed));
         } finally {
             setFinishingSharing(false);
             readiness.reload();
         }
     };
 
-    const failureText = failure
-        ? failure === 'outcome_unknown'
-            ? t('secrets.catalog.outcomeUnknown')
-            : t('secrets.catalog.operationFailed')
-        : movedUnderEditor && !saving ? t('secrets.catalog.operationFailed') : null;
+    const failureText = failure ?? (movedUnderEditor && !saving ? operationFailed : null);
 
     // Rendered inside the secret's expanded row: the recipients, what each one needs, then the one
     // write. Nothing is shared until Save (or Share, for a still-personal secret) is pressed.

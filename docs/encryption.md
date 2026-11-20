@@ -7356,12 +7356,11 @@ wrapped for eligible recipient Accounts; plain material uses the canonical serve
 Mixed plain/E2EE audiences are prepared per recipient, and one recipient's missing encryption
 readiness does not reinterpret encrypted material as plain.
 
-Deleting a shared Saved Secret runs the same owner-side reference census first. The Home cannot
-semantically inspect an E2EE owner's Settings, so the owner client refuses the delete while its own
-profile, Provider, Voice, MCP, ACP, plugin, Connected Account, or registry token bindings still name the resource and
-reports where it is used. That is client-enforced referential integrity for the owner's own
-document, not a server-side guarantee, and it says nothing about recipient Settings: a recipient's
-reference to a deleted resource simply resolves as deleted and offers replacement.
+Deleting a shared Saved Secret starts with a reference census for the current Account. The Home
+checks current Connected Account credentials in both Account modes and checks Plain bindings in the
+deletion transaction. The keyholding client checks the E2EE owner's encrypted bindings and reports
+where the resource is used. Recipient Settings are outside the owner's census. A recipient's
+reference to a deleted resource resolves as deleted and offers replacement.
 
 Deployment bindings additionally retain their validated resource ids and exact
 revisions as non-content metadata on the existing `DeploymentEnvironment` row.

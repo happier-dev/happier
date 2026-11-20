@@ -100,6 +100,24 @@ describe('SavedSecretCreateEditor', () => {
         expect(onCreated).toHaveBeenCalledWith(createdRef(), 'shared');
     });
 
+    it('keeps a create draft open and presents a typed Home refusal', async () => {
+        home!.respondToMutations(() => Response.json({ error: 'resource_changed' }, { status: 409 }));
+        const onCreated = vi.fn();
+        const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
+        const screen = await renderScreen(
+            <SavedSecretCreateEditor scope={scopeA} approvalPending={false}
+                requestApproval={vi.fn()} onCancel={vi.fn()} onCreated={onCreated} />,
+        );
+        screen.changeTextByTestId('saved-secret-create-name', 'Kept name');
+        screen.changeTextByTestId('saved-secret-create-value', 'synthetic-value');
+        await flushHookEffects();
+        await screen.pressByTestIdAsync('saved-secret-create-submit');
+        await vi.waitFor(() => expect(createWrites()).toHaveLength(1));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('approvals.conflictFailure'));
+        expect(onCreated).not.toHaveBeenCalled();
+        expect(screen.findByTestId('saved-secret-create-name')?.props.value).toBe('Kept name');
+    });
+
     it('confirms disclosure and submits initial Account, Team, and Group grants', async () => {
         const { SavedSecretCreateEditor } = await import('./SavedSecretCreateEditor');
         const screen = await renderScreen(

@@ -17,6 +17,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { COLLECTION_LIST_SEARCH_THRESHOLD } from '@/components/ui/lists/collection/CollectionList';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { Modal } from '@/modal';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { ScopedSnapshotError } from '@/sync/domains/scope/scopedSnapshotFacts';
@@ -116,7 +117,12 @@ export function SecretsList(props: SecretsListProps) {
         if (value.length === 0) return;
         const intent = {};
         addIntentRef.current = intent;
-        const createdId = await onCreatePersonal?.({ name, value });
+        const createdId = await onCreatePersonal?.({ name, value }).catch(error => {
+            if (mountedRef.current && addIntentRef.current === intent) {
+                Modal.alert(t('common.error'), resolveActionExecutionErrorMessage(error, t('secrets.catalog.operationFailed')));
+            }
+            return null;
+        });
         // Creation still persists if its picker closes or its add draft is canceled.
         if (!createdId || !mountedRef.current || addIntentRef.current !== intent) return;
         onAfterAddSelectId?.(createdId);

@@ -10,6 +10,8 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import { Modal } from '@/modal';
+import { HappyError } from '@/utils/errors/errors';
 import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { SavedSecretCatalogEntryV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { SecretsList } from './SecretsList';
@@ -287,6 +289,25 @@ describe('SecretsList', () => {
             value: '  sk-test\n',
         });
         expect(onAfterAddSelectId).toHaveBeenCalledWith('uuid-1');
+    });
+
+    it('keeps an inline create draft after a typed refusal', async () => {
+        const { screen, onAfterAddSelectId } = await renderSecretsList({ onCreatePersonal: async () => {
+            throw new HappyError('Creation declined', false, { code: 'resource_changed' });
+        } });
+        await pressTestInstanceAsync(findTestInstanceByTypeContainingText(screen, 'Pressable', 'common.add'), 'add');
+        const name = findTestInstanceByTypeWithProps(screen, 'TextInput', { placeholder: 'secrets.placeholders.nameExample' });
+        const value = findTestInstanceByTypeWithProps(screen, 'TextInput', { placeholder: 'secrets.placeholders.valueExample' });
+        act(() => {
+            changeTextTestInstance(name, 'Workspace token', 'name');
+            changeTextTestInstance(value, 'dummy-workspace-token', 'value');
+        });
+        await pressTestInstanceAsync(findTestInstanceByTypeWithProps(screen, 'Pressable', {
+            accessibilityLabel: 'common.save',
+        }), 'save');
+        expect(Modal.alert).toHaveBeenCalledWith('common.error', 'approvals.conflictFailure');
+        expect(name?.props.value).toBe('Workspace token');
+        expect(onAfterAddSelectId).not.toHaveBeenCalled();
     });
 
     it.each(['closes', 'cancels adding'] as const)('does not select a late-created secret after its picker %s', async (retirement) => {

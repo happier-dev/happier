@@ -21,6 +21,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createSavedSecretResource } from '@/sync/ops/settings/savedSecretResourceOperations';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
 
@@ -177,9 +178,9 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 return;
             }
             if (!approvalDeclined) setFailure(t('secrets.catalog.operationFailed'));
-        } catch {
+        } catch (cause) {
             if (currentScopeKey.current !== scopeKey) return;
-            setFailure(t('secrets.catalog.operationFailed'));
+            setFailure(resolveActionExecutionErrorMessage(cause, t('secrets.catalog.operationFailed')));
         }
         operationInFlight.current = false;
         setSubmitting(false);
@@ -202,12 +203,13 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 if (first) { await finishCreated(first, scopeKey, 'personal'); return; }
             } else {
                 setFailure(outcome.failure.kind === 'outcome_unknown'
-                    ? t('secrets.catalog.outcomeUnknown') : t('secretsSettings.vaultLinkFailed'));
+                    ? t('secrets.catalog.outcomeUnknown')
+                    : resolveActionExecutionErrorMessage(outcome.failure, t('secretsSettings.vaultLinkFailed')));
             }
         } catch (cause) {
             if (currentScopeKey.current !== scopeKey) return;
             if (isTeamActionApprovalPendingError(cause)) { props.requestApproval(cause.registration); return; }
-            setFailure(t('secretsSettings.vaultLinkFailed'));
+            setFailure(resolveActionExecutionErrorMessage(cause, t('secretsSettings.vaultLinkFailed')));
         }
         operationInFlight.current = false;
         setSubmitting(false);
@@ -243,11 +245,11 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 ...(source ? { source } : { value }),
                 ...savedSecretGrantInputs(grants),
                 onApprovalSucceeded: ({ resourceRef }) => finishCreated(resourceRef, scopeKey, 'shared'),
-                onApprovalFailed: () => {
+                onApprovalFailed: (code) => {
                     if (currentScopeKey.current !== scopeKey) return;
                     operationInFlight.current = false;
                     setSubmitting(false);
-                    setFailure(t('secrets.catalog.approvalDeclined'));
+                    setFailure(resolveActionExecutionErrorMessage({ code }, t('secrets.catalog.approvalDeclined')));
                 },
             });
             if (currentScopeKey.current !== scopeKey) return;
@@ -257,7 +259,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
                 setSubmitting(false);
                 setFailure(result.reason === 'outcome_unknown'
                     ? t('secrets.catalog.outcomeUnknown')
-                    : t('secrets.catalog.operationFailed'));
+                    : resolveActionExecutionErrorMessage(result.failure, t('secrets.catalog.operationFailed')));
             }
         } catch (cause) {
             if (currentScopeKey.current !== scopeKey) return;
@@ -267,7 +269,7 @@ export const SavedSecretCreateEditor = React.memo(function SavedSecretCreateEdit
             }
             operationInFlight.current = false;
             setSubmitting(false);
-            setFailure(t('secrets.catalog.operationFailed'));
+            setFailure(resolveActionExecutionErrorMessage(cause, t('secrets.catalog.operationFailed')));
         }
     }, [finishCreated, grants, kind, linkAccount, linkReference, linkedSource, props.requestApproval, props.scope, scopeKey, value]);
 
