@@ -13,6 +13,7 @@ import {
   type ClassifyPrimarySessionRuntimeIssueInput,
 } from './classifyPrimarySessionRuntimeIssue';
 import type { SessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { StructuredInputComposerAttachmentResolutionError } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
 type PrimarySessionRuntimeIssueRecord = Readonly<{
   latestTurnStatus: PrimaryTurnStatusV1;
@@ -145,10 +146,13 @@ export async function surfacePrimarySessionRuntimeIssue(
     lastRuntimeIssue: issue,
   } satisfies PrimarySessionRuntimeIssueRecord;
   if (input.session?.sessionTurnLifecycle) {
+    const transcriptPreview = input.error instanceof StructuredInputComposerAttachmentResolutionError
+      ? input.error.transcriptPreview : undefined;
     const failed = await input.session.sessionTurnLifecycle.failTurn({
       issue,
       occurredAt: issue.occurredAt,
       allocateWhenIdle: input.allocateTurnWhenIdle === true,
+      ...(transcriptPreview === undefined ? {} : { transcriptPreview }),
     });
     if (failed) {
       await input.recordIssue?.(record);

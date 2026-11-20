@@ -1,4 +1,5 @@
 {
+  "plugins.triage.sourceFailure.posthog/not-found": "La source n’a pas trouvé cette entrée.",
   "plugins.triage.reviews.open": "Ouvrir la revue",
   "plugins.triage.reviews.unavailable": "Impossible d’ouvrir cette revue",
   "plugins.triage.tasks.review.partial": "La tâche a été créée, mais son lien vers la revue n’est pas confirmé. Réparez le lien sans créer une autre tâche.",

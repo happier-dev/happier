@@ -3479,10 +3479,15 @@ preserves `preparation_pending` or `attachment_unavailable` as `dependency_failu
 Typed attachment refusals retain their code-only preparation cause through the
 daemon boundary, loop diagnostic and Session failure presentation. A definitive
 Plugin refusal retains its retryability instead of becoming a transient failure.
+When a resolver reports a blocked attachment by instance, the host retains the
+resolution code and retryability in the turn failure. The Session transcript
+carries the selected attachment's display name and the resolver's explanation.
+Home's turn metadata carries the code and retryability without the attachment
+name or source label.
 Typed Home-resolution failures retain their specific code (such as `profile_missing`)
-through preparation and lifecycle publication. All use
-static document/Home remediation, without publishing private references or
-raw error text. Required context remains fail-closed; the issue does not imply
+through preparation and lifecycle publication. Public previews use
+static document/Home remediation without publishing private references or
+raw error text. Required context remains fail-closed. The issue does not imply
 that an Agent accepted the initial input. This is a development-source contract;
 loaded-runtime failure visibility and explicit recovery need separate validation.
 

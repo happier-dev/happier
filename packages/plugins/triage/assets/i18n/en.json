@@ -1,4 +1,5 @@
 {
+  "plugins.triage.sourceFailure.posthog/not-found": "Its source could not find this entry.",
   "plugins.triage.reviews.open": "Open Review",
   "plugins.triage.reviews.unavailable": "This Review could not be opened",
   "plugins.triage.tasks.review.partial": "The task was created, but its Review link is not confirmed. Repair the link without creating another task.",

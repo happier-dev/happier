@@ -778,20 +778,28 @@ describe('resolving an attached Triage entry for dispatch', () => {
         // A transient provider failure is worth retrying; the class decides,
         // not a guess about the word "failed".
         await expect(resolveTriageEntryForDispatch({ attachments: [attachment()] }, unresolved.deps))
-            .rejects.toMatchObject({ name: 'PluginError', code: 'provider-busy', retryable: true });
+            .resolves.toMatchObject({ attachments: [{ status: 'failed', retryable: true }] });
     });
 
-    it('preserves a permanent source refusal code without disclosing its detail', async () => {
+    it('explains a permanent source refusal without disclosing its detail', async () => {
         const harness = createHarness({ get: async () => ({
             kind: 'unresolved', localRef: LOCAL_REF,
             failure: { class: 'permission', code: 'forbidden', detail: 'PRIVATE_PROVIDER_BODY' },
         }) });
-        const failure = await resolveTriageEntryForDispatch({ attachments: [attachment()] }, harness.deps)
-            .then(() => null, (error: unknown) => error);
-        expect(failure).toBeInstanceOf(PluginError);
-        expect(failure).toMatchObject({ code: 'forbidden', retryable: false });
-        expect(failure instanceof Error && failure.message).not.toContain('PRIVATE_');
+        const failure = await resolveTriageEntryForDispatch({ attachments: [attachment()] }, harness.deps);
+        expect(failure.attachments).toMatchObject([{ status: 'unavailable', retryable: false, message: expect.stringMatching(/access/i) }]);
         expect(JSON.stringify(failure)).not.toContain('PRIVATE_');
+    });
+
+    it('reports an exact PostHog lookup miss without claiming the issue was removed', async () => {
+        const harness = createHarness({ get: async () => ({
+            kind: 'unresolved', localRef: LOCAL_REF,
+            failure: { class: 'unknown', code: 'posthog/not-found' },
+        }) });
+        await expect(resolveTriageEntryForDispatch({ attachments: [attachment()] }, harness.deps))
+            .resolves.toMatchObject({ attachments: [{
+                status: 'notFound', retryable: false, message: expect.stringMatching(/not find/i),
+            }] });
     });
 
     it('retains the canonical invocation refusal for the host diagnostic owner', async () => {

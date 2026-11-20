@@ -1,4 +1,5 @@
 {
+  "plugins.triage.sourceFailure.posthog/not-found": "Die Quelle konnte diesen Eintrag nicht finden.",
   "plugins.triage.reviews.open": "Review öffnen",
   "plugins.triage.reviews.unavailable": "Dieses Review konnte nicht geöffnet werden",
   "plugins.triage.tasks.review.partial": "Die Aufgabe wurde erstellt, aber ihr Review-Link ist nicht bestätigt. Repariere den Link, ohne eine weitere Aufgabe zu erstellen.",

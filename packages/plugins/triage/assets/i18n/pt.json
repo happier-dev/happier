@@ -1,4 +1,5 @@
 {
+  "plugins.triage.sourceFailure.posthog/not-found": "A fonte não conseguiu encontrar esta entrada.",
   "plugins.triage.reviews.open": "Abrir revisão",
   "plugins.triage.reviews.unavailable": "Não foi possível abrir esta revisão",
   "plugins.triage.tasks.review.partial": "A tarefa foi criada, mas a ligação à revisão não está confirmada. Repare a ligação sem criar outra tarefa.",

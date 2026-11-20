@@ -478,6 +478,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   };
   const enqueueSessionTurnMutation = (
     mutation: RuntimeSessionTurnMutationV1,
+    transcriptPreview?: string,
   ): void | Promise<void | Readonly<{ terminalStatusOverride: 'failed' }>> => {
     if (!isTerminalSessionTurnMutationAction(mutation.action)) {
       return params.session.enqueueSessionTurnMutation?.(mutation);
@@ -540,7 +541,13 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
             diagnostic: { code: mutation.issue.code, severity: 'error',
               ...(mutation.issue.sanitizedPreview ? { message: mutation.issue.sanitizedPreview } : {}),
               details: { v: 1, source: mutation.issue.source, occurredAt: mutation.issue.occurredAt } },
-          }, { issue: mutation.issue, terminalSourceMessage: turnState?.terminalSourceMessage });
+          }, {
+            // Attachment labels are Session content. Only the encrypted
+            // transcript receives them, never Home's public turn mutation.
+            issue: transcriptPreview === undefined || terminalStatusOverride
+              ? mutation.issue : { ...mutation.issue, sanitizedPreview: transcriptPreview },
+            terminalSourceMessage: turnState?.terminalSourceMessage,
+          });
           if (turnState && marker) {
             turnState.terminalSourceMessage = marker;
             if (marker.committedSequence !== undefined) turnState.failureMessageSeq = marker.committedSequence;

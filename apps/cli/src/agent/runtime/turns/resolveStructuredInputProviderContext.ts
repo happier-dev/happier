@@ -14,7 +14,8 @@ import { isSameWidgetDefinitionV1, parseWidgetInstanceRefKeyV1, WidgetInstanceAc
 import type { SessionInputReferencesV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
 import { browserMediaToStructuredImageInput } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 import { logger } from '@/ui/logger';
-import type { RunnerDaemonPluginServicesPreparationCauseV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
+import { SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH, type RunnerDaemonPluginServicesPreparationCauseV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 /**
  * The send-time provider resolver (D-3, INV-9, R-10).
@@ -93,15 +94,25 @@ type StructuredInputComposerAttachmentResolutionErrorCode =
  * this owner never retires or mutates the already-admitted Message.
  */
 export class StructuredInputComposerAttachmentResolutionError extends Error {
+  readonly failureCause?: SessionRuntimeIssueV1['failureCause'];
+  readonly #transcriptPreview?: string;
+
   constructor(
     readonly code: StructuredInputComposerAttachmentResolutionErrorCode,
     readonly retryable: boolean,
     message: string,
     readonly preparationCause?: RunnerDaemonPluginServicesPreparationCauseV1,
+    transcriptPreview?: string,
   ) {
     super(message);
     this.name = 'StructuredInputComposerAttachmentResolutionError';
+    if (transcriptPreview !== undefined) {
+      this.#transcriptPreview = transcriptPreview;
+      this.failureCause = { phase: 'turn_start', failureReason: 'unknown', code, retryable };
+    }
   }
+
+  get transcriptPreview(): string | undefined { return this.#transcriptPreview; }
 }
 
 export class StructuredInputComposerAttachmentUnavailableError
@@ -568,16 +579,18 @@ function correlateComposerAttachmentResolution(params: Readonly<{
 }
 
 function nonReadyComposerAttachmentResolutionError(
+  attachment: ComposerAttachmentInputV1,
   outcome: Exclude<ComposerAttachmentResolveResultV1['attachments'][number], Readonly<{ status: 'ready' }>>,
 ): StructuredInputComposerAttachmentResolutionError {
   const code = outcome.status === 'notFound'
     ? 'composer_attachment_resolution_not_found'
     : `composer_attachment_resolution_${outcome.status}` as const;
-  return composerAttachmentResolutionError({
-    code,
-    retryable: outcome.retryable,
-    message: outcome.message ?? `Composer attachment resolution is ${outcome.status}`,
-  });
+  const { description, label } = attachment.presentation;
+  const name = [description, label].filter(Boolean).join(' · ');
+  const message = `Composer attachment resolution is ${outcome.status}`;
+  const preview = redactBugReportSensitiveText(`${name}: ${outcome.message ?? message}`)
+    .slice(0, SESSION_RUNTIME_ISSUE_PREVIEW_MAX_LENGTH);
+  return new StructuredInputComposerAttachmentResolutionError(code, outcome.retryable, message, undefined, preview);
 }
 
 async function resolveComposerAttachments(params: Readonly<{
@@ -622,7 +635,7 @@ async function resolveComposerAttachments(params: Readonly<{
     outcomes.forEach((outcome, index) => {
       const attachment = group.attachments[index]!;
       if (outcome.status !== 'ready') {
-        throw nonReadyComposerAttachmentResolutionError(outcome);
+        throw nonReadyComposerAttachmentResolutionError(attachment, outcome);
       }
       const { content: _content, ...contentlessAttachment } = attachment;
       const resolved = ResolvedComposerAttachmentDispatchV1Schema.parse({

@@ -1,4 +1,5 @@
 {
+  "plugins.triage.sourceFailure.posthog/not-found": "La fonte non ha trovato questa voce.",
   "plugins.triage.reviews.open": "Apri revisione",
   "plugins.triage.reviews.unavailable": "Impossibile aprire questa revisione",
   "plugins.triage.tasks.review.partial": "L’attività è stata creata, ma il collegamento alla revisione non è confermato. Ripara il collegamento senza creare un’altra attività.",

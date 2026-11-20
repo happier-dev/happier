@@ -17,6 +17,7 @@ export type SessionTurnLifecycleMutationPort = Readonly<{
     readQuestionWaitTurnId?: () => string | null;
     enqueueSessionTurnMutation?: (
         mutation: RuntimeSessionTurnMutationV1,
+        transcriptPreview?: string,
     ) => void | Readonly<{ terminalStatusOverride: 'failed' }> | Promise<void | Readonly<{ terminalStatusOverride: 'failed' }>>;
 }>;
 
@@ -39,12 +40,13 @@ type SessionTurnLifecycleParams = Readonly<{
 
 export type SessionTurnLifecycle = Readonly<{
     confirmSessionOpened(): Promise<void>;
-    observeRuntimeEvent(event: AgentSessionRuntimeEvent): void;
+    observeRuntimeEvent(event: AgentSessionRuntimeEvent, transcriptPreview?: string): void;
     observeRollbackBoundary(input: RuntimeRollbackBoundaryObservation): void;
     failTurn(input: Readonly<{
         issue: SessionRuntimeIssueV1;
         occurredAt?: number;
         allocateWhenIdle?: boolean;
+        transcriptPreview?: string;
     }>): Promise<boolean>;
     hasActiveTurn(): boolean;
     dispose(): void;
@@ -154,6 +156,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             terminalStatus?: 'completed' | 'failed';
         }>,
         failedEvent?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-failed' }>,
+        transcriptPreview?: string,
     ): void {
         if (mutation.action === 'begin' || mutation.action === 'complete' || mutation.action === 'fail' || mutation.action === 'cancel') {
             const facts = readAutomationLifecycleFacts();
@@ -191,7 +194,9 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     recordEnrichment('skipped', 'evidence_absent');
                 }
             }
-            return await enqueue.call(params.session, mutation);
+            return await (transcriptPreview === undefined
+                ? enqueue.call(params.session, mutation)
+                : enqueue.call(params.session, mutation, transcriptPreview));
         };
 
         if (!params.onAcceptedTurnLifecycle) {
@@ -337,12 +342,12 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         ...(input.issue.failureCause ? { failureCause: input.issue.failureCause } : {}),
                     },
                 },
-            });
+            }, input.transcriptPreview);
             await lifecycle.drainAcceptedLifecycle();
             return true;
         },
 
-        observeRuntimeEvent(event) {
+        observeRuntimeEvent(event, transcriptPreview) {
             if (event.sessionId !== params.session.sessionId) return;
 
             if (event.kind === 'turn-start') {
@@ -451,6 +456,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     } satisfies RuntimeSessionTurnMutationV1,
                     { event: 'assistant_message_end', turnId: event.turnId, terminalStatus: 'failed' },
                     event,
+                    transcriptPreview,
                 );
                 if (activeTurnId === event.turnId) {
                     projectTurnProgress(null, event.emittedAtMs);

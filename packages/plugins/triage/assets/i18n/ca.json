@@ -1,4 +1,5 @@
 {
+  "plugins.triage.sourceFailure.posthog/not-found": "La font no ha pogut trobar aquesta entrada.",
   "plugins.triage.reviews.open": "Obre la revisió",
   "plugins.triage.reviews.unavailable": "No s’ha pogut obrir aquesta revisió",
   "plugins.triage.tasks.review.partial": "La tasca s’ha creat, però el seu enllaç a la revisió no està confirmat. Repara l’enllaç sense crear una altra tasca.",

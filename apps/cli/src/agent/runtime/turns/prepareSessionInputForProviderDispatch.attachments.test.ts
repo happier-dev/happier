@@ -10,7 +10,9 @@ import {
 } from './prepareSessionInputForProviderDispatch';
 import { StructuredInputComposerAttachmentResolutionError } from './resolveStructuredInputProviderContext';
 import { createNativeAgentSessionEffectBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
-import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
+import { classifyPrimarySessionRuntimeIssue, surfacePrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/surfacePrimarySessionRuntimeIssue';
+import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
 
 const structuredInput = HappierStructuredInputV1Schema.parse({
   v: 1,
@@ -20,7 +22,7 @@ const structuredInput = HappierStructuredInputV1Schema.parse({
     attachment: { pluginId: 'acme.issue-context', localId: 'issue' },
     key: 'issue-42',
     value: { issueId: '42' },
-    presentation: { label: 'Issue #42', typeLabel: 'Issue' },
+    presentation: { label: 'Issue #42', description: 'Acme project', typeLabel: 'Issue' },
   }],
 });
 
@@ -97,6 +99,39 @@ describe('Composer attachment dispatch failure classification', () => {
       .toMatchObject({ source: 'dependency_failure', failureCause: { preparationCause: { requestId: 'preparation-request-132' } } });
     expect(JSON.stringify(failed)).not.toContain(privateText);
     expect(failed).not.toHaveProperty('cause');
+  });
+
+  it('identifies a blocked attachment in the failed turn and its typed preparation settlement', async () => {
+    const failed = await prepare({
+      sessionId: 'session-1',
+      resolveComposerAttachmentForDispatch: async input => ({
+        attachments: input.request.attachments.map(({ instanceId }) => ({
+          instanceId, status: 'notFound', retryable: false, message: 'It no longer exists in its source.',
+        })),
+      }),
+    }).catch((error: unknown) => error);
+    const preparation = readStructuredInputPreparationFailure(failed);
+    expect(preparation).toMatchObject({ code: 'composer_attachment_resolution_not_found', retryable: false });
+    const mutations: RuntimeSessionTurnMutationV1[] = [];
+    const previews: string[] = [];
+    const sessionTurnLifecycle = createSessionTurnLifecycle({
+      session: { sessionId: 'session-1', enqueueSessionTurnMutation(mutation, preview) {
+        mutations.push(mutation);
+        if (preview !== undefined) previews.push(preview);
+      } },
+    });
+    const issue = await surfacePrimarySessionRuntimeIssue({
+      cause: 'session_error', error: failed, preparingPrompt: true, allocateTurnWhenIdle: true,
+      session: { sessionId: 'session-1', sessionTurnLifecycle },
+    });
+    expect(issue).toMatchObject({ source: 'dependency_failure', code: 'attachment_unavailable',
+      failureCause: { code: preparation?.code, retryable: false },
+    });
+    expect(mutations.at(-1)).toMatchObject({ action: 'fail', issue: {
+      failureCause: { code: preparation?.code, retryable: false },
+    } });
+    expect(previews).toEqual([expect.stringMatching(/Acme project.*Issue #42.*no longer exists/)]);
+    expect(JSON.stringify({ mutations, issue, preparation, failed })).not.toContain('Issue #42');
   });
 
   it.each([

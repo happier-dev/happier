@@ -1,7 +1,8 @@
-import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
+import { isPluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { SessionInputForgeEvidenceV1 } from '@happier-dev/plugin-sdk/sessions';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import {
+    describeTriageSourceFailureV1,
     normalizeTriageSingleLineV1,
     type TriageConfiguredSourceInstanceV1,
     type TriageEntryRefV1,
@@ -388,13 +389,15 @@ async function resolveOne(
             // reattaches deliberately.
             return blocked(attachment.instanceId, 'notFound', false, 'It was merged into another entry.');
         }
-        case 'unresolved':
-            // The authoritative source code uses the same failure envelope as
-            // an invocation refusal. Provider detail stays at the source.
-            throw new PluginError({
-                code: observation.failure.code,
-                retryable: retryableFailure(observation.failure),
-                message: 'Its source could not confirm this entry.',
-            });
+        case 'unresolved': {
+            const { failure } = observation;
+            // An exact lookup miss cannot establish deletion or a merge.
+            if (failure.code === 'posthog/not-found') {
+                return blocked(attachment.instanceId, 'notFound', false, 'Its source could not find this entry.');
+            }
+            const status = failure.class === 'permission' || failure.class === 'authentication' ? 'unavailable' : 'failed';
+            return blocked(attachment.instanceId, status, retryableFailure(failure),
+                describeTriageSourceFailureV1(failure, 'Its source could not confirm this entry.', undefined, 'en'));
+        }
     }
 }
