@@ -2389,6 +2389,10 @@ describe('own-server target at the Action host boundary', () => {
                                     expect(closeInput.volumes).toEqual(deployed?.volumes);
                                     let candidate: ReturnType<typeof DeploymentOwnServerContentV1Schema.parse> | undefined;
                                     const teardown = createOwnServerTeardownForHost({ ...host,
+                                        async *readHistoryHeaders() {
+                                            for (const saved of [...nativeReceipts].reverse())
+                                                if (saved.deployment.environmentId === environment.environment.id) yield saved.deployment;
+                                        },
                                         readBuildHistory: () => (async function* () {
                                             for (const saved of [...nativeReceipts].reverse())
                                                 if (saved.deployment.environmentId === environment.environment.id) yield saved;

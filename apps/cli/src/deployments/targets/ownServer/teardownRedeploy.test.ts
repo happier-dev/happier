@@ -104,6 +104,7 @@ it('deploys after native teardown and preserves a later activation failure witho
         };
         const target = createOwnServerDeploymentTargetForHost(host);
         const teardown = createOwnServerTeardownForHost({ ...host, async findReceipt() { return null; },
+            async *readHistoryHeaders() { for (const receipt of [...receipts.values()].reverse()) yield structuredClone(receipt.deployment); },
             async createCandidate() { throw new Error('Receipt is supplied at the storage boundary'); } });
         let revision = 0;
         const candidate = async (id: string) => {

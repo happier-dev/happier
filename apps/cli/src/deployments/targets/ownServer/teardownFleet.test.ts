@@ -21,6 +21,7 @@ it.each([undefined, ['machine-b']])('prepares exactly the selected fleet members
             async acquireTeardown() { throw new Error('Preparation must not remove workloads'); } },
         async readEnvironment() { return environment; },
         async *readBuildHistory() { yield prior; },
+        async *readHistoryHeaders() { yield prior.deployment; },
         async readReceipt() { throw new Error('No teardown receipt exists yet'); },
         async writeTransition() { throw new Error('Preparation cannot settle a receipt'); },
         async findReceipt() { return null; },

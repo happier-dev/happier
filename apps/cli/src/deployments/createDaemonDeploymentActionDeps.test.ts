@@ -3928,6 +3928,7 @@ describe('installed deployment storage and target composition', () => {
             async readEnvironment() { throw new Error('The routing owner already read this Environment'); },
             async readReceipt() { throw new Error('No retained receipt'); },
             async *readBuildHistory() { yield createDeploymentReceiptDetailV1(); },
+            async *readHistoryHeaders() { throw new Error('A target-only review does not probe Environment history'); },
             async writeTransition() { throw new Error('Preparation must not settle'); },
             async findReceipt() { return null; }, async createCandidate() { return candidate; },
         });
@@ -3953,6 +3954,7 @@ describe('installed deployment storage and target composition', () => {
             async readEnvironment() { return environment; },
             async readReceipt() { throw new Error('Preparation must not read an uncreated receipt'); },
             async *readBuildHistory() { yield createDeploymentReceiptDetailV1(); },
+            async *readHistoryHeaders() { throw new Error('A target-only review does not probe Environment history'); },
             async writeTransition() { throw new Error('Preparation must not settle'); },
             async findReceipt() { return null; },
             async createCandidate(_environment, content) {
@@ -3982,6 +3984,7 @@ describe('installed deployment storage and target composition', () => {
             async readEnvironment() { return environment; },
             async readReceipt() { throw new Error('Refusal must precede receipt acquisition'); },
             async *readBuildHistory() { throw new Error('Refusal must precede history reads'); },
+            async *readHistoryHeaders() { throw new Error('Refusal must precede history reads'); },
             async writeTransition() { throw new Error('Refusal must not settle'); },
             async findReceipt() { throw new Error('Refusal must precede receipt allocation'); },
             async createCandidate() { throw new Error('Refusal must precede candidate creation'); },

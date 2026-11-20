@@ -137,7 +137,8 @@ import { readDeploymentTemplateDeployIntentV1 } from '@happier-dev/protocol/depl
 import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { createPlatformVariablesForHost } from './targets/platformVariablesForHost';
 import { readDeploymentObservationForHost } from './readObservationForHost';
-import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readOwnServerDeploymentReceiptHistoryForHost } from './readReceiptForHost';
+import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readDeploymentReceiptHistoryHeadersForHost,
+    readOwnServerDeploymentReceiptHistoryForHost } from './readReceiptForHost';
 import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDefaultsForHost, prepareDeploymentEnvironmentDefaultsForHost,
     type DeploymentCreationDefaultRequestForHost } from './readCreationDefaultsForHost';
 import { createEnvironmentCreatePlannerForHost, resolveEnvironmentCreateCopyForHost,
@@ -493,14 +494,24 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             : (await ApiClient.create(host.credentials)).getMachine(machineId, { signal: context.signal }));
         return machine ? readTelemetryCollectorPlacementForHost(machine) : { kind: 'unavailable', reason: 'collector_unavailable' };
     };
-    const readReceiptHistory = (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>, lineage?: ReadonlySet<string>) =>
-        readOwnServerDeploymentReceiptHistoryForHost({ environmentId: request.environmentId, lineage,
-            async readPage(cursor) {
-                const loaded = await storage('deployments.receipts.list', { serverId: host.serverId,
-                    environmentId: request.environmentId, ...(cursor ? { cursor } : {}) }, request.context);
-                if ('ok' in loaded && !loaded.ok && 'errorCode' in loaded) return refuse(loaded);
-                return loaded;
-            },
+    const receiptHistoryPages = (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>, lineage?: ReadonlySet<string>) => ({
+        environmentId: request.environmentId, lineage,
+        async readPage(cursor?: string) {
+            const loaded = await storage('deployments.receipts.list', { serverId: host.serverId,
+                environmentId: request.environmentId, ...(cursor ? { cursor } : {}) }, request.context);
+            if ('ok' in loaded && !loaded.ok && 'errorCode' in loaded) return refuse(loaded);
+            return loaded;
+        },
+    });
+    const historyLineage = async (request: Parameters<NonNullable<OwnServerDeploymentTargetHostInput['readBuildHistory']>>[0]) => {
+        if (request.targetLinkId === undefined) return undefined;
+        const environment = request.environment ?? await targetHostReaders.readEnvironment(request);
+        const link = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId)?.targetLink;
+        if (!link) return refuse('target_mismatch');
+        return getDeploymentTargetLinkLineageV1(link, environment.targetLinks.map(item => item.targetLink));
+    };
+    const readReceiptHistory = (request: Parameters<typeof receiptHistoryPages>[0], lineage?: ReadonlySet<string>) =>
+        readOwnServerDeploymentReceiptHistoryForHost({ ...receiptHistoryPages(request, lineage),
             readCurrent: deploymentId => targetHostReaders.readReceipt({ ...request, deploymentId }),
             open: deployment => openReceipt(deployment, request.context),
         });
@@ -581,15 +592,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 actionOperationId: request.context.operationAcceptance?.operationId }), request.context));
         },
         async *readBuildHistory(request) {
-            if (request.targetLinkId === undefined) {
-                yield* readReceiptHistory(request);
-                return;
-            }
-            const environment = request.environment ?? await targetHostReaders.readEnvironment(request);
-            const link = environment.targetLinks.find(item => item.targetLink.id === request.targetLinkId)?.targetLink;
-            if (!link) return refuse('target_mismatch');
-            const lineage = getDeploymentTargetLinkLineageV1(link, environment.targetLinks.map(item => item.targetLink));
-            yield* readReceiptHistory(request, lineage);
+            yield* readReceiptHistory(request, await historyLineage(request));
         },
         async dispatchMember(member) {
             const { request } = member;
@@ -814,6 +817,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             }
     };
     const ownServerTeardown = createOwnServerTeardownForHost({ ...targetHost, sendChild, findReceipt: findTeardownReceipt,
+        async *readHistoryHeaders(request) {
+            yield* readDeploymentReceiptHistoryHeadersForHost(receiptHistoryPages(request, await historyLineage(request)));
+        },
         createCandidate: (environment, content, context) => createReceiptCandidate({ environment, content, context,
             assertCurrent: () => assertCurrent(context) }),
     });

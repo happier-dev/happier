@@ -6,36 +6,44 @@ import { type DeploymentReceiptDetailV1, type DeploymentReceiptHeaderV1, Deploym
 import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
-/** Incumbent history pager shared by member-version and finite health reads.
- * Settled headers are immutable; live receipts and conflicted headers reopen
- * through the canonical exact current reader, never a second artifact store. */
-export async function* readOwnServerDeploymentReceiptHistoryForHost(input: Readonly<{
+type ReceiptHistoryPages = Readonly<{
     environmentId: string;
     lineage?: ReadonlySet<string>;
     readPage(cursor?: string): Promise<unknown>;
-    readCurrent(deploymentId: string): Promise<DeploymentReceiptDetailV1>;
-    open(deployment: DeploymentReceiptHeaderV1): Promise<DeploymentReceiptDetailV1>;
-}>) {
+}>;
+
+export async function* readDeploymentReceiptHistoryHeadersForHost(input: ReceiptHistoryPages) {
     let cursor: string | undefined;
     for (;;) {
         const page = DeploymentReceiptListResultV1Schema.parse(await input.readPage(cursor));
         if (!page.ok) throw createActionExecuteFailureError({ ok: false, errorCode: page.error, error: page.error });
         for (const deployment of page.items) {
             if (deployment.environmentId !== input.environmentId || input.lineage && !input.lineage.has(deployment.targetLinkId)) continue;
-            let receipt: DeploymentReceiptDetailV1;
-            if (deployment.operation === 'teardown' || !isDeploymentSettledV1(deployment.state)) {
-                receipt = await input.readCurrent(deployment.id);
-            } else {
-                try { receipt = await input.open(deployment); }
-                catch (error) {
-                    if (!(error instanceof Error) || !('code' in error) || error.code !== 'deployment_conflict') throw error;
-                    receipt = await input.readCurrent(deployment.id);
-                }
-            }
-            yield { ...receipt, content: DeploymentOwnServerContentV1Schema.parse(receipt.content) };
+            yield deployment;
         }
         if (!page.nextCursor) return;
         cursor = page.nextCursor;
+    }
+}
+
+/** Settled headers are immutable; live receipts and conflicted headers reopen
+ * through the canonical exact current reader. */
+export async function* readOwnServerDeploymentReceiptHistoryForHost(input: ReceiptHistoryPages & Readonly<{
+    readCurrent(deploymentId: string): Promise<DeploymentReceiptDetailV1>;
+    open(deployment: DeploymentReceiptHeaderV1): Promise<DeploymentReceiptDetailV1>;
+}>) {
+    for await (const deployment of readDeploymentReceiptHistoryHeadersForHost(input)) {
+        let receipt: DeploymentReceiptDetailV1;
+        if (deployment.operation === 'teardown' || !isDeploymentSettledV1(deployment.state)) {
+            receipt = await input.readCurrent(deployment.id);
+        } else {
+            try { receipt = await input.open(deployment); }
+            catch (error) {
+                if (!(error instanceof Error) || !('code' in error) || error.code !== 'deployment_conflict') throw error;
+                receipt = await input.readCurrent(deployment.id);
+            }
+        }
+        yield { ...receipt, content: DeploymentOwnServerContentV1Schema.parse(receipt.content) };
     }
 }
 

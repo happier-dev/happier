@@ -90,6 +90,7 @@ it.each(['reviewed', 'omitted', 'approval-pending', 'foreign', 'other-child', 'o
             async acquireTeardown() { throw new Error('Controller cannot acquire remote native target'); } },
         async readEnvironment() { return child; },
         async *readBuildHistory() { yield createDeploymentReceiptDetailV1(); },
+        async *readHistoryHeaders() { yield createDeploymentReceiptDetailV1().deployment; },
         async readReceipt() { throw new Error('No receipt read required during preparation'); },
         async writeTransition() { throw new Error('No receipt transition during preparation'); },
         async findReceipt() { return null; },

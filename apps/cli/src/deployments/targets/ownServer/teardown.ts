@@ -4,7 +4,7 @@ import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecu
 import { createActionExecuteFailureError, ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildDeploymentTeardownInputV1, DeploymentTeardownNothingDeployedInputV1Schema,
     type DeploymentTeardownInputV1, type DeploymentTeardownRefusalDetailsV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentOwnServerContentV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentOwnServerContentV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentTeardownResourceV1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { observeNativeCaddyRetainedNetwork } from '@happier-dev/cli-common/machineSetup';
@@ -28,6 +28,7 @@ import type { DeploymentTeardownRequestInputV1 } from '@happier-dev/protocol/dep
 
 type Reference = Pick<DeploymentTeardownInputV1, 'contentArtifactId' | 'contentHeaderVersion' | 'contentBodyVersion'>;
 type Host = OwnServerDeploymentTargetHostInput & Readonly<{
+    readHistoryHeaders(request: Parameters<NonNullable<OwnServerDeploymentTargetHostInput['readBuildHistory']>>[0]): AsyncIterable<DeploymentReceiptHeaderV1>;
     findReceipt(input: Pick<DeploymentTeardownInputV1, 'environmentId' | 'targetLinkId' | 'requestKey'>,
         context: ActionExecutorContext): Promise<DeploymentReceiptDetailV1 | null>;
     sendChild?(job: DeploymentChildRpcV1, context: ActionExecutorContext): Promise<unknown>;
@@ -136,12 +137,11 @@ export function createOwnServerTeardownForHost(host: Host) {
         const projects = new Set([identity.projectName]);
         let mayHaveWorkload = link.activeDeploymentId !== undefined
             || environment.targetLinks.some(other => other.targetLink.id !== link.id);
-        // select already proved the two native producer ports are present.
-        for await (const receipt of host.readBuildHistory!({ environmentId: request.input.environmentId,
+        for await (const deployment of host.readHistoryHeaders({ environmentId: request.input.environmentId,
             targetLinkId: link.id, environment, context: request.context })) {
-            if (receipt.deployment.operation === 'teardown') continue;
+            if (deployment.operation === 'teardown') continue;
             mayHaveWorkload = true;
-            projects.add(resolveNativeComposeCandidateProjectName(identity.projectName, receipt.deployment.id));
+            projects.add(resolveNativeComposeCandidateProjectName(identity.projectName, deployment.id));
         }
         const member = link.members.find(member => member.machineId === host.machineId);
         if (!member) throw createActionExecuteFailureError({ ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' });
@@ -349,7 +349,7 @@ export function createOwnServerTeardownForHost(host: Host) {
                 if (!prior && removeEnvironment === true
                     && environment.targetLinks.every(row => row.targetLink.activeDeploymentId === undefined && !row.content?.nativeOrigin)) {
                     let hasHistory = false;
-                    for await (const _receipt of host.readBuildHistory!({ environmentId: input.environmentId, environment, context })) {
+                    for await (const _receipt of host.readHistoryHeaders({ environmentId: input.environmentId, environment, context })) {
                         hasHistory = true;
                         break;
                     }

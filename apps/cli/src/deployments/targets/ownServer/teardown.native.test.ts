@@ -10,6 +10,7 @@ import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/acc
 import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { configuration } from '@/configuration';
 import * as persistence from '@/persistence';
 import * as installationStore from '@/daemon/identity/store';
@@ -17,6 +18,7 @@ import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHo
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createOwnServerTeardownForHost } from './teardown';
+import { readDeploymentReceiptHistoryHeadersForHost } from '../../readReceiptForHost';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
 import { createScmBackendRegistry } from '@/scm/registry';
@@ -46,6 +48,7 @@ it.each(['remote-refusal', 'fleet-refusal', 'remote-throw'] as const)(
             runtime: { async acquire() { throw new Error('Review cannot acquire workload execution'); } },
             async readEnvironment() { return environment; },
             async *readBuildHistory() { yield createDeploymentReceiptDetailV1(); },
+            async *readHistoryHeaders() { yield createDeploymentReceiptDetailV1().deployment; },
             async readReceipt() { throw new Error('No receipt mutation is admitted'); },
             async writeTransition() { throw new Error('No receipt mutation is admitted'); },
             async findReceipt() { return null; },
@@ -78,6 +81,7 @@ it.each(['exact', 'changed-input'] as const)(
             runtime: { async acquire() { throw new Error('No native work was admitted'); } },
             async readEnvironment() { return environment; },
             async *readBuildHistory() {},
+            async *readHistoryHeaders() {},
             async readReceipt() { throw new Error('No receipt is required'); },
             async writeTransition() { throw new Error('No receipt is required'); },
             async findReceipt() { return null; },
@@ -128,14 +132,28 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
         delete environment.targetLinks[0].targetLink.activeDeploymentId;
         const prior = createDeploymentReceiptDetailV1();
         prior.deployment.targetLinkId = 'other-target';
+        let privateHistoryOpens = 0;
+        let historyPages = 0;
+        const headers = {
+            async *readHistoryHeaders() {
+                historyPages++;
+                if (history === 'unavailable') throw Object.assign(new Error('History is incomplete'), { code: 'deployment_content_unavailable' });
+                if (history === 'other-target-deployed') yield prior.deployment;
+            },
+        };
         const teardown = createOwnServerTeardownForHost({ serverId: 'home', machineId: 'machine-a',
             credentials: { token: 'test-token', encryption: null }, serverHttpBaseUrl: 'https://unused-home.test',
             runtime: { async acquire() { throw new Error('No native work was admitted'); } },
             async readEnvironment() { return environment; },
             async *readBuildHistory(request) {
+                if (request.targetLinkId === undefined) historyPages++;
                 if (history === 'unavailable') throw Object.assign(new Error('History is incomplete'), { code: 'deployment_content_unavailable' });
-                if (history === 'other-target-deployed' && request.targetLinkId === undefined) yield prior;
+                if (history === 'other-target-deployed' && request.targetLinkId === undefined) {
+                    privateHistoryOpens++;
+                    yield prior;
+                }
             },
+            ...headers,
             async readReceipt() { throw new Error('No receipt is required'); },
             async writeTransition() { throw new Error('No receipt is required'); },
             async findReceipt() { return null; },
@@ -145,6 +163,8 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
             targetLinkId: 'target-link', requestKey: 'remove-empty', reason: 'manual', removeEnvironment: true, volumes: [] }, context: {} });
         if (history === 'empty') expect(prepared).toMatchObject({ input: { nothingDeployed: true, removeEnvironment: true } });
         else expect(prepared).toMatchObject({ ok: false });
+        expect(historyPages).toBe(1);
+        expect(privateHistoryOpens).toBe(0);
     });
 
 // The canonical executable Docker fixture uses a POSIX shebang.
@@ -261,13 +281,32 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     return { ...native, nativeIo: { ...native.nativeIo, run } };
                 } };
             let writes = 0;
+            let privateHistoryOpens = 0;
+            const otherLineage = { ...prior.deployment, id: 'unrelated-lineage', targetLinkId: 'foreign-target' };
+            const otherEnvironment = { ...prior.deployment, id: 'unrelated-environment', environmentId: 'foreign-environment' };
+            const headers = {
+                readHistoryHeaders({ environmentId, targetLinkId }: Readonly<{ environmentId: string; targetLinkId?: string }>) {
+                    const retained = scenario !== 'never-deployed' && scenario !== 'other-link' ? [prior.deployment] : [];
+                    return readDeploymentReceiptHistoryHeadersForHost({ environmentId,
+                        lineage: targetLinkId === undefined ? undefined : new Set([targetLinkId]),
+                        async readPage(cursor) {
+                            return cursor ? { ok: true, items: [...retained, otherEnvironment], nextCursor: null }
+                                : { ok: true, items: [receipt.deployment, otherLineage], nextCursor: 'next-page' };
+                        },
+                    });
+                },
+            };
             const host: OwnServerDeploymentTargetHostInput = { credentials, serverId: 'home',
                 serverHttpBaseUrl: 'https://teardown-home.test', machineId: 'machine-a', runtime,
                 async readEnvironment() { return structuredClone(environment); },
                 async readReceipt() { return structuredClone(receipt); },
                 async *readBuildHistory() {
+                    privateHistoryOpens++;
                     yield structuredClone(receipt);
-                    if (scenario !== 'never-deployed' && scenario !== 'other-link') yield structuredClone(prior);
+                    if (scenario !== 'never-deployed' && scenario !== 'other-link') {
+                        privateHistoryOpens++;
+                        yield structuredClone(prior);
+                    }
                 },
                 async writeTransition(input) {
                     writes++;
@@ -276,9 +315,9 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     return { ok: true, environmentId: environment.environment.id, revision: environment.environment.revision,
                         deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: input.state };
                 } };
-            const targetTeardown = createOwnServerTeardownForHost({ ...host, async findReceipt() { return null; },
+            const targetTeardown = createOwnServerTeardownForHost({ ...host, ...headers, async findReceipt() { return null; },
                 async createCandidate() { throw new Error('Native child cannot create a candidate'); } });
-            const secondTeardown = createOwnServerTeardownForHost({ ...host, machineId: 'machine-b',
+            const secondTeardown = createOwnServerTeardownForHost({ ...host, ...headers, machineId: 'machine-b',
                 runtime: createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home',
                     serverHttpBaseUrl: 'https://teardown-home.test', machineId: 'machine-b',
                     resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
@@ -291,7 +330,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 async createCandidate() { throw new Error('Native child cannot create a candidate'); } });
             if (scenario === 'never-deployed') {
                 const { acquireTeardownReview: _review, ...withoutVolumeReview } = host.runtime;
-                const neverDeployed = createOwnServerTeardownForHost({ ...host, runtime: withoutVolumeReview,
+                const neverDeployed = createOwnServerTeardownForHost({ ...host, ...headers, runtime: withoutVolumeReview,
                     async findReceipt() { return null; },
                     async createCandidate() { throw new Error('Preview must not create a candidate'); } });
                 expect(await neverDeployed.preview({ serverId: 'home', environmentId: environment.environment.id,
@@ -359,7 +398,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                         async stop() { observerStops++; return { status: 'stopped' }; },
                     } });
             }
-            const teardown = createOwnServerTeardownForHost({ ...host,
+            const teardown = createOwnServerTeardownForHost({ ...host, ...headers,
                 ...(remote ? { machineId: 'controller-machine',
                     runtime: { ...host.runtime, async acquireTeardown() { throw new Error('Controller cannot acquire native target'); } },
                     async sendChild(job: DeploymentChildRpcV1, childContext: ActionExecutorContext) {
@@ -385,6 +424,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 expect(await teardown.preview({ serverId: 'home', environmentId: environment.environment.id,
                     targetLinkId: link.id, reason: 'manual', mode: 'preview' }, {})).toEqual({ ok: true, kind: 'preview',
                     volumes: [{ name: 'app_data', machineId: 'machine-a' }, { name: 'app_logs', machineId: 'machine-a' }] });
+                expect(privateHistoryOpens).toBeGreaterThan(0);
                 expect(await docker!.readVolumeNames()).toEqual(['app_data', 'app_logs', 'foreign_data']);
                 expect(await docker!.readNetworkIds()).toEqual(['owned-network', 'foreign-network']);
                 const prepared = await teardown.prepare({ readWorkflowInvocation: async () => { throw new Error('This teardown must not read a Workflow invocation'); }, input: { serverId: 'home', environmentId: environment.environment.id,
@@ -399,6 +439,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 forged.teardown!.resources.find(resource => resource.id === 'app_data')!.id = 'foreign_data';
                 expect(await teardown.admit(environment, link.id, forged, prepared.input, {})).toMatchObject({ ok: false });
             }
+            const privateHistoryOpensBeforeEffect = privateHistoryOpens;
             const result = await teardown.execute({ actionId: 'deployments.teardown', input: {
                 serverId: 'home', environmentId: environment.environment.id, targetLinkId: link.id,
                 expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
@@ -410,6 +451,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 environmentId: environment.environment.id, revision: environment.environment.revision,
                 deploymentId: receipt.deployment.id, deploymentRevision: receipt.deployment.revision, state: receipt.deployment.state },
                 context: { operationAcceptance: { operationId: receipt.deployment.actionOperationId, accept() {} } } });
+            expect.soft(privateHistoryOpens - privateHistoryOpensBeforeEffect).toBe(0);
             if (auditsImages || caddyPrimary || scenario === 'remote-already-absent' || scenario === 'remote-fleet-absent' || scenario === 'never-deployed' || scenario === 'remote-native' || scenario === 'remote-retry' || reconcile || scenario === 'remote-caddy') {
                 expect(result, JSON.stringify(result)).toMatchObject({ ok: true, state: 'succeeded' });
                 if (scenario === 'remote-fleet-absent') expect(receipt.content.teardown?.proofs.filter(proof => proof.step === 'removeTarget'))
@@ -450,6 +492,15 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     expect(await docker.readPruneReference('nginx:alpine')).toMatch(/^sha256:/);
                 }
                 if (scenario === 'remote-native') expect(await docker.readVolumeNames()).toEqual(['app_logs', 'foreign_data']);
+                if (scenario === 'local-native') {
+                    const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
+                        serverId: 'home', environmentId: environment.environment.id });
+                    const commands = (await docker.readInvocations()).flatMap(call => call.args);
+                    const projectFilter = (deploymentId: string) => `label=com.docker.compose.project=${resolveNativeComposeCandidateProjectName(identity.projectName, deploymentId)}`;
+                    expect(commands).toContain(projectFilter(prior.deployment.id));
+                    expect(commands).not.toContain(projectFilter(otherLineage.id));
+                    expect(commands).not.toContain(projectFilter(otherEnvironment.id));
+                }
                 if (afterTunnelRetirement) expect(await docker.readVolumeNames()).toEqual([]);
                 expect(remoteJobs).toEqual(auditsImages ? [] : scenario === 'remote-already-absent' || reconcile || afterTunnelRetirement
                     ? ['removeTarget:observe', 'verify:observe'] : scenario === 'remote-fleet-absent'
