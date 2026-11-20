@@ -26,7 +26,6 @@ import {
 } from '@happier-dev/triage-sources/ui';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
-import { AZURE_ABANDONED_NATIVE_STATE_LABEL } from '../../triage/mapping.js';
 import { AZURE_DEVOPS_TRIAGE_MUTATION_ACTION_IDS } from '../../triage/mutationActions.js';
 import {
   AZURE_REQUESTABLE_THREAD_STATUSES_V1,
@@ -465,11 +464,8 @@ export function AzureMutationControls({
   };
 
   if (overview.state.presentation !== 'active') {
-    // Azure's reopen, and the only transition a non-active pull request has. A completed pull
-    // request is `resolved`, and offering Reactivate on it would be offering to undo a merge that
-    // already landed — so only the abandoned label, the one exported constant the mapper writes,
-    // offers it.
-    if (overview.state.nativeLabel !== AZURE_ABANDONED_NATIVE_STATE_LABEL) return null;
+    // Azure projects abandoned pull requests as closed and completed pull requests as resolved.
+    if (overview.state.presentation !== 'closed') return null;
     return (
       <Stack gap="large">
         <Divider />

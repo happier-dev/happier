@@ -14,20 +14,10 @@ import type {
   AzureRowFact,
 } from './types.js';
 
-/**
- * Azure's own word for an abandoned pull request. A completed one projects `resolved` and an
- * abandoned one `closed` (`CONTRACT.md` §4, r0.42); the label stays the Reactivate decision.
- *
- * It is exported because the detail surface decides whether to offer *Reactivate* from exactly
- * this label. Spelling it twice is how the control would keep appearing on completed pull
- * requests after somebody reworded the table below.
- */
-export const AZURE_ABANDONED_NATIVE_STATE_LABEL = 'Abandoned';
-
 const STATE_NATIVE_LABEL: Readonly<Record<AzurePullRequestStatus, string>> = {
   active: 'Active',
   completed: 'Completed',
-  abandoned: AZURE_ABANDONED_NATIVE_STATE_LABEL,
+  abandoned: 'Abandoned',
   notSet: 'Not set',
   all: 'All',
 };

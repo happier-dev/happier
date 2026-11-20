@@ -136,7 +136,7 @@ const ABANDONED_INPUT = {
     ...FIXTURE.detailInput.observation,
     snapshot: {
       ...FIXTURE.detailInput.observation.snapshot,
-      state: { presentation: 'closed', nativeLabel: 'Abandoned' },
+      state: { presentation: 'closed' },
     },
   },
 } as unknown as JsonValue;
@@ -515,7 +515,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
 });
 
 describe('the mounted Azure DevOps reactivation', () => {
-  it('offers Reactivate on an abandoned pull request and sends the exact entry', async () => {
+  it('offers Reactivate on a closed pull request without a native label and sends the exact entry', async () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
     const detail = await mountDetail(ABANDONED_INPUT);
 
