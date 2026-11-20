@@ -831,3 +831,30 @@ test('the gate reports missing published workspace declarations as incomplete in
   const sourceError = await compare(row.text.replace('@x/protocol/index', '@x/protocol/missing'));
   assert.equal(sourceError.fresh[0]?.code, 7016, 'an export whose TypeScript source is absent can still be a real regression');
 });
+
+test('report mode withholds a verdict when the worker cannot load a declared ambient dependency', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-report-ambient-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  await commit('packages/leaf/package.json', JSON.stringify({ name: '@x/leaf', scripts: { typecheck: 'tsc' },
+    devDependencies: { '@types/node': '24.0.0' } }));
+  const sha = await commit('packages/leaf/src/index.ts', 'export const value = 42;');
+  const source = { file: 'packages/leaf/src/index.ts', line: 1, column: 1, code: 2741,
+    text: "Property 'NODE_ENV' is missing in type 'Record<string, string>' but required in type 'ProcessEnv'." };
+  const missing = { file: '<global>', line: 0, column: 0, code: 2688,
+    text: "Cannot find type definition file for 'node'." };
+  const posts = [];
+  const options = { repo, env, commit: sha, log: () => {}, post: entry => posts.push(entry), boardPaths: [] };
+  const head = execFileSync('git', ['rev-parse', `${sha}^{tree}`], { cwd: repo, encoding: 'utf8' }).trim();
+  const compare = diagnose => reportCommitGateTypecheck({ ...options,
+    remote: trees => new Map(trees.map(tree => [tree, new Map([['packages/leaf', tree === head ? [source, diagnose] : []]])])) });
+  const partial = await compare(missing);
+  assert.deepEqual(partial.fresh, []);
+  assert.deepEqual(partial.incomplete, ['packages/leaf']);
+  assert.deepEqual(posts, []);
+  assert.match(readFileSync(join(state, 'verdicts.log'), 'utf8'), /GATE-REPORT-incomplete .*new=0 incomplete=packages\/leaf/u);
+  const authored = await compare({ ...missing, text: missing.text.replace('node', 'typo') });
+  assert.ok(authored.fresh.some(row => row.code === 2688));
+  assert.equal(posts.length, 1);
+});

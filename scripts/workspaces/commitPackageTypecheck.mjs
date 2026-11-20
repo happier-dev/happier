@@ -365,6 +365,28 @@ export function treeDependencyPreparer({ repo, state, env = process.env, log = (
   return prepare;
 }
 
+// TS2688 also covers an authored reference typo. Require a declared npm
+// dependency in the selected tree before treating it as an installation failure.
+function missingAmbientDeclaration(repo, treeId, dir, rows) {
+  const names = rows.flatMap(row => {
+    if (row.file !== '<global>' || row.code !== 2688) return [];
+    const name = /^Cannot find type definition file for '([^']+)'\./u.exec(row.text)?.[1];
+    return name ? [name] : [];
+  });
+  if (!names.length) return null;
+  const git = gitAt(repo);
+  const manifests = nulList(git(['ls-tree', '-z', '--name-only', treeId, '--', `${dir}/package.json`, 'package.json']));
+  for (const path of manifests) {
+    const { dependencies, devDependencies, peerDependencies, optionalDependencies } = JSON.parse(git(['show', `${treeId}:${path}`]));
+    const declared = { ...dependencies, ...devDependencies, ...peerDependencies, ...optionalDependencies };
+    for (const name of names) {
+      const typesName = `@types/${name.replace(/^@/u, '').replace('/', '__')}`;
+      if (Object.hasOwn(declared, name) || Object.hasOwn(declared, typesName)) return name;
+    }
+  }
+  return null;
+}
+
 // TS7016 from a published workspace JS export is a missing input when that
 // exact tree declares the corresponding type and supplies its authored TS source.
 function missingPublishedDeclaration(repo, treeId, rows) {
@@ -408,9 +430,11 @@ export function treeTypechecker({ repo, state, env, log, compile = compileScope,
   const timings = [];
   const judgeRows = (treeId, rows, side, dir) => {
     if (!rows) return rows;
-    const missing = missingPublishedDeclaration(repo, treeId, rows);
-    if (!missing) return rows;
-    log(`[commit-package-typecheck] ${side} ${dir} incomplete missing-workspace-declaration: ${missing}`);
+    const ambient = missingAmbientDeclaration(repo, treeId, dir, rows);
+    const workspace = ambient ? null : missingPublishedDeclaration(repo, treeId, rows);
+    if (!ambient && !workspace) return rows;
+    const reason = ambient ? `missing-ambient-declaration: ${ambient}` : `missing-workspace-declaration: ${workspace}`;
+    log(`[commit-package-typecheck] ${side} ${dir} incomplete ${reason}`);
     return null;
   };
   const readCachedRows = (treeId, dir, side) => {
