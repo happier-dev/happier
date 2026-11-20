@@ -10,6 +10,8 @@ import type { SubagentRefInputV1, SubagentStatusV1, SubagentLifecycleDetailV1 } 
 import type { ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecuteResult } from '../types.js';
+import { SESSION_SUBAGENTS_GET_ACTION_ID, SESSION_SUBAGENTS_LIST_ACTION_ID } from '../../actionIds.js';
+import type { SubagentReadOperand } from '../../specs/session/subagents.js';
 
 
 
@@ -190,30 +192,24 @@ export async function dispatchAgentsSubagents1(inv: Pick<CoreInvocation, 'action
 export async function dispatchAgentsSubagents2(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'data' | 'ctx' | 'parsed'>): Promise<ActionExecuteResult | null> {
   const { actionId, deps, data, ctx, parsed } = inv;
 
-        if (actionId === 'sessions.subagents.list') {
+        if (actionId === SESSION_SUBAGENTS_LIST_ACTION_ID) {
           if (!deps.subagentsList) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.list' };
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           }
-          const parentSessionId = normalizeId(data.parentSessionId) || normalizeId(ctx.defaultSessionId);
+          const parentSessionId = resolveSessionIdFromInput(parsed.data, ctx);
+          if (!parentSessionId) return { ok: false, errorCode: 'session_not_selected', error: 'session_not_selected' };
           const res = await deps.subagentsList({
-            ...(parentSessionId ? { parentSessionId } : {}),
-            ...(Object.prototype.hasOwnProperty.call(data, 'groupId')
-              ? { groupId: normalizeId(data.groupId) || null }
-              : {}),
-            ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
-          });
+            parentSessionId,
+            ...(typeof data.beforeSeq === 'number' ? { beforeSeq: data.beforeSeq } : {}),
+          }, ctx);
           return completeActionResult(res);
         }
 
-        if (actionId === 'sessions.subagents.get') {
+        if (actionId === SESSION_SUBAGENTS_GET_ACTION_ID) {
           if (!deps.subagentsGet) {
-            return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:sessions.subagents.get' };
+            return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
           }
-          const parentSessionId = normalizeId(data.parentSessionId) || normalizeId(ctx.defaultSessionId);
-          const res = await deps.subagentsGet({
-            id: String(data.id),
-            ...(parentSessionId ? { parentSessionId } : {}),
-          });
+          const res = await deps.subagentsGet(parsed.data as SubagentReadOperand, ctx);
           return completeActionResult(res);
         }
 

@@ -5,7 +5,7 @@ import {
   WORKFLOW_ACTION_IDS_V1,
 } from '../workflows/actionsV1.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
-import { isRuntimeActionIdV1 } from './actionIds.js';
+import { isRuntimeActionIdV1, SESSION_SUBAGENTS_GET_ACTION_ID, SESSION_SUBAGENTS_LIST_ACTION_ID } from './actionIds.js';
 import {
   isRuntimeActionExecutorReal,
   resolveRuntimeActionSurfaces,
@@ -521,8 +521,8 @@ describe('actionToolExposure', () => {
 
   it('exposes bounded subagent reads while keeping lifecycle mutations RPC-only', () => {
     const readActionIds = [
-      'sessions.subagents.list',
-      'sessions.subagents.get',
+      SESSION_SUBAGENTS_LIST_ACTION_ID,
+      SESSION_SUBAGENTS_GET_ACTION_ID,
       'sessions.subagents.watch',
     ] as const;
     const mutationActionIds = [
@@ -550,6 +550,8 @@ describe('actionToolExposure', () => {
       }));
       expect(PLUGIN_SURFACE_EXCLUSION_REASONS[actionId]).toBe(INTERNAL_ACTION_REASONS[actionId]);
     }
+    expect(isActionDiscoverableOnToolSurface(getActionSpec(SESSION_SUBAGENTS_LIST_ACTION_ID), 'agent')).toBe(true);
+    expect(isActionDiscoverableOnToolSurface(getActionSpec(SESSION_SUBAGENTS_GET_ACTION_ID), 'agent')).toBe(true);
 
     for (const actionId of ['subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start'] as const) {
       expect(getActionSpec(actionId).surfaces).toEqual(expect.objectContaining({

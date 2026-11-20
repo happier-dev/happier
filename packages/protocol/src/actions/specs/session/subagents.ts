@@ -11,18 +11,52 @@ import { RPC_METHODS } from '../../../rpc/methods.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { readRecord } from '../../../inputs/inputRecords.js';
 import { resolveExecutionRunMachineRuntimeDemand } from '../../executor/sessionScope.js';
+import { SESSION_SUBAGENTS_GET_ACTION_ID, SESSION_SUBAGENTS_LIST_ACTION_ID } from '../../actionIds.js';
+import { AgentActivityStatusV1Schema } from '../../../sessions/work/agentActivity/agentActivityStatusV1.js';
 
+const transcriptBeforeSeq = () => z.number().check(z.int(), z.minimum(1), z.maximum(Number.MAX_SAFE_INTEGER));
+const subagentId = () => z.string().check(z.trim(), z.minLength(1));
+
+const SubagentReadOperandSchema = lazyZodSchema(() => z.strictObject({
+  sessionId: subagentId(),
+  entryId: subagentId(),
+  toolId: subagentId(),
+  beforeSeq: z.optional(transcriptBeforeSeq()),
+}));
+export type SubagentReadOperand = z.infer<typeof SubagentReadOperandSchema>;
 
 export const SubagentListInputSchema = lazyZodSchema(() => z.looseObject({
-  parentSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  groupId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1)))),
-  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(100))),
+  sessionId: z.optional(subagentId()),
+  beforeSeq: z.optional(transcriptBeforeSeq()),
 }));
 
-export const SubagentGetInputSchema = lazyZodSchema(() => z.looseObject({
-  id: z.string().check(z.trim(), z.minLength(1)),
-  parentSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+export const SubagentGetInputSchema = SubagentReadOperandSchema;
+
+const SubagentRosterRowSchema = lazyZodSchema(() => z.object({
+  id: subagentId(),
+  status: AgentActivityStatusV1Schema,
+  title: z.string(),
+  startedAtMs: z.nullable(z.number()),
+  endedAtMs: z.nullable(z.number()),
+  parentId: z.nullable(z.string()),
+  operand: SubagentReadOperandSchema,
 }));
+const SubagentListOutputSchema = lazyZodSchema(() => z.object({
+  rows: z.array(SubagentRosterRowSchema),
+  nextBeforeSeq: z.nullable(transcriptBeforeSeq()),
+}));
+const SubagentGetOutputSchema = lazyZodSchema(() => z.nullable(z.extend(SubagentRosterRowSchema, {
+  detail: z.nullable(z.object({
+    sidechainId: z.nullable(z.string()),
+    tool: z.object({
+      name: z.string(),
+      input: StrictJsonValueSchema,
+      result: z.optional(StrictJsonValueSchema),
+    }),
+    messages: z.array(StrictJsonValueSchema),
+    nextBeforeSeq: z.nullable(transcriptBeforeSeq()),
+  })),
+})));
 
 export const SubagentWatchInputSchema = lazyZodSchema(() => z.looseObject({
   parentSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
@@ -298,56 +332,61 @@ function createSubagentActionSpecs() {
     inputSchema: VoiceAgentStartInputSchema,
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.list', executionPlacement: 'session', approval: {result: 'required'},
+    id: SESSION_SUBAGENTS_LIST_ACTION_ID, executionPlacement: 'session', approval: {result: 'required'},
     title: 'List session subagents',
-    description: 'Return bounded provider-neutral subagent projections for a session.',
+    description: 'List published child activity and children from one parent Session transcript page. Pass nextBeforeSeq as beforeSeq to find older children.',
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_LIST },
     sideEffectClass: 'read',
+    contextualDefaults: { sessionId: 'current_session' },
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
     surfaces: {
       ui: false,
       voice: false,
-      agent: false,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
     },
-    outputSchema: lazyZodSchema(() => z.array(SubagentRefV1Schema)),
+    outputSchema: SubagentListOutputSchema,
     inputSchema: SubagentListInputSchema,
     inputHints: {
       title: 'List session subagents',
-      description: 'Reads a bounded provider-neutral subagent projection snapshot.',
+      description: 'Each row includes the operand for reading that child.',
       fields: [
-        { path: 'parentSessionId', title: 'Parent session id', widget: 'text' },
-        { path: 'groupId', title: 'Group id', widget: 'text' },
-        { path: 'limit', title: 'Limit', widget: 'text' },
+        { path: 'sessionId', title: 'Parent session id', widget: 'text' },
+        { path: 'beforeSeq', title: 'Earlier transcript cursor', widget: 'text' },
       ],
     },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'sessions.subagents.get', executionPlacement: 'session', approval: {result: 'required'},
+    id: SESSION_SUBAGENTS_GET_ACTION_ID, executionPlacement: 'session', approval: {result: 'required'},
     title: 'Get session subagent',
-    description: 'Return one provider-neutral subagent projection by id.',
+    description: 'Read one Session child using the operand returned by list, even when the child has no Session id. Use the returned sidechain id and cursor to read earlier messages through the Session transcript Action.',
     safety: 'safe',
     placements: [],
     bindings: { rpcMethod: RPC_METHODS.SESSIONS_SUBAGENTS_GET },
     sideEffectClass: 'read',
+    contextualDefaults: { sessionId: 'current_session' },
+    sessionTarget: { field: 'sessionId', cardinality: 'one' },
     surfaces: {
       ui: false,
       voice: false,
-      agent: false,
+      agent: true,
       mcp: false,
       cli: false,
       rpc: true,
     },
-    outputSchema: lazyZodSchema(() => z.nullable(SubagentRefV1Schema)),
+    outputSchema: SubagentGetOutputSchema,
     inputSchema: SubagentGetInputSchema,
     inputHints: {
       title: 'Get session subagent',
       fields: [
-        { path: 'id', title: 'Subagent id', widget: 'text', required: true },
-        { path: 'parentSessionId', title: 'Parent session id', widget: 'text' },
+        { path: 'sessionId', title: 'Parent session id', widget: 'text', required: true },
+        { path: 'entryId', title: 'Roster entry id', widget: 'text', required: true },
+        { path: 'toolId', title: 'Child tool id', widget: 'text', required: true },
+        { path: 'beforeSeq', title: 'Roster cursor', widget: 'text' },
       ],
     },
   } satisfies PreNormalizedActionSpec,

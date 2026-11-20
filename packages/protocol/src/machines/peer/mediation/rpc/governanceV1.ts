@@ -6,6 +6,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { MACHINE_SERVICE_ACTION_IDS } from '../../../../local/services/actionIdsV1.js';
 import { MACHINE_CAPABILITIES_DETECT_ACTION_ID } from '../../../../actions/specs/machineConnectionActionIdsV1.js';
+import { SESSION_SUBAGENTS_GET_ACTION_ID, SESSION_SUBAGENTS_LIST_ACTION_ID } from '../../../../actions/actionIds.js';
 
 export type MachineRpcGovernanceClassification = 'action_spec_bound' | 'internal_only' | 'advisory_unclassified';
 
@@ -126,8 +127,8 @@ const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
   [RPC_METHODS.REVIEW_COMMENTS_ATTACH_EVIDENCE]: 'reviews.comments.attachEvidence',
   [RPC_METHODS.REVIEW_COMMENTS_BULK_TRANSITION]: 'reviews.comments.bulkTransition',
   [RPC_METHODS.REVIEW_COMMENTS_CLAIM_PUBLICATION_DISPATCH]: 'reviews.comments.claimPublicationDispatch',
-  [RPC_METHODS.SESSIONS_SUBAGENTS_LIST]: 'sessions.subagents.list',
-  [RPC_METHODS.SESSIONS_SUBAGENTS_GET]: 'sessions.subagents.get',
+  [RPC_METHODS.SESSIONS_SUBAGENTS_LIST]: SESSION_SUBAGENTS_LIST_ACTION_ID,
+  [RPC_METHODS.SESSIONS_SUBAGENTS_GET]: SESSION_SUBAGENTS_GET_ACTION_ID,
   [RPC_METHODS.SESSIONS_SUBAGENTS_WATCH]: 'sessions.subagents.watch',
   [RPC_METHODS.SESSIONS_SUBAGENTS_UPSERT]: 'sessions.subagents.upsert',
   [RPC_METHODS.SESSIONS_SUBAGENTS_UPDATE_STATUS]: 'sessions.subagents.updateStatus',

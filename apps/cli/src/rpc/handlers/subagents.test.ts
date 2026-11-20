@@ -33,10 +33,10 @@ describe('subagent RPC handlers', () => {
         });
 
         await expect(handlers.get(RPC_METHODS.SESSIONS_SUBAGENTS_LIST)?.({
-            parentSessionId: 'session-1',
+            sessionId: 'session-1',
         })).resolves.toEqual({
             actionId: 'sessions.subagents.list',
-            input: { parentSessionId: 'session-1' },
+            input: { sessionId: 'session-1' },
         });
         await expect(handlers.get(RPC_METHODS.SESSIONS_SUBAGENTS_UPSERT)?.({
             id: 'subagent-1',
@@ -56,7 +56,7 @@ describe('subagent RPC handlers', () => {
         expect(calls).toEqual([
             {
                 actionId: 'sessions.subagents.list',
-                input: { parentSessionId: 'session-1' },
+                input: { sessionId: 'session-1' },
                 context: {
                     authority: 'account_automation',
                     defaultSessionId: 'session-1',

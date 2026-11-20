@@ -16,6 +16,8 @@ export { PET_IMPORT_ACTION_ID_V1, PET_DELETE_ACTION_ID_V1, PET_ACTION_IDS_V1, is
 export { isProjectCheckoutRemovalActionIdV1 } from './projectActionIdsV1.js';
 export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spawn.connected_services.list' as const;
 export const ACTION_INVOKE_ACTION_ID_V1 = 'action.invoke' as const;
+export const SESSION_SUBAGENTS_LIST_ACTION_ID = 'sessions.subagents.list' as const;
+export const SESSION_SUBAGENTS_GET_ACTION_ID = 'sessions.subagents.get' as const;
 export const REVIEW_START_ACTION_ID_V1 = 'review.start' as const;
 export const REVIEW_PREPARE_ROUND_ACTION_ID_V1 = 'review.prepare_round' as const;
 export const REVIEW_SETTLE_ROUND_ACTION_ID_V1 = 'review.settle_round' as const;
@@ -630,8 +632,8 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'reviews.comments.claimPublicationDispatch',
   ],
   subagent_registry: [
-    'sessions.subagents.list',
-    'sessions.subagents.get',
+    SESSION_SUBAGENTS_LIST_ACTION_ID,
+    SESSION_SUBAGENTS_GET_ACTION_ID,
     'sessions.subagents.watch',
     'sessions.subagents.upsert',
     'sessions.subagents.updateStatus',

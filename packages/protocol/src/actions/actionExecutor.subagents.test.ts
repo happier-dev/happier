@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { ActionIdSchema } from './actionIds.js';
+import { ActionIdSchema, SESSION_SUBAGENTS_GET_ACTION_ID, SESSION_SUBAGENTS_LIST_ACTION_ID } from './actionIds.js';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 
 function createDeps(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
@@ -44,15 +44,15 @@ describe('ActionExecutor subagent registry actions', () => {
     const deps = createDeps({
       subagentsList: async (args) => {
         calls.push({ kind: 'list', args });
-        return [{
-          id: 'subagent-1',
-          parentSessionId: args.parentSessionId,
-          origin: 'agent' as const,
-          kind: 'native' as const,
-          agentRef: { agentId: ' codex ' },
-          status: 'pending' as const,
-          createdAt: 123,
-        }];
+        return { rows: [{
+          id: 'child-entry',
+          operand: { sessionId: args.parentSessionId, entryId: 'child-entry', toolId: 'child-tool' },
+          status: 'queued',
+          title: 'Child',
+          startedAtMs: null,
+          endedAtMs: null,
+          parentId: null,
+        }], nextBeforeSeq: 123 };
       },
       subagentsUpsert: async (args) => {
         calls.push({ kind: 'upsert', args });
@@ -65,8 +65,8 @@ describe('ActionExecutor subagent registry actions', () => {
     });
     const executor = createActionExecutor(deps);
 
-    const listResult = await executor.execute(ActionIdSchema.parse('sessions.subagents.list'), {
-      parentSessionId: 'session-1',
+    const listResult = await executor.execute(SESSION_SUBAGENTS_LIST_ACTION_ID, {
+      sessionId: 'session-1',
     }, { surface: 'rpc' });
     const upsertResult = await executor.execute(ActionIdSchema.parse('sessions.subagents.upsert'), {
       id: 'subagent-1',
@@ -77,15 +77,15 @@ describe('ActionExecutor subagent registry actions', () => {
 
     expect(listResult).toEqual({
       ok: true,
-      result: [{
-        id: 'subagent-1',
-        parentSessionId: 'session-1',
-        origin: 'agent',
-        kind: 'native',
-        agentRef: { agentId: 'codex' },
-        status: 'pending',
-        createdAt: 123,
-      }],
+      result: { rows: [{
+        id: 'child-entry',
+        operand: { sessionId: 'session-1', entryId: 'child-entry', toolId: 'child-tool' },
+        status: 'queued',
+        title: 'Child',
+        startedAtMs: null,
+        endedAtMs: null,
+        parentId: null,
+      }], nextBeforeSeq: 123 },
     });
     expect(upsertResult).toEqual({
       ok: true,
@@ -122,8 +122,8 @@ describe('ActionExecutor subagent registry actions', () => {
       subagentsList: async () => [{ id: 'subagent-1' }],
     }));
 
-    await expect(executor.execute(ActionIdSchema.parse('sessions.subagents.list'), {
-      parentSessionId: 'session-1',
+    await expect(executor.execute(SESSION_SUBAGENTS_LIST_ACTION_ID, {
+      sessionId: 'session-1',
     }, { surface: 'rpc' })).resolves.toEqual({
       ok: false,
       errorCode: 'invalid_action_output',
@@ -140,8 +140,8 @@ describe('ActionExecutor subagent registry actions', () => {
       }),
     }));
 
-    await expect(executor.execute(ActionIdSchema.parse('sessions.subagents.list'), {
-      parentSessionId: 'session-1',
+    await expect(executor.execute(SESSION_SUBAGENTS_LIST_ACTION_ID, {
+      sessionId: 'session-1',
     }, { surface: 'rpc' })).resolves.toEqual({
       ok: false,
       errorCode: 'subagent_store_unavailable',
@@ -172,7 +172,7 @@ describe('ActionExecutor subagent registry actions', () => {
   });
 
   it('allows subagent reads and rejects lifecycle mutations on the Plugin surface', async () => {
-    const list = vi.fn(async () => []);
+    const list = vi.fn(async () => ({ rows: [], nextBeforeSeq: null }));
     const get = vi.fn(async () => null);
     const watch = vi.fn(async () => ({ kind: 'snapshot' as const, subagents: [] }));
     const upsert = vi.fn(async (_args: unknown) => ({}));
@@ -211,8 +211,8 @@ describe('ActionExecutor subagent registry actions', () => {
     };
 
     for (const [actionId, input] of [
-      ['sessions.subagents.list', { parentSessionId: 'other-session' }],
-      ['sessions.subagents.get', { id: 'subagent-1', parentSessionId: 'other-session' }],
+      [SESSION_SUBAGENTS_LIST_ACTION_ID, { sessionId: 'other-session' }],
+      [SESSION_SUBAGENTS_GET_ACTION_ID, { sessionId: 'other-session', entryId: 'child-entry', toolId: 'child-tool' }],
       ['sessions.subagents.watch', { id: 'subagent-1', parentSessionId: 'other-session' }],
     ] as const) {
       await expect(executor.execute(ActionIdSchema.parse(actionId), input, context))
@@ -241,7 +241,7 @@ describe('ActionExecutor subagent registry actions', () => {
   });
 
   it('allows subagent reads and rejects lifecycle mutations on the API surface', async () => {
-    const list = vi.fn(async () => []);
+    const list = vi.fn(async () => ({ rows: [], nextBeforeSeq: null }));
     const get = vi.fn(async () => null);
     const watch = vi.fn(async () => ({ kind: 'snapshot' as const, subagents: [] }));
     const upsert = vi.fn(async (_args: unknown) => ({}));
@@ -258,8 +258,8 @@ describe('ActionExecutor subagent registry actions', () => {
     const context = { surface: 'api' as const, authority: 'account_automation' as const };
 
     for (const [actionId, input] of [
-      ['sessions.subagents.list', { parentSessionId: 'other-session' }],
-      ['sessions.subagents.get', { id: 'subagent-1', parentSessionId: 'other-session' }],
+      [SESSION_SUBAGENTS_LIST_ACTION_ID, { sessionId: 'other-session' }],
+      [SESSION_SUBAGENTS_GET_ACTION_ID, { sessionId: 'other-session', entryId: 'child-entry', toolId: 'child-tool' }],
       ['sessions.subagents.watch', { id: 'subagent-1', parentSessionId: 'other-session' }],
     ] as const) {
       await expect(executor.execute(ActionIdSchema.parse(actionId), input, context))
@@ -301,12 +301,12 @@ describe('ActionExecutor subagent registry actions', () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it('uses the default session id and forwards limit for subagent read actions', async () => {
+  it('uses the default Session for list and forwards the transcript cursor and exact child operand', async () => {
     const calls: unknown[] = [];
     const deps = createDeps({
       subagentsList: vi.fn(async (args) => {
         calls.push({ kind: 'list', args });
-        return [];
+        return { rows: [], nextBeforeSeq: null };
       }),
       subagentsGet: vi.fn(async (args) => {
         calls.push({ kind: 'get', args });
@@ -319,19 +319,18 @@ describe('ActionExecutor subagent registry actions', () => {
     });
     const executor = createActionExecutor(deps);
 
-    await executor.execute(ActionIdSchema.parse('sessions.subagents.list'), {
-      limit: 2,
+    await executor.execute(SESSION_SUBAGENTS_LIST_ACTION_ID, {
+      beforeSeq: 2,
     }, { surface: 'rpc', defaultSessionId: 'session-1' });
-    await executor.execute(ActionIdSchema.parse('sessions.subagents.get'), {
-      id: 'subagent-1',
-    }, { surface: 'rpc', defaultSessionId: 'session-1' });
+    const operand = { sessionId: 'session-1', entryId: 'child-entry', toolId: 'child-tool', beforeSeq: 2 };
+    await executor.execute(SESSION_SUBAGENTS_GET_ACTION_ID, operand, { surface: 'rpc', defaultSessionId: 'session-1' });
     await executor.execute(ActionIdSchema.parse('sessions.subagents.watch'), {
       id: 'subagent-1',
     }, { surface: 'rpc', defaultSessionId: 'session-1' });
 
     expect(calls).toEqual([
-      { kind: 'list', args: { parentSessionId: 'session-1', limit: 2 } },
-      { kind: 'get', args: { id: 'subagent-1', parentSessionId: 'session-1' } },
+      { kind: 'list', args: { parentSessionId: 'session-1', beforeSeq: 2 } },
+      { kind: 'get', args: operand },
       { kind: 'watch', args: { id: 'subagent-1', parentSessionId: 'session-1' } },
     ]);
   });

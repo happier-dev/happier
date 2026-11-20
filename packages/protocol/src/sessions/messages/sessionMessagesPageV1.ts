@@ -52,6 +52,8 @@ export const SessionMessagesPageV1Schema = lazyZodSchema(() => z.object({
   nextBeforeSeq: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)))), nextAfterSeq: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0), z.maximum(Number.MAX_SAFE_INTEGER)))),
 }));
 export type SessionMessagesPageV1 = z.infer<typeof SessionMessagesPageV1Schema>;
+/** The standard loaded transcript window shared by Session roster readers. */
+export const SESSION_MESSAGES_PAGE_SIZE = 150;
 // An external publication row may be an opaque cursor witness. Invalid content
 // and coarse actors are omitted; Account identity never crosses this projection.
 export const SessionExternalShareableMessagesPageV1Schema = lazyZodSchema(() => z.extend(z.omit(SessionMessagesPageV1Schema, { activity: true }), {

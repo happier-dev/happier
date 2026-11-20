@@ -1,5 +1,6 @@
 import type { ActionExecutorDeps, ActionCaller } from '@happier-dev/protocol';
 import { HostSubagentStoreError, hostSubagentStore, type HostSubagentActor } from '@/session/subagents/hostSubagentStore';
+import type { createSessionSubagentActivityReads } from '@/session/subagents/readSessionSubagentActivity';
 function serializeHostSubagentStoreError(error: unknown): Readonly<{ ok: false; errorCode: string; error: string }> {
   if (error instanceof HostSubagentStoreError) {
     return { ok: false, errorCode: error.code, error: error.code };
@@ -18,16 +19,11 @@ function deriveHostSubagentActor(caller: ActionCaller): HostSubagentActor {
   };
 }
 
-export function createCliSubagentActionDeps(): Pick<ActionExecutorDeps, 'subagentsList' | 'subagentsGet' | 'subagentsWatch' | 'subagentsUpsert' | 'subagentsUpdateStatus' | 'subagentsComplete'> {
+export function createCliSubagentActionDeps(
+  reads: ReturnType<typeof createSessionSubagentActivityReads>,
+): Pick<ActionExecutorDeps, 'subagentsList' | 'subagentsGet' | 'subagentsWatch' | 'subagentsUpsert' | 'subagentsUpdateStatus' | 'subagentsComplete'> {
   return {
-
-    subagentsList: async (args) => {
-      return await hostSubagentStore.list(args);
-    },
-
-    subagentsGet: async (args) => {
-      return await hostSubagentStore.get(args);
-    },
+    ...reads,
 
     subagentsWatch: async (args) => {
       try {

@@ -118,6 +118,7 @@ import type { fetchSessionsQueryPage } from '@/session/transport/http/sessionsHt
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
 import { createCliNotificationActionDeps } from './cliActionDeps/notifications';
 import { createCliSubagentActionDeps } from './cliActionDeps/subagents';
+import { createSessionSubagentActivityReads } from '@/session/subagents/readSessionSubagentActivity';
 export { projectSessionInitialAccessEnvelopeHostErrorResult } from './cliActionDeps/sessionSpawnErrors';
 
 import { setModelFavoriteV1 } from '@happier-dev/protocol/providers/modelFavoritesV1';
@@ -1917,7 +1918,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
     sessionActivityGet: awarenessDeps.sessionActivityGet,
     sessionRecentMessagesGet: transcriptDeps.sessionRecentMessagesGet,
 
-    ...createCliSubagentActionDeps(),
+    ...createCliSubagentActionDeps(createSessionSubagentActivityReads({
+      credentials: params.credentials, withHome: withProjectHome, isSameActionHomeId, readServerFeaturesSnapshot,
+      readTransportSessionOwnerMetadata, resolveServerRequestHeaders,
+    })),
     pluginsDevLoopAction: pluginAdministrationDeps.pluginsDevLoopAction,
     pluginSettingsAdministrationAction: pluginAdministrationDeps.pluginSettingsAdministrationAction,
     pluginPermissionGrantAction: pluginAdministrationDeps.pluginPermissionGrantAction,

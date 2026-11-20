@@ -42,7 +42,7 @@ export type HostSubagentListParams = Readonly<{
 
 export type HostSubagentGetParams = Readonly<{
     id: string;
-    parentSessionId?: string;
+    parentSessionId: string;
 }>;
 
 export type HostSubagentWatchParams = Readonly<{
@@ -242,11 +242,13 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
         queueMicrotask(flushChangedNotifications);
     };
 
+    const find = (params: HostSubagentGetParams): SubagentRefV1 | undefined => {
+        const parentSessionId = requireParentSessionId(normalizeOptionalString(params.parentSessionId));
+        return refsByKey.get(subagentKey({ parentSessionId, id: params.id }));
+    };
+
     const getExisting = (params: HostSubagentGetParams): SubagentRefV1 => {
-        const parentSessionId = normalizeOptionalString(params.parentSessionId);
-        const ref = parentSessionId
-            ? refsByKey.get(subagentKey({ parentSessionId, id: params.id }))
-            : [...refsByKey.values()].find((candidate) => candidate.id === params.id);
+        const ref = find(params);
         if (!ref) {
             throw new HostSubagentStoreError('subagent_not_found');
         }
@@ -279,10 +281,7 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
         },
         list,
         async get(params) {
-            const parentSessionId = normalizeOptionalString(params.parentSessionId);
-            const ref = parentSessionId
-                ? refsByKey.get(subagentKey({ parentSessionId, id: params.id }))
-                : [...refsByKey.values()].find((candidate) => candidate.id === params.id);
+            const ref = find(params);
             return ref ? cloneRef(ref) : null;
         },
         watch(params, onEvent, watchOptions) {

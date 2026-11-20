@@ -15,6 +15,7 @@ import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
 import type { ApprovalQueueListResultV1 } from '../../approvals/approvalRequestPublicRead.js';
 import type { ApprovalRequestDecideInputSchema } from '../specs/approvals.js';
 import type { SessionPendingNextOutput } from '../specs/session/pendingNext.js';
+import type { SubagentReadOperand } from '../specs/session/subagents.js';
 import type { DaemonLocalServiceLauncherStartRequestV1, LocalServiceStartApprovalReviewV1 } from '../../local/services/launcher/v1.js';
 import type { DaemonLspApplyRequest, DaemonLspApplyResponse, DaemonLspQueryRequest, DaemonLspQueryResponse, DaemonLspRestartRequest, DaemonLspRestartResponse } from '../../machines/languageIntelligence.js';
 import type { WorkspaceFilesReplacePreviewActionInput, WorkspaceFilesReplaceActionInput, WorkspaceFilesReplaceActionOutput } from '../actionSpecs.js';
@@ -3084,9 +3085,8 @@ export type ActionExecutorDeps = Readonly<{
     context: ActionExecutorContext;
   }>) => Promise<ActionExecuteResult | null>;
 
-  // Provider-neutral session subagent projections (optional until A.12-subagents host owner is wired).
-  subagentsList?: (args: Readonly<{ parentSessionId?: string; groupId?: string | null; limit?: number }>) => Promise<unknown>;
-  subagentsGet?: (args: Readonly<{ id: string; parentSessionId?: string }>) => Promise<unknown>;
+  subagentsList?: (args: Readonly<{ parentSessionId: string; beforeSeq?: number }>, context: ActionExecutorContext) => Promise<unknown>;
+  subagentsGet?: (operand: SubagentReadOperand, context: ActionExecutorContext) => Promise<unknown>;
   subagentsWatch?: (args: Readonly<{ parentSessionId?: string; id?: string }>) => Promise<unknown>; // Returns the initial snapshot from the bounded host watcher path.
   subagentsUpsert?: (args: Readonly<{
     input: SubagentRefInputV1;

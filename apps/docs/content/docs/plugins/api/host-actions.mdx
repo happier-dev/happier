@@ -22278,34 +22278,35 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `sessions.subagents.get`
 
-**Get session subagent** — Return one provider-neutral subagent projection by id.
+**Get session subagent** — Read one Session child using the operand returned by list, even when the child has no Session id. Use the returned sidechain id and cursor to read earlier messages through the Session transcript Action.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `rpc`, `api`.
+- Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
 
-- `id` (text, required): Subagent id
-- `parentSessionId` (text): Parent session id
+- `sessionId` (text, required): Parent session id
+- `entryId` (text, required): Roster entry id
+- `toolId` (text, required): Child tool id
+- `beforeSeq` (text): Roster cursor
 
 ## `sessions.subagents.list`
 
-**List session subagents** — Return bounded provider-neutral subagent projections for a session.
+**List session subagents** — List published child activity and children from one parent Session transcript page. Pass nextBeforeSeq as beforeSeq to find older children.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `rpc`, `api`.
+- Also surfaced on: `agent`, `rpc`, `api`.
 
 ### Input guidance
 
-- `parentSessionId` (text): Parent session id
-- `groupId` (text): Group id
-- `limit` (text): Limit
+- `sessionId` (text): Parent session id
+- `beforeSeq` (text): Earlier transcript cursor
 
 ## `sessions.subagents.watch`
 
