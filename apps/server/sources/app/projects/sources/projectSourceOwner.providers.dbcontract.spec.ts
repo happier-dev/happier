@@ -33,18 +33,22 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Source owner p
         await db.teamMembership.createMany({ data: [owner, direct, groupOnly]
             .map(team => ({ accountId: viewer.id, teamId: team.id, role: 'member' as const })) });
         const hidden = await db.teamGroup.create({ data: { name: 'Other Group', teamId: groupOnly.id } });
-        await db.projectSource.create({ data: { name: 'Shared Source', createdByAccountId: author.id,
+        const source = await db.projectSource.create({ data: { name: 'Shared Source', createdByAccountId: author.id,
             owner: { kind: 'team', teamId: owner.id }, attachments: [], audience: [
                 { principal: { kind: 'team', teamId: direct.id }, level: 'view' },
                 { principal: { kind: 'group', teamId: groupOnly.id, groupId: hidden.id }, level: 'view' },
             ] } });
 
-        const page = await inTx(tx => listTeamsForActorInTx(tx, {
-            actorAccountId: viewer.id, v: 1, scope: 'member', archived: 'active',
-        }));
-        if (!page.ok) throw new Error(page.error);
-        expect(Object.fromEntries(page.page.items.map(({ id, hasSetup }) => [id, hasSetup])))
-            .toEqual({ [owner.id]: true, [direct.id]: true, [groupOnly.id]: false });
+        try {
+            const page = await inTx(tx => listTeamsForActorInTx(tx, {
+                actorAccountId: viewer.id, v: 1, scope: 'member', archived: 'active',
+            }));
+            if (!page.ok) throw new Error(page.error);
+            expect(Object.fromEntries(page.page.items.map(({ id, hasSetup }) => [id, hasSetup])))
+                .toEqual({ [owner.id]: true, [direct.id]: true, [groupOnly.id]: false });
+        } finally {
+            await db.projectSource.delete({ where: { id: source.id } });
+        }
     });
 
     it('creates, attaches and clears a repository with real SQL null, then preserves rows across two canonical deploys', async () => {
