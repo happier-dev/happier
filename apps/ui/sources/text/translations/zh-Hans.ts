@@ -15215,6 +15215,7 @@ settingsSession: {
     title: "Codex 和 Claude Code 移动客户端",
     subtitle: "默认启用端到端加密，并可在其他设备上恢复您的账户。",
     createAccount: "创建账户",
+    newAccount: '新账户',
     chooseEncryptionTitle: "选择加密方式",
     chooseEncryptionBody: "此Home支持加密与不加密账户。请选择你希望如何存储账户数据。",
     chooseEncryptionEncrypted: "继续使用端到端加密",

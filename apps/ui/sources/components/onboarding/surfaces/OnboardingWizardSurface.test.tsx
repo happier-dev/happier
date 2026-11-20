@@ -651,6 +651,24 @@ describe('OnboardingWizardSurface', () => {
         }
     });
 
+    it('opens the sign-in service address from the approval step for a chosen Home', async () => {
+        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
+        const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
+            layout: 'portrait',
+            initialStepId: 'auth_restore',
+            authEntryOptions: baseAuthOptions,
+            onSelectAccountService: async () => ({ kind: 'unavailable' }),
+        }));
+        try {
+            await pressOnboarding(screen, 'welcome-account-service-choose');
+            expect(screen.findByTestId('account-service-selection-form')).toBeTruthy();
+            await pressOnboarding(screen, 'account-service-selection-back');
+            expect(getOnboardingStepId(screen)).toBe('auth_restore');
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     const enterRemoteRelayAccess = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
         await pressOnboarding(screen, 'onboarding-wizard-relay:remoteComputer');
         await pressOnboarding(screen, 'onboarding-wizard-primary');

@@ -21,7 +21,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { authProviderRegistry, getAuthProvider, normalizeProviderId } from '@/auth/providers/registry';
 import { fetchHomeAuthEntry } from '@/auth/entry/authEntryClient';
-import { projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
+import { isNativeAuthenticationMethodId, projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';
 import { useOAuthProviderConfigured } from '@/hooks/server/useOAuthProviderConfigured';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isSafeExternalAuthUrl } from '@/auth/providers/externalAuthUrl';
@@ -355,7 +355,7 @@ export const ProviderIdentityItems = React.memo((props: ProviderIdentityItemsPro
                 const descriptors = new Map<string, ProviderDescriptor>();
                 for (const method of capabilities.catalog.methods) {
                     const id = normalizeProviderId(method.id);
-                    if (!id || id === 'key_challenge' || id === 'email_password' || id === 'mtls') continue;
+                    if (!id || isNativeAuthenticationMethodId(id)) continue;
                     descriptors.set(id, {
                         id,
                         displayName: method.presentation?.displayName ?? id,

@@ -82,10 +82,11 @@ function describeAction(
             const kind = request.execution.kind;
             const serviceMethod = request.authority.purpose === 'account_service';
             const newHere = action.labelRole === 'new_here';
+            const newAccount = action.labelRole === 'new_account';
             const login = action.labelRole === 'login';
             const returning = model.heading === 'returning';
             const fallbackId = index === 0 ? 'welcome-provider-primary' : 'welcome-login-provider';
-            const testID = serviceMethod
+            const testID = newAccount ? 'restore-new-account' : serviceMethod
                 ? kind === 'key_entry' || kind === 'generated_key' ? 'welcome-account-service-key' : `welcome-account-service-provider-${request.method.id}`
                 : newHere ? 'welcome-primary-start'
                     : kind === 'mtls' ? row.emphasis === 'primary' ? 'welcome-mtls-primary' : 'welcome-mtls-login'
@@ -95,6 +96,8 @@ function describeAction(
             if (login) {
                 title = t('welcome.welcomeReturningLoginButton');
                 subtitle = action.lastUsed ? lastTimeSubtitle(request.execution, provider) : presentation.title;
+            } else if (newAccount) {
+                title = t('welcome.newAccount');
             } else if (newHere) {
                 title = t(returning ? 'welcome.welcomeReturningStartFreshButton' : 'welcome.welcomePrimaryButton');
                 subtitle = kind === 'generated_key'

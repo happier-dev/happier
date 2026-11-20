@@ -39,6 +39,10 @@ function isEmailPasswordEntryAction(value: string): value is EmailPasswordEntryA
     return value === 'login' || value === 'provision' || value === 'connect';
 }
 
+export function isNativeAuthenticationMethodId(id: string): id is 'key_challenge' | 'email_password' | 'mtls' {
+    return id === 'key_challenge' || id === 'email_password' || id === 'mtls';
+}
+
 /**
  * Account modes a Home admits for a new email/password Account. The entry
  * projection carries Home policy in the action mode: `keyed` means E2EE only,
@@ -159,13 +163,13 @@ export function projectAuthEntryMethodCapabilities(
         }];
     });
     const keyedProvisionProviderIds = uniqueProviderIds(authenticationActions.flatMap(({ method, action }) => (
-        method.id !== 'key_challenge' && method.id !== 'mtls' && method.id !== 'email_password'
+        !isNativeAuthenticationMethodId(method.id)
         && action.id === 'provision' && (action.mode === 'keyed' || action.mode === 'either')
             ? [method.id]
             : []
     )));
     const keylessLoginMethodIds = uniqueProviderIds(authenticationActions.flatMap(({ method, action }) => (
-        method.id !== 'key_challenge' && method.id !== 'email_password'
+        (!isNativeAuthenticationMethodId(method.id) || method.id === 'mtls')
         && action.id === 'login' && (action.mode === 'keyless' || action.mode === 'either')
             ? [method.id]
             : []
@@ -206,14 +210,14 @@ export function projectAuthenticationMethodCapabilities(
 
     const keyedProvisionProviderIds = usesStructuredMethods
         ? uniqueProviderIds(catalog.methods
-            .filter((method) => method.id !== 'key_challenge' && method.id !== 'mtls' && method.id !== 'email_password'
+            .filter((method) => !isNativeAuthenticationMethodId(method.id)
                 && method.enabledActions.some((action) => action.id === 'provision' && (action.mode === 'keyed' || action.mode === 'either')))
             .map((method) => method.id))
         : legacyEnabledSignupMethodIds.filter((id) => id !== 'anonymous');
 
     const keylessLoginMethodIds = usesStructuredMethods
         ? uniqueProviderIds(catalog.methods
-            .filter((method) => method.id !== 'key_challenge' && method.id !== 'email_password'
+            .filter((method) => (!isNativeAuthenticationMethodId(method.id) || method.id === 'mtls')
                 && method.enabledActions.some((action) => action.id === 'login' && (action.mode === 'keyless' || action.mode === 'either')))
             .map((method) => method.id))
         : legacyEnabledLoginMethodIds.filter((id) => id !== 'key_challenge');
@@ -227,8 +231,7 @@ export function projectAuthenticationMethodCapabilities(
         : keylessLoginMethodIds.filter((id) => id !== 'mtls' && oauthProviders[id]?.configured === true);
     const authenticationActions = catalog.methods.flatMap((method): HomeAuthenticationAction[] => {
         const methodId = normalizeAuthenticationProviderId(method.id);
-        const isNativeMethod = methodId === 'key_challenge' || methodId === 'mtls' || methodId === 'email_password';
-        if (!usesStructuredMethods && !isNativeMethod && oauthProviders[methodId]?.configured !== true) return [];
+        if (!usesStructuredMethods && !isNativeAuthenticationMethodId(methodId) && oauthProviders[methodId]?.configured !== true) return [];
         return method.enabledActions.flatMap((action): HomeAuthenticationAction[] => {
             const execution = projectAuthenticationExecution(method, action);
             return execution ? [{ method, action, execution }] : [];

@@ -29,6 +29,7 @@ export type RestoreIndexEmbeddedProps = Readonly<{
     reverseTargetProfileId?: string | null;
     onBack: () => void;
     onOpenSecretKeyLogin?: () => void;
+    renderAdditionalSignInWays?: (onLeave?: () => void) => React.ReactNode;
     initialPairingLink?: string | null;
     initialResult?: RestoreScanComputerQrViewProps['initialResult'];
     onNavigationLockChange?: (locked: boolean) => void;
@@ -104,6 +105,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                     onShowQr={openQr}
                     offerSecretKey={props.entryIntent === 'enter_home'}
                 />
+                {props.renderAdditionalSignInWays?.()}
             </>
         ) : activeView === 'scanner' ? (
             <RestoreScanComputerQrView
@@ -114,6 +116,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                 onBack={props.onBack}
                 showBack={false}
                 onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+                additionalSignInWays={props.renderAdditionalSignInWays?.()}
                 onOpenPairingLinkEntry={openPasteEntry}
                 onShowQrInstead={openQr}
                 onNavigationLockChange={props.onNavigationLockChange}
@@ -126,6 +129,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                 embedded
                 onBack={props.onBack}
                 onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+                renderAdditionalSignInWays={props.renderAdditionalSignInWays}
                 onOpenScanQr={openScanner}
                 onOpenPairingLinkEntry={openPasteEntry}
                 onNavigationLockChange={props.onNavigationLockChange}

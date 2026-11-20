@@ -15804,6 +15804,7 @@ settingsSession: {
         title: 'Mobiler Client für Codex, Claude Code und OpenCode',
         subtitle: 'Standardmäßig Ende-zu-Ende-verschlüsselt, mit Kontowiederherstellung für deine anderen Geräte.',
         createAccount: 'Konto anlegen',
+        newAccount: 'Neues Konto',
         chooseEncryptionTitle: 'Verschlüsselung wählen',
         chooseEncryptionBody: 'Dieses Home unterstützt verschlüsselte und unverschlüsselte Konten. Wähl, wie deine Kontodaten gespeichert werden sollen.',
         chooseEncryptionEncrypted: 'Mit Ende-zu-Ende-Verschlüsselung weiter',

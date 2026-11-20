@@ -15587,6 +15587,7 @@ settingsSession: {
     subtitle:
       "Chiffré de bout en bout par défaut, avec restauration du compte sur tes autres appareils.",
     createAccount: "Créer un compte",
+    newAccount: 'Nouveau compte',
     chooseEncryptionTitle: "Choisis le chiffrement",
     chooseEncryptionBody: "Ce Home accepte les comptes chiffrés et non chiffrés. Choisis comment stocker les données de ton compte.",
     chooseEncryptionEncrypted: "Continuer avec le chiffrement de bout en bout",

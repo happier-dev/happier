@@ -15713,6 +15713,7 @@ settingsSession: {
     subtitle:
       "Cifrado de extremo a extremo por defecto, con restauración de la cuenta en tus otros dispositivos.",
     createAccount: "Crear cuenta",
+    newAccount: 'Nueva cuenta',
     chooseEncryptionTitle: "Elige el cifrado",
     chooseEncryptionBody: "Este Home admite cuentas cifradas y no cifradas. Elige cómo quieres almacenar los datos de tu cuenta.",
     chooseEncryptionEncrypted: "Continuar con cifrado de extremo a extremo",

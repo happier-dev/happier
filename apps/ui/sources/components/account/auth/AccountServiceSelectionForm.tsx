@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { AccountServiceEndpointV1 } from '@/sync/domains/server/serverProfiles';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { OrganizationPolicyFieldNotice, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
+import { OrganizationPolicyFieldNotice, OrganizationPolicyInvalidNextStep, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { WizardChoiceRow } from '@/components/onboarding/ui/WizardChoiceRow';
 import { Typography } from '@/constants/Typography';
@@ -92,19 +92,20 @@ export const AccountServiceSelectionForm = React.memo(function AccountServiceSel
                         onPress={() => select(currentEndpoint.url)}
                     />
                 ) : null}
-                {/* A service fixed by the organization is the only choice; it is not offered dead. */}
-                {policy.lock ? null : <WizardChoiceRow
+                <WizardChoiceRow
                     testID="account-service-another-choice"
                     disabled={policy.disabled}
+                    dimmed={policy.disabled}
                     selected={showUrlInput}
                     icon="plus-circle"
                     title={t('homeAdd.otherSignInService')}
-                    subtitle={t('homeAdd.otherSignInServiceSubtitle')}
+                    subtitle={policy.lock ? t('organizationPolicy.lockedExplanation') : t('homeAdd.otherSignInServiceSubtitle')}
                     onPress={() => {
                         setShowUrlInput(true);
                     }}
-                />}
+                />
                 <OrganizationPolicyFieldNotice field="accountService" />
+                <OrganizationPolicyInvalidNextStep />
             </View>
             {showUrlInput && !policy.lock ? (
                 <View style={styles.field}>

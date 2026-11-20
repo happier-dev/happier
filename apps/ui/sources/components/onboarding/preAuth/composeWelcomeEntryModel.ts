@@ -29,7 +29,7 @@ export type WelcomeAuthenticationMethod =
  * device signed in last time (`lastUsed`), or the Home's first way in when that is no longer offered.
  */
 export type WelcomeAction =
-    | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'new_here' | 'method' }>
+    | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'new_here' | 'new_account' | 'method' }>
     | Readonly<{ kind: 'authenticate'; request: WelcomeAuthenticationMethod; labelRole: 'login'; lastUsed: boolean }>
     | Readonly<{ kind: 'scan_or_paste_home'; labelRole: 'login' | 'method' }>
     | Readonly<{ kind: 'choose_home' }>
@@ -78,7 +78,7 @@ export type ComposeWelcomeEntryModelInput = Readonly<{
     /** An admitted Home catalog observed at the exact selected service endpoint, never a fallback Home. */
     observedHomeAtServiceEndpoint?: Readonly<{ home: HomeTargetInput; label: string }>;
     context:
-        | Readonly<{ kind: 'home' }>
+        | Readonly<{ kind: 'home' | 'restore' }>
         | Readonly<{ kind: 'team' | 'invitation'; label: string; dominantActionId: string | null }>;
     allowedNavigation: Readonly<{
         changeHome: boolean;
@@ -229,7 +229,14 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
         ...(newHereService ? [methodAction(newHereService, 'new_here')] : []),
     ];
 
-    if (input.userHistory === 'first_time') {
+    const isRestore = input.context.kind === 'restore';
+    if (isRestore) {
+        actions.push(...homeDirect.filter((row) => row.execution.kind !== 'key_entry').map((row) => methodAction(row)));
+        actions.push(...withoutProvision(serviceMethods).map((row) => methodAction(row)));
+        if (input.allowedNavigation.selectService) actions.push({ kind: 'choose_sign_in_service' });
+        const newAccount = primaryProvision ?? newHereService;
+        if (newAccount) actions.push({ kind: 'authenticate', request: newAccount, labelRole: 'new_account' });
+    } else if (input.userHistory === 'first_time') {
         // The two ways to begin lead: an account here, or a Home of your own. Login is their peer;
         // signing in some other way, and every way to point elsewhere, follows quietly.
         actions.push(...newHere, ...createPersonalHome);
@@ -269,7 +276,7 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     const unique = actions.filter((action, index) => (
         actions.findIndex((candidate) => actionIdentity(candidate) === actionIdentity(action)) === index
     ));
-    const dominantActionId = input.context.kind === 'home' ? null : input.context.dominantActionId;
+    const dominantActionId = 'dominantActionId' in input.context ? input.context.dominantActionId : null;
     const { placement } = input;
     const firstTime = input.userHistory === 'first_time';
     const hasHome = placement?.hasHome ?? false;
@@ -327,8 +334,8 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
     return {
         heading: input.userHistory,
         chooseHomeDestination,
-        showSelfHostingFooter: hasHome && input.target.kind === 'none' && input.allowedNavigation.changeHome,
-        showWaysHeading: firstTime && !hasLoginDoor,
+        showSelfHostingFooter: !isRestore && hasHome && input.target.kind === 'none' && input.allowedNavigation.changeHome,
+        showWaysHeading: !isRestore && firstTime && !hasLoginDoor,
         showKeyProvisioningIntro,
         hasLoginDoor,
         restore: !unique.some((action) => action.kind === 'scan_or_paste_home' && action.labelRole === 'login') ? {
@@ -342,15 +349,15 @@ export function composeWelcomeEntryModel(input: ComposeWelcomeEntryModelInput): 
                 : qrAvailable ? 'welcome.welcomeSecondarySubtitle' : 'welcome.loginSubtitleLinkFirst',
             icon: !leadWithLink ? 'key' : qrAvailable ? 'qr-code' : 'link',
         },
-        showHomeStatus,
+        showHomeStatus: !isRestore && showHomeStatus,
         ...(input.target.kind === 'none'
             ? input.serviceCatalogState.kind === 'ready' ? { targetContext: { label: input.serviceCatalogState.name } } : {}
             : { targetContext: { label: input.target.label } }),
         actions: unique.map((action, index) => ({
             id: actionIdentity(action),
-            emphasis: index === 0 ? 'primary' : emphasisOf(action, hasAuthentication),
+            emphasis: isRestore ? 'tertiary' : index === 0 ? 'primary' : emphasisOf(action, hasAuthentication),
             action,
         })),
-        ...(notice ? { notice } : {}),
+        ...(!isRestore && notice ? { notice } : {}),
     };
 }

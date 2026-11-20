@@ -211,6 +211,7 @@ export type RestoreScanComputerQrViewProps = Readonly<{
     /** False when the host already draws the way back (the welcome pane's chevron, the setup card's back). */
     showBack?: boolean;
     onOpenSecretKeyLogin?: () => void;
+    additionalSignInWays?: React.ReactNode;
     onOpenPairingLinkEntry?: () => void;
     onShowQrInstead?: () => void;
     initialResult?: 'legacy_pairing' | 'expired';
@@ -1107,6 +1108,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     <View style={[styles.footer, embedded ? styles.embeddedFooter : null]}>
                         {renderAlternative('restore-open-manual', t('connect.restoreWithSecretKeyInstead'), openSecretKeyLogin)}
                         {props.onShowQrInstead ? renderAlternative('restore-show-qr-instead', t('connect.showQrInstead'), openShowQrInstead) : null}
+                        {props.additionalSignInWays}
                         {showBack ? renderAlternative('restore-scan-cancel', t('common.back'), handleBack) : null}
                     </View>
                 </View>

@@ -27,6 +27,9 @@ export type WelcomeDecisionPanelProps = Readonly<{
     authEntryOptions: AuthEntryOptions;
     /** A setup/authentication parent can supply the task's heading. */
     showGreeting?: boolean;
+    /** The Approve step uses the same admitted catalog for its alternative ways in. */
+    restoreWays?: boolean;
+    onLeaveRestore?: () => void;
     /**
      * Advertised methods of the exact effective sign-in service. These remain additive to any
      * usable Home methods and never retarget the Home authority.
@@ -143,12 +146,12 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             && (!accountServiceEntry.endpoint.serverIdentityId || accountServiceEntry.endpoint.serverIdentityId === options.observedHomeServerIdentityId)
             ? { observedHomeAtServiceEndpoint: { home: homeTarget, label: options.homeLabel ?? t('settingsAccount.thisHomeTitle') } } : {}),
         ...(options.observedHomeServerIdentityId ? { observedHomeServerIdentityId: options.observedHomeServerIdentityId } : {}),
-        context: { kind: 'home' },
+        context: { kind: props.restoreWays ? 'restore' : 'home' },
         allowedNavigation: {
             // A Home or sign-in service fixed by the organization policy is shown as the managed
             // value; the ways to pick another are left out rather than offered dead.
             changeHome: props.canChangeHome !== false && !homePolicy.disabled,
-            selectService: props.onChooseAccountService != null && !servicePolicy.disabled,
+            selectService: props.onChooseAccountService != null && (props.restoreWays === true || !servicePolicy.disabled),
             // Camera support controls how the restore surface starts, not
             // whether it exists: every client can paste a Home link.
             scanOrPasteHome: !homePolicy.disabled,
@@ -169,17 +172,18 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     const returningGreeting = useReturningGreeting({ besideLogin: model.hasLoginDoor });
     const viewModel = projectWelcomeEntryViewModel(model, {
         options,
-        showGreeting: props.showGreeting !== false,
+        showGreeting: !props.restoreWays && props.showGreeting !== false,
         terminalWaiting,
         returningGreeting,
         hasHome,
         serviceName,
         canRetryService: accountServiceEntry != null,
     });
-    usePublishFirstOpenWelcomeModel(viewModel);
+    usePublishFirstOpenWelcomeModel(props.restoreWays ? null : viewModel);
 
     const onAction = (index: number) => {
         const action = model.actions[index]?.action;
+        if (action) props.onLeaveRestore?.();
         switch (action?.kind) {
             case 'scan_or_paste_home': return props.onOpenRestore();
             case 'choose_home': return model.chooseHomeDestination === 'picker'
@@ -207,7 +211,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         onAction,
         onRetry,
         onSelfHosting: props.onChangeRelay,
-        policyNotice: <>
+        policyNotice: props.restoreWays ? undefined : <>
             <OrganizationPolicyFieldNotice field={homePolicy.lock ? 'home' : servicePolicy.lock ? 'accountService' : 'personalHome'} />
             <OrganizationPolicyInvalidNextStep />
         </>,

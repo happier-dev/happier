@@ -15542,6 +15542,7 @@ settingsSession: {
     subtitle:
       "Domyślnie szyfrowane end-to-end, z przywracaniem konta na innych Twoich urządzeniach.",
     createAccount: "Utwórz konto",
+    newAccount: 'Nowe konto',
     chooseEncryptionTitle: "Wybierz szyfrowanie",
     chooseEncryptionBody: "Ten Home obsługuje konta szyfrowane i nieszyfrowane. Wybierz, jak chcesz przechowywać dane konta.",
     chooseEncryptionEncrypted: "Kontynuuj z szyfrowaniem end‑to‑end",

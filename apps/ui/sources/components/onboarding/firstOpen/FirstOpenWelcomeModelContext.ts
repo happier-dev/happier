@@ -5,12 +5,12 @@ import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/Welc
 /** The opening host supplies this channel only while it has a replica to update. */
 export const FirstOpenWelcomeModelContext = createContext<((model: WelcomeEntryViewModel) => void) | null>(null);
 
-export function usePublishFirstOpenWelcomeModel(model: WelcomeEntryViewModel): void {
+export function usePublishFirstOpenWelcomeModel(model: WelcomeEntryViewModel | null): void {
     const publish = useContext(FirstOpenWelcomeModelContext);
     const previous = useRef<{ publish: typeof publish; serialized: string } | null>(null);
 
     useEffect(() => {
-        if (!publish) {
+        if (!publish || !model) {
             previous.current = null;
             return;
         }

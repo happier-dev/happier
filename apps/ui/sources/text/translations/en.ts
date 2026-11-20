@@ -18886,6 +18886,7 @@ const enWelcome = {
   subtitle:
     'End-to-end encrypted by default, with account restore for your other devices.',
   createAccount: 'Create account',
+  newAccount: 'New account',
   chooseEncryptionTitle: 'Choose encryption',
   chooseEncryptionBody:
     'This Home supports both encrypted and non-encrypted accounts. Choose how you want to store your account data.',

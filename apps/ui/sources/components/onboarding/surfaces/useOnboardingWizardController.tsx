@@ -1407,7 +1407,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onChooseAccountService: props.onSelectAccountService ? handleOpenAccountServiceSelection : undefined,
         onContinueWithHomeAuthentication: handleContinueWithHomeAuthentication,
         onSelectAccountService: handleSelectAccountService,
-        onAccountServiceSelectionBack: handleBackToWelcome,
+        onAccountServiceSelectionBack: handleBack,
         onAccountDirectoryKeyBack: () => {
             setAccountDirectoryHomeRecovery(null);
             setAccountDirectoryKeyRequest(null);

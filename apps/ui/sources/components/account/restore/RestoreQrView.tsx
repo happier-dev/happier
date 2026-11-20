@@ -183,6 +183,7 @@ export type RestoreQrViewProps = Readonly<{
     embedded?: boolean;
     onBack?: () => void;
     onOpenSecretKeyLogin?: () => void;
+    renderAdditionalSignInWays?: (onLeave: () => void) => React.ReactNode;
     onOpenScanQr?: () => void;
     onOpenPairingLinkEntry?: () => void;
     onNavigationLockChange?: (locked: boolean) => void;
@@ -403,6 +404,7 @@ export const RestoreQrView = React.memo(function RestoreQrView(props: RestoreQrV
                         {providerResetEnabled ? (
                             <TextLinkButton testID="restore-open-lost-access" label={t('connect.lostAccessLink')} onPress={() => router.push('/restore/lost-access')} />
                         ) : null}
+                        {props.renderAdditionalSignInWays?.(() => { void reversePairing.cancel(); })}
                     </View>
                 ) : null}
                 {!claimOwnsNavigation && !embedded ? (

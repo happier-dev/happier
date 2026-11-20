@@ -14751,6 +14751,7 @@ settingsSession: {
         title: 'Client mòbil de Codex i Claude Code',
         subtitle: 'Xifratge d\'extrem a extrem per defecte, amb restauració del compte als teus altres dispositius.',
         createAccount: 'Crea un compte',
+        newAccount: 'Compte nou',
         chooseEncryptionTitle: 'Tria el xifratge',
         chooseEncryptionBody: 'Aquest Home admet comptes xifrats i no xifrats. Tria com vols emmagatzemar les dades del teu compte.',
         chooseEncryptionEncrypted: "Continua amb xifratge d'extrem a extrem",

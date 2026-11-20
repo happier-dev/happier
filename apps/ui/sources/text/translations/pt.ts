@@ -15823,6 +15823,7 @@ settingsSession: {
     subtitle:
       "Criptografia de ponta a ponta por padrão, com restauração da conta nos seus outros dispositivos.",
     createAccount: "Criar conta",
+    newAccount: 'Nova conta',
     chooseEncryptionTitle: "Escolha a criptografia",
     chooseEncryptionBody: "Este Home oferece suporte a contas criptografadas e não criptografadas. Escolha como você quer armazenar os dados da sua conta.",
     chooseEncryptionEncrypted: "Continuar com criptografia de ponta a ponta",

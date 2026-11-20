@@ -15991,6 +15991,7 @@ settingsSession: {
     subtitle:
       "デフォルトでエンドツーエンド暗号化され、他のデバイスでもアカウントを復元できます。",
     createAccount: "アカウントを作成",
+    newAccount: '新しいアカウント',
     chooseEncryptionTitle: "暗号化を選択",
     chooseEncryptionBody: "このHomeは暗号化あり／なしのアカウントに対応しています。アカウントデータの保存方法を選択してください。",
     chooseEncryptionEncrypted: "エンドツーエンド暗号化で続行",

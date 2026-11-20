@@ -15927,6 +15927,7 @@ settingsSession: {
     subtitle:
       "Crittografia end-to-end predefinita, con ripristino dell'account sugli altri tuoi dispositivi.",
     createAccount: "Crea account",
+    newAccount: 'Nuovo account',
     chooseEncryptionTitle: "Scegli la crittografia",
     chooseEncryptionBody: "Questo Home supporta account crittografati e non crittografati. Scegli come vuoi archiviare i dati del tuo account.",
     chooseEncryptionEncrypted: "Continua con crittografia end‑to‑end",

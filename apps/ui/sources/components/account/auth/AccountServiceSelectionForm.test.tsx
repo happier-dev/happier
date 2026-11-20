@@ -41,7 +41,7 @@ describe('AccountServiceSelectionForm', () => {
         vi.unstubAllGlobals();
     });
 
-    it('offers a policy-locked service as its managed value, without a dead way to pick another', async () => {
+    it('offers the managed service and explains why a different service is disabled', async () => {
         vi.stubGlobal('isTauri', true);
         vi.stubGlobal('document', {});
         vi.stubGlobal('window', { addEventListener: vi.fn(), removeEventListener: vi.fn(), __HAPPIER_WEB_RUNTIME_CONFIG__: {
@@ -56,7 +56,8 @@ describe('AccountServiceSelectionForm', () => {
             onBack={onBack} onSelect={vi.fn()}
         />);
         expect(screen.findByTestId('account-service-current-choice')?.props.disabled).toBe(false);
-        expect(screen.findByTestId('account-service-another-choice')).toBeNull();
+        expect(screen.getTextContent()).toContain('organizationPolicy.lockedExplanation');
+        expect(screen.findByTestId('account-service-another-choice')?.props.disabled).toBe(true);
         expect(screen.findByTestId('account-service-url-input')).toBeNull();
         expect(screen.findByTestId('organization-policy-accountService')).not.toBeNull();
         expect(screen.findByTestId('organization-policy-accountService-support')).not.toBeNull();

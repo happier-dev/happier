@@ -12827,6 +12827,7 @@ settingsSession: {
         title: 'Codex 和 Claude Code 行動用戶端',
         subtitle: '預設採用端對端加密，並可在其他裝置上還原您的帳戶。',
         createAccount: '建立帳戶',
+        newAccount: '新帳戶',
         chooseEncryptionTitle: '選擇加密方式',
         chooseEncryptionBody: '此Home支援加密與不加密帳戶。請選擇你希望如何儲存帳戶資料。',
         chooseEncryptionEncrypted: '繼續使用端對端加密',

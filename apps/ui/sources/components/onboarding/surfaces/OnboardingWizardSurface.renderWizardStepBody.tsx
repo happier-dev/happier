@@ -435,6 +435,19 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                     initialView={params.restoreInitialView}
                     reverseTargetProfileId={params.restoreTargetProfileId}
                     onNavigationLockChange={params.onRestoreNavigationLockChange}
+                    renderAdditionalSignInWays={(onLeave) => <WelcomeDecisionPanel
+                        showGreeting={false}
+                        restoreWays
+                        onLeaveRestore={onLeave}
+                        authEntryOptions={params.authEntryOptions}
+                        accountServiceEntry={params.accountServiceEntry}
+                        onContinueWithAccountServiceProvider={params.onContinueWithAccountServiceProvider}
+                        onContinueWithAccountServiceKey={params.onContinueWithAccountServiceKey}
+                        onChooseAccountService={params.onChooseAccountService}
+                        onContinueWithHomeAuthentication={params.onContinueWithHomeAuthentication}
+                        onOpenRestore={params.onOpenRestore}
+                        onChangeRelay={params.onOpenRelaySelectionFromAuth}
+                    />}
                 />
             </View>
         );
