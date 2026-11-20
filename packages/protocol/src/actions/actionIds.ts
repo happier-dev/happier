@@ -338,8 +338,9 @@ export function isSessionClientControlActionId(value: string): boolean {
 export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = [NOTIFICATION_NOTIFY_ME_ACTION_ID, 'review.start'];
 
 /** Comment mutations that persist a Review comment event. */
+const createReviewCommentActionId = 'reviews.comments.create' as const;
 export const REVIEW_COMMENT_MUTATION_ACTION_IDS_V1 = Object.freeze([
-  'reviews.comments.create',
+  createReviewCommentActionId,
   'reviews.comments.transition',
   'reviews.comments.edit',
   'reviews.comments.reply',
@@ -348,7 +349,7 @@ export const REVIEW_COMMENT_MUTATION_ACTION_IDS_V1 = Object.freeze([
   'reviews.comments.attachEvidence',
   'reviews.comments.bulkTransition',
 ] as const);
-const [createReviewCommentActionId, ...otherReviewCommentMutationActionIds] = REVIEW_COMMENT_MUTATION_ACTION_IDS_V1;
+const otherReviewCommentMutationActionIds = REVIEW_COMMENT_MUTATION_ACTION_IDS_V1.filter(id => id !== createReviewCommentActionId);
 
 export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   plugin_collection_sharing: PLUGIN_COLLECTION_SHARING_ACTION_IDS_V1,
