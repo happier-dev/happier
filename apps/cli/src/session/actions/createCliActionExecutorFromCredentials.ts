@@ -2016,7 +2016,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         // Native reads keep their existing read receiver and transport.
         && !isDeploymentReadActionIdV1(actionId);
       let selectedOriginalMachine = (environmentPlacement || requireDaemonIngress || params.externalActionClient || managedMachineDaemonIngress
-        || spec.id === 'session.spawn_new' && requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
+        || requiresOriginalAccountMachineActionProof(spec.id, admittedInput, context)
         || declaredDaemonIngress)
         && (environmentPlacement || executionPlacement === 'machine' || controlControllerTarget !== null) && originalCliCaller
         ? resolveSelectedExternalActionMachineTarget({ actionId: spec.id, rawInput: admittedInput,

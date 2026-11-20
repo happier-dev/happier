@@ -80,7 +80,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import axios from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
-import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRequesterHttpAuthorization, resolveExternalActionServerRequestHeaders } from './externalActionExecutionAuthorization';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
@@ -1395,16 +1395,19 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
           const executor = createCliActionExecutorFromCredentials({
             credentials: { token: token(authenticationKind), encryption: mode === 'plain' ? null
               : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' },
-            externalActionClient: true, serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+            // Direct Machine Run CLI commands do not force the external client transport.
+            ...(sessionId ? { externalActionClient: true } : {}),
+            serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
             machineId: 'alice-machine',
             actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
           });
           const start = { sessionId, intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
             cwd: taskDir, instructions: 'Read only', permissionMode: 'read_only', retentionPolicy: 'resumable',
             runClass: 'long_lived', ioMode: 'request_response' };
-          const input = actionId === 'execution.run.start' || actionId === 'execution.run.ensure_or_start' ? start
+          const input = getActionSpec(actionId).inputSchema.parse(actionId === 'execution.run.start' ? start
+            : actionId === 'execution.run.ensure_or_start' ? { sessionId: null, start }
             : actionId === 'execution.run.ensure' ? { sessionId: null, runId: 'retained-run', resume: true }
-              : { sessionId: null, runId: 'retained-run', message: 'Continue', resume: true, delivery: 'prompt' };
+              : { sessionId: null, runId: 'retained-run', message: 'Continue', resume: true, delivery: 'prompt' });
           const result = await executor.execute(actionId, input, { surface: 'cli', actionRequestId: 'request-1' });
           if (sessionId) {
             expect(result).toMatchObject({ errorCode: 'project_requester_credentials_unavailable' });
