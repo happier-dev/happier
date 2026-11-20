@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { MachineIsolationPolicyV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 
@@ -122,6 +123,46 @@ describe('Machine isolation page', () => {
         check?.action.onPress();
         expect(retrySave).toHaveBeenCalledOnce();
         expect(retryCheck).toHaveBeenCalledOnce();
+    });
+
+    // PRESETS-ACCEPT-1119 round 2: at 1440 the Sandboxes table drew a second rounded sheet inside its section's sheet when
+    // the check-failed notice stood above it. The owner's rounded-sheet ruling (11-19) keeps that section's one edge.
+    it.each([
+        { state: 'with the check-failed notice above it', checkFailure: { title: 'check', code: 'machine_offline', onRetry: () => undefined } },
+        { state: 'healthy', checkFailure: null },
+    ])('keeps the Sandboxes table on its section sheet, one edge around it ($state)', async ({ checkFailure }) => {
+        const { MachineIsolationPageView } = await import('./MachineIsolationPageView');
+        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const { HAPPIER_PAGE_METRICS } = await import('@happier-dev/plugin-ui/presentation');
+        const screen = await renderScreen(React.createElement(ListPresentationProvider, { value: 'page' },
+            React.createElement(MachineIsolationPageView, {
+                machineName: 'devbox', status: 'ready', policy: CONFIGURED, entries: ENTRIES, readOnlyReason: null, busy: false,
+                saveFailure: null, checkFailure, onChooseTarget: vi.fn(), onChooseLifecycle: vi.fn(), onToggleNative: vi.fn(), onRemove: vi.fn(),
+            } as never)));
+        const flatten = (style: unknown): Record<string, unknown> => Array.isArray(style)
+            ? Object.assign({}, ...style.map(flatten)) : style !== null && typeof style === 'object' ? style as Record<string, unknown> : {};
+        // A rounded, edged box at the page sheet's radius: a section's sheet or a table's own.
+        const edged = (node: { type: unknown; props: { style?: unknown } }) => {
+            if (typeof node.type !== 'string') return false;
+            const style = flatten(node.props.style);
+            return style.borderRadius === HAPPIER_PAGE_METRICS.sheetRadiusPx && Number(style.borderWidth ?? 0) > 0;
+        };
+        const section = findTestInstanceByTypeWithProps(screen, ItemGroup, { testID: 'machine-isolation-sandboxes' })!;
+        // The table measures a desktop width (the renderer lays nothing out itself), where a bare table takes its sheet.
+        const stage = section.findAll((node) => node.props.testID === 'machine-isolation-sandboxes-table:stage'
+            && typeof node.props.onLayout === 'function')[0]!;
+        await act(async () => {
+            stage.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } } });
+        });
+        const table = section.findAll((node) => node.props.testID === 'machine-isolation-sandboxes-table')[0]!;
+        expect(table).toBeDefined();
+        // Exactly one edge around the table: the section's sheet, never a second one of the table's own.
+        expect(section.findAll(edged).filter((box) => box.findAll((node) => node === table).length > 0)).toHaveLength(1);
+        // The table reads that it stands on the section's sheet: no list scope between them starts outside the sheet
+        // again (a fresh scope clears the enclosing-sheet fact, and the Collection then drew a second sheet of its own).
+        const { ListPresentationProvider: ScopeStart } = await import('@/components/ui/lists/listPresentation');
+        const restarts = section.findAllByType(ScopeStart).filter((scope) => scope.findAll((node) => node === table).length > 0);
+        expect(restarts).toHaveLength(0);
     });
 
     it('never shows an unreadable saved policy as Directly', async () => {

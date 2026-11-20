@@ -24,7 +24,6 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { Collection, useHappierCollection, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { readPresetTableMenuStep, usePresetTableAnatomy, type PresetTableItem } from '@/components/settings/machines/presets/presetTable';
 import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -414,7 +413,8 @@ function MachineIsolationSandboxesTable(
   });
   return (
     <IsolationRowMenuContext.Provider value={menu}>
-    <ListPresentationProvider value="page" pageInsets="contained">
+      {/* On this section's own sheet: no list scope of its own, which would start the table outside that sheet again
+          and give it a second rounded sheet (PRESETS-ACCEPT-1119 round 2). */}
       <CoreCollectionScope>
         <Collection<PresetTableItem & { entry: MachineIsolationEntryRow }>
           testID="machine-isolation-sandboxes-table"
@@ -430,7 +430,6 @@ function MachineIsolationSandboxesTable(
           preferredListRatio={1}
         />
       </CoreCollectionScope>
-    </ListPresentationProvider>
     {/* The section's add is its last row, in the same sheet under the table. */}
     {props.onAdd ? (
       <ItemAddRow

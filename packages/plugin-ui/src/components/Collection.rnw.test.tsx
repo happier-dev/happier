@@ -137,6 +137,7 @@ import { PageHeader } from './PageHeader.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HappierColumnEdgeContext } from '../presentation/layout/columnEdge.js';
+import { HappierPageSheet } from '../presentation/layout/PageSection.js';
 import { HAPPIER_COLLECTION_LIST_METRICS } from '../presentation/collection/CollectionList.js';
 import { capabilityCollectionAnatomy } from './Capabilities.js';
 import { HappierCollectionNavigationBackClosesDetailContext } from '../presentation/collection/collectionLayout.js';
@@ -528,6 +529,8 @@ function mount(
     hostApiOverrides?: Parameters<typeof createHostApiStub>[1];
     /** The page edge the host's column already draws around the surface (a plugin page's gutter). */
     columnEdgePx?: number;
+    /** The collection sits in a page section's sheet, after these rows (a notice above the table). */
+    enclosingSheet?: Readonly<{ before?: React.ReactNode }>;
   }> &
     HarnessOptions = {},
 ) {
@@ -566,13 +569,14 @@ function mount(
         <PluginUiSurfaceNoticeContext.Provider value={options.surfaceNotice ?? null}>
         <PluginUiScrollActivityProvider tracker={options.scrollTracker ?? null}>
           <HappierColumnEdgeContext.Provider value={options.columnEdgePx ?? 0}>
-          <Harness
-            {...harness}
-            openKey={openKey}
-            onOpenChange={(key) => {
-              openChanges.push(key);
-            }}
-          />
+          {options.enclosingSheet === undefined ? (
+            <Harness {...harness} openKey={openKey} onOpenChange={(key) => { openChanges.push(key); }} />
+          ) : (
+            <HappierPageSheet colors={{ sheet: '#ffffff', sheetBorder: '#d0d0d0', rowDivider: '#e0e0e0', groupDivider: '#eeeeee' }}>
+              {options.enclosingSheet.before}
+              <Harness {...harness} openKey={openKey} onOpenChange={(key) => { openChanges.push(key); }} />
+            </HappierPageSheet>
+          )}
           </HappierColumnEdgeContext.Provider>
         </PluginUiScrollActivityProvider>
         </PluginUiSurfaceNoticeContext.Provider>
@@ -4031,6 +4035,32 @@ describe('the table sheet', () => {
       }
       expect(outerScroller).toBe(false);
       expect([sheet!, ...sheet!.querySelectorAll<HTMLElement>('*')].some(scrolls)).toBe(true);
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // PRESETS-ACCEPT-1119 round 2 (Isolation → Sandboxes at 1440): a table on a page section's sheet keeps that sheet's one
+  // edge, whatever stands above it on the sheet (the check-failed notice).
+  it.each([
+    { before: 'nothing', node: undefined },
+    { before: 'a notice', node: <Text testID="sheet-notice">Couldn't check these sandbox types.</Text> },
+  ])('draws no second sheet for a page list already on a section sheet, with $before above it', ({ node }) => {
+    const view = mount({
+      presentation: 'list', scroll: 'page', grouped: false, detail: 'none',
+      anatomy: { ...anatomy, peek: undefined },
+      useRowActions: () => ({ secondaryActions: [{ id: 'pin', label: 'Pin' }], onSecondaryAction: () => undefined }),
+      enclosingSheet: { before: node },
+    });
+    try {
+      view.measure(1440);
+      let edges = 0;
+      for (let at = view.query('row:a')?.parentElement ?? null; at !== null && at !== view.container; at = at.parentElement) {
+        const style = getComputedStyle(at);
+        if (style.borderTopLeftRadius === radius && Number.parseFloat(style.borderTopWidth || '0') > 0) edges += 1;
+      }
+      // The section's own sheet, and nothing of the table's.
+      expect(edges).toBe(1);
     } finally {
       view.unmount();
     }
