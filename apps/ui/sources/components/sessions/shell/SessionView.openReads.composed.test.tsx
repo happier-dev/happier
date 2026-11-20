@@ -16,7 +16,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { sync } from '@/sync/sync';
 import { hasCurrentSessionTurnsProjection } from '@/sync/domains/session/hasAuthoritativeSessionRouteData';
 import { getSessionSurfaceVisibilitySnapshot } from '@/sync/domains/session/sessionSurfaceVisibility';
-import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
+import { buildSessionTurnsProjectionV1, type SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
 import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/control/contract';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
@@ -63,6 +63,33 @@ const httpRequests: string[] = [];
 const coldOpenId = 'cold-open-settled-turn';
 const coldOpenRead = createDeferred<void>();
 const coldOpenRequests: string[] = [];
+const revisitId = 'turn-marker-revisit';
+const jumpId = 'turn-marker-jump';
+const failedId = 'turn-marker-failed';
+const revisitTurnRead = createDeferred<void>();
+const revisitReads: string[] = [];
+
+function agentMessage(seq: number, content: unknown, meta?: Record<string, unknown>) {
+    return {
+        id: `message-${seq}`, seq, localId: null, sidechainId: null,
+        content: { t: 'plain', v: { role: 'agent', content, ...(meta ? { meta } : {}) } },
+        createdAt: seq, updatedAt: seq,
+    };
+}
+
+function agentText(seq: number, text: string) {
+    return agentMessage(seq, {
+        type: 'output', data: {
+            type: 'assistant', uuid: `reply-${seq}`, parentUuid: null, isSidechain: false,
+            message: { role: 'assistant', content: [{ type: 'text', text }] },
+        },
+    });
+}
+
+function markerTurn(id: string): SessionTurnV1 {
+    return { turnId: 'settled', status: id === failedId ? 'failed' : 'completed', startedAt: 1, terminalAt: 4001, updatedAt: 4001,
+        transcriptAnchors: { startUserMessageSeq: 1, endSeqInclusive: 3 } };
+}
 const machineRequests: string[] = [];
 const socketRequests: string[] = [];
 const physicalSockets = new Set<Socket>();
@@ -73,6 +100,9 @@ const runtime = installSessionPaneRuntimeTestHarness({
         httpRequests.push(String(input));
         const path = new URL(String(input)).pathname;
         const method = init?.method ?? 'GET';
+        if (method === 'GET' && [
+            `/v1/sessions/${revisitId}/turns`, `/v2/sessions/${revisitId}`, `/v1/sessions/${revisitId}/messages`,
+        ].includes(path)) revisitReads.push(path);
         if (method === 'GET' && (path === `/v1/sessions/${coldOpenId}/turns` || path === `/v2/sessions/${coldOpenId}`)) {
             coldOpenRequests.push(`GET ${path}`);
         } else if (method === 'POST' && path === '/v2/sessions/read-batch') {
@@ -80,6 +110,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
             if (batch.includeSnapshot && batch.sessionIds.includes(coldOpenId)) {
                 coldOpenRequests.push(batch.includeTurns ? 'snapshot with turns' : 'snapshot without turns');
             }
+            if (batch.sessionIds.includes(revisitId)) revisitReads.push(`${path} ${String(batch.includeTurns)}`);
         }
     },
     configureSocket: socket => {
@@ -99,6 +130,15 @@ const runtime = installSessionPaneRuntimeTestHarness({
     },
     request: async (input, init) => {
         const url = new URL(String(input));
+        const markerId = [revisitId, jumpId, failedId].find(id => url.pathname === `/v2/sessions/${id}`
+            || url.pathname.startsWith(`/v1/sessions/${id}/`));
+        if (markerId && url.pathname.startsWith('/v2/sessions/')) {
+            return Response.json({ session: createPlainSessionWithDisplayRecordFixture({ id: markerId, seq: markerId === jumpId ? 50 : 3 }) });
+        }
+        if (markerId && url.pathname.endsWith('/turns')) {
+            if (markerId === revisitId) await revisitTurnRead.promise;
+            return Response.json(buildSessionTurnsProjectionV1({ sessionId: markerId, updatedAt: 4001, turns: [markerTurn(markerId)] }));
+        }
         if (url.pathname === `/v2/sessions/${coldOpenId}` && (init?.method ?? 'GET') === 'GET') {
             await coldOpenRead.promise;
             return Response.json({ session: createPlainSessionWithDisplayRecordFixture({ id: coldOpenId, seq: 3 }) });
@@ -112,6 +152,28 @@ const runtime = installSessionPaneRuntimeTestHarness({
         }
         if (/^\/v1\/sessions\/[^/]+\/messages$/.test(url.pathname) && (init?.method ?? 'GET') === 'GET') {
             reads.push(url.pathname + url.search);
+            if (markerId) {
+                const prompt = {
+                    id: 'message-1', seq: 1, localId: null, sidechainId: null,
+                    content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Marker prompt' } } },
+                    createdAt: 1, updatedAt: 1,
+                };
+                const reply = agentText(2, 'Marker reply');
+                const end = markerId === failedId
+                    ? agentMessage(3, { type: 'codex', data: { type: 'turn_failed', id: 'settled' } }, { source: 'runtime', runtimeEventKind: 'turn-failed', runtimeTurnId: 'settled' })
+                    : agentText(3, 'Closing reply');
+                const before = url.searchParams.get('beforeSeq');
+                const after = url.searchParams.get('afterSeq');
+                if (markerId === jumpId) {
+                    const messages = before === '2' ? [prompt] : after === '1' ? [reply]
+                        : after === '2' ? [end] : after === null ? [agentText(50, 'Tail reply')] : [];
+                    return Response.json({ messages, hasMore: after === '1', nextBeforeSeq: messages[0]?.seq ?? null, nextAfterSeq: messages[0]?.seq ?? null });
+                }
+                return Response.json({
+                    messages: after === null ? [end, reply, prompt] : [],
+                    hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+                });
+            }
             return Response.json({ messages: url.searchParams.has('afterSeq') ? [] : [1, 2, 3].map(seq => ({
                 id: `message-${seq}`, seq, localId: null, sidechainId: null,
                 content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: `Turn ${seq}` } } },
@@ -168,6 +230,118 @@ it('includes settled turn markers in the first populated cold transcript commit 
         expect(firstPaintMarkerCount).toBe(1);
     } finally {
         await screen?.unmount();
+        legendViewport.renderAllRows = false;
+    }
+});
+
+it('keeps late markers out of held rows, then includes them on a retained revisit with zero reads', async () => {
+    const id = revisitId;
+    const serverId = runtime.serverId;
+    storage.getState().applySessions([createSessionFixture({ id, serverId, seq: 3, encryptionMode: 'plain' })]);
+    await expect(sync.ensureSessionVisibleForMessageRoute(id, {
+        serverId, forceRefresh: true, includeTurnsProjection: false, awaitMessageHydration: true,
+    }))
+        .resolves.toMatchObject({ kind: 'available' });
+    expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true);
+    expect(storage.getState().sessions[id]?.sessionTurns).toBeUndefined();
+    const body = <SessionDestinationBody />;
+    const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+    const ref = { kind: 'session' as const, params: { id, serverId } };
+    let observeCommit: (() => void) | undefined;
+    const tab = (shown: boolean) => <React.Profiler id={id} onRender={() => observeCommit?.()}>
+        <DestinationInstanceHost tabId={id} ref={ref}
+            pathname={`/session/${id}`} focused={shown} visible={shown} navigation={navigation}>
+            {body}
+        </DestinationInstanceHost>
+    </React.Profiler>;
+    legendViewport.renderAllRows = true;
+    const screen = await renderScreen(tab(true), { wrapper: runtime.Wrapper });
+    try {
+        expect(screen.getTextContent()).toContain('Marker prompt');
+        expect(screen.findAllHostsByTestId('transcript-turn-duration')).toHaveLength(0);
+        await act(async () => {
+            revisitTurnRead.resolve();
+            await waitForHomeGovernance(() => expect(hasCurrentSessionTurnsProjection(storage.getState().sessions[id] ?? {})).toBe(true));
+        });
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        expect(screen.findAllHostsByTestId('transcript-turn-duration')).toHaveLength(0);
+        await screen.update(tab(false));
+        expect(getSessionSurfaceVisibilitySnapshot().visibleSessionIds).not.toContain(id);
+        expect(storage.getState().sessionMessages[id]?.isLoaded).toBe(true);
+        expect(storage.getState().sessions[id]?.sessionTurns?.turns).toHaveLength(1);
+        const readsBeforeRevisit = revisitReads.length;
+        let firstRevisitMarkerCount: number | undefined;
+        const revealCommits: Array<{ visible: boolean; rows: boolean; markers: number }> = [];
+        const readCommit = () => ({
+            visible: screen.findHostByTestId(`session-view-retained-surface:${id}`)?.props.pointerEvents === 'auto',
+            rows: screen.getTextContent().includes('Marker prompt'),
+            markers: screen.findAllHostsByTestId('transcript-turn-duration').length,
+        });
+        const hiddenCommit = readCommit();
+        observeCommit = () => {
+            const commit = readCommit();
+            revealCommits.push(commit);
+            if (firstRevisitMarkerCount === undefined && commit.visible && commit.rows) {
+                firstRevisitMarkerCount = commit.markers;
+            }
+        };
+        await screen.update(tab(true));
+        await flushHookEffects({ cycles: 3, turns: 3 });
+        expect(revisitReads.slice(readsBeforeRevisit)).toEqual([]);
+        expect.soft(firstRevisitMarkerCount, JSON.stringify({ hiddenCommit, revealCommits })).toBe(1);
+        expect(screen.findAllHostsByTestId('transcript-turn-duration')).toHaveLength(1);
+    } finally {
+        await screen.unmount();
+        legendViewport.renderAllRows = false;
+    }
+});
+
+function coldMarkerTab(id: string, seq: number) {
+    const serverId = runtime.serverId;
+    storage.getState().applyServerScopedSessionListRows(serverId, [
+        createSessionListRenderableSessionFixture({ id, serverId, seq }),
+    ], { source: 'rowOnly', mode: 'append' });
+    return <DestinationInstanceHost tabId={id} ref={{ kind: 'session', params: { id, serverId } }}
+        pathname={`/session/${id}`} focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+        <SessionDestinationBody />
+    </DestinationInstanceHost>;
+}
+
+it('shows a duration in a jumped historical window only when its closing anchor pages in', async () => {
+    const id = jumpId;
+    legendViewport.renderAllRows = true;
+    const screen = await renderScreen(coldMarkerTab(id, 50), { wrapper: runtime.Wrapper });
+    try {
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Tail reply'));
+        const target = { kind: 'seq', seq: 1 } as const;
+        await act(async () => {
+            await expect(sync.loadTargetWindowMessages(id, target, { limit: 1 }))
+                .resolves.toMatchObject({ status: 'loaded', targetPresent: true, hasMoreNewer: true });
+        });
+        expect(screen.getTextContent()).toContain('Marker prompt');
+        expect(screen.getTextContent()).not.toContain('Closing reply');
+        expect(screen.findAllHostsByTestId('transcript-turn-duration')).toHaveLength(0);
+        await act(async () => {
+            await expect(sync.loadTargetWindowMessages(id, target, { limit: 1, direction: 'newer' }))
+                .resolves.toMatchObject({ status: 'loaded', rawSeqs: [3] });
+        });
+        expect(screen.getTextContent()).toContain('Closing reply');
+        expect(screen.findAllHostsByTestId('transcript-turn-duration')).toHaveLength(1);
+    } finally {
+        await screen.unmount();
+        legendViewport.renderAllRows = false;
+    }
+});
+
+it('shows Stopped after on a cold open when the failed terminal row was absorbed by the reducer', async () => {
+    legendViewport.renderAllRows = true;
+    const screen = await renderScreen(coldMarkerTab(failedId, 3), { wrapper: runtime.Wrapper });
+    try {
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Marker reply'));
+        expect(storage.getState().sessionMessages[failedId]?.latestNonRenderableMessageSeq).toBe(3);
+        expect(screen.getTextContent()).toContain('Stopped after');
+    } finally {
+        await screen.unmount();
         legendViewport.renderAllRows = false;
     }
 });

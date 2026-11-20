@@ -524,6 +524,15 @@ The **Transcript** screen controls how session conversations are presented:
 
 This is a presentation layer. It does not change provider behavior or tool permissions.
 
+In 0.3 development builds, **New** marks where unread messages begin when you
+open a session with read history. The divider skips prompts you sent yourself.
+
+In 0.3 development builds, **Show turn duration** is on by default. For turns
+that last at least a second, the transcript shows **Worked for** and the elapsed
+time at the end of a completed turn. Failed or cancelled turns show **Stopped
+after**. When you jump back through history, the line appears when the end of
+the turn loads. Turn the setting off to hide these lines.
+
 In the 0.3 development version, **Link agent names in messages** is on by default. When a Codex agent's nickname identifies one agent in the current session family or in a session already mentioned in the transcript, its name opens that conversation. Code, existing links, and ambiguous names stay as written. Turn the setting off to keep automatically detected names as plain text.
 
 Some transcript-related defaults, such as transcript-storage defaults for new sessions, are still backend-aware. That means a built-in backend and a configured ACP backend can have different default behavior.

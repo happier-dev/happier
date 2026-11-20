@@ -71,8 +71,8 @@ import {
 import { useLegendHeldIntent } from './legend/useLegendHeldIntent';
 import { useLegendRevealRevalidation } from './legend/useLegendRevealRevalidation';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
-import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import { createTranscriptCellStore, TranscriptLegendCell, type TranscriptCellSource } from './legend/cellStore';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { createTranscriptCellStore, TranscriptLegendCell, type TranscriptCellSource, type TranscriptCellStore } from './legend/cellStore';
 
 export { resolveLegendRendererAtEndStateFromWebMetrics } from './legend/atEnd';
 
@@ -93,6 +93,32 @@ const LEGEND_TRANSCRIPT_ESTIMATED_ITEM_SIZE_PX = 240;
 // descends to the scrollable, so the adapter must own the identity on a wrapper
 // View that is an ancestor of the Legend scroller.
 const LEGEND_IDENTITY_HOST_STYLE = { flex: 1, minHeight: 0 } as const;
+
+/** Keep the mounted list while hidden and present pending rows and their cell source in the reveal commit. */
+function PresentedLegendList<TItem>({ cellSource, cellStore, legendProps, listRef, onCommit }: Readonly<{
+    cellSource: TranscriptCellSource<TItem>;
+    cellStore: TranscriptCellStore<TItem>;
+    legendProps: LegendListProps<TItem>;
+    listRef: React.Ref<LegendListRef>;
+    onCommit: () => void;
+}>): React.ReactElement {
+    // Only this leaf follows layout presentation. With no pending rows the Legend element is reused.
+    const presented = useLayoutPresentationActive();
+    const pending = React.useMemo(() => ({
+        cellSource,
+        element: <TranscriptLayoutCommitObserver onCommitLayoutEffect={onCommit}>
+            <LegendList ref={listRef} {...legendProps} />
+        </TranscriptLayoutCommitObserver>,
+    }), [cellSource, legendProps, listRef, onCommit]);
+    const lastPresented = React.useRef(pending);
+    const current = presented ? pending : lastPresented.current;
+    cellStore.update(current.cellSource);
+    React.useLayoutEffect(() => {
+        lastPresented.current = current;
+        cellStore.publish();
+    }, [cellStore, current]);
+    return current.element;
+}
 const TRANSCRIPT_ROW_SEPARATORS = {
     highlight: () => undefined,
     unhighlight: () => undefined,
@@ -1446,9 +1472,6 @@ function LegendListTranscriptRendererInner<TItem>(
         ),
         inputs: [props.renderItem, revealNativeItem],
     }), [props.data, props.keyExtractor, props.renderItem, revealNativeItem]);
-    // A hidden retained tab keeps its last presented source, so its mounted cells do no work.
-    cellStore.update(usePresentedValue(cellSource));
-    React.useLayoutEffect(() => { cellStore.publish(); });
     const renderItem: LegendListProps<TItem>['renderItem'] = (info) => {
         const sourceIndex = toSourceIndex(info.index, dataLength, projectChronologicalIndex);
         const itemKey = props.keyExtractor(info.item, sourceIndex);
@@ -1719,10 +1742,6 @@ function LegendListTranscriptRendererInner<TItem>(
         scrollEventThrottle: props.frame.rendererOptions.interaction.scrollEventThrottle,
         viewabilityConfig: props.viewabilityConfig,
     };
-    // A hidden retained Session tab is display:none (0 x 0): Legend keeps its last presented props and
-    // measurements until the tab is shown, so streamed rows never mount the whole transcript there.
-    const presentedLegendProps = usePresentedValue(legendProps);
-
     return (
         <TranscriptRendererContentDemandProvider demand={contentDemand}>
             <PluginUiScrollActivityProvider tracker={scrollActivity}>
@@ -1738,18 +1757,17 @@ function LegendListTranscriptRendererInner<TItem>(
                     layout effects for this commit have run. Held-intent settlement is requested only
                     by the renderer's data/measurement/viewport signals, never by a content-free
                     React commit. */}
-                <TranscriptLayoutCommitObserver
-                    onCommitLayoutEffect={() => {
+                <PresentedLegendList
+                    cellSource={cellSource}
+                    cellStore={cellStore}
+                    legendProps={legendProps}
+                    listRef={legendListRef}
+                    onCommit={() => {
                         invalidateNativePhysicalViewportCapture();
                         emitSynthesizedContentSize();
                         props.onCommitLayoutEffect?.();
                     }}
-                >
-                    <LegendList
-                        ref={legendListRef}
-                        {...presentedLegendProps}
-                    />
-                </TranscriptLayoutCommitObserver>
+                />
             </View>
             </PluginUiScrollActivityProvider>
         </TranscriptRendererContentDemandProvider>

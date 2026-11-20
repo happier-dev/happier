@@ -135,7 +135,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         showToolCalls,
         transcriptMarkers,
     } = deps;
-    const { newDividerAfterSeq, viewerScope, turnEnds } = transcriptMarkers;
+    const { newDividerAfterSeq, viewerScope, turnEnds, latestNonRenderableSeq } = transcriptMarkers;
 
     const getTurnMessageById = React.useCallback((messageId: string): Message | null => {
         if (getMessageByIdOverride) return getMessageByIdOverride(messageId);
@@ -192,6 +192,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             newDividerAfterSeq,
             viewerScope,
             turnEnds,
+            latestNonRenderableSeq,
             isSeqRangeLoaded,
         });
         const retained = retainKeyedRows(previousDecomposedItemsRef.current, marked, (item) => item.id, { freeze: false });
@@ -203,6 +204,7 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         getTurnMessageById,
         isSeqRangeLoaded,
         items,
+        latestNonRenderableSeq,
         quietWorkflowTurnIds,
         sessionId,
         transcriptToolCallsCollapsedPreviewCountSetting,
@@ -219,7 +221,9 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             isSeqRangeLoaded: jumpWindowFacts.isSeqRangeLoaded,
             items: decomposedItems,
             listOrientation,
-            resolveSeq: jumpWindowFacts.resolveTargetWindowItemSeq,
+            resolveSeq: (item) => item.kind === 'transcript-marker'
+                ? item.windowAnchorSeq
+                : jumpWindowFacts.resolveTargetWindowItemSeq(item),
             sessionId,
             tailContiguousBoundary: tailContiguousBoundary ?? null,
             resolveMessageIds: collectTranscriptNavigationMessageIdsForItem,

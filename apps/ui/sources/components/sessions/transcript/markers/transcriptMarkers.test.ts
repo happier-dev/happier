@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { Message, TranscriptAccountActor } from '@happier-dev/session-core/messages';
 import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 
@@ -101,20 +101,67 @@ const shape = (rows: readonly { kind: string; id: string }[]) =>
   );
 
 describe('transcript markers', () => {
-  it('projects each row once on a reply arrival across 5,000 rows and 300 settled turns', () => {
-    const turns: SessionTurnV1[] = Array.from({ length: 300 }, (_, index) => ({
+  it('projects settled turn anchors with the next running turn boundary', () => {
+    const facts = projectTranscriptTurnEnds([
+      { turnId: 'running', status: 'in_progress', startedAt: 10_000, updatedAt: 10_000,
+        transcriptAnchors: { startSeqInclusive: 7 } },
+      { turnId: 'stopped', status: 'failed', startedAt: 5_000, updatedAt: 9_000, terminalAt: 9_000,
+        transcriptAnchors: { startSeqInclusive: 4, finalAssistantMessageSeq: 6 } },
+      { turnId: 'completed', status: 'completed', startedAt: 0, updatedAt: 3_000, terminalAt: 3_000,
+        transcriptAnchors: { startSeqInclusive: 1, endSeqInclusive: 3 } },
+    ]);
+
+    expect(facts.map(({ turnId, startSeq, endSeq, nextTurnStartSeq, outcome, durationMs, endedAtMs }) =>
+      ({ turnId, startSeq, endSeq, nextTurnStartSeq, outcome, durationMs, endedAtMs }))).toEqual([
+      { turnId: 'completed', startSeq: 1, endSeq: 3, nextTurnStartSeq: 4,
+        outcome: 'worked', durationMs: 3_000, endedAtMs: 3_000 },
+      { turnId: 'stopped', startSeq: 4, endSeq: 6, nextTurnStartSeq: 7,
+        outcome: 'stopped', durationMs: 4_000, endedAtMs: 9_000 },
+    ]);
+  });
+
+  it.each([100, 1_000, 2_500])('looks up later starts with linear visits for %i settled turns', (turnCount) => {
+    const turns: SessionTurnV1[] = Array.from({ length: turnCount }, (_, index) => ({
+      turnId: String(index), status: 'completed', startedAt: index * 2_000,
+      terminalAt: index * 2_000 + 1_500, updatedAt: index * 2_000 + 1_500,
+      transcriptAnchors: { startSeqInclusive: index * 2 + 1, endSeqInclusive: index * 2 + 2 },
+    }));
+    const sort = Array.prototype.sort;
+    let orderedSlotVisits = 0;
+    // Observe reads from sorted lists outside the sort itself, without replacing the projection or its decisions.
+    const spy = vi.spyOn(Array.prototype, 'sort').mockImplementation(function (this: unknown[], compare?: (a: unknown, b: unknown) => number) {
+      return new Proxy(sort.call(this, compare), {
+        get(target, key, receiver) {
+          if (typeof key === 'string' && /^\d+$/.test(key)) orderedSlotVisits++;
+          return Reflect.get(target, key, receiver);
+        },
+      });
+    });
+    let facts;
+    try {
+      facts = projectTranscriptTurnEnds(turns);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(orderedSlotVisits).toBeLessThanOrEqual(2 * turnCount);
+    expect(facts.map((fact) => fact.nextTurnStartSeq)).toEqual(turns.map((_, index) =>
+      turns[index + 1]?.transcriptAnchors?.startSeqInclusive ?? null));
+  });
+
+  it('projects each row once on a reply arrival after 5,000 rows and 2,500 settled turns', () => {
+    const turns: SessionTurnV1[] = Array.from({ length: 2_500 }, (_, index) => ({
       turnId: String(index),
       status: 'completed',
       startedAt: index * 10_000,
       terminalAt: index * 10_000 + 8_000,
       updatedAt: index * 10_000 + 8_000,
-      transcriptAnchors: { startSeqInclusive: index * 16 + 1, endSeqInclusive: (index + 1) * 16 },
+      transcriptAnchors: { startSeqInclusive: index * 2 + 1, endSeqInclusive: (index + 1) * 2 },
     }));
     turns.push({
-      turnId: 'active', status: 'in_progress', startedAt: 3_000_000, updatedAt: 3_000_000,
-      transcriptAnchors: { startSeqInclusive: 4801 },
+      turnId: 'active', status: 'in_progress', startedAt: 25_000_000, updatedAt: 25_000_000,
+      transcriptAnchors: { startSeqInclusive: 5_001 },
     });
-    const messages = Array.from({ length: 5_000 }, (_, index) => index % 16 === 0
+    const messages = Array.from({ length: 5_002 }, (_, index) => index % 2 === 0
       ? user(index + 1, { v: 1, ...viewer, profile: null })
       : agent(index + 1));
     const rows: TranscriptRowShellItem[] = messages.map((message) => ({
@@ -141,7 +188,7 @@ describe('transcript markers', () => {
       },
     });
     expect(after).toEqual([...before, rows.at(-1)]);
-    expect(after).toHaveLength(5_301);
+    expect(after).toHaveLength(7_503);
     expect(messageLookups).toBe(rows.length);
     // One projection pass and at most one additional pass to materialize the marker rows.
     expect(rowVisits).toBeLessThanOrEqual(2 * rows.length);

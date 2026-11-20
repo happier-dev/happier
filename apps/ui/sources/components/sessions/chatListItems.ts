@@ -63,6 +63,8 @@ export type ChatListItem =
         kind: 'transcript-marker';
         id: string;
         marker: TranscriptMarker;
+        /** The covered turn end used to clip the line with its transcript window. */
+        windowAnchorSeq?: number;
     }
     | {
         kind: 'pending-queue';

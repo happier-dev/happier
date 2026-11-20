@@ -30,6 +30,8 @@ export type TranscriptMarkerInputs = Readonly<{
   viewerScope: ServerAccountScope | null;
   /** Settled turns, empty while "Show turn duration" is off. */
   turnEnds: readonly TranscriptTurnEndFact[];
+  /** An exact applied record that the reducer omitted from the rows. */
+  latestNonRenderableSeq?: number | null;
 }>;
 
 const EMPTY_TURN_ENDS: readonly TranscriptTurnEndFact[] = Object.freeze([]);
@@ -51,10 +53,13 @@ export function projectTranscriptTurnEnds(
   turns: readonly SessionTurnV1[] | null | undefined,
 ): readonly TranscriptTurnEndFact[] {
   if (!turns || turns.length === 0) return EMPTY_TURN_ENDS;
-  // Every turn's start, running ones included: a settled turn's rows stop where any later turn begins.
-  const starts = turns.map(readStartSeq).filter((seq): seq is number => seq !== null).sort((left, right) => left - right);
-  const facts: TranscriptTurnEndFact[] = [];
+  type TurnEnd = Omit<TranscriptTurnEndFact, 'nextTurnStartSeq'> & { nextTurnStartSeq: number | null };
+  const orderedAnchors: { seq: number; end?: TurnEnd }[] = [];
+  const facts: TurnEnd[] = [];
   for (const turn of turns) {
+    // A running turn can also mark the boundary of a settled turn's rows.
+    const startSeq = readStartSeq(turn);
+    if (startSeq !== null) orderedAnchors.push({ seq: startSeq });
     const outcome =
       turn.status === 'completed'
         ? 'worked'
@@ -68,24 +73,32 @@ export function projectTranscriptTurnEnds(
     const endSeq =
       readSeq(anchors?.endSeqInclusive) ??
       readSeq(anchors?.finalAssistantMessageSeq);
-    const startSeq = readStartSeq(turn);
     const firstPromptSeq = anchors?.startUserMessageSeq;
     const otherPromptSeqs = anchors?.userMessageSeqs ?? [];
     const promptSeqs = firstPromptSeq !== undefined ? [firstPromptSeq, ...otherPromptSeqs]
       : otherPromptSeqs.length > 0 ? otherPromptSeqs
       : startSeq !== null ? [startSeq] : [];
-    facts.push({
+    const fact: TurnEnd = {
       turnId: turn.turnId,
       startSeq,
       endSeq,
       promptSeqs,
-      nextTurnStartSeq: endSeq === null ? null : starts.find((seq) => seq > endSeq && (startSeq === null || seq > startSeq)) ?? null,
+      nextTurnStartSeq: null,
       outcome,
       durationMs,
       endedAtMs: turn.terminalAt,
-    });
+    };
+    facts.push(fact);
+    if (endSeq !== null) orderedAnchors.push({ seq: Math.max(startSeq ?? endSeq, endSeq), end: fact });
   }
   if (facts.length === 0) return EMPTY_TURN_ENDS;
+  // Walk newest to oldest. Process an end before starts at the same seq so only a strictly later start counts.
+  let nextStart: number | null = null;
+  for (const anchor of orderedAnchors.sort((left, right) =>
+    right.seq - left.seq || Number(right.end !== undefined) - Number(left.end !== undefined))) {
+    if (anchor.end) anchor.end.nextTurnStartSeq = nextStart;
+    else nextStart = anchor.seq;
+  }
   return facts.sort((left, right) => (left.endSeq ?? Infinity) - (right.endSeq ?? Infinity));
 }
 
@@ -106,8 +119,9 @@ type SeqBlock = {
 function markerItem(
   id: string,
   marker: TranscriptMarker,
+  windowAnchorSeq?: number,
 ): Extract<TranscriptRowShellItem, { kind: 'transcript-marker' }> {
-  return { kind: 'transcript-marker', id, marker };
+  return { kind: 'transcript-marker', id, marker, windowAnchorSeq };
 }
 
 /** Index of the last block starting at or before `seq`, including a group spanning it. */
@@ -148,11 +162,11 @@ export function insertTranscriptMarkers(params: TranscriptMarkerInputs & Readonl
   getMessageById: (messageId: string) => Message | null;
   isSeqRangeLoaded?: (fromInclusive: number, toInclusive: number) => boolean;
 }>): readonly TranscriptRowShellItem[] {
-  const { items, sessionId, getMessageById, newDividerAfterSeq, viewerScope, turnEnds, isSeqRangeLoaded } = params;
+  const { items, sessionId, getMessageById, newDividerAfterSeq, viewerScope, turnEnds, latestNonRenderableSeq, isSeqRangeLoaded } = params;
   if (items.length === 0 || (newDividerAfterSeq === null && !turnEnds.some(hasClosingLine))) return items;
 
   const blocks: SeqBlock[] = [];
-  const changesRowIndexByTurnId = new Map<string, number>();
+  const changesRowByTurnId = new Map<string, { index: number; seq: number }>();
   let openGroup: { groupId: string; first: number; minSeq: number; maxSeq: number; memberSeqs: number[] } | null = null;
   const isForeign = (item: { originSessionId?: string; isReadOnlyContext?: boolean }) =>
     item.isReadOnlyContext === true || (item.originSessionId !== undefined && item.originSessionId !== sessionId);
@@ -164,7 +178,7 @@ export function insertTranscriptMarkers(params: TranscriptMarkerInputs & Readonl
       const message = getMessageById(item.messageId);
       if (turnEnds.length > 0 && message?.kind === 'tool-call' && message.tool?.name === 'Diff') {
         const changes = readTurnChangeToolMetadataFromToolCall(message.tool);
-        if (changes) changesRowIndexByTurnId.set(changes.turnId, index);
+        if (changes) changesRowByTurnId.set(changes.turnId, { index, seq: item.seq });
       }
       const prompt = message?.kind === 'user-text';
       blocks.push({
@@ -222,24 +236,31 @@ export function insertTranscriptMarkers(params: TranscriptMarkerInputs & Readonl
     if (
       anchoredBlock.minSeq !== fact.endSeq
       && !anchoredBlock.memberSeqs?.includes(fact.endSeq)
+      && fact.endSeq !== latestNonRenderableSeq
       && !isSeqRangeLoaded?.(Math.min(anchoredBlock.maxSeq, fact.endSeq), fact.endSeq)
     ) continue;
 
+    // A retained tail row can still be in the source after a jump. When closing in
+    // the historical window, place the line among the blocks that window can show.
+    const closesInWindow = isSeqRangeLoaded?.(fact.endSeq, fact.endSeq) === true;
+    const fitsWindow = (seq: number) => !closesInWindow || isSeqRangeLoaded?.(seq, seq) === true;
+    if (!fitsWindow(anchoredBlock.minSeq)) continue;
     const id = `transcript-marker:turn-end:${fact.turnId}`;
-    const changesRowIndex = changesRowIndexByTurnId.get(fact.turnId);
-    if (changesRowIndex !== undefined) {
-      place(before, changesRowIndex, markerItem(id, {
+    const changesRow = changesRowByTurnId.get(fact.turnId);
+    if (changesRow && fitsWindow(changesRow.seq)) {
+      place(before, changesRow.index, markerItem(id, {
         type: 'turn-end', outcome: fact.outcome, durationMs: fact.durationMs, joinsChanges: true,
-      }));
+      }, fact.endSeq));
       continue;
     }
     const until = fact.nextTurnStartSeq ?? Number.POSITIVE_INFINITY;
-    while (blockIndex + 1 < blocks.length && !blocks[blockIndex + 1]!.prompt && blocks[blockIndex + 1]!.minSeq < until) {
+    for (let next = blocks[blockIndex + 1]; next; next = blocks[blockIndex + 1]) {
+      if (next.prompt || next.minSeq >= until || !fitsWindow(next.minSeq)) break;
       blockIndex += 1;
     }
     place(after, blocks[blockIndex]!.last, markerItem(id, {
       type: 'turn-end', outcome: fact.outcome, durationMs: fact.durationMs, joinsChanges: false,
-    }));
+    }, fact.endSeq));
   }
   if (before.size === 0 && after.size === 0) return items;
 

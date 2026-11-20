@@ -1311,7 +1311,8 @@ describe('Legend transcript renderer adapter', () => {
         const initialCommitCount = onCommitLayoutEffect.mock.calls.length;
         await screen.update(render('row-2', 2));
         expect(onCommitLayoutEffect.mock.calls.length).toBeGreaterThan(initialCommitCount);
-        expect(screen.findAllByType('LegendList' as any)[0]?.parent?.parent?.parent?.type).toBe(View);
+        const viewport = screen.findAllByType(View).find((node) => node.props.nativeID === 'legend-main-native-id');
+        expect(viewport?.findAllByType('LegendList' as never)).toHaveLength(1);
     });
 
     it('publishes Legend at-end state changes through the renderer boundary', async () => {
