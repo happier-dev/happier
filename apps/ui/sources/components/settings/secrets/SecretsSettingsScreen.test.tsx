@@ -7,6 +7,8 @@ import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/se
 import { parseSavedSecretCatalogReferenceV1, type SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { SharedSavedSecretCreateInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import { MachinePresetActionOutputSchemasV1, machinePresetActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
+import { ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ProfileRowsListResponseV1Schema, PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
@@ -95,10 +97,11 @@ beforeEach(async () => {
 afterEach(async () => { await connection?.dispose(); connection = null; standardCleanup(); clearActiveUnsavedChangesGuard(); });
 
 async function mount(editAccess = true, initializeSync = false, beforeRender?: (scope: ServerAccountScope) => Promise<void>) {
-    const serverId = await harness.addHome({ name: 'Secrets Home', serverUrl: 'https://secret-editor.test', accountId: 'account-owner', teamsEnabled: true, currentAccount: true });
+    const serverId = await harness.addHome({ name: 'Secrets Home', serverUrl: 'https://secret-editor.test',
+        serverIdentityId: 'srv_secret_editor', accountId: 'account-owner', teamsEnabled: true, currentAccount: true });
     await harness.selectHomes([serverId]);
     if (initializeSync) {
-        connection = await restoreServerAccountForTest({ serverUrl: 'https://secret-editor.test', accountId: 'account-owner',
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://secret-editor.test', serverIdentityId: 'srv_secret_editor', accountId: 'account-owner',
             credentials: { token: createAccountTokenForTests('account-owner', { currentAccount: true }) },
             request: (input, init) => harness.request(input, init),
         });
@@ -119,6 +122,11 @@ async function mount(editAccess = true, initializeSync = false, beforeRender?: (
     storage.setState({ settings });
     harness.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
     harness.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 1 }) });
+    // 263571943a8a includes native presets and retained managed Machines in the deletion census.
+    harness.answer(serverId, machinePresetActionEndpointPathV1('machines.presets.list'), {
+        body: MachinePresetActionOutputSchemasV1['machines.presets.list'].parse({ kind: 'listed', presets: [] }),
+    });
+    harness.answer(serverId, '/v1/machines/managed/actions/list', { body: ManagedListOutputV1Schema.parse({ machines: [] }) });
     harness.answer(serverId, PROFILE_ROWS_ROUTE_V1, { body: ProfileRowsListResponseV1Schema.parse({
         status: 'listed', rows: [], nextCursor: null, complete: true, referenceGuardRevision: 'absent',
         transferControl: { status: 'absent' }, diagnostics: [],
