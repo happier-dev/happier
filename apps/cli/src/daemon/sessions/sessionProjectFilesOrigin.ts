@@ -5,10 +5,10 @@ import {
   type SessionProjectFilesOriginV1,
 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { workspaceAddressFromRefV1, workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/connectedServiceCredentialApi';
 import type { StoredCredentials } from '@/persistence';
-import { readSessionMetadataTupleWriterSnapshot, updateSessionMetadataEnvelopeTupleWithRetry,
-  type SessionMetadataWriterSnapshot } from '@/session/metadata/updateSessionMetadataWithRetry';
+import { readSessionMetadataTupleWriterSnapshot, updateSessionMetadataEnvelopeTupleWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { createProjectAccountSnapshotMutation, type ProjectAccountSessionCustody } from '@/workspaces/projectAccountRows';
@@ -56,7 +56,7 @@ export function withSessionProjectFilesOrigin(correspondence: SessionCreationCor
 /** The private birth recipe retains endpoints; managed placement owns the copied base. */
 export async function persistSessionProjectFilesOrigin(input: Readonly<{
   credentials: StoredCredentials; sessionId: string; origin: SessionProjectFilesOriginV1;
-}>): Promise<Readonly<{ origin: SessionProjectFilesOriginV1; snapshot: SessionMetadataWriterSnapshot }>> {
+}>) {
   const rawSession = await fetchSessionByIdCompat({ reason: 'session-control', token: input.credentials.token, sessionId: input.sessionId });
   if (!rawSession) throw Object.assign(new Error('Session origin is unavailable'), { code: 'project_files_origin_unavailable' });
   const accountEncryptionCurrentness = await fetchAccountEncryptionCurrentness({ token: input.credentials.token });
@@ -70,6 +70,21 @@ export async function persistSessionProjectFilesOrigin(input: Readonly<{
     mutation: { kind: 'metadata', update: metadata => ({ ...metadata,
       sessionCreationCorrespondenceV1: withSessionProjectFilesOrigin(
         SessionCreationCorrespondenceV1ReadSchema.parse(metadata.sessionCreationCorrespondenceV1), input.origin) }) } });
-  const correspondence = SessionCreationCorrespondenceV1ReadSchema.parse(snapshot.value.metadata.sessionCreationCorrespondenceV1);
-  return { origin: correspondence.recipe.projectFilesOrigin!, snapshot };
+  if (snapshot.mode !== 'owner') {
+    throw Object.assign(new Error('Private Project files origin is unavailable'), { code: 'metadata_privacy_upgrade_required' });
+  }
+  const { sharedMetadata, ownerMetadata, agentState } = snapshot.value;
+  const correspondence = SessionCreationCorrespondenceV1ReadSchema.parse(ownerMetadata.system?.sessionCreationCorrespondenceV1);
+  return {
+    origin: correspondence.recipe.projectFilesOrigin!,
+    snapshot: {
+      metadata: sharedMetadata,
+      metadataVersion: snapshot.metadataVersion,
+      agentState,
+      agentStateVersion: snapshot.agentStateVersion,
+      metadataLayoutVersion: snapshot.metadataLayoutVersion,
+      ownerMetadata,
+      ownerMetadataEnvelope: snapshot.ownerMetadataEnvelope,
+    } satisfies NonNullable<SessionAttachFilePayload['snapshot']>,
+  };
 }

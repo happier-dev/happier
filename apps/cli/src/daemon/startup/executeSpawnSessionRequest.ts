@@ -1646,12 +1646,8 @@ export async function executeSpawnSessionRequest(
                         const retained = await persistSessionProjectFilesOrigin({ credentials: params.credentials,
                             sessionId: launchExistingSessionId, origin: sessionTargetOrigin });
                         sessionTargetOrigin = retained.origin;
-                        const snapshot = retained.snapshot;
-                        if (snapshot.mode !== 'owner') throw Object.assign(new Error('Private Project files origin is unavailable'), { code: 'metadata_privacy_upgrade_required' });
                         launchSessionAttachPayload = { ...launchSessionAttachPayload, snapshot: {
-                            ...launchSessionAttachPayload.snapshot, ...snapshot.value, metadataVersion: snapshot.metadataVersion,
-                            agentStateVersion: snapshot.agentStateVersion, metadataLayoutVersion: snapshot.metadataLayoutVersion,
-                            ownerMetadataEnvelope: snapshot.ownerMetadataEnvelope,
+                            ...launchSessionAttachPayload.snapshot, ...retained.snapshot,
                         } };
                     }
                     if (!sessionTargetBaseline && sessionTargetOrigin?.targetWorkspace.kind === 'managed'

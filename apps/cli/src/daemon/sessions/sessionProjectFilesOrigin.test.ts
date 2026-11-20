@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionMetadataTuplePatchV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
 import { buildSessionCreationCorrespondence, type SessionProjectFilesOriginV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
@@ -99,12 +100,12 @@ describe('native copied Project files retained by the existing Session recipe ow
     const readRaw = createHome();
     const initial = await persistSessionProjectFilesOrigin({ credentials, sessionId: 'same-session', origin: origin() });
     expect(initial.origin).toEqual(origin());
-    // The launch attach payload can use the exact committed tuple, without
-    // fetching it again or independently resealing Account-owned metadata.
-    expect(initial.snapshot.mode).toBe('owner');
-    if (initial.snapshot.mode !== 'owner') throw new Error('Expected owner launch tuple');
-    expect(initial.snapshot.value.ownerMetadata.system?.sessionCreationCorrespondenceV1?.recipe.projectFilesOrigin).toEqual(origin());
-    expect(initial.snapshot.ownerMetadataEnvelope).toEqual(readRaw().ownerMetadata);
+    // The child parses the shared envelope before combining it with owner metadata.
+    expect(SessionSharedMetadataV1Schema.parse(initial.snapshot.metadata)).toEqual(JSON.parse(readRaw().metadata));
+    expect(initial.snapshot).toMatchObject({
+      ownerMetadata: { system: { sessionCreationCorrespondenceV1: { recipe: { projectFilesOrigin: origin() } } } },
+      ownerMetadataEnvelope: readRaw().ownerMetadata,
+    });
     // A new call has no daemon registry or in-memory recipe from the first call.
     const recovered = await persistSessionProjectFilesOrigin({ credentials, sessionId: 'same-session', origin: origin('C:\\other-host\\project') });
     expect(recovered.origin).toEqual(initial.origin);
