@@ -1219,6 +1219,13 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
     logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
     settings: { forScope: () => ({ snapshot: async () => ({ values: options.settingsValues ?? {} }) }) },
     notifications: { send: notify },
+    events: {
+      host: { subscribe: () => ({ dispose() {} }) },
+      plugin: {
+        emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }),
+        subscribe: () => ({ dispose() {} }),
+      },
+    } satisfies PluginServices['events'],
     storage: { account: { collection: () => collection } },
     actions: { execute, executeAdmittedTargetedOperationWithExecutionOrigin,
       getCurrentExecutionRouting: async () => ({ ...getPluginMachineExecutionRouting(options.getPollExecutionOrigin?.()
@@ -2907,7 +2914,6 @@ describe('Conversation provider observation ingress', () => {
     const providerContext: PluginInvocationContext = { ...harness.context,
       signal: generation.signal, services: { ...harness.context.services,
         storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
-        events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } } as unknown as PluginServices['events'],
       },
     };
     const context: BackgroundServiceContext = { ...providerContext, surface: 'background', session: undefined };
@@ -3188,7 +3194,6 @@ describe('Conversation provider observation ingress', () => {
     } });
     const context = { ...harness.context, signal: generation.signal, services: { ...harness.context.services,
       storage: { account: { collection: () => state } },
-      events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
     } } as unknown as BackgroundServiceContext;
     vi.setSystemTime(1_750);
     const running = supervisor.run(context);
@@ -3278,7 +3283,6 @@ describe('Conversation provider observation ingress', () => {
     const context: BackgroundServiceContext = { ...harness.context, surface: 'background', session: undefined,
       signal: generation.signal, services: { ...harness.context.services,
         storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
-        events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } } as unknown as PluginServices['events'],
       },
     };
     const supervisor = createIngressSupervisor({ reconciliationIntervalMs: 1_000 });
@@ -3374,7 +3378,6 @@ describe('Conversation provider observation ingress', () => {
     };
     const context: PluginInvocationContext = { ...harness.context, services: { ...harness.context.services,
       storage: { account: { collection: () => state } } as unknown as PluginServices['storage'],
-      events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } } as unknown as PluginServices['events'],
     } };
     const supervisor = createIngressSupervisor();
     let running: Promise<void> | undefined;
@@ -10249,7 +10252,6 @@ describe('Conversation checkpointed-poll ingress', () => {
     const running = supervisor.run({ ...harness.context, surface: 'background', session: undefined, signal: generation.signal,
       services: { ...harness.context.services,
         storage: { account: { collection: () => ({ ...collection, watch: () => ({ dispose() {} }) }) } },
-        events: { plugin: { emit: async () => ({ status: 'admitted', sequence: 1, subscriberCount: 0 }) } },
       } as unknown as PluginServices,
     });
     try {
