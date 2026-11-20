@@ -1,6 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { runCheckpointedPluginEventObserverV1, type BackgroundServiceContext,
     type PluginCheckpointedEventSourceDefinitionV1 } from '@happier-dev/plugin-sdk/background-services';
+import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/plugin-sdk/events';
 import { createDeploymentReceiptEventSourceAdapter, deploymentEventActions, deploymentEvents } from './deploymentEvents.js';
 
 import { PLUGIN_MANIFEST as vercel } from '../../deploy-vercel/src/manifest.js';
@@ -98,7 +99,6 @@ function fixture(periodMs?: number, eventId = 'deployment-failed', kindWide = fa
         await Promise.all([...listeners.get(eventId) ?? []].map(listener => listener({ payload })));
     }
     return { context, controller, definition, execute, admissions, reads, settle, environment,
-        nativeFact(payload: Record<string, unknown>) { return emit('@happier/machine/service-observed', payload); },
         setReceipt(overrides: Partial<typeof current>) { current = { ...current, ...overrides }; },
         receiptChanged(environmentId = config.environmentId, deploymentId = current.id) {
             return emit('@happier/deployment/receipt-invalidated', { serverId: config.serverId, environmentId, deploymentId });
@@ -398,60 +398,11 @@ it('does not observe already settled receipts or their historical siblings', asy
     } finally { h.controller.abort(); await running; }
 });
 
-it('observes native restore and rollback settlements without receipt reads and retains arrivals during admission', async () => {
-    const h = fixture(undefined, 'backup-restore-settled');
-    h.settle('succeeded');
-    const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host, () => 1500);
-    const source = adapter.decode(h.definition);
-    expect(source).not.toBeNull();
-    if (!source) throw new Error('Expected the canonical deployment restore Event source');
-    const options = { context: h.context, definition: h.definition, definitions: [h.definition], source, isCurrent: async () => true };
-    const observe = () => adapter.observe(options);
-    const initial = await observe();
-    expect(initial.observations).toEqual([]);
-    await adapter.save({ ...options, checkpoint: initial.checkpoint! });
-    const wakes: (string | undefined)[] = [];
-    const subscription = adapter.subscribeWake!(async id => { wakes.push(id); });
-    const restored = { kind: 'backupRestore', serverId: 'home', machineId: 'machine-a',
-        environmentId: config.environmentId, targetLinkId: config.targetLinkId, operationId: 'restore-operation', occurredAt: 1100,
-        state: 'succeeded', resultKind: 'restored', verified: true, errorCode: null,
-        destination: { kind: 'database', service: 'postgres', database: 'original-database' } } as const;
-    const rolledBack = { ...restored, operationId: 'rollback-operation', occurredAt: 1200, resultKind: 'rolledBack', verified: false } as const;
-    try {
-        await h.nativeFact({ ...restored, serverId: 'other-home' });
-        await h.nativeFact({ ...restored, environmentId: 'other-environment' });
-        await h.nativeFact({ ...restored, targetLinkId: 'other-target' });
-        await h.nativeFact({ ...restored, occurredAt: config.observingSince - 1 });
-        await h.nativeFact({ kind: 'backup', serverId: 'home', machineId: 'machine-a',
-            environmentId: config.environmentId, operationId: 'backup-operation', occurredAt: 1100,
-            state: 'succeeded', errorCode: null });
-        await h.receiptChanged();
-        expect(wakes).toEqual([]);
-        const ignored = await observe();
-        expect(ignored.observations).toEqual([]);
-        await adapter.save({ ...options, checkpoint: ignored.checkpoint! });
-        await h.nativeFact(restored);
-        await h.nativeFact(restored);
-        const first = await observe();
-        expect(first.observations.map(row => row.payload)).toEqual([restored]);
-        await h.nativeFact(rolledBack);
-        expect(first.checkpoint).toBeDefined();
-        await adapter.save({ ...options, checkpoint: first.checkpoint! });
-        const next = await observe();
-        expect(next.observations.map(row => row.payload)).toEqual([rolledBack]);
-        expect(next.observations[0]!.occurrenceId).not.toBe(first.observations[0]!.occurrenceId);
-        await adapter.save({ ...options, checkpoint: next.checkpoint! });
-        await h.nativeFact({ ...restored, occurredAt: 1400 });
-        const replay = await observe();
-        expect(replay.observations[0]!.occurrenceId).toBe(first.observations[0]!.occurrenceId);
-        expect(replay.observations[0]!.payload).toEqual({ ...restored, occurredAt: 1400 });
-        await adapter.save({ ...options, checkpoint: replay.checkpoint! });
-        const integrityUnavailable = { ...restored, operationId: 'restore-integrity-unavailable', occurredAt: 1450, verified: false };
-        const exceptionalError = { ...restored, operationId: 'restore-error', occurredAt: 1451,
-            state: 'failed', resultKind: null, verified: null, errorCode: 'restore_failed' };
-        await h.nativeFact(integrityUnavailable);
-        await h.nativeFact(exceptionalError);
-        expect((await observe()).observations.map(row => row.payload)).toEqual([integrityUnavailable, exceptionalError]);
-        expect(h.execute).not.toHaveBeenCalled();
-    } finally { subscription.dispose(); h.controller.abort(); }
+it('decodes a declared receipt source and refuses an unregistered restore source', () => {
+    const h = fixture(undefined, DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.localId);
+    const adapter = createDeploymentReceiptEventSourceAdapter(h.context.services.events.host);
+    expect(adapter.decode(h.definition)).toMatchObject({ serverId: config.serverId, environmentId: config.environmentId });
+    expect(adapter.decode({ ...h.definition,
+        eventRef: { ...h.definition.eventRef, localId: 'backup-restore-settled' },
+    })).toBeNull();
 });
