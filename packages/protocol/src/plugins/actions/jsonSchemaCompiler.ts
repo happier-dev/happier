@@ -3,6 +3,8 @@ import { Ajv } from 'ajv';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import formatsImport, { type FormatName, type FormatsPlugin } from 'ajv-formats';
 
+import { forEachJsonSchemaChild, jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
+import { isNormalizedPluginJsonSchema, type PluginJsonSchemaV2 } from '../contributions/jsonSchema.js';
 import { containsEquivalentPluginJsonValue, hasUniquePluginJsonValues, pluginJsonValuesEqual, scalarPluginJsonValueKey } from '../contributions/jsonSchemaValues.js';
 import { assertStrictPluginJsonValue, measurePluginJsonUtf8Bytes, measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../contributions/strictJsonValue.js';
 import { HAPPIER_LENGTH_MULTIPLE_OF_KEYWORD, HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD, HAPPIER_MAX_UTF8_BYTES_KEYWORD, HAPPIER_VALUE_CONSTRAINTS_KEYWORD, type PluginJsonSchemaValidator } from './protocolComposableSchema.js';
@@ -65,9 +67,9 @@ function readByteLimitKeywordValue(keyword: string, maximum: unknown): number {
   return maximum;
 }
 
-function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
+function createAjv(dialect: 'draft-07' | 'draft-2020-12', inlineRefs: boolean): Ajv {
   const options = {
-    allErrors: true, ownProperties: true, strict: false,
+    allErrors: true, ownProperties: true, strict: false, inlineRefs,
     // Cold Action schemas spend seconds in optional generated-code rewrites.
     code: { optimize: false },
     // Plugin declarations have already passed their closed vocabulary. Native
@@ -172,6 +174,26 @@ function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
   return ajv;
 }
 
+function separateOptionalPropertySchemas(schema: PluginJsonSchemaV2): PluginJsonSchemaV2 {
+  if (schema.type !== 'object' || schema.additionalProperties !== false || !schema.properties) return schema;
+  const required = new Set(schema.required);
+  const definitions: Record<string, PluginJsonSchemaV2> = {};
+  const properties = Object.fromEntries(Object.entries(schema.properties).map(([key, property], index) => {
+    if (required.has(key)) return [key, property];
+    let hasChild = false;
+    forEachJsonSchemaChild(property, child => { if (typeof child === 'object' && child !== null) hasChild = true; });
+    if (!hasChild) return [key, property];
+    definitions[index] = property;
+    return [key, { $ref: `#/definitions/${index}` }];
+  }));
+  // Existing pointers can depend on the original location of these properties.
+  // For a pointer-free document, the isolated optional schemas compile as
+  // separate functions. The initial Action compiles no unused recovery code
+  // into the function it runs, even when the optional branch is very large.
+  if (Object.keys(definitions).length === 0 || jsonSchemaContainsReference(schema)) return schema;
+  return { ...schema, properties, definitions };
+}
+
 // Reuse validators for admitted immutable schema identities. Each new identity
 // owns its AJV scope: removeSchema() clears AJV's cache, but its generated-code
 // scope still retains schemas and validators until the entire engine retires.
@@ -196,11 +218,14 @@ export function compileProtocolJsonSchema(
   const existing = validators.get(jsonSchema);
   if (existing) return existing;
   const schema = prepareSchema ? prepareSchema(jsonSchema) : jsonSchema;
-  const content = JSON.stringify(schema);
+  const compiled = dialect === 'draft-07' && isNormalizedPluginJsonSchema(schema)
+    ? separateOptionalPropertySchemas(schema)
+    : schema;
+  const content = JSON.stringify(compiled);
   const contents = compiledContents[dialect];
   let validate = contents.get(content)?.deref();
   if (!validate) {
-    validate = createAjv(dialect).compile(schema);
+    validate = createAjv(dialect, compiled === schema).compile(compiled);
     // A new compilation is the rare path: drop keys whose validators were collected.
     for (const [key, ref] of contents) if (!ref.deref()) contents.delete(key);
     contents.set(content, new WeakRef(validate));

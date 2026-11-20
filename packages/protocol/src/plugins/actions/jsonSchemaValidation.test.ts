@@ -147,6 +147,31 @@ describe('plugin JSON Schema validation policy', () => {
     }
   });
 
+  it('keeps the cold Action validator independent of optional recovery shape size', () => {
+    const build = (choices: number) => preparePluginJsonSchema({
+      type: 'object',
+      required: ['task'],
+      additionalProperties: false,
+      properties: {
+        task: { const: 'review' },
+        recovery: { anyOf: Array.from({ length: choices }, (_, attempt) => ({
+          type: 'object', properties: { attempt: { const: attempt } },
+          required: ['attempt'], additionalProperties: false,
+        })) },
+      },
+    });
+    const small = build(2);
+    const large = build(64);
+    // The initial Action calls the recovery validator only when recovery is present.
+    expect(large.validate.toString().length).toBe(small.validate.toString().length);
+    expect(large.validate({ task: 'review' })).toBe(true);
+    expect(large.validate({ task: 'review', recovery: { attempt: 63 } })).toBe(true);
+    expect(large.validate({ task: 'review', recovery: { attempt: 64 } })).toBe(false);
+    expect(large.validate({ task: 'review', recovery: { attempt: 63, extra: true } })).toBe(false);
+    expect(large.validate({ recovery: { attempt: 63 } })).toBe(false);
+    expect(large.validate({ task: 'review', extra: true })).toBe(false);
+  });
+
   it('preserves a valid authority union arm instead of projecting it into a narrower arm', () => {
     const epoch = { type: 'integer' as const, minimum: 1 };
     const authorityArms = [
