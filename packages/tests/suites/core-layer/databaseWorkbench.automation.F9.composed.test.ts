@@ -1,5 +1,8 @@
 import { expect, it } from 'vitest';
 
+import { AutomationEventAdmitHttpResultV1Schema } from '@happier-dev/protocol/automations/automationActionSpecsV1';
+import { AutomationEventActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
+import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/protocol/plugins/installations/manifests';
 import { AutomationDatabaseSubjectV1Schema, projectAutomationDatabaseSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
@@ -16,14 +19,46 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
+// Match the native Automation Run settlement window used by the pending bridge
+// journey. The generic testkit wait can expire while the worker is launching.
+const workflowSettlement = { timeoutMs: 90_000, intervalMs: 100, failFast: true } as const;
 
 // D15: the source read, SDK observation admission and Workflow worker are real.
 // The subject comes from projects.open's accepted target, never a fixture-only
 // Environment identity. Setup/schema failures cannot count as behavior RED.
 it('P4-F9-known-good-observation-run', async () => {
+  const admitPath = AutomationEventActionHttpPathsV1['automation.event.admit'];
+  let replayNextObservation = false;
+  const replayedRunIds: string[] = [];
   const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir: run.testDir('dbw-automation-f9'),
     serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
-    daemonEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
+    daemonEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
+    // Finite native work reaches the Home advertised in its signed connection
+    // descriptor. Put the fixture transport observer on that ingress.
+    guestReachableHome: { host: '127.0.0.1' },
+    captureRequestBody: request => replayNextObservation && request.path === admitPath,
+    async beforeForwardResponse(request): Promise<void> {
+      if (!replayNextObservation || request.path !== admitPath || request.statusCode !== 200) return;
+      replayNextObservation = false;
+      const authorization = request.headers.authorization;
+      const publisherProof = request.headers[PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1];
+      if (!request.body?.complete || request.body.truncated ||
+          typeof authorization !== 'string' || typeof publisherProof !== 'string') {
+        throw new Error('F9 observation transport capture is incomplete');
+      }
+      // Model duplicate delivery by the network while the real daemon Action
+      // is still awaiting its first response. Keep the signed request in memory.
+      const replay = await fetchJson<unknown>(fixture.server.baseUrl + admitPath, {
+        method: 'POST', headers: { authorization, 'Content-Type': 'application/json',
+          [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: publisherProof },
+        body: request.body.text,
+      });
+      if (replay.status !== 200) throw new Error(`F9 duplicate observation request returned HTTP ${replay.status}`);
+      for (const result of AutomationEventAdmitHttpResultV1Schema.parse(replay.data).results) {
+        if (result.kind === 'rejoined') replayedRunIds.push(result.runId);
+      }
+    },
+  });
   try {
     const target = (await fixture.connectDatabase(fixture.postgres.selectedDatabaseUrl, 'F9 selected')).target;
     const privateLiteral = 'F9_PRIVATE_SQL_LITERAL_MUST_NOT_ENTER_WORKFLOW_HISTORY';
@@ -107,7 +142,7 @@ it('P4-F9-known-good-observation-run', async () => {
       const runs = await readRuns();
       expect(runs.length).toBeLessThanOrEqual(1);
       return runs.length === 1 && runs[0]?.state === 'succeeded';
-    }, { failFast: true, context: 'One completed database observation completes one real Workflow Run' });
+    }, { ...workflowSettlement, context: 'One completed database observation completes one real Workflow Run' });
     const firstRun = (await readRuns())[0]!;
     const detail = await fixture.owner.execute('workflow.run.get', { runId: firstRun.id });
     expect(detail.ok, JSON.stringify(detail)).toBe(true);
@@ -119,12 +154,16 @@ it('P4-F9-known-good-observation-run', async () => {
     expect(JSON.stringify(publicRun)).not.toContain('dbw_f9_workload');
     console.info('P4-F9-known-good-observation-run passed', fixture.runtime);
 
+    replayNextObservation = true;
     await observe();
     await waitFor(async () => {
       const runs = await readRuns();
       expect(runs.length).toBeLessThanOrEqual(2);
       return runs.length === 2 && runs.every(row => row.state === 'succeeded');
-    }, { failFast: true, context: 'A distinct completed observation keeps its own occurrence identity' });
+    }, { ...workflowSettlement, context: 'A distinct completed observation keeps its own occurrence identity' });
+    const secondRun = (await readRuns()).find(row => row.id !== firstRun.id);
+    expect(replayNextObservation, 'The real Home ingress must see the duplicate delivery').toBe(false);
+    expect(replayedRunIds, 'A duplicate delivery must rejoin the identical Workflow Run').toEqual([secondRun?.id]);
     const threshold = await fixture.owner.executeReviewed('workflow.trigger.update', {
       automationId: saved.set.automationId, triggerId: saved.triggerId, expectedRevision: saved.set.revision,
       patch: { trigger: { ...eventSource,

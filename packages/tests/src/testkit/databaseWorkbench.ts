@@ -13,6 +13,7 @@ import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } fr
 
 import { startDatabaseWorkbenchPostgres } from './process/databaseWorkbenchPostgres';
 export { prepareDatabaseWorkbenchPostgresService } from './process/databaseWorkbenchPostgres';
+import type { RecordedHttpProxyRequest } from './httpRequestRecordingProxy';
 import { repoRootDir } from './paths';
 import { startSessionMcpAgent } from './sessionMcpAgent';
 
@@ -50,6 +51,9 @@ export async function startDatabaseWorkbenchAgent(
 export async function startDatabaseWorkbenchFixture(params: Readonly<{
   testDir: string;
   serverEnv?: NodeJS.ProcessEnv;
+  guestReachableHome?: Parameters<typeof import('./teamSetupF').startTeamSetupFFixture>[0]['guestReachableHome'];
+  captureRequestBody?: (request: RecordedHttpProxyRequest) => boolean;
+  beforeForwardResponse?: (request: RecordedHttpProxyRequest) => void | Promise<void>;
 }>) {
   // Load the CLI composition only when starting it, under the composed runner's
   // importer-aware aliases. Importing a fixture must not initialize the CLI graph.
@@ -58,6 +62,8 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
   try {
     const composition = await startTeamSetupFFixture({ testDir: join(params.testDir, 'composition'),
       dbProvider: 'postgres', observeActionRequests: true,
+      guestReachableHome: params.guestReachableHome,
+      captureRequestBody: params.captureRequestBody, beforeForwardResponse: params.beforeForwardResponse,
       serverEnv: { NODE_ENV: process.env.NODE_ENV, ...params.serverEnv, DATABASE_URL: postgres.homeDatabaseUrl } });
     return { ...composition, postgres,
       async stop() {
@@ -77,6 +83,9 @@ export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
   testDir: string;
   serverEnv?: NodeJS.ProcessEnv;
   daemonEnv?: NodeJS.ProcessEnv;
+  guestReachableHome?: Parameters<typeof startDatabaseWorkbenchFixture>[0]['guestReachableHome'];
+  captureRequestBody?: Parameters<typeof startDatabaseWorkbenchFixture>[0]['captureRequestBody'];
+  beforeForwardResponse?: Parameters<typeof startDatabaseWorkbenchFixture>[0]['beforeForwardResponse'];
 }>) {
   const fixture = await startDatabaseWorkbenchFixture(params);
   try {
