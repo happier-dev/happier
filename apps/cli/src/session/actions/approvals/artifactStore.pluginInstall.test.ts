@@ -6,6 +6,8 @@ import { readPluginInstallApprovalPendingReview } from '@happier-dev/protocol/ac
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { ArtifactBodyEnvelopeV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +18,7 @@ import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixtu
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { projectApprovalExecutionFailureV2 } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
+import { createAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { StoredCredentials } from '@/persistence';
 import { PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
@@ -586,7 +589,7 @@ describe('plugin install approval Artifact rejoin', () => {
       }
     });
 
-  it('reuses an open development install approval when the daemon restores the same source', async () => {
+  it('reuses an open development install approval when the same rights observation becomes stale on restart', async () => {
     accountMode = 'e2ee';
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-development-restored-approval-'));
     const pluginId = 'acme.restored-install-approval';
@@ -601,11 +604,23 @@ describe('plugin install approval Artifact rejoin', () => {
       happyHomeDir, serverId: 'home-1', resolveCurrentMachineExecutionOriginContext: resolveOrigin });
     let publicationError: unknown;
     let stop: (() => Promise<void>) | undefined;
+    let rightsFreshness: 'current' | 'stale' = 'current';
+    let passwordlessSudoToRoot: 'allowed' | 'denied' = 'denied';
     const start = async () => {
       const reloadController = createPluginReloadController({ happyHomeDir });
       const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, reloadController, staleCandidateCleanup: 'disabled',
         connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
         approvalStore, resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+        readDaemonRights: () => ({
+          freshness: rightsFreshness,
+          observation: {
+            version: 1, observedAt: rightsFreshness === 'current' ? 1 : 2,
+            daemonUid: 1000, daemonUsername: 'happier', daemonIdentity: 'nonRoot',
+            rootEquivalentGroups: [], groupMembership: { state: 'current' },
+            passwordlessSudoToRoot, managedDropIn: 'absent',
+            tailscaledOperator: { authorization: 'allowed' },
+          },
+        }),
         publishDevelopmentReview: async input => {
           try { await publish(input); }
           catch (error) { publicationError = error; throw error; }
@@ -626,17 +641,45 @@ describe('plugin install approval Artifact rejoin', () => {
       }))}; export function activate() {}`);
       await start();
       expect(rows.size).toBe(1);
-      const artifactId = [...rows.keys()][0]!;
-      const approval = await approvalStore.approvalsGet({ artifactId, serverId: 'home-1' });
+      const firstArtifactId = [...rows.keys()][0]!;
+      const approval = await approvalStore.approvalsGet({ artifactId: firstArtifactId, serverId: 'home-1' });
       expect(approval).toMatchObject({ status: 'open' });
       const review = readPluginInstallApprovalPendingReview(approval?.preview);
-      if (!review) throw new Error('Expected the published installation review');
+      const observation = review?.review.daemonRights?.observation;
+      if (approval?.v !== 2 || !review || !observation) throw new Error('Expected the published installation review');
+      const artifactStore = createAccountArtifactStore({ credentials: storedCredentials, getAccountEncryptionMode: async () => 'e2ee' });
+      // Seed the exact historical key while keeping the real encrypted approval record.
+      const previousIdentity = createCanonicalJsonSigningInput(projectNativeJsonValueForTransport([
+        'happier:development-install-approval:v1', 'home-identity', 'machine-1',
+        review.reason, review.currentVersion, review.authorityExpansion,
+        { ...review.review, daemonRights: { freshness: 'current', observation: { ...observation, observedAt: undefined } } },
+      ]));
+      const sourceId = await artifactStore.resolvePrivateSourceId(previousIdentity);
+      const artifactId = deriveAccountScopedArtifactIdV1('account-1', sourceId);
+      if (artifactId !== firstArtifactId) {
+        await artifactStore.create({ artifactId, idScope: { v: 1, sourceId },
+          header: buildApprovalRequestArtifactHeaderV1(approval, { legacyServerId: 'home-1' }), body: JSON.stringify(approval) });
+        rows.delete(firstArtifactId);
+      }
       await stop?.();
 
+      rightsFreshness = 'stale';
       const restartedDaemon = await start();
       expect([...rows.keys()]).toEqual([artifactId]);
+      expect(await approvalStore.approvalsGet({ artifactId, serverId: 'home-1' })).toEqual(approval);
       expect(await restartedDaemon.changeService.statusPluginChange({ pendingChangeId: review.pendingChangeId }))
-        .toEqual(review);
+        .toMatchObject({
+          pendingChangeId: review.pendingChangeId,
+          review: { pluginId, daemonRights: { freshness: 'stale', observation: { observedAt: 2 } } },
+        });
+      await stop?.();
+
+      passwordlessSudoToRoot = 'allowed';
+      const changedRightsDaemon = await start();
+      expect(rows.size).toBe(2);
+      const [changedReview] = (await changedRightsDaemon.changeService.listPendingPluginChanges()).changes;
+      expect(changedReview).toMatchObject({ review: { pluginId, daemonRights: { observation: { passwordlessSudoToRoot: 'allowed' } } } });
+      expect(changedReview?.pendingChangeId).not.toBe(review.pendingChangeId);
     } finally {
       try {
         await stop?.();

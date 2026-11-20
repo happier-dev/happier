@@ -12966,8 +12966,11 @@ Error name without error messages, stacks or payloads.
 On restart, the daemon prepares registered development sources against the
 current installation and restores the existing open Account approval when the
 same Machine still needs review of the same installation intent. The original
-approval retains its identity and decision history. A fresh request after a
-decision can create a new approval.
+approval retains its identity and decision history. Changes to the timestamp
+or freshness of the same daemon rights observation reuse that approval.
+Changes to the observed rights still require a distinct review. Daemons also
+rejoin existing requests keyed by a current observation.
+A fresh request after a decision can create a new approval.
 Other pending decisions remain until an explicit decision,
 handoff or shutdown retires them; settled rejoin results remain for the daemon lifetime. Candidate
 cleanup is awaited through that lifecycle and reports failures without a shorter

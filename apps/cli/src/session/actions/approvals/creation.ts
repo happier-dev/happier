@@ -50,12 +50,21 @@ type PluginInstallReview = Extract<PluginChangePendingReviewResult, { reviewKind
 type PluginInstallIntent = Omit<PluginInstallReview, 'pendingChangeId'>;
 type PluginInstallMachine = Readonly<{ machineId: string; serverIdentityId: string }>;
 
-function developmentApprovalIdentity(pending: PluginInstallIntent, origin: PluginInstallApprovalSubject['origin']): string | null {
+function developmentApprovalIdentity(
+  pending: PluginInstallIntent,
+  origin: PluginInstallApprovalSubject['origin'],
+  observationFreshness: 'stale' | 'current' = 'stale',
+): string | null {
   const { review, reason, currentVersion, authorityExpansion } = pending;
   if (review.updateChannel.kind !== 'path' || !review.updateChannel.development || !origin.machineId || !origin.serverIdentityId) return null;
   const observation = review.daemonRights?.observation;
-  // The sample time can change on restart without changing the disclosed rights.
-  const rights = observation ? { ...review.daemonRights, observation: { ...observation, observedAt: undefined } } : review.daemonRights;
+  if (observationFreshness === 'current' && !observation) return null;
+  // Retained approvals disclose a snapshot. Neither sample time nor transport
+  // freshness changes the rights that were observed.
+  const rights = observation ? {
+    freshness: observationFreshness,
+    observation: { ...observation, observedAt: undefined },
+  } : review.daemonRights;
   return createCanonicalJsonSigningInput(projectNativeJsonValueForTransport([
     'happier:development-install-approval:v1', origin.serverIdentityId, origin.machineId,
     reason, currentVersion, authorityExpansion, { ...review, daemonRights: rights },
@@ -209,6 +218,24 @@ export function createCliApprovalCreation(params: Readonly<{
     }
   }
 
+  async function resolvePluginInstallApprovalChain<T extends Readonly<{ followSuccessor: boolean; retired?: boolean }>>(input: Readonly<{
+    accountId: string;
+    sourceId: string;
+    readLegacyIdentity?: () => string | null;
+    inspect: (artifact: AccountArtifact | null) => T;
+    hasCandidate: (result: { inspection: T; hasTerminalPredecessor: boolean }) => boolean;
+  }>) {
+    const canonical = await readPluginInstallApprovalChain(input);
+    if (!input.readLegacyIdentity || input.hasCandidate(canonical)) return canonical;
+    // Existing 0.3 reviews may already live under the current-observation key.
+    const legacyIdentity = input.readLegacyIdentity();
+    if (!legacyIdentity) return canonical;
+    const legacy = await readPluginInstallApprovalChain({
+      ...input, sourceId: await accountArtifactStore.resolvePrivateSourceId(legacyIdentity),
+    });
+    return input.hasCandidate(legacy) ? legacy : canonical;
+  }
+
   return {
     findOpenPluginDevelopmentApproval: async ({ review, machineId, serverIdentityId }) => {
       const accountId = getAccountId();
@@ -216,8 +243,10 @@ export function createCliApprovalCreation(params: Readonly<{
       const origin = { accountId, machineId, serverIdentityId, serverId: serverIdentityId };
       const identity = developmentApprovalIdentity(review, origin);
       if (!identity) return null;
-      const { inspection } = await readPluginInstallApprovalChain({
+      const { inspection } = await resolvePluginInstallApprovalChain({
         accountId, sourceId: await accountArtifactStore.resolvePrivateSourceId(identity),
+        readLegacyIdentity: () => developmentApprovalIdentity(review, origin, 'current'),
+        hasCandidate: result => result.inspection.pendingChangeId !== null,
         inspect: artifact => {
           if (!artifact || artifact.access !== 'owner') return { followSuccessor: false, pendingChangeId: null };
           const request = readBuiltInApprovalArtifact(artifact.header, artifact.body);
@@ -237,17 +266,21 @@ export function createCliApprovalCreation(params: Readonly<{
       if (!accountId) return false;
       const origin = { accountId, machineId, serverIdentityId, serverId: serverIdentityId };
       const identity = pendingReview.reviewKind === 'installation' ? developmentApprovalIdentity(pendingReview, origin) : null;
-      const { artifact, hasTerminalPredecessor } = await readPluginInstallApprovalChain({
+      const { artifact, hasTerminalPredecessor } = await resolvePluginInstallApprovalChain({
         accountId, sourceId: identity ? await accountArtifactStore.resolvePrivateSourceId(identity) : pendingReview.pendingChangeId,
+        ...(pendingReview.reviewKind === 'installation' && identity ? {
+          readLegacyIdentity: () => developmentApprovalIdentity(pendingReview, origin, 'current'),
+        } : {}),
+        hasCandidate: result => result.inspection.sameCandidate || result.hasTerminalPredecessor,
         inspect: artifact => {
           const request = artifact?.access === 'owner' ? readBuiltInApprovalArtifact(artifact.header, artifact.body) : null;
           if (!request || !matchPluginInstallApprovalSubject(request, { pendingReview, origin }, identity).matched) {
-            return { followSuccessor: false };
+            return { followSuccessor: false, sameCandidate: false };
           }
           const retained = readPluginInstallApprovalPendingReview(request.preview);
           const sameCandidate = retained?.pendingChangeId === pendingReview.pendingChangeId;
           const retired = !isApprovalRequestV2InFlightStatus(request.status);
-          return { followSuccessor: retired || (!sameCandidate && request.status !== 'open'), retired: retired && sameCandidate };
+          return { followSuccessor: retired || (!sameCandidate && request.status !== 'open'), retired: retired && sameCandidate, sameCandidate };
         },
       });
       return !artifact && hasTerminalPredecessor;
@@ -292,6 +325,8 @@ export function createCliApprovalCreation(params: Readonly<{
         return res;
       }
       const developmentIdentity = pendingReview && origin ? developmentApprovalIdentity(pendingReview, origin) : null;
+      let readLegacyIdentity = developmentIdentity && pendingReview && origin
+        ? () => developmentApprovalIdentity(pendingReview, origin, 'current') : undefined;
       const sourceId = discussionReply
         ? discussionReplyApprovalArtifactId(discussionReply.identity)
         : developmentIdentity ? await accountArtifactStore.resolvePrivateSourceId(developmentIdentity)
@@ -368,13 +403,16 @@ export function createCliApprovalCreation(params: Readonly<{
       // terminal row remains immutable history; every observer follows the
       // same successor id and therefore rejoins the one active lifecycle.
       while (true) {
-        const { artifactId, idScope, inspection: existingState } = await readPluginInstallApprovalChain({
+        const { artifactId, idScope, inspection: existingState } = await resolvePluginInstallApprovalChain({
           accountId: getAccountId() ?? origin?.accountId ?? '', sourceId,
+          ...(readLegacyIdentity ? { readLegacyIdentity } : {}),
+          hasCandidate: result => result.inspection.state === 'rejoin',
           inspect: artifact => {
             const state = inspectPendingReviewArtifact(artifact);
             return { ...state, followSuccessor: state.state === 'terminal' };
           },
         });
+        readLegacyIdentity = undefined;
         if (existingState.state === 'rejoin') {
           await prepareRequesterRecipient(artifactId, request.v === 2 ? request.requesterConfirmation : undefined);
           return { artifactId, request: existingState.request };
