@@ -1,43 +1,73 @@
 import * as React from 'react';
-import { readHostActivelyFocused, readHostActivelyViewed, subscribeToHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
-import type { GlyphMotion, GlyphSurfaceReadiness } from '../glyph/glyphSurfaceTypes';
+import { glyphDigitStepS } from '@happier-dev/brand/glyph-scene';
 import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { readHostActivelyFocused, readHostActivelyViewed, subscribeToHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import type { GlyphMotion, GlyphSurfaceReadiness, GlyphViewport } from '../glyph/glyphSurfaceTypes';
 
-/** Paints directly. The epoch belongs to the producer and uses the performance.now() time origin. */
+const digitStepMs = glyphDigitStepS * 1000;
+
+/** Paints directly. Presentation and digit time share one scheduler. */
 export function useGlyphClock(
     motion: GlyphMotion,
     readiness: GlyphSurfaceReadiness | null,
-    paint: (seconds: number) => void,
+    paint: (seconds: number, digitSeconds: number) => void,
     warmWhenHidden = false,
+    viewport?: GlyphViewport,
+    digitCadence = false,
 ): void {
     const presentation = useLayoutPresentationSignal();
     const settledEpoch = React.useRef<number | null>(null);
-    const digitTime = React.useRef(0);
+    const digitTimeMs = React.useRef(0);
     const elapsedTime = React.useRef(0);
     const hiddenWarm = React.useRef<GlyphSurfaceReadiness | null>(null);
     React.useEffect(() => {
-        if (!readiness) { hiddenWarm.current = null; return; }
         let scheduled: (() => void) | undefined;
-        const stop = () => { scheduled?.(); scheduled = undefined; };
+        let digitStart: number | undefined;
+        const digitTimeAt = (now: number) => digitTimeMs.current + (digitStart === undefined ? 0 : Math.max(0, now - digitStart));
+        const draw = (seconds: number, now = performance.now()) => paint(seconds, digitTimeAt(now) / 1000);
+        const stop = () => {
+            scheduled?.();
+            scheduled = undefined;
+            digitTimeMs.current = digitTimeAt(performance.now());
+            digitStart = undefined;
+        };
+        const digitsAtRest = (seconds: number) => {
+            if (digitStart === undefined) return;
+            const rest = () => {
+                const interval = setInterval(() => draw(seconds), digitStepMs);
+                scheduled = () => clearInterval(interval);
+            };
+            const untilStep = Math.ceil(digitStepMs - digitTimeAt(performance.now()) % digitStepMs);
+            if (untilStep === digitStepMs) rest();
+            else {
+                const timer = setTimeout(() => { draw(seconds); rest(); }, untilStep);
+                scheduled = () => clearTimeout(timer);
+            }
+        };
+        const animate = (sample: (now: number) => boolean) => {
+            let frame = requestAnimationFrame(tick);
+            function tick(now: number) {
+                if (sample(now)) frame = requestAnimationFrame(tick);
+            }
+            scheduled = () => cancelAnimationFrame(frame);
+        };
         const resume = () => {
             stop();
-            const visible = readHostActivelyViewed() && presentation.get();
-            const focused = readHostActivelyFocused();
-            if (!visible && warmWhenHidden) {
+            const presented = readHostActivelyViewed() && presentation.get();
+            const inViewport = viewport?.get();
+            const visible = presented && inViewport !== 'hidden';
+            if (!readiness) { hiddenWarm.current = null; return; }
+            if (!presented && warmWhenHidden) {
                 if (hiddenWarm.current !== readiness) {
                     hiddenWarm.current = readiness;
-                    paint(0);
+                    draw(0);
                 }
                 return;
             }
-            if (!motion) { if (visible) paint(0); return; }
-            if (motion.kind === 'digits') {
-                if (!visible) return;
-                paint(readiness === 'ready' ? digitTime.current : 0);
-                if (focused && readiness === 'ready') {
-                    const timer = setInterval(() => { digitTime.current += 2; paint(digitTime.current); }, 2000);
-                    scheduled = () => clearInterval(timer);
-                }
+            if (visible && inViewport !== 'backdrop' && readiness === 'ready' && digitCadence && readHostActivelyFocused()) digitStart = performance.now();
+
+            if (!motion) {
+                if (visible) { draw(0); digitsAtRest(0); }
                 return;
             }
             if (motion.kind === 'elapsed') {
@@ -45,14 +75,13 @@ export function useGlyphClock(
                 let last = performance.now();
                 const end = motion.durationS;
                 if (elapsedTime.current >= end) return;
-                paint(elapsedTime.current);
-                let handle = requestAnimationFrame(function tick(now) {
+                draw(elapsedTime.current, last);
+                animate(now => {
                     elapsedTime.current = Math.min(end, elapsedTime.current + Math.max(0, now - last) / 1000);
                     last = now;
-                    paint(elapsedTime.current);
-                    if (elapsedTime.current < end) handle = requestAnimationFrame(tick);
+                    draw(elapsedTime.current, now);
+                    return elapsedTime.current < end;
                 });
-                scheduled = () => cancelAnimationFrame(handle);
                 return;
             }
             const duration = () => (motion.kind === 'field-calm' ? motion.readDurationS?.() : undefined) ?? motion.durationS;
@@ -61,29 +90,30 @@ export function useGlyphClock(
                 settledEpoch.current = motion.epoch;
                 motion.onSettled?.();
             };
-            const elapsed = Math.max(0, (performance.now() - motion.epoch) / 1000);
-            if (!visible || readiness === 'still' || settledEpoch.current === motion.epoch || elapsed >= duration()) {
-                if (visible) paint(duration());
+            const elapsedAt = (now: number) => Math.max(0, (now - motion.epoch) / 1000);
+            const now = performance.now();
+            const end = duration();
+            if (!visible || readiness === 'still' || settledEpoch.current === motion.epoch || elapsedAt(now) >= end) {
+                if (visible) draw(end, now);
                 finish();
+                if (visible) digitsAtRest(end);
                 return;
             }
-            paint(elapsed);
-            let handle = requestAnimationFrame(function tick(now) {
-                const time = Math.max(0, (now - motion.epoch) / 1000);
+            draw(elapsedAt(now), now);
+            animate(now => {
+                const seconds = elapsedAt(now);
                 const end = duration();
-                if (time >= end) {
-                    paint(end);
-                    finish();
-                    return;
-                }
-                paint(time);
-                handle = requestAnimationFrame(tick);
+                draw(Math.min(seconds, end), now);
+                if (seconds < end) return true;
+                finish();
+                digitsAtRest(end);
+                return false;
             });
-            scheduled = () => cancelAnimationFrame(handle);
         };
         resume();
         const unsubscribePresentation = presentation.subscribe(resume);
         const unsubscribeHost = subscribeToHostActivelyViewed(resume);
-        return () => { stop(); unsubscribePresentation(); unsubscribeHost(); };
-    }, [motion, readiness, paint, presentation, warmWhenHidden]);
+        const unsubscribeViewport = viewport?.subscribe(resume);
+        return () => { stop(); unsubscribePresentation(); unsubscribeHost(); unsubscribeViewport?.(); };
+    }, [motion, readiness, paint, presentation, warmWhenHidden, viewport, digitCadence]);
 }

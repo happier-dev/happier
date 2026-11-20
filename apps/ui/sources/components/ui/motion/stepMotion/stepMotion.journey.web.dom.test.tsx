@@ -3,16 +3,21 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
+import { glyphFrame } from '@happier-dev/brand/glyph-scene';
 
 import type { GlyphSurfaceProps } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
+import { HomePlanet } from '@/components/atmosphere/HomePlanet';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 import { StepMotionLayer } from './StepMotionLayer';
-import { runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
+import { playBuild, runStepMove, skipStepMotion, StepMotionStage } from './StepMotionStage';
+import { stepMotionTiming } from './stepMotionTiming';
 import { useStepFocal } from './useStepFocal';
 
 const desktopEvents = vi.hoisted(() => new Map<string, () => void>());
 let stageScene: GlyphSurfaceProps['scene'] = [];
+let homePaint: GlyphSurfaceProps | undefined;
+let stageMotion: GlyphSurfaceProps['motion'];
 
 vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
     const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
@@ -33,12 +38,76 @@ vi.mock('react-native-unistyles', async () => {
 });
 // jsdom has no WebGL context. The real stage and scene still prepare every DOM effect.
 vi.mock('@/components/atmosphere/glyph/GlyphSurface', () => ({
-    GlyphSurface: ({ onReady, scene }: GlyphSurfaceProps) => {
+    GlyphSurface: (props: GlyphSurfaceProps) => {
+        const { onReady, scene, motion, testID } = props;
         React.useEffect(() => { onReady?.('ready'); }, [onReady]);
-        React.useEffect(() => { stageScene = scene; }, [scene]);
+        React.useEffect(() => {
+            if (testID === 'home-planet') homePaint = props;
+            else { stageScene = scene; stageMotion = motion; }
+        }, [motion, props, scene, testID]);
         return null;
     },
 }));
+
+it('builds the actual Home planet in Full and settles to its existing Quiet pixels', async () => {
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+    vi.stubGlobal('CSS', { escape: (id: string) => id });
+    setReducedMotionPreferenceOverride(false);
+    const animate = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');
+    Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: () => ({ onfinish: null, cancel() {} }) });
+    const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 800, 600));
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(1000);
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const pixelsAt = (time: number) => {
+        if (!homePaint || typeof homePaint.scene !== 'function') throw new Error('Home did not publish a glyph scene');
+        const { width, height, scene } = homePaint;
+        const body = glyphFrame({ view: { w: width, h: height }, theme: 'dark', dpr: 1, layers: scene(time) }, { time }).body;
+        if (!body) throw new Error('Home did not sample its planet');
+        let opacity = 0;
+        for (let index = 3; index < body.rgba.length; index += 4) opacity = Math.max(opacity, body.rgba[index]);
+        return opacity;
+    };
+    try {
+        await act(async () => root.render(<StepMotionStage>
+            <StepMotionLayer layerKey="home" stepKey="home">
+                <HomePlanet pane={{ width: 800, height: 600 }} intensity="quiet" digits={false} theme="dark"
+                    phone={false} hero={null} hidden={false} leave="fade" reducedMotion={false} />
+            </StepMotionLayer>
+        </StepMotionStage>));
+        await act(async () => { await vi.dynamicImportSettled(); });
+        const resting = pixelsAt(0);
+        expect(homePaint?.motion).toBeNull();
+        let result: Promise<'settled' | 'skipped'> | undefined;
+        await act(async () => { result = playBuild({ layer: 'home', choreography: 'home' }); });
+        expect(pixelsAt(0)).toBeGreaterThan(resting);
+        expect(homePaint?.motion).toBeNull();
+        clock.mockReturnValue(1000 + stepMotionTiming.homeS * 1000);
+        await act(async () => {
+            if (stageMotion?.kind !== 'transition') throw new Error('Home build did not start');
+            stageMotion.onSettled?.();
+        });
+        expect(await result).toBe('settled');
+        expect(homePaint?.motion).toMatchObject({ epoch: 1000 + stepMotionTiming.homeS * 1000 });
+        expect(pixelsAt(0)).toBeGreaterThan(resting);
+        expect(pixelsAt(stepMotionTiming.homeSettleS)).toBe(resting);
+        await act(async () => {
+            if (homePaint?.motion?.kind !== 'field-calm') throw new Error('Home settle did not continue after the build');
+            homePaint.motion.onSettled?.();
+        });
+        expect(homePaint?.motion).toBeNull();
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        clock.mockRestore();
+        rect.mockRestore();
+        if (animate) Object.defineProperty(HTMLElement.prototype, 'animate', animate);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'animate');
+        setReducedMotionPreferenceOverride(null);
+        vi.unstubAllGlobals();
+    }
+});
 
 function pointerDown(node: HTMLElement, id: number) {
     const event = new MouseEvent('pointerdown', { bubbles: true });

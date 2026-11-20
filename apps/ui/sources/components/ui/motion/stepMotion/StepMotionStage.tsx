@@ -42,6 +42,12 @@ type StagePaint = Readonly<{
     releaseFreeze: () => void;
     finish: () => void;
 }>;
+type OpeningBuildGlyphs = Pick<StagePaint, 'animation' | 'duration' | 'scene' | 'finish'>;
+type HomeGlyphArrival = Readonly<{
+    settleEpoch: number;
+    building: boolean;
+    finish: () => void;
+}>;
 
 const emptyScene: Extract<GlyphSurfaceProps['scene'], readonly unknown[]> = [];
 const gridForWindow = (): StepGrid => {
@@ -76,7 +82,9 @@ function leaveClip(progress: number, region: StepAnchor['rect'], origin?: StepAn
 
 function createStepMotionStage(
     publish: (paint: StagePaint | null) => void,
+    publishHomeArrival: React.Dispatch<React.SetStateAction<HomeGlyphArrival | null>>,
     requestRenderer: (needed: boolean) => void,
+    prepareOpeningRenderer: (preparing: boolean) => void,
     colors: () => Readonly<{ primary: string; tertiary: string; page: string }>,
 ) {
     const layers = new Set<StepMotionLayerHandle>();
@@ -166,7 +174,8 @@ function createStepMotionStage(
         const { layer, animation, grid, freeze, source, returnTo, complete } = input;
         const incoming = layerRect(layer);
         const duration = presentation?.stepAnimationDuration(animation);
-        if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration || !glyphReady) {
+        if (!presentation || !incoming || incoming.width <= 0 || incoming.height <= 0 || !duration ||
+            (animation.grammar !== 'opening' && !glyphReady)) {
             freeze?.release();
             showIncoming(layer, complete);
             return;
@@ -257,11 +266,23 @@ function createStepMotionStage(
             else paintOutgoingWeb(freeze.clone, freeze.rect, freeze.control, releaseFreeze);
         }
 
+        const releaseHomeArrival = () => {
+            publishHomeArrival(current => current?.finish === releaseHomeArrival ? null : current);
+        };
+        const homeArrival: HomeGlyphArrival | null = animation.grammar === 'home' ? {
+            settleEpoch: animation.epoch + durationMs,
+            building: true,
+            finish: releaseHomeArrival,
+        } : null;
         const finish = (outcome: StepBuildResult) => {
             if (active?.stop !== skip) return;
             active = null;
             for (const cleanup of cleanups) cleanup();
             publish(null);
+            if (homeArrival) {
+                if (outcome === 'skipped') releaseHomeArrival();
+                else publishHomeArrival(current => current?.finish === releaseHomeArrival ? { ...homeArrival, building: false } : current);
+            }
             releaseFreeze();
             syncPresentation();
             complete?.(outcome);
@@ -269,6 +290,7 @@ function createStepMotionStage(
         const skip = () => finish('skipped');
         active = { layer: layer.key, animation, endpoints, stop: skip };
         syncPresentation();
+        if (homeArrival) publishHomeArrival(homeArrival);
         publish({ animation, duration, freeze, freezeOpacity, scene, releaseFreeze, finish: () => finish('settled') });
     }
 
@@ -425,28 +447,28 @@ function createStepMotionStage(
             pressed = null;
         },
         glyphReadiness(readiness: GlyphSurfaceReadiness) {
-            const ready = readiness === 'ready';
-            if (ready !== glyphReady) {
-                glyphReady = ready;
-                reportBuildReady?.(ready);
-            }
+            glyphReady = readiness === 'ready';
             if (!glyphReady && active?.animation) settle();
         },
         loadPresentation(loaded: StepMotionPresentation) {
             presentation = loaded;
+            reportBuildReady?.(true);
         },
         prepareBuild(onReady?: (ready: boolean) => void) {
             buildPrepared = true;
+            glyphReady = false;
+            prepareOpeningRenderer(true);
             reportBuildReady = onReady;
-            onReady?.(glyphReady);
+            onReady?.(presentation !== null);
             warm();
             return () => {
                 buildPrepared = false;
                 reportBuildReady = undefined;
+                prepareOpeningRenderer(false);
                 syncPresentation();
             };
         },
-        isBuildReady: () => glyphReady,
+        isBuildReady: () => buildPrepared ? presentation !== null : glyphReady,
         run<T>(move: StepMove<T>): T {
             const previous = active?.animation;
             const reverse = move.kind === 'back' && previous?.to === 1 && active?.layer === move.layer
@@ -527,7 +549,7 @@ function createStepMotionStage(
             const reduced = readReducedMotionPreference();
             if (!reduced) warm();
             return new Promise(resolve => {
-                if (reduced || !glyphReady) {
+                if (reduced || (build.choreography === 'opening' ? !presentation : !glyphReady)) {
                     showIncoming(layer, resolve);
                     return;
                 }
@@ -549,11 +571,15 @@ function createStepMotionStage(
 
 type StepMotionStageController = ReturnType<typeof createStepMotionStage>;
 const StageContext = React.createContext<StepMotionStageController | null>(null);
+const OpeningBuildGlyphsContext = React.createContext<OpeningBuildGlyphs | null>(null);
+const HomeGlyphArrivalContext = React.createContext<HomeGlyphArrival | null>(null);
 let rootStage: StepMotionStageController | null = null;
 
 export function StepMotionStage({ children }: React.PropsWithChildren) {
     const [paints, publish] = React.useState<StagePaint | null>(null);
+    const [homeArrival, publishHomeArrival] = React.useState<HomeGlyphArrival | null>(null);
     const [warming, setWarming] = React.useState(false);
+    const [openingPrepared, setOpeningPrepared] = React.useState(false);
     const [renderer, setRenderer] = React.useState<Readonly<{
         GlyphSurface: React.ComponentType<GlyphSurfaceProps>;
         StepFreezeImage: StepMotionPresentation['StepFreezeImage'];
@@ -561,7 +587,7 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
     const { theme } = useUnistyles();
     const colors = React.useRef({ ...theme.colors.text, page: theme.colors.background.canvas });
     colors.current = { ...theme.colors.text, page: theme.colors.background.canvas };
-    const [stage] = React.useState(() => createStepMotionStage(publish, setWarming, () => colors.current));
+    const [stage] = React.useState(() => createStepMotionStage(publish, publishHomeArrival, setWarming, setOpeningPrepared, () => colors.current));
     const { width, height } = useWindowDimensions();
     React.useEffect(() => {
         if (!warming) return;
@@ -587,10 +613,13 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
         kind: 'transition', epoch: paints.animation.epoch,
         durationS: paints.duration, onSettled: paints.finish,
     }) : null, [paints]);
+    const opening = paints?.animation.grammar === 'opening' ? paints : null;
     return <StageContext.Provider value={stage}>
         <View style={{ flex: 1 }} onTouchStart={Platform.OS === 'web' ? undefined : stage.nativeTouch}>
-            {children}
-            {warming && renderer ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden
+            <OpeningBuildGlyphsContext.Provider value={opening}>
+                <HomeGlyphArrivalContext.Provider value={homeArrival}>{children}</HomeGlyphArrivalContext.Provider>
+            </OpeningBuildGlyphsContext.Provider>
+            {warming && renderer && !openingPrepared && !opening ? <View pointerEvents="none" accessible={false} accessibilityElementsHidden
                 importantForAccessibility="no-hide-descendants" aria-hidden
                 style={[StyleSheet.absoluteFillObject, { zIndex: 1001 }]}>
                 {paints?.freeze?.image ? <renderer.StepFreezeImage
@@ -612,7 +641,15 @@ export function useStepMotionStage() {
     return React.useContext(StageContext);
 }
 
-/** Warm the admitted opening without delaying its first layout. */
+export function useOpeningBuildGlyphs() {
+    return React.useContext(OpeningBuildGlyphsContext);
+}
+
+export function useHomeGlyphArrival() {
+    return React.useContext(HomeGlyphArrivalContext);
+}
+
+/** Prepare the live build effects. The opening's GlyphSurface supplies their painter. */
 export function usePrepareStepBuild(admitted: boolean, onReady?: (ready: boolean) => void): () => boolean {
     const stage = useStepMotionStage();
     React.useLayoutEffect(() => admitted ? stage?.prepareBuild(onReady) : undefined, [admitted, onReady, stage]);

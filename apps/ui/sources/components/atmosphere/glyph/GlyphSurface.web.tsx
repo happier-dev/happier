@@ -19,7 +19,7 @@ type Prepared = {
 export type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphMotion } from './glyphSurfaceTypes';
 
 export const GlyphSurface = React.memo(function GlyphSurface({
-    width, height, scene, motion = null, theme: themeOverride, cell, style, testID, onReady, onPaint, drawAtRef, warmWhenHidden,
+    width, height, scene, motion = null, theme: themeOverride, cell, style, testID, onReady, onPaint, drawAtRef, warmWhenHidden, viewport, digitCadence,
 }: GlyphSurfaceProps) {
     const { theme: appTheme } = useUnistyles();
     const theme = themeOverride ?? (appTheme.dark ? 'dark' : 'light');
@@ -73,12 +73,12 @@ export const GlyphSurface = React.memo(function GlyphSurface({
 
     const readiness = reduced && ready ? 'still' : ready;
     const paintedStatus = React.useRef<GlyphSurfaceReadiness | null>(null);
-    const paint = React.useCallback((seconds: number) => {
+    const paint = React.useCallback((seconds: number, digitSeconds = 0) => {
         const state = prepared.current;
         const canvas = webgl.current;
         const staticCanvas = still.current;
         if (!state || !canvas || !staticCanvas || pixelWidth <= 0 || pixelHeight <= 0) return;
-        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined) : scene;
+        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined, digitSeconds) : scene;
         const start = performance.now();
         const frame = sample({ view: { w: width, h: height }, dpr, theme, layers, cell: [cellW, cellH] }, { time: seconds });
         const target = state.painter.ready ? canvas : staticCanvas;
@@ -96,7 +96,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         onPaint?.();
     }, [cellH, cellW, dpr, height, onPaint, pixelHeight, pixelWidth, readiness, sample, scene, theme, width]);
     React.useImperativeHandle(drawAtRef, () => readiness ? paint : (() => {}), [paint, readiness]);
-    useGlyphClock(motion, readiness, paint, warmWhenHidden);
+    useGlyphClock(motion, readiness, paint, warmWhenHidden, viewport, digitCadence);
 
     return <View pointerEvents="none" testID={testID} style={[style, { width, height }]}>
         <canvas key={`gl-${dpr}-${cellW}-${cellH}`} ref={webgl} aria-hidden style={{ ...StyleSheet.absoluteFillObject, width, height, visibility: 'hidden' }} />

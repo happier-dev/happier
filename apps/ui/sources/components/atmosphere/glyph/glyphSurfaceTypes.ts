@@ -2,10 +2,14 @@ import type { GlyphLayer } from '@happier-dev/brand/glyph-scene';
 import type * as React from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 
+export type GlyphViewport = Readonly<{
+    get: () => 'hidden' | 'backdrop' | 'all';
+    subscribe: (listener: () => void) => () => void;
+}>;
+
 export type GlyphSurfaceReadiness = 'ready' | 'still';
 export type GlyphMotion =
     | Readonly<{ kind: 'transition'; epoch: number; durationS: number; onSettled?: () => void }>
-    | Readonly<{ kind: 'digits' }>
     | Readonly<{ kind: 'elapsed'; durationS: number; paused: boolean }>
     | Readonly<{ kind: 'field-calm'; epoch: number; durationS: number; readDurationS?: () => number; onSettled?: () => void }>
     | null;
@@ -13,8 +17,10 @@ export type GlyphMotion =
 export type GlyphSurfaceProps = Readonly<{
     width: number;
     height: number;
-    scene: readonly GlyphLayer[] | ((seconds: number, readiness?: GlyphSurfaceReadiness) => readonly GlyphLayer[]);
+    scene: readonly GlyphLayer[] | ((seconds: number, readiness?: GlyphSurfaceReadiness, digitSeconds?: number) => readonly GlyphLayer[]);
     motion?: GlyphMotion;
+    viewport?: GlyphViewport;
+    digitCadence?: boolean;
     theme?: 'light' | 'dark';
     cell?: readonly [number, number];
     onReady?: (status: GlyphSurfaceReadiness) => void;

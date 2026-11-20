@@ -78,6 +78,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useAtmosphere } from '@/components/atmosphere/useAtmosphere';
 import { atmosphereStageStore, useAtmospherePictureShown, useAtmosphereSending, useAtmosphereSendDissolving } from '@/components/atmosphere/atmosphereStage';
 import { HomePlanet, homePlanetFootFade, useHomePlanetGeometry } from '@/components/atmosphere/HomePlanet';
+import { useHomeGlyphArrival } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { HomeBotMoons } from './HomeBotMoons';
 import { homePlanetDrawnHeight, type HomePane } from '@/components/atmosphere/homePlanetPlacement';
 import { planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
@@ -477,7 +478,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         readContentNode: () => contentRef.current ?? listRef.current?.getInnerViewNode(),
     }));
     React.useEffect(() => { tracker.invalidateLayout(); }, [tracker, layout.sections]);
-    // The visible window itself (no prebuild overscan), for the Bot moons: scrolled out, they stop.
+    // Planet and moons use the measured window to pause when they scroll out of view.
     const [visibleWindow] = React.useState(() => createNearViewportTracker({
         quantum: PAGE_ROW_TOUCH_MIN_HEIGHT_PX,
         initialViewportHeight,
@@ -528,17 +529,18 @@ const HomeHubContent = React.memo(function HomeHubContent() {
         height: homePlanetDrawnHeight(heroFrame.pane.height, planetFadeFrom !== undefined && planetFadeTo !== undefined
             ? { from: planetFadeFrom, to: planetFadeTo } : undefined) }), [heroFrame.pane.height, heroFrame.pane.width, planetFadeFrom, planetFadeTo]);
     const homeLoading = guidance.kind === 'loading' || (!guidanceIsHome && !layout.hasSnapshot && layout.status === 'loading');
+    const firstArrival = useHomeGlyphArrival();
     const momentTarget = React.useMemo(() => resolveHomeMomentTarget({
         guidanceKind: guidance.kind, heroActive, planetSource, pane: planetPane,
-        layer: planetGeometry ? planetGlyphLayer({ geometry: planetGeometry, intensity: planetIntensity, digits: planetDigits,
+        layer: planetGeometry ? planetGlyphLayer({ geometry: planetGeometry, intensity: planetIntensity, digits: planetDigits, soft: phone,
             fade: planetFadeFrom !== undefined && planetFadeTo !== undefined ? { from: planetFadeFrom, to: planetFadeTo } : undefined }) : null,
-    }), [guidance.kind, heroActive, planetDigits, planetFadeFrom, planetFadeTo, planetGeometry, planetIntensity, planetPane, planetSource]);
+    }), [guidance.kind, heroActive, phone, planetDigits, planetFadeFrom, planetFadeTo, planetGeometry, planetIntensity, planetPane, planetSource]);
     const [homePlanetDrawn, setHomePlanetDrawn] = React.useState(false);
     const onHomePlanetDrawn = React.useCallback(() => setHomePlanetDrawn(true), []);
     const homeReport = React.useMemo(() => ({ waiting: homeLoading, target: momentTarget, drawn: homePlanetDrawn }),
         [homeLoading, homePlanetDrawn, momentTarget]);
     const loadingMoment = useHomeLoadingMoment({
-        waiting: homeLoading && isAtmosphereMomentOn(atmosphere.moments, 'loading'), start: 'mount', abort: homeUnavailable, paused: false,
+        waiting: homeLoading && isAtmosphereMomentOn(atmosphere.moments, 'loading'), start: 'mount', abort: homeUnavailable || firstArrival !== null, paused: false,
         reducedMotion: atmosphere.reducedMotion, theme: homeTheme, pane: hubPane,
         home: homeReport, cover: <ItemList testID="home-hub.loading-cover">{null}</ItemList>,
     });
@@ -691,6 +693,7 @@ const HomeHubContent = React.memo(function HomeHubContent() {
                             theme={homeTheme} phone={phone} hero={heroFrame.hero}
                             planet={heroActive && planetDrawn} fieldAllowed={atmosphere.source !== 'picture'}
                             fieldQuiet={heroFrame.keepOut} fieldHost={fieldHost} fieldTap={fieldTap} fieldScrollY={heroFrame.scrollY}
+                            viewport={visibleWindow}
                             hidden={dissolving || (!planetSource && pictureShown) || loadingMoment.hold.held}
                             arrive={loadingMoment.hold.arrive === 'instant' ? 'instant' : 'fade'}
                             writing={heroFrame.isWriting} onDrawn={onHomePlanetDrawn}

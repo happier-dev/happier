@@ -3,8 +3,13 @@ import { StyleSheet, type View } from 'react-native';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
 import { useSessionFinishedRipple } from './homeAtmosphereMoments';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useHomeGlyphArrival } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { stepMotionTiming } from '@/components/ui/motion/stepMotion/stepMotionTiming';
+import type { NearViewportTracker } from '@/components/widgets/nearViewport';
 import { sessionRippleLayer } from './sessionRipple';
-import { GlyphSurface, type GlyphMotion } from './glyph/GlyphSurface';
+import { GlyphSurface, type GlyphMotion, type GlyphSurfaceReadiness } from './glyph/GlyphSurface';
+import type { GlyphViewport } from './glyph/glyphSurfaceTypes';
 import { glyphFieldDurationS, homeFieldStrength, planetGlyphLayer, type GlyphFieldMode, type GlyphLayer, type GlyphRect, type PlanetIntensity } from '@happier-dev/brand/glyph-scene';
 import { HomeFieldPreference, useHomeGlyphField } from './glyph/useHomeGlyphField';
 import { FURTHER_PLANET_MOMENT_TIMINGS } from '@happier-dev/brand/planet-moments';
@@ -82,20 +87,49 @@ export const HomePlanet = React.memo(function HomePlanet(
     fieldTap?: React.RefObject<((x: number, y: number) => void) | null>;
     fieldScrollY?: React.RefObject<number>;
     fieldQuiet?: readonly GlyphRect[];
+    viewport?: NearViewportTracker;
   }>,
 ) {
   const { pane, digits, intensity, theme, writing, focused, hidden, reducedMotion, planet = true, fieldAllowed } = props;
   const geometry = useHomePlanetGeometry(props);
   const fade = homePlanetFootFade(props);
+  const homeArrival = useHomeGlyphArrival();
+  const arrival = planet && !reducedMotion ? homeArrival : null;
   const [preference, setPreference] = React.useState<GlyphFieldMode>('off');
-  const mode = !fieldAllowed || !pane.width ? 'off' : reducedMotion || hidden || focused === false ?
+  const mode = !fieldAllowed || !pane.width ? 'off' : reducedMotion || hidden || focused === false || arrival?.building ?
     preference === 'off' ? 'off' : 'still' : preference;
+  const height = homePlanetDrawnHeight(pane.height, fade);
+  const planetBottom = fade?.to ?? height;
+  const showBackdrop = mode !== 'off';
+  const viewport = React.useMemo<GlyphViewport | undefined>(() => {
+    const tracker = props.viewport;
+    if (!tracker) return;
+    const get: GlyphViewport['get'] = () => {
+      const window = tracker.getVisibleWindow();
+      // The first frame can warm before layout. Digit time starts with a measured viewport.
+      if (!window) return 'backdrop';
+      if (window.bottom <= 0 || window.top >= height) return 'hidden';
+      if (planet && window.top < planetBottom) return 'all';
+      return showBackdrop ? 'backdrop' : 'hidden';
+    };
+    return { get, subscribe(listener) {
+      let visible = get();
+      return tracker.subscribeVisibleWindow(() => {
+        const next = get();
+        if (visible === next) return;
+        visible = next;
+        listener();
+      });
+    } };
+  }, [height, planet, planetBottom, props.viewport, showBackdrop]);
+  const presentation = useLayoutPresentationSignal();
+  const canStir = React.useCallback(() => presentation.get() && viewport?.get() !== 'hidden', [presentation, viewport]);
   const { epoch: fieldEpoch, layer: fieldLayer, readDurationS, settle: settleField } = useHomeGlyphField({
     mode, arriving: !hidden && props.arrive === 'instant',
     quiet: props.fieldQuiet, host: props.fieldHost, nativeTap: props.fieldTap, scrollY: props.fieldScrollY,
     strength: homeFieldStrength(intensity, { phone: props.phone }), planet: planet ? geometry ?? undefined : undefined,
+    canStir,
   });
-  const height = homePlanetDrawnHeight(pane.height, fade);
   const [drawn, setDrawn] = React.useState(false);
   // Home remounts its planet on every return, so its first draw is a return, not an arrival: it shows
   // at once. Only a reveal after this mount held it hidden (a moment's hand-over, a picture leaving, the
@@ -110,36 +144,52 @@ export const HomePlanet = React.memo(function HomePlanet(
     onDrawn.current?.();
   }, []);
   const [answerEpoch, setAnswerEpoch] = React.useState<number | null>(null);
-  const onAnswer = React.useCallback(() => setAnswerEpoch(performance.now()), []);
+  const onAnswer = React.useCallback(() => {
+    if (presentation.get() && (!viewport || viewport.get() === 'all')) setAnswerEpoch(performance.now());
+  }, [presentation, viewport]);
   const finishAnswer = React.useCallback(() => setAnswerEpoch(null), []);
-  const answer = !planet || hidden || focused === false || writing ? null : answerEpoch;
-  const epoch = fieldEpoch ?? answer;
+  const answer = !planet || hidden || focused === false || writing || arrival?.building ? null : answerEpoch;
+  const arrivalEpoch = arrival?.building ? null : arrival?.settleEpoch ?? null;
+  const starts = [fieldEpoch, answer, arrivalEpoch].filter(start => start !== null);
+  const epoch = starts.length ? Math.min(...starts) : null;
   const ringDuration = FURTHER_PLANET_MOMENT_TIMINGS.RIP.DUR;
-  const end = React.useCallback(() => Math.max(fieldEpoch === null ? 0 : readDurationS(),
-    answer === null || epoch === null ? 0 : (answer - epoch) / 1000 + ringDuration), [answer, epoch, fieldEpoch, readDurationS, ringDuration]);
-  const settle = React.useCallback(() => { settleField(); finishAnswer(); }, [finishAnswer, settleField]);
+  const fromField = fieldEpoch === null || epoch === null ? 0 : (fieldEpoch - epoch) / 1000;
+  const fromAnswer = answer === null || epoch === null ? 0 : (answer - epoch) / 1000;
+  const settleStart = arrivalEpoch === null || epoch === null ? 0 : (arrivalEpoch - epoch) / 1000;
+  const end = React.useCallback(() => Math.max(
+    fieldEpoch === null ? 0 : fromField + readDurationS(),
+    answer === null ? 0 : fromAnswer + ringDuration,
+    arrivalEpoch === null ? 0 : settleStart + stepMotionTiming.homeSettleS,
+  ), [answer, arrivalEpoch, fieldEpoch, fromAnswer, fromField, readDurationS, ringDuration, settleStart]);
+  const settle = React.useCallback(() => {
+    settleField();
+    finishAnswer();
+    if (!arrival?.building) arrival?.finish();
+  }, [arrival, finishAnswer, settleField]);
   const { from: fadeFrom, to: fadeTo } = fade ?? {};
   const scene = React.useMemo(() => {
     if (!geometry) return [];
     const fade = fadeFrom !== undefined && fadeTo !== undefined ? { from: fadeFrom, to: fadeTo } : undefined;
-    const options = { geometry, intensity, digits, fade, soft: props.phone };
-    return (seconds: number) => {
+    const settle = arrivalEpoch === null ? undefined : { startS: settleStart, durationS: stepMotionTiming.homeSettleS };
+    return (seconds: number, _readiness?: GlyphSurfaceReadiness, digitTimeS = 0) => {
       const layers: GlyphLayer[] = [];
-      const field = fieldLayer(seconds);
+      const field = fieldLayer(Math.max(0, seconds - fromField));
       if (field) layers.push(field);
       if (!planet) return layers;
-      if (answer === null || epoch === null || epoch + seconds * 1000 < answer) {
+      const options = { geometry, intensity: arrival?.building ? 'full' as const : intensity, digits, fade, soft: props.phone, settle, digitTimeS };
+      if (answer === null || seconds < fromAnswer) {
         layers.push(planetGlyphLayer(options));
         return layers;
       }
-      layers.push(sessionRippleLayer(options, epoch + seconds * 1000 - answer, { width: pane.width, theme, reducedMotion }));
+      layers.push(sessionRippleLayer(options, (seconds - fromAnswer) * 1000, { width: pane.width, theme, reducedMotion }));
       return layers;
     };
-  }, [answer, digits, epoch, fadeFrom, fadeTo, fieldLayer, geometry, intensity, pane.width, planet, props.phone, reducedMotion, theme]);
-  const motion = React.useMemo<GlyphMotion>(() => {
-    if (epoch !== null) return { kind: 'field-calm', epoch, durationS: glyphFieldDurationS, readDurationS: end, onSettled: settle };
-    return planet && digits && !reducedMotion && !hidden && !writing && focused === true ? { kind: 'digits' } : null;
-  }, [digits, end, epoch, focused, hidden, planet, reducedMotion, settle, writing]);
+  }, [answer, arrival?.building, arrivalEpoch, digits, fadeFrom, fadeTo, fieldLayer, fromAnswer, fromField, geometry,
+    intensity, pane.width, planet, props.phone, reducedMotion, settleStart, theme]);
+  const motion = React.useMemo<GlyphMotion>(() => epoch === null ? null : (
+    { kind: 'field-calm', epoch, durationS: glyphFieldDurationS, readDurationS: end, onSettled: settle }
+  ), [end, epoch, settle]);
+  const digitCadence = planet && digits && !reducedMotion && !hidden && !writing && !arrival?.building && focused === true;
   React.useEffect(() => { if (answerEpoch !== null && answer === null) finishAnswer(); }, [answer, answerEpoch, finishAnswer]);
   return <>
     {fieldAllowed ? <HomeFieldPreference onMode={setPreference} /> : null}
@@ -159,6 +209,8 @@ export const HomePlanet = React.memo(function HomePlanet(
         scene={scene}
         theme={theme}
         motion={motion}
+        viewport={viewport}
+        digitCadence={digitCadence}
         onReady={onReady}
         testID="home-planet"
       />

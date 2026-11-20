@@ -5,7 +5,7 @@ import { renderScreen } from '@/dev/testkit';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useGlyphClock } from './useMomentClock';
 
-beforeEach(() => vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] }));
+beforeEach(() => vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'performance'] }));
 afterEach(() => vi.useRealTimers());
 
 it('schedules no moment frames in a retained inactive pane and resumes only its visible elapsed time', async () => {
@@ -67,4 +67,40 @@ it('holds an elapsed glyph scene while it waits and resumes its existing timelin
     expect(commits).toBe(2);
     expect(vi.getTimerCount()).toBe(0);
     await screen.unmount();
+});
+
+it('holds digit time outside the planet viewport while the backdrop continues', async () => {
+    let shown: 'all' | 'backdrop' | 'hidden' = 'all';
+    const listeners = new Set<() => void>();
+    const viewport = { get: () => shown, subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+    } };
+    const show = (next: typeof shown) => act(async () => {
+        shown = next;
+        listeners.forEach(listener => listener());
+    });
+    const samples: [number, number][] = [];
+    const paint = (time: number, digits: number) => { samples.push([time, digits]); };
+    const motion = { kind: 'field-calm', epoch: 0, durationS: 4 } as const;
+    function Clock() { useGlyphClock(motion, 'ready', paint, false, viewport, true); return null; }
+    const screen = await renderScreen(<Clock />);
+    await act(async () => { vi.advanceTimersByTime(640); });
+    expect(samples.at(-1)).toEqual([0.64, 0.64]);
+    expect(vi.getTimerCount()).toBe(1);
+    await show('backdrop');
+    await act(async () => { vi.advanceTimersByTime(2304); });
+    expect(samples.at(-1)).toEqual([2.944, 0.64]);
+    await show('hidden');
+    const sampleCount = samples.length;
+    await act(async () => { vi.advanceTimersByTime(60_000); });
+    expect(samples).toHaveLength(sampleCount);
+    expect(vi.getTimerCount()).toBe(0);
+    await show('all');
+    expect(samples.at(-1)).toEqual([4, 0.64]);
+    await act(async () => { vi.advanceTimersByTime(1360); });
+    expect(samples.at(-1)).toEqual([4, 2]);
+    expect(vi.getTimerCount()).toBe(1);
+    await screen.unmount();
+    expect(vi.getTimerCount()).toBe(0);
 });

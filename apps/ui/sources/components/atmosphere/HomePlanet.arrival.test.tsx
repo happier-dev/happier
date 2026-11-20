@@ -8,11 +8,12 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 // The web layer owns the arrival fade; the Skia planet stands in for the drawing (its picture is the boundary).
 vi.mock('./AtmosphereDissolve', async () => import('./AtmosphereDissolve.web'));
-vi.mock('@shopify/react-native-skia', async () => ({
-  ...(await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock(),
-  useTypeface: () => ({}),
-  createPicture: () => ({ dispose() {} }),
+vi.mock('./glyph/glyphAtlas.native', async () => ({
+  glyphAtlas: (await import('@/dev/testkit/mocks/reactNativeSkia')).createGlyphAtlasRasterMock,
 }));
+vi.mock('@shopify/react-native-skia', async () =>
+  (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaGlyphMock(),
+);
 
 beforeEach(() => {
   vi.stubGlobal('getComputedStyle', () => ({ getPropertyValue: () => '' }));
@@ -35,7 +36,7 @@ it('a return to Home shows the planet at once; only a moment that hands over to 
     },
   });
   const planet = (hidden: boolean) => (
-    <HomePlanet pane={{ width: 280, height: 240 }} placement="corner" style="balanced" digits={false} theme="dark"
+    <HomePlanet pane={{ width: 280, height: 240 }} intensity="calm" digits={false} theme="dark"
       phone={false} hero={null} hidden={hidden} arrive="fade" leave="fade" reducedMotion={false} />
   );
   for (let visit = 0; visit < 3; visit++) {
@@ -46,6 +47,6 @@ it('a return to Home shows the planet at once; only a moment that hands over to 
   // A moment holds the planet hidden, then hands over to it.
   const screen = await renderScreen(planet(true), { createNodeMock: node });
   await screen.update(planet(false));
-  expect(arrivals).toHaveLength(1);
+  await vi.waitFor(() => expect(arrivals).toHaveLength(1));
   await screen.unmount();
 });

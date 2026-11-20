@@ -9,7 +9,7 @@ import { expect, it, vi } from 'vitest';
 import { WelcomeEntryView } from '@/components/onboarding/preAuth/WelcomeEntryView';
 import { UnauthenticatedRouteShell } from '@/components/onboarding/unauthShell/UnauthenticatedRouteShell';
 import { UnauthenticatedSplitShell } from '@/components/onboarding/unauthShell/UnauthenticatedSplitShell';
-import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { StepMotionStage, useStepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import { onboardingAuthHistoryState, onboardingHistoryState, readOpeningSeenAt } from '@/sync/domains/state/onboardingUiState';
@@ -49,9 +49,12 @@ it.each([
     const bounds = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect')
         .mockReturnValue(new DOMRect(0, 0, width, 844));
     let commitLayout = () => { throw new Error('The destination has not mounted'); };
+    let readBuildReady = () => false;
     function Destination() {
         const layout = useFirstOpenContentLayout();
+        const stage = useStepMotionStage();
         commitLayout = () => { layout?.({ nativeEvent: { layout: frame } } as Parameters<NonNullable<typeof layout>>[0]); };
+        readBuildReady = () => stage?.isBuildReady() ?? false;
         return name === 'Welcome' ? <UnauthenticatedSplitShell stepId="welcome" isWelcomeStep>
             <WelcomeEntryView model={{
                 heading: { title: 'Welcome', subtitle: 'Set up Happier' },
@@ -78,12 +81,15 @@ it.each([
         await vi.waitFor(async () => {
             await act(async () => {});
             expect(scene()?.querySelector('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]')).toBeTruthy();
-            expect(box.querySelectorAll('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]').length).toBeGreaterThan(1);
+            expect(readBuildReady()).toBe(true);
         });
         animate.mockClear();
         await act(async () => commitLayout());
         expect(readOpeningSeenAt()).toEqual(expect.any(Number));
         expect(scene()).toBeTruthy();
+        const openingCanvas = scene()?.querySelector('canvas[data-glyph-linked=true]');
+        const visibleCanvases = Array.from(box.querySelectorAll<HTMLCanvasElement>('canvas[data-glyph-linked=true][data-glyph-first-draw-ms]'))
+            .filter(canvas => canvas.style.visibility === 'visible');
         // The build gives the destination's real leaves compositor keyframes.
         expect(animate).toHaveBeenCalled();
         expect(box.querySelector('[data-testid="first-open-next"]')?.closest('[inert]')).toBeNull();
@@ -96,6 +102,7 @@ it.each([
             next.click();
         });
         expect(scene()).toBeNull();
+        expect(visibleCanvases).toEqual([openingCanvas]);
         expect(onAction).toHaveBeenCalledOnce();
         expect(resolveFirstOpen({ accountRestored: false, segments })).toBe('none');
     } finally {

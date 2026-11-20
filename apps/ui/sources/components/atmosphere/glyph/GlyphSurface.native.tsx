@@ -16,7 +16,7 @@ type Painter = Awaited<ReturnType<Backend['createNativeGlyphPainter']>>;
 export type { GlyphSurfaceProps, GlyphSurfaceReadiness, GlyphMotion } from './glyphSurfaceTypes';
 
 export const GlyphSurface = React.memo(function GlyphSurface({
-    width, height, scene, motion = null, theme: themeOverride, cell, style, testID, onReady, onPaint, drawAtRef, warmWhenHidden,
+    width, height, scene, motion = null, theme: themeOverride, cell, style, testID, onReady, onPaint, drawAtRef, warmWhenHidden, viewport, digitCadence,
 }: GlyphSurfaceProps) {
     const { theme: appTheme } = useUnistyles();
     const theme = themeOverride ?? (appTheme.dark ? 'dark' : 'light');
@@ -59,9 +59,9 @@ export const GlyphSurface = React.memo(function GlyphSurface({
     }, []);
     const readiness = prepared && lowPower !== null ? reduced || lowPower ? 'still' as const : 'ready' as const : null;
     const paintedStatus = React.useRef<GlyphSurfaceReadiness | null>(null);
-    const paint = React.useCallback((seconds: number) => {
+    const paint = React.useCallback((seconds: number, digitSeconds = 0) => {
         if (!painterRef.current || width <= 0 || height <= 0) return;
-        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined) : scene;
+        const layers = typeof scene === 'function' ? scene(seconds, readiness ?? undefined, digitSeconds) : scene;
         const frame = sample({ view: { w: width, h: height }, dpr, theme, layers, cell: [cellW, cellH] }, { time: seconds });
         const next = painterRef.current.paint(frame);
         picture.value = next;
@@ -74,7 +74,7 @@ export const GlyphSurface = React.memo(function GlyphSurface({
         onPaint?.();
     }, [cellH, cellW, dpr, height, onPaint, picture, readiness, sample, scene, theme, width]);
     React.useImperativeHandle(drawAtRef, () => readiness ? paint : (() => {}), [paint, readiness]);
-    useGlyphClock(motion, readiness, paint, warmWhenHidden);
+    useGlyphClock(motion, readiness, paint, warmWhenHidden, viewport, digitCadence);
 
     return <Canvas pointerEvents="none" accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" testID={testID} style={[style, { width, height }]}>
         {prepared ? <Picture picture={picture as unknown as { value: SkPicture }} /> : null}

@@ -462,10 +462,11 @@ describe('HomeHub', () => {
         }
     });
 
-    it('parks planet paints, moments and timers with retained Home and resumes their paints', async () => {
+    it('parks planet paints and timers outside the viewport and on retained Home, then resumes', async () => {
         const before = storage.getState();
         settings.presented = true;
         settings.measureAtmosphere = true;
+        settings.belowHeroTop = settings.viewport.height + 150;
         vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout', 'requestAnimationFrame', 'cancelAnimationFrame', 'Date', 'performance'] });
         const timers = installTimerCensus(stack => stack.replaceAll('\\', '/').includes('/components/atmosphere/') ? 'atmosphere' : null);
         let fires = 0;
@@ -484,10 +485,28 @@ describe('HomeHub', () => {
                         layout: { x: 0, y: 0, width: settings.viewport.width, height: settings.viewport.height },
                     } });
                 }
+                screen!.findByTestId('home-hub')!.props.onLayout({ nativeEvent: {
+                    layout: { x: 0, y: 0, ...settings.viewport },
+                } });
+                screen!.findHostByTestId('home-hub.below-hero')?.props.onLayout({ nativeEvent: {
+                    layout: { x: 0, y: settings.belowHeroTop, ...settings.viewport },
+                } });
             });
+            await vi.waitFor(() => expect(timers.read().filter(timer => timer.consumer === 'atmosphere')).toHaveLength(1));
             const restingPaints = atmospherePaints.count;
             await act(async () => { vi.advanceTimersByTime(2000); });
             expect(atmospherePaints.count).toBeGreaterThan(restingPaints);
+            const scroll = (y: number) => act(async () => {
+                screen!.findByTestId('home-hub')!.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y } } });
+            });
+            await scroll(settings.viewport.height * 2);
+            const offscreen = atmospherePaints.count;
+            await act(async () => { vi.advanceTimersByTime(60_000); });
+            expect(atmospherePaints.count).toBe(offscreen);
+            expect(timers.read().filter(timer => timer.consumer === 'atmosphere')).toHaveLength(0);
+            await scroll(0);
+            await act(async () => { vi.advanceTimersByTime(2000); });
+            expect(atmospherePaints.count).toBeGreaterThan(offscreen);
             settings.presented = false;
             await screen.rerender();
             const hiddenPaints = atmospherePaints.count;
