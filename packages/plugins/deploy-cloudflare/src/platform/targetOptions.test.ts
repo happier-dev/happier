@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit, createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
 import type { HttpRequest } from '@happier-dev/plugin-sdk/http';
 import { resolveEffectiveActionInputFields } from '@happier-dev/plugin-sdk/actions';
@@ -175,6 +175,14 @@ it('propagates cancelled Resource lifetime and custody refusal without provider 
       query: { draftInput: draft, fieldPath: 'providerIdentity.providerResourceId' },
       readAction: async () => ({ ok: false, errorCode: 'connected_account_access_denied', error: 'Denied' }) })))
       .rejects.toMatchObject({ code: 'connected_account_access_denied' });
+    const readAction = async () => ({ ok: false as const, errorCode: 'connected_account_access_denied', error: 'Denied' });
+    const { credentialRef: _credentialRef, ...withoutCredential } = draft;
+    const dispatch = vi.fn(readAction);
+    await expect(resource.read(createTestResourceInvocationContext({
+      query: { draftInput: withoutCredential, fieldPath: 'providerIdentity.providerResourceId' },
+      readAction: dispatch,
+    }))).rejects.toMatchObject({ code: 'invalid_parameters' });
+    expect(dispatch).not.toHaveBeenCalled();
     // The Resource-to-host Action boundary returns the canonical typed refusal.
     await expect(resource.read(createTestResourceInvocationContext({
       query: { draftInput: draft, fieldPath: 'triggerUuid' },

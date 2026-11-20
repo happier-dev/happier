@@ -2,7 +2,7 @@ import { PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic }
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, projectNativeJsonValueForTransport, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import { DeploymentTargetRoleInputProtocolSchemasV1, type DefinePluginInput, type DeploymentTargetRoleFailureV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
+import { createDeploymentTargetOptionsResource } from '@happier-dev/plugin-sdk/resources';
 import { isObject } from '../connectedAccounts/probe.js';
 import { request, requestAccounts, type DeploymentContext } from './deploymentHttp.js';
 import { cloudflareHasNextPage, CloudflareProviderRefusal } from './cloudflareRoutes.js';
@@ -144,15 +144,10 @@ function draftProduct(draft: Readonly<Record<string, JsonValue>>): JsonValue | u
   return undefined;
 }
 
-function targetOptionsFor(product?: 'workers' | 'pages'): PluginDynamicResourceRuntime { return {
-  async read(options) {
-    options.signal.throwIfAborted();
-    const query = options.query;
-    if (!query?.draftInput || !query.fieldPath) throw new PluginError({ code: 'invalid_parameters' });
-    // The options owner has admitted this partial draft against its Action schema.
-    const draft = query.draftInput as Readonly<Record<string, JsonValue>>;
-    const input: Record<string, JsonValue> = { fieldPath: query.fieldPath };
-    for (const key of ['credentialRef', 'credentialPrincipal', 'providerIdentity', 'providerAccountId', 'resourceName']) {
+function targetOptionsFor(product?: 'workers' | 'pages') {
+  return createDeploymentTargetOptionsResource({ pluginId, localId: 'target-options-read' }, 'deployment.cloudflare.options', draft => {
+    const input: Record<string, JsonValue> = {};
+    for (const key of ['providerIdentity', 'providerAccountId', 'resourceName']) {
       if (draft[key] !== undefined) input[key] = draft[key];
     }
     const selectedProduct = product ?? draftProduct(draft);
@@ -160,21 +155,9 @@ function targetOptionsFor(product?: 'workers' | 'pages'): PluginDynamicResourceR
     if (isObject(draft.providerEnvironment) && draft.providerEnvironment.scriptName !== undefined) {
       input.scriptName = draft.providerEnvironment.scriptName as JsonValue;
     }
-    if (query.query !== undefined) input.query = query.query;
-    if (query.cursor !== undefined) input.cursor = query.cursor;
-    const result = await options.readAction({ pluginId, localId: 'target-options-read' }, input, { signal: options.signal });
-    if (!result.ok) {
-      const code = 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable';
-      const details = 'details' in result ? result.details : undefined;
-      const error = new PluginError({ code, failureCause: projectActionFailureCauseV1(result, 'deployment.cloudflare.options'), ...(code === 'missing_option_dependency' && isObject(details) && typeof details.requiredDraftPath === 'string'
-        ? { details: { requiredDraftPath: details.requiredDraftPath } } : {}) });
-      throw code === 'deployment_unavailable' ? withActionFailureDiagnostic(error,
-        { phase: 'deployment.cloudflare.options', causeKind: 'native_failure', error: result }) : error;
-    }
-    return JSON.stringify(result.result);
-  },
-  observe() { return { dispose() {} }; },
-}; }
+    return input;
+  });
+}
 
 export const targetOptions = targetOptionsFor();
 const resource = { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'global',

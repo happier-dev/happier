@@ -2,7 +2,7 @@ import { PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic }
 import { DeploymentTargetPreparationBaseV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { DefinePluginInput, JsonValue } from '@happier-dev/plugin-sdk';
 import type { InputOption, PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
-import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
+import { createDeploymentTargetOptionsResource } from '@happier-dev/plugin-sdk/resources';
 import { readVercelProjectCoordinates, vercelEndpoint, vercelRequest } from './operations.js';
 
 const pluginId = 'happier.deploy.vercel';
@@ -112,35 +112,15 @@ export const targetOptionsAction: PluginActionDefinition<Extract<PluginActionDec
   run: (input: JsonValue, context: PluginAccountActionContext) => options(input as unknown as OptionsInput, context),
 };
 
-const runtime: PluginDynamicResourceRuntime = {
-  async read(options) {
-    const query = options.query;
-    const draft = query?.draftInput;
-    if (!query?.fieldPath || !record(draft) || !draft.credentialRef || !draft.credentialPrincipal) throw new PluginError({ code: 'invalid_parameters' });
-    const environment = record(draft.providerEnvironment) ? draft.providerEnvironment : {};
-    const coordinates = readVercelProjectCoordinates(draft);
-    const result = await options.readAction({ pluginId, localId: 'target-options-read' }, {
-      // The query is host-admitted JSON; the read Action validates its custody operands.
-      credentialRef: draft.credentialRef as JsonValue, credentialPrincipal: draft.credentialPrincipal as JsonValue,
-      fieldPath: query.fieldPath,
-      ...(text(coordinates.providerAccountId) ? { providerAccountId: coordinates.providerAccountId } : {}),
-      ...(text(coordinates.providerResourceId) ? { providerResourceId: coordinates.providerResourceId } : {}),
-      ...(environment.kind === 'preview' && text(environment.gitBranch) ? { gitBranch: environment.gitBranch } : {}),
-      ...(query.query !== undefined ? { query: query.query } : {}), ...(query.cursor !== undefined ? { cursor: query.cursor } : {}),
-    }, { signal: options.signal });
-    if (!result.ok) {
-      const code = 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'deployment_unavailable';
-      const details = 'details' in result ? result.details : undefined;
-      const error = new PluginError({ code, failureCause: projectActionFailureCauseV1(result, 'deployment.vercel.options'),
-        ...(code === 'missing_option_dependency' && record(details) && typeof details.requiredDraftPath === 'string'
-          ? { details: { requiredDraftPath: details.requiredDraftPath } } : {}) });
-      throw code === 'missing_option_dependency' ? error : withActionFailureDiagnostic(error,
-        { phase: 'deployment.vercel.options', causeKind: 'native_failure', error: result });
-    }
-    return JSON.stringify(result.result);
-  },
-  observe: () => ({ dispose() {} }),
-};
+const runtime = createDeploymentTargetOptionsResource({ pluginId, localId: 'target-options-read' }, 'deployment.vercel.options', draft => {
+  const environment = record(draft.providerEnvironment) ? draft.providerEnvironment : {};
+  const coordinates = readVercelProjectCoordinates(draft);
+  return {
+    ...(text(coordinates.providerAccountId) ? { providerAccountId: coordinates.providerAccountId } : {}),
+    ...(text(coordinates.providerResourceId) ? { providerResourceId: coordinates.providerResourceId } : {}),
+    ...(environment.kind === 'preview' && text(environment.gitBranch) ? { gitBranch: environment.gitBranch } : {}),
+  };
+});
 export const targetOptionsResources = { 'target-options': { source: 'dynamic', kind: 'config', scope: 'global', execution,
   contentType: 'application/json', runtime } } satisfies NonNullable<DefinePluginInput['resources']>;
 export const targetInputTypes = {

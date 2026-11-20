@@ -2906,6 +2906,7 @@
 | `./resources` | `ResourceDescriptor` | type | any |
 | `./resources` | `ResourcesRegistrationApi` | type | any |
 | `./resources` | `ResourcesService` | type | any |
+| `./resources` | `createDeploymentTargetOptionsResource` | value | any |
 | `./resources` | `isPluginTranscriptActivityContentTypeV1` | value | any |
 | `./reviews` | `CreateReviewCommentFingerprintInput` | type | any |
 | `./reviews` | `REVIEW_ARTIFACT_KIND_V1` | value | daemon |

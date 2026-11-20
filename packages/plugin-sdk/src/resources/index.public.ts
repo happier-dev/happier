@@ -28,3 +28,5 @@ export type { ResourcesRegistrationApi } from '../activation.js';
 export type { ResourcesService } from '../resources.js';
 export { PluginSessionInboxResourceBindingV1Schema, PluginSessionInboxRowV1Schema, PluginSessionInboxRowPageV1Schema } from './sessionInbox.js';
 export type { PluginSessionInboxResourceBindingV1, PluginSessionInboxRowV1, PluginSessionInboxRowPageV1 } from './sessionInbox.js';
+
+export { createDeploymentTargetOptionsResource } from '../resources.js';
