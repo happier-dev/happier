@@ -395,10 +395,16 @@ export function isExternalActionHomeRelayAccountEligible(
     return !binding.sessionActionOrigin || binding.accountId === binding.custodianAccountId;
 }
 
+export type ExternalActionExecutionMachineAdmissionFacts =
+    import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts & Readonly<{
+        /** Public key from the same installed carrier that owns the selected custody. */
+        requesterOperationReadPublicKey?: Uint8Array;
+    }>;
+
 export async function resolveExternalActionExecutionMachineAdmissionInTx(
     reader: Tx, input: ExternalActionExecutionMachineAdmissionInput,
 ): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
-    & import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts> {
+    & ExternalActionExecutionMachineAdmissionFacts> {
     const admission = await resolveExternalActionExecutionMachineAccessInTx(reader, input);
     if (admission.kind !== 'admitted' || !input.carrier) return admission;
     const origin = input.sessionActionOrigin ?? input.executionBinding?.sessionActionOrigin;
@@ -422,7 +428,7 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(
 async function resolveExternalActionExecutionMachineAccessInTx(
     reader: Tx, input: ExternalActionExecutionMachineAdmissionInput,
 ): Promise<Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>
-    & import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts> {
+    & ExternalActionExecutionMachineAdmissionFacts> {
     if (input.nativePurpose) {
         const action = SignedRootActionIdSchema.safeParse(input.actionId);
         if (!action.success || getActionSpec(action.data).originalExecution?.nativePurpose !== input.nativePurpose) {
@@ -453,10 +459,10 @@ async function resolveExternalActionExecutionMachineAccessInTx(
         // store admits the actual read before any data can be accessed.
         const machine = await reader.machine.findUnique({ where: { id: input.machineId }, select: {
             accountId: true, kind: true, installationId: true, revokedAt: true, replacedByMachineId: true,
-            account: { select: { encryptionMode: true } },
+            installationPublicKey: true, account: { select: { encryptionMode: true } },
         } });
         const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
-        if (requesterOperationRead && input.actionId !== ACTION_OPERATION_GET_ACTION_ID_V1
+        if (input.requesterOperationRead && !machine?.installationPublicKey
             || telemetryRead && (input.actionId !== ACTION_INVOKE_ACTION_ID_V1
                 || input.envelope?.target?.kind !== 'machine' || input.envelope.target.machineId !== input.machineId
                 || input.envelope.target.project || input.sessionActionOrigin)
@@ -467,7 +473,9 @@ async function resolveExternalActionExecutionMachineAccessInTx(
                 || native.machineId !== input.machineId || native.custodianAccountId !== machine.accountId
                 || native.installationId !== machine.installationId)) return { kind: 'denied', code: 'machine_unavailable' };
         return { kind: 'admitted', actorAccountId: input.actorAccountId, machineId: input.machineId, role: 'use',
-            custodianAccountId: machine.accountId, installationId: machine.installationId, encryptionMode: mode.mode };
+            custodianAccountId: machine.accountId, installationId: machine.installationId, encryptionMode: mode.mode,
+            ...(input.requesterOperationRead && machine.installationPublicKey
+                ? { requesterOperationReadPublicKey: machine.installationPublicKey } : {}) };
     }
     if (native?.managedContinuation && input.actionId === native.actionId && input.actorAccountId === native.accountId
         && input.machineId === native.machineId) {
@@ -1676,6 +1684,7 @@ type VerifiedSignedChildRequest = VerifiedExternalActionExecutionRequest & Reado
     /** Private request-local result; resource adapters keep consuming the existing public projection. */
     signedChildPurpose: Awaited<ReturnType<typeof readSignedChildPurpose>> & Readonly<{
         preparationRead: Awaited<ReturnType<typeof readDeploymentPreparationHttpReadPurpose>>;
+        requesterOperationRead?: 'machineLookup' | 'verify';
     }>;
 }>;
 
@@ -1814,9 +1823,12 @@ async function verifyCommon(
     if (!binding) return refuseExternalActionExecutionRequest('authorization_token', proof);
     const refuse =(phase: ExternalActionAuthorizationRefusalPhase) => refuseExternalActionExecutionRequest(phase, proof, undefined,
         { rootActionId: binding.actionId, effectActionId: effectActionId.data });
-    if (binding.requesterOperationRead && (effectActionId.data !== binding.actionId
-        || !isExactExecutionMachineLookup(binding.machineId, proof) && (proof.method.toUpperCase() !== 'POST'
-            || proof.path !== bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId)))) return refuse('verification_purpose');
+    const requesterOperationRead = binding.requesterOperationRead && effectActionId.data === binding.actionId
+        ? isExactExecutionMachineLookup(binding.machineId, proof) ? 'machineLookup'
+            : proof.method.toUpperCase() === 'POST'
+                && proof.path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(binding.actionId) ? 'verify' : undefined
+        : undefined;
+    if (binding.requesterOperationRead && !requesterOperationRead) return refuse('verification_purpose');
     if (!isExternalActionResolvedTargetAllowedV1({
         authorizedTarget: binding.target,
         resolvedTarget: target,
@@ -2020,7 +2032,7 @@ async function verifyCommon(
         });
     const acceptedPreparationRead = declaredPreparationRead
         ? await readDeploymentPreparationHttpReadPurpose(db, binding, declaredPreparationRead, acceptedDeployment || undefined) : null;
-    const signedChildPurpose = { ...childPurpose, preparationRead: acceptedPreparationRead };
+    const signedChildPurpose = { ...childPurpose, preparationRead: acceptedPreparationRead, requesterOperationRead };
     if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && isDeploymentDomainMetadataReadActionIdV1(effectActionId.data)
         && !acceptedPreparationRead) return refuse('deployment_metadata_environment');
@@ -4166,8 +4178,9 @@ export async function verifyExternalActionDomainExecutionRequest(
     const nativePurpose = rootSpec?.originalExecution?.nativePurpose;
     const rootMachineAction = MachineAccessActionIdSchema.safeParse(verified.binding.actionId);
     const effectMachineAction = MachineAccessActionIdSchema.safeParse(verified.effectActionId);
-    const readsExecutionMachine = isExactExecutionMachineLookup(verified.binding.machineId, proof)
-        && (verified.binding.requesterOperationRead === true || root.success
+    const readsExecutionMachine = verified.binding.requesterOperationRead
+        ? verified.signedChildPurpose.requesterOperationRead === 'machineLookup'
+        : isExactExecutionMachineLookup(verified.binding.machineId, proof) && root.success
         && (((rootSpec?.executionPlacements ?? [rootSpec?.executionPlacement]).includes('machine')
                 || verified.binding.sessionActionOrigin && isLedSubtreeSessionLifecycleActionId(root.data))
             && verified.binding.target.kind === 'machine' && verified.binding.target.machineId === verified.binding.machineId
@@ -4175,7 +4188,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         && (verified.effectActionId === verified.binding.actionId
             || isContributedActionRoot(verified.binding.actionId)
             || verified.signedChildPurpose.sibling.archiveStop
-            || verified.signedChildPurpose.sibling.projectPrepareReview));
+            || verified.signedChildPurpose.sibling.projectPrepareReview);
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(verified.binding.actionId);
     const admittedReadRootRequesterGet = isAdmittedReadRootRequesterGet(verified, proof);
     const reviewedMachineSetupChild = verified.signedChildPurpose.reviewedMachineSetupChild
@@ -5730,10 +5743,11 @@ export async function verifyExternalActionExecutionAuthorizationCurrentness(
     const verified = await verifyCommon(proof);
     if (!verified) return null;
     if (verified.binding.actionId !== proof.outerActionId) return refuseExternalActionExecutionRequest('outer_action', proof);
-    if (
-        proof.method.toUpperCase() !== "POST"
-        || proof.path !== bindExternalActionExecutionAuthorizationVerifyHttpPathV1(proof.outerActionId)
-    ) {
+    const verifiesExecution = verified.binding.requesterOperationRead
+        ? verified.signedChildPurpose.requesterOperationRead === 'verify'
+        : proof.method.toUpperCase() === 'POST'
+            && proof.path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1(proof.outerActionId);
+    if (!verifiesExecution) {
         return refuseExternalActionExecutionRequest('verification_purpose', proof);
     }
     const effect = parseExternalActionEffectAction(verified.binding, verified.effectActionId);

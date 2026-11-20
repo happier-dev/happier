@@ -6,7 +6,6 @@ import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_
 import { readExternalActionRequestPrincipal } from './requestPrincipal';
 import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { isNewDeploymentOrBotWorkEnabled } from './actionFeatureAdmission';
 import { isManagedPresentUser } from '@/app/machines/managed/managedRequestAuthority';
 import { Buffer } from "node:buffer";
@@ -796,15 +795,13 @@ export function registerExternalActionRoutes(
                 || body.data.envelope.pluginInvocation || body.data.envelope.managedCreationCodec)) {
                 return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
             }
-            if (requesterOperationRead && (actionId.data !== ACTION_OPERATION_GET_ACTION_ID_V1
-                || !('authentication' in principal)
-                || body.data.envelope.pluginInvocation
-                || managedAdmission || deploymentNativeAdmission || deploymentMetadataEnvironmentId
-                || target.kind !== 'machine' || target.machineId !== receivingMachineId || target.project
-                || body.data.sessionActionOrigin || body.data.workflowActionOrigin || continuation || handoffAdmission)) {
+            // The binding schema owns the requester read's exact Action, target and provenance.
+            // Only ingress operands outside that binding and alternate handoff mint paths stop here.
+            if (requesterOperationRead && (body.data.envelope.pluginInvocation
+                || deploymentNativeAdmission || deploymentMetadataEnvironmentId || handoffContinuation || handoffPreflight)) {
                 return sendExternalActionHttpError(reply, 'invalid_envelope', body.data.envelope.requestId);
             }
-            if (actionId.data === 'machines.managed.credentials.install'
+            if (!requesterOperationRead && actionId.data === 'machines.managed.credentials.install'
                 && (managedAdmission?.actionId !== 'machines.managed.credentials.install'
                     || !await prepareManagedCredentialDeliveryForAction(app, {
                         actorAccountId: principal.accountId, machineId: receivingMachineId, request: managedAdmission.input,
@@ -815,15 +812,15 @@ export function registerExternalActionRoutes(
                     }))) return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
             const admission = handoffContinuation
                 ? await readAdmittedExternalActionHandoffMachineInTx(db, handoffContinuation.binding)
-                : continuation?.admission ? continuation.admission.machineAdmission
+                : !requesterOperationRead && continuation?.admission ? continuation.admission.machineAdmission
                 : handoffPreflight ? await readAdmittedExternalActionHandoffMachineInTx(db, handoffPreflight.binding)
-                : handoffAdmission
+                : !requesterOperationRead && handoffAdmission
                 ? await resolveMachineAdmission({ actorAccountId: principal.accountId, machineId: receivingMachineId })
                 : await resolveExternalActionExecutionMachineAdmissionInTx(db, { actorAccountId: principal.accountId,
                     machineId: receivingMachineId, actionId: actionId.data, envelope: body.data.envelope, carrier: 'select',
                     ...(requesterOperationRead ? { requesterOperationRead } : {}),
                     ...(telemetryCollectorCodec ? { telemetryCollectorCodec } : {}),
-                    ...(workflowAdmission ? { workflowAdmission } : {}),
+                    ...(!requesterOperationRead && workflowAdmission ? { workflowAdmission } : {}),
                     ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
                     ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
                     authentication: { authenticationAuthority: principal.authority,
@@ -840,7 +837,7 @@ export function registerExternalActionRoutes(
                         ? { phase: 'execution_authorization', errorClass: 'Error', errorCode: admission.code, httpStatus: null }
                         : undefined);
             }
-            const machine = await db.machine.findFirst({
+            const machine = requesterOperationRead ? null : await db.machine.findFirst({
                 where: { id: receivingMachineId, accountId: admission.custodianAccountId,
                     installationId: admission.installationId },
                 select: {
@@ -850,14 +847,11 @@ export function registerExternalActionRoutes(
                     installationPublicKey: true,
                 },
             });
-            if (
-                !machine
-                || classifyMachineAvailabilityState(machine) !== "available"
-                || !machine.installationId
-                || !machine.installationPublicKey
-            ) {
-                return sendExternalActionHttpError(reply, "target_unavailable", body.data.envelope.requestId);
-            }
+            const installationPublicKey = requesterOperationRead
+                ? 'requesterOperationReadPublicKey' in admission ? admission.requesterOperationReadPublicKey : undefined
+                : machine?.installationId && classifyMachineAvailabilityState(machine) === 'available'
+                    ? machine.installationPublicKey : undefined;
+            if (!installationPublicKey) return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
             try {
                 const { authority: _authority, ...provenance } = principal;
                 const machineRuntimeDemand = readExternalActionMachineRuntimeDemandV1(actionId.data, body.data.envelope);
@@ -932,19 +926,20 @@ export function registerExternalActionRoutes(
                 const managedFiniteWake = isExternalActionManagedWakeRootV1(authorization.binding)
                     ? await inTx(tx => readCurrentManagedFiniteWakeCustodyInTx(tx, { actionOrigin: authorization })) : null;
                 if (requesterOperationRead || telemetryCollectorCodec && authorization.binding.deploymentTelemetryRead) {
-                    if (authorization.binding.installationId !== machine.installationId
-                        || authorization.binding.custodianAccountId !== admission.custodianAccountId) {
+                    if (!requesterOperationRead && (authorization.binding.installationId !== machine?.installationId
+                        || authorization.binding.custodianAccountId !== admission.custodianAccountId)) {
                         return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
                     }
                     return reply.header('cache-control', 'no-store').send({ ...authorization,
                         [requesterOperationRead ? 'requesterOperationReadInstallationPublicKey' : 'telemetryReadInstallationPublicKey']:
-                            Buffer.from(machine.installationPublicKey).toString('base64url') });
+                            Buffer.from(installationPublicKey).toString('base64url') });
                 }
                 return reply.header("cache-control", "no-store").send(managedFiniteWake
                     ? { ...authorization, managedFiniteWake } : authorization);
             } catch (error) {
                 if (error instanceof ApiTokenOperationError && (error.code === "credential_scope_denied" || error.code === "invalid_token"
-                    || error.code === "target_unavailable" || error.code === "source_changed" || error.code === "source_access_denied")) {
+                    || error.code === "target_unavailable" || error.code === "source_changed" || error.code === "source_access_denied"
+                    || error.code === "invalid_envelope")) {
                     if (error.code === 'credential_scope_denied' && error.details !== undefined) {
                         const projected = projectExternalActionHttpError(error.code);
                         return sendExternalActionJson(reply, projected.statusCode, { ...projected.payload,

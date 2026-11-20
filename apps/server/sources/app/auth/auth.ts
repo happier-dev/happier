@@ -243,7 +243,7 @@ export type ApiTokenSummary = Readonly<{
 }>;
 
 export class ApiTokenOperationError extends Error {
-    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "api_token_label_invalid" | "api_token_label_mode_mismatch" | "api_token_label_recipient_envelope_rejected" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "source_access_denied" | "source_changed" | "target_unavailable",
+    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "api_token_label_invalid" | "api_token_label_mode_mismatch" | "api_token_label_recipient_envelope_rejected" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "source_access_denied" | "source_changed" | "target_unavailable" | "invalid_envelope",
         readonly grantReason?: ApiTokenGrantDenialReasonV1,
         readonly details?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['details'],
         readonly failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['failureCause']) {
@@ -404,7 +404,7 @@ export type ExternalActionGrantEvaluationContext = Readonly<{ input?: unknown;
     /** Internal placement decision; no public request/binding field is trusted. */
     managedCreationRecovery?: true;
     managedMachineAdmission?: import('@happier-dev/protocol/machines/machineAccessV1').SocketRpcMachineAdmissionContextV1
-        & import('./externalActionManagedAdmission').ManagedActionMachineAdmissionFacts;
+        & import('./externalActionExecutionAuthorization').ExternalActionExecutionMachineAdmissionFacts;
     browserSessionId?: string;
     workflowAdmission?: WorkflowExternalActionAdmission;
     managedCreationAdmission?: import('./externalActionManagedAdmission').ManagedCreationChildAdmission;
@@ -663,15 +663,21 @@ class AuthModule {
         if (!this.externalActionExecutionAuthorizationTokens) {
             throw new Error("Auth module not initialized");
         }
-        // Custody comes from the current Machine row, never from an invocation
-        // author's Account or target fields. The ingress separately admits use.
-        const machine = await db.machine.findUnique({ where: { id: input.machineId },
-            select: { accountId: true, installationId: true } });
+        const admitted = context.managedMachineAdmission;
+        // The requester read selects an installed carrier once, including the key returned to its caller.
+        const machine = input.requesterOperationRead && admitted?.requesterOperationReadPublicKey
+            ? { accountId: admitted.custodianAccountId, installationId: admitted.installationId }
+            : await db.machine.findUnique({ where: { id: input.machineId }, select: { accountId: true, installationId: true } });
         if (!machine?.installationId) throw refuse('machine_installation', 'target_unavailable');
         const accountMode = await db.account.findUnique({ where: { id: input.accountId }, select: { encryptionMode: true } });
         if (!accountMode) {
             throw refuse('account', 'invalid_token');
         }
+        const bindingIdentity = { custodianAccountId: machine.accountId, installationId: machine.installationId,
+            accountEncryptionMode: accountMode.encryptionMode };
+        const requesterBinding = input.requesterOperationRead
+            ? ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({ ...input, ...bindingIdentity }) : undefined;
+        if (requesterBinding?.success === false) throw refuse('binding_shape', 'invalid_envelope', { cause: requesterBinding.error });
         const inputRecord = typeof context.input === "object" && context.input !== null && !Array.isArray(context.input)
             ? context.input as Readonly<Record<string, unknown>> : null;
         const presetOperation = isMachinePresetFiniteOperationActionIdV1(input.actionId);
@@ -863,8 +869,8 @@ class AuthModule {
             && !sameStrictJsonValue(input.projectSessionDefaultsAdmission, projectSessionDefaultsAdmission)) {
             throw refuse('project_session_defaults');
         }
-        const parsedBinding = ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({
-            ...input, custodianAccountId: machine.accountId, installationId: machine.installationId,
+        const parsedBinding = requesterBinding ?? ExternalActionExecutionAuthorizationBindingV1Schema.safeParse({
+            ...input, ...bindingIdentity,
             ...(presetPreparationAdmission ? { presetPreparationAdmission } : {}),
             ...(projectSessionDefaultsAdmission ? { projectSessionDefaultsAdmission } : {}),
             ...(deploymentChildRoot ? { deploymentChildRoot: true } : {}),
@@ -881,7 +887,6 @@ class AuthModule {
                 : nativeAdmission && nativeSource && !domainRoot && !nativeMemberRoot && !ingressUpdateRoot && !configureRoot && !telemetryRoot ? { deploymentCandidatePublication: createDeploymentCandidatePublicationV1({
                 ...input, environmentId: nativeAdmission.environmentId, source: nativeSource,
             }) } : {}),
-            accountEncryptionMode: accountMode.encryptionMode,
         });
         if (!parsedBinding.success) throw refuse('binding_shape', undefined, { cause: parsedBinding.error });
         let supplied = parsedBinding.data;

@@ -23,7 +23,8 @@ import {
     MACHINE_PLAIN_DATA_KEY_MARKER, ARTIFACT_PLAIN_DATA_KEY_MARKER, PluginManifestV2Schema, encodePlainMachineStoredContent, encodePlainArtifactStoredContent,
     MachineOperationProtocolCapabilitiesV1Schema, signAccountContentKeyBindingV1,
 } from '@happier-dev/protocol';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1, createExternalActionDaemonDispatchResponse,
+import { bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1,
+    ExternalActionExecutionAuthorizationV1Schema, ExternalActionDaemonDispatchRequestSchema, createExternalActionDaemonDispatchResponseV1, createExternalActionDaemonDispatchResponse,
     prepareExternalActionResponseEnvelopeV1, prepareExternalActionResponseV2, openExternalActionRequestV2, openExternalActionResponseV2, sealExternalActionRequestV2,
     computeActionInputApprovalDigestV1, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -294,6 +295,76 @@ describe('composed CLI managed Action origination', () => {
         await instance.ready();
         return instance;
     }
+
+    it('admits requester operation reads with one Machine carrier read and distinct signed HTTP purposes', async () => {
+        const owner = await fixture(true);
+        const { machineId, installationId } = owner.controller;
+        const actionId = ACTION_OPERATION_GET_ACTION_ID_V1;
+        const target = { kind: 'machine' as const, machineId };
+        const requestId = crypto.randomUUID();
+        const binding = { actionId, target, requestId, accountId: owner.account.id, serverIdentityId: homeId,
+            authentication: { kind: 'account' as const, tokenEpoch: owner.account.tokenEpoch } };
+        const envelope = { ...sealExternalActionRequestV2({ binding,
+            material: { type: 'dataKey', machineKey: tweetnacl.randomBytes(32) },
+            projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+            randomBytes: tweetnacl.randomBytes,
+            input: { serverId: homeId, machineId, operationId: crypto.randomUUID() } }), requesterOperationRead: true as const };
+        const instance = await app(async () => { throw new Error('Issuance and proof verification do not dispatch'); }, () => {}, []);
+        // Observe the real persistence boundary without replacing its decisions or replies.
+        const delegate = db.machine;
+        const { findUnique, findFirst } = delegate;
+        const readUnique = vi.spyOn(delegate, 'findUnique').mockImplementation(findUnique.bind(delegate));
+        const readFirst = vi.spyOn(delegate, 'findFirst').mockImplementation(findFirst.bind(delegate));
+        try {
+            const issue = (requestEnvelope: unknown) => instance.inject({
+                method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${owner.token}` },
+                payload: { v: 1, machineId, envelope: requestEnvelope },
+            });
+            const wrongTarget = { kind: 'session' as const, sessionId: crypto.randomUUID() };
+            const malformedTarget = await issue({ ...envelope, target: wrongTarget });
+            expect(malformedTarget.json()).toMatchObject({ code: 'invalid_envelope', requestId });
+            await expect.soft(auth.mintExternalActionExecutionAuthorization({ ...binding, machineId, target: wrongTarget,
+                requesterOperationRead: true, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }))
+                .rejects.toMatchObject({ code: 'invalid_envelope' });
+            readUnique.mockClear();
+            readFirst.mockClear();
+            const issued = await issue(envelope);
+            expect(issued.statusCode, JSON.stringify({ body: issued.json(),
+                machineUniqueReads: readUnique.mock.calls.length, machineFirstReads: readFirst.mock.calls.length })).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(authorization.binding).toMatchObject({ machineId, installationId, custodianAccountId: owner.account.id });
+            expect(authorization.requesterOperationReadInstallationPublicKey).toBe(Buffer.from(owner.keys.publicKey).toString('base64url'));
+            const carrierReads = [...readUnique.mock.calls, ...readFirst.mock.calls]
+                .filter(([query]) => query.where?.id === machineId);
+            expect.soft(carrierReads).toHaveLength(1);
+
+            const machinePath = `/v1/machines/${encodeURIComponent(machineId)}`;
+            const verifyPath = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
+            const signed = (method: 'GET' | 'POST', path: string, key = owner.keys.secretKey) => {
+                const body = method === 'POST' ? { v: 1 } : undefined;
+                return instance.inject({ method, url: path, ...(body ? { payload: body } : {}),
+                    headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+                        ...createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                            target, installationId, method, path, body, privateKey: key }) } });
+            };
+            expect((await signed('POST', verifyPath)).statusCode).toBe(200);
+            expect((await signed('GET', machinePath)).statusCode).toBe(200);
+            const otherPurpose = await signed('GET', `${machinePath}?include=unrelated`);
+            expect(otherPurpose.statusCode).toBe(401);
+            expect(otherPurpose.json()).toMatchObject({ authorizationRefusal: 'verification_purpose' });
+            const otherSigner = await signed('GET', machinePath, tweetnacl.sign.keyPair().secretKey);
+            expect(otherSigner.statusCode).toBe(401);
+            expect(otherSigner.json()).toMatchObject({ authorizationRefusal: 'machine_signature' });
+        } finally {
+            readUnique.mockRestore();
+            readFirst.mockRestore();
+            // Prisma retains overridden delegate keys after a spy deletes the own descriptor.
+            delegate.findUnique = findUnique;
+            delegate.findFirst = findFirst;
+            await instance.close();
+        }
+    });
 
     async function admitPresetThroughHttp(selected: Awaited<ReturnType<typeof fixture>>,
         requester: Awaited<ReturnType<typeof fixture>>, input: ReturnType<typeof ManagedAcquireInputV1Schema.parse>, requestId: string) {
