@@ -537,8 +537,9 @@ describe('executionRunRegistry', () => {
       // Native filesystem invalidations are the system boundary. A burst can
       // arrive while a protected body read is outstanding; inventory and Run
       // projection remain real, including their normal subscription wiring.
+      const entry = `state-${createHash('sha256').update(JSON.stringify([state.runId])).digest('hex')}.sealed`;
       for (let event = 0; event < 32; event++) {
-        for (const watcher of filesystemBoundary.watchers) watcher.emit('change', 'change', 'state-large.sealed');
+        for (const watcher of filesystemBoundary.watchers) watcher.emit('change', 'change', entry);
       }
       await new Promise<void>(resolve => setImmediate(resolve));
       release();
@@ -687,14 +688,15 @@ describe('executionRunRegistry', () => {
     } });
     expect(opened).not.toHaveProperty('future');
     expect(RetainedExecutionRunRecordSchema.safeParse(record).success).toBe(false);
-    const oldFile = join(directory, `state-${Buffer.from('another-run').toString('base64url')}.sealed`);
+    const mismatchedEntry = `state-${createHash('sha256').update(JSON.stringify(['another-run'])).digest('hex')}.sealed`;
+    const oldFile = join(directory, mismatchedEntry);
     const oldBytes = storage.sealJson({ purpose: 'execution_run_state', value: record });
     await writeProtectedLocalStateFileAtomic(oldFile, oldBytes);
     const diagnostic = vi.spyOn(logger, 'warn');
     try {
       await expect(readRetainedExecutionRunRecords()).resolves.toEqual([opened]);
       expect(diagnostic).toHaveBeenCalledWith(expect.any(String), {
-        code: 'execution_run_state_unavailable', entry: `state-${Buffer.from('another-run').toString('base64url')}.sealed`,
+        code: 'execution_run_state_unavailable', entry: mismatchedEntry,
         reason: 'identity_mismatch',
       });
     } finally { diagnostic.mockRestore(); }
@@ -758,7 +760,7 @@ describe('executionRunRegistry', () => {
     } finally { inventory.dispose(); diagnostic.mockRestore(); }
   });
 
-  it('deletes history after queued checkpoints, including prior retained and marker filenames', async () => {
+  it('deletes history after queued checkpoints, including the released marker filename', async () => {
     const registry = executionRunRegistry;
     const state = { runId: 'deleted-history', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
       intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: '',
@@ -768,8 +770,6 @@ describe('executionRunRegistry', () => {
     await registry.retainExecutionRunState(state);
     const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
     const currentPath = join(directory, `state-${createHash('sha256').update(JSON.stringify([state.runId])).digest('hex')}.sealed`);
-    const priorPath = join(directory, `state-${Buffer.from(state.runId).toString('base64url')}.sealed`);
-    writeFileSync(priorPath, readFileSync(currentPath), { mode: 0o600 });
     await registry.writeExecutionRunMarker({ runId: state.runId, pid: process.pid, happySessionId: null,
       callId: state.callId, sidechainId: state.sidechainId, intent: state.intent,
       backendId: state.backendId, backendTarget: readBackendTargetRefV2(state.backendTarget), permissionMode: state.permissionMode,
@@ -783,44 +783,31 @@ describe('executionRunRegistry', () => {
     expect(await registry.readRetainedExecutionRunRecord(state.runId)).toBeNull();
     expect(await registry.listExecutionRunMarkers()).toEqual([]);
     expect(existsSync(currentPath)).toBe(false);
-    expect(existsSync(priorPath)).toBe(false);
     expect(existsSync(priorMarker)).toBe(false);
   });
 
-  it('recovers the prior retained basename into the current owner without reviving a terminal event after acceptance', async () => {
+  it('ignores the 0.3 development Run state basename without treating the inventory as incomplete', async () => {
     const registry = executionRunRegistry;
-    const { configuration } = await import('@/configuration');
     const state = { runId: 'prior-retained-entry', callId: 'call', sidechainId: 'side', sessionId: 'parent-session', depth: 0,
       intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: '',
       permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
       status: 'failed', startedAtMs: 1, finishedAtMs: 2, notifyParentOnCompletion: true,
     } satisfies import('@/agent/runtime/bridges/executionRun/executionRunTypes').ExecutionRunState;
     await registry.retainExecutionRunState(state, 'prior-terminal');
-    const directory = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
+    const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
     const currentPath = join(directory, `state-${createHash('sha256').update(JSON.stringify([state.runId])).digest('hex')}.sealed`);
     const priorPath = join(directory, `state-${Buffer.from(state.runId).toString('base64url')}.sealed`);
     renameSync(currentPath, priorPath);
-    const priorBytes = readFileSync(priorPath, 'utf8');
-    expect(await registry.readRetainedExecutionRunRecord(state.runId))
-      .toMatchObject({ terminalEventId: 'prior-terminal', state: { runId: state.runId } });
-    const [recovered] = await registry.readRetainedExecutionRunRecords();
-    expect(recovered).toMatchObject({ terminalEventId: 'prior-terminal', state: { runId: state.runId } });
-    expect(await registry.readRetainedExecutionRunRecord(state.runId)).toEqual(recovered);
-    expect(existsSync(priorPath)).toBe(false);
-    await registry.reconcileRetainedExecutionRunRecords({ nowMs: 3 });
-    const [pending] = await registry.readPendingExecutionRunWorkerUpdates();
-    expect(pending.localId).toBe('execution-run-worker-update:prior-terminal');
-    expect(await registry.acknowledgeExecutionRunWorkerUpdate(pending)).toBe(true);
-    // A stale former copy cannot override the current acceptance checkpoint.
-    writeFileSync(priorPath, priorBytes, { mode: 0o600 });
-    await registry.reconcileRetainedExecutionRunRecords({ nowMs: 4 });
-    expect(await registry.readPendingExecutionRunWorkerUpdates()).toEqual([]);
-    expect(await registry.readRetainedExecutionRunRecords()).toEqual([expect.not.objectContaining({ terminalEventId: expect.anything() })]);
+
+    const onUnavailable = vi.fn();
+    await expect(registry.readRetainedExecutionRunRecord(state.runId)).resolves.toBeNull();
+    await expect(registry.reconcileRetainedExecutionRunRecords({ nowMs: 3 }, onUnavailable)).resolves.toEqual([]);
+    await expect(registry.readPendingExecutionRunWorkerUpdates()).resolves.toEqual([]);
+    expect(onUnavailable).not.toHaveBeenCalled();
   });
 
-  it('recovers prior worker-update custody into the current basename and accepts it exactly once', async () => {
+  it('publishes and acknowledges only the current terminal observation without scanning the directory', async () => {
     const registry = executionRunRegistry;
-    const { configuration } = await import('@/configuration');
     const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
       sessionId: 'parent', localId: 'execution-run-worker-update:prior-worker-terminal', update: {
         v: 1, workerKind: 'execution_run', workerId: 'prior-worker-run', ownerState: 'failed',
@@ -828,53 +815,20 @@ describe('executionRunRegistry', () => {
       },
     };
     await registry.retainExecutionRunWorkerUpdate(pending);
-    const directory = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
+    const directory = join(happyHomeDir, 'tmp', 'daemon-execution-runs');
     const identity = JSON.stringify([pending.update.workerId, pending.localId]);
     const currentPath = join(directory, `worker-update-${createHash('sha256').update(identity).digest('hex')}.sealed`);
     const priorPath = join(directory, `worker-update-${Buffer.from(identity).toString('base64url')}.sealed`);
     renameSync(currentPath, priorPath);
-    expect(await registry.readPendingExecutionRunWorkerUpdates()).toEqual([pending]);
-    expect(existsSync(currentPath)).toBe(true);
-    expect(existsSync(priorPath)).toBe(false);
-    expect(await registry.acknowledgeExecutionRunWorkerUpdate(pending)).toBe(true);
-    expect(await registry.acknowledgeExecutionRunWorkerUpdate(pending)).toBe(true);
-    expect(await registry.readPendingExecutionRunWorkerUpdates()).toEqual([]);
-  });
 
-  it('does not republish accepted worker custody from an older overlapping basename scan', async () => {
-    const registry = executionRunRegistry;
-    const { configuration } = await import('@/configuration');
-    const pending: import('./executionRunRegistry').RetainedExecutionRunWorkerUpdate = {
-      sessionId: 'parent', localId: 'execution-run-worker-update:overlap-terminal', update: {
-        v: 1, workerKind: 'execution_run', workerId: 'overlap-worker-run', ownerState: 'failed',
-        wake: 'finished', headline: 'Failed run', result: 'Retained output', canInspect: true,
-      },
-    };
+    filesystemBoundary.readdirSpy.mockClear();
     await registry.retainExecutionRunWorkerUpdate(pending);
-    const directory = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
-    const identity = JSON.stringify([pending.update.workerId, pending.localId]);
-    const currentPath = join(directory, `worker-update-${createHash('sha256').update(identity).digest('hex')}.sealed`);
-    const priorPath = join(directory, `worker-update-${Buffer.from(identity).toString('base64url')}.sealed`);
-    writeFileSync(priorPath, readFileSync(currentPath), { mode: 0o600 });
-    let release!: () => void;
-    let captured!: () => void;
-    const hold = new Promise<void>(resolve => { release = resolve; });
-    const observed = new Promise<void>(resolve => { captured = resolve; });
-    filesystemBoundary.afterProtectedRead = async path => {
-      if (path !== priorPath) return;
-      filesystemBoundary.afterProtectedRead = null;
-      captured();
-      await hold;
-    };
-    const older = registry.readPendingExecutionRunWorkerUpdates();
-    try {
-      await observed;
-      await registry.acknowledgeExecutionRunWorkerUpdate(pending);
-    } finally { release(); }
-    await older;
+    expect(filesystemBoundary.readdirSpy).not.toHaveBeenCalledWith(directory);
+    expect(await registry.readPendingExecutionRunWorkerUpdates()).toEqual([pending]);
+    filesystemBoundary.readdirSpy.mockClear();
+    expect(await registry.acknowledgeExecutionRunWorkerUpdate(pending)).toBe(true);
+    expect(filesystemBoundary.readdirSpy).not.toHaveBeenCalledWith(directory);
     expect(await registry.readPendingExecutionRunWorkerUpdates()).toEqual([]);
-    expect(existsSync(currentPath)).toBe(false);
-    expect(existsSync(priorPath)).toBe(false);
   });
 
   it('strips raw output summaries and diagnostics before marker persistence', async () => {

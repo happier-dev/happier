@@ -11,7 +11,7 @@ import { FollowPolicyV1Schema } from '@happier-dev/protocol/sessions/follow/sess
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { readOrCreateDeviceLocalSecretStorage, type DeviceLocalSecretStorage } from './deviceLocalSecretStorage';
+import { readOrCreateDeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 import { resolveReleaseRingScopedBasename } from '../cli/runtime/publicReleaseChannel';
 import {
   ensureProtectedLocalStateDirectory,
@@ -36,6 +36,9 @@ import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/fea
 import { notifyDaemonSessionActivityChanged } from './controlClient';
 import { resolveExecutionRunFollowOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
+
+const retainedStateEntryPattern = /^state-[a-f0-9]{64}\.sealed$/;
+const workerUpdateEntryPattern = /^worker-update-[a-f0-9]{64}\.sealed$/;
 
 const liveWorkListeners = new Set<() => void>();
 function notifyExecutionRunLiveWorkChanged(): void {
@@ -83,8 +86,8 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
       const armed = watch(directory, { persistent: false }, (_event, filename) => {
         const entry = filename?.toString();
         if (entry && entry !== basename(directory) && !isCanonicalExecutionRunMarkerEntry(entry)
-          && !(entry.startsWith('state-') && entry.endsWith('.sealed'))
-          && !(entry.startsWith('worker-update-') && entry.endsWith('.sealed'))) return;
+          && !retainedStateEntryPattern.test(entry)
+          && !workerUpdateEntryPattern.test(entry)) return;
         notify();
       });
       watcher = armed;
@@ -202,32 +205,6 @@ function retainedStatePath(runId: string): string {
   return join(resolveExecutionRunMarkerDir(), `state-${digestEntryIdentity([runId])}.sealed`);
 }
 
-function priorRetainedStatePath(runId: string): string {
-  return join(resolveExecutionRunMarkerDir(), `state-${Buffer.from(runId).toString('base64url')}.sealed`);
-}
-
-/** The previous development writer used identity-encoded basenames. Keep one
- * current copy before retiring that name; an existing current copy always wins. */
-async function adoptPriorRetainedEntry<T>(input: Readonly<{
-  runId: string; path: string; currentPath: string; validatePrior: (ciphertext: string) => void; readCurrent: () => Promise<T>;
-}>): Promise<T> {
-  return serializeRetainedStateWrite(input.runId, async () => {
-    // A prior adopter/ACK may have retired both names while this scan waited.
-    let ciphertext: string;
-    try { ciphertext = await readProtectedLocalStateFile(input.path); }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return input.readCurrent();
-      throw error;
-    }
-    input.validatePrior(ciphertext);
-    await publishProtectedLocalStateFileIfAbsent(input.currentPath, ciphertext, { authority: 'owned' });
-    const current = await input.readCurrent();
-    try { await removeProtectedLocalStateFile(input.path); }
-    catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error; }
-    return current;
-  });
-}
-
 // Only failed observations are retained. File/key/permission changes retry the
 // real reader; unchanged failures remain unknown without reopening/decrypting.
 const unavailableRetainedEntries = new Map<string, Readonly<{ observation: string | null }>>();
@@ -285,19 +262,10 @@ export async function readRetainedExecutionRunRecord(runId: string): Promise<Ret
     }));
     if (record.state.runId !== runId) throw new Error('Retained execution state identity mismatch');
     return record;
-  } catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error; }
-  const priorPath = priorRetainedStatePath(runId);
-  let ciphertext: string;
-  try { ciphertext = await readProtectedLocalStateFile(priorPath); }
-  catch (error) {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    // An absent or unrepresentable former basename needs no inventory scan.
-    if (code === 'ENOENT' || code === 'ENAMETOOLONG') return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null;
     throw error;
   }
-  const prior = createStoredReadSchema(RetainedExecutionRunRecordSchema).parse(storage.openJson({ purpose: 'execution_run_state', ciphertext }));
-  if (prior.state.runId !== runId) throw new Error('Retained execution state identity mismatch');
-  return prior;
 }
 
 /** A hint compares only existing source revision identity; content is validated by its source reader. */
@@ -379,7 +347,7 @@ async function readRetainedExecutionRunProjections<T>(input: Readonly<{
   const { onUnavailable } = input;
   await Promise.all(retainedStateWrites.values());
   let entries: string[];
-  try { entries = (await readdir(resolveExecutionRunMarkerDir())).filter((entry) => entry.startsWith('state-') && entry.endsWith('.sealed')); }
+  try { entries = (await readdir(resolveExecutionRunMarkerDir())).filter((entry) => retainedStateEntryPattern.test(entry)); }
   catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') { pruneUnavailableRetainedEntries('state-', []); input.projections?.clear(); return []; } throw error; }
   pruneUnavailableRetainedEntries('state-', entries);
   if (input.projections) {
@@ -407,7 +375,7 @@ async function readRetainedExecutionRunProjections<T>(input: Readonly<{
       const parsed = createStoredReadSchema(RetainedExecutionRunRecordSchema).safeParse(storage.openJson({
         purpose: 'execution_run_state', ciphertext,
       }));
-      if (!parsed.success || retainedStatePath(parsed.data.state.runId) !== path && priorRetainedStatePath(parsed.data.state.runId) !== path) {
+      if (!parsed.success || retainedStatePath(parsed.data.state.runId) !== path) {
         onUnavailable?.();
         reportUnavailableRetainedEntry(path, observation, {
           code: 'execution_run_state_unavailable', entry,
@@ -415,18 +383,7 @@ async function readRetainedExecutionRunProjections<T>(input: Readonly<{
         }, '[executionRunRegistry] Retained execution state could not be opened');
         continue;
       }
-      const currentPath = retainedStatePath(parsed.data.state.runId);
-      const record = currentPath === path ? parsed.data : await adoptPriorRetainedEntry({ runId: parsed.data.state.runId, path, currentPath,
-        validatePrior: value => {
-          const prior = createStoredReadSchema(RetainedExecutionRunRecordSchema).parse(storage.openJson({ purpose: 'execution_run_state', ciphertext: value }));
-          if (priorRetainedStatePath(prior.state.runId) !== path) throw new Error('Retained execution state identity mismatch');
-        },
-        readCurrent: async () => {
-          const current = await readRetainedExecutionRunRecord(parsed.data.state.runId);
-          if (!current) throw new Error('Retained execution state publication missing');
-          return current;
-        },
-      });
+      const record = parsed.data;
       unavailableRetainedEntries.delete(path);
       const value = input.project(record);
       records.set(record.state.runId, value);
@@ -563,10 +520,6 @@ function resolveWorkerUpdateEntry(runId: string, localId: string): string {
   return `worker-update-${digestEntryIdentity([runId, localId])}.sealed`;
 }
 
-function priorWorkerUpdateEntry(runId: string, localId: string): string {
-  return `worker-update-${Buffer.from(JSON.stringify([runId, localId])).toString('base64url')}.sealed`;
-}
-
 function digestEntryIdentity(identity: readonly string[]): string {
   // Identity lives in the payload. Fixed ASCII basenames leave room for atomic
   // publication suffixes regardless of identity length or native separators.
@@ -575,27 +528,11 @@ function digestEntryIdentity(identity: readonly string[]): string {
 
 async function listWorkerUpdateEntries(): Promise<readonly string[]> {
   try {
-    return (await readdir(resolveExecutionRunMarkerDir())).filter((entry) => entry.startsWith('worker-update-') && entry.endsWith('.sealed'));
+    return (await readdir(resolveExecutionRunMarkerDir())).filter((entry) => workerUpdateEntryPattern.test(entry));
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return [];
     throw error;
   }
-}
-
-async function readPriorWorkerUpdate(input: RetainedExecutionRunWorkerUpdate, storage: DeviceLocalSecretStorage) {
-  const entry = priorWorkerUpdateEntry(input.update.workerId, input.localId);
-  if (!(await listWorkerUpdateEntries()).includes(entry)) return null;
-  const path = join(resolveExecutionRunMarkerDir(), entry);
-  let ciphertext: string;
-  try { ciphertext = await readProtectedLocalStateFile(path); }
-  catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null; throw error; }
-  const retained = createStoredReadSchema(RetainedWorkerUpdateSchema).parse(storage.openJson({
-    purpose: 'execution_run_worker_update', ciphertext,
-  }));
-  if (JSON.stringify(retained) !== JSON.stringify(input)) {
-    throw new Error('Execution-run worker update custody conflicts with the terminal observation');
-  }
-  return path;
 }
 
 /** Each terminal observation has immutable custody independent of the public run marker. */
@@ -604,7 +541,6 @@ export async function retainExecutionRunWorkerUpdate(input: RetainedExecutionRun
   if (payload.update.workerKind !== 'execution_run') throw new Error('Expected an execution-run worker update');
   const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
   const path = join(resolveExecutionRunMarkerDir(), resolveWorkerUpdateEntry(payload.update.workerId, payload.localId));
-  await readPriorWorkerUpdate(payload, storage);
   const published = await publishProtectedLocalStateFileIfAbsent(path, storage.sealJson({
     purpose: 'execution_run_worker_update', value: payload,
   }), { authority: 'owned' });
@@ -653,33 +589,11 @@ export async function readPendingExecutionRunWorkerUpdates(
         ciphertext,
       }));
       if (!parsed.success || parsed.data.update.workerKind !== 'execution_run'
-        || resolveWorkerUpdateEntry(parsed.data.update.workerId, parsed.data.localId) !== entry
-          && priorWorkerUpdateEntry(parsed.data.update.workerId, parsed.data.localId) !== entry) {
+        || resolveWorkerUpdateEntry(parsed.data.update.workerId, parsed.data.localId) !== entry) {
         throw new Error('Retained terminal observation could not be opened');
       }
-      const currentPath = join(resolveExecutionRunMarkerDir(), resolveWorkerUpdateEntry(parsed.data.update.workerId, parsed.data.localId));
-      const retained = currentPath === path ? parsed.data : await adoptPriorRetainedEntry({ runId: parsed.data.update.workerId, path, currentPath,
-        validatePrior: value => {
-          const prior = createStoredReadSchema(RetainedWorkerUpdateSchema).parse(storage.openJson({ purpose: 'execution_run_worker_update', ciphertext: value }));
-          if (prior.update.workerKind !== 'execution_run' || priorWorkerUpdateEntry(prior.update.workerId, prior.localId) !== entry) {
-            throw new Error('Retained terminal observation identity mismatch');
-          }
-          if (JSON.stringify(prior) !== JSON.stringify(parsed.data)) throw new Error('Retained terminal observation changed during adoption');
-        },
-        readCurrent: async () => {
-          const current = createStoredReadSchema(RetainedWorkerUpdateSchema).parse(storage.openJson({
-            purpose: 'execution_run_worker_update', ciphertext: await readProtectedLocalStateFile(currentPath),
-          }));
-          if (current.update.workerKind !== 'execution_run' || current.update.workerId !== parsed.data.update.workerId
-            || current.localId !== parsed.data.localId) throw new Error('Retained terminal observation identity mismatch');
-          if (JSON.stringify(current) !== JSON.stringify(parsed.data)) {
-            throw new Error('Execution-run worker update custody conflicts with the terminal observation');
-          }
-          return current;
-        },
-      });
       unavailableRetainedEntries.delete(path);
-      result.set(currentPath, retained);
+      result.set(path, parsed.data);
     } catch (error) {
       // An exact acceptance ACK can remove an entry between the directory scan and read.
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') { unavailableRetainedEntries.delete(path); continue; }
@@ -705,9 +619,7 @@ export async function acknowledgeExecutionRunWorkerUpdate(input: RetainedExecuti
       if (!parsed.success || parsed.data.update.workerKind !== 'execution_run'
         || parsed.data.update.workerId !== input.update.workerId
         || parsed.data.localId !== input.localId || parsed.data.sessionId !== input.sessionId) return false;
-      const priorPath = await readPriorWorkerUpdate(parsed.data, storage);
       await acknowledgeRetainedRunTerminal(input);
-      if (priorPath) await removeProtectedLocalStateFile(priorPath);
       await removeProtectedLocalStateFile(path);
       notifyExecutionRunLiveWorkChanged();
       return true;
@@ -890,13 +802,8 @@ export async function removeExecutionRunMarker(runId: string): Promise<void> {
 export async function deleteRetainedExecutionRunHistory(runId: string): Promise<void> {
   await serializeRetainedStateWrite(runId, async () => {
     await removeExecutionRunMarkerFiles(runId);
-    for (const path of [retainedStatePath(runId), priorRetainedStatePath(runId)]) {
-      try { await removeProtectedLocalStateFile(path); }
-      catch (error) {
-        const code = (error as NodeJS.ErrnoException)?.code;
-        if (code !== 'ENOENT' && code !== 'ENAMETOOLONG') throw error;
-      }
-    }
+    try { await removeProtectedLocalStateFile(retainedStatePath(runId)); }
+    catch (error) { if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error; }
     notifyExecutionRunLiveWorkChanged();
   });
 }

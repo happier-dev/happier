@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -59,7 +60,8 @@ describe('createAdoptedExecutionRunRootCleanup', () => {
                 runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 1,
             };
             await retainExecutionRunState(state);
-            await writeFile(join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs', 'state-unrelated.sealed'), 'unreadable');
+            const digest = createHash('sha256').update(JSON.stringify(['unrelated'])).digest('hex');
+            await writeFile(join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs', `state-${digest}.sealed`), 'unreadable');
             const base = join(sandbox, 'managed');
             const home = resolveConnectedServiceMaterializedRootDir({ baseDir: base, agentId: 'codex', materializationKey: state.runId });
             await mkdir(home, { recursive: true });
