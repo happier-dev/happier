@@ -47,15 +47,18 @@ export function createActionAutomationPrivateMatchingV1(options: Readonly<{
       const matched: ActionAutomationSelectedTriggerV1[] = [];
       const notices: ActionAutomationNoticeV1[] = [];
       for (const row of selected) {
+        const skip = (reason: string) => notices.push({ code: 'action_automation_skipped', reason,
+          automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId });
         const value = definitions.get(key(row));
         const trigger = value && 'trigger' in value ? value.trigger : undefined;
         if (!trigger) {
-          notices.push({ code: 'action_automation_skipped', reason: value && 'reason' in value ? value.reason : 'content_unavailable',
-          automationId: row.automationId, triggerId: row.triggerId, workflowId: row.workflowId });
+          skip(value && 'reason' in value ? value.reason : 'content_unavailable');
           continue;
         }
         if (trigger.phase === evidence.phase && trigger.actionIds.includes(evidence.actionId)
           && evaluateAutomationEventFilterV1(trigger.filter ?? null, evidence)) matched.push(row);
+        // A retained wait check needs a content-free outcome when its condition does not match.
+        else if (row.phase === 'before' && row.mode === 'wait') skip('conditionNotMatched');
       }
       return { matched, notices };
     };

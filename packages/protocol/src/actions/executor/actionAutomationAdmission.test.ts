@@ -11,7 +11,8 @@ import { createAccountScopedCryptoMaterialSnapshotV1, sealAccountScopedBlobCiphe
 import { AutomationStoredWorkflowDefinitionRecipeV2Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
 import type { AvailableAutomationAccountEncryptionV1 } from '../../automations/automationAccountCurrentnessV1.js';
-import { restoreApprovalAutomaticContextV1, createApprovalAutomaticChecksV1 } from './automaticApprovalContinuation.js';
+import { createAutomaticApprovalContinuation, restoreApprovalAutomaticContextV1, createApprovalAutomaticChecksV1 } from './automaticApprovalContinuation.js';
+import { ApprovalRequestV2Schema } from '../../approvals/approvalRequestV1.js';
 import { automationSubjectKeyV1 } from '../../automations/automationSubjectV1.js';
 
 it('uses the invoking Machine for Account Action checks and visibly skips when it is absent', async () => {
@@ -140,7 +141,7 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   const workflowId = '11111111-1111-4111-8111-111111111111';
   const rows = ['before', 'after'].map(phase => ({ automationId: 'own', triggerId: phase,
     triggerRevision: 1, workflowId, workflowRevision: 1, ownerAccountId: 'actor',
-    actionIds: [actionId], phase, ...(phase === 'before' ? { mode: 'notify' } : {}) }));
+    actionIds: [actionId], phase, ...(phase === 'before' ? { mode: 'wait', onFailure: 'refuse' } : {}) }));
   let definitionReads = 0;
   let workflowReads = 0;
   const sent: unknown[] = [];
@@ -160,14 +161,14 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
     scopeSessionId: null, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
     triggers: rows.map(row => ({ id: row.triggerId, revision: 1, enabled: true, createdAt: 1, updatedAt: 1,
       kind: 'action' as const, phase: row.phase as 'before' | 'after', actionIds: [actionId],
-      ...(row.phase === 'before' ? { mode: 'notify' as const } : {}),
+      ...(row.phase === 'before' ? { mode: 'wait' as const, onFailure: 'refuse' as const } : {}),
       triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
         ...(current.witness.mode === 'e2ee' && 'material' in current
           ? { mode: 'e2ee' as const, material: current.material.material, randomBytes: length => new Uint8Array(length).fill(2) }
           : { mode: 'plain' as const }),
         binding: { v: 1, automationId: 'own', triggerId: row.triggerId, triggerRevision: 1, triggerKind: 'action' },
         definition: { kind: 'action', phase: row.phase, actionIds: [actionId],
-          ...(row.phase === 'before' ? { mode: 'notify' } : {}),
+          ...(row.phase === 'before' ? { mode: 'wait', onFailure: 'refuse' } : {}),
           filter: { v: 1, all: [{ op: 'eq', field: row.phase === 'before' ? '/phase' : '/outcome',
             value: row.phase === 'before' ? 'after' : 'failed' }] } },
       })) })) };
@@ -197,8 +198,22 @@ it.each(['plain', 'e2ee'] as const)('retains selected private Only-when matching
   const selection = await http.select({ actionId, input: {}, context, prepareMatching: checks.prepareMatching });
   expect(workflowReads).toBe(0);
   const invocation = createActionAutomationInvocationV1({ actionId, context, selection, port: http });
-  await http.start!({ actionId, input: {}, selected: selection.before,
-    context: { ...context, actionAutomationAdmission: invocation } });
+  const approval = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+    createdBy: { surface: 'cli' }, requestedSurface: 'cli', actionId, actionArgs: { message: 'Approved notice' },
+    approval: { flow: 'deferred', result: 'required' }, summary: 'Send a notice',
+    executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+      accountId: 'actor', serverId: 'home', machineId: 'machine', actionId, requestId: 'original-request' },
+    automaticChecks: { ...createApprovalAutomaticChecksV1(selection, true),
+      humanDecision: { kind: 'approve', decidedAtMs: 2, authority: 'present_user', decidingAccountId: 'actor' } },
+  });
+  const continuationContext = { ...context, actionAutomationAdmission: invocation };
+  const continuation = createAutomaticApprovalContinuation({ actionAutomations: http }, async () => null);
+  const admitted = await continuation.admit('approval', approval, continuationContext);
+  const notices = [{ code: 'action_automation_skipped', reason: 'conditionNotMatched', automationId: 'own', triggerId: 'before', workflowId }];
+  expect(admitted).toMatchObject({ status: 'open', automaticChecks: { phase: 'checking', runs: [], notices } });
+  if (!('v' in admitted)) throw new Error('Expected the nonmatching wait check to settle without a Run');
+  expect(await continuation.resume('approval', admitted, continuationContext)).toMatchObject({ kind: 'approved',
+    request: { status: 'approved', automaticChecks: { phase: 'passed', runs: [], notices } } });
   expect(sent).toEqual([]);
   const restored = restoreApprovalAutomaticContextV1({ automaticChecks: createApprovalAutomaticChecksV1(selection, false) },
     actionId, { ...context, actionAutomationAdmission: invocation }, { ...http, prepareMatching: checks.prepareMatching });
