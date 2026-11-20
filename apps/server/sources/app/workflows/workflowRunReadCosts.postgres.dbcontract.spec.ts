@@ -453,12 +453,16 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow
             const changedEmissions = publication.mock.calls.length;
             publication.mockClear();
             statements.length = 0;
-            await commitWorkflowInvocationFact({ ...input, expectedContentRevision: BigInt(changed.contentRevision), expectedLifecycle: "waiting_for_review" });
+            const repeated = await commitWorkflowInvocationFact({ ...input, expectedContentRevision: BigInt(changed.contentRevision), expectedLifecycle: "waiting_for_review" });
             const repeatedCosts = costs();
             expect(publication.mock.calls).toHaveLength(0);
             console.info("WORKFLOW_SERVER_COSTS", JSON.stringify({ historyRows: 502, requestedSources: 500,
                 summary: summaryCosts, summaryPrivateColumns, attention: attentionCosts,
                 changed: { ...changedCosts, socketEmissions: changedEmissions }, repeated: { ...repeatedCosts, socketEmissions: 0 } }));
+            expect(changed).toMatchObject({ lifecycle: "waiting_for_review", contentRevision: "1" });
+            expect(changedEmissions).toBe(1);
+            expect(repeated).toEqual(changed);
+            expect(repeatedCosts.statements).toBe(22);
             const checkpointEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowCheckpointStoredEnvelopeV1({ mode: "plain",
                 binding: { v: 1, purpose: "checkpoint", accountId: ownerId, runId },
                 checkpoint: { kind: "happier.workflow-checkpoint.v1", rootRecordId: rootId, nextSequence: "503",

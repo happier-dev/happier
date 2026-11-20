@@ -2192,7 +2192,6 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
                 || (params.expectedLifecycle === "outcome_uncertain" && params.lifecycle === "outcome_uncertain")
                 || ((params.lifecycle === "failed" || params.lifecycle === "cancelled")
                     && AUTOMATION_RUN_TERMINAL_STATES.some(state => state === run.state)));
-        const deliveryBefore = await readOriginDeliverySignalTx(tx, params.accountId, params.runId);
         const current = await tx.workflowRunInvocation.findFirst({ where: { id: params.invocationId, runId: params.runId, attempt: params.invocationAttempt }, select: invocationSelect }) as InvocationRow | null;
         const acknowledge = async (row: InvocationRow) => {
             const parent = await tx.automationRun.findUniqueOrThrow({ where: { id: params.runId }, select: { revision: true } });
@@ -2216,20 +2215,11 @@ export async function commitWorkflowInvocationFact(params: WorkflowInvocationFac
             throw new WorkflowRunServiceError("currentness_conflict");
         }
         if (current.lifecycle === params.lifecycle && current.contentEnvelope === params.contentEnvelope) return await acknowledge(current);
-        if (WORKFLOW_TERMINAL_INVOCATION_LIFECYCLES.some((lifecycle) => lifecycle === current.lifecycle)) {
-            if (current.lifecycle === "outcome_uncertain"
-                && resolvesObservedTerminal) {
-                const changed = await tx.workflowRunInvocation.updateMany({
-                    where: { id: current.id, attempt: params.invocationAttempt, lifecycle: current.lifecycle, contentRevision: params.expectedContentRevision },
-                    data: { lifecycle: params.lifecycle, contentEnvelope: params.contentEnvelope, contentRevision: { increment: 1 } },
-                });
-                if (changed.count !== 1) throw new WorkflowRunServiceError("currentness_conflict");
-                const resolved = await tx.workflowRunInvocation.findUniqueOrThrow({ where: { id: current.id }, select: invocationSelect }) as InvocationRow;
-                await markWorkflowRunChangedTx(tx, params.accountId, params.runId, deliveryBefore);
-                return await acknowledge(resolved);
-            }
+        if (WORKFLOW_TERMINAL_INVOCATION_LIFECYCLES.some((lifecycle) => lifecycle === current.lifecycle)
+            && !(current.lifecycle === "outcome_uncertain" && resolvesObservedTerminal)) {
             throw new WorkflowRunServiceError("currentness_conflict");
         }
+        const deliveryBefore = await readOriginDeliverySignalTx(tx, params.accountId, params.runId);
         const changed = await tx.workflowRunInvocation.updateMany({
             where: { id: current.id, attempt: params.invocationAttempt, lifecycle: params.expectedLifecycle, contentRevision: params.expectedContentRevision },
             data: { lifecycle: params.lifecycle, contentEnvelope: params.contentEnvelope, contentRevision: { increment: 1 } },
