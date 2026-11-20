@@ -19,7 +19,7 @@ export function homeFieldStrength(intensity, { phone = false } = {}) {
 }
 const restLight = lightForReveal(1);
 const glyphPitch = [8, 16];
-const retypeSeconds = 2;
+export const glyphDigitStepS = 2;
 
 export const planetGlyphLayer = (options) => ({ kind: 'planet', ...options });
 export const markGlyphLayer = (options) => ({ kind: 'mark', ...options });
@@ -240,7 +240,7 @@ function samplePlanet(out, grid, layer, time, theme, palette, previous) {
     if (!layer.digits) return body;
     // Home's digits: a sparse share of the lit cells in the planet's ink, a share of them retyping each step.
     const { cell, cols } = grid;
-    const step = Math.floor(time / retypeSeconds);
+    const step = Math.floor((layer.digitTimeS ?? time) / glyphDigitStepS);
     const ink = out.ink;
     for (let n = 0; n < cells.light.length; n++) {
         const amount = cells.light[n];

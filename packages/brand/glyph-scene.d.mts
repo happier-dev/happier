@@ -11,6 +11,8 @@ export type PlanetGlyphOptions = Readonly<{
     geometry: GlyphPlanetGeometry;
     intensity: PlanetIntensity;
     digits: boolean;
+    /** Visible digit cadence. Defaults to the scene clock for callers that choreograph their own digits. */
+    digitTimeS?: number;
     fade?: Readonly<{ from: number; to: number }>;
     assemble?: Timing;
     decode?: number;
@@ -109,6 +111,7 @@ export function createGlyphFrameSampler(): (scene: GlyphScene, motion?: Readonly
 export function glyphFrame(scene: GlyphScene, motion?: Readonly<{ time?: number }>): GlyphFrame;
 
 export const glyphFieldDurationS: number;
+export const glyphDigitStepS: number;
 export const glyphFieldTrailCell: number;
 export const glyphFieldTrailLifeS: number;
 export const glyphFieldRippleLifeS: number;

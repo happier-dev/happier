@@ -120,6 +120,24 @@ test('the Home planet is the glyph planet: light-ramp cells over a faint wash, s
     assert.equal([...frameAt('full', false).sprites.glyph].filter(isDigit).length, 0);
 });
 
+test('a travelling field or ripple uses its own elapsed time while the planet digits hold their step', async () => {
+    const { glyphPlanetDigitFirstTile, fieldDotLayer } = await import('./glyph-scene.mjs');
+    const pane = { width: 880, height: 690 };
+    const geometry = horizonPlanetGeometry(pane, { composerTop: 350 });
+    const sample = (time, digitTimeS) => glyphFrame({ view: { w: pane.width, h: pane.height }, dpr: 1, theme: 'dark', layers: [
+        fieldDotLayer({ mode: 'animated' }),
+        planetGlyphLayer({ geometry, intensity: 'quiet', digits: true, ring: { progress: 0.2 }, digitTimeS }),
+    ] }, { time });
+    const digits = ({ sprites }) => Array.from(sprites.glyph, (glyph, i) => [sprites.at[i * 2], sprites.at[i * 2 + 1], glyph])
+        .filter(([, , glyph]) => glyph >= glyphPlanetDigitFirstTile && glyph < glyphPlanetDigitFirstTile + 10);
+    const held = sample(0, 6);
+    const moved = sample(3, 6);
+    assert.notDeepEqual(held.field.mask.rgba, moved.field.mask.rgba);
+    assert.ok(digits(held).length > 0);
+    assert.deepEqual(digits(held), digits(moved));
+    assert.notDeepEqual(digits(moved), digits(sample(3, 8)));
+});
+
 test('Welcome and Approve keep body digits inside the limb and draw the halo only with dots', () => {
     const pane = { width: 1224, height: 765 };
     for (const state of ['welcome', 'deep']) {
