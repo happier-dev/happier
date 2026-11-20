@@ -5,7 +5,8 @@ import type { LimaCommandResult, LimaExecutor } from '@happier-dev/plugin-sdk/ma
 import { buildCreateArgs, createLimaProvider, limaAcquisitionResource, limaPreparationMessage } from './provider.js';
 import { LimaLaunchSchema } from './schemas.js';
 import { MACHINE_PROVISIONER_CLOUD_SSH_USER } from '@happier-dev/plugin-sdk/machine-provisioners';
-import { MachineProvisionerObservationV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerAcquireResultV1Schema, MachineProvisionerObservationV1Schema,
+  MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const launch = LimaLaunchSchema.parse({
   store: '/private/lima-test', image: 'https://example.test/ubuntu.img',
@@ -252,13 +253,43 @@ describe('public Lima native leaf', () => {
   const inheritedInfo = {
     hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'], limaHome: '/home/happier/.lima',
     defaultTemplate: { base: [{ url: 'template:_images/ubuntu' }, { url: 'template:_default/mounts' }],
-      cpus: 4, memory: '4GiB', disk: '100GiB' },
+      cpus: 4, memory: '1GiB', disk: '100GiB' },
   };
   const resolvedImages = [
     { arch: 'x86_64', location: 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img' },
     { arch: 'x86_64', location: 'https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img' },
     { arch: 'aarch64', location: 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-arm64.img' },
   ];
+
+  it('explains why 1 GiB cannot be reviewed for Create and recommends 4 GiB', async () => {
+    const { executor } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
+    const options = MachineProvisionerOptionsResultV1Schema.parse(
+      await createLimaProvider(executor).options({ ...launch, memoryGiB: 1 }));
+    expect(projectMachineProvisionerSelectionV1({ options, launchSchema: LimaLaunchSchema.jsonSchema,
+      selection: { size: '2/1/20' } })).toMatchObject({
+      kind: 'unavailable', code: 'agent_session_memory_too_small', unavailableReason: {
+        code: 'agent_session_memory_too_small',
+        status: { params: { measuredPeakGiB: '1.80', minimumGiB: 2, recommendedGiB: 4 } },
+      },
+    });
+  });
+
+  it.each([2, 4, 6])('keeps %s GiB as an explicit, reviewable size', async memoryGiB => {
+    const { executor } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
+    const requested = { ...launch, memoryGiB };
+    const options = await createLimaProvider(executor).options(requested);
+    expect(projectMachineProvisionerSelectionV1({ options, launchSchema: LimaLaunchSchema.jsonSchema,
+      selection: { size: `2/${memoryGiB}/20` } })).toMatchObject({ kind: 'ready', launch: requested });
+  });
+
+  it('rejects a retained 1 GiB recipe at acquisition before native allocation', async () => {
+    const { executor, effects } = processBoundary(() => ({ exitCode: 0, out: '', err: '' }));
+    const result = await createLimaProvider(executor).acquire({ managedId, launch: { ...launch, memoryGiB: 1 } });
+    expect(MachineProvisionerAcquireResultV1Schema.parse(result)).toEqual({
+      kind: 'rejected', code: 'agent_session_memory_too_small',
+    });
+    expect(effects).toEqual([]);
+  });
 
   it.each(['x86_64', 'aarch64'] as const)('resolves the inherited default image for selected architecture %s with one native read', async arch => {
     const { executor, reads, effects } = processBoundary(args => ({ exitCode: 0,

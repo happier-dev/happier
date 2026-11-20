@@ -7,5 +7,6 @@
   "machineLima.presentation.lima_2_required": "Lima 2 required",
   "machineLima.presentation.qemu_unavailable": "QEMU unavailable",
   "machineLima.presentation.qemu_driver_unavailable": "QEMU unavailable",
-  "machineLima.presentation.vz_driver_unavailable": "VZ needs macOS 13 or later"
+  "machineLima.presentation.vz_driver_unavailable": "VZ needs macOS 13 or later",
+  "machineLima.presentation.agent_session_memory_too_small": "Too small for an agent Session. Startup peaked at {measuredPeakGiB} GiB. Choose at least {minimumGiB} GiB. We recommend {recommendedGiB} GiB."
 }

@@ -101,6 +101,10 @@ instance name. There is no separate native instance-name field. Recovery and
 cleanup keep the recorded storage and native identity, including after you edit
 the VM's CPU, memory or disk through Lima.
 
+New Lima machines default to 4 GiB of memory. Create requires at least 2 GiB
+because measured agent Session startup peaked at 1.80 GiB. If Create refuses the
+size, choose 4 GiB in the size controls.
+
 Lume requires an Apple silicon Mac, a qualified image with a private SSH setup path, and Lume's own server running on that Mac (`lume serve`): Happier does not start it, and the Lume card says so while the server isn't answering. In 0.3 development, a missing Lume command offers **Install Lume**, which downloads the verified native app bundle after confirmation. This does not start the server or create a VM. A Cua card that finds its command missing, or Cua older than the supported version, names that state and where to get or update it. Storage and the Happier-generated VM name identify the guest together. macOS virtual machines belong to Lume alone: Cua does not offer a Lume runtime. Cua creation selects the local runtime and image explicitly. Runtime and image determine supported power operations, disk retention and display capture. Native installation and image licenses must be checked separately; an installed SDK does not grant permission to redistribute every native component.
 
 In 0.3 development source, a custom Lume image can declare its prepared Linux or macOS SSH account explicitly. It must support Lume's native default-password setup path; choosing an operating system does not infer a login or qualify an arbitrary image. Setup checks the observed guest operating system before installing the controller-held public key. CPU, memory, disk size and storage remain reviewed inputs rather than guessed hardware presets.

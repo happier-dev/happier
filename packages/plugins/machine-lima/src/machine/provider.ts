@@ -19,6 +19,18 @@ export const LIMA_DEPENDENCY_ID = 'lima-cli';
 export const LIMA_QEMU_DEPENDENCY_IDS = { x86_64: 'qemu-x86-64', aarch64: 'qemu-aarch64' } as const;
 const contributionRef = { pluginId: LIMA_PLUGIN_ID, localId: LIMA_PROVISIONER_ID };
 const gib = 1024 ** 3;
+const defaultMemoryGiB = 4;
+
+function agentSessionMemoryRefusal(memoryGiB: number | undefined) {
+  // MACH-LIFECYCLE-1118.md (memory-summary.json) measured 1.803 GiB at Session startup.
+  const measuredPeakGiB = 1.803;
+  const minimumGiB = Math.ceil(measuredPeakGiB);
+  if (memoryGiB === undefined || memoryGiB >= minimumGiB) return undefined;
+  const code = 'agent_session_memory_too_small';
+  return { code, status: machinePresentationLabel(code, {
+    measuredPeakGiB: measuredPeakGiB.toFixed(2), minimumGiB, recommendedGiB: defaultMemoryGiB,
+  }) };
+}
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -214,7 +226,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       }
       // Project files use the guest filesystem; host mounts are not placement inputs.
       const explicit = LimaLaunchSchema.safeParse({ ...query, mounts: query.mounts ?? [] });
-      // The controller's native info owns the store and template defaults. Never infer them from
+      // The controller's native info supplies the store and the other template defaults. Never infer them from
       // the viewing device, or replace a complete retained recipe on a refresh.
       const info = templateInfo ?? (explicit.success ? undefined : await nativeInfo());
       const template = info?.defaultTemplate;
@@ -232,7 +244,7 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       const parsed = explicit.success ? explicit : LimaOptionsInputSchema.safeParse(projectNativeJsonValueForTransport({
         store: info?.limaHome, image: defaultImage, arch,
         vmType: template?.vmType ?? (info?.hostOS === 'darwin' ? 'vz' : 'qemu'), cpus: template?.cpus,
-        memoryGiB: templateGiB(template?.memory), diskGiB: templateGiB(template?.disk),
+        memoryGiB: defaultMemoryGiB, diskGiB: templateGiB(template?.disk),
         ...query, mounts: query.mounts ?? [],
       }));
       const emptyDimensions = { size: [], image: [], location: [], network: [], duration: [] };
@@ -248,13 +260,14 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       const image = launch.image === undefined ? undefined : { id: launch.image, ...describeImage(launch.image) };
       // buildCreateArgs always configures the Ubuntu guest template, independently of the controller OS.
       const nativeRefusalCode = 'code' in availability ? availability.code : undefined;
+      const memoryRefusal = agentSessionMemoryRefusal(launch.memoryGiB);
       const unavailableReason = !availability.available && nativeRefusalCode ? {
         code: nativeRefusalCode,
         status: machinePresentationLabel(nativeRefusalCode === 'lima_driver_unavailable'
           ? launch.vmType === 'vz' ? 'vz_driver_unavailable' : 'qemu_driver_unavailable' : 'qemu_unavailable'),
         ...(nativeRefusalCode === 'lima_driver_unavailable' ? { fieldPath: 'vmType' } : {}),
-      } : undefined;
-      return { base: { launch, guestPlatform: 'linux', available: availability.available,
+      } : memoryRefusal;
+      return { base: { launch, guestPlatform: 'linux', available: availability.available && !memoryRefusal,
         nativeFacts: { ...(image ? { image } : {}), ...(launch.arch ? { preparationGuest: {
           target: { os: 'linux', arch: launch.arch === 'aarch64' ? 'arm64' : 'x64' }, remoteHomeDir: '/opt/happier',
         } } : {}) },
@@ -267,6 +280,8 @@ export function createLimaProvider<TResult extends LimaCommandResult, TChannel =
       if (input.managedId === undefined || input.managedId.length === 0) return { kind: 'rejected' as const, code: 'invalid_request' as const };
       const launch = LimaLaunchSchema.parse(input.launch);
       validateLimaStore(launch.store);
+      const memoryRefusal = agentSessionMemoryRefusal(launch.memoryGiB);
+      if (memoryRefusal) return { kind: 'rejected' as const, code: memoryRefusal.code };
       if (launch.image.startsWith('template:')) return { kind: 'rejected' as const, code: 'provider_unavailable' as const,
         nativeCause: { localCause: 'native_options_changed' as const } };
       const expected = limaAcquisitionResource(launch, input.managedId);
