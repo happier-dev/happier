@@ -28,12 +28,13 @@ type FieldRun = {
 
 export function useHomeGlyphField(input: Readonly<{
     mode: GlyphFieldMode;
+    arriving: boolean;
     quiet?: readonly GlyphRect[];
     host?: React.RefObject<View | null>;
     nativeTap?: React.RefObject<((x: number, y: number) => void) | null>;
     scrollY?: React.RefObject<number>;
 }>) {
-    const { mode, quiet, host, nativeTap, scrollY } = input;
+    const { mode, arriving, quiet, host, nativeTap, scrollY } = input;
     const [epoch, setEpoch] = React.useState<number | null>(null);
     const run = React.useRef<FieldRun | null>(null);
     const restingPhase = React.useRef(0);
@@ -57,7 +58,7 @@ export function useHomeGlyphField(input: Readonly<{
     }, []);
     React.useEffect(() => {
         if (mode !== 'animated') { settle(); return; }
-        start();
+        if (arriving) start();
         const node = host?.current as unknown as HTMLElement | undefined;
         function stir(x: number, y: number, click: boolean) {
             if (!readHostActivelyViewed()) return;
@@ -98,7 +99,7 @@ export function useHomeGlyphField(input: Readonly<{
                 node?.removeEventListener?.('click', click);
             }
         };
-    }, [host, mode, nativeTap, scrollY, settle, start]);
+    }, [arriving, host, mode, nativeTap, scrollY, settle, start]);
 
     const layer = React.useCallback((seconds: number): FieldDotLayer | null => {
         if (mode === 'off') return null;

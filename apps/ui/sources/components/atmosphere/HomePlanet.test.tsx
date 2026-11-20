@@ -2,12 +2,19 @@ import * as React from 'react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { countStoreNotifications, renderScreen } from '@/dev/testkit';
+import { readReanimatedFrameCallbacks, resetReanimatedFrameCallbacks } from '@/dev/testkit/mocks/reanimated';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { HomeBotMoons } from '@/components/hub/HomeBotMoons';
+import { HomeOrbitBotMoon } from './orbit/HomeOrbitBotMoon';
 import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot, removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
+import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { HomePlanet } from './HomePlanet';
 import { GlyphSurface, type GlyphSurfaceProps } from './glyph/GlyphSurface';
 import type { PlanetGlyphLayer } from '@happier-dev/brand/glyph-scene';
-import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
+import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { AtmosphereDissolve } from './AtmosphereDissolve';
 
@@ -197,18 +204,61 @@ describe('Home glyph subscription locality', () => {
 
   it('firstOpen.01.F1.return draws once per visit, starts no settle and disposes the picture on departure', async () => {
     const home = <HomePlanet pane={pane} intensity="quiet" digits={false} theme="dark"
-      phone={false} hero={null} hidden={false} leave="fade" reducedMotion={false} focused />;
+      phone={false} hero={null} hidden={false} leave="fade" reducedMotion={false} focused fieldAllowed />;
     const screen = await renderScreen(<>{home}</>);
     try {
       for (let visit = 1; visit <= 12; visit++) {
         await vi.waitFor(() => expect(nativePictures.count).toBe(visit));
-        expect(screen.findByType(GlyphSurface).props.motion).toBeNull();
+        const { motion, scene } = screen.findByType(GlyphSurface).props as GlyphSurfaceProps;
+        expect(motion).toBeNull();
+        const layers = typeof scene === 'function' ? scene(0) : scene;
+        expect(layers.some(layer => layer.kind === 'field')).toBe(true);
         await screen.update(<></>);
         expect(nativePictures.disposed).toBe(visit);
         if (visit < 12) await screen.update(<>{home}</>);
       }
       expect(nativePictures.count).toBe(12);
     } finally { await screen.unmount(); }
+  });
+
+  it('firstOpen.01.F1.idle60 leaves Home and its idle Bot moon without frame work', async () => {
+    const previousServer = getActiveServerSnapshot().serverId;
+    const server = await upsertAndActivateServer({ serverUrl: 'https://home-glyph-idle.test' });
+    resetReanimatedFrameCallbacks();
+    const bot = createSessionListRenderableSessionFixture({
+      id: 'idle-moon', serverId: server.id, accessLevel: 'owner', active: true, presence: 'online',
+      metadata: { path: '/repo', bot: { kind: 'bot' }, name: 'Helper' }, latestTurnStatus: 'completed',
+    });
+    storage.getState().applyServerScopedSessionListRows(server.id, [bot], { source: 'ordinary', mode: 'replace' });
+    const scene = <InjectedAuthProvider credentials={null}>
+      <HomePlanet pane={pane} intensity="quiet" digits={false} theme="dark"
+        phone={false} hero={null} hidden={false} leave="fade" reducedMotion={false} focused fieldAllowed />
+      <HomeBotMoons planet={horizonPlanetGeometry(pane)} width={pane.width} height={pane.height}
+        phone={false} shown viewport={null} />
+    </InjectedAuthProvider>;
+    const screen = await renderScreen(scene);
+    try {
+      await vi.waitFor(() => expect(nativePictures.count).toBeGreaterThan(0));
+      const moon = screen.findByType(HomeOrbitBotMoon).props;
+      const glyph = screen.findByType(GlyphSurface).props;
+      const paints = nativePictures.count;
+      let callbacks = 0;
+      const requestFrame = globalThis.requestAnimationFrame;
+      vi.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => requestFrame(time => {
+        callbacks += 1;
+        callback(time);
+      }));
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+      expect(callbacks).toBe(0);
+      expect(nativePictures.count).toBe(paints);
+      expect(readReanimatedFrameCallbacks().filter(record => record.handle.isActive)).toEqual([]);
+      expect(screen.findByType(HomeOrbitBotMoon).props).toBe(moon);
+      expect(screen.findByType(GlyphSurface).props).toBe(glyph);
+    } finally {
+      await screen.unmount();
+      if (previousServer) await setActiveServerId(previousServer);
+      await removeServerProfile(server.id);
+    }
   });
 
   it('firstOpen.01.F1.rest redraws only the digits leaf every two seconds and pauses for writing, focus and reduced motion', async () => {

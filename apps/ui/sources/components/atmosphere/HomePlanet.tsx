@@ -91,7 +91,8 @@ export const HomePlanet = React.memo(function HomePlanet(
   const mode = !fieldAllowed || !pane.width ? 'off' : reducedMotion || hidden || focused === false ?
     preference === 'off' ? 'off' : 'still' : preference;
   const { epoch: fieldEpoch, layer: fieldLayer, readDurationS, settle: settleField } = useHomeGlyphField({
-    mode, quiet: props.fieldQuiet, host: props.fieldHost, nativeTap: props.fieldTap, scrollY: props.fieldScrollY,
+    mode, arriving: !hidden && props.arrive === 'instant',
+    quiet: props.fieldQuiet, host: props.fieldHost, nativeTap: props.fieldTap, scrollY: props.fieldScrollY,
   });
   const height = homePlanetDrawnHeight(pane.height, fade);
   const [drawn, setDrawn] = React.useState(false);
