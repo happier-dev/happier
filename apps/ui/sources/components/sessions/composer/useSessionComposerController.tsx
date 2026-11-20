@@ -108,10 +108,6 @@ import { resourceHasAvailableTeamCredentialProviderModel } from "@/components/se
 import { useScmSessionAutoRefresh } from "@/scm/refresh/useScmSessionAutoRefresh";
 import { storage, useIsMachineListSettled, useLocalSetting, useMachine, useServerScopedMachine, useSetting, useSocketStatus, useWorkspaceReviewCommentsDrafts } from "@/sync/domains/state/storage";
 import { useSettingsValues } from "@/sync/store/settingsReadHooks";
-import { useCurrentFavoriteModelSelectionsV1Mutable } from "@/sync/store/hooks";
-import { useAccountSettingsScope } from "@/sync/store/settingsWriters";
-import { buildFavoriteBackendIdentity } from "@/sync/domains/models/favoriteModelBackendIdentity";
-import { rememberFavoriteModelReasoningEffort, toggleFavoriteModelSelection } from "@/sync/domains/models/favoriteModelSelections";
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from "@happier-dev/protocol/providers/catalog/reasoningEffort";
 import { readServerAccountScopeOwnerLifetime, serverAccountScopeKeySuffix } from "@/sync/domains/scope/serverAccountScope";
 import { readMessageDisplayText } from "@happier-dev/session-core/messages";
@@ -300,7 +296,7 @@ import { useProviderBindingStatus } from "@/providers/hooks/useProviderBindingSt
 import { presentSessionProviderBinding } from "@/providers/session/presentation";
 import { useProviderModelProjection } from "@/providers/hooks/useProviderModelProjection";
 import { useConfirmExperimentalProviderModel } from "@/providers/hooks/useConfirmExperimentalProviderModel";
-import { SessionModelPicker } from "@/components/sessions/modelPicker/SessionModelPicker";
+import { ExistingSessionModelPicker } from "@/components/sessions/modelPicker/ExistingSessionModelPicker";
 import { SessionModelNativeSourceLabelContext } from "@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff";
 import { hiddenModelVisibilityKeys, type SessionModelProjectionGroup } from "@/components/sessions/modelPicker/buildSessionModelPickerSections";
 import { isTeamCredentialProviderModelPickerValue, sessionModelSelectionKey, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
@@ -4174,18 +4170,8 @@ export function useSessionComposerController({
         machineId: typeof machineId === 'string' ? machineId : null,
         serverId: sessionRouteServerId,
     }), [machineId, sessionRouteServerId]);
-    const [accountModelFavorites, setAccountModelFavorites] = useCurrentFavoriteModelSelectionsV1Mutable();
-    const accountSettingsScope = useAccountSettingsScope();
-    const sessionFavoritesEnabled = hasWriteAccess && !embedded
-        && areServerAccountScopesEqual(accountSettingsScope, sessionAccountScope);
-    const sessionFavoriteEntries = React.useMemo(
-        () => sessionFavoritesEnabled && modelPickerAgentTargetKey
-            ? projectFavoriteModelEntries(accountModelFavorites, { backendTargetKey: modelPickerAgentTargetKey })
-            : undefined,
-        [accountModelFavorites, modelPickerAgentTargetKey, sessionFavoritesEnabled],
-    );
     const publishFavoriteModelSelection = React.useCallback(async (
-        ref: ProviderBoundModelRef,
+        ref: ProviderBoundModelRef | null,
         effort?: string,
         modelOptionsContext?: SessionModelOptionsContext,
     ) => {
@@ -4193,10 +4179,6 @@ export function useSessionComposerController({
         if (!await publishModelSelection(ref, modelOptionsContext)) return false;
         return effort === undefined || await publishAcpConfigOptionOverride(PROVIDER_REASONING_EFFORT_OPTION_ID, effort);
     }, [publishAcpConfigOptionOverride, publishModelSelection]);
-    const setSessionFavoriteEffort = React.useCallback((ref: ProviderBoundModelRef, effort: string) => {
-        const next = rememberFavoriteModelReasoningEffort(accountModelFavorites, ref, effort);
-        if (next) setAccountModelFavorites(next);
-    }, [accountModelFavorites, setAccountModelFavorites]);
     const existingSessionModelPicker = React.useMemo(() => {
         if (!agentId || !modelPickerAgentTargetKey) return embedded?.allowedModels ? null : undefined;
         return <SessionModelDiscoveryDetail
@@ -4234,8 +4216,18 @@ export function useSessionComposerController({
                     existingSessionNativeModels,
                     existingSessionSelectedModelRef,
                 );
+                const selectModel = (ref: ProviderBoundModelRef | null, effort?: string) => (
+                    publishFavoriteModelSelection(
+                        resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, ref),
+                        effort,
+                        modelOptionsContext,
+                    )
+                );
                 return (
-                    <SessionModelPicker
+                    <ExistingSessionModelPicker
+                        backend={sessionActionDefaultBackendEntry}
+                        sessionAccountScope={sessionAccountScope}
+                        canEditFavorites={hasWriteAccess && !embedded}
                         fillAvailableSpace
                         multiColumn
                         agentTargetKey={modelPickerAgentTargetKey}
@@ -4276,35 +4268,7 @@ export function useSessionComposerController({
                         selectedTeamCredentialModel={selectedTeamCredentialModel}
                         reportedModel={existingSessionReportedModel}
                         canEnterCustomNativeValue={canEnterCustomModel}
-                        favoriteEntries={sessionFavoriteEntries}
-                        onUpdateFavoriteModelReasoningEffort={sessionFavoritesEnabled ? setSessionFavoriteEffort : undefined}
-                        onToggleFavorite={sessionFavoritesEnabled ? (ref, effort) => {
-                            const group = providerGroups.find(candidate => candidate.connectionId === ref.providerConnectionId);
-                            const modelLabel = ref.providerConnectionId
-                                ? group?.rows.find(row => row.ref.modelId === ref.modelId)?.descriptor.name
-                                : existingSessionNativeModels.find(model => model.value === ref.modelId)?.label;
-                            setAccountModelFavorites(toggleFavoriteModelSelection({
-                                favorites: accountModelFavorites,
-                                backend: sessionActionDefaultBackendEntry?.backendTargetKey === ref.agentTargetKey
-                                    ? buildFavoriteBackendIdentity(sessionActionDefaultBackendEntry)
-                                    : { backendTargetKey: ref.agentTargetKey },
-                                modelRef: ref,
-                                modelLabel,
-                                backendLabel: sessionActionDefaultBackendEntry?.title,
-                                providerDisplaySnapshot: group ? {
-                                    providerName: group.providerName,
-                                    connectionName: group.connectionName,
-                                    connectionRole: group.connectionRole,
-                                    connectionDisplayNameMode: group.connectionDisplayNameMode,
-                                } : null,
-                                reasoningEffort: effort,
-                                addedAtMs: Date.now(),
-                            }));
-                        } : undefined}
-                        onSelectFavoriteModel={sessionFavoritesEnabled && canSelectModel ? (ref, effort) => {
-                            const canonicalRef = resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, ref);
-                            return publishFavoriteModelSelection(canonicalRef, effort, modelOptionsContext);
-                        } : undefined}
+                        onSelectFavoriteModel={canSelectModel ? selectModel : undefined}
                         // Model options (Thinking, effort) are Session settings, not the model grant.
                         selectedOptionControls={hasWriteAccess ? existingSessionSelectedModelOptionControls ?? undefined : undefined}
                         onSelectOptionControlValue={updateAcpConfigOptionOverride}
@@ -4317,11 +4281,7 @@ export function useSessionComposerController({
                                 : { phase: 'idle', onRefresh: () => { void providerModelProjection.refresh(); } }
                             : undefined])}
                         experimentalConfirmation={confirmExperimentalProviderModel}
-                        onSelect={(ref) => {
-                            hapticsLight();
-                            const canonicalRef = resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, ref);
-                            void publishModelSelection(canonicalRef, modelOptionsContext);
-                        }}
+                        onSelect={selectModel}
                         onSelectTeamCredentialModel={(selection) => {
                             hapticsLight();
                             void publishTeamCredentialModelSelection(selection);
@@ -4360,7 +4320,6 @@ export function useSessionComposerController({
         router,
         sessionRouteServerId,
         publishTeamCredentialModelSelection,
-        publishModelSelection,
         teamCredentialCatalog.probe, teamCredentialCatalog.resourceStatusByKey,
         teamCredentialCatalog.homeNameByTeamId,
         teamCredentialCatalog.displayNames, teamCredentialCatalog.resources,
@@ -4371,14 +4330,9 @@ export function useSessionComposerController({
         composerOptionsInput,
         hasWriteAccess,
         existingSessionModelOptionOverrides,
-        accountModelFavorites,
         canSelectModel,
         publishFavoriteModelSelection,
         sessionActionDefaultBackendEntry,
-        sessionFavoriteEntries,
-        sessionFavoritesEnabled,
-        setAccountModelFavorites,
-        setSessionFavoriteEffort,
     ]);
 
     const [directoryRecovery, setDirectoryRecovery] = React.useState<Readonly<{
@@ -4718,11 +4672,13 @@ export function useSessionComposerController({
     // opens, each switched to exactly as the model picker's row does.
     const readModelFavorites = (): readonly SessionComposerModelFavorite[] => {
         if (!canSelectModel || !modelPickerAgentTargetKey) return [];
+        const { settings, settingsScope } = storage.getState();
+        if (!areServerAccountScopesEqual(settingsScope, sessionAccountScope)) return [];
         const selected = existingSessionSelectedModelRef
             ? sessionModelSelectionKey(resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, existingSessionSelectedModelRef))
             : null;
         return projectFavoriteModelEntries(
-            storage.getState().settings.currentFavoriteModelSelectionsV1 ?? [],
+            settings.currentFavoriteModelSelectionsV1 ?? [],
             { backendTargetKey: modelPickerAgentTargetKey },
         ).map(entry => ({
             key: entry.key,
@@ -4730,7 +4686,10 @@ export function useSessionComposerController({
             ...(entry.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
             sourceLabel: entry.sourceLabel,
             current: entry.key === selected,
-            apply: () => publishModelSelection(resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, entry.ref)),
+            apply: () => publishFavoriteModelSelection(
+                resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, entry.ref),
+                entry.reasoningEffort,
+            ),
         }));
     };
     const requestComposerActionChipOpen = (chipKey: string, anchorRef?: React.RefObject<View | null>): boolean => {

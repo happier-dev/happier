@@ -21,10 +21,8 @@ import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new
 import { resolveNewSessionOperationalBackendTarget, withNewSessionConfigOptionOverrides } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
-import {
-    getFavoriteModelRef,
-    type FavoriteModelSelectionV1,
-} from '@/sync/domains/models/favoriteModelSelections';
+import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
+import { projectFavoriteModelEntries } from '@/components/sessions/modelPicker/favoriteModelEntries';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import {
     findModelOptionForEffectiveModelId,
@@ -38,8 +36,9 @@ import {
     type SessionModelPickerProps,
     type SessionModelPickerExperimentalConfirmationController,
 } from '@/components/sessions/modelPicker/SessionModelPicker';
+import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import { hiddenModelVisibilityKeys, resolveSessionModelSourceDescriptor } from '@/components/sessions/modelPicker/buildSessionModelPickerSections';
-import { sessionModelSelectionKey, sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
+import { sessionModelSelectionKey, sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue, type SessionModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { OPTION_PICKER_HEADER_ACTION_METRICS } from '@/components/sessions/pickers/OptionPickerOverlay';
@@ -445,14 +444,10 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         providersFeatureEnabled,
     ]);
 
-    const favoritesByKey = React.useMemo(() => new Map(
-        (props.favoriteModelSelections ?? [])
-            .flatMap((favorite) => {
-                const ref = getFavoriteModelRef(favorite);
-                return ref.agentTargetKey === agentTargetKey ? [[sessionModelSelectionKey(ref), favorite.reasoningEffort] as const] : [];
-            }),
-    ), [agentTargetKey, props.favoriteModelSelections]);
-    const providerFavoriteKeys = React.useMemo(() => new Set(favoritesByKey.keys()), [favoritesByKey]);
+    const favoriteEntries = React.useMemo(
+        () => projectFavoriteModelEntries(props.favoriteModelSelections ?? [], favoriteBackendIdentity),
+        [favoriteBackendIdentity, props.favoriteModelSelections],
+    );
     const providerGroups = providersFeatureEnabled ? (providerProjection.data?.groups ?? []) : [];
     const providerSourceBrowse = React.useMemo(() => ({
         machineId: props.selectedMachineId,
@@ -470,6 +465,33 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         />
     ) : undefined;
     const modelAttribution = managedModelSelected ? inheritedModel?.label ?? null : null;
+    const selectModel = (ref: SessionModelPickerValue, savedEffort?: string) => {
+        props.teamModels?.onSelectOtherModel();
+        const selectedId = ref?.modelId ?? 'default';
+        const modelId = ref?.providerConnectionId
+            ? selectedId
+            : resolveCanonicalModelOptionId(modelOptions, selectedId);
+        const canonicalRef = ref && modelId !== ref.modelId
+            ? { ...ref, modelId }
+            : ref;
+        const sourceDescriptor = resolveSessionModelSourceDescriptor({
+            selected: canonicalRef, providerGroups,
+            teamCredentialResources: props.teamModels?.teamCredentialResources,
+        });
+        const overrides = selectionRef.current.configOverrides;
+        const configOverrides = sanitizeConfigOverridesForModel(
+            modelId,
+            savedEffort === undefined ? overrides : { ...overrides, [PROVIDER_REASONING_EFFORT_OPTION_ID]: savedEffort },
+            canonicalRef?.providerConnectionId ? sourceDescriptor?.modelOptions ?? [] : undefined,
+        );
+        publishSelection({
+            ...selectionRef.current,
+            modelId,
+            modelSelection: canonicalRef ? { v: 1, updatedAt: Date.now(), ref: canonicalRef } : null,
+            configOverrides,
+        });
+        return true;
+    };
     const providerPicker = (
         <SessionModelPicker
             fillAvailableSpace
@@ -498,8 +520,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
             notes={modelNotes}
             probe={unifiedProbe}
             headerAccessory={modelHeaderAccessory}
-            favoriteKeys={props.onToggleFavoriteModel ? providerFavoriteKeys : undefined}
-            favoriteReasoningEffortByKey={favoritesByKey}
+            favoriteEntries={favoriteEntries}
             onUpdateFavoriteModelReasoningEffort={props.onUpdateFavoriteModelReasoningEffort}
             selectedOptionControls={selectedModelOptionControls ?? undefined}
             modelOptionOverrides={selectedConfigOverrides}
@@ -535,28 +556,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                     } : {}),
                 });
             } : undefined}
-            onSelect={(ref) => {
-                props.teamModels?.onSelectOtherModel();
-                const selectedId = ref?.modelId ?? 'default';
-                const modelId = ref?.providerConnectionId
-                    ? selectedId
-                    : resolveCanonicalModelOptionId(modelOptions, selectedId);
-                const canonicalRef = ref && modelId !== ref.modelId
-                    ? { ...ref, modelId }
-                    : ref;
-                const sourceDescriptor = resolveSessionModelSourceDescriptor({
-                    selected: canonicalRef, providerGroups,
-                    teamCredentialResources: props.teamModels?.teamCredentialResources,
-                });
-                const configOverrides = sanitizeConfigOverridesForModel(modelId, selectionRef.current.configOverrides,
-                    canonicalRef?.providerConnectionId ? sourceDescriptor?.modelOptions ?? [] : undefined);
-                publishSelection({
-                    ...selectionRef.current,
-                    modelId,
-                    modelSelection: canonicalRef ? { v: 1, updatedAt: Date.now(), ref: canonicalRef } : null,
-                    configOverrides,
-                });
-            }}
+            onSelect={selectModel}
+            onSelectFavoriteModel={favoriteEntries.length > 0 ? selectModel : undefined}
         />
     );
 

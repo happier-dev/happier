@@ -3378,10 +3378,17 @@ listed MiniMax models in both regions, and the listed Z.AI Coding Plan
 models. DeepSeek Flash remains a separate route because its moving alias does
 not establish equivalence to another catalog's pinned model.
 
-New Session favorites use the existing Account preference. Starring a model can
-save its current Thinking level and restore it when the route still supports
-it. Changing Thinking changes the session. Updating the favorite saves the
-new level to the Account. Favorites saved without Thinking still select the model.
+The New Session and existing Session Agent pickers share the Account preference.
+Starring a concrete model saves its current Thinking level through
+`models.favorite.set`. Changing Thinking changes the Session. Updating the
+favorite saves the new level to the Account.
+
+On web and desktop, Command or Control plus 1–9 selects a favorite for the
+displayed Agent in saved order and closes the picker after applying it.
+New Session passes the exact model and supported Thinking override to
+`session.draft.agent.set`. An existing Session applies the model through
+`session.model.set` and any saved Thinking level through
+`session.config_option.set`. Favorites saved without Thinking still select the model.
 
 The merger preserves provenance. A model that disappears from a current probe leaves normal picker results but remains renderable when referenced by a favorite, draft, or historical session. Missing definitions and tombstoned connections produce explicit stale states and actionable errors; they never trigger a native fallback.
 
