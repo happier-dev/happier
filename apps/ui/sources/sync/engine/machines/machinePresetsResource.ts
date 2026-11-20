@@ -49,17 +49,12 @@ function notify(serverId: string) {
     for (const listener of listeners.get(serverId) ?? []) listener();
 }
 
-function publish(serverId: string, entry: Entry, next: Snapshot) {
-    const retained = retainShallow(entry.snapshot, next);
-    if (retained === entry.snapshot) return;
-    entry.snapshot = retained;
-    notify(serverId);
-}
-
-function publishRevisions(serverId: string, entry: Entry, next: RevisionSnapshot) {
-    const retained = retainShallow(entry.revisions, next);
-    if (retained === entry.revisions) return;
-    entry.revisions = retained;
+function publish(serverId: string, entry: Entry, next: Snapshot | undefined, nextRevisions: RevisionSnapshot) {
+    const snapshot = next ? retainShallow(entry.snapshot, next) : entry.snapshot;
+    const revisions = retainShallow(entry.revisions, nextRevisions);
+    if (snapshot === entry.snapshot && revisions === entry.revisions) return;
+    entry.snapshot = snapshot;
+    entry.revisions = revisions;
     notify(serverId);
 }
 
@@ -69,9 +64,10 @@ function load(serverId: string, entry: Entry) {
     const read: PendingRead = { controller: new AbortController(), awaitingApproval: false, content };
     entry.read = read;
     entry.stale = false;
-    if (entry.snapshot.approval) {
+    if (entry.snapshot.approval || entry.revisions.approval) {
         const { approval: _approval, ...settled } = entry.snapshot;
-        publish(serverId, entry, settled);
+        const { approval: _revisionApproval, ...settledRevisions } = entry.revisions;
+        publish(serverId, entry, settled, settledRevisions);
     }
     const current = () => !read.controller.signal.aborted && entry.lifetime.isCurrent() && entry.read === read;
     const client = createMachinePresetCollectionClient(entry.lifetime.scope, entry.homeId);
@@ -81,8 +77,7 @@ function load(serverId: string, entry: Entry) {
         onApprovalPending: (approval: ActionApprovalRegistration) => {
             if (!current()) return;
             read.awaitingApproval = true;
-            publish(serverId, entry, { ...entry.snapshot, approval });
-            publishRevisions(serverId, entry, { ...entry.revisions, approval });
+            publish(serverId, entry, { ...entry.snapshot, approval }, { ...entry.revisions, approval });
             for (const consumer of entry.consumers) consumer.onApprovalPending?.(approval);
         },
         onApprovalSettled: () => { read.awaitingApproval = false; },
@@ -108,16 +103,14 @@ function load(serverId: string, entry: Entry) {
         entry.read = null;
         const error = result.kind === 'failed' ? result.code : null;
         const lost = result.kind === 'failed' && isMachinePresetAccessLost(result.code);
-        if (content) {
-            entry.contentStale = result.kind === 'failed';
-            publish(serverId, entry, {
-                value: result.kind === 'succeeded' ? retainKeyedRows(entry.snapshot.value,
-                    result.value.filter((preset): preset is ManagedMachinePresetListEntryV1 => 'contentEncryptionMode' in preset), preset => preset.id)
-                    : lost ? null : entry.snapshot.value,
-                loading: false, error,
-            });
-        } else if (lost) publish(serverId, entry, { value: null, loading: false, error });
-        publishRevisions(serverId, entry, {
+        if (content) entry.contentStale = result.kind === 'failed';
+        const next = content || lost ? {
+            value: result.kind === 'succeeded' ? retainKeyedRows(entry.snapshot.value,
+                result.value.filter((preset): preset is ManagedMachinePresetListEntryV1 => 'contentEncryptionMode' in preset), preset => preset.id)
+                : lost ? null : entry.snapshot.value,
+            loading: false, error,
+        } : undefined;
+        publish(serverId, entry, next, {
             value: result.kind === 'succeeded' ? retainDeep(entry.revisions.value ?? undefined, Object.fromEntries(
                 result.value.flatMap(preset => preset.setupRevision === undefined ? [] : [[preset.id, {
                     id: preset.id, homeId: preset.homeId, revision: preset.revision, setupRevision: preset.setupRevision,
@@ -129,8 +122,8 @@ function load(serverId: string, entry: Entry) {
     }).catch(() => {
         if (!current()) return;
         entry.read = null;
-        publish(serverId, entry, { value: entry.snapshot.value, loading: false, error: 'request_failed' });
-        publishRevisions(serverId, entry, { value: entry.revisions.value, loading: false, error: 'request_failed' });
+        publish(serverId, entry, { value: entry.snapshot.value, loading: false, error: 'request_failed' },
+            { value: entry.revisions.value, loading: false, error: 'request_failed' });
     }).finally(() => {
         if (entry.read === read) entry.read = null;
     });

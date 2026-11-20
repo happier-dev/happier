@@ -80,6 +80,44 @@ describe('preset collection and history through Actions', () => {
             expect.objectContaining({ sharedWithTeamId: 'selected-team', cursor: 'next-page' }),
         ]);
     });
+    it('publishes a changed preset copy and its setup revision together once', async () => {
+        const homeId = 'srv_history';
+        const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const original = createPlainManagedMachinePresetFixture({ ...preset, setupRevision: 1 });
+        const unrelated = createPlainManagedMachinePresetFixture({ ...preset, id: 'other-preset', setupRevision: 1 });
+        const answer = (row: typeof original) => harness.answer(serverId, '/v1/machines/presets/list', {
+            body: { kind: 'listed', presets: [row, unrelated] },
+        });
+        answer(original);
+        await renderHook(() => useMachinePresets([serverId]));
+        const { readMachinePresetsSnapshot, readMachinePresetRevisionsSnapshot, subscribeMachinePresets } =
+            await import('@/sync/engine/machines/machinePresetsResource');
+        const readContent = () => readMachinePresetsSnapshot(serverId, homeId).value;
+        const readRevisions = () => readMachinePresetRevisionsSnapshot(serverId, homeId).value;
+        await waitForHomeGovernance(() => expect(readRevisions()?.preset?.setupRevision).toBe(1));
+        const retainedCopy = readContent()?.find(row => row.id === unrelated.opened.id);
+        const retainedRevision = readRevisions()?.[unrelated.opened.id];
+        const frames: Array<{ content: number | undefined; setupRevision: number | undefined }> = [];
+        const release = subscribeMachinePresets([serverId], () => frames.push({
+            content: readContent()?.find(row => row.id === preset.id)?.setupRevision,
+            setupRevision: readRevisions()?.preset?.setupRevision,
+        }));
+        const push = () => act(async () => publishHomeAccountChange(serverId, [MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1],
+            { feedPageConsumed: true, changeKinds: ['account'] }));
+        try {
+            answer(createPlainManagedMachinePresetFixture({ ...preset, revision: 4, setupRevision: 2 }));
+            await push();
+            await waitForHomeGovernance(() => expect(readRevisions()?.preset?.setupRevision).toBe(2));
+            expect(frames).toEqual([{ content: 2, setupRevision: 2 }]);
+            expect(readContent()?.find(row => row.id === unrelated.opened.id)).toBe(retainedCopy);
+            expect(readRevisions()?.[unrelated.opened.id]).toBe(retainedRevision);
+            await push();
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(3));
+            await flushHookEffects();
+            expect(frames).toHaveLength(1);
+        } finally { release(); }
+    });
     it('shares one preset list across concurrent and repeated Store, Software and Add-to-preset visits', async () => {
         const serverId = await addPresetHome({ name: 'History', serverUrl: 'https://history.example',
             serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
