@@ -194,7 +194,7 @@ describe('qualified usage day summaries', () => {
                 expect(queries[0]!.sql.split('FROM')[0]).not.toContain('payload');
                 const plan = await tx.$queryRaw<Array<{ detail: string }>>(prismaRuntime.sql`EXPLAIN QUERY PLAN ${queries[0]!}`);
                 expect(plan.some(row => row.detail.includes('INDEX pauds_day_idx'))).toBe(true);
-                expect(plan.some(row => row.detail.includes('SEARCH h USING COVERING INDEX pauh_record_time_idx'))).toBe(true);
+                expect(plan.some(row => /^SEARCH h (?:EXISTS )?USING COVERING INDEX pauh_record_time_idx \(/.test(row.detail))).toBe(true);
                 const measuredSql = queries[0]!.sql.replace('AND EXISTS', 'AND summary_candidate_probe() AND EXISTS');
                 const bindings = queries[0]!.values.map(value => {
                     if (value === null || typeof value === 'string' || typeof value === 'number') return value;
