@@ -19,6 +19,11 @@ export function resolveManagedAsleepWake(input: Readonly<{
     return kind === 'waitsForController' ? { kind, controller: input.controllerName } : { kind };
 }
 
+/** The Home's projected rule on a Machine row (no managed record): its controller stays private, so it goes unnamed. */
+export function readProjectedManagedAsleepWake(kind: ManagedAsleepWakeV1): ManagedAsleepWake {
+    return kind === 'waitsForController' ? { kind, controller: null } : { kind };
+}
+
 /** Held managed input recovers through its existing activation Action, not a second immediate send. */
 export function isManagedPendingInputAwaitingWake(
     pending: Pick<PendingMessage, 'localId' | 'source' | 'pendingDeliveryStatus' | 'pendingActivationHoldReason'>,

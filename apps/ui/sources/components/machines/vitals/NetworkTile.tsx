@@ -25,6 +25,7 @@ import {
   VitalsSubLine,
   VitalsTile,
   VitalsValue,
+  useVitalsHeld,
 } from './VitalsSheet';
 import {
   formatVitalsPointTime,
@@ -52,6 +53,8 @@ export const NetworkTile = React.memo(function NetworkTile(
   const { theme } = useUnistyles();
   const network = props.sample.network.reported ? props.sample.network : null;
   const accent = usageSignatureAccent(theme);
+  // A machine that isn't running moves nothing: its last rate would read as now, so it says none (its hour stays).
+  const held = useVitalsHeld();
   const chart = React.useMemo(() => {
     if (!props.timeline) return null;
     const domain = resolveNetworkDomain(props.timeline.points);
@@ -108,7 +111,7 @@ export const NetworkTile = React.memo(function NetworkTile(
     timeline: props.timeline, metric: 'rxBps' });
   const upReading = selectMachineVitalsReading({ value: network.txBps, sampledAt: props.sample.sampledAt,
     timeline: props.timeline, metric: 'txBps' });
-  const down = downReading ? formatVitalsRateParts(downReading.value) : null;
+  const down = downReading && !held ? formatVitalsRateParts(downReading.value) : null;
   const heldAt = Math.min(...[downReading, upReading].flatMap(reading => reading?.held ? [reading.sampledAt] : []));
   const interfaces = (network.interfaces ?? []).filter(
     (entry) => entry.included,
@@ -142,14 +145,14 @@ export const NetworkTile = React.memo(function NetworkTile(
     .join(' · ');
   const value = (
     <VitalsValue
-      leading={
+      leading={held ? undefined : (
         <Icon
           name="arrow-down"
           size={ICON_SIZE.sm}
           color={theme.colors.text.tertiary}
           style={styles.arrow}
         />
-      }
+      )}
       value={down ? down.value : t('machineVitals.unmeasured')}
       unit={
         down
@@ -163,7 +166,7 @@ export const NetworkTile = React.memo(function NetworkTile(
       testID="machine-vitals-network"
       label={t('machineVitals.network.title')}
       meta={
-        upReading ? (
+        upReading && !held ? (
           <VitalsMeta
             leading={
               <Icon

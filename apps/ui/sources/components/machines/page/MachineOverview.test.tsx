@@ -210,3 +210,34 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     // machine last reported follows the work, as last-known detail (lab m-life W 1).
     expect(vitalsOrder()).toEqual(['work', 'vitals']);
 });
+
+it('says what wakes a created machine that is asleep when this Account cannot read its managed record', async () => {
+    const homeId = await home.addHome({ name: 'Wake Home', serverUrl: 'https://overview-wake.test', accountId: 'owner' });
+    accountConnection = await restoreServerAccountForTest({ serverUrl: 'https://overview-wake.test', accountId: 'owner', request: home.request });
+    const serverId = accountConnection.serverId;
+    const machine = createMachineFixture({ id: 'wake-machine', active: false, storageMode: 'plain',
+        managedMachineRef: { homeId, managedId: 'managed-elsewhere' },
+        managedInputRuntime: { nativeReady: false, wakeState: 'asleep', state: 'asleep', asleepWake: 'onSend' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine]);
+    const authority = await renderHook(() => useManagedEnrolledMachine({ enrolledMachineId: machine.id, serverId }));
+    const state = (status: 'loading' | 'ready') => ({
+        target: { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine,
+            machineName: 'Lima', machineSentenceName: 'Lima', isServerSwitching: false, isHydratingMachine: false, switchReady: true },
+        managedEnrolled: { ...authority.getCurrent(), machine: undefined, entry: { accountId: 'owner', machines: [], status } },
+        refreshKey: 0, reload: async () => {},
+    } satisfies MachinePageState);
+    const frame = (value: MachinePageState) => (
+        <AuthProvider initialCredentials={{ token: `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` }}>
+            <ModalProvider><MachinePageStateContext.Provider value={value}>
+                <MachineOverview serverId={serverId} machineId={machine.id} machineName="Lima" online={false}
+                    params={{ id: 'overview' }} setParams={() => {}} />
+            </MachinePageStateContext.Provider></ModalProvider>
+        </AuthProvider>
+    );
+    // While the managed record is still being read, nothing claims a wake rule that record may say differently.
+    const screen = await renderScreen(frame(state('loading')));
+    expect(screen.getTextContent()).not.toContain(t('managedPower.asleepWakesOnSend'));
+    // The picker says it starts when you send; the detail says the same rule, from the Home's projected wake.
+    await screen.update(frame(state('ready')));
+    expect(screen.getTextContent()).toContain(t('managedPower.asleepWakesOnSend'));
+});

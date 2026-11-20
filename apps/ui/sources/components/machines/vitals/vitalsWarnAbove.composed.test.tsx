@@ -44,6 +44,7 @@ const { DiskTile } = await import('./DiskTile');
 const { MemoryTile } = await import('./MemoryTile');
 const { VitalsHistoryChart } = await import('./VitalsHistoryChart');
 const { VitalsMeterRow } = await import('./VitalsMeterRow');
+const { MachinePressureIndicator } = await import('@/components/machines/summary/MachinePressureIndicator');
 const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { ScrubLens } =
   await import('@/components/settings/usage/UsageScrubLens');
@@ -541,4 +542,28 @@ describe('retained vitals readings', () => {
       ).toBe('Open files 46,688 · no limit, Terminals 5 of 4,096');
     },
   );
+});
+
+describe('held vitals of a machine that is not running', () => {
+  const now = Date.now();
+  const timeline = buildMachineVitalsTimeline({ range: '1h', history: null, samples: [sample(now - 60_000), sample(now)] });
+  const chart = { timeline, axis: ['1 h ago', 'now'] as const, freshness: 'offline' as const, live: false };
+  const tiles = (held: boolean) => (
+    <VitalsSheet held={held}>
+      <MemoryTile sample={sample(now)} attention={null} {...chart} nowMs={now} />
+      <NetworkTile sample={sample(now)} today={null} {...chart} />
+    </VitalsSheet>
+  );
+
+  it('says no transfer rate and no memory pressure word, which only a running machine has', async () => {
+    const live = await renderScreen(tiles(false));
+    expect(live.getTextContent()).toContain('machineVitals.network.perSecondUnit');
+    expect(live.findAllByType(MachinePressureIndicator)).not.toHaveLength(0);
+    standardCleanup();
+    const held = await renderScreen(tiles(true));
+    expect(held.getTextContent()).not.toContain('machineVitals.network.perSecondUnit');
+    expect(held.findAllByType(MachinePressureIndicator)).toHaveLength(0);
+    // History stays: the hour it reported is still its own.
+    expect(held.findAllByType(VitalsHistoryChart)).toHaveLength(2);
+  });
 });

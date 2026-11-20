@@ -163,8 +163,9 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
         if (input.online) facts.push({ key: 'uptime', testID: 'machine-detail-uptime', text: describeMachineUptime(input.hostFacts.bootedAt, input.nowMs ?? Date.now()) });
     }
     const host = machine.metadata?.host;
-    // Managed identity has provider/native facts; the raw host remains in the machine's technical details.
-    if (input.managedMeta === undefined && host && machine.metadata?.displayName && host !== machine.metadata.displayName) facts.push({ key: 'host', text: host });
+    // Managed identity has provider/native facts; the raw host remains in the machine's technical details. A guest
+    // Happier created keeps its generated host there too when this Account can't read its managed record.
+    if (input.managedMeta === undefined && !machine.managedMachineRef && host && machine.metadata?.displayName && host !== machine.metadata.displayName) facts.push({ key: 'host', text: host });
     if (input.encryptionMode) {
         facts.push(input.encryptionMode === 'e2ee'
             ? { key: 'encryption', icon: 'lock', text: t('settingsAccount.endToEndEncrypted'), testID: 'machine-detail-encryption' }

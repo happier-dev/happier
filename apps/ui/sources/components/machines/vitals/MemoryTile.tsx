@@ -40,6 +40,7 @@ import {
   VitalsTile,
   VitalsTileSecondary,
   VitalsValue,
+  useVitalsHeld,
 } from './VitalsSheet';
 import {
   formatVitalsPercent,
@@ -90,7 +91,9 @@ export const MemoryTile = React.memo(function MemoryTile(
   const reason = selectMemoryReason(props.attention);
   const tone = resolveMemoryTone(props.attention);
   const noPressure = memory?.pressure.level === 'not_reported';
-  const pressured = reason !== null;
+  // Pressure is a running machine's present; held figures keep only what it had free (VitalsSheet `held`).
+  const held = useVitalsHeld();
+  const pressured = reason !== null && !held;
   const accent = usageSignatureAccent(theme);
   const levelInk = React.useCallback(
     (level: string) =>
@@ -261,6 +264,7 @@ export const MemoryTile = React.memo(function MemoryTile(
       testID="machine-vitals-memory"
       label={t('machineVitals.memory.title')}
       labelAccessory={
+        !held &&
         !pressured &&
         !noPressure &&
         memory.pressure.level !== 'not_reported' ? (

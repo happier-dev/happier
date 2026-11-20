@@ -11,6 +11,10 @@ import { describeMachineRuntimePresence, projectMachineManagedPresence } from '@
 import { resolveManagedInstallationRecovery } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { splitHappierBannerPoint } from '@happier-dev/plugin-ui/presentation';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { Icon } from '@/components/ui/icons/Icon';
+import { ManagedMachineStateRow, type ManagedLifecycleHandlers } from '@/components/settings/machines/managed/ManagedMachineStateRow';
+import { readProjectedManagedAsleepWake } from '@/sync/domains/pending/managedWakeProjection';
 import { CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -92,6 +96,10 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
     // Happier went quiet) is explained by its own state row ("Asleep · your next message or run starts it", lab m-life
     // W 1), so that leads and what it last reported follows the work, as last-known detail.
     const vitalsLead = props.online === false && !offlineExplained;
+    // A created machine whose managed record this Account can't read (once that read settles) still says what wakes it,
+    // with the same line the record's state row uses, from the Home's projected rule; the picker says it the same way.
+    const projectedWake = managedMachine === undefined && managedEnrolled.entry !== undefined
+        && managedEnrolled.entry.status !== 'loading' ? machine.managedInputRuntime?.asleepWake : undefined;
     return (
         // The vitals banner says once that the machine is offline; the sections below inherit it, never repeat it.
         <CheckoutReachabilityScope scope={reachabilityScope}>
@@ -108,6 +116,13 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
                 />
             ) : null}
             {vitalsLead ? vitals : null}
+            {projectedWake ? (
+                <ItemGroup>
+                    <ManagedMachineStateRow name={props.machineName} mark={<Icon name="desktop" />} leadWithLine
+                        state={{ kind: 'stoppedStorage', wake: readProjectedManagedAsleepWake(projectedWake) }}
+                        handlers={NO_HANDLERS} testID="machine-detail-asleep-wake" />
+                </ItemGroup>
+            ) : null}
 
             {/* A machine Happier created explains itself first (lab m-detail): Keep it, Managed from and
                 what it was made with, beside its receipt, before the sections every machine has. */}
@@ -148,3 +163,6 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
         </CheckoutReachabilityScope>
     );
 }
+
+/** Without its managed record this Account holds no power action; the row only says what wakes the machine. */
+const NO_HANDLERS: ManagedLifecycleHandlers = {};

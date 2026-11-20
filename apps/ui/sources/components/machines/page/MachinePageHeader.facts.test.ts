@@ -34,6 +34,9 @@ describe('machine page header facts', () => {
     const input = { machine, online: true, encryptionMode: null, replacedByMachineLabel: null } as const;
     expect(composeMachinePageHeaderFacts({ ...input, managedMeta: [] }).map(fact => fact.key)).not.toContain('host');
     expect(composeMachinePageHeaderFacts({ ...input, managedMeta: undefined })).toContainEqual({ key: 'host', text: 'lima-generated-host' });
+    // A guest Happier created whose managed record this Account cannot read still has a generated host, never a name.
+    const created = { ...machine, managedMachineRef: { homeId: 'home', managedId: 'managed' } };
+    expect(composeMachinePageHeaderFacts({ ...input, machine: created, managedMeta: undefined }).map(fact => fact.key)).not.toContain('host');
   });
   it('leads a created machine\'s facts with its power word, once, before its kind (lab m-detail)', () => {
     const facts = composeMachinePageHeaderFacts({ machine: createMachineFixture(), online: false, managedPowerWord: 'Asleep',
