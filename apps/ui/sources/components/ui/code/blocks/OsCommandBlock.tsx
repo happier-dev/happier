@@ -1,10 +1,9 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 
 import { SegmentedTabBar, type SegmentedTab } from '@/components/ui/navigation/SegmentedTabBar';
-import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
@@ -76,12 +75,15 @@ export const OsCommandBlock = React.memo(function OsCommandBlock(props: Readonly
                     // The command line is an Element: glass where it stands on an atmosphere (the welcome planet), its
                     // solid paint elsewhere; its Copy takes that material's inner fill.
                     <GlassSurface surfaceGroup="card" nested finishRole={null} style={styles.lineRow}>
-                        <Text style={styles.linePrompt} accessibilityElementsHidden importantForAccessibility="no">
-                            {lineOs === 'windows' ? '>' : '$'}
-                        </Text>
-                        {/* One line that gives up its middle, so the command's start and its flags stay readable. */}
-                        <View style={styles.lineCodeSlot}>
-                            <MiddleEllipsisText testID={`${props.testID}.code`} value={lineCommand} style={styles.lineCode} />
+                        {/* The prompt stands on the command's first line; the command takes up to three lines that break
+                            anywhere, so it and its flags stay readable (a path-aware middle cut drops its start). */}
+                        <View style={styles.lineCommandRow}>
+                            <Text style={styles.linePrompt} accessibilityElementsHidden importantForAccessibility="no">
+                                {lineOs === 'windows' ? '>' : '$'}
+                            </Text>
+                            <Text testID={`${props.testID}.code`} style={[styles.lineCode, styles.lineCodeSlot]} numberOfLines={3} ellipsizeMode="tail" selectable>
+                                {lineCommand}
+                            </Text>
                         </View>
                         <CopyIconButton testID={`${props.testID}.copy`} text={lineCommand} />
                     </GlassSurface>
@@ -151,9 +153,19 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.mono(),
         color: theme.colors.text.tertiary,
     },
+    lineCommandRow: {
+        flex: 1,
+        minWidth: 0,
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        gap: theme.space.s10,
+        paddingVertical: theme.space.s8,
+    },
     lineCodeSlot: {
         flex: 1,
         minWidth: 0,
+        // A command breaks anywhere, like a terminal, so a long address never pushes its flags off the line.
+        ...(Platform.OS === 'web' ? { wordBreak: 'break-all' as const } : {}),
     },
     lineCode: {
         ...Typography.variant('label'),
