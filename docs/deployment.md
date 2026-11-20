@@ -537,13 +537,15 @@ Vercel's project names the rebuild as its current Production target, the exact
 deployment response can confirm alias assignment while the project's alias fields lag.
 [Vercel promotion guide](https://vercel.com/docs/deployments/promoting-a-deployment)
 
-Cloudflare Workers observations report a `workers.dev` URL only when the script's
-subdomain is enabled, using the account's actual subdomain. An explicitly disabled
-route records an empty URL list; an unavailable address read leaves addresses
-unknown without changing proven deployment success. Happier does not enable the
-route implicitly. A serving platform receipt with no provider URL leads to the
-Environment's Domains page. Platform receipts use platform outcome copy and do
-not show Machine execution or Docker image-retention facts.
+Cloudflare **Create new** enables the Worker's public `workers.dev` route when it
+creates the script and leaves preview URLs disabled. **Use existing** observes and
+preserves the existing route configuration. Worker observations report a URL only
+when the provider confirms that the route is enabled. They use the account's actual
+subdomain. An explicitly disabled route records an empty URL list. An unavailable
+address read leaves addresses unknown without changing proven deployment success.
+A serving platform receipt with no provider URL leads to the Environment's Domains
+page. Platform receipts use platform outcome copy and omit Machine execution and
+Docker image-retention facts.
 
 Platform deployment targets expose their declared Git integration and Upload methods through the shared target chooser. The selected method goes to inspection and the existing `deployments.deploy` intent; choosing Upload does not grant provider Git access or permit arbitrary local-folder publishing. Both methods retain the repository Source and reviewed immutable commit. Vercel uploads source for a remote provider build. Cloudflare Workers and Pages prepare output on the controller through their shared pinned container/toolchain owner, without attaching the platform's variable bindings to local Exec.
 
