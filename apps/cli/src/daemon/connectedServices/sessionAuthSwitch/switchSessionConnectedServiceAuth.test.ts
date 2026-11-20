@@ -18,6 +18,7 @@ import {
   type ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
 import { CODEX_PLUGIN } from '@happier-dev/plugins-codex/manifest';
+import { SessionConnectedServiceAuthSwitchReceiptSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { TrackedSession } from '@/daemon/types';
@@ -3090,7 +3091,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       throw new Error('runtime target registration rejected');
     });
 
-    await expect(switchSessionConnectedServiceAuth({
+    const result = await switchSessionConnectedServiceAuth({
       core: createCore(),
       postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
       getChildren: () => [tracked],
@@ -3113,7 +3114,8 @@ describe('switchSessionConnectedServiceAuth', () => {
         agentId: 'claude',
         bindings: bindings('new-profile'),
       },
-    })).resolves.toMatchObject({
+    });
+    expect(result).toMatchObject({
       ok: false,
       errorCode: 'partial_applied_pending_reconciliation',
       diagnostics: {
@@ -3130,6 +3132,11 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
     expect(persistSessionBindings).toHaveBeenCalledTimes(1);
     expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('new-profile'));
+    expect(SessionConnectedServiceAuthSwitchReceiptSchema.parse(result)).toMatchObject({
+      ok: false,
+      errorCode: 'partial_applied_pending_reconciliation',
+      diagnostics: { application: { status: 'partial_applied_pending_reconciliation' } },
+    });
   });
 
    it('does not hot-apply live runtime auth when metadata persistence fails', async () => {
@@ -3275,7 +3282,8 @@ describe('switchSessionConnectedServiceAuth', () => {
       },
     };
 
-    await expect(switchSessionConnectedServiceAuth(input)).resolves.toEqual({
+    const result = await switchSessionConnectedServiceAuth(input);
+    expect(result).toEqual({
       ok: false,
       errorCode: 'hot_apply_succeeded_but_recovery_failed',
       diagnostics: {
@@ -3291,6 +3299,11 @@ describe('switchSessionConnectedServiceAuth', () => {
 
     expect(persistSessionBindings).toHaveBeenCalledOnce();
     expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('new-profile'));
+    expect(SessionConnectedServiceAuthSwitchReceiptSchema.parse(result)).toMatchObject({
+      ok: false,
+      errorCode: 'hot_apply_succeeded_but_recovery_failed',
+      diagnostics: { application: { status: 'hot_apply_succeeded_but_recovery_failed' } },
+    });
     expect(recoverAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
       action: 'hot_applied',
       serviceIds: new Set(['happier.agent.claude/anthropic']),
