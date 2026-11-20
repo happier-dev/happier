@@ -1,5 +1,6 @@
+import { snapCanvasBox } from '@/components/ui/media/canvasBackingStore';
+
 import type { BackdropCanvasProps, BackdropRenderRequest } from './backdropCanvas.types';
-import { snapCanvasBox } from './planetCanvasScene';
 
 export function backdropRenderRequest(props: BackdropCanvasProps, dpr: number): BackdropRenderRequest {
     const box = snapCanvasBox(props.size.width, props.size.height, dpr);

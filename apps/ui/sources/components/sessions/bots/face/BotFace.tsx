@@ -125,8 +125,8 @@ function BotFaceLayered(props: Readonly<{ frame: Frame; smile: NonNullable<BotFa
     createBotFaceScene({ style: 'dots', identity, size, mood, monochrome, theme, dpr, layer, mutter })), [identity, size, mood, monochrome, theme, dpr, mutter]);
   return (
     <View style={{ width: size, height: size }}>
-      <View style={{ position: 'absolute' }}><PlanetCanvas width={size} height={size} scene={body} /></View>
-      <Animated.View style={props.smile}><PlanetCanvas width={size} height={size} scene={smile} /></Animated.View>
+      <View style={{ position: 'absolute' }}><PlanetCanvas width={size} height={size} dots={body.body} /></View>
+      <Animated.View style={props.smile}><PlanetCanvas width={size} height={size} dots={smile.body} /></Animated.View>
     </View>
   );
 }
@@ -301,8 +301,8 @@ function BotFacePaint(props: Readonly<{ frame: Frame; draw: Draw }>) {
     const input = draw();
     return input.style === 'dots' || input.style === 'planet'
       ? {
-          kind: 'scene' as const,
-          scene: createBotFaceScene({ ...input, style: input.style }),
+          kind: 'dots' as const,
+          dots: createBotFaceScene({ ...input, style: input.style }).body,
         }
       : {
           kind: 'raster' as const,
@@ -310,8 +310,8 @@ function BotFacePaint(props: Readonly<{ frame: Frame; draw: Draw }>) {
         };
   }, [draw, props.frame.drawRaster]);
   const size = props.frame.size;
-  return output.kind === 'scene' ? (
-    <PlanetCanvas width={size} height={size} scene={output.scene} />
+  return output.kind === 'dots' ? (
+    <PlanetCanvas width={size} height={size} dots={output.dots} />
   ) : (
     <BotFaceRasterView image={output.image} size={size} />
   );

@@ -4,7 +4,7 @@ import { HAPPIER_TYPE_SCALE } from '@happier-dev/plugin-ui/presentation';
  * The Home orbit scene, moved from the atmosphere lab (`at-widget.js scene()`): flat, faint dotted
  * circles centred on the planet; each body (a machine) is a moon on its circle, and what it holds
  * trails behind it as dots on the same circle. Every orbit is wider than the planet and its glow, so
- * nothing ever crosses in front of it. Geometry only: the planet is drawn by PlanetCanvas.
+ * nothing ever crosses in front of it. Geometry only: HomeOrbitMap draws the shared GlyphSurface.
  *
  * One owner for every orbit drawing: the Your Home widget (sessions per machine) and the capability
  * homepages (skills per machine) both lay out through here and draw through `HomeOrbitMap`.

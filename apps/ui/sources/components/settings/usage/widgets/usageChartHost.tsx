@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PixelRatio } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   usagePlanetMeridianWeight,
@@ -76,13 +77,14 @@ function UsageChartPlanet({
   dark,
 }: Readonly<{ spec: UsagePlanetSpec; dark: boolean }>) {
   const theme = dark ? 'dark' : 'light';
+  const dpr = PixelRatio.get();
   const light =
     spec.light === undefined ? undefined : planetLightForProgress(spec.light);
-  const ink = spec.ink ? { ink: spec.ink } : {};
+  const ink = spec.ink || undefined;
   const meridianKey = spec.meridians?.join(',');
-  const scene = React.useMemo(() => {
-    if (!meridianKey) return null;
-    const base = createPlanetScene({
+  const dots = React.useMemo(() => {
+    if (spec.mark && !meridianKey) return null;
+    const { body, haze } = createPlanetScene({
       theme,
       R: spec.radius,
       cx: spec.size / 2,
@@ -90,74 +92,56 @@ function UsageChartPlanet({
       view: { w: spec.size, h: spec.size },
       rotate: spec.rotate,
       mirror: false,
-      fullness: 1,
-      halo: 0,
-      tail: 0,
+      ...(meridianKey ? { fullness: 1, halo: 0, tail: 0 } : {
+        dpr,
+        fullness: spec.night ?? 0,
+        halo: spec.halo,
+        tail: spec.tail,
+        rise: spec.rise,
+      }),
       style: spec.style,
       field: { around: 0, over: 0 },
       ...(light ? { light } : {}),
     });
-    return {
-      ...base,
-      haze: [],
-      body: base.body.map((dot) => ({
-        ...dot,
-        opacity: dot.opacity * usagePlanetMeridianWeight(spec, dot.x),
-      })),
-    };
+    return meridianKey ? body.map((dot) => ({
+      ...dot,
+      opacity: dot.opacity * usagePlanetMeridianWeight(spec, dot.x),
+    })) : [...body, ...haze];
     // The meridian weights are value-keyed; the spec object is rebuilt on every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    dpr,
     meridianKey,
-    theme,
-    spec.radius,
-    spec.size,
-    spec.rotate,
-    spec.style,
+    spec.halo,
     spec.light,
+    spec.mark,
+    spec.night,
+    spec.radius,
+    spec.rise,
+    spec.rotate,
+    spec.size,
+    spec.style,
+    spec.tail,
+    theme,
   ]);
-  if (scene)
+  if (dots)
     return (
       <PlanetCanvas
         width={spec.size}
         height={spec.size}
-        scene={scene}
-        {...ink}
-      />
-    );
-  if (spec.mark)
-    return (
-      <PlanetCanvas
-        width={spec.size}
-        height={spec.size}
-        {...ink}
-        mark={{
-          size: spec.size,
-          theme,
-          halo: spec.halo,
-          ...(light ? { light } : {}),
-        }}
+        dots={dots}
+        ink={ink}
       />
     );
   return (
     <PlanetCanvas
       width={spec.size}
       height={spec.size}
-      {...ink}
-      options={{
+      ink={ink}
+      mark={{
+        size: spec.size,
         theme,
-        R: spec.radius,
-        cx: spec.size / 2,
-        cy: spec.size / 2,
-        view: { w: spec.size, h: spec.size },
-        rotate: spec.rotate,
-        mirror: false,
-        fullness: spec.night ?? 0,
         halo: spec.halo,
-        tail: spec.tail,
-        rise: spec.rise,
-        style: spec.style,
-        field: { around: 0, over: 0 },
         ...(light ? { light } : {}),
       }}
     />

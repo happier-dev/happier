@@ -291,7 +291,7 @@ it('keeps native display boxes on the same device-pixel grid as their backing pi
     await backdrop.unmount();
     expect(boundary.fs!.files.size).toBe(0);
     const { PlanetCanvas } = await import('./PlanetCanvas.native');
-    const planet = await renderScreen(React.createElement(PlanetCanvas, { scene: { body: [], haze: [], cells: [] }, width: 2.37, height: 2.61, testID: 'box' }));
+    const planet = await renderScreen(React.createElement(PlanetCanvas, { dots: [], width: 2.37, height: 2.61, testID: 'box' }));
     expect(planet.findByTestId('box')!.props.style.at(-1)).toEqual({ width: 2, height: 2.5 });
     await planet.unmount();
 });

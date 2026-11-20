@@ -1,8 +1,9 @@
 import * as React from 'react';
+import { PixelRatio } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import {
+  createPlanetScene,
   planetLightForProgress,
-  type PlanetSceneOptions,
 } from '@happier-dev/brand/planet';
 
 import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
@@ -25,15 +26,17 @@ export const AvatarPlanet = React.memo(function AvatarPlanet(
 ) {
   const { theme } = useUnistyles();
   const size = props.size ?? 48;
-  const options = React.useMemo<PlanetSceneOptions>(() => {
+  const dpr = PixelRatio.get();
+  const dots = React.useMemo(() => {
     // One seed reading for every seeded identity picture (the Bot faces use the same).
     const seed = botFaceSeedNumber(props.id);
-    return {
+    const { body, haze } = createPlanetScene({
       theme: theme.dark ? 'dark' : 'light',
       R: size * PLANET_RADIUS_RATIO,
       cx: size / 2,
       cy: size / 2,
       view: { w: size, h: size },
+      dpr,
       rotate: (botFaceHash(seed, 3) - 0.5) * 0.9,
       mirror: false,
       fullness: 0.85,
@@ -42,13 +45,14 @@ export const AvatarPlanet = React.memo(function AvatarPlanet(
       style: 'balanced',
       field: { around: 0, over: 0 },
       light: planetLightForProgress(0.84 + 0.16 * botFaceHash(seed, 5)),
-    };
-  }, [props.id, size, theme.dark]);
+    });
+    return [...body, ...haze];
+  }, [dpr, props.id, size, theme.dark]);
   return (
     <PlanetCanvas
       width={size}
       height={size}
-      options={options}
+      dots={dots}
       {...(props.monochrome ? { ink: theme.colors.text.tertiary } : {})}
     />
   );

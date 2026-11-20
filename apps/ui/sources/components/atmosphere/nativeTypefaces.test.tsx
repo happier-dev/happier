@@ -1,8 +1,7 @@
 import * as React from 'react';
-import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
-import { PlanetCanvas } from './PlanetCanvas.native';
+import { SceneArtAuthoredPlanet } from '@/components/ui/surfaces/SceneArtAuthoredPlanet.native';
 
 // Skia's native host is the system boundary. In @shopify/react-native-skia 2.4.18,
 // `SkFont.getTypeface()` wraps the font's borrowed SkTypeface in an owning sk_sp without
@@ -57,9 +56,10 @@ const options = { R: 110, cx: 193, cy: 197, theme: 'dark', view: { w: pane.width
 describe('native planet typefaces', () => {
     afterEach(() => { native.state.borrowedAdoptions = 0; native.state.glyphs = 0; });
 
-    it('draws a static planet mark’s digits without adopting the font’s borrowed typeface', async () => {
-        await act(async () => { renderScreen(<PlanetCanvas width={pane.width} height={pane.height} options={options} />); });
+    it('draws an authored planet’s digits without adopting the font’s borrowed typeface', async () => {
+        const screen = await renderScreen(<SceneArtAuthoredPlanet options={options} />);
         expect(native.state.glyphs).toBeGreaterThan(0);
         expect(native.state.borrowedAdoptions).toBe(0);
+        await screen.unmount();
     });
 });

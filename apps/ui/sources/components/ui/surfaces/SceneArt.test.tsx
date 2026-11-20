@@ -1,13 +1,12 @@
 import * as React from 'react';
 import Color from 'color';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PixelRatio } from 'react-native';
 import * as Unistyles from 'react-native-unistyles';
 import { resolveHappierScene } from '@happier-dev/plugin-ui/presentation';
-import { planetLightForProgress } from '@happier-dev/brand/planet';
+import { createPlanetScene, planetLightForProgress } from '@happier-dev/brand/planet';
 
 import { renderScreen } from '@/dev/testkit';
-import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
-import { createPlanetCanvasSceneCache } from '@/components/atmosphere/planetCanvasScene';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 import { SceneArt } from './SceneArt';
@@ -15,6 +14,29 @@ import { SceneArt } from './SceneArt';
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeNativeMock({ platformOS: 'ios' });
+});
+
+const painted = vi.hoisted(() => ({ dots: [] as number[][], digits: [] as string[] }));
+
+vi.mock('@shopify/react-native-skia', async () => {
+    const boundary = (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock();
+    const canvas = {
+        scale() {}, saveLayer() {}, restore() {},
+        drawCircle: (x: number, y: number, r: number) => painted.dots.push([x, y, r]),
+        drawText: (digit: string) => painted.digits.push(digit),
+    };
+    return {
+        ...boundary,
+        BlendMode: { SrcATop: 1, SrcOver: 2 },
+        useTypeface: () => ({}),
+        createPicture: (draw: (target: typeof canvas) => void) => { draw(canvas); return { dispose() {} }; },
+        Skia: {
+            ...boundary.Skia,
+            Color: (ink: string) => ink,
+            Paint: () => ({ setAntiAlias() {}, setColor() {}, setAlphaf() {}, setBlendMode() {}, dispose() {} }),
+            Font: () => ({ setEmbolden() {}, getMetrics: () => ({ ascent: -1, descent: 0 }), getGlyphWidths: () => [1], getGlyphIDs: () => [1], dispose() {} }),
+        },
+    };
 });
 
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
@@ -107,20 +129,29 @@ describe('SceneArt', () => {
 
     it('renders a plugin planet look and placement through the scene core, including explicit zero and false', async () => {
         const renderLook = async (style: 'airy' | 'rich' | undefined, fullness: number, digits: boolean) => {
+            painted.dots.length = 0;
+            painted.digits.length = 0;
             const scene = resolveHappierScene({
                 name: 'acme.custom-planet', moment: 'dusk',
                 planetAt: { x: 88, y: 29, r: 30, style, fullness, digits },
             }, 'page');
             const screen = await renderScreen(<SceneArt scene={scene} size="page" still />);
-            const canvas = screen.findAllByType(PlanetCanvas)[0]!;
-            expect(canvas.props.options).toMatchObject({
+            const expected = createPlanetScene({
                 R: 30 * 1.45, cx: 88 * 1.45, cy: 29 * 1.45,
-                view: { w: 232, h: 92.8 }, style, fullness,
+                view: { w: 232, h: 92.8 }, dpr: PixelRatio.get(), theme: 'light', style, fullness,
+                halo: 0.55, field: digits ? {} : 0,
                 light: planetLightForProgress(0.38),
             });
             expect(screen.findHostByTestId('scene-planet-body')?.props.style[0]).toMatchObject({ left: 0, top: 0, width: 232, height: 92.8 });
-            return createPlanetCanvasSceneCache()({ width: canvas.props.width, height: canvas.props.height,
-                options: canvas.props.options }, 1);
+            const dots = [...expected.body, ...expected.haze].map(dot => [dot.x, dot.y, dot.r]);
+            expect(painted.dots).toHaveLength(dots.length);
+            expect(painted.dots.findIndex((dot, index) => dot.some((value, channel) => value !== dots[index]?.[channel]))).toBe(-1);
+            expect(painted.digits).toEqual([
+                ...expected.cells.filter(cell => cell.over),
+                ...expected.cells.filter(cell => !cell.over),
+            ].map(cell => cell.ch));
+            await screen.unmount();
+            return expected;
         };
         const rich = await renderLook('rich', 0.7, true);
         const airy = await renderLook('airy', 0, false);
@@ -139,7 +170,6 @@ describe('SceneArt', () => {
             planetAt: { x: 112, r: 28, digits: true },
         });
         const moving = await renderScreen(<SceneArt scene={scene} size="pane" still={false} />);
-        expect(moving.findAllByType(PlanetCanvas)[0]!.props.options).toBeDefined();
         expect(moving.findHostByTestId('scene-planet')?.props.style).toMatchObject({ height: 45.6 * 1.1, overflow: 'hidden' });
         expect(planetStyle(moving).transform?.[0]?.translateY).toBeGreaterThan(0);
         setReducedMotionPreferenceOverride(true);

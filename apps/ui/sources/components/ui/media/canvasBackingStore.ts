@@ -2,6 +2,13 @@ import * as React from 'react';
 
 type CanvasSurface = { width: number; height: number };
 
+/** An exact whole-device-pixel box avoids a resampled seam. */
+export function snapCanvasBox(width: number, height: number, dpr: number) {
+    const w = Math.floor(width * dpr + 1e-3) / dpr;
+    const h = Math.floor(height * dpr + 1e-3) / dpr;
+    return { width: w, height: h, pixelWidth: Math.round(w * dpr), pixelHeight: Math.round(h * dpr), dpr };
+}
+
 /**
  * Frees a canvas's pixel buffer now. A dropped canvas keeps its buffer until a garbage collection, and on
  * WebKit (desktop) that buffer is a GPU-process surface the JS heap never feels, so the collection does not

@@ -3,7 +3,7 @@ import { createPairingGlyphSampler, createThemeHorizonGlyphSampler, pairingMomen
 import { createPlanetScene } from '@happier-dev/brand/planet';
 import { paintMomentCommands } from './momentPaint.web';
 import { paintNativeMomentCommands } from './momentPaint.native';
-import { paintNativePlanetMark } from './planetCanvasPaint.native';
+import { paintNativeSceneArtPlanet } from '@/components/ui/surfaces/SceneArtAuthoredPlanet.native';
 import { paintNativeThemeHorizon } from '../settings/appearance/themeHorizonPaint.native';
 
 // Canvas/Skia drawing and font metrics are system boundaries. Both real interpreters, the real
@@ -147,9 +147,9 @@ it('paints cut and regular planet glyphs through the numeric native embolden bou
             theme: 'light', dpr: 2, field: { around: 1, over: 0.62, overStyle } });
         const native = recordNative();
         // Only opaque Skia canvas/font host objects are substituted here.
-        paintNativePlanetMark(native.canvas as unknown as Parameters<typeof paintNativePlanetMark>[0], scene,
-            'mono400' as unknown as Parameters<typeof paintNativePlanetMark>[2],
-            'mono600' as unknown as Parameters<typeof paintNativePlanetMark>[3]);
+        paintNativeSceneArtPlanet(native.canvas as unknown as Parameters<typeof paintNativeSceneArtPlanet>[0], scene,
+            'mono400' as unknown as Parameters<typeof paintNativeSceneArtPlanet>[2],
+            'mono600' as unknown as Parameters<typeof paintNativeSceneArtPlanet>[3]);
         expect(native.textWeights).toContain(false);
         if (overStyle === 'ink') expect(native.textWeights).toContain(true);
         else expect(native.textWeights).not.toContain(true);

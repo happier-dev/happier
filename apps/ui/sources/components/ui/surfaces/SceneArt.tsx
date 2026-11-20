@@ -4,7 +4,7 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withTiming } from '
 import Svg, { Circle, Defs, Ellipse, G, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
 import { planetLightForProgress } from '@happier-dev/brand/planet';
-import { PlanetCanvas, type PlanetCanvasProps } from '@/components/atmosphere/PlanetCanvas';
+import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
 import {
     HAPPIER_SCENE_ART_METRICS,
     HAPPIER_SCENE_VIEWBOX,
@@ -16,6 +16,8 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
+
+import { SceneArtAuthoredPlanet } from './SceneArtAuthoredPlanet';
 
 /**
  * The line ink per theme (Daybreak library tokens): the primary text colour at a fixed strength, and a
@@ -181,7 +183,8 @@ function ScenePlanet(props: Readonly<{
     const box = planet.r * PLANET_BOX_PER_RADIUS;
     const boxPx = box * props.scale;
     const customLook = planet.style !== undefined || planet.fullness !== undefined || planet.digits !== undefined;
-    const canvas = React.useMemo<PlanetCanvasProps>(() => customLook ? {
+    const canvas = React.useMemo(() => customLook ? {
+        kind: 'authored' as const,
         width: props.width,
         height: HAPPIER_SCENE_VIEWBOX.height * props.scale,
         options: {
@@ -197,6 +200,7 @@ function ScenePlanet(props: Readonly<{
             ...(planet.progress !== undefined ? { light: planetLightForProgress(planet.progress) } : {}),
         },
     } : {
+        kind: 'mark' as const,
         width: boxPx,
         height: boxPx,
         mark: {
@@ -242,7 +246,9 @@ function ScenePlanet(props: Readonly<{
                 testID="scene-planet-body"
                 style={[{ position: 'absolute', left: customLook ? 0 : (planet.cx - box / 2) * props.scale, top: customLook ? 0 : (planet.cy - box / 2) * props.scale, width: canvas.width, height: canvas.height }, riseStyle]}
             >
-                <PlanetCanvas {...canvas} />
+                {canvas.kind === 'authored'
+                    ? <SceneArtAuthoredPlanet options={canvas.options} />
+                    : <PlanetCanvas width={canvas.width} height={canvas.height} mark={canvas.mark} />}
             </Animated.View>
         </View>
     );

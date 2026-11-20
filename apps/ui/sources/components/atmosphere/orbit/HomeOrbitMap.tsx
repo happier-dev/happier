@@ -1,6 +1,5 @@
 import * as React from 'react';
 import {
-  PixelRatio,
   Platform,
   Pressable,
   StyleSheet as RNStyleSheet,
@@ -8,8 +7,10 @@ import {
 } from 'react-native';
 import Svg, { Circle as SvgCircle, Line as SvgLine, Path, Text as SvgText } from 'react-native-svg';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { planetGlyphLayer } from '@happier-dev/brand/glyph-scene';
+import { horizonPlanetGeometry } from '@happier-dev/brand/planet-placement';
 
-import { PlanetCanvas } from '@/components/atmosphere/PlanetCanvas';
+import { GlyphSurface } from '@/components/atmosphere/glyph/GlyphSurface';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
 import { Text } from '@/components/ui/text/Text';
@@ -61,8 +62,8 @@ export type HomeOrbitMapProps = Readonly<{
 }>;
 
 /**
- * The Home orbit map: orbits behind, the planet (PlanetCanvas, the brand scene at rest: no
- * re-typing), then the dots and moons in front. Static at rest; a preview fades the dots outside
+ * The Home orbit map: orbits behind, the settled Horizon planet, then the dots and moons in
+ * front. Static at rest; a preview fades the dots outside
  * it. Hidden from assistive technology: callers render the same facts as words.
  */
 export const HomeOrbitMap = React.memo(function HomeOrbitMap(
@@ -74,22 +75,17 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
   const ink = theme.colors.text.primary;
   const card = theme.colors.edge.cardFill;
   const amber = workStatusGlyphColor(theme.colors, 'attention');
-  // The lab's lattice: at least 3 device px with crisp dots, never a dithered smudge at small sizes.
-  const dpr = Math.min(2, PixelRatio.get() || 1);
   const canvasSize = scene.canvas?.size ?? 0;
   const planet = React.useMemo(
-    () => ({
-      theme: theme.dark ? ('dark' as const) : ('light' as const),
-      R: scene.pr,
-      cx: canvasSize / 2,
-      cy: canvasSize / 2,
-      view: { w: canvasSize, h: canvasSize },
-      time: 0,
-      rate: 0,
-      pitch: Math.max(1.5, 3 / dpr),
-      dpr,
-    }),
-    [canvasSize, dpr, scene.pr, theme.dark],
+    () => [planetGlyphLayer({
+      geometry: horizonPlanetGeometry({ width: canvasSize, height: canvasSize }, {
+        radius: scene.pr,
+        limb: canvasSize / 2 - scene.pr,
+      }),
+      intensity: 'quiet',
+      digits: false,
+    })],
+    [canvasSize, scene.pr],
   );
   const f = (value: number) => Number(value.toFixed(1));
   const previewing = highlightKeys != null;
@@ -167,10 +163,10 @@ export const HomeOrbitMap = React.memo(function HomeOrbitMap(
           ))}
         </Svg>
         {scene.canvas ? (
-          <PlanetCanvas
+          <GlyphSurface
             width={scene.canvas.size}
             height={scene.canvas.size}
-            options={planet}
+            scene={planet}
             style={{
               position: 'absolute',
               left: scene.canvas.left,
