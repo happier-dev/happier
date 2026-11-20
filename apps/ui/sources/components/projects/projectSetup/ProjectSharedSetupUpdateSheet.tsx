@@ -19,6 +19,7 @@ import { Typography } from '@/constants/Typography';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -272,22 +273,14 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
             details={[failure]}
           />
         ) : null}
-        {/* The choice and its note stand on the sections' edge, so the group owns their inset. */}
+        {/* The choice stands on the sections' edge, so the group owns its inset. */}
         <ItemGroup surface="none" testID="project-shared-setup-update.choice">
-          <View style={styles.choice}>
-            <ProjectSetupScopeChoice
-              testID="project-shared-setup-update"
-              scope={scope}
-              onChange={props.onScopeChange}
-              allowSkip={false}
-            />
-            <View style={styles.note}>
-              <Icon name="lock" size={14} color={theme.colors.text.tertiary} />
-              <Text variant="meta" style={[styles.noteText, { color: theme.colors.text.secondary }]}>
-                {props.pending ? t('projects.scripts.sharedUpdate.nothingRunsPending') : t('projects.scripts.sharedUpdate.nothingRuns')}
-              </Text>
-            </View>
-          </View>
+          <ProjectSetupScopeChoice
+            testID="project-shared-setup-update"
+            scope={scope}
+            onChange={props.onScopeChange}
+            allowSkip={false}
+          />
         </ItemGroup>
       </>
     );
@@ -295,7 +288,18 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   const decidable = Boolean(request) && rows.length > 0;
   return (
     <View style={styles.body}>
-      {content}
+      {/* The lab draws the sheet's sections with page anatomy (as Share setup): description above, hairline rows. */}
+      <ListPresentationProvider value="page">{content}</ListPresentationProvider>
+      {/* Lab L6-updateSheet: what nothing-runs-yet means sits beside the decision it qualifies. */}
+      <View style={styles.footer}>
+      {decidable ? (
+        <View style={styles.note}>
+          <Icon name="lock" size={14} color={theme.colors.text.tertiary} />
+          <Text variant="meta" style={[styles.noteText, { color: theme.colors.text.secondary }]}>
+            {props.pending ? t('projects.scripts.sharedUpdate.nothingRunsPending') : t('projects.scripts.sharedUpdate.nothingRuns')}
+          </Text>
+        </View>
+      ) : null}
       <View style={styles.actions}>
         <RoundButton
           size="normal"
@@ -323,6 +327,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
             }}
           />
         ) : null}
+      </View>
       </View>
     </View>
   );
@@ -420,8 +425,16 @@ const EMPTY_MANIFEST = { version: 1 } as const;
 
 const styles = StyleSheet.create((theme) => ({
   body: { gap: theme.space.s16, paddingBottom: theme.space.s8 },
-  choice: { gap: theme.space.s12 },
-  note: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+  // The footer stands on the sections' text edge, as Share setup's does.
+  footer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: theme.space.s12,
+    paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
+  },
+  note: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, flexGrow: 1, flexShrink: 1, flexBasis: 240 },
   command: { ...Typography.mono(), ...happierPageTextMetrics('rowDescription') },
   noteText: { flex: 1, minWidth: 0 },
   actions: {

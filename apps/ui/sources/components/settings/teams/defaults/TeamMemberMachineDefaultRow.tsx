@@ -123,7 +123,9 @@ export const TeamMemberMachineDefaultRow = React.memo(function TeamMemberMachine
             noItemsMessage={presetState?.loading ? t('common.loading') : undefined}
             dropdownTitle={t('teams.settings.memberDefaults.machine')}
             // The field names the selection; the line beneath carries only what the field cannot.
-            dropdownSubtitle={[inheritedSource, unseen, note].filter(Boolean).join(' ') || undefined}
+            // Otherwise the line says what the default decides (new sessions), not "this session".
+            dropdownSubtitle={[inheritedSource, unseen, note].filter(Boolean).join(' ')
+                || t('teams.settings.memberDefaults.machineDescription')}
             dropdownTestID={props.testID}
             testIdPrefix={props.testID}
             dropdownClearOption={{

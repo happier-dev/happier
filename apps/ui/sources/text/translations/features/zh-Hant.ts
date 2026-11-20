@@ -16544,6 +16544,7 @@ const traditionalChinese: TeamsTranslationRoot = {
                 homeDefault: "Home 預設",
                 policyDefault: "組織政策",
                 machineNotMemberUsable: "成員無法使用此機器。請與團隊共用，或選擇另一台機器。",
+                machineDescription: "新工作階段的啟動位置。",
                 teamDefault: "團隊預設",
                 groupDefault: "群組預設",
                 none: "未設定",

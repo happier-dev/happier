@@ -776,14 +776,15 @@ export function TeamSetupPageView(
                 })
               : t('teams.join.setupPage.repositoriesDescriptionNoMachine')
           }
-          action={run.kind === 'done' ? undefined : (
+          // The search runs on the chosen Machine: without one (a preview, nothing chosen yet) there is nothing to offer.
+          action={run.kind === 'done' || !props.clones.onFind ? undefined : (
             <RoundButton
               testID="team-setup-find-clones"
               size="small"
               display="secondary"
               title={t('teams.join.setupPage.findClones')}
               loading={props.clones.searching}
-              disabled={!props.clones.onFind || running}
+              disabled={running}
               onPress={() => props.clones.onFind?.()}
             />
           )}

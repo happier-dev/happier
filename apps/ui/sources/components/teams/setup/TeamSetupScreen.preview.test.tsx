@@ -83,6 +83,8 @@ it('previews the member page from the same Team reads, with nothing to run and a
     expect(text).toContain(t('teams.join.setupPage.previewLead', { team: 'Acme' }));
     expect(text).toContain(t('teams.join.setupPage.previewMachine'));
     expect(screen.findByTestId('team-setup-run')).toBeNull();
+    // Nothing is searched without a Machine, so the page offers no clone search it cannot run.
+    expect(screen.findByTestId('team-setup-find-clones')).toBeNull();
     await screen.pressByTestIdAsync('team-setup-preview-close');
     expect(router.back).toHaveBeenCalledOnce();
   } finally {

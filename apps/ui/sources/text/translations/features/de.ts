@@ -16484,6 +16484,7 @@ const german: TeamsTranslationRoot = {
                 homeDefault: "Home-Standard",
                 policyDefault: "Organisationsrichtlinie",
                 machineNotMemberUsable: "Mitglieder können diese Maschine nicht nutzen. Teile sie mit dem Team oder wähle eine andere.",
+                machineDescription: "Wo neue Sitzungen starten.",
                 teamDefault: "Team-Standard",
                 groupDefault: "Gruppen-Standard",
                 none: "Nicht festgelegt",

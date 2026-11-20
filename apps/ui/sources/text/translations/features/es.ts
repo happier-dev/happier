@@ -16605,6 +16605,7 @@ const spanish: TeamsTranslationRoot = {
                 homeDefault: "Predeterminado de la Home",
                 policyDefault: "Política de la organización",
                 machineNotMemberUsable: "Los miembros no pueden usar esta máquina. Compártela con el equipo o elige otra.",
+                machineDescription: "Dónde empiezan las nuevas sesiones.",
                 teamDefault: "Predeterminado del equipo",
                 groupDefault: "Predeterminado del grupo",
                 none: "Sin definir",

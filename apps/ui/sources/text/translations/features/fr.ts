@@ -16726,6 +16726,7 @@ const french: TeamsTranslationRoot = {
                 homeDefault: "Défaut de la Home",
                 policyDefault: "Règle de l’organisation",
                 machineNotMemberUsable: "Les membres ne peuvent pas utiliser cette machine. Partage-la avec l’équipe ou choisis-en une autre.",
+                machineDescription: "Où démarrent les nouvelles sessions.",
                 teamDefault: "Par défaut de l’équipe",
                 groupDefault: "Par défaut du groupe",
                 none: "Non défini",
