@@ -329,8 +329,8 @@ describe('Workflow Run native Machine admission', () => {
           localActionContext(attempt),
         );
       const comparisonInput = { cwd: root, source: { kind: 'workingTree' } };
-      const comparisonRequest = (targetMachineId = machineId, input: unknown = comparisonInput) => createTargetedActionRpcRequestV1(input,
-        { kind: 'machine', machineId: targetMachineId, project: { machineId: targetMachineId, directory: root } });
+      const comparisonRequest = (targetMachineId = machineId, input: unknown = comparisonInput, defaultSessionId?: string) => createTargetedActionRpcRequestV1(input,
+        { kind: 'machine', machineId: targetMachineId, project: { machineId: targetMachineId, directory: root } }, { defaultSessionId });
       const compare = (callerRunId: string, targetMachineId = machineId, input?: unknown,
         principal: WorkflowAcceptedAuthorizationV1['principal'] = { kind: 'host' }) => workflowTransport.transport.invoke(
         RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
@@ -408,6 +408,14 @@ describe('Workflow Run native Machine admission', () => {
             principal: { kind: 'host' } } }, requesterWorkAttributionV1) });
         expect(result).toMatchObject({ success: true, comparison: { inventory: { files: [expect.objectContaining({ path: 'review.txt' })] } } });
         expect(ScmComparisonCaptureOutputSchema.safeParse(result).success).toBe(true);
+        // The native after-turn Workflow keeps its origin as invoking context;
+        // the explicit Machine and working-tree source still own execution.
+        expect(await callMachineAction({ machineId, method: RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
+          request: comparisonRequest(machineId, comparisonInput, 'origin-session'),
+          effectActionId: 'scm.diffSummary.capture', exactMachine: true,
+          context: { ...buildWorkflowActionContext({ runId, authorization: { admittedPermissionCeiling: 'default',
+            principal: { kind: 'host' } } }, requesterWorkAttributionV1), defaultSessionId: 'origin-session' } }))
+          .toMatchObject({ success: true, comparison: { inventory: { files: [expect.objectContaining({ path: 'review.txt' })] } } });
         expect(nativePreparations).toBe(0);
         memberFolderAvailable = false;
         expect(ScmComparisonCaptureOutputSchema.parse(await compare(runId))).toMatchObject({
@@ -416,6 +424,8 @@ describe('Workflow Run native Machine admission', () => {
         });
         expect(scmAdmissionReads).toBe(1); // Only the unattached caller was checked for a fresh admission.
         expect(await compare(runId, machineId, { cwd: root, source: { kind: 'session', sessionId: 'source-session' } }))
+          .toMatchObject({ effectAttempted: false, failureCause: { phase: 'rpc.admission.requester_execution_isolation' } });
+        expect(await compare(runId, machineId, { cwd: root, source: { kind: 'turnCheckpoint', sessionId: 'source-session', turnId: 'source-turn' } }))
           .toMatchObject({ effectAttempted: false, failureCause: { phase: 'rpc.admission.requester_execution_isolation' } });
         for (const principal of [
           { kind: 'session', sessionId: 'source-session' },

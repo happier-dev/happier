@@ -15,7 +15,9 @@ function isDetachedComparisonCapture(request: unknown, machineId: string): boole
   if (request && typeof request === 'object' && 'kind' in request && request.kind === 'targeted_action_rpc') {
     const envelope = TargetedActionRpcRequestV1Schema.safeParse(request);
     if (!envelope.success || envelope.data.target.kind !== 'machine' || envelope.data.target.machineId !== machineId
-      || envelope.data.defaultSessionId || envelope.data.pluginCaller) return false;
+      || envelope.data.pluginCaller) return false;
+    // defaultSessionId is invoking context (including this Run's origin), not
+    // an execution target. The explicit Machine and capture source decide that.
     request = envelope.data.input;
   }
   const capture = ScmComparisonCaptureInputSchema.safeParse(request);
