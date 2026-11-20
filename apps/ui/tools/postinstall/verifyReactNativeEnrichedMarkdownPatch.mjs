@@ -4,6 +4,17 @@ import path from 'node:path';
 const PARSER_CACHE_DELETE_MARKER = 'parseCache.delete(cacheKey)';
 const MIN_EXPECTED_PARSER_CACHE_DELETE_OCCURRENCES = 4;
 
+// Installed Android sources that must carry the native patch, as [path under the package's
+// com/swmansion/enriched/markdown sources, marker].
+export const ANDROID_NATIVE_PATCH_MARKERS = [
+    ['renderer/Renderer.kt', 'MarkdownSpannableFactory.newSpannable(builder)'],
+    ['utils/text/MarkdownSpannableFactory.kt', 'is SpannableStringBuilder -> InsertionOrderedSpannable(source)'],
+    ['utils/text/view/TextViewSetup.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+    ['views/TableContainerView.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
+    // Touch focus must not make the transcript scroll to reveal the tapped message.
+    ['accessibility/AccessibleMarkdownTextView.kt', 'scrollView.offsetDescendantRectToMyCoords(this, offset)'],
+];
+
 function countOccurrences(contents, marker) {
     return contents.split(marker).length - 1;
 }
@@ -35,12 +46,7 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
         'TailFadeInAnimator.kt',
     );
     const androidMarkdownDirectory = path.resolve(packageDir, 'android/src/main/java/com/swmansion/enriched/markdown');
-    const androidSpanIndexFiles = [
-        ['renderer/Renderer.kt', 'MarkdownSpannableFactory.newSpannable(builder)'],
-        ['utils/text/MarkdownSpannableFactory.kt', 'is SpannableStringBuilder -> InsertionOrderedSpannable(source)'],
-        ['utils/text/view/TextViewSetup.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
-        ['views/TableContainerView.kt', 'setSpannableFactory(MarkdownSpannableFactory)'],
-    ].map(([relativePath, marker]) => ({ filePath: path.join(androidMarkdownDirectory, relativePath), marker }));
+    const androidNativePatchFiles = ANDROID_NATIVE_PATCH_MARKERS.map(([relativePath, marker]) => ({ filePath: path.join(androidMarkdownDirectory, relativePath), marker }));
 
     const requiredPaths = [
         enrichedMarkdownTextPath,
@@ -55,7 +61,7 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
         iosTailFadeAnimatorPath,
         iosRendererDirectory,
         androidTailFadeAnimatorPath,
-        ...androidSpanIndexFiles.map(({ filePath }) => filePath),
+        ...androidNativePatchFiles.map(({ filePath }) => filePath),
     ];
     if (requiredPaths.some((filePath) => !fs.existsSync(filePath))) return false;
 
@@ -84,7 +90,7 @@ export function verifyReactNativeEnrichedMarkdownPatch({ packageDir }) {
 
     return (
         nativeRendererOwnershipPatched
-        && androidSpanIndexFiles.every(({ filePath, marker }) => fs.readFileSync(filePath, 'utf8').includes(marker))
+        && androidNativePatchFiles.every(({ filePath, marker }) => fs.readFileSync(filePath, 'utf8').includes(marker))
         && enrichedMarkdownTextContents.includes('markStreamingRevealOffsets')
         && enrichedMarkdownTextContents.includes('streamingAnimation')
         && enrichedMarkdownTextContents.includes('updateStreamingRevealRanges')
