@@ -129,7 +129,8 @@ describe('native confirmation of a carried executor review', () => {
       creationDefaults: { values: { controllerMachineId: 'controller', buildMachineId: 'builder', retainPreviousDeployments: 0 },
         sources: { controllerMachineId: 'project', buildMachineId: 'account', retainPreviousDeployments: 'project' } },
       creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 7, projectDefaultsRevision: 3, content: null },
-      copy: { sourceEnvironmentId: 'staging', sourceRevision: 3, included: ['app settings'], omitted: ['production database'] },
+      copy: { sourceEnvironmentId: 'staging', sourceRevision: 3,
+        included: ['definition:repository', 'retainPreviousDeployments:copy', 'ownServer', 'app settings'], omitted: ['production database'] },
     });
     const prepared = await prepareApprovalRequest({ actionId, input: actionArgs, actionArgs, deploymentReview,
       context: { surface: 'ui' }, deps: {} });
@@ -143,8 +144,13 @@ describe('native confirmation of a carried executor review', () => {
     try {
       await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
       expect(screen.findByTestId('actions.confirmation-review.creation-review.defaults.retention')).not.toBeNull();
-      expect(screen.getTextContent()).toContain('app settings');
-      expect(screen.getTextContent()).toContain('production database');
+      const copyReview = screen.getTextContent();
+      expect(copyReview).toContain('Repository');
+      expect(copyReview).toContain('Kept for rollback');
+      expect(copyReview).toContain('A machine');
+      expect(copyReview).toContain('app settings');
+      expect(copyReview).toContain('production database');
+      expect(copyReview).not.toMatch(/definition:repository|retainPreviousDeployments:copy|ownServer/);
       const chrome = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.chrome;
       const visible = `${chrome?.kind === 'card' ? chrome.subtitle ?? '' : ''} ${screen.getTextContent()}`;
       if (spec.inputHints?.description) expect(visible).not.toContain(spec.inputHints.description);

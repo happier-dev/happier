@@ -238,10 +238,10 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
         {defaultsRows}
       </ItemGroup>}
       {review.copy?.included.length ? <ItemGroup title={t('projects.deployments.copy.include')}>
-        {review.copy.included.map(value => <Item key={value} mode="info" title={value} />)}
+        {review.copy.included.map(value => <Item key={value} mode="info" title={deploymentCopyReviewLabel(value)} />)}
       </ItemGroup> : null}
       {review.copy?.omitted.length ? <ItemGroup title={t('projects.deployments.copy.omit')}>
-        {review.copy.omitted.map(value => <Item key={value} mode="info" title={value} />)}
+        {review.copy.omitted.map(value => <Item key={value} mode="info" title={deploymentCopyReviewLabel(value)} />)}
       </ItemGroup> : null}
       {review.template ? <DeploymentTemplateFacts review={review.template} serverId={props.serverId} testID={`${testID}.template`} /> : null}
       {props.cost ? <ItemGroup testID={`${testID}.cost`} title={t('newApp.deploy.plan.costTitle')}><SectionContentRow>
@@ -252,6 +252,17 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
       </SectionContentRow></ItemGroup> : null}
     </>}
   </>;
+}
+
+/** Render the host's copy facts with the same labels used by the deployment pages. */
+function deploymentCopyReviewLabel(value: string): string {
+  switch (value) {
+    case 'definition:stored': return t('newApp.deploy.plan.runsCompose');
+    case 'definition:repository': return t('projects.sources.repositoryTitle');
+    case 'retainPreviousDeployments:copy': return t('projects.deployments.keptForRollback');
+    case 'ownServer': return t('projects.deployments.platformLink.onMachine');
+    default: return value;
+  }
 }
 
 function DeploymentTemplateFacts(props: Readonly<{

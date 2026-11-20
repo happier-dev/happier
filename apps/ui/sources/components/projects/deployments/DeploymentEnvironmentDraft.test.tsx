@@ -465,7 +465,9 @@ describe('Environment draft Machine Home', () => {
                 contentArtifactId: 'copied-content', contentHeaderVersion: 1, contentBodyVersion: 1 },
               review: { creationDefaults: { values: { controllerMachineId: 'runtime', buildMachineId: 'runtime', retainPreviousDeployments: 5 },
                 sources: { controllerMachineId: 'explicit', buildMachineId: 'builtin', retainPreviousDeployments: 'builtin' } },
-                creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null } } });
+                creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 3, projectDefaultsRevision: 0, content: null },
+                copy: { sourceEnvironmentId: detail.environment.id, sourceRevision: detail.environment.revision,
+                  included: ['definition:stored', 'retainPreviousDeployments:copy', 'ownServer'], omitted: [] } } });
             return preview;
           }
           creates++;
@@ -492,6 +494,11 @@ describe('Environment draft Machine Home', () => {
           .find(row => row.props.testID === 'project-deployments.draft.refused')?.props.details)}`).toBeDefined());
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(header().props.primaryAction.disabled, 'prepared copy can be created').toBe(false); });
+      const copyReview = screen.getTextContent();
+      expect(copyReview).toContain('Runs your Compose file');
+      expect(copyReview).toContain('Kept for rollback');
+      expect(copyReview).toContain('A machine');
+      expect(copyReview).not.toMatch(/definition:stored|retainPreviousDeployments:copy|ownServer/);
       await act(async () => header().props.primaryAction.onPress());
       await waitForHomeGovernance(() => expect(creates, 'controller created exactly one copy').toBe(1));
       await waitForHomeGovernance(async () => { await act(async () => {});
