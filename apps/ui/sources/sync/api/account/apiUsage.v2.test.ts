@@ -163,7 +163,7 @@ describe('apiUsage v2 analytics query', () => {
         expect(urls.some((url) => url.includes('/v1/usage/query'))).toBe(true);
     });
 
-    it('uses a year-long date range with month granularity for the year filter and downgrades legacy fallback grouping to day', async () => {
+    it('uses weekly granularity over the year period and keeps legacy fallback grouping daily', async () => {
         vi.stubEnv('TZ', 'UTC');
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         await upsertAndActivateServer({ serverUrl: 'https://api.example.test' });
@@ -196,7 +196,7 @@ describe('apiUsage v2 analytics query', () => {
         const [, v2Options] = v2Call;
         const v2Body = JSON.parse(String(v2Options?.body));
         expect(v2Body).toMatchObject({
-            granularity: 'month',
+            granularity: 'week',
         });
         expect(v2Body.dateRange).toEqual({
             // The canonical relative year includes today among its 365 calendar dates.

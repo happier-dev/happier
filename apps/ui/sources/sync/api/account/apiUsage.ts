@@ -116,11 +116,7 @@ export async function queryUsage(
                     endMs: typeof params.endTime === 'number' ? params.endTime * 1000 : undefined,
                 }
                 : undefined,
-            granularity: params.groupBy === 'hour'
-                ? 'hour'
-                : params.groupBy === 'month'
-                    ? 'month'
-                    : 'day',
+            granularity: params.groupBy ?? 'day',
             timeZoneOffsetMinutes: params.timeZoneOffsetMinutes ?? 0,
             costMode: params.costMode ?? 'auto',
             includeInsights: true,
