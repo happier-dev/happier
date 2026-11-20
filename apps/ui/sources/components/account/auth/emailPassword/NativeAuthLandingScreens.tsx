@@ -553,7 +553,7 @@ export const NativeAuthEmailVerifyScreen = React.memo(function NativeAuthEmailVe
                 ? { testID: 'native-auth-verify-retry', onPress: previewRead.retry }
                 : null;
         return <LandingShell homeLabel={landingTarget.kind === 'ready' ? landingTarget.homeLabel : undefined} testID="native-auth-verify"
-            mark="mail"
+            mark="envelope"
             title={t('settingsAccount.nativePassword.verifyTitle')}
             secondary={{ testID: 'native-auth-verify-return', label: t('settingsAccount.nativePassword.returnToSignIn'), onPress: () => router.replace('/') }}>
             <SurfaceStateCard

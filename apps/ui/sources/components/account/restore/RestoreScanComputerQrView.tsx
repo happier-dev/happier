@@ -222,17 +222,17 @@ const SCANNER_RESULT_HEADINGS: Readonly<Record<HomeEnrollmentScannerResult, Read
     titleKey: TranslationKeyNoParams;
     iconName: IconName;
 }>>> = {
-    succeeded: { titleKey: 'connect.pairingAddedTitle', iconName: 'checkmark' },
+    succeeded: { titleKey: 'connect.pairingAddedTitle', iconName: 'check' },
     partial_commit: { titleKey: 'connect.pairingPartialTitle', iconName: 'warning' },
     retryable_error: { titleKey: 'connect.pairingUnfinishedTitle', iconName: 'warning' },
     expired: { titleKey: 'connect.pairingExpiredTitle', iconName: 'clock' },
-    invalid_request: { titleKey: 'connect.pairingInvalidTitle', iconName: 'unlink' },
+    invalid_request: { titleKey: 'connect.pairingInvalidTitle', iconName: 'link-break' },
     already_requested: { titleKey: 'connect.pairingUsedTitle', iconName: 'qr-code' },
-    rejected: { titleKey: 'connect.pairingRejectedTitle', iconName: 'hand-left' },
-    wrong_target: { titleKey: 'connect.pairingWrongHomeTitle', iconName: 'home' },
-    malformed_response: { titleKey: 'connect.updateRequiredTitle', iconName: 'refresh' },
-    legacy_pairing: { titleKey: 'connect.updateRequiredTitle', iconName: 'refresh' },
-    update_required: { titleKey: 'connect.updateRequiredTitle', iconName: 'refresh' },
+    rejected: { titleKey: 'connect.pairingRejectedTitle', iconName: 'hand' },
+    wrong_target: { titleKey: 'connect.pairingWrongHomeTitle', iconName: 'house' },
+    malformed_response: { titleKey: 'connect.updateRequiredTitle', iconName: 'arrow-clockwise' },
+    legacy_pairing: { titleKey: 'connect.updateRequiredTitle', iconName: 'arrow-clockwise' },
+    update_required: { titleKey: 'connect.updateRequiredTitle', iconName: 'arrow-clockwise' },
 };
 
 function resolveDeviceLabel(): string | null {

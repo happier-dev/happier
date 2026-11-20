@@ -4,7 +4,6 @@ import { View } from 'react-native';
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 
@@ -88,7 +87,8 @@ export function UnauthenticatedRouteStep(props: Omit<RouteStepProps, 'title'> & 
             ) : null}
         </>
     ) : props.secondary ? (
-        <TextLinkButton
+        // Centred on the column on a phone too, where the actions span its width.
+        <StepQuietAction
             testID={props.secondary.testID}
             label={props.secondary.label}
             onPress={props.secondary.onPress}
