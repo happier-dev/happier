@@ -39,6 +39,7 @@ import {
 import {
   resolveWorkspaceBundleLockPath,
   callerHoldsWorkspaceBundleLock,
+  WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE,
   withWorkspaceBundleLock,
 } from './workspaceBundleLock.mjs';
 import { resolveWorkspacePackageBuildLockPath } from './workspacePackageBuildLock.mjs';
@@ -531,7 +532,6 @@ export async function ensureWorkspacePackagesBuiltForComponents(componentDirs, {
   return await withSingleTrailingBuildPass({ run: async () => {
     signal?.throwIfAborted();
     const demand = await readWorkspaceBuildBatchDemand(components, { env, admissionClass });
-    const resources = workspaceBuildBatchResources(demand);
     const plan = planWorkspacePackageBuilds(demand.packageNames, demand, {
       visitedNames: demand.consumerOnlyPackageNames,
     });
@@ -551,6 +551,8 @@ export async function ensureWorkspacePackagesBuiltForComponents(componentDirs, {
       }
       return { ok: true, built: [], skipped: [] };
     }
+    await preparePlannedProtocolExports(plan, demand.packageJsonByDir, { env, signal });
+    const resources = workspaceBuildBatchResources(demand);
     const resultDir = await mkdtemp(join(tmpdir(), 'happier-typecheck-batch-result-'));
     const resultPath = join(resultDir, 'result.json');
     const request = { repoDir: demand.monorepoRoot, components, identity: resources.identity,
@@ -1767,6 +1769,30 @@ async function ensureWorkspacePackageNamesBuilt(monorepoRoot, packageNames, opti
   ) });
 }
 
+async function preparePlannedProtocolExports(plan, packageJsonByDir, { env, publicationMode, signal, inheritedAdmission }) {
+  const protocol = plan.get('@happier-dev/protocol');
+  if (!protocol) return;
+  const generator = join(protocol.dir, 'scripts/generate-exports.mjs');
+  if (!existsSync(generator)) return;
+  const { prepareProtocolExports } = await import(pathToFileURL(generator).href);
+  try {
+    const manifest = await prepareProtocolExports({ packageRoot: protocol.dir, env, publicationMode, signal });
+    // Export publication changes no dependency edges. Use the prepared
+    // manifest for admission identity and for the compiler input capture.
+    protocol.manifest = manifest;
+    packageJsonByDir.set(protocol.dir, manifest);
+  } catch (error) {
+    if (inheritedAdmission && error.code === WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE) {
+      // Inputs can change while queued. Yield capacity before the existing
+      // trailing pass repeats preparation and competes for the lease.
+      throw Object.assign(new Error(error.message, { cause: error }), {
+        code: 'HSTACK_WORKSPACE_BUILD_RESOURCES_CHANGED',
+      });
+    }
+    throw error;
+  }
+}
+
 async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, {
   quiet,
   env,
@@ -1800,16 +1826,7 @@ async function ensureWorkspacePackageNamesBuiltPass(monorepoRoot, packageNames, 
   const plan = planWorkspacePackageBuilds(packageNames ?? [], { packageDirsByName, packageJsonByDir }, {
     includeDevDependencies, visitedNames,
   });
-  const protocolDir = plan.get('@happier-dev/protocol')?.dir;
-  const protocolExportGenerator = protocolDir && join(protocolDir, 'scripts/generate-exports.mjs');
-  if (protocolExportGenerator && existsSync(protocolExportGenerator)) {
-    const { prepareProtocolExports } = await import(pathToFileURL(protocolExportGenerator).href);
-    const protocolManifest = await prepareProtocolExports({ packageRoot: protocolDir, env, publicationMode, signal });
-    // Export publication changes no dependency edges. Capture and graph-drift
-    // inspection must consume its resulting manifest, not the earlier map.
-    packageJsonByDir.set(protocolDir, protocolManifest);
-    plan.get('@happier-dev/protocol').manifest = protocolManifest;
-  }
+  await preparePlannedProtocolExports(plan, packageJsonByDir, { env, publicationMode, signal, inheritedAdmission });
   const scheduleConcurrentPackageBuild = createAsyncConcurrencyLimiter(maxConcurrentBuilds);
   const scheduleBundledWorkspacePackageBuild = createAsyncConcurrencyLimiter(1);
   const schedulePackageBuild = (packageJson, packageDir, operation) => (
@@ -1974,6 +1991,7 @@ async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNam
     if (state.expectedTargets.length && !workspacePackageBuildStateCurrent(state)) { current = false; break; }
   }
   if (current) return null;
+  await preparePlannedProtocolExports(plan, packageJsonByDir, { env, publicationMode: options.publicationMode, signal });
   const admissionClass = await resolveWorkspaceBatchAdmissionClass({ monorepoRoot, packageNames: closure,
     packageDirsByName, packageJsonByDir, env });
   const resources = workspaceBuildBatchResources({ monorepoRoot, componentInputs: [], packageNames: closure,

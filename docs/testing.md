@@ -1223,8 +1223,12 @@ between hosts. Without configured targets, preparation remains host-local.
 Its existing workspace graph prepares transitive producers through their joint
 publication-lease and capacity owner. Dispatch retains the compilation placement
 envelope without reserving capacity around the coordinator, so a foreign producer
-lease can settle before admission. Admitted descendants retaining publication
-leases still cannot wait for foreign publication leases.
+lease can settle before admission. A stale workspace package batch prepares
+Protocol exports before requesting compiler capacity, so a cold host-module
+analysis can join the existing host-local analysis before capacity is charged.
+The admitted worker still rechecks current inputs before it builds. Admitted
+descendants retaining publication leases still cannot wait for foreign
+publication leases.
 
 Remote development service readiness and QA-browser forward readiness have no
 automatic overall startup deadline. They follow their owning process/user

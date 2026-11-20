@@ -165,7 +165,7 @@ async function readCache(packageRoot) {
  * installed packages they import). A file outside that graph cannot change the
  * result until a reached file starts importing it.
  */
-async function analyze(packageRoot, candidates) {
+async function analyze(packageRoot, candidates, signal) {
   const sources = [...new Set(candidates.values())].sort();
   const candidateKey = createHash('sha256').update(analyzerIdentity)
     .update(JSON.stringify([...candidates])).digest('hex');
@@ -182,7 +182,7 @@ async function analyze(packageRoot, candidates) {
   return await withWorkspaceBundleLock(async () => await readCurrent() ?? await analyzeAndRecord(packageRoot, candidates, sources, candidateKey), {
     // Host-local and always writable: revision trees mount the package read-only.
     lockPath: join(tmpdir(), `happier-protocol-host-modules-${createHash('sha256').update(packageRoot).digest('hex').slice(0, 16)}.lock`),
-    timeoutMs: null, errorLabel: 'Protocol host-module analysis',
+    timeoutMs: null, errorLabel: 'Protocol host-module analysis', signal,
   });
 }
 
@@ -250,9 +250,9 @@ async function readText(path) {
 }
 
 /** Derives the generated files; throws when a listed (provided) subpath stopped being loadable. */
-export async function deriveHostProvidedProtocolModules({ packageRoot, publicSources, exports }) {
+export async function deriveHostProvidedProtocolModules({ packageRoot, publicSources, exports, signal }) {
   const candidates = readCandidates(publicSources, exports);
-  const { provided, refused } = await analyze(packageRoot, candidates);
+  const { provided, refused } = await analyze(packageRoot, candidates, signal);
   const currentSubpaths = await readText(join(packageRoot, HOST_PROVIDED_SUBPATHS_FILE));
   const regressions = [...readPreviouslyProvided(currentSubpaths)].filter(specifier => refused.has(specifier));
   if (regressions.length > 0) {

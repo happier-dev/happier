@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import {
@@ -57,6 +58,7 @@ import {
   inspectWorkspaceQaStalePackages,
 } from './ensureWorkspacePackagesBuilt.mjs';
 import {
+  observeWorkspaceBundleLockPriority,
   resolveWorkspaceBundleLockPath,
   withWorkspaceBundleLock,
 } from './workspaceBundleLock.mjs';
@@ -234,6 +236,72 @@ if(args[0]==='run' && args[1]==='build:packages') {
   const idle = await native.brokerStatus();
   assert.equal(idle.activeCount, 0, 'completed publication releases every admission');
   assert.equal(idle.waitingCount, 0, 'completed publication leaves no queued work');
+});
+
+test('a cold Protocol host analysis waits before taking a package batch admission', { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), 'happier-host-analysis-admission-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const native = await installWorkspaceAdmissionProcessFixture(t, root);
+  const repoRoot = join(root, 'native-owner');
+  writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['packages/*'] });
+  for (const app of ['cli', 'server', 'ui']) {
+    mkdirSync(join(repoRoot, 'apps', app), { recursive: true });
+    writeFileSync(join(repoRoot, 'apps', app, 'package.json'), JSON.stringify({ name: `@fixture/${app}` }));
+  }
+  const protocol = join(repoRoot, 'packages/protocol');
+  mkdirSync(join(protocol, 'src'), { recursive: true });
+  symlinkSync(fileURLToPath(new URL('../../packages/protocol/scripts', import.meta.url)), join(protocol, 'scripts'), 'dir');
+  writeFileSync(join(protocol, 'package.json'), JSON.stringify({
+    name: '@happier-dev/protocol', type: 'module', main: './dist/index.js', scripts: { build: 'fixture-build' },
+  }));
+  writeFileSync(join(protocol, 'tsconfig.json'), JSON.stringify({ include: ['src/**/*.ts'] }));
+  writeFileSync(join(protocol, 'export-aliases.json'), '{}');
+  const source = join(protocol, 'src/index.ts');
+  writeFileSync(source, 'export const ready = true;\n');
+  const { generateProtocolExports } = await import('../../packages/protocol/scripts/generate-exports.mjs');
+  await generateProtocolExports({ packageRoot: protocol });
+  writeFileSync(source, 'export const ready = false;\n');
+  const pnpm = join(root, 'pnpm.mjs');
+  writeFileSync(pnpm, `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const output = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+mkdirSync(output, { recursive: true });
+writeFileSync(join(output, 'index.js'), 'export const ready = false;\\n');
+writeFileSync(join(output, 'index.d.ts'), 'export declare const ready: false;\\n');
+`);
+  const offered = join(root, 'offered');
+  const launcher = join(root, 'counting-launcher.sh');
+  writeFileSync(launcher, `#!/bin/sh
+case "$1" in --heavyweight-admission) touch '${offered}' ;; esac
+exec /bin/sh '${native.launcher}' "$@"
+`);
+  chmodSync(launcher, 0o755);
+  const env = { ...native.env, npm_execpath: pnpm, HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_HSTACK_EXECUTION: '' };
+  const lockPath = join(tmpdir(), `happier-protocol-host-modules-${createHash('sha256').update(protocol).digest('hex').slice(0, 16)}.lock`);
+  let build;
+  try {
+    await withWorkspaceBundleLock(async () => {
+      const initialPriority = observeWorkspaceBundleLockPriority(lockPath);
+      build = ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/protocol'], {
+        env, quiet: true, signal: t.signal,
+        workspaceBuildBoundary: { ...defaultWorkspaceBuildBoundary, workerLauncherPath: launcher },
+      });
+      const terminal = build.then(() => 'completed', error => `failed: ${error.message}`);
+      while (observeWorkspaceBundleLockPriority(lockPath) === initialPriority) {
+        t.signal.throwIfAborted();
+        const outcome = await Promise.race([terminal, new Promise(resolveWait => setTimeout(resolveWait, 10))]);
+        assert.equal(outcome, undefined, 'the producer must wait for the existing analysis');
+      }
+      assert.equal(existsSync(offered), false, 'cold analysis must wait without asking for compiler admission');
+      const status = await native.brokerStatus();
+      assert.equal(status.activeCount, 0);
+      assert.equal(status.waitingCount, 0);
+    }, { lockPath });
+  } finally {
+    if (build) await build.catch(() => {});
+  }
+  assert.deepEqual((await build).built, ['@happier-dev/protocol']);
+  assert.ok(existsSync(offered), 'the batch takes its admission after the analysis');
 });
 
 test('one named build of a package closure takes one compiler admission, and none when current', { skip: process.platform !== 'linux', timeout: 60_000 }, async t => {

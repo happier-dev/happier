@@ -83,14 +83,14 @@ async function listSourceModules(directory, prefix = '') {
 }
 
 export async function generateProtocolExports({ packageRoot = defaultPackageRoot, check = false, signal } = {}) {
-  if (!check) signal?.throwIfAborted();
+  signal?.throwIfAborted();
   const readProjection = async () => {
     const manifestPath = join(packageRoot, 'package.json');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     const publicSources = await readProtocolPublicSources(packageRoot);
     const exports = await deriveProtocolExports(packageRoot, publicSources);
     // The Plugin UI host module set is the same public inventory, narrowed to what React Native can load.
-    const host = await deriveHostProvidedProtocolModules({ packageRoot, publicSources, exports });
+    const host = await deriveHostProvidedProtocolModules({ packageRoot, publicSources, exports, signal });
     const hostCurrent = host.files.every(file => file.current === file.next) || (check && host.coherent);
     return { manifestPath, manifest, exports, hostFiles: host.files,
       current: JSON.stringify(manifest.exports) === JSON.stringify(exports) && hostCurrent };
