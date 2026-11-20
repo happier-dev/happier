@@ -22,6 +22,8 @@ import {
 import type { Message } from "@happier-dev/session-core/messages";
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { projectTranscriptTurnEnds, type TranscriptTurnEndFact } from '../markers/transcriptMarkers';
+import type { ForkAwareMessageDescriptors } from '../forkContext/buildForkAwareMessageDescriptors';
 
 export type TranscriptNavigationServerAccountScope = Readonly<{
     serverId: string;
@@ -59,9 +61,11 @@ export type SessionTranscriptNavigationEntriesState = Readonly<{
 export function useSessionTranscriptNavigationEntriesFromMessages(params: Readonly<{
     activeServerAccountScope: TranscriptNavigationServerAccountScope;
     forkedTranscriptEnabled: boolean;
+    forkMetadataByMessageId?: ForkAwareMessageDescriptors['metadataByMessageId'];
     messageIdsOldestFirst: readonly string[];
     messagesById: Record<string, Message>;
     sessionId: string;
+    turnEnds?: readonly TranscriptTurnEndFact[];
     /**
      * Whether a surface can display these entries. Defaults to true so the demand-opened
      * navigation pane is unchanged; the always-mounted transcript host passes the rail's
@@ -74,9 +78,11 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
     const {
         activeServerAccountScope,
         forkedTranscriptEnabled,
+        forkMetadataByMessageId,
         messageIdsOldestFirst,
         messagesById,
         sessionId,
+        turnEnds,
     } = params;
     // The canonical pin-change seam: the out-of-band route-id reconcile writer (fired while
     // messages apply) notifies here too, so every mounted consumer agrees on the same revision.
@@ -110,9 +116,10 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
             cache: transcriptNavigationLoadedMessagesCache,
             messageIdsOldestFirst,
             messagesById,
+            forkMetadataByMessageId,
             sessionId,
         })
-    ), [messageIdsOldestFirst, messagesById, sessionId, transcriptNavigationLoadedMessagesCache]);
+    ), [forkMetadataByMessageId, messageIdsOldestFirst, messagesById, sessionId, transcriptNavigationLoadedMessagesCache]);
     /**
      * Cursor for the backfill: the oldest seq the loaded window already holds, so paging resumes
      * below it instead of re-downloading it.
@@ -207,8 +214,9 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
             loadedMessages: transcriptNavigationLoadedMessages,
             remoteMessages: transcriptNavigationRemoteMessages,
             pins: sessionMessagePins,
+            turnEnds,
         });
-    }, [sessionId, sessionMessagePins, transcriptNavigationLoadedMessages, transcriptNavigationLoadedMessagesCache, transcriptNavigationRemoteMessages]);
+    }, [sessionId, sessionMessagePins, transcriptNavigationLoadedMessages, transcriptNavigationLoadedMessagesCache, transcriptNavigationRemoteMessages, turnEnds]);
 
     return {
         sessionMessagePins,
@@ -224,6 +232,8 @@ export type SessionTranscriptNavigationEntriesResult = SessionTranscriptNavigati
     isLoaded: boolean;
 }>;
 
+const useNoSessionTurns = () => null;
+
 /**
  * Session-scoped entry point: reads the transcript rows and the account scope from the stores,
  * so the navigation pane can render a complete timeline on a surface where the transcript
@@ -231,18 +241,24 @@ export type SessionTranscriptNavigationEntriesResult = SessionTranscriptNavigati
  */
 export function useSessionTranscriptNavigationEntries(sessionId: string): SessionTranscriptNavigationEntriesResult {
     const {
+        forkAwareMessageDescriptors,
         forkedTranscriptEnabled,
         isLoaded,
         messageIdsOldestFirst,
         messagesById,
     } = useTranscriptRootMessages(sessionId, { liveText: true });
+    const useSessionTurns = useSessionTranscriptSource().useSessionTurns ?? useNoSessionTurns;
+    const turns = useSessionTurns();
+    const turnEnds = React.useMemo(() => projectTranscriptTurnEnds(turns), [turns]);
     const activeServerAccountScope = useActiveServerAccountScope();
     const state = useSessionTranscriptNavigationEntriesFromMessages({
         activeServerAccountScope,
         forkedTranscriptEnabled,
+        forkMetadataByMessageId: forkAwareMessageDescriptors?.metadataByMessageId,
         messageIdsOldestFirst,
         messagesById,
         sessionId,
+        turnEnds,
     });
     return {
         ...state,

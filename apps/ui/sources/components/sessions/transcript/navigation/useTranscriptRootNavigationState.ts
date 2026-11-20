@@ -7,6 +7,8 @@ import { Platform } from 'react-native';
 
 import { isTranscriptNavigationRailSupportedPlatform } from '@/components/sessions/transcript/navigation/deriveTranscriptNavigationRailLayout';
 import type { Message } from "@happier-dev/session-core/messages";
+import type { ForkAwareMessageDescriptors } from '../forkContext/buildForkAwareMessageDescriptors';
+import type { TranscriptTurnEndFact } from '../markers/transcriptMarkers';
 
 /**
  * Transcript-host entry point into the single navigation derivation owner
@@ -16,9 +18,11 @@ import type { Message } from "@happier-dev/session-core/messages";
 export function useTranscriptRootNavigationState(params: Readonly<{
     activeServerAccountScope: TranscriptNavigationServerAccountScope;
     forkedTranscriptEnabled: boolean;
+    forkMetadataByMessageId?: ForkAwareMessageDescriptors['metadataByMessageId'];
     messageIdsOldestFirst: readonly string[];
     messagesById: Record<string, Message>;
     sessionId: string;
+    turnEnds: readonly TranscriptTurnEndFact[];
 }>): SessionTranscriptNavigationEntriesState {
     // The transcript host mounts on every platform, but the rail it feeds is web-only, and
     // native reaches transcript navigation through the phone cockpit pane (which mounts its

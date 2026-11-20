@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
-import type { TranscriptNavigationEntry, TranscriptNavigationTurnFacts } from './transcriptNavigationTypes';
+import type { TranscriptNavigationEntry, TranscriptNavigationLoadedMessage, TranscriptNavigationTurnFacts } from './transcriptNavigationTypes';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -11,6 +11,16 @@ const motionPreference = vi.hoisted(() => ({ reduced: false }));
 const startedAnimations = vi.hoisted(() => ({ count: 0 }));
 
 installNavigationCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        return createTextModuleMock({
+            translate: (key, params) => {
+                if (key === 'session.transcriptNavigation.durationSeconds') return `${params?.seconds}s`;
+                if (key === 'session.transcriptTurnEnd.workedFor') return `Worked for ${params?.duration}`;
+                return key;
+            },
+        });
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         const base = await createReactNativeWebMock({});
@@ -48,6 +58,10 @@ vi.mock('@/hooks/ui/useReducedMotionPreference', () => ({
 
 // Resolve the real graph after boundary options are installed, during suite collection.
 const { TranscriptNavigationEntryList } = await import('./TranscriptNavigationEntryList');
+const { TranscriptMarkerRow } = await import('../markers/TranscriptMarkerRow');
+const { projectTranscriptTurnEnds } = await import('../markers/transcriptMarkers');
+const { createTranscriptNavigationLoadedMessagesCache, deriveTranscriptNavigationEntriesWithLoadedMessageCache } =
+    await import('./buildTranscriptNavigationLoadedMessages');
 
 function entry(overrides: Partial<TranscriptNavigationEntry> & Pick<TranscriptNavigationEntry, 'id' | 'seq'>): TranscriptNavigationEntry {
     return {
@@ -96,6 +110,32 @@ function atLocal(year: number, month: number, day: number, hour: number): number
 }
 
 describe('TranscriptNavigationEntryList timeline', () => {
+    it('uses the same settled lifecycle duration as the transcript line when turn data arrives', async () => {
+        standardCleanup();
+        const loadedMessages: TranscriptNavigationLoadedMessage[] = [
+            { sessionId: 's1', messageId: 'prompt', routeMessageId: 'prompt', seq: 1, role: 'user', text: 'Prompt', createdAtMs: 0, transcriptBlockIndex: null },
+            { sessionId: 's1', messageId: 'reply', routeMessageId: 'reply', seq: 2, role: 'assistant', text: 'Reply', createdAtMs: 6_000, transcriptBlockIndex: null },
+        ];
+        const turnEnds = projectTranscriptTurnEnds([{
+            turnId: 'turn', status: 'completed', startedAt: 2_000, terminalAt: 10_000, updatedAt: 10_000,
+            transcriptAnchors: { startUserMessageSeq: 1, finalAssistantMessageSeq: 2 },
+        }]);
+        const params = {
+            cache: createTranscriptNavigationLoadedMessagesCache(),
+            sessionId: 's1', mode: 'all' as const, loadedMessages, remoteMessages: [], pins: [],
+        };
+        const legacy = await renderTimeline({ entries: deriveTranscriptNavigationEntriesWithLoadedMessageCache(params) });
+        expect(legacy.getTextContent()).toContain('6s');
+        standardCleanup();
+        const line = await renderScreen(
+            <TranscriptMarkerRow marker={{ type: 'turn-end', outcome: turnEnds[0]!.outcome, durationMs: turnEnds[0]!.durationMs, joinsChanges: false }} />,
+        );
+        expect(line.getTextContent()).toContain('Worked for 8s');
+        standardCleanup();
+        const settled = await renderTimeline({ entries: deriveTranscriptNavigationEntriesWithLoadedMessageCache({ ...params, turnEnds }) });
+        expect(settled.getTextContent()).toContain('8s');
+        expect(settled.getTextContent()).not.toContain('6s');
+    });
     it('keeps the newest waiting turn present with now and an elapsed counter until it ends', async () => {
         standardCleanup();
         const screen = await renderTimeline({

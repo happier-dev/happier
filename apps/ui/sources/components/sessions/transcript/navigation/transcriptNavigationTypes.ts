@@ -3,6 +3,7 @@ import type {
     TranscriptJumpScope,
     TranscriptJumpTarget,
 } from '../viewport/jump/transcriptJumpTargetTypes';
+import type { TranscriptTurnEndFact } from '../markers/transcriptMarkers';
 
 export type TranscriptNavigationRole = 'user' | 'assistant' | 'tool' | 'system' | 'unknown';
 
@@ -70,6 +71,8 @@ export type TranscriptNavigationEntry = Readonly<{
      * only role and text): unknown is never shown as zero.
      */
     facts?: TranscriptNavigationTurnFacts | null;
+    /** Recorded lifecycle duration, available independently of the message window. */
+    settledDurationMs?: number;
 }>;
 
 /**
@@ -86,6 +89,8 @@ export type TranscriptNavigationLoadedMessage = Readonly<{
     text: string | null;
     createdAtMs: number | null;
     loaded?: boolean;
+    /** Ancestor context has its own sequence space. */
+    isForeignContext?: boolean;
     /** Present on loaded tool rows only. */
     tool?: TranscriptNavigationToolFacts | null;
     /**
@@ -114,6 +119,7 @@ export type DeriveTranscriptNavigationEntriesParams = Readonly<{
     /** Rows recovered from the remote history page; merged with `loadedMessages` by row identity. */
     remoteMessages: readonly TranscriptNavigationLoadedMessage[];
     pins: readonly TranscriptNavigationPin[];
+    turnEnds?: readonly TranscriptTurnEndFact[];
     previousEntries?: readonly TranscriptNavigationEntry[] | null;
 }>;
 

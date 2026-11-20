@@ -3,8 +3,9 @@ import { prepareTranscriptMessageBody } from '../messageDisplayText';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { SessionMessageHistoryRemoteRow } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
 
-import { buildUserEntry, deriveTranscriptNavigationEntries, resolvePromptOnlyTurnFacts } from './deriveTranscriptNavigationEntries';
+import { buildUserEntry, deriveTranscriptNavigationEntries, indexSettledDurationsByPromptSeq, resolvePromptOnlyTurnFacts } from './deriveTranscriptNavigationEntries';
 import { normalizeTranscriptNavigationTextPreview } from './transcriptNavigationTextPreview';
+import type { ForkAwareMessageDescriptors } from '../forkContext/buildForkAwareMessageDescriptors';
 import type {
     DeriveTranscriptNavigationEntriesParams,
     TranscriptNavigationEntry,
@@ -68,7 +69,7 @@ function normalizeSessionId(value: string): string {
     return value.trim();
 }
 
-function buildLoadedMessageRow(sessionId: string, message: Message): TranscriptNavigationLoadedMessage {
+function buildLoadedMessageRow(sessionId: string, message: Message, isForeignContext: boolean): TranscriptNavigationLoadedMessage {
     return {
         sessionId: normalizeSessionId(sessionId),
         messageId: message.id,
@@ -79,6 +80,7 @@ function buildLoadedMessageRow(sessionId: string, message: Message): TranscriptN
         text: readTranscriptNavigationMessagePreview(message),
         createdAtMs: normalizeFiniteInteger(message.createdAt),
         loaded: true,
+        isForeignContext,
         tool: toolFactsForMessage(message),
         preNormalized: true,
     };
@@ -145,6 +147,7 @@ export type TranscriptNavigationLoadedMessagesCache = {
         readonly sessionId: string;
         readonly messageIdsOldestFirst: readonly string[];
         readonly messagesById: Readonly<Record<string, Message>>;
+        readonly forkMetadataByMessageId: ForkAwareMessageDescriptors['metadataByMessageId'] | undefined;
         readonly loadedMessages: TranscriptNavigationLoadedMessage[];
     } | null;
     previousEntries: readonly TranscriptNavigationEntry[] | null;
@@ -154,6 +157,7 @@ export type TranscriptNavigationLoadedMessagesCache = {
         readonly loadedMessages: readonly TranscriptNavigationLoadedMessage[];
         readonly remoteMessages: DeriveTranscriptNavigationEntriesParams['remoteMessages'];
         readonly pins: DeriveTranscriptNavigationEntriesParams['pins'];
+        readonly turnEnds: DeriveTranscriptNavigationEntriesParams['turnEnds'];
         readonly entries: TranscriptNavigationEntry[];
     } | null;
 };
@@ -171,6 +175,7 @@ export function buildTranscriptNavigationLoadedMessages(params: Readonly<{
     messageIdsOldestFirst: readonly string[];
     messagesById: Readonly<Record<string, Message>>;
     sessionId: string;
+    forkMetadataByMessageId?: ForkAwareMessageDescriptors['metadataByMessageId'];
     cache?: TranscriptNavigationLoadedMessagesCache;
 }>): TranscriptNavigationLoadedMessage[] {
     const cachedBuild = params.cache?.lastBuild;
@@ -179,6 +184,7 @@ export function buildTranscriptNavigationLoadedMessages(params: Readonly<{
         && cachedBuild.sessionId === params.sessionId
         && cachedBuild.messageIdsOldestFirst === params.messageIdsOldestFirst
         && cachedBuild.messagesById === params.messagesById
+        && cachedBuild.forkMetadataByMessageId === params.forkMetadataByMessageId
     ) {
         return cachedBuild.loadedMessages;
     }
@@ -187,13 +193,15 @@ export function buildTranscriptNavigationLoadedMessages(params: Readonly<{
     for (const messageId of params.messageIdsOldestFirst) {
         const message = params.messagesById[messageId];
         if (!message) continue;
+        const origin = params.forkMetadataByMessageId?.[messageId];
+        const isForeignContext = origin !== undefined && (origin.isReadOnlyContext || origin.originSessionId !== params.sessionId);
         const cachedRow = params.cache?.rowsByMessage.get(message);
-        if (cachedRow && cachedRow.sessionId === params.sessionId) {
+        if (cachedRow && cachedRow.sessionId === params.sessionId && cachedRow.isForeignContext === isForeignContext) {
             loadedMessages.push(cachedRow);
             continue;
         }
 
-        const row = buildLoadedMessageRow(params.sessionId, message);
+        const row = buildLoadedMessageRow(params.sessionId, message, isForeignContext);
         params.cache?.rowsByMessage.set(message, row);
         loadedMessages.push(row);
     }
@@ -211,6 +219,7 @@ export function buildTranscriptNavigationLoadedMessages(params: Readonly<{
             sessionId: params.sessionId,
             messageIdsOldestFirst: params.messageIdsOldestFirst,
             messagesById: params.messagesById,
+            forkMetadataByMessageId: params.forkMetadataByMessageId,
             loadedMessages,
         };
     }
@@ -231,6 +240,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
         && cachedDerivation.loadedMessages === params.loadedMessages
         && cachedDerivation.remoteMessages === params.remoteMessages
         && cachedDerivation.pins === params.pins
+        && cachedDerivation.turnEnds === params.turnEnds
     ) {
         return cachedDerivation.entries;
     }
@@ -244,6 +254,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
             loadedMessages: params.loadedMessages,
             remoteMessages: params.remoteMessages,
             pins: params.pins,
+            turnEnds: params.turnEnds,
             entries: appendEntries,
         };
         return appendEntries;
@@ -255,6 +266,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
         loadedMessages: params.loadedMessages,
         remoteMessages: params.remoteMessages,
         pins: params.pins,
+        turnEnds: params.turnEnds,
         previousEntries: params.cache.previousEntries,
     });
     params.cache.previousEntries = entries;
@@ -264,6 +276,7 @@ export function deriveTranscriptNavigationEntriesWithLoadedMessageCache(
         loadedMessages: params.loadedMessages,
         remoteMessages: params.remoteMessages,
         pins: params.pins,
+        turnEnds: params.turnEnds,
         entries,
     };
     return entries;
@@ -291,6 +304,7 @@ function deriveSingleAppendedUserTurnEntries(
     if (cachedDerivation.mode !== 'all' || params.mode !== 'all') return null;
     if (cachedDerivation.remoteMessages !== params.remoteMessages) return null;
     if (cachedDerivation.pins !== params.pins) return null;
+    if (cachedDerivation.turnEnds !== params.turnEnds) return null;
     if (!loadedMessagePrefixMatches(cachedDerivation.loadedMessages, params.loadedMessages)) return null;
 
     const appendedMessage = params.loadedMessages[params.loadedMessages.length - 1];
@@ -332,6 +346,7 @@ function deriveSingleAppendedUserTurnEntries(
         blockOrder: 0,
         transcriptBlockIndex: normalizeFiniteInteger(appendedMessage.transcriptBlockIndex),
         facts: resolvePromptOnlyTurnFacts(appendedMessage),
+        settledDurationMs: appendedMessage.isForeignContext ? undefined : indexSettledDurationsByPromptSeq(params.turnEnds).get(seq),
     }, 'all', null);
     if (!appendedEntry) return null;
 

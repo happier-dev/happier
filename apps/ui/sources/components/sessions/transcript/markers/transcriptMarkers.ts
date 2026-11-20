@@ -8,13 +8,14 @@ import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/dom
 
 /**
  * A settled turn's end, placed by its recorded transcript anchors: how long it ran from its recorded start to its
- * recorded end, and whether it finished or was stopped. Turns without both recorded times or an end anchor
- * have no line; nothing here is inferred from message timestamps.
+ * recorded end, and whether it finished or was stopped. A settled turn can be known before its closing
+ * row is available.
  */
 export type TranscriptTurnEndFact = Readonly<{
   turnId: string;
   startSeq: number | null;
-  endSeq: number;
+  endSeq: number | null;
+  promptSeqs: readonly number[];
   /** Where the next turn starts; rows between this turn's end anchor and it (its error, late tool rows) are still this turn's. */
   nextTurnStartSeq: number | null;
   outcome: 'worked' | 'stopped';
@@ -62,25 +63,34 @@ export function projectTranscriptTurnEnds(
           : null;
     if (!outcome || typeof turn.terminalAt !== 'number') continue;
     const durationMs = turn.terminalAt - turn.startedAt;
-    if (!(durationMs >= SHORTEST_SHOWN_TURN_MS)) continue;
+    if (!Number.isFinite(durationMs) || durationMs < 0) continue;
     const anchors = turn.transcriptAnchors;
     const endSeq =
       readSeq(anchors?.endSeqInclusive) ??
       readSeq(anchors?.finalAssistantMessageSeq);
-    if (endSeq === null) continue;
     const startSeq = readStartSeq(turn);
+    const firstPromptSeq = anchors?.startUserMessageSeq;
+    const otherPromptSeqs = anchors?.userMessageSeqs ?? [];
+    const promptSeqs = firstPromptSeq !== undefined ? [firstPromptSeq, ...otherPromptSeqs]
+      : otherPromptSeqs.length > 0 ? otherPromptSeqs
+      : startSeq !== null ? [startSeq] : [];
     facts.push({
       turnId: turn.turnId,
       startSeq,
       endSeq,
-      nextTurnStartSeq: starts.find((seq) => seq > endSeq && (startSeq === null || seq > startSeq)) ?? null,
+      promptSeqs,
+      nextTurnStartSeq: endSeq === null ? null : starts.find((seq) => seq > endSeq && (startSeq === null || seq > startSeq)) ?? null,
       outcome,
       durationMs,
       endedAtMs: turn.terminalAt,
     });
   }
   if (facts.length === 0) return EMPTY_TURN_ENDS;
-  return facts.sort((left, right) => left.endSeq - right.endSeq);
+  return facts.sort((left, right) => (left.endSeq ?? Infinity) - (right.endSeq ?? Infinity));
+}
+
+function hasClosingLine(fact: TranscriptTurnEndFact): fact is TranscriptTurnEndFact & { endSeq: number } {
+  return fact.endSeq !== null && fact.durationMs >= SHORTEST_SHOWN_TURN_MS;
 }
 
 type SeqBlock = {
@@ -139,7 +149,7 @@ export function insertTranscriptMarkers(params: TranscriptMarkerInputs & Readonl
   isSeqRangeLoaded?: (fromInclusive: number, toInclusive: number) => boolean;
 }>): readonly TranscriptRowShellItem[] {
   const { items, sessionId, getMessageById, newDividerAfterSeq, viewerScope, turnEnds, isSeqRangeLoaded } = params;
-  if (items.length === 0 || (newDividerAfterSeq === null && turnEnds.length === 0)) return items;
+  if (items.length === 0 || (newDividerAfterSeq === null && !turnEnds.some(hasClosingLine))) return items;
 
   const blocks: SeqBlock[] = [];
   const changesRowIndexByTurnId = new Map<string, number>();
@@ -205,6 +215,7 @@ export function insertTranscriptMarkers(params: TranscriptMarkerInputs & Readonl
   }
 
   for (const fact of turnEnds) {
+    if (!hasClosingLine(fact)) continue;
     let blockIndex = lastBlockStartingAtOrBefore(blocks, fact.endSeq);
     const anchoredBlock = blocks[blockIndex];
     if (!anchoredBlock || (fact.startSeq !== null && anchoredBlock.maxSeq < fact.startSeq)) continue;

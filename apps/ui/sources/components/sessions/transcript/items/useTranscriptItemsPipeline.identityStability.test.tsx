@@ -194,7 +194,7 @@ describe('useTranscriptItemsPipeline identity stability', () => {
         const byId = Object.fromEntries(messages.map((message) => [message.id, message]));
         const rowsFor = (count: number) => messages.slice(0, count).map((message) => ({ kind: 'message' as const, id: `msg:${message.id}`,
             messageId: message.id, seq: message.seq ?? null, createdAt: message.createdAt }));
-        const turnEnd = (turnId: string, startSeq: number, endSeq: number) => ({ turnId, startSeq, endSeq, nextTurnStartSeq: endSeq + 1,
+        const turnEnd = (turnId: string, startSeq: number, endSeq: number) => ({ turnId, startSeq, endSeq, promptSeqs: [startSeq], nextTurnStartSeq: endSeq + 1,
             outcome: 'worked' as const, durationMs: 72_000, endedAtMs: 72_000 });
         const base = { ...buildDeps(createStableMembers()), getMessageById: (id: string) => byId[id] ?? null };
         const depsWith = (count: number, turnEnds: ReturnType<typeof turnEnd>[]) => ({ ...base, items: rowsFor(count),

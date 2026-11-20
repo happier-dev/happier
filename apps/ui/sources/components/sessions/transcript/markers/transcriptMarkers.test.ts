@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { Message, TranscriptAccountActor } from '@happier-dev/session-core/messages';
+import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 
+import type { TranscriptRowShellItem } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
 import { buildTranscriptTurnUnits } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurnUnits';
 import { buildTranscriptTurns } from '@/components/sessions/transcript/turnGrouping/buildTranscriptTurns';
 import {
@@ -99,6 +101,52 @@ const shape = (rows: readonly { kind: string; id: string }[]) =>
   );
 
 describe('transcript markers', () => {
+  it('projects each row once on a reply arrival across 5,000 rows and 300 settled turns', () => {
+    const turns: SessionTurnV1[] = Array.from({ length: 300 }, (_, index) => ({
+      turnId: String(index),
+      status: 'completed',
+      startedAt: index * 10_000,
+      terminalAt: index * 10_000 + 8_000,
+      updatedAt: index * 10_000 + 8_000,
+      transcriptAnchors: { startSeqInclusive: index * 16 + 1, endSeqInclusive: (index + 1) * 16 },
+    }));
+    turns.push({
+      turnId: 'active', status: 'in_progress', startedAt: 3_000_000, updatedAt: 3_000_000,
+      transcriptAnchors: { startSeqInclusive: 4801 },
+    });
+    const messages = Array.from({ length: 5_000 }, (_, index) => index % 16 === 0
+      ? user(index + 1, { v: 1, ...viewer, profile: null })
+      : agent(index + 1));
+    const rows: TranscriptRowShellItem[] = messages.map((message) => ({
+      kind: 'message', id: `msg:${message.id}`, messageId: message.id, seq: message.seq ?? null, createdAt: message.createdAt,
+    }));
+    const byId = new Map(messages.map((message) => [message.id, message]));
+    const getMessageById = (id: string) => byId.get(id) ?? null;
+    const shared = { sessionId: 's1', turnEnds: projectTranscriptTurnEnds(turns), newDividerAfterSeq: 4800, viewerScope: viewer };
+    const before = insertTranscriptMarkers({ ...shared, items: rows.slice(0, -1), getMessageById });
+    let rowVisits = 0;
+    let messageLookups = 0;
+    const countedRows = new Proxy(rows, {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) rowVisits += 1;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const after = insertTranscriptMarkers({
+      ...shared,
+      items: countedRows,
+      getMessageById: (id) => {
+        messageLookups += 1;
+        return getMessageById(id);
+      },
+    });
+    expect(after).toEqual([...before, rows.at(-1)]);
+    expect(after).toHaveLength(5_301);
+    expect(messageLookups).toBe(rows.length);
+    // One projection pass and at most one additional pass to materialize the marker rows.
+    expect(rowVisits).toBeLessThanOrEqual(2 * rows.length);
+  });
+
   it('puts a turn line above its own changes card, after a tool group, and New at the opened cursor', () => {
     const { rows, getMessageById } = rowsFor([
       user(1),
@@ -152,6 +200,7 @@ describe('transcript markers', () => {
     ).toEqual([
       ['turn-1', 'worked', 72_000],
       ['turn-2', 'stopped', 40_000],
+      ['turn-4', 'worked', 400],
     ]);
 
     const marked = insertTranscriptMarkers({

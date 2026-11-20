@@ -620,9 +620,10 @@ const TimelineEntryRow = React.memo((props: TimelineEntryRowProps) => {
                             </Text>
                         ) : null}
                         {props.showApprovals && facts ? <ApprovalOutcomes approvals={facts.approvals} /> : null}
-                        {facts && !answer ? (
+                        {(facts || entry.settledDurationMs !== undefined) && !answer ? (
                             <TranscriptNavigationTurnFactsStrip
                                 facts={facts}
+                                settledDurationMs={entry.settledDurationMs}
                                 createdAtMs={entry.createdAtMs}
                                 live={present}
                                 showApprovalCounts={!props.showApprovals}

@@ -96,11 +96,12 @@ export function TranscriptNavigationRailPreview(props: TranscriptNavigationRailP
                         {body}
                     </Text>
                 ) : null}
-                {props.entry.facts ? (
+                {props.entry.facts || props.entry.settledDurationMs !== undefined ? (
                     <TranscriptNavigationTurnFactsStrip
                         facts={props.entry.facts}
+                        settledDurationMs={props.entry.settledDurationMs}
                         createdAtMs={props.entry.createdAtMs}
-                        live={props.entry.facts.running}
+                        live={props.entry.facts?.running ?? false}
                         showApprovalCounts
                         testID="transcript-navigation-rail.preview.facts"
                     />

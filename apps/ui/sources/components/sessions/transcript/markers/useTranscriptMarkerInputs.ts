@@ -10,7 +10,6 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { storage, useSetting } from '@/sync/domains/state/storage';
 
 import {
-  projectTranscriptTurnEnds,
   type TranscriptMarkerInputs,
   type TranscriptTurnEndFact,
 } from './transcriptMarkers';
@@ -109,13 +108,10 @@ export function useTranscriptMarkerInputs(
   session: Session,
   hasTranscriptRows: boolean,
   viewerScope: ServerAccountScope | null,
+  projectedTurnEnds: readonly TranscriptTurnEndFact[],
 ): TranscriptMarkerInputs {
   const showTurnDuration = useSetting('transcriptShowTurnDuration') !== false;
-  const turns = session.sessionTurns?.turns ?? null;
-  const settledTurnEnds = React.useMemo(
-    () => (showTurnDuration && turns ? projectTranscriptTurnEnds(turns) : null),
-    [showTurnDuration, turns],
-  );
+  const settledTurnEnds = showTurnDuration && session.sessionTurns != null ? projectedTurnEnds : null;
   const opened = useOpenedFacts(session, settledTurnEnds, hasTranscriptRows);
   const lateSettled = opened?.lateSettled ?? null;
   const turnEnds = React.useMemo(() => {

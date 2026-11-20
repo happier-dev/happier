@@ -24,6 +24,7 @@ import { preloadEnrichedMarkdownRuntime } from '@/components/markdown/enriched/p
 import { useSessionManagedWorkflowRuns } from '@/components/workflows/run/useContextManagedWorkflowRuns';
 import { useTranscriptRootDerivedItems } from '@/components/sessions/transcript/items/useTranscriptRootDerivedItems';
 import { useTranscriptMarkerInputs } from '@/components/sessions/transcript/markers/useTranscriptMarkerInputs';
+import { projectTranscriptTurnEnds } from '@/components/sessions/transcript/markers/transcriptMarkers';
 import { useTranscriptRootNavigationState } from '@/components/sessions/transcript/navigation/useTranscriptRootNavigationState';
 import { useTranscriptRootPendingRequests } from '@/components/sessions/transcript/items/useTranscriptRootPendingRequests';
 import { useTranscriptRootRollbackActions } from '@/components/sessions/transcript/items/useTranscriptRootRollbackActions';
@@ -118,6 +119,8 @@ export function useChatListRootState(props: ChatListProps) {
     const toolViewTimelineChromeMode = transcriptSessionCommon.toolChrome.toolViewTimelineChromeMode;
 
     const activeServerAccountScope = useActiveServerAccountScope();
+    const sessionTurns = props.session.sessionTurns?.turns;
+    const turnEnds = React.useMemo(() => projectTranscriptTurnEnds(sessionTurns), [sessionTurns]);
     const {
         sessionMessagePins,
         togglePersistedSessionMessagePin,
@@ -125,9 +128,11 @@ export function useChatListRootState(props: ChatListProps) {
     } = useTranscriptRootNavigationState({
         activeServerAccountScope,
         forkedTranscriptEnabled,
+        forkMetadataByMessageId: forkAwareMessageDescriptors?.metadataByMessageId,
         messageIdsOldestFirst,
         messagesById,
         sessionId: props.session.id,
+        turnEnds,
     });
     const pendingUserActionRequests = useTranscriptRootPendingRequests({
         messageIdsOldestFirst,
@@ -493,6 +498,7 @@ export function useChatListRootState(props: ChatListProps) {
         props.session,
         messageIdsOldestFirst.length > 0,
         transcriptSessionCommon.messageDisplay.accountActorViewerScope ?? null,
+        turnEnds,
     );
 
     return {

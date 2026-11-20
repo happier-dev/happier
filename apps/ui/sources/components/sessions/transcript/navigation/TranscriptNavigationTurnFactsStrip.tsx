@@ -32,7 +32,8 @@ function approvalCounts(approvals: readonly TranscriptNavigationTurnApproval[]) 
  * or empty turn renders nothing rather than zeros. Shared by the Navigate pane and the trail preview.
  */
 export const TranscriptNavigationTurnFactsStrip = React.memo((props: Readonly<{
-    facts: TranscriptNavigationTurnFacts;
+    facts?: TranscriptNavigationTurnFacts | null;
+    settledDurationMs?: number;
     createdAtMs: number | null;
     live: boolean;
     showApprovalCounts: boolean;
@@ -40,24 +41,30 @@ export const TranscriptNavigationTurnFactsStrip = React.memo((props: Readonly<{
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const { facts } = props;
-    const { allowed, denied } = approvalCounts(facts.approvals);
-    const duration = !props.live && props.createdAtMs !== null && facts.endedAtMs !== null
-        ? formatTranscriptNavigationDuration(facts.endedAtMs - props.createdAtMs)
-        : null;
-    const liveSince = props.live ? props.createdAtMs : null;
-    const hasAnything = facts.toolCount > 0
-        || facts.failedCount > 0
+    const { facts, settledDurationMs } = props;
+    const { allowed, denied } = approvalCounts(facts?.approvals ?? []);
+    const toolCount = facts?.toolCount ?? 0;
+    const failedCount = facts?.failedCount ?? 0;
+    const live = props.live && settledDurationMs === undefined;
+    const durationMs = settledDurationMs ?? (
+        !live && props.createdAtMs !== null && facts?.endedAtMs != null
+            ? facts.endedAtMs - props.createdAtMs
+            : null
+    );
+    const duration = durationMs === null ? null : formatTranscriptNavigationDuration(durationMs);
+    const liveSince = live ? props.createdAtMs : null;
+    const hasAnything = toolCount > 0
+        || failedCount > 0
         || (props.showApprovalCounts && (allowed > 0 || denied > 0))
         || duration !== null
         || liveSince !== null;
     if (!hasAnything) return null;
     return (
         <View testID={props.testID} style={styles.facts}>
-            {facts.toolCount > 0 ? (
+            {toolCount > 0 ? (
                 <View style={styles.fact}>
                     <Icon name="wrench" size={12} color={theme.colors.text.tertiary} />
-                    <Text style={styles.factText}>{t('session.transcriptNavigation.toolCount', { count: facts.toolCount })}</Text>
+                    <Text style={styles.factText}>{t('session.transcriptNavigation.toolCount', { count: toolCount })}</Text>
                 </View>
             ) : null}
             {props.showApprovalCounts && allowed > 0 ? (
@@ -72,10 +79,10 @@ export const TranscriptNavigationTurnFactsStrip = React.memo((props: Readonly<{
                     <Text style={styles.factText}>{t('session.transcriptNavigation.deniedCount', { count: denied })}</Text>
                 </View>
             ) : null}
-            {facts.failedCount > 0 ? (
+            {failedCount > 0 ? (
                 <View style={styles.fact}>
                     <Icon name="warning" size={12} color={theme.colors.state.danger.foreground} />
-                    <Text style={styles.factTextStrong}>{t('session.transcriptNavigation.failedCount', { count: facts.failedCount })}</Text>
+                    <Text style={styles.factTextStrong}>{t('session.transcriptNavigation.failedCount', { count: failedCount })}</Text>
                 </View>
             ) : null}
             {liveSince !== null ? (

@@ -5,6 +5,7 @@ import type { AgentState, Metadata } from '@happier-dev/session-core/state';
 import type { SessionPendingRequestLists } from '@happier-dev/session-core/pending';
 import type { SessionAwarenessProjectionV1} from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import type { SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionForkSupportSource } from '@/sync/domains/sessionFork/forkUiSupport';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -57,6 +58,7 @@ export type SessionTranscriptSource = Readonly<{
     useRuntimeLastObservedAt(): number | null;
     useMetadata(): Metadata | null;
     useAgentState(): AgentState | null;
+    useSessionTurns?(): readonly SessionTurnV1[] | null;
     useWorkspacePath(): string | null;
     useForkSupportSource(): SessionForkSupportSource | null;
     useAuthorship(): Readonly<{ viewerScope: ServerAccountScope | null; hasOtherNamedCollaborator: boolean }>;

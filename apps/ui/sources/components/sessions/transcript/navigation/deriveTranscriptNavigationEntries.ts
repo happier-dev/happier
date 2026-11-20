@@ -38,7 +38,16 @@ export type UserTurnDraft = Readonly<{
     transcriptBlockIndex: number | null;
     /** Null when any row of the turn is outside the loaded window (unknown, never zero). */
     facts?: TranscriptNavigationTurnFacts | null;
+    settledDurationMs?: number;
 }>;
+
+export function indexSettledDurationsByPromptSeq(turnEnds: DeriveTranscriptNavigationEntriesParams['turnEnds']): ReadonlyMap<number, number> {
+    const durations = new Map<number, number>();
+    for (const turn of turnEnds ?? []) {
+        for (const seq of turn.promptSeqs) durations.set(seq, turn.durationMs);
+    }
+    return durations;
+}
 
 type TurnFactsAccumulator = {
     complete: boolean;
@@ -260,6 +269,7 @@ function findPinForUserSeq(pins: readonly TranscriptNavigationPin[], seq: number
 function deriveLoadedUserTurns(
     sessionId: string,
     loadedMessages: readonly TranscriptNavigationLoadedMessage[],
+    settledDurationsByPromptSeq: ReadonlyMap<number, number>,
 ): Map<number, UserTurnDraft> {
     const turnsBySeq = new Map<number, UserTurnDraft>();
     let activeUser: TranscriptNavigationLoadedMessage | null = null;
@@ -297,6 +307,7 @@ function deriveLoadedUserTurns(
             blockOrder: normalizeBlockIndex(activeUser.transcriptBlockIndex, 'user'),
             transcriptBlockIndex: normalizeFiniteInteger(activeUser.transcriptBlockIndex),
             facts: activeFacts ? finishTurnFacts(activeFacts) : null,
+            settledDurationMs: activeUser.isForeignContext ? undefined : settledDurationsByPromptSeq.get(seq),
         });
         activeUser = null;
         activeAgentPreview = null;
@@ -413,6 +424,7 @@ export function buildUserEntry(turn: UserTurnDraft, mode: 'all' | 'pinned', pin:
             pinnedAtMs,
             loaded: turn.loaded,
             facts: turn.facts ?? null,
+            settledDurationMs: turn.settledDurationMs,
         },
     };
 }
@@ -495,7 +507,7 @@ export function deriveTranscriptNavigationEntries(params: DeriveTranscriptNaviga
             loadedMessages,
             params.remoteMessages.map(normalizeLoadedMessage),
         ).sort(compareLoadedMessage);
-    const turnsBySeq = deriveLoadedUserTurns(sessionId, turnRows);
+    const turnsBySeq = deriveLoadedUserTurns(sessionId, turnRows, indexSettledDurationsByPromptSeq(params.turnEnds));
 
     const userTurns = [...turnsBySeq.values()].sort((a, b) => a.seq - b.seq);
     const entries: NavigationEntryWithOrder[] = [];
@@ -553,6 +565,7 @@ function transcriptNavigationEntriesMatch(
         && a.pinned === b.pinned
         && a.pinnedAtMs === b.pinnedAtMs
         && a.loaded === b.loaded
+        && a.settledDurationMs === b.settledDurationMs
         && transcriptNavigationTurnFactsMatch(a.facts ?? null, b.facts ?? null);
 }
 
