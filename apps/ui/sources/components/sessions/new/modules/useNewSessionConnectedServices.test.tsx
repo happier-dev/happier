@@ -5,6 +5,7 @@ import { projectMachineAgent } from '@/agents/machineAgents/machineAgentModel';
 import { projectMachineAgentConnectedServices } from '@/agents/machineAgents/machineAgentConnectedServices';
 import { isMachineAgentReady } from '@/agents/machineAgents/resolveMachineAgentState';
 import { resolveAgentSessionStartBlockLine } from '@/components/machines/agents/agentSessionStartBlockLine';
+import { resolveAgentSessionStartBlock } from '@/components/machines/agents/machineAgentPresentation';
 import { getConnectedServiceRegistrySnapshot } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { storage } from '@/sync/domains/state/storage';
 import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
@@ -324,7 +325,7 @@ afterEach(async () => {
 });
 
 describe('new Session Connected Accounts from the machine catalog', () => {
-    it.each(['pi', 'opencode', 'ohMyPi'] as const)('offers own Muse for %s and authors the direct launch binding', async (agentId) => {
+    it.each(['muse', 'pi', 'opencode', 'ohMyPi'] as const)('offers own Muse for %s and authors the direct launch binding', async (agentId) => {
         const { AuthProvider } = await import('@/auth/context/AuthContext');
         const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
         const serviceKey = buildQualifiedPluginContributionKey(service);
@@ -518,6 +519,7 @@ describe('New Session purpose catalog authority', () => {
         { native: 'signedOut' as const, connected: false, selected: 'native', ready: false },
         { native: 'signedOut' as const, connected: true, selected: 'connected', ready: true, status: 'refresh_failed_retryable' as const },
         { native: 'signedOut' as const, connected: true, selected: 'connected', ready: false, status: 'needs_reauth' as const },
+        { native: 'signedOut' as const, connected: true, selected: 'inherited', ready: true, withdrawPurposeCatalog: true },
         { native: 'signedIn' as const, connected: true, selected: 'inherited', ready: true },
         { native: 'signedIn' as const, connected: true, selected: 'inherited', ready: false, status: 'needs_reauth' as const },
     ])('launch readiness follows the selected credential and offers a one-tap binding recovery: %j', async (scenario) => {
@@ -626,6 +628,17 @@ describe('New Session purpose catalog authority', () => {
                 } } });
                 const { getConnectedAccountCatalogValue } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
                 expect(getConnectedAccountCatalogValue(scope, 'purposes').value).toEqual(value);
+            }
+            if ('withdrawPurposeCatalog' in scenario) {
+                await act(async () => { applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'forbidden' }, true); });
+                const waiting = hook.getCurrent();
+                expect(waiting.connectedAccountDefaultsStatus).toBe('unavailable');
+                expect(() => waiting.requireConnectedAccountDefaultsReady()).toThrowError(expect.objectContaining({
+                    code: 'connected_account_purpose_catalog_unavailable',
+                }));
+                expect(resolveAgentSessionStartBlock(waiting.selectedCredentialMachineAgent)).toBeNull();
+                await act(async () => { applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1, record: { key: 'purposes', value } }, true); });
+                expect(isMachineAgentReady(hook.getCurrent().selectedCredentialMachineAgent)).toBe(true);
             }
         } finally { await hook.unmount(); await connection.dispose(); bridge.dispose(); }
     });
@@ -1135,8 +1148,10 @@ describe('useNewSessionConnectedServices', () => {
         await hook.rerender({ current: true, installed: true, selected: true, revision: 1 });
         expect(isMachineAgentReady(hook.getCurrent().selectedCredentialMachineAgent)).toBe(false);
         await hook.rerender({ current: true, installed: true, selected: false, revision: 2 });
-        expect(hook.getCurrent().selectedCredentialMachineAgent?.state).toBe('needsSignIn');
-        applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'forbidden' }, true);
+        await act(async () => { applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'ready', revision: 1,
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } }, true); });
+        expect(resolveAgentSessionStartBlock(hook.getCurrent().selectedCredentialMachineAgent)).toBe('signedOut');
+        await act(async () => { applyConnectedAccountCatalogSnapshot(scope, 'purposes', { status: 'unavailable', reason: 'forbidden' }, true); });
         expect(() => hook.getCurrent().requireConnectedAccountDefaultsReady()).toThrowError(expect.objectContaining({ code: 'connected_account_purpose_catalog_unavailable' }));
     });
     it('authors an Account prompt trigger with a profile picked through the New Session authentication owner', async () => {
