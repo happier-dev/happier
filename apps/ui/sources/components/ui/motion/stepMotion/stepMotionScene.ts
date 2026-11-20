@@ -35,17 +35,21 @@ function makeParticles(source: GlyphRect, target: GlyphRect, focalInk?: StepFoca
     const t = stepMotionTiming;
     const small = source.width * source.height < t.smallArea;
     const sourceCells = Math.round(source.width * source.height * t.particleDensity / t.particleArea);
-    const targetCells = focalInk?.length ?? Math.round(target.width * target.height * t.particleDensity / t.particleArea);
+    // The focal ink only places the digits; their number follows the larger area, as in the lab, so it holds when
+    // the ink arrives mid-move.
+    const targetCells = Math.round(target.width * target.height * t.particleDensity / t.particleArea);
     const count = Math.min(t.particleLimit, Math.max(small ? t.smallMinimum : 1, sourceCells, targetCells));
     const cols = Math.max(1, Math.round(Math.sqrt(count * Math.max(1, target.width) / Math.max(1, target.height))));
     const rows = Math.ceil(count / cols);
     const particles = new Float32Array(count * 8);
+    // A small control's digits fill it and thin out over twice its halo on every side (a box convolved with a
+    // triangle), so the dissolving control never reads as a hard-edged block.
+    const feather = (i: number, salt: number) => (scatter(i, salt) + scatter(i, salt + 104) - 1) * 2 * t.smallHalo;
     for (let i = 0; i < count; i++) {
         const x = (i % cols + 0.5) / cols;
         const y = (Math.floor(i / cols) + 0.5) / rows;
-        const halo = small ? t.smallHalo : 0;
-        const left = source.x - halo + (small ? scatter(i, 3) : x) * (source.width + 2 * halo);
-        const top = source.y - halo + (small ? scatter(i, 5) : y) * (source.height + 2 * halo);
+        const left = small ? source.x + scatter(i, 3) * source.width + feather(i, 101) : source.x + x * source.width;
+        const top = small ? source.y + scatter(i, 5) * source.height + feather(i, 307) : source.y + y * source.height;
         const [targetX, targetY] = focalInk?.[Math.floor(i * focalInk.length / count)] ?? [x, y];
         const right = target.x + targetX * target.width;
         const bottom = target.y + targetY * target.height;
@@ -70,7 +74,6 @@ export function createStepMotionScene(input: Readonly<{
     outgoingInk?: GlyphInkMap;
     incomingInk?: GlyphInkMap;
     ink?: GlyphInk;
-    controlInk?: GlyphInk;
     cover?: GlyphInk;
 }>): (elapsed: number) => readonly GlyphLayer[] {
     const { animation, grid, outgoing, incoming, source, target, outgoingInk, incomingInk, cover } = input;
@@ -125,7 +128,7 @@ export function createStepMotionScene(input: Readonly<{
                 travellers = makeParticles(source, target, focalInk);
             }
             layers.push(travellerGlyphLayer({
-                ...travellers, ink: travellers.small ? input.controlInk ?? ink : ink,
+                ...travellers, ink,
                 presentationTimeS: p * t.forwardS, stepMorphProgress: p,
             }));
         }

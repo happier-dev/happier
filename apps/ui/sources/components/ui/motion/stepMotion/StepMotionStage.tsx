@@ -89,7 +89,7 @@ function createStepMotionStage(
     publishHomeArrival: React.Dispatch<React.SetStateAction<HomeGlyphArrival | null>>,
     requestRenderer: (needed: boolean) => void,
     prepareOpeningRenderer: (preparing: boolean) => void,
-    colors: () => Readonly<{ primary: string; tertiary: string; page: string }>,
+    colors: () => Readonly<{ tertiary: string; page: string }>,
 ) {
     const layers = new Set<StepMotionLayerHandle>();
     const anchors = new Map<string, Array<StepAnchor | undefined>>();
@@ -218,7 +218,7 @@ function createStepMotionStage(
         const web = layer.webElement();
         if (web && focalTarget instanceof HTMLElement) sampleFocalInk(focalTarget);
         const leaves = web ? readStepLeaves(web, grid, animation.grammar !== 'home' && animation.grammar !== 'opening') : null;
-        const { primary, tertiary, page } = colors();
+        const { tertiary, page } = colors();
         const cover = web ? undefined : reversing ? undefined : inkFor(page);
         const scene = createStepMotionScene({
             animation,
@@ -231,7 +231,6 @@ function createStepMotionStage(
             outgoingInk: reversing ? leaves?.ink : freeze?.ink,
             incomingInk: reversing ? freeze?.ink : leaves?.ink,
             ink: inkFor(tertiary),
-            controlInk: inkFor(primary),
             cover,
         });
         const intervals = Math.ceil(duration * 60);

@@ -62,6 +62,43 @@ describe('first-open glyph choreography', () => {
         expect(positions(0.72, 'traveller').some((y, index) => index % 2 === 1 && y > 480)).toBe(true);
     });
 
+    it('dissolves a small control into digits that thin out at its edges instead of a hard-edged block', () => {
+        const forward = scene({ grammar: 'morph', from: 0, to: 1, secondsPerProgress: 0.92 });
+        // At p = 0.05 every digit is fully faded in and none has started its flight.
+        const layer = forward(0.05 * 0.92).find(layer => layer.kind === 'traveller');
+        if (!layer) throw new Error('The pressed control should break into digits');
+        const at = createGlyphFrameSampler()({ view: { w: 390, h: 844 }, dpr: 1, theme: 'light', layers: [layer] }).sprites.at;
+        const { x, y, width, height } = geometry.source;
+        const outside = (px: number, py: number) => Math.max(x - px, px - x - width, y - py, py - y - height);
+        let core = 0, rim = 0;
+        for (let index = 0; index < at.length; index += 2) {
+            const distance = outside(at[index], at[index + 1]);
+            if (distance <= -8) core++;
+            else if (distance > 4 && distance <= 8) rim++;
+        }
+        const coreArea = (width - 16) * (height - 16);
+        const rimArea = (width + 16) * (height + 16) - (width + 8) * (height + 8);
+        expect(core / coreArea).toBeGreaterThan(0.03);
+        expect(rim / rimArea).toBeLessThan(0.35 * core / coreArea);
+    });
+
+    it('keeps the lab digit count when the focal ink arrives mid-move, so the mass neither thins nor jumps', () => {
+        let focalInk: Array<readonly [number, number]> | undefined;
+        const { cols, rows } = geometry.grid;
+        const forward = createStepMotionScene({
+            ...geometry, outgoingInk: { rgba: new Uint8Array(cols * rows * 4), cols, rows },
+            readFocalInk: () => focalInk,
+            animation: { grammar: 'morph', from: 0, to: 1, secondsPerProgress: 0.92, epoch: 0 },
+        });
+        const count = (progress: number) => (forward(progress * 0.92).find(layer => layer.kind === 'traveller')?.particles.length ?? 0) / 8;
+        const before = count(0.1);
+        // A sparse code: far fewer ink cells than the target's area holds digits.
+        focalInk = Array.from({ length: 120 }, (_, index) => [(index % 12 + 0.5) / 12, (Math.floor(index / 12) + 0.5) / 10] as const);
+        const { width, height } = geometry.target;
+        expect(before).toBe(Math.round(width * height * 0.8 / 70));
+        expect(count(0.3)).toBe(before);
+    });
+
     it('clears outgoing Home digits before revealing Home and leaves an empty scene at settle', () => {
         const home = scene({ grammar: 'home', from: 0, to: 1, secondsPerProgress: 3.4 });
         const modes = (seconds: number) => home(seconds).flatMap(layer => layer.kind === 'front' ? [layer.mode] : []);
