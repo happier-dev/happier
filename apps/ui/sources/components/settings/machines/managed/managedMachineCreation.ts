@@ -26,7 +26,7 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode, homeDomainFailureFromActionFailure } from '@/sync/api/home/homeDomainActions';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import type { ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
-import { canRetryManagedInstallation, managedCreationSetup } from '@/components/settings/machines/managed/managedCreationPresentation';
+import { buildManagedInstallationRetryInput, canRetryManagedInstallation, managedCreationSetup } from '@/components/settings/machines/managed/managedCreationPresentation';
 import { buildReviewedManagedMachineDeleteInput, qualifyManagedMachineDeleteReview } from '@/components/settings/machines/managed/managedMachineDeleteReview';
 import { supportedMachineRetentionEffectsV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { prepareMachineSetupPresetApplyInput } from './machineSetupApply';
@@ -206,11 +206,11 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (!current()) return fail('continuation_retired');
     if (acquisition.managedId && !alreadyAdmitted) return fail(readFailureCode, undefined, undefined, readFailure);
     if (alreadyAdmitted?.creationState !== undefined && alreadyAdmitted.creationState !== 'active') return fail('enrollment_retired');
-    if (!alreadyAdmitted?.enrolledMachineId && (!acquisition.managedId || input.retryInstallation)) {
+    if (!acquisition.managedId || input.retryInstallation) {
         if (input.retryInstallation && (!alreadyAdmitted?.resource || alreadyAdmitted.allocation !== 'bound')) return fail('installation_retry_unavailable');
         const actionId = input.retryInstallation ? 'machines.managed.bootstrap.retry' as const : 'machines.managed.acquire' as const;
         const actionInput = input.retryInstallation && alreadyAdmitted
-            ? { homeId: alreadyAdmitted.homeId, managedId: alreadyAdmitted.id, expectedIntentRevision: alreadyAdmitted.intentRevision }
+            ? buildManagedInstallationRetryInput(alreadyAdmitted)
             : buildManagedMachineAcquireInput(input.draft, input.agentStart);
         if (!actionInput) return fail('content_unavailable');
         const accepted = await awaitActionApprovalResult<ManagedAcceptedV1, { kind: 'accepted'; value: ManagedAcceptedV1 }
@@ -265,7 +265,7 @@ export async function runManagedMachineCreation(input: Readonly<{
     if (acquisition.operation && acquisition.selection.kind === 'preset' && !scopedMachine) return fail(readFailureCode, undefined, undefined, readFailure);
     controller ??= scopedMachine?.controller;
     let machine: ManagedMachineReadSnapshotV1 | null = null;
-    if (controller && acquisition.operation && (!alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
+    if (controller && acquisition.operation && (input.retryInstallation || !alreadyAdmitted?.enrolledMachineId || awaitingSetupWithoutGuestOperation)) {
         let promptMachine = scopedMachine && isManagedMachineEnrollmentRequester(scopedMachine, input.scope.accountId) ? scopedMachine : null;
         input.onProgress({ kind: 'acquiring', managedId: acquisition.managedId });
         while (current()) {

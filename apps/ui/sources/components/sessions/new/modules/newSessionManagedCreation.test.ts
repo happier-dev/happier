@@ -1306,6 +1306,13 @@ describe('ordinary managed creation continuation', () => {
         expect(retry.actions.find(value => value.actionId === 'machines.managed.bootstrap.retry')?.input).toEqual({ homeId: 'home', managedId: 'paid', expectedIntentRevision: 1 });
     });
 
+    it('reports the controller installation Retry failure even after the guest has enrolled', async () => {
+        const retry = transport({ enrolled: true, failed: true });
+        expect(await retry.run({ acquisition: { ...initial, managedId: 'paid' }, retryInstallation: true }))
+            .toMatchObject({ kind: 'failed', code: 'installation_failed' });
+        expect(retry.getAcquisition()).toMatchObject({ managedId: 'paid', operation: { operationId: 'install' } });
+    });
+
     it('retires a replaced local continuation even when its original operation later enrolls', async () => {
         const waiting = createDeferred<void>();
         let current = true;
