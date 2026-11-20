@@ -70,6 +70,26 @@ test('inherits project noEmit and isolates tsrs incremental state without changi
   assert.deepEqual(select(args).argsSuffix, ['--tsBuildInfoFile', fixture.path('tsconfig.tsbuildinfo.tsrs')]);
 });
 
+test('the pinned Rust compiler accepts the bounded checker and parser settings', {
+  skip: process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch),
+}, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-compiler-thread-budget-' });
+  await writeFile(fixture.path('sample.ts'), 'export const value: number = 3;\n');
+  const env = { CI: 'true', HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '1', GOMAXPROCS: '6', RAYON_NUM_THREADS: '32' };
+  const args = ['--noEmit', '--checkers', '32', 'sample.ts'];
+  const call = resolveTypeScriptCliInvocation({ args, env, workspaceDir: fixture.root, admissionClass: 'compilation' });
+  assert.deepEqual(call.compilerThreadArgs, ['--checkers', '2']);
+  assert.deepEqual(call.compilerThreadEnv, { RAYON_NUM_THREADS: '2' });
+  const result = spawnSync(call.command, [...call.argsPrefix, ...args, ...call.compilerThreadArgs], {
+    cwd: fixture.root, env: { ...env, ...call.compilerThreadEnv }, encoding: 'utf8',
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const serial = resolveTypeScriptCliInvocation({ args: ['--noEmit', '--singleThreaded', 'sample.ts'], env, workspaceDir: fixture.root });
+  assert.equal(serial.compilerThreadArgs, undefined);
+  assert.deepEqual(serial.compilerThreadEnv, { RAYON_NUM_THREADS: '1' });
+});
+
 test('runner checks, recovers incrementally and switches to Microsoft without sharing compiler snapshots', {
   skip: process.platform !== 'linux' || !['x64', 'arm64'].includes(process.arch),
 }, async t => {

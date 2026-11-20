@@ -359,6 +359,35 @@ test('tsrs compilation retains its memory floor and charges its observed CPU cla
   assert.equal(broker.status().reservedMemoryKiB, floorKiB);
 });
 
+test('compilation grants reach parallel and explicit single-threaded payloads', linux, async t => {
+  const { root } = await fixture(t, { cpuCores: 48 });
+  const resultPath = join(root, 'compiler-core-grant');
+  for (const [compilerArgs, cores] of [
+    [[], '6'], [['--singleThreaded'], '2'], [['--singleThreaded', 'false'], '6'],
+  ]) {
+    const status = await runAdmissionCommand({ root, className: 'compilation', floorKiB: 1,
+      readJobPeakKiB: () => null, machine: 'fixture', repoDir: root, cacheBaseDir: root, env: {},
+      authoredArgs: ['node', 'scripts/workspaces/runTypeScriptCli.mjs', ...compilerArgs],
+      command: process.execPath, args: ['-e',
+        'require("node:fs").writeFileSync(process.argv[1], process.env.GOMAXPROCS)', resultPath] });
+    assert.equal(status, 0);
+    assert.equal(await readFile(resultPath, 'utf8'), cores);
+  }
+});
+
+test('nineteen cold multithreaded compiles cannot all reserve a 48-core host', { ...linux, timeout: 6000 }, async t => {
+  const { root } = await fixture(t, { cpuCores: 48, readCpuPressure: () => 0,
+    readSlotWorkingSetKiB: () => 1 });
+  for (let index = 0; index < 19; index++) {
+    await acquire(root, 4, t, { className: 'compilation', p99DurationMs: 60_000, durationClass: 'compilation' });
+  }
+  const offered = await requestAdmissionSample(root);
+  assert.equal(offered.activeCount, 8, `the CPU budget must hold the burst to eight offers, got ${offered.activeCount} of 19`);
+  assert.equal(offered.waitingCount, 11);
+  assert.equal(offered.reservedMemoryKiB, 32, 'fresh offers reserve their full working-set floors');
+  assert.equal(offered.reservedCpuCores, 48);
+});
+
 test('memory-fitting CPU-heavy waiters admit up to cores minus runnable pressure', { ...linux, timeout: 6000 }, async t => {
   const clock = captureRecoveryClock(t);
   let pressure = 3;

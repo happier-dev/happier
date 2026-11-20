@@ -1,11 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { availableParallelism } from 'node:os';
 import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { NATIVE_TYPESCRIPT_PACKAGE_JSON, resolveTypeScriptApiExecutable } from './resolveTypeScriptApiExecutable.mjs';
 import { resolveRemoteCommandPolicy } from '../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs';
-import { resolveTypeScriptAdmissionClass } from '../../apps/stack/scripts/utils/dev_targets/command_resources.mjs';
+import { isSingleThreadedTypeScript, resolveColdAdmissionCpuCost, resolveTypeScriptAdmissionClass }
+  from '../../apps/stack/scripts/utils/dev_targets/command_resources.mjs';
 import { isWorkspaceBuildStartup } from '../../apps/stack/scripts/utils/proc/workspace_build_admission.mjs';
 
 const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -55,6 +57,27 @@ export function shouldRouteTypeScriptCliThroughHstack(params) {
 export function requiresTypeScriptAdmission({ env = process.env, platform = process.platform } = {}) {
   return platform === 'linux' && !isWorkspaceBuildStartup({ env }) && (!env.CI || env.HAPPIER_DEV_TARGET_EXECUTION === '1'
     || env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED === '1' || Boolean(env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN));
+}
+
+function rustCompilerThreadLimits(args, env, admissionClass) {
+  const granted = Number(env.GOMAXPROCS);
+  const coldCores = resolveColdAdmissionCpuCost(admissionClass);
+  const cores = Math.min(availableParallelism(), Number.isSafeInteger(granted) && granted > 0
+    ? granted : typeof coldCores === 'number' ? coldCores : availableParallelism());
+  // tsrs runs separate native checkers and a Rayon front-end pool. Bound both,
+  // leaving one core for its coordinator. The pinned compiler uses this Rayon
+  // variable for its own pool, independently of Go's scheduler.
+  const serial = isSingleThreadedTypeScript(args);
+  const limit = serial ? 1 : Math.max(1, Math.floor((cores - 1) / 2));
+  const rayon = Number(env.RAYON_NUM_THREADS);
+  const checkerIndex = args.findLastIndex(arg => /^--checkers(?:=|$)/i.test(arg));
+  const requested = checkerIndex === -1 ? undefined : Number(args[checkerIndex].includes('=')
+    ? args[checkerIndex].split('=')[1] : args[checkerIndex + 1]);
+  return {
+    compilerThreadEnv: { RAYON_NUM_THREADS: String(Number.isSafeInteger(rayon) && rayon > 0 ? Math.min(rayon, limit) : limit) },
+    ...(!serial && (requested === undefined || (Number.isSafeInteger(requested) && requested > limit))
+      ? { compilerThreadArgs: ['--checkers', String(limit)] } : {}),
+  };
 }
 
 export function resolveTypeScriptCliInvocation(params) {
@@ -110,7 +133,10 @@ export function resolveTypeScriptCliInvocation(params) {
     : [compilerPath];
   // Match the native local admission owner's ordinary CI exemption. Placed
   // workers, explicit local overrides and admitted descendants retain guards.
-  if (requiresTypeScriptAdmission({ env, platform: params.platform ?? process.platform })) {
+  const needsAdmission = requiresTypeScriptAdmission({ env, platform });
+  const threadLimits = options && platform === 'linux' && (needsAdmission || env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT)
+    ? rustCompilerThreadLimits(params.args, env, admissionClass) : {};
+  if (needsAdmission) {
     // Routing markers select transport; only the native admission owner can
     // validate/reuse an admitted ancestor or wait for compilation headroom.
     return {
@@ -123,6 +149,7 @@ export function resolveTypeScriptCliInvocation(params) {
       ...apiExecutable,
       cacheSuffix,
       ...cacheArgs,
+      ...threadLimits,
     };
   }
   return {
@@ -133,5 +160,6 @@ export function resolveTypeScriptCliInvocation(params) {
     ...apiExecutable,
     cacheSuffix,
     ...cacheArgs,
+    ...threadLimits,
   };
 }

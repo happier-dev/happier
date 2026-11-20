@@ -653,9 +653,14 @@ class-specific cold costs in the command-resource catalog. The broker then uses
 host-local identity or related class history when available. Each successful
 attributable payload contributes its cgroup CPU usage delta divided by its run
 duration. The grant includes 50% headroom on learned CPU use, rounded up to a
-whole core, and feeds the Go and Vitest worker controls. This accounting imposes
-no OS quota. Explicit worker controls remain in place; nonnumeric sizing requests
-reserve the whole host and can wait for runnable pressure to clear.
+whole core, and feeds the Go and Vitest worker controls. Native TypeScript
+compilation reserves at least its parallel launch budget even when host history
+contains smaller serial averages. Explicit `--singleThreaded` compilation reserves
+two cores. Ordinary parallel compilation starts at six, and parallel Rust UI
+compilation starts at seventeen. On admitted Linux runs, the Go scheduler uses
+the grant and Rust's checker and parser pools fit within the compiler budget.
+This controls compiler concurrency without setting an OS quota. Nonnumeric worker
+requests reserve the whole host and can wait for runnable pressure to clear.
 
 On succession, the broker adopts live slot charges before offering capacity to
 reconnecting waiters. A zero or absent legacy charge uses the largest cold class

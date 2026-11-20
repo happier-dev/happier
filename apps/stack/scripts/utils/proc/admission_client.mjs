@@ -134,7 +134,7 @@ async function runPayload({ command, args, env, signal }) {
  */
 export async function runAdmittedTask({ root, className, floorKiB, machine,
   locks = [], noWait = false, requireInherited = false, failureId, repoDir = process.cwd(),
-  exportMode, exportWorkers, requestedCpuCores, projects, component, entry, readJobPeakKiB,
+  exportMode, exportWorkers, requestedCpuCores, cpuCost = resolveAdmissionCpuCost(className), projects, component, entry, readJobPeakKiB,
   cacheBaseDir = process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, env = process.env, signal } = {}, action) {
   if (typeof action !== 'function') throw new TypeError('Admission requires a task callback');
   const cancellation = new AbortController();
@@ -219,7 +219,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     let admittedDuration;
     const request = { kind: 'acquire', className: resolveAdmissionDiskClass(className), resourceClass: className, floorKiB,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
-      cpuCost: resolveAdmissionCpuCost(className),
+      cpuCost,
       requestedCpuCores: requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt: Date.now(),
       repoDir, cacheBaseDir, noWait, locks, projects,
@@ -417,12 +417,12 @@ export function admissionCommandIdentity({ repoDir = process.cwd(), cwd = proces
   return { component: relative(repoDir, cwd) || '.', entry: entry.join(' ') };
 }
 
-export async function runAdmissionCommand({ command, args = [], validationPreparation, ...options } = {}) {
+export async function runAdmissionCommand({ command, args = [], authoredArgs = args, validationPreparation, ...options } = {}) {
   let payloadStarted = false;
   let payloadStartedAt;
   try {
     const identity = options.entry !== undefined ? {} : admissionCommandIdentity({ repoDir: options.repoDir, command, args });
-    const admission = { ...identity, ...options,
+    const admission = { ...identity, ...options, cpuCost: resolveAdmissionCpuCost(options.className, authoredArgs),
       requestedCpuCores: options.requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env: options.env ?? process.env, args }),
     };
     const launch = (env, signal) => {
@@ -556,7 +556,8 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
       : value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores')),
     repoDir, locks: JSON.parse(value('workspace-locks') ?? '[]'),
     noWait: options.includes('--no-wait'), requireInherited: options.includes('--require-inherited'),
-    failureId: value('failure-id'), command: argv[delimiter + 1], args: argv.slice(delimiter + 2) });
+    failureId: value('failure-id'), command: argv[delimiter + 1], args: argv.slice(delimiter + 2),
+    ...(identityArgs.length ? { authoredArgs: identityArgs } : {}) });
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

@@ -4,7 +4,7 @@ import { appendFileSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, 
 import { createConnection, createServer } from 'node:net';
 import { dirname, isAbsolute, join, posix, relative } from 'node:path';
 import { availableParallelism } from 'node:os';
-import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, resolveAdmissionCpuCores, resolveColdAdmissionCpuCost } from '../dev_targets/command_resources.mjs';
+import { COLD_ADMISSION_CPU_CORES, FOCUSED_TEST_ADMISSION_CLASSES, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_RELOAD_ADMISSION_CLASS, resolveAdmissionCpuCores, isTypeScriptCompilationClass, resolveColdAdmissionCpuCost } from '../dev_targets/command_resources.mjs';
 import { createInterface } from 'node:readline';
 import { DURATION_WINDOW, nearestRankP99 } from '../dev_targets/execution_provenance.mjs';
 import { pathToFileURL } from 'node:url';
@@ -323,10 +323,13 @@ export function createAdmissionBroker({ root,
   const recordedIdentityPeakKiB = item => recordedIdentityResource(item);
   function hostCpuCores(item) {
     const observed = recordedIdentityResource(item, true);
-    const cold = resolveColdAdmissionCpuCost(item.resourceClass ?? item.className);
-    // Legacy exports may lack the worker declaration and options.
-    return Math.min(totalCpuCores, observed === undefined ? (typeof cold === 'number' ? cold : totalCpuCores)
-      : Math.ceil(observed * 1.5 / 1000));
+    const className = item.resourceClass ?? item.className;
+    const cold = resolveColdAdmissionCpuCost(className);
+    const coldCores = typeof cold === 'number' ? cold : totalCpuCores;
+    const learnedCores = observed === undefined ? coldCores : Math.ceil(observed * 1.5 / 1000);
+    // Existing CPU rows mix serial and parallel compiler modes and measure a
+    // run average. Neither can lower the parallel launch budget.
+    return Math.min(totalCpuCores, isTypeScriptCompilationClass(className) ? Math.max(coldCores, learnedCores) : learnedCores);
   }
   function requestedColdFloorKiB(item) {
     // Pre-calibration clients retain the old catalog default in their acquire

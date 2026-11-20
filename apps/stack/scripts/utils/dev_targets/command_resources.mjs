@@ -119,8 +119,7 @@ export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
 
 // Cold core charges for commands without a worker declaration. Short cgroup
 // cpu.stat deltas (2026-11-19 22:16Z, controller, nl1, nl3, windows2-linux):
-// compilation 1.124 (earlier nested UI 1.38), UI 1.135, server 0.746,
-// source-bundle 1.079, and tsrs 11.153. Use 1.5×, rounded up. Generic
+// source-bundle 1.079 and tsrs UI 11.153. Use 1.5×, rounded up. Generic
 // validation keeps 3 cores against the completed 2.946-core maximum.
 // Completed cgroup averages (2026-11-20 01:14Z, nl1/nl3/windows2-linux):
 // dependency-install 1.590 max (7 runs) and source-reload 1.856 max
@@ -129,6 +128,11 @@ export function resolveTypeScriptAdmissionClass(admissionClass, compiler) {
 // and both the 2.547 completed max and earlier 2.552 short delta.
 // Entry-loads use the validation envelope. Completed local identities replace
 // cold estimates. Fixed worker classes and dynamic exports use their declarations.
+// The 1.38-core compilation observation was single-threaded. Reserve two
+// cores for that explicit mode and six for an ordinary native compile:
+// four default TS7 checkers × 1.5 for front-end and runtime work.
+const SINGLE_THREADED_TYPESCRIPT_CPU_CORES = 2;
+const TYPESCRIPT_CPU_CORES = 6;
 export const COLD_ADMISSION_CPU_CORES = Object.freeze({
   [SOURCE_RELOAD_ADMISSION_CLASS]: 3,
   validation: 3,
@@ -137,17 +141,30 @@ export const COLD_ADMISSION_CPU_CORES = Object.freeze({
   'dependency-install': 3,
   'package-dist': 3,
   'runtime-build': 4,
-  compilation: 2,
-  'compilation-ui': 2,
+  compilation: TYPESCRIPT_CPU_CORES,
+  'compilation-ui': TYPESCRIPT_CPU_CORES,
   'compilation-ui-tsrs': 17,
-  'compilation-cli': 2,
-  'compilation-server': 2,
+  'compilation-cli': TYPESCRIPT_CPU_CORES,
+  'compilation-server': TYPESCRIPT_CPU_CORES,
 });
 export const UNKNOWN_ADMISSION_CPU_CORES = COLD_ADMISSION_CPU_CORES['package-dist'];
 
-// Clients retain the symbolic declaration; the destination broker sizes
-// host-class commands from its own completed history.
-export function resolveAdmissionCpuCost(className) {
+export function isTypeScriptCompilationClass(className) {
+  return HEAVYWEIGHT_COMMAND_RESOURCES[className]?.diskClass === 'compilation';
+}
+
+export function isSingleThreadedTypeScript(args) {
+  const index = args.findLastIndex(arg => /^--singlethreaded(?:=|$)/i.test(arg));
+  if (index === -1) return false;
+  const [, value] = args[index].toLowerCase().split('=');
+  return value === undefined ? args[index + 1]?.toLowerCase() !== 'false' : value === 'true';
+}
+
+// The destination broker sizes symbolic host-class costs from its own history.
+export function resolveAdmissionCpuCost(className, args = []) {
+  if (isTypeScriptCompilationClass(className) && isSingleThreadedTypeScript(args)) {
+    return SINGLE_THREADED_TYPESCRIPT_CPU_CORES;
+  }
   return HEAVYWEIGHT_COMMAND_RESOURCES[className]?.cpuCores ?? 'host';
 }
 

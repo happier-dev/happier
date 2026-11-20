@@ -72,10 +72,12 @@ function compilerProjects(args) {
 }
 
 async function runCompiler(invocation, project, isCancelled, captureDiagnostics = false) {
-  const options = { ownedProcessGroup: true, cwd: process.cwd(), stdio: 'inherit', env: process.env };
+  const options = { ownedProcessGroup: true, cwd: process.cwd(), stdio: 'inherit',
+    env: { ...process.env, ...invocation.compilerThreadEnv } };
   const diagnosticReportDir = process.env.HAPPIER_TYPECHECK_REPORT_DIR;
   const capture = Boolean(diagnosticReportDir) || captureDiagnostics;
-  const compilerArgs = [...invocation.argsPrefix, ...project.args, ...(invocation.argsSuffix ?? []), ...(capture ? ['--pretty', 'false'] : [])];
+  const compilerArgs = [...invocation.argsPrefix, ...project.args, ...(invocation.argsSuffix ?? []),
+    ...(invocation.compilerThreadArgs ?? []), ...(capture ? ['--pretty', 'false'] : [])];
   const execute = async (command, args) => {
     if (!capture) return await runCommand(command, args, options);
     // A descendant can retain a diagnostic pipe after the compiler exits.

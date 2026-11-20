@@ -24,11 +24,11 @@ heavyweight_cpu_cores() {
     dependency-install) heavyweight_cpu_cost=3 ;;
     package-dist) heavyweight_cpu_cost=3 ;;
     runtime-build) heavyweight_cpu_cost=4 ;;
-    compilation) heavyweight_cpu_cost=2 ;;
-    compilation-ui) heavyweight_cpu_cost=2 ;;
+    compilation) heavyweight_cpu_cost=6 ;;
+    compilation-ui) heavyweight_cpu_cost=6 ;;
     compilation-ui-tsrs) heavyweight_cpu_cost=17 ;;
-    compilation-cli) heavyweight_cpu_cost=2 ;;
-    compilation-server) heavyweight_cpu_cost=2 ;;
+    compilation-cli) heavyweight_cpu_cost=6 ;;
+    compilation-server) heavyweight_cpu_cost=6 ;;
     *) heavyweight_cpu_cost=3 ;;
   esac
   if [ "${1-}" != source-web-export ] && [ "$heavyweight_cpu_cost" -gt "$2" ]; then heavyweight_cpu_cost=$2; fi
