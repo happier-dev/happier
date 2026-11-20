@@ -83,8 +83,12 @@ calls retain Agent automation authority.
 
 Voice follow-ups default to the app's bound coding Session. Shared MCP keeps
 an omitted Session target open for the app to resolve. Choosing the
-Session creation Action starts a separate Session; it needs no extra marker. The input receipt records admission. The reply or Session
-status supplies the work outcome and any typed failure cause. Voice preference
+Session creation Action starts a separate Session. Voice passes a spoken model
+name for that Session to the spawn Action, which resolves it against the
+selected Agent and Machine before creation. If the name has no clear match,
+Voice reads back the available choices and submits the exact selection after
+the person chooses. Creation and input acceptance are receipts. The reply or
+Session status supplies the work outcome and any typed failure cause. Voice preference
 requests use `settings.list` with a title query and then `settings.get` or
 `settings.set` with the returned anchor.
 

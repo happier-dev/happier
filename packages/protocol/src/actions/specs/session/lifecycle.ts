@@ -779,7 +779,7 @@ function createSessionSpawnActionSpecs(): readonly [SessionSpawnActionSpec] {
             ? { ...field, description: `${field.description} For a Team option (source: team_resource), copy option.value as ref in {v:2,ref,updatedAt}. For an Account Provider ref, use v:1. The launch owner derives the Team credential binding from the ref.` }
             : field),
           { path: 'spokenModelName', title: 'Spoken model name', widget: 'text',
-            description: 'Pass the name the person said. Use this or an exact model selection.' },
+            description: 'Pass the name the person said on the first call. On a model-choice retry, submit the selected exact model with modelSelection or modelSelectionInput.' },
           { path: 'modelSelectionInput', title: 'Model choice by ID', widget: 'json',
             description: 'Supply modelId, providerConnectionId when applicable, and updatedAt when using a catalog choice without a structured model ref.' },
           { path: 'connectedServicesAuthIntent', title: 'Connected Account choice', widget: 'json',

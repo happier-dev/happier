@@ -42,6 +42,24 @@ describe('redactVoiceToolResultValue', () => {
     })).toEqual({ session: { id: 's1' } });
   });
 
+  it.each(['provider_model_ambiguous', 'provider_model_not_found'])(
+    'keeps the exact spawn choices for %s when Session summaries are private', errorCode => {
+      const value = { agentTargetKey: 'agent:codex', providerConnectionId: null, modelId: 'model' };
+      const result = { ok: false, errorCode, error: errorCode, details: {
+        candidates: [{ value, label: 'Named Model', description: 'Native' }],
+        session: { title: 'PRIVATE TITLE' },
+      } };
+      const prefs = { ...SHARE_ALL, shareSessionSummary: false, shareDeviceInventory: true };
+      for (const redact of [redactVoiceToolResultForProvider, redactVoiceActionExecutionResultForProvider]) {
+        const projected = redact('spawnSession', result, prefs);
+        expect(projected).toMatchObject({ details: { candidates: [{ value, label: 'Named Model', description: 'Native' }] } });
+        expect(JSON.stringify(projected)).not.toContain('PRIVATE TITLE');
+        expect(redact('spawnSession', result, { ...prefs, shareDeviceInventory: false }))
+          .toMatchObject({ errorCode, details: { candidates: [] } });
+      }
+    },
+  );
+
   it('withholds awareness request state and private work without changing the canonical result', () => {
     const awareness = {
       v: 1, sessionId: 's1', runtime: 'waiting', freshness: 'live', lifecycle: 'active',

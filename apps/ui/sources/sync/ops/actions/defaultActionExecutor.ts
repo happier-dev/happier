@@ -104,7 +104,7 @@ import {
   sessionUsageLimitSwitchAccountNow, sessionUsageLimitConsumeResetCredit,
   type SessionUsageLimitRecoveryOperationResult,
 } from '@/sync/ops/sessionUsageLimitRecovery';
-import { createActionExecutor, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createActionExecutor, prepareVoiceNamedModelSpawn, readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { completeSpawnActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { projectSessionReferenceFailure, resolveServerIdForSession } from '@happier-dev/protocol/actions/executor/sessionScope';
 import { readActionFailureEnvelope, readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -5244,13 +5244,21 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     return executeMachineActionAtDaemon(actionId, input, context, async (actionInput, reviewDigest, reviewedDeploymentInput) => {
       // The relay's boundary has admitted the caller and parsed authoring input.
       // Settle omissions once; a carried review reuses these same captured facts.
-      if (!reviewDigest && isSessionSpawnNewActionIdV1(actionId) && deps.prepareSessionSpawnNewInput) {
+      if (!reviewDigest && isSessionSpawnNewActionIdV1(actionId)) {
         try {
           const authoring = SessionSpawnNewActionInputV2Schema.parse(actionInput);
-          const prepared = await deps.prepareSessionSpawnNewInput(authoring, context);
-          actionInput = authoring.spokenModelName === undefined ? prepared.input
-            : { ...prepared.input, spokenModelName: authoring.spokenModelName };
-          context = { ...context, sessionCreationDefaults: prepared.defaults };
+          const prepare = deps.prepareSessionSpawnNewInput;
+          if (authoring.spokenModelName !== undefined) {
+            const named = await prepareVoiceNamedModelSpawn(authoring, authoring.spokenModelName,
+              context, prepare, (options, optionContext) => executor.execute('action.options.resolve', options, optionContext));
+            if (!named.ok) return named;
+            actionInput = named.input;
+            context = named.context;
+          } else if (prepare) {
+            const prepared = await prepare(authoring, context);
+            actionInput = prepared.input;
+            context = { ...context, sessionCreationDefaults: prepared.defaults };
+          }
         } catch (error) {
           const failure = parseActionExecuteFailure(error);
           if (failure) return failure;

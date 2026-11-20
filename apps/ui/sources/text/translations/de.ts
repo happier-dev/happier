@@ -9616,6 +9616,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     voiceSurface: {
+      sessionCreated: 'Session erstellt.',
       approvalTapRequired: 'Diese Anfrage erfordert ein Tippen in Happier. Öffne sie, um sie zu genehmigen oder abzulehnen.',
       actionCanceled: 'Der Vorgang wurde abgebrochen.',
         reviewCredentials: 'Zugangsdaten prüfen',

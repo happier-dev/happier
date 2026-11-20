@@ -9706,6 +9706,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   },
 
   voiceSurface: {
+    sessionCreated: 'Sessão criada.',
     approvalTapRequired: 'Este pedido requer um toque no Happier. Abra-o para aprovar ou rejeitar.',
     actionCanceled: 'A operação foi cancelada.',
     reviewCredentials: 'Rever credenciais',

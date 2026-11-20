@@ -9898,6 +9898,7 @@ localTailscale: {
   },
 
   voiceSurface: {
+    sessionCreated: 'セッションを作成しました。',
     approvalTapRequired: 'このリクエストは Happier でのタップが必要です。開いて承認または拒否してください。',
     actionCanceled: '操作がキャンセルされました。',
     reviewCredentials: '認証情報を確認',

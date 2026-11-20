@@ -1,3 +1,6 @@
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ActionInputOptionSchema } from '@happier-dev/protocol/actions/actionInputHints';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { redactVoicePathLikeData } from '@/voice/shared/redactVoicePathLikeData';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { SETTINGS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/settingsDeclarationActionIdsV1';
@@ -49,6 +52,7 @@ const SESSION_SUMMARY_KEYS: ReadonlySet<string> = new Set(['title', 'label', 'na
 const CURRENT_UI_CONTEXT_READ_TOOL_NAME = String(
   getActionSpec('ui.current_context.read').bindings?.voiceClientToolName ?? '',
 ).trim();
+const SPAWN_SESSION_TOOL_NAME = getActionSpec(SESSION_SPAWN_NEW_ACTION_ID_V1).bindings?.voiceClientToolName;
 const SETTINGS_LIST_TOOL_NAME = String(getActionSpec(SETTINGS_LIST_ACTION_ID_V1).bindings?.voiceClientToolName ?? '').trim();
 const DECLARATION_LABEL_TOOL_NAMES: ReadonlySet<string> = new Set(
   (['agents.backends.list', 'agents.models.list', 'settings.list'] as const).flatMap(id => [
@@ -291,6 +295,26 @@ export function redactVoiceToolResultForProvider(
   }
   if (ACTION_RESULT_TOOL_NAMES.has(toolName)) {
     return projectActionResultForProvider(value);
+  }
+  if (toolName === SPAWN_SESSION_TOOL_NAME) {
+    const failure = parseActionExecuteFailure(value);
+    if (failure?.errorCode === 'provider_model_ambiguous' || failure?.errorCode === 'provider_model_not_found') {
+      const details = failure.details;
+      const candidates = details && typeof details === 'object' && 'candidates' in details
+        ? details.candidates : undefined;
+      // Only inventory choice labels are presentation. Other fields on the failure
+      // can still contain Session information and use the normal privacy projection.
+      const choices = Array.isArray(candidates) && prefs.shareDeviceInventory === true
+        ? candidates.flatMap(candidate => {
+          const parsed = ActionInputOptionSchema.safeParse(candidate);
+          if (!parsed.success || parsed.data.disabled) return [];
+          const { value, label, description } = parsed.data;
+          return [{ value, label, ...(description === undefined ? {} : { description }) }];
+        }) : [];
+      return redactVoiceToolResultValueWithClassification({
+        ok: false, errorCode: failure.errorCode, error: failure.errorCode, details: { candidates: choices },
+      }, prefs, true);
+    }
   }
   return redactVoiceToolResultValueWithClassification(
     ACCOUNT_REQUEST_READ_TOOL_NAMES.has(toolName) ? projectAccountRequestForProvider(value) : value,

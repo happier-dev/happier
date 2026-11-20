@@ -1,3 +1,4 @@
+import { VOICE_SPAWN_NAMED_MODEL_GUIDANCE } from '@happier-dev/protocol/actions/actionInputVoiceGuidance';
 import { listVoiceActionBlockSpecs, listVoiceSdkSafeToolActionSpecs, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildMemoryRecallGuidanceBlockV1, type MemoryRecallGuidanceVariant } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
@@ -16,7 +17,7 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 14;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 15;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
@@ -33,11 +34,11 @@ const VOICE_AGENT_SPOKEN_RESULT_RULES = [
 const VOICE_AGENT_SESSION_CREATION_RULES = [
   'Create a requested Happier Session through the canonical Session creation Action. A native Agent/Task subagent or execution run is not a Happier Session and does not create a Session list row.',
   'When the person asks to start a new coding Session and do work, pass the work to that Session creation Action in initialInput.text. Do not perform the requested coding task in the Voice carrier, including through native shell or file tools. If the Action is unavailable or fails, report that result instead of doing the work locally.',
-  'Only report a Session as created or started after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
+  'Only report a Session as created after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
   'Use Session creation for a separate Session the person requested. For a coding follow-up, send the message with sessionId omitted to use the working target.',
-  'When the person names a model for a new coding Session, look it up before creating the Session. Use the Session creation Action’s modelSelection options with the selected Agent and Machine and the spoken model name. Copy the exact choice into modelSelection using the Action’s hints. If multiple choices match, the lookup returns provider_model_not_found, or the choice is unavailable, ask which model the person meant before creating the Session. When they name no model, omit the model fields and use the coding Agent’s default without asking.',
+  VOICE_SPAWN_NAMED_MODEL_GUIDANCE,
   'If the person specifies a separate credential source, resolve it through the spawn connected-services catalog or reuse an exact Session selection when requested. A Team model choice already names its shared credential source. Ask before creating the Session if a requested source is ambiguous or unavailable.',
-  'Creation and input acceptance alone establish only that the Session exists or received the request. To report the work outcome, read the observed child turn or use Session status. For a message with reply wait, use its exact reply outcome. If the turn failed, report the typed cause, such as a usage limit. If work is still pending, say it was sent.',
+  'Session creation and input acceptance are receipts. Check the observed child turn or call session.status.get before claiming work is running, will run, or is done. For a message with reply wait, use its exact reply outcome. If the turn failed, report the typed cause, such as a usage limit. When all you have is a receipt, say the Session was created or the request was sent.',
   'Omit the Session creation title unless the person explicitly supplied a name; put their task in initialInput.text. Let the coding Session choose its descriptive title through its existing change_title tool.',
   'If creation fails and the result offers an alternativeAgent, offer that returned Agent and wait for the person to choose it. Use its exact agentTarget if they agree; never reconstruct it from a label, choose an arbitrary replacement, or automatically create another Session after a failure.',
 ] as const;
@@ -75,7 +76,7 @@ export function buildGlobalVoiceAgentStartupInstructionsPlanV1() {
         text: [
           'Normal permission and approval custody applies through the canonical request tools and session UI.',
           ...VOICE_AGENT_APPROVAL_RULES,
-          'Never semantically retry a mutation. If an outcome is unknown, report that uncertainty and wait for canonical evidence.',
+          'Never semantically retry a mutation with an unknown outcome. Report that uncertainty and wait for canonical evidence.',
           VOICE_AGENT_IRREVERSIBLE_ACTION_RULE,
         ].join('\n'),
       },

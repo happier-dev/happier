@@ -9600,6 +9600,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   },
 
   voiceSurface: {
+    sessionCreated: 'Sesión creada.',
     approvalTapRequired: 'Esta solicitud requiere un toque en Happier. Ábrela para aprobarla o rechazarla.',
     actionCanceled: 'La operación se canceló.',
     reviewCredentials: 'Revisar credenciales',

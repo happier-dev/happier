@@ -11145,6 +11145,7 @@ const enVoiceAssistant = {
 };
 
 const enVoiceSurface = {
+  sessionCreated: 'Session created.',
   approvalTapRequired: 'This request needs a tap in Happier. Open it to approve or reject.',
   actionCanceled: 'The operation was canceled.',
   reviewCredentials: 'Review credentials',

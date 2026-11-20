@@ -53,6 +53,11 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
     return t('voiceSurface.actionCanceled');
   }
   if (envelope?.ok !== true) {
+    if (owner === SESSION_SPAWN_NEW_ACTION_ID_V1
+      && (envelope?.errorCode === 'provider_model_ambiguous' || envelope?.errorCode === 'provider_model_not_found')) {
+      // The carrier reads the returned choices and maps the answer to the exact choice.
+      return null;
+    }
     if (owner === SESSION_MESSAGE_SEND_ACTION_ID_V1) {
       return parseActionExecuteFailure(entry.result)?.errorCode === 'outcome_unknown'
         ? t('session.askRecord.unsure') : t('session.askRecord.notSent');
@@ -77,7 +82,7 @@ export function resolveSpokenActionOutcome(entry: LocalVoiceAgentToolResultEntry
     // Creation is a validated domain settlement, not an Action { ok: false }
     // envelope. The host's presentation retains its bound Agent and alternative.
     switch (body.type) {
-      case 'success': return t('newSession.sessionStartedMessage');
+      case 'success': return t('voiceSurface.sessionCreated');
       case 'pending': return t('session.askRecord.unsure');
       case 'error': {
         if (body.code === 'cancelled') return t('voiceSurface.actionCanceled');

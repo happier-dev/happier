@@ -161,7 +161,7 @@ import { isApprovalArtifactKindV1 } from '../approvals/approvalArtifactKindV1.js
 import { ScmDiffSummaryModelSelectorSchema } from '../scm/diffSummary.js';
 import * as z from '../zodRuntimePolicy.js';
 import { actionStartTargetUnavailableV1 } from './executor/actionStartDiagnostics.js';
-import { ActionOptionsResolveResultSchema } from './specs/catalog.js';
+import { ActionOptionsResolveInputSchema, ActionOptionsResolveResultSchema } from './specs/catalog.js';
 import { SessionModelSelectionV1Schema, SessionModelSelectionV2Schema } from '../providers/selection/schemas.js';
 import { matchSpokenSpawnModelOptions, resolveInputOptions, resolveTypedInputFieldOptions, normalizeResolvedOptions, tryNormalizeExecutionBackendOptionValue, readReviewNarratorOptions, buildAgentInventorySelectionArgs } from '../inputs/inputOptions.js';
 import { ProjectPagesListInputV1Schema } from './projectActionFamily.js';
@@ -595,6 +595,7 @@ import {
   SessionSpawnNewActionAgentAuthoringInputV2Schema,
   admitSessionSpawnNewActionInputV2,
   projectSessionSpawnNewActionInputV2,
+  type SessionSpawnNewActionAuthoringInputV2,
   type SessionSpawnNewInputV2,
 } from '../sessions/creation/sessionSpawnNewInputV2.js';
 import {
@@ -656,6 +657,54 @@ export type {
 } from './executor/types.js';
 
 type ActionExecuteFailure = Extract<ActionExecuteResult, Readonly<{ ok: false }>>;
+
+/** Resolve Voice authoring once, before either spawn transport projects the exact recipe. */
+export async function prepareVoiceNamedModelSpawn(
+  input: SessionSpawnNewActionAuthoringInputV2,
+  spokenModelName: string,
+  context: ActionExecutorContext,
+  prepare: ActionExecutorDeps['prepareSessionSpawnNewInput'],
+  resolveOptions: (input: z.infer<typeof ActionOptionsResolveInputSchema>, context: ActionExecutorContext) => Promise<ActionExecuteResult>,
+): Promise<ActionExecuteFailure | Readonly<{ ok: true; input: SessionSpawnNewActionAuthoringInputV2; context: ActionExecutorContext }>> {
+  if (context.surface !== 'voice' || input.modelSelection !== undefined || input.modelSelectionInput !== undefined
+    || input.configuration?.model.value != null) {
+    return { ok: false, errorCode: 'invalid_parameters', error: 'Pass a spoken model name only in Voice, without another model selection.' };
+  }
+  const prepared = await prepare?.(input, context);
+  if (prepared) context = { ...context, sessionCreationDefaults: prepared.defaults };
+  const { spokenModelName: _spokenModelName, ...authoring } = input;
+  const spawn = prepared?.input ?? authoring;
+  const choice = await resolveOptions({
+    actionId: SESSION_SPAWN_NEW_ACTION_ID_V1,
+    fieldPath: 'modelSelection',
+    draftInput: {
+      agentTarget: spawn.agentTarget,
+      executionTarget: spawn.executionTarget,
+      directory: spawn.directory,
+      profileId: spawn.profileId,
+      connectedServices: spawn.connectedServices,
+    },
+    query: spokenModelName,
+  }, context);
+  if (!choice.ok) return choice;
+  const { options: candidates } = ActionOptionsResolveResultSchema.parse(choice.result);
+  const [candidate] = candidates;
+  if (!candidate || candidates.length !== 1) {
+    return { ok: false, errorCode: 'provider_model_ambiguous', error: 'Choose one model from the matching options.',
+      details: { candidates } };
+  }
+  const value = candidate.value;
+  const ref = typeof value === 'string' && spawn.agentTarget
+    ? { agentTargetKey: buildBackendTargetKeyV2(spawn.agentTarget), providerConnectionId: null, modelId: value }
+    : value;
+  const updatedAt = Date.now();
+  const structured = SessionModelSelectionV2Schema.safeParse({ v: 2, ref, updatedAt });
+  const selection = structured.success ? structured : SessionModelSelectionV1Schema.safeParse({ v: 1, ref, updatedAt });
+  if (!selection.success) {
+    return { ok: false, errorCode: 'provider_model_not_found', error: 'The matched model cannot be selected.', details: { candidates } };
+  }
+  return { ok: true, input: { ...spawn, modelSelection: selection.data }, context };
+}
 
 function redactMemoryActionInput(actionId: string, input: unknown): unknown {
   const request = readRecord(input);
@@ -2688,55 +2737,30 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     }
     const spokenModelName = actionId === 'session.spawn_new' && !existingAdmission
       ? readNonEmptyString(readRecord(parsed.data).spokenModelName) : undefined;
-    if (spokenModelName && (ctx.surface !== 'voice'
-      || readRecord(parsed.data).modelSelection !== undefined
-      || readRecord(parsed.data).modelSelectionInput !== undefined
-      || readRecord(readRecord(parsed.data).configuration).model !== undefined)) {
-      return { ok: false, errorCode: 'invalid_parameters', error: 'Pass a spoken model name only in Voice, without another model selection.' };
-    }
     // Prepare (including Import) already issued the Session recipe from its
     // admitted root. Preserve it for preflight and creation-key materialization;
     // the native launch owner still applies runtime defaults.
-    if (actionId === 'session.spawn_new' && !existingAdmission && deps.prepareSessionSpawnNewInput
-      && !(ctx.externalActionExecutionAuthorization?.binding.actionId === DEPLOYMENT_PREPARE_ACTION_ID_V1
-        && readHostAdmittedReviewedChildRoleV1(ctx, actionId, parsed.data) === DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1)) {
+    if (actionId === 'session.spawn_new' && !existingAdmission) {
+      const prepare = ctx.externalActionExecutionAuthorization?.binding.actionId === DEPLOYMENT_PREPARE_ACTION_ID_V1
+        && readHostAdmittedReviewedChildRoleV1(ctx, actionId, parsed.data) === DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1
+        ? undefined : deps.prepareSessionSpawnNewInput;
       try {
-        const prepared = await deps.prepareSessionSpawnNewInput(
-          SessionSpawnNewActionInputV2Schema.parse(parsed.data), ctx);
-        parsed = { success: true as const, data: prepared.input };
-        ctx = { ...ctx, sessionCreationDefaults: prepared.defaults };
+        if (spokenModelName) {
+          const named = await prepareVoiceNamedModelSpawn(SessionSpawnNewActionInputV2Schema.parse(parsed.data), spokenModelName,
+            ctx, prepare, (input, context) => executeHostChild('action.options.resolve', input, context));
+          if (!named.ok) return named;
+          parsed = { success: true as const, data: named.input };
+          ctx = named.context;
+        } else if (prepare) {
+          const prepared = await prepare(SessionSpawnNewActionInputV2Schema.parse(parsed.data), ctx);
+          parsed = { success: true as const, data: prepared.input };
+          ctx = { ...ctx, sessionCreationDefaults: prepared.defaults };
+        }
       } catch (error) {
         const failure = parseActionExecuteFailure(error);
         if (failure) return failure;
         throw error;
       }
-    }
-    if (spokenModelName) {
-      const { spokenModelName: _spokenModelName, ...spawn } = SessionSpawnNewActionInputV2Schema.parse(parsed.data);
-      const choice = await executeHostChild('action.options.resolve', {
-        actionId: 'session.spawn_new', fieldPath: 'modelSelection',
-        draftInput: { agentTarget: spawn.agentTarget, executionTarget: spawn.executionTarget, directory: spawn.directory,
-          profileId: spawn.profileId, connectedServices: spawn.connectedServices },
-        query: spokenModelName,
-      }, ctx);
-      if (!choice.ok) return choice;
-      const { options: candidates } = ActionOptionsResolveResultSchema.parse(choice.result);
-      const [candidate] = candidates;
-      if (!candidate || candidates.length !== 1) {
-        return { ok: false, errorCode: 'provider_model_ambiguous', error: 'Choose one model from the matching options.',
-          details: { candidates } };
-      }
-      const value = candidate.value;
-      const ref = typeof value === 'string' && spawn.agentTarget
-        ? { agentTargetKey: buildBackendTargetKeyV2(spawn.agentTarget), providerConnectionId: null, modelId: value }
-        : value;
-      const updatedAt = Date.now();
-      const structured = SessionModelSelectionV2Schema.safeParse({ v: 2, ref, updatedAt });
-      const selection = structured.success ? structured : SessionModelSelectionV1Schema.safeParse({ v: 1, ref, updatedAt });
-      if (!selection.success) {
-        return { ok: false, errorCode: 'provider_model_not_found', error: 'The matched model cannot be selected.', details: { candidates } };
-      }
-      parsed = { success: true as const, data: { ...spawn, modelSelection: selection.data } };
     }
     const discussionParticipantLaunch = existingAdmission?.discussionParticipantLaunch
       ?? (actionId === 'session.spawn_new' && readRecord(parsed.data).discussionParticipant !== undefined

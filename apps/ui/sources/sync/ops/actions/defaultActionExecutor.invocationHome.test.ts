@@ -290,7 +290,13 @@ describe('default Action original Home selection', () => {
                     return Response.json({ v: 1, actionId, requestId: request.envelope.requestId,
                         execution: operation === 'spawn canonical uncertainty'
                             ? { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' }
-                            : { ok: true, result: operation === 'rich-resume' ? { type: 'success', sessionId: 'bob-session' } : actionId === 'session.spawn_new'
+                            : { ok: true, result: operation === 'rich-resume' ? { type: 'success', sessionId: 'bob-session' }
+                            : request.envelope.requestId === 'voice-named-attempt' ? {
+                                type: 'success', disposition: 'created', sessionId: 'bob-session',
+                                executionTarget: { serverId: homeId, machineId: 'alice-machine' },
+                                organizationPlacement: { sectionId: null, tagIds: [] },
+                                initialInput: { status: 'notRequested' },
+                            } : actionId === 'session.spawn_new'
                             ? { type: 'pending', retryWithSameCreationKey: true, outcome: 'unknown' }
                             : { ok: true, status: 'opened', sessionId: 'bob-session', serverId: homeId } } });
                 }
@@ -299,6 +305,15 @@ describe('default Action original Home selection', () => {
             machineRpcBoundary.mockImplementation(async request => {
                 if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
                     return createExistingSessionDirectoryPreflightResult(request.payload);
+                }
+                if (operation === 'spawn Voice' && request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+                    return { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+                        codex: { id: 'codex', title: 'Codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                    } } };
+                }
+                if (operation === 'spawn Voice' && request.method === RPC_METHODS.CAPABILITIES_INVOKE) {
+                    return { ok: true, result: { source: 'dynamic', supportsFreeform: false,
+                        availableModels: [{ id: 'catalog-model-id', name: 'Named Model' }] } };
                 }
                 throw new Error('Raw shared-Machine spawn is forbidden');
             });
@@ -352,7 +367,9 @@ describe('default Action original Home selection', () => {
                 permissionModeUpdatedAt: 9, initialTranscriptAfterSeq: 17, spawnNonce: richOptions.spawnNonce,
                 initialGoal: richOptions.initialGoal, environmentVariables: richOptions.environmentVariables,
             } });
-            else expect(relayedInput).toEqual(actionId === 'session.spawn_new' ? projectSessionSpawnNewApiRequest(input).input : resumeInput);
+            else expect(relayedInput).toEqual(actionId === 'session.spawn_new' ? projectSessionSpawnNewApiRequest({
+                ...input, ...(operation === 'spawn Voice' ? { sessionPlacement: { kind: 'machine', target: input.executionTarget } } : {}),
+            }).input : resumeInput);
             // One receiving Action per invocation; preparation must not admit locally.
             expect(httpPaths.filter(path => path === `/v1/actions/${actionId}`)).toHaveLength(operation === 'spawn confirmation' ? 2 : 1);
             if (operation === 'spawn confirmation') {
@@ -369,6 +386,26 @@ describe('default Action original Home selection', () => {
             }
             // Only the receiving daemon prepares/adopts the spawn recipe.
             expect(machineRpcBoundary.mock.calls.map(([request]) => request.method)).toEqual([]);
+            if (operation === 'spawn Voice') {
+                const configuration = {
+                    mode: { value: null, updatedAtMs: 0 },
+                    model: { value: null, updatedAtMs: 1 },
+                    permissionIntent: { value: null, updatedAtMs: 0 },
+                    options: {},
+                };
+                const spawn = (spokenModelName: string, key: string) => executor.execute(actionId, {
+                    ...input, configuration, spokenModelName, creationKey: buildManualSessionCreationKey(key),
+                }, { ...context, actionRequestId: key });
+                const named = await spawn('Named Model', 'voice-named-attempt');
+                expect(named, JSON.stringify(named)).toMatchObject({ ok: true, result: { type: 'success', sessionId: 'bob-session' } });
+                expect(relayedInput).toMatchObject({ modelSelection: { ref: { modelId: 'catalog-model-id' } } });
+                expect(relayedInput).not.toHaveProperty('spokenModelName');
+                const count = httpPaths.filter(path => path === '/v1/actions/session.spawn_new').length;
+                const refused = await spawn('Banana Thunder', 'voice-unknown-attempt');
+                expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'provider_model_not_found',
+                    details: { candidates: [{ value: 'catalog-model-id', label: 'Named Model' }] } });
+                expect(httpPaths.filter(path => path === '/v1/actions/session.spawn_new')).toHaveLength(count);
+            }
             expect(JSON.stringify(input).includes(token)).toBe(false);
             expect(JSON.stringify(outcome).includes(token)).toBe(false);
             if (actionId === 'session.spawn_new') expect(httpPaths.includes('/v1/machines/alice-machine/access')).toBe(true);

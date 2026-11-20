@@ -4,6 +4,7 @@ import { actionStartTargetUnavailableV1 } from './executor/actionStartDiagnostic
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
 import { buildAcpConfigOptionOverridesV1 } from '../sessions/metadata/metadataOverridesV1.js';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
+import type { AgentSessionConfigurationSnapshotV1 } from '../runtime/agentSessionConfigurationV1.js';
 import { ExecutionRunStartRequestSchema } from '../execution/runs/startRequest.js';
 import { AgentExecutionTargetV1Schema } from '../agents/executionTargetV1.js';
 import { projectActionWorkflowSelectionInputV1 } from './executor/agentStartAdmission.js';
@@ -365,6 +366,58 @@ it.each((['subagents.plan.start', 'subagents.delegate.start', 'voice_agent.start
     expect(received.map(request => request.backendTarget)).toEqual([agentTarget]);
   },
 );
+
+it('resolves or refuses Voice model authoring with a configuration snapshot before spawning', async () => {
+  const executorDeps = createDeps({
+    resolveSessionSpawnAgentInventorySelection: () => ({ agentId: 'codex', backendTargetKey: START_TARGET_KEY }),
+    agentsModelsList: async () => ({ items: [
+      { label: 'Muse Spark Contributor', value: 'muse-spark-contributor' },
+      { label: 'Muse Spark Standard', value: 'muse-spark-standard' },
+    ] }),
+    sessionSpawnNew: vi.fn(async () => ({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' })),
+  });
+  const executor = createActionExecutor(executorDeps);
+  const context = { surface: 'voice', authority: 'present_user' } as const;
+  const input = {
+    creationKey: 'voice-named-model',
+    executionTarget: { serverId: 'server-1', machineId: 'm1' },
+    directory: { kind: 'path', path: '/workspace' },
+    agentTarget: parseBackendTargetKeyV2(START_TARGET_KEY),
+    configuration: {
+      mode: { value: null, updatedAtMs: 0 },
+      permissionIntent: { value: null, updatedAtMs: 0 },
+      model: { value: null, updatedAtMs: 1 },
+      options: {},
+    },
+  };
+  const candidates = [{ label: 'Muse Spark Contributor', value: 'muse-spark-contributor' },
+    { label: 'Muse Spark Standard', value: 'muse-spark-standard' }];
+  const spawn = (spokenModelName: string, configuration: AgentSessionConfigurationSnapshotV1 = input.configuration) =>
+    executor.execute('session.spawn_new', { ...input, spokenModelName, configuration }, context);
+
+  const named = await spawn('Muse Spark Contributor');
+  expect(named, JSON.stringify(named)).toMatchObject({ ok: true });
+  expect(vi.mocked(executorDeps.sessionSpawnNew).mock.calls[0]?.[0]).toMatchObject({
+    modelSelection: { ref: { modelId: 'muse-spark-contributor' } },
+  });
+  expect(await spawn('Muse Spark')).toMatchObject({ ok: false, errorCode: 'provider_model_ambiguous', details: { candidates } });
+  const unknown = await spawn('Banana Thunder');
+  expect(unknown).toMatchObject({ ok: false, errorCode: 'provider_model_not_found', details: { candidates } });
+  expect(await spawn('Muse Spark Contributor', { ...input.configuration, model: { value: 'muse-spark-standard', updatedAtMs: 1 } }))
+    .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  expect(executorDeps.sessionSpawnNew).toHaveBeenCalledTimes(1);
+
+  const pick = candidates[1];
+  const retry = await executor.execute('session.spawn_new', {
+    ...input,
+    creationKey: 'voice-chosen-model',
+    modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey: START_TARGET_KEY, providerConnectionId: null, modelId: pick.value } },
+  }, context);
+  expect(retry, JSON.stringify(retry)).toMatchObject({ ok: true });
+  expect(vi.mocked(executorDeps.sessionSpawnNew).mock.calls[1]?.[0]).toMatchObject({
+    modelSelection: { ref: { modelId: pick.value } },
+  });
+});
 
 it('round-trips the contributed Agent option into session creation and a direct execution run', async () => {
   const identity = { pluginId: 'acme.review', localId: 'reviewer' };

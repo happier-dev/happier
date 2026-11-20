@@ -9825,6 +9825,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
   voiceSurface: {
+    sessionCreated: 'Sessione creata.',
     approvalTapRequired: 'Questa richiesta richiede un tocco in Happier. Aprila per approvarla o rifiutarla.',
     actionCanceled: 'L’operazione è stata annullata.',
     reviewCredentials: 'Controlla le credenziali',

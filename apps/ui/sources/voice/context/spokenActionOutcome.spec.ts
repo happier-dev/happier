@@ -54,6 +54,19 @@ describe('spoken Action owner outcomes', () => {
     })).toBeTypeOf('string');
   });
 
+  it('reports Session creation without promising the accepted first turn will run', () => {
+    expect(resolveSpokenActionOutcome({ t: 'spawnSession', args: {},
+      result: { ok: true, type: 'success', sessionId: 's1', initialInput: { status: 'accepted', localId: 'm1' } },
+    })).toBe('Session created.');
+  });
+
+  it('leaves named-model choices for the carrier to read aloud', () => {
+    expect(resolveSpokenActionOutcome({ t: 'spawnSession', args: {},
+      result: { ok: false, errorCode: 'provider_model_not_found', error: 'provider_model_not_found',
+        details: { candidates: [{ label: 'Named Model', value: 'model' }] } },
+    })).toBeNull();
+  });
+
   it.each([false, true])('reports only admission for an asynchronous send (envelope=%s)', envelope => {
     const input = { message: 'Write a file', reply: 'none' };
     const result = { status: 'accepted', localId: 'message-1' };

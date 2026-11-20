@@ -81,7 +81,7 @@ describe('voiceAgentPrompt', () => {
       buildVoiceClientToolAgentPrompt(),
     ]) {
       expect(prompt).toContain('A native Agent/Task subagent or execution run is not a Happier Session');
-      expect(prompt).toContain('Only report a Session as created or started after the Session creation Action returns success with its sessionId');
+      expect(prompt).toContain('Only report a Session as created after the Session creation Action returns success with its sessionId');
       expect(prompt).toContain('Omit the Session creation title unless the person explicitly supplied a name');
       expect(prompt).toContain('Let the coding Session choose its descriptive title through its existing change_title tool');
       expect(prompt).toContain('acknowledge the actual outcome in one short sentence');
@@ -90,6 +90,22 @@ describe('voiceAgentPrompt', () => {
       expect(prompt).toContain('For a spoken "brief me", use the canonical sidebar Brief Action');
     }
     expect(buildLocalVoiceAgentSystemPrompt()).toContain('Do not look them up with native ToolSearch.');
+  });
+
+  it.each([
+    ['native', () => buildLocalVoiceAgentSystemPrompt()],
+    ['MCP', () => buildLocalVoiceAgentSystemPrompt({ actionTransport: 'mcp' })],
+    ['realtime', () => buildVoiceClientToolAgentPrompt()],
+    ['global', () => renderPromptPlanV1(buildGlobalVoiceAgentStartupInstructionsPlanV1())],
+  ] as const)('requires exact named model recovery and observed child progress in %s', (_carrier, render) => {
+    const prompt = render();
+    expect(prompt).toContain('pass the name you heard in spokenModelName');
+    expect(prompt).not.toContain('look it up before creating the Session');
+    expect(prompt).not.toContain('When the person names a model, resolve it with listAgentModels');
+    expect(prompt).not.toContain('When the person names a model, call resolveActionOptions');
+    expect(prompt).toMatch(/provider_model_ambiguous.*provider_model_not_found.*details\.candidates.*short closed question.*name or position.*exact returned choice/);
+    expect(prompt).toContain('Omit the model fields only when the person names no model');
+    expect(prompt).toMatch(/session\.status\.get.*before claiming work is running, will run, or is done/);
   });
 
   it('documents Account settings and request discovery through the real admitted Voice catalog', () => {
@@ -200,14 +216,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 14,
+      revision: 15,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: '3e8593693bcdf958823382f25c37d66635d49c960f68eaae7e084d2e36ff86a4',
+      digest: '383c6a450b9ba8f8d3fd7b8627ee810249654d9bce6fc0496f5aa05a438e806d',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");

@@ -9268,6 +9268,7 @@ export const zhHans: TranslationStructure = {
   },
 
   voiceSurface: {
+    sessionCreated: '会话已创建。',
     approvalTapRequired: '此请求需要在 Happier 中点击确认。打开请求以批准或拒绝。',
     actionCanceled: '操作已取消。',
     reviewCredentials: '检查凭据',
