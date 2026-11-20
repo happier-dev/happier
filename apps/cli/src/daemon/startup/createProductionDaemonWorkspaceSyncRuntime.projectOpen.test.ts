@@ -231,9 +231,11 @@ it('uses the fresh Apply requester’s exact workspace row before opening the or
   const apply = runtime.workspaceSync.withManagedReturnTarget;
   if (!apply || workspace.kind !== 'managed') throw new Error('Managed Return Apply must be installed');
   await expect(apply(context, workspace, async () => {})).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
+  memberRows = [createPlainProjectAccountRefRow({ ...ref, controller: { ...controller, installationId: 'replaced-installation' } })];
+  await expect(apply(context, workspace, async () => {})).rejects.toMatchObject({ code: 'workspace_target_unavailable' });
   expect(opened).toEqual([]);
   memberRows = [row];
   await expect(apply(context, workspace, async () => {})).rejects.toBe(transportUnavailable);
   expect(opened).toEqual([{ workspace, requesterAccountId: 'member' }]);
-  expect(rowReaders).toEqual([`Bearer ${member.token}`, `Bearer ${member.token}`]);
+  expect(rowReaders).toEqual(Array(3).fill(`Bearer ${member.token}`));
 });

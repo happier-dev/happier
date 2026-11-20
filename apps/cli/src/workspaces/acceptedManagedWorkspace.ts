@@ -21,12 +21,12 @@ export async function readManagedWorkspaceRefForAddress(
     signal: AbortSignal,
     scope: 'workspace' | 'project' = 'workspace',
 ) {
-    return await readAcceptedManagedWorkspaceRefFromRows({
+    return await readManagedWorkspaceRefFromRows({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, signal,
     }, runtime.serverHttpBaseUrl, workspace, scope);
 }
 
-export async function readAcceptedManagedWorkspaceRefFromRows(
+async function readManagedWorkspaceRefFromRows(
     rows: ProjectAccountRowsInput,
     serverHttpBaseUrl: string,
     workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>,
@@ -42,6 +42,16 @@ export async function readAcceptedManagedWorkspaceRefFromRows(
     return { ref, workspaceRefs };
 }
 
+export async function readAcceptedManagedWorkspaceRefFromRows(
+    rows: ProjectAccountRowsInput,
+    serverHttpBaseUrl: string,
+    workspace: Extract<WorkspaceAddressV2, { kind: 'managed' }>,
+    scope?: 'workspace' | 'project',
+) {
+    const { ref, workspaceRefs } = await readManagedWorkspaceRefFromRows(rows, serverHttpBaseUrl, workspace, scope);
+    return matchesAcceptedManagedWorkspaceRef(ref, workspace) ? { ref, workspaceRefs } : null;
+}
+
 /** Resolve the requester's accepted exact address before any provider access. */
 export async function readAcceptedManagedWorkspaceRef(
     runtime: Parameters<typeof readManagedWorkspaceRefForAddress>[0],
@@ -49,7 +59,7 @@ export async function readAcceptedManagedWorkspaceRef(
     signal: AbortSignal,
     scope?: Parameters<typeof readManagedWorkspaceRefForAddress>[3],
 ) {
-    const { ref, workspaceRefs } = await readManagedWorkspaceRefForAddress(runtime, workspace, signal, scope);
-    return matchesAcceptedManagedWorkspaceRef(ref, workspace)
-        ? { ref, workspaceRefs } : null;
+    return await readAcceptedManagedWorkspaceRefFromRows({
+        ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, signal,
+    }, runtime.serverHttpBaseUrl, workspace, scope);
 }
