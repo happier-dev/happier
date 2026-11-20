@@ -697,7 +697,7 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
       && (current.lifecycle === 'admitting' || current.lifecycle === 'running' || current.lifecycle === 'waiting_for_approval')) {
       // A detached execution can report acceptance or usage while its tool request is still open.
       const interaction = updatesInteraction ? fact.interaction : persisted.progress.interaction;
-      const requests = interaction && typeof interaction === 'object' && !Array.isArray(interaction)
+      const requests = interaction && typeof interaction === 'object' && 'requests' in interaction
         ? interaction.requests : undefined;
       const hasOutstandingRequests = requests && typeof requests === 'object' && !Array.isArray(requests)
         && Object.keys(requests).length > 0;
