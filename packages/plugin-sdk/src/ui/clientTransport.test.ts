@@ -555,7 +555,16 @@ describe('plugin UI domain client transport adapter', () => {
         await expect(api.readStoredImage(ref)).rejects.toMatchObject({ code: 'invalid_payload' });
     });
 
-    it('forwards openNewSession as one strict flat request', async () => {
+    it.each([
+        { serverId: 'home', workspaceId: 'checkout', machineId: 'controller', rootPath: '/repo', kind: undefined },
+        { v: 2, kind: 'managed', serverId: 'home', workspaceId: 'checkout', rootPath: '/repo',
+            managedId: 'guest', controller: { machineId: 'controller', installationId: 'installation' } },
+    ] as const)('forwards openNewSession with a wire-safe Project origin ($kind)', async (workspace) => {
+        const origin = { kind: 'project', accountId: 'account-a', page: 'overview', workspace } as const;
+        const expectedWorkspace = workspace.kind === undefined
+            ? { serverId: 'home', workspaceId: 'checkout', machineId: 'controller', rootPath: '/repo' }
+            : workspace;
+        const expectedPayload = { prompt: 'Repair CI', origin: { ...origin, workspace: expectedWorkspace } };
         const sent: PluginUiHostApiWireEnvelopeV1[] = [];
         let receive: ((message: unknown) => void) | undefined;
         const controller = new AbortController();
@@ -579,7 +588,6 @@ describe('plugin UI domain client transport adapter', () => {
                             methods: ['openNewSession'],
                         });
                     } else if (message.kind === 'request' && message.method === 'openNewSession') {
-                        expect(message.payload).toEqual({ prompt: 'Repair CI' });
                         receive?.({
                             wireVersion: 1,
                             kind: 'result',
@@ -594,14 +602,18 @@ describe('plugin UI domain client transport adapter', () => {
         });
 
         await expect(api.openNewSession(
-            { prompt: 'Repair CI' },
+            { prompt: 'Repair CI', origin: { ...origin, layoutId: undefined } },
             { signal: controller.signal },
         )).resolves.toBeUndefined();
         expect(sent).toContainEqual(expect.objectContaining({
             kind: 'request',
             method: 'openNewSession',
-            payload: { prompt: 'Repair CI' },
         }));
+        const request = sent.find(message => message.kind === 'request' && message.method === 'openNewSession');
+        const payload = request?.kind === 'request' ? request.payload : undefined;
+        expect(payload).toEqual(expectedPayload);
+        expect(payload).not.toHaveProperty('origin.layoutId');
+        if (workspace.kind === undefined) expect(payload).not.toHaveProperty('origin.workspace.kind');
         await expect(api.openNewSession({ prompt: { text: 'retired' } } as never))
             .rejects.toMatchObject({ code: 'invalid_payload' });
     });

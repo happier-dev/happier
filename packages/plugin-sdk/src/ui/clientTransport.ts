@@ -13,6 +13,7 @@ import { PluginUiActionControlRequestV1Schema } from '@happier-dev/protocol/plug
 import { createPluginUiActionControlBinding } from '@happier-dev/cli-common/plugins/ui';
 
 import { PluginError } from '../errors.js';
+import { projectNativeJsonValueForTransport } from '../protocol/strictJsonValue.js';
 import { resolvePluginUiHostApiVersionV1, isPluginUiHostMethodSupportedInVersionV1, PluginUiHostApiWireIdentityV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenAutomationEventRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
 import { PluginUiOpenManagedMachineConfigurationRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
@@ -1001,7 +1002,7 @@ export async function createPluginUiHostApiClientFromTransport(
             }
             await request(
                 'openNewSession',
-                payload.data,
+                projectNativeJsonValueForTransport(payload.data),
                 requestOptions?.signal,
                 selected?.success ? selected.data : undefined,
                 selected?.success ? true : undefined,
