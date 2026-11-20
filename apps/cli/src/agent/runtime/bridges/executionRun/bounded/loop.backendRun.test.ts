@@ -10,6 +10,7 @@ import {
 } from '@/agent/runtime/bridges/executionRun/testkit';
 
 import { executeBoundedBackendRun } from '@/agent/runtime/bridges/executionRun/bounded/loop';
+import { buildNativeReviewOutputSchema } from '@/agent/reviews/normalize/nativeReviewOutputSchema';
 
 const mockedLogger = vi.hoisted(() => ({
   debug: vi.fn(),
@@ -896,42 +897,18 @@ describe('executeBoundedBackendRun', () => {
           return;
         }
 
-        const hasFullFindingContract =
-          prompt.includes('"id": string')
-          && prompt.includes('"title": string')
-          && prompt.includes('"severity": "blocker"|"high"|"medium"|"low"|"nit"')
-          && prompt.includes('"category": "correctness"|"security"|"performance"|"maintainability"|"testing"|"style"|"docs"');
-
-        ctrl.buffer = hasFullFindingContract
-          ? [
-              '{',
-              '  "summary": "Ok",',
-              '  "findings": [',
-              '    {',
-              '      "id": "f1",',
-              '      "title": "Prompt is ignored",',
-              '      "severity": "medium",',
-              '      "category": "correctness",',
-              '      "summary": "The backend ignores the prompt parameter.",',
-              '      "filePath": "apps/cli/src/agent/reviews/prompt/buildStandardReviewPrompt.ts",',
-              '      "startLine": 137,',
-              '      "endLine": 137',
-              '    }',
-              '  ]',
-              '}',
-            ].join('\n')
-          : [
-              '{',
-              '  "summary": "Ok",',
-              '  "findings": [',
-              '    {',
-              '      "severity": "medium",',
-              '      "category": "correctness",',
-              '      "summary": "Missing id/title because the repair prompt did not specify them."',
-              '    }',
-              '  ]',
-              '}',
-            ].join('\n');
+        ctrl.buffer = JSON.stringify({
+          reviewOutcome: 'complete', quality: null, summary: 'Review complete',
+          overviewMarkdown: 'The backend ignores the prompt parameter.',
+          findings: [{
+            id: 'f1', title: 'Prompt is ignored', severity: 'medium', category: 'correctness',
+            summary: 'The backend ignores the prompt parameter.',
+            filePath: 'apps/cli/src/agent/reviews/prompt/buildStandardReviewPrompt.ts',
+            startLine: 137, endLine: 137, whyItMatters: null, evidence: null,
+            confidence: null, suggestion: null, patch: null,
+          }],
+          questions: [], assumptions: [],
+        });
       },
       { runtimeId, onWaitForTurnCompletion: async () => {} },
     );
@@ -987,6 +964,7 @@ describe('executeBoundedBackendRun', () => {
 
     expect(prompts).toHaveLength(2);
     expect(prompts[1]).toContain('return ONLY valid JSON');
+    expect(prompts[1]).toContain(JSON.stringify(buildNativeReviewOutputSchema(undefined)));
     expect(prompts[1]).not.toContain('Do not run any tools.');
     expect(prompts[1]).toContain('If you have not yet inspected the workspace or gathered enough evidence');
     expect(finishRun).toHaveBeenCalledWith(

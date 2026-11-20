@@ -7,6 +7,7 @@ import { buildExecutionRunResultContractPrompt } from '@happier-dev/protocol/exe
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { ReviewModelOutputV1Schema } from '@happier-dev/protocol/reviews/reviewModelOutputV1';
 import { ReviewSessionInputV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
+import { REVIEW_CURRENT_FINDINGS_GUIDANCE } from '@/agent/reviews/prompt/buildStandardReviewPrompt';
 import { WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS } from '@happier-dev/protocol/workflows/workflowV1';
 import { EXISTING_SESSION_FIELD_APPLICATIONS } from '@happier-dev/protocol/sessions/authoring/existingSessionFieldApplication';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -631,7 +632,7 @@ export function renderWorkflowSessionStepInput(params: Readonly<{
     : params.result);
   const text = withWorkflowRoleInstructions(params.input.text, params.roleInstructions);
   const reviewGuidance = isReview
-    ? '\n\nRate the quality of the reviewed changes from 1 to 5 in quality.score, with a one-line rationale in quality.rationale.'
+    ? `\n\n${REVIEW_CURRENT_FINDINGS_GUIDANCE}\nRate the quality of the reviewed changes from 1 to 5 in quality.score, with a one-line rationale in quality.rationale.`
     : '';
   return instruction ? `${text}${reviewGuidance}\n\n${instruction}` : text;
 }

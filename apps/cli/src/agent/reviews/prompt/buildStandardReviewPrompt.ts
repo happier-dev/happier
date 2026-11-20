@@ -4,6 +4,8 @@ import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
 import { ReviewFollowUpIntentInputSchema } from '../followUp/reviewFollowUpIntentInput';
 import { buildNativeReviewOutputSchema } from '../normalize/nativeReviewOutputSchema';
 
+export const REVIEW_CURRENT_FINDINGS_GUIDANCE = '- Return the complete current findings set, including unresolved findings reported in previous rounds that still apply. Do not omit a current finding merely because it was reported before.';
+
 export function buildReviewGuidanceBlock(): string {
   return [
     'While working, you may emit brief progress updates as plain text.',
@@ -21,6 +23,7 @@ export function buildReviewGuidanceBlock(): string {
     '- Put the reviewer narrative in overviewMarkdown.',
     '- For a complete review, include quality with an integer score from 1 (serious issues) to 5 (ready to ship) and a one-line rationale grounded in the review. Omit the score when the available evidence does not support one.',
     '- Only emit findings you can support with evidence.',
+    REVIEW_CURRENT_FINDINGS_GUIDANCE,
     '- Set reviewOutcome to complete only after inspecting the requested scope; an empty findings array does not prove a clean review.',
     '- If inspection is unavailable, set reviewOutcome to failed and explain the missing evidence in overviewMarkdown. If only part of the scope could be inspected, use partial and preserve supported findings.',
     '- If you need missing context from the user, add a question instead of guessing.',

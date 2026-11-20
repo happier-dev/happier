@@ -67,6 +67,46 @@ describe('buildStandardReviewPrompt', () => {
     expect(prompt).toContain('add a question instead of guessing');
   });
 
+  it('requires a new round to report unresolved findings again in its complete current findings set', () => {
+    const prompt = buildStandardReviewPrompt({
+      instructions: 'Review total.ts, where the reducer still uses sum - value.',
+      intentInput: {
+        previousRoundContext: {
+          reviewRound: { roundOrdinal: 1 },
+          reviewFindings: {
+            summary: 'Reducer subtracts instead of adding.',
+            findings: [{ id: 'F1', title: 'Reducer subtracts instead of adding', severity: 'blocker', filePath: 'total.ts' }],
+          },
+        },
+      },
+    });
+
+    expect(prompt).toContain('"id":"F1"');
+    expect(prompt).toContain('complete current findings set');
+    expect(prompt).toContain('including unresolved findings reported in previous rounds that still apply');
+    expect(prompt).toContain('Do not omit a current finding merely because it was reported before');
+    expect(prompt).not.toContain('Only update findings when your conclusion changed');
+  });
+
+  it('keeps ordinary follow-up finding updates limited to changed conclusions or clarification', () => {
+    const prompt = buildStandardReviewPrompt({
+      instructions: 'Explain the existing finding.',
+      intentInput: {
+        kind: 'review_follow_up.v1',
+        parentRunRef: { runId: 'run_1', callId: 'call_1', backendId: 'codex' },
+        threadId: 'thread_1',
+        messageMarkdown: 'Why is the reducer incorrect?',
+        summary: 'Reducer subtracts instead of adding.',
+        overviewMarkdown: 'The reducer still subtracts each value.',
+      },
+    });
+
+    expect(prompt).toContain('Only update findings when your conclusion changed or needs clarification');
+    expect(prompt).toContain('updatedFindings');
+    expect(prompt).not.toContain('complete current findings set');
+    expect(prompt).not.toContain('Do not omit a current finding');
+  });
+
   it('includes explicit review scope guidance for normal review launches', () => {
     const prompt = buildStandardReviewPrompt({
       instructions: 'Review the current session changes.',
