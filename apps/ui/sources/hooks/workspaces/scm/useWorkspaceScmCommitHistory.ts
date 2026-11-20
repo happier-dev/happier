@@ -6,10 +6,12 @@ import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domai
 
 export function useWorkspaceScmCommitHistory(input: WorkspaceScopeBase & Readonly<{
     readLogEnabled: boolean;
+    paused?: boolean;
     historyBranch?: string | null;
 }>) {
     return usePagedScmCommitHistory({
         enabled: input.readLogEnabled,
+        paused: input.paused,
         historyIdentity: input.workspace
             ? JSON.stringify([tryBuildWorkspaceCacheKey(input), input.historyBranch ?? null])
             : JSON.stringify([input.serverId, input.machineId, input.rootPath, input.historyBranch ?? null]),

@@ -6,10 +6,11 @@ import { SCM_HISTORY_PAGE_SIZE } from './historyPresentation';
 
 export function usePagedScmCommitHistory(input: Readonly<{
     enabled: boolean;
+    paused?: boolean;
     historyIdentity: string;
     loadPage: (request: Readonly<{ limit: number; skip: number }>) => Promise<Pick<ScmLogListResponse, 'success' | 'entries'>>;
 }>) {
-    const { enabled, loadPage, historyIdentity } = input;
+    const { enabled, paused, loadPage, historyIdentity } = input;
     const [historyEntries, setHistoryEntries] = React.useState<ScmLogEntry[]>([]);
     const [historyLoading, setHistoryLoading] = React.useState(false);
     const [historyError, setHistoryError] = React.useState(false);
@@ -35,6 +36,7 @@ export function usePagedScmCommitHistory(input: Readonly<{
     }, [historyEntries]);
 
     const loadCommitHistory = React.useCallback(async (opts?: { reset?: boolean }) => {
+        if (paused) return;
         if (!enabled) {
             setHistoryEntries([]);
             setHistorySkip(0);
@@ -165,14 +167,14 @@ export function usePagedScmCommitHistory(input: Readonly<{
         } finally {
             if (currentIdentityRef.current === historyIdentity) setHistoryLoading(false);
         }
-    }, [historyIdentity, enabled, historyHasMore, historyLoading, historySkip, loadPage]);
+    }, [historyIdentity, enabled, historyHasMore, historyLoading, historySkip, loadPage, paused]);
 
     return {
         historyIdentity,
         historyEntries,
-        historyLoading,
-        historyError,
-        historyHasMore,
+        historyLoading: historyLoading && !paused,
+        historyError: historyError && !paused,
+        historyHasMore: historyHasMore && !paused,
         loadCommitHistory,
     };
 }

@@ -203,6 +203,45 @@ describe('WorkspaceRightPanelGitView (stale snapshot)', () => {
         } finally { vi.useRealTimers(); }
     });
 
+    it('keeps the cached managed checkout without reading history from its offline controller', async () => {
+        const lastHeartbeat = Date.now();
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+            vi.setSystemTime(lastHeartbeat + 24 * 60 * 60 * 1000);
+            const machine = createMachineFixture({ id: 'm1', active: false,
+                activeAt: lastHeartbeat, seq: 2, updatedAt: Date.now() });
+            storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+            await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [machine]);
+            const workspace = { v: 2, kind: 'managed', serverId, workspaceId: 'managed-checkout',
+                managedId: 'guest', controller: { machineId: machine.id, installationId: 'controller-installation' }, rootPath } as const;
+            const managedScope = { ...scope(), workspace };
+            storage.getState().updateWorkspaceScmSnapshot(managedScope, createSnapshot(true));
+            const { CheckoutReachabilityScope } = await import('@/components/workspaces/reachability/checkoutReachability');
+            const { WorkspaceRightPanelGitView } = await import('./WorkspaceRightPanelGitView');
+            const screen = await renderScreen(
+                <CheckoutReachabilityScope scope={managedScope}>
+                    <WorkspaceRightPanelGitView {...managedScope} activeSubTabId="history" onOpenFile={() => {}} />
+                </CheckoutReachabilityScope>,
+            );
+
+            expect(rpc).not.toHaveBeenCalled();
+            expect(storage.getState().getWorkspaceScmSnapshotError(managedScope)).toBeNull();
+            expect(screen.findHostByTestId('workspace-rightpanel-git-unavailable')).toBeNull();
+            expect(screen.findHostByTestId('project-rightpanel-git-surface:commit')).not.toBeNull();
+
+            answerCurrentSnapshot();
+            const online = { ...machine, active: true, activeAt: Date.now(), seq: 3, updatedAt: Date.now() };
+            await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [online]);
+            await vi.waitFor(() => expect(rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_LOG_LIST))
+                .toEqual([[expect.objectContaining({ serverId, machineId: machine.id,
+                    payload: expect.objectContaining({
+                        kind: 'targeted_action_rpc',
+                        target: expect.objectContaining(workspace),
+                        input: expect.objectContaining({ cwd: rootPath }),
+                    }) })]]));
+        } finally { vi.useRealTimers(); }
+    });
+
     it('stays quiet when the snapshot is current', async () => {
         storage.getState().updateWorkspaceScmSnapshot(scope(), createSnapshot(true));
         answerCurrentSnapshot();

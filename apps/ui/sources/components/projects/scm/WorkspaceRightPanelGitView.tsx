@@ -109,9 +109,11 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         [snapshot],
     );
 
+    const historyPaused = error?.errorCode === 'machine_offline';
     const { historyIdentity: commitHistoryIdentity, historyEntries, historyLoading, historyError, historyHasMore, loadCommitHistory } = useWorkspaceScmCommitHistory({
         ...scope,
         historyBranch: snapshot?.branch.head,
+        paused: historyPaused,
         readLogEnabled: snapshot?.repo.isRepo === true && (snapshot.capabilities?.readLog ?? true),
     });
     // HEAD can move on the same branch (commit or undo). Reload its page while retaining the pane's scroll identity.
@@ -119,12 +121,16 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
     const didInitCommitHistoryKeyRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
+        if (historyPaused) {
+            didInitCommitHistoryKeyRef.current = null;
+            return;
+        }
         if (paneLayout !== 'unified' && displayActiveSubTab !== 'history') return;
         if (didInitCommitHistoryKeyRef.current === commitHistoryInitKey) return;
         if (historyLoading) return;
         didInitCommitHistoryKeyRef.current = commitHistoryInitKey;
         void loadCommitHistory({ reset: true });
-    }, [paneLayout, displayActiveSubTab, commitHistoryInitKey, historyLoading, loadCommitHistory]);
+    }, [paneLayout, displayActiveSubTab, commitHistoryInitKey, historyLoading, historyPaused, loadCommitHistory]);
 
     const pullPreflight = React.useMemo(() => {
         return evaluateScmOperationPreflight({
