@@ -861,7 +861,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
                 return;
             }
             if (!state.context.relaySelection.locked) {
-                dispatch({ type: 'wizard/setRelaySelection', relaySelection: buildDefaultRelaySelection() });
+                dispatch({ type: 'wizard/setRelaySelection', relaySelection: buildDefaultRelaySelection({ preselectCurrentHome: false }) });
             }
             dispatch({ type: 'wizard/goToStep', stepId: 'relay_select' });
         } });
@@ -1080,9 +1080,14 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         onRetryEndpoint: retryEndpoint,
     });
 
+    // A selection naming a Home with no card here (the Home already in use) is not a choice on Where.
+    const relaySelectionHasNoCard = state.context.relaySelection.choiceId === 'customUrl'
+        && state.context.relaySelection.relayProfileId != null
+        && !profileChoices.some((profile) => profile.id === state.context.relaySelection.relayProfileId);
     const primaryDisabled =
         (stepId === 'relay_select' && (
             state.context.relaySelection.choiceId == null
+            || relaySelectionHasNoCard
             || (
                 selectedRelayEndpointForReadiness != null
                 && (

@@ -19377,9 +19377,9 @@ const enSetupOnboarding = {
   webDesktopOnlyOptionalNextTitle: 'Optional: secure access and providers',
   webDesktopOnlyOptionalNextBody:
     'After installing Happier, open Settings → Secure access (Tailscale) to connect your phone, and Settings → Providers to install your preferred tools.',
-  preAuthTitle: 'Which Home do you want to use?',
+  preAuthTitle: 'Where should your Home live?',
   preAuthBody:
-    'Your Home is where your account, sessions, and settings live. Choose an existing Home or create a Personal Home.',
+    'Your Home keeps your account, sessions and settings. You can add more later.',
   preAuthContinueHint:
     'When you continue, Happier will connect to the selected Home and then return here to finish setup.',
   currentRelayTitle: 'Selected Home',

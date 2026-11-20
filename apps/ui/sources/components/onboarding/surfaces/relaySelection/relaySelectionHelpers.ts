@@ -66,7 +66,12 @@ export async function ensureCanonicalCloudRelayProfile(): Promise<Readonly<{ ser
     return { serverId: profile.id, serverUrl };
 }
 
-export function buildDefaultRelaySelection(): WizardRelaySelection {
+/**
+ * The wizard's default Home selection. The Home already in use is preselected for the welcome's
+ * sign-in; "Where should your Home live?" passes `preselectCurrentHome: false` because that Home is
+ * not one of its places (plan 03 U6), so Cloud (or the existing-Home address) is preselected there.
+ */
+export function buildDefaultRelaySelection(options: Readonly<{ preselectCurrentHome?: boolean }> = {}): WizardRelaySelection {
     const snapshot = getActiveServerSnapshot();
     const serverUrlRaw = snapshot.serverUrl ? String(snapshot.serverUrl).trim() : '';
     const serverUrl = serverUrlRaw ? (normalizeServerUrl(serverUrlRaw) ?? serverUrlRaw) : '';
@@ -101,7 +106,7 @@ export function buildDefaultRelaySelection(): WizardRelaySelection {
         };
     }
 
-    if (serverUrl) {
+    if (serverUrl && options.preselectCurrentHome !== false) {
         const matchingProfile = savedProfiles.find((profile) => isSameServerUrl(profile.serverUrl, serverUrl));
         if (matchingProfile) {
             return {
@@ -113,7 +118,7 @@ export function buildDefaultRelaySelection(): WizardRelaySelection {
         }
     }
 
-    if (serverUrl) {
+    if (serverUrl && options.preselectCurrentHome !== false) {
         const matchesCloud = canonicalCloudUrl ? isSameServerUrl(serverUrl, canonicalCloudUrl) : false;
         return {
             choiceId: matchesCloud ? 'cloud' : 'customUrl',
