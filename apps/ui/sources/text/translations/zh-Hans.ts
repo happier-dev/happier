@@ -18867,6 +18867,7 @@ settingsSession: {
         domainIngressTunnel: "隧道",
         domainIngressChoose: "选择隧道",
         domainIngressEmpty: "没有符合条件的隧道。请检查账户、区域和连接器后重试。",
+        domainIngressCreateTunnel: ({ name }: { name: string }) => `新隧道“${name}”,由 Happier 创建`,
         domainIngressUnavailable: "无法加载隧道。请检查连接后重试。",
         domainFieldHost: "域名",
         domainFieldService: "服务",

@@ -17,8 +17,6 @@ import { useFirstConnection } from './useFirstConnection';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { ValueFieldSelect } from '@/components/ui/forms/ValueFieldSelect';
-import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
-import { Item } from '@/components/ui/lists/Item';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -66,7 +64,6 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const [tunnels, setTunnels] = React.useState<TunnelRead | null>(null);
   const [tunnelChoice, setTunnelChoice] = React.useState<string | null>(null);
   const [reading, setReading] = React.useState<'zones' | 'tunnels' | null>(null);
-  const [advanced, setAdvanced] = React.useState(false);
   const [ttl, setTtl] = React.useState('1');
   // One provider read at a time, owned by this form: Cancel, closing the form, or changing the account or tunnel
   // choice aborts it through the Action's own signal (O-DEPLOY F2). There is no timeout.
@@ -103,8 +100,10 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   React.useEffect(() => stopRead, [stopRead, credentialKey, tunnelChoice, props.enabled]);
   const canRead = !!props.inspect && !!selectedCredential && !!props.hostname
     && (zonesOnly || !connectorOverride || !!connectorOverride.imageRef && !!connectorOverride.version) && !props.busy && !reading;
-  const inspect = async (kind: 'zones' | 'tunnels') => {
-    if (!canRead || !props.inspect || kind === 'tunnels' && !zoneId) return;
+  const inspect = async (kind: 'zones' | 'tunnels', chainedZoneId?: string): Promise<void> => {
+    const readZoneId = chainedZoneId ?? zoneId;
+    const readTunnelKey = JSON.stringify({ ...input, zoneId: readZoneId });
+    if (!props.inspect || !chainedZoneId && !canRead || kind === 'tunnels' && !readZoneId) return;
     stopRead();
     const controller = new AbortController();
     flight.current = controller;
@@ -112,7 +111,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
     setReading(kind);
     try {
       const result = await props.inspect(zonesOnly ? 'happier.deploy.cloudflare/actions/workers-domain-zones-read' : selectionAction,
-        { ...input, ...(kind === 'tunnels' ? { zoneId } : zonesOnly && explicitZone && explicitZoneId.trim() ? { zoneId: explicitZoneId.trim() } : {}) },
+        { ...input, ...(kind === 'tunnels' ? { zoneId: readZoneId } : zonesOnly && explicitZone && explicitZoneId.trim() ? { zoneId: explicitZoneId.trim() } : {}) },
         { signal: controller.signal });
       if (controller.signal.aborted) return;
       const value: unknown = result.ok ? result.value : null;
@@ -137,7 +136,17 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           const dnsAction = PluginContributionIdentityV1Schema.safeParse(isRecord(value) ? value.dnsRecordAction : undefined);
           setZones({ key: zoneKey, ...metadata, kind: 'ready', zones: rows,
             ...(dnsAction.success ? { dnsRecordAction: dnsAction.data } : {}) });
-          setZoneChoice(rows.length === 1 ? rows[0]!.zoneId : null);
+          // The zone the hostname sits in is the choice; the person picks only when it is not one zone.
+          const matched = rows.length === 1 ? rows[0]! : matchingZone(rows, props.hostname);
+          setZoneChoice(matched?.zoneId ?? null);
+          setTunnels(null);
+          setTunnelChoice(null);
+          // One press finds the zone and the tunnels in it (TUNNEL-LIVE-1119 "pick the tunnel, the domain, the app").
+          if (matched && !zonesOnly) {
+            if (flight.current === controller) flight.current = null;
+            void inspect('tunnels', matched.zoneId);
+            return;
+          }
         } else {
           setZones({ key: zoneKey, ...metadata, ...unavailable });
           setZoneChoice(null);
@@ -154,7 +163,14 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
           if (!parsed.success) { valid = false; break; }
           options.push({ label: row.label, selection: parsed.data });
         }
-        setTunnels(valid ? { key: tunnelKey, kind: 'ready', options } : { key: tunnelKey, ...unavailable });
+        // The provider's own create choice (a tunnel Happier creates and manages) follows the existing ones.
+        const create = isRecord(value) && isRecord(value.createOption) && typeof value.createOption.label === 'string'
+          ? AccessProviderSelectionV1Schema.safeParse(value.createOption.selection) : null;
+        if (valid && create?.success && isRecord(value) && isRecord(value.createOption)) {
+          options.push({ label: t('projects.deployments.domainIngressCreateTunnel', { name: String(value.createOption.label) }),
+            selection: create.data });
+        }
+        setTunnels(valid ? { key: readTunnelKey, kind: 'ready', options } : { key: readTunnelKey, ...unavailable });
         setTunnelChoice(valid && options.length === 1 ? '0' : null);
       }
     } catch (error) {
@@ -168,7 +184,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         setZones({ key: zoneKey, credentialKey, ...unavailable });
         setZoneChoice(null);
       } else {
-        setTunnels({ key: tunnelKey, ...unavailable });
+        setTunnels({ key: readTunnelKey, ...unavailable });
         setTunnelChoice(null);
       }
     } finally {
@@ -196,7 +212,23 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
   const selectedZone = currentZones?.kind === 'ready' ? currentZones.zones.find(zone => zone.zoneId === zoneId) : undefined;
   const dns = DeploymentDomainDnsInputV1Schema.shape.dns.safeParse(props.dnsRecordsOnly && selectedZone && currentZones?.kind === 'ready'
     ? { action: currentZones.dnsRecordAction, credentialRef: selectedCredential, zoneId: selectedZone.zoneId, ttl: Number(ttl) } : undefined);
-  return { selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined,
+  // The connector's overrides (Cloudflare Account ID, image, version) have defaults: the form shows them in its one
+  // Advanced section rather than a second Advanced here (round 10, TUNNEL-LIVE-1119 friction list).
+  const advancedFields = props.enabled && !zonesOnly && props.linkedZone === undefined ? <>
+      <FieldItem label={t('projects.deployments.domainIngressAccountId')}>
+        <FieldTextInput testID={`${id}.accountId`} value={accountId || defaults?.accountId || ''} onChangeText={setAccountId}
+          accessibilityLabel={t('projects.deployments.domainIngressAccountId')} autoCapitalize="none" editable={!props.busy} monospace />
+      </FieldItem>
+      <FieldItem label={t('projects.deployments.domainIngressImage')} supportingText={t('projects.deployments.domainIngressConnectorHint')}>
+        <FieldTextInput testID={`${id}.imageRef`} value={imageRef || defaults?.connector.imageRef || ''} onChangeText={setImageRef}
+          accessibilityLabel={t('projects.deployments.domainIngressImage')} autoCapitalize="none" editable={!props.busy} monospace />
+      </FieldItem>
+      <FieldItem label={t('projects.deployments.domainIngressVersion')}>
+        <FieldTextInput testID={`${id}.version`} value={version || defaults?.connector.version || ''} onChangeText={setVersion}
+          accessibilityLabel={t('projects.deployments.domainIngressVersion')} autoCapitalize="none" editable={!props.busy} monospace />
+      </FieldItem>
+  </> : null;
+  return { advancedFields, selection: props.enabled ? selected : undefined, zone: props.enabled && zonesOnly ? selectedZone : undefined,
     dns: props.enabled && dns.success ? dns.data : undefined, fields: props.enabled ? (
     <View style={styles.fields}>
       {props.linkedZone === undefined ? <>
@@ -214,25 +246,6 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         accountsOnly
         disabled={props.busy}
       />}
-      {!props.dnsRecordsOnly ? <>
-      <ExpandableItem testID={`${id}.advanced`} expanded={advanced} onExpandedChange={setAdvanced}
-        header={state => <Item testID={`${id}.advanced.header`} {...state.headerProps}
-          title={t('projects.deployments.domainIngressAdvanced')} />}
-      >
-      <FieldItem label={t('projects.deployments.domainIngressAccountId')}>
-        <FieldTextInput testID={`${id}.accountId`} value={accountId || defaults?.accountId || ''} onChangeText={setAccountId}
-          accessibilityLabel={t('projects.deployments.domainIngressAccountId')} autoCapitalize="none" editable={!props.busy} monospace />
-      </FieldItem>
-      <FieldItem label={t('projects.deployments.domainIngressImage')} supportingText={t('projects.deployments.domainIngressConnectorHint')}>
-        <FieldTextInput testID={`${id}.imageRef`} value={imageRef || defaults?.connector.imageRef || ''} onChangeText={setImageRef}
-          accessibilityLabel={t('projects.deployments.domainIngressImage')} autoCapitalize="none" editable={!props.busy} monospace />
-      </FieldItem>
-      <FieldItem label={t('projects.deployments.domainIngressVersion')}>
-        <FieldTextInput testID={`${id}.version`} value={version || defaults?.connector.version || ''} onChangeText={setVersion}
-          accessibilityLabel={t('projects.deployments.domainIngressVersion')} autoCapitalize="none" editable={!props.busy} monospace />
-      </FieldItem>
-      </ExpandableItem>
-      </> : null}
       </> : null}
       {props.dnsRecordsOnly ? <FieldItem label={t('projects.deployments.domainDnsTtl')}>
         <FieldTextInput testID={`${id}.ttl`} value={ttl} onChangeText={setTtl}
@@ -279,6 +292,13 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
         action={{ label: t('common.retry'), testID: `${id}.tunnels.retry`, onPress: () => { void inspect('tunnels'); } }} /> : null}
     </View>
   ) : null };
+}
+
+/** The longest zone the hostname is, or sits under; none when the hostname names no listed zone. */
+function matchingZone(zones: readonly Zone[], hostname: string): Zone | undefined {
+  const host = hostname.toLowerCase();
+  return zones.filter(zone => host === zone.name.toLowerCase() || host.endsWith(`.${zone.name.toLowerCase()}`))
+    .sort((a, b) => b.name.length - a.name.length)[0];
 }
 
 const styles = StyleSheet.create(theme => ({

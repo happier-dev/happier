@@ -19121,6 +19121,7 @@ settingsSession: {
         domainIngressTunnel: "Tunnel",
         domainIngressChoose: "Choisir un tunnel",
         domainIngressEmpty: "Aucun tunnel compatible. Vérifiez le compte, la zone et le connecteur, puis réessayez.",
+        domainIngressCreateTunnel: ({ name }: { name: string }) => `Nouveau tunnel « ${name} », créé par Happier`,
         domainIngressUnavailable: "Impossible de charger les tunnels. Vérifiez la connexion et réessayez.",
         domainFieldHost: "Domaine",
         domainFieldService: "Service",

@@ -19201,6 +19201,7 @@ settingsSession: {
         domainIngressTunnel: "Туннель",
         domainIngressChoose: "Выберите туннель",
         domainIngressEmpty: "Нет подходящих туннелей. Проверьте аккаунт, зону и коннектор и повторите попытку.",
+        domainIngressCreateTunnel: ({ name }: { name: string }) => `Новый туннель «${name}», создаёт Happier`,
         domainIngressUnavailable: "Не удалось загрузить туннели. Проверьте подключение и повторите попытку.",
         domainFieldHost: "Домен",
         domainFieldService: "Сервис",

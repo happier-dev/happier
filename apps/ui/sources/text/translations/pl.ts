@@ -19072,6 +19072,7 @@ settingsSession: {
         domainIngressTunnel: "Tunel",
         domainIngressChoose: "Wybierz tunel",
         domainIngressEmpty: "Brak odpowiednich tuneli. Sprawdź konto, strefę i łącznik, a następnie spróbuj ponownie.",
+        domainIngressCreateTunnel: ({ name }: { name: string }) => `Nowy tunel „${name}”, utworzony przez Happier`,
         domainIngressUnavailable: "Nie udało się wczytać tuneli. Sprawdź połączenie i spróbuj ponownie.",
         domainFieldHost: "Domena",
         domainFieldService: "Usługa",

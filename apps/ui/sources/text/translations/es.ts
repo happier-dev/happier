@@ -19247,6 +19247,7 @@ settingsSession: {
         domainIngressTunnel: "Túnel",
         domainIngressChoose: "Elegir un túnel",
         domainIngressEmpty: "No hay túneles disponibles. Revisa la cuenta, la zona y el conector e inténtalo de nuevo.",
+        domainIngressCreateTunnel: ({ name }: { name: string }) => `Túnel nuevo «${name}», creado por Happier`,
         domainIngressUnavailable: "No se pudieron cargar los túneles. Revisa la conexión e inténtalo de nuevo.",
         domainFieldHost: "Dominio",
         domainFieldService: "Servicio",

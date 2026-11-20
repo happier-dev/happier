@@ -19161,6 +19161,7 @@ settingsSession: {
         domainIngressTunnel: "トンネル",
         domainIngressChoose: "トンネルを選択",
         domainIngressEmpty: "利用可能なトンネルがありません。アカウント、ゾーン、コネクターを確認して再試行してください。",
+        domainIngressCreateTunnel: ({ name }: { name: string }) => `新しいトンネル「${name}」(Happier が作成)`,
         domainIngressUnavailable: "トンネルを読み込めませんでした。接続を確認して再試行してください。",
         domainFieldHost: "ドメイン",
         domainFieldService: "サービス",

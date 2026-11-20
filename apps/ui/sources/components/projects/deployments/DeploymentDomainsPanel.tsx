@@ -475,7 +475,7 @@ function DomainAddForm(
   const linkedZone = needsZone ? principal?.kind === 'account' && principal.target.kind === 'account'
     && props.provider?.providerIdentity ? { credentialRef: principal.target.account, accountId: props.provider.providerIdentity.providerAccountId } : null : undefined;
   const needsSelection = !provider && (props.recordedIngress?.kind === 'cloudflareTunnel' || ingressMode === 'cloudflare');
-  const { selection: ingress, zone, fields: ingressFields } = useDeploymentDomainIngressFields({
+  const { selection: ingress, zone, fields: ingressFields, advancedFields: ingressAdvanced } = useDeploymentDomainIngressFields({
     hostname: hostname.trim().toLowerCase(), busy: props.busy, inspect: props.inspect, enabled: needsSelection || needsZone, linkedZone,
   });
   const host = hostname.trim().toLowerCase();
@@ -614,22 +614,28 @@ function DomainAddForm(
               placeholder="3000"
             />}
           </FieldItem>
-          <FieldItem
-            label={t('projects.deployments.domainFieldPath')}
-            supportingText={t('projects.deployments.domainPathHint')}
-            style={props.phone ? undefined : styles.routePath}
-          >
-            <FieldTextInput
-              testID="project-deployments.environment.domains.add.path"
-              value={path}
-              onChangeText={setPath}
-              monospace
-              autoCapitalize="none"
-              accessibilityLabel={t('projects.deployments.domainFieldPath')}
-              placeholder={t('projects.deployments.domainAllPaths')}
-            />
-          </FieldItem>
         </View>
+        {/* The simple link flow is address, where it reaches and the app (TUNNEL-LIVE-1119): path, redirect, access and the
+            outside check all have defaults, so they wait under Advanced; check page and status share one line. */}
+        <ExpandableItem testID="project-deployments.environment.domains.add.advanced" expanded={advanced} onExpandedChange={setAdvanced}
+          header={state => <Item testID="project-deployments.environment.domains.add.advanced.header" {...state.headerProps}
+            title={t('projects.deployments.domainIngressAdvanced')} />}
+        >
+        {ingressAdvanced}
+        <FieldItem
+          label={t('projects.deployments.domainFieldPath')}
+          supportingText={t('projects.deployments.domainPathHint')}
+        >
+          <FieldTextInput
+            testID="project-deployments.environment.domains.add.path"
+            value={path}
+            onChangeText={setPath}
+            monospace
+            autoCapitalize="none"
+            accessibilityLabel={t('projects.deployments.domainFieldPath')}
+            placeholder={t('projects.deployments.domainAllPaths')}
+          />
+        </FieldItem>
         <FieldItem
           label={t('projects.deployments.editors.redirect')}
           supportingText={t('projects.deployments.editors.redirectHint')}
@@ -675,11 +681,6 @@ function DomainAddForm(
             </FieldItem>
           </>
         ) : null}
-        {/* The outside check has a default, so it waits under Advanced; page and status share one line, like the route. */}
-        <ExpandableItem testID="project-deployments.environment.domains.add.advanced" expanded={advanced} onExpandedChange={setAdvanced}
-          header={state => <Item testID="project-deployments.environment.domains.add.advanced.header" {...state.headerProps}
-            title={t('projects.deployments.domainIngressAdvanced')} />}
-        >
         <View style={props.phone ? styles.stack : styles.route}>
           <FieldItem
             label={t('projects.deployments.domainFieldCheck')}
@@ -822,11 +823,10 @@ const styles = StyleSheet.create((theme) => ({
   form: { gap: theme.space.s12 },
   needs: { color: theme.colors.text.secondary },
   stack: { gap: theme.space.s12 },
-  // Service, port and path share one line on wide screens (lab 1.2 : .8 : 1); phones stack them.
+  // Service and port share one line on wide screens (lab 1.2 : .8); phones stack them.
   route: { flexDirection: 'row', gap: theme.space.s12, alignItems: 'flex-start' },
   routeService: { flex: 1.2 },
   routePort: { flex: 0.8 },
-  routePath: { flex: 1 },
   paging: {
     flexDirection: 'row',
     justifyContent: 'center',

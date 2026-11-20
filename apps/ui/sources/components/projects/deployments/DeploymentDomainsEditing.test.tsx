@@ -418,6 +418,10 @@ describe('Environment → Domains: add form (P6)', () => {
         screen.changeTextByTestId(`${id}.host`, hostname);
         screen.changeTextByTestId(`${id}.service`, 'web');
         screen.changeTextByTestId(`${id}.port`, '3000');
+      });
+      // Redirect, certificate and basic auth wait under More options (TUNNEL-LIVE-1119 friction list).
+      await screen.pressByTestIdAsync(`${id}.advanced.header`);
+      await act(async () => {
         screen.changeTextByTestId(`${id}.redirect`, 'www.happier.dev');
         screen.changeTextByTestId(`${id}.basicAuth`, 'preview');
       });
@@ -515,6 +519,9 @@ describe('Environment → Domains: add form (P6)', () => {
     try {
       expect(await settle(id)).not.toBeNull();
       await screen.pressByTestIdAsync(id);
+      // The simple link flow is address, where it reaches and the app; the rest waits under More options.
+      expect(screen.findByTestId(`${id}.redirect`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.advanced.header`);
       expect(screen.findByTestId(`${id}.redirect`)).not.toBeNull();
       expect(screen.findByTestId(`${id}.basicAuth`)).toBeNull();
     } finally {
@@ -888,13 +895,11 @@ describe('Environment → Domains: Find zones can be stopped (O-DEPLOY F2)', () 
       details: { requiredFact: 'cloudflarePermissions', remedy: 'Reconnect the selected Cloudflare account.' } };
     inspectPlatformTarget.mockResolvedValueOnce(kind === 'zones' ? failure : { ok: true,
       value: { kind: 'ready', zones: [{ zoneId: 'chosen-zone', name: 'happier.dev' }], options: [] } });
+    // The same Find press reads the tunnels of the one zone found.
+    if (kind === 'tunnels') inspectPlatformTarget.mockResolvedValueOnce(failure);
     const { screen, controller } = await openAndFind(tunnelDetail(), inspectPlatformTarget);
     try {
-      if (kind === 'tunnels') {
-        inspectPlatformTarget.mockResolvedValueOnce(failure);
-        await screen.pressByTestIdAsync(`${id}.ingress.read`);
-      }
-      expect(screen.findByTestId(`${id}.ingress.${kind}.error`)).not.toBeNull();
+      await vi.waitFor(() => expect(screen.findByTestId(`${id}.ingress.${kind}.error`)).not.toBeNull());
       await screen.pressByTestIdAsync(`${id}.ingress.${kind}.retry`);
       await screen.pressByTestIdAsync(`${id}.ingress.${kind}.cancel`);
       expect(signals[0]?.aborted).toBe(true);
@@ -1202,6 +1207,68 @@ describe('Environment → Domains: the platform\'s built-in address', () => {
       expect(screen.findByTestId(builtIn)).not.toBeNull();
       const texts = screen.findAllByType('Text' as never).map(node => String(node.props.children));
       expect(texts).not.toContain(t('projects.deployments.domainsEmpty'));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
+describe('Environment → Domains: one Find, then a tunnel Happier can create (round 10, TUNNEL-LIVE-1119)', () => {
+  const account = { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' };
+  const selection = (tunnel: Record<string, unknown>) => ({ provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
+    config: { hostname: 'docs.happier.dev', controller: { accountId: 'acct', zoneId: 'zone-1',
+      connector: { imageRef: 'cloudflare/cloudflared', version: '2026.10.0' }, tunnel, owned: [], dnsOwnership: [] } },
+    credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount' as const, account } }] });
+  const created = selection({ kind: 'create', name: 'docs.happier.dev' });
+  const adopted = selection({ kind: 'adopt', tunnelId: 'tunnel-1', name: 'office' });
+  async function findChoices(existing: readonly unknown[]) {
+    const inspectPlatformTarget = vi.fn<DomainIngressInspection>(async (_action, input) => (input as { zoneId?: string }).zoneId
+      ? { ok: true, value: { kind: 'ready', options: existing, createOption: { label: 'docs.happier.dev', selection: created } } }
+      : { ok: true, value: { kind: 'ready', zones: [{ zoneId: 'zone-1', name: 'happier.dev' }], options: [] } } as never);
+    const base = createDeploymentEnvironmentDetailV1();
+    const detail = { ...base, content: { ...base.content, ingress: { kind: 'cloudflareTunnel' as const } } };
+    const actions = { ...domainActions(detail), inspectPlatformTarget };
+    const rendered = await renderDomains(detail, [], actions);
+    expect(await rendered.settle(id)).not.toBeNull();
+    await rendered.screen.pressByTestIdAsync(id);
+    const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
+    await act(async () => {
+      rendered.screen.changeTextByTestId(`${id}.host`, 'docs.happier.dev');
+      rendered.screen.changeTextByTestId(`${id}.service`, 'web');
+      rendered.screen.changeTextByTestId(`${id}.port`, '3000');
+      rendered.screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account', account }, null);
+    });
+    // One deliberate press finds the zone and, with the zone settled, the tunnels in it.
+    await rendered.screen.pressByTestIdAsync(`${id}.ingress.zones.read`);
+    await vi.waitFor(() => expect(inspectPlatformTarget).toHaveBeenCalledTimes(2));
+    expect(inspectPlatformTarget.mock.calls[1]![1]).toMatchObject({ zoneId: 'zone-1' });
+    return { ...rendered, actions };
+  }
+  const tunnelSelect = async (screen: Awaited<ReturnType<typeof findChoices>>['screen']) => {
+    const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
+    return screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === `${id}.ingress.tunnel`);
+  };
+
+  it('offers a new tunnel Happier manages when the zone has none, already chosen, and adds the Domain with it', async () => {
+    const { screen, controller, actions } = await findChoices([]);
+    try {
+      await vi.waitFor(async () => expect((await tunnelSelect(screen))?.props.items).toHaveLength(1));
+      // One Advanced section: the connector overrides open with the form's own, not under a second Advanced.
+      expect(screen.findByTestId(`${id}.ingress.advanced.header`)).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.advanced.header`);
+      expect(screen.findByTestId(`${id}.ingress.imageRef`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        content: expect.objectContaining({ ingress: created }),
+      }));
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+
+  it('lists existing tunnels beside the new one and waits for a choice', async () => {
+    const { screen, controller, actions } = await findChoices([{ label: 'office', selection: adopted }]);
+    try {
+      await vi.waitFor(async () => expect((await tunnelSelect(screen))?.props.items).toHaveLength(2));
+      expect((await tunnelSelect(screen))?.props.selectedId ?? null).toBeNull();
+      await screen.pressByTestIdAsync(`${id}.save`);
+      expect(actions.addDomain).not.toHaveBeenCalled();
     } finally { await screen.unmount(); controller.retire(); }
   });
 });
