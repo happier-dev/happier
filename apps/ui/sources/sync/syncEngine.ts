@@ -8648,7 +8648,9 @@ class Sync {
 
                   await this.refreshSessionMetadataUpgrades();
 
-                  if (reason === 'socket-reconnect' || reason === 'manual') {
+                  // The durable feed (or its snapshot recovery) carries missed Team
+                  // changes on reconnect. Only manual recovery asks again without one.
+                  if (reason === 'manual') {
                       this.teamLabelEnvelopeSync.invalidateCoalesced();
                   }
 
@@ -13688,10 +13690,6 @@ class Sync {
                             accountId: sessionRecordChangeScope.accountId, changes: planned.changes });
                         if (!shouldContinue()) throw new StaleServerGenerationError();
                     }
-                    if (planned.changes.some(change => change.kind === 'account'
-                        && change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
-                        this.teamLabelEnvelopeSync.invalidateCoalesced({ rerunIfStarted: true });
-                    }
                     if (changesRequireSessionMetadataUpgradeDiscovery(planned.changes)) {
                         this.metadataUpgradeDiscovery.invalidate();
                         // share rows already refresh the list. A narrow row or
@@ -13712,6 +13710,10 @@ class Sync {
                             const changes = replayedChanges.filter(change =>
                                 publishedAccountChangeCursors.get(`${change.kind}:${change.entityId}`) !== change.cursor);
                             if (changes.length === 0) return;
+                            if (changes.some(change => change.kind === 'account'
+                                && change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
+                                this.teamLabelEnvelopeSync.invalidateCoalesced({ rerunIfStarted: true });
+                            }
                             // A failed row still retries through the full materialization
                             // plan. Only newly observed rows describe a new projection wake.
                             const publishedPlan = changes.length === replayedChanges.length ? planned : planSyncActionsFromChanges(changes, {

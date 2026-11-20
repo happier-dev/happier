@@ -440,6 +440,7 @@ describe('sync AccountChange catch-up projection', () => {
     // owed, each owner's owed census costs exactly one request: no inventory walk, no per-resource census.
     it.each(['e2ee', 'plain'] as const)('asks the Saved Secret, Task and Artifact owed censuses once each on the membership-change wake (%s)', async mode => {
         const owedReads: string[] = [];
+        const labelReads: string[] = [];
         const repairReads: string[] = [];
         const credentials = mode === 'e2ee'
             ? { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(73), 'base64url') }
@@ -449,7 +450,10 @@ describe('sync AccountChange catch-up projection', () => {
             if (path === '/v1/account/encryption/currentness' && 'secret' in credentials) {
                 return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(credentials)));
             }
-            if (path === '/v2/teams/label-envelopes') return Promise.resolve(jsonResponse({ teams: [] }));
+            if (path === '/v2/teams/label-envelopes') {
+                labelReads.push(init?.method ?? 'GET');
+                return Promise.resolve(jsonResponse({ teams: [] }));
+            }
             // The Task inventory and any per-resource census are the reverted O(owned) walk; record them too.
             if (path === '/v1/tasks' || path.endsWith('/recipients/owed') || path.endsWith('/recipients/census') || path.endsWith('/access/recipients')) {
                 repairReads.push(`${init?.method ?? 'GET'} ${path}`);
@@ -459,10 +463,16 @@ describe('sync AccountChange catch-up projection', () => {
             owedReads.push(init?.method ?? 'GET');
             return Promise.resolve(jsonResponse({ resources: [] }));
         } });
-        const runtime = syncRuntime as unknown as SyncAccountChangeCatchUpHarness;
+        const runtime = syncRuntime as unknown as SyncAccountChangeWakeSchedulingHarness & {
+            teamLabelEnvelopeSync: { awaitQueue(): Promise<void> };
+        };
         const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
         await waitForHomeGovernance(() => expect(getActiveServerAccountScope()).not.toBeNull());
+        await waitForHomeGovernance(() => expect(labelReads).toEqual(['GET']));
+        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect(owedReads).toEqual(mode === 'e2ee' ? ['GET'] : []);
         owedReads.length = 0;
+        labelReads.length = 0;
         repairReads.length = 0;
         changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 1, changedAt: 1, kind: 'account',
             entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 1 });
@@ -471,12 +481,23 @@ describe('sync AccountChange catch-up projection', () => {
             expect(owedReads).toEqual(['GET']);
             expect(repairReads.sort()).toEqual(['GET /v1/artifacts/access/recipients/owed', 'GET /v1/tasks/recipients/owed']);
         });
-        else {
-            // A Plain Account holds no content key: it custodies no E2EE envelope and asks nothing.
-            await new Promise(resolve => setTimeout(resolve, 50));
-            expect(owedReads).toEqual([]);
-            expect(repairReads).toEqual([]);
-        }
+        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect(labelReads).toEqual(['GET']);
+        if (mode === 'plain') expect(repairReads).toEqual([]);
+        await runtime.resumeSync('socket-reconnect');
+        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect({ labels: labelReads, savedSecrets: owedReads }).toEqual({
+            labels: ['GET'], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
+        });
+        labelReads.length = 0;
+        owedReads.length = 0;
+        changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 2, changedAt: 2, kind: 'account',
+            entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 2 });
+        await runtime.resumeSync('socket-reconnect');
+        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        expect({ labels: labelReads, savedSecrets: owedReads }).toEqual({
+            labels: ['GET'], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
+        });
     });
 
     it('FLOWBUDGET foregrounds an acquired 1000-Session list and applies one changed Session', async () => {
@@ -1769,8 +1790,13 @@ describe('sync AccountChange catch-up projection', () => {
         }
     });
 
-    it('does not reread Teams or Home for already published rows across ten held-cursor wakes', async () => {
-        await restoreTestAccount();
+    it('does not reread Teams, Home or the label census across ten held-cursor replays', async () => {
+        let labelReads = 0;
+        await restoreTestAccount({ physicalRequest: url => {
+            if (new URL(url).pathname !== '/v2/teams/label-envelopes') return undefined;
+            labelReads++;
+            return Promise.resolve(jsonResponse({ teams: [] }));
+        } });
         const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
         const { observeTeamsDirectory, resetTeamsDirectoryEngineForTests } = await import('./engine/teams/teamsDirectoryEngine');
         const { getTeamsDirectorySnapshot, resetTeamsSnapshotsForTests } = await import('./store/teams/teamsSnapshots');
@@ -1808,7 +1834,9 @@ describe('sync AccountChange catch-up projection', () => {
         const input = { v: 1, scope: 'member', archived: 'active' } as const;
         const stopTeams = observeTeamsDirectory(scope, input);
         const stopHome = observeHomeGovernance(scope);
-        const runtime = syncRuntime as unknown as SyncAccountChangeCatchUpHarness;
+        const runtime = syncRuntime as unknown as SyncAccountChangeCatchUpHarness & {
+            teamLabelEnvelopeSync: { awaitQueue(): Promise<void> };
+        };
         let teamCursor = 2;
         changesResponse.mockImplementation(async ({ url }) => {
             const after = Number(new URL(url).searchParams.get('after'));
@@ -1824,20 +1852,28 @@ describe('sync AccountChange catch-up projection', () => {
                 expect(getTeamsDirectorySnapshot(scope, teamDirectoryQueryKeyV1(input))?.status).toBe('ready');
                 expect(getHomeGovernanceSnapshot(scope)?.status).toBe('ready');
             });
+            await waitForHomeGovernance(() => expect(labelReads).toBe(1));
+            await runtime.teamLabelEnvelopeSync.awaitQueue();
             await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
+            await runtime.teamLabelEnvelopeSync.awaitQueue();
+            expect(labelReads).toBe(2);
             await waitForHomeGovernance(() => expect(reads).toHaveLength(4));
             const heldCursor = runtime.changesCursor;
             reads.length = 0;
             for (let wake = 0; wake < 10; wake++) await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
             await new Promise<void>(resolve => setImmediate(resolve));
             expect(runtime.changesCursor).toBe(heldCursor);
+            await runtime.teamLabelEnvelopeSync.awaitQueue();
             expect(reads).toEqual([]);
+            expect(labelReads).toBe(2);
 
             // A newer change for the same family must still reach its mounted reader.
             teamCursor = 4;
             await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
             await waitForHomeGovernance(() => expect(reads).toEqual(['/v1/teams/list']));
             expect(runtime.changesCursor).toBe(heldCursor);
+            await runtime.teamLabelEnvelopeSync.awaitQueue();
+            expect(labelReads).toBe(3);
             sessionAvailable = true;
             await runtime.resumeViaChanges({ accountId: ACCOUNT_ID });
             expect(runtime.changesCursor).toBe('4');
