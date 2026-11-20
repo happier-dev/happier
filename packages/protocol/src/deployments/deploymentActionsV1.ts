@@ -911,11 +911,12 @@ export async function resolveDeploymentPreviewExecutionMachineIdV1(
   return { ok: true, machineId: selected.machineId, ...(environment ? { environment } : {}) };
 }
 
-/** Service data-role changes need the installed controller's native binding preparation. */
+/** Data-role writes that change installed credentials prepare on the Environment controller. */
 export function isDeploymentDataRoleBindingWriteV1(input: unknown): boolean {
   const parsed = DeploymentActionInputSchemasV1[DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1].safeParse(input);
   return parsed.success && 'set' in parsed.data
-    && parsed.data.set.some(binding => binding.purpose === 'dataRole' && 'service' in binding);
+    && (parsed.data.set.some(binding => binding.purpose === 'dataRole')
+      || parsed.data.remove.some(binding => binding.purpose === 'dataRole' && 'targetLinkId' in binding));
 }
 
 /** Identifies existing Environment Actions that use installed deployment placement. */

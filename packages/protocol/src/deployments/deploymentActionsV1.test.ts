@@ -117,6 +117,21 @@ describe('Environment controller placement', () => {
     expect(isDeploymentEnvironmentPlacementActionV1(actionId, dataRole, 'account', local)).toBe(true);
     expect(isDeploymentEnvironmentPlacementActionV1(actionId, variable, 'account')).toBe(true);
   });
+
+  it.each(['set', 'remove'] as const)('places a managed provider role %s on the Environment controller', (edit) => {
+    const actionId = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+    const role = { purpose: 'dataRole', targetLinkId: 'managed-provider', role: 'readOnlyPassword' };
+    const input = DeploymentActionInputSchemasV1[actionId].parse({
+      serverId: 'home', environmentId: 'environment', expectedRevision: 1,
+      set: edit === 'set' ? [{ ...role, source: {
+        kind: 'secret', ref: formatSharedSavedSecretRefV1('read-role'), resourceRevision: 1,
+      } }] : [],
+      remove: edit === 'remove' ? [role] : [],
+    });
+    expect(isDeploymentEnvironmentPlacementActionV1(actionId, input, 'account', {
+      canPrepareAccountBindings: true,
+    })).toBe(true);
+  });
 });
 
 it('admits an opaque next-page cursor for branch reads while branch mutations stay closed', () => {
