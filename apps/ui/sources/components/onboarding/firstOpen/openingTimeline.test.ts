@@ -50,4 +50,22 @@ describe('first-open scene timing', () => {
         expect(turned.at.some((position, i) => i % 2 === 0 && Math.abs(position % 8 - 4) > 0.001)).toBe(true);
         expect(markAt(1.93).glyph.length).toBe(0);
     });
+    it('keeps loose digits quieter than the mark and gives the formed planet a lifting halo of grey digits', () => {
+        const sample = createOpeningTimeline({ width: 1440, height: 900, phone: false, theme: 'light' });
+        const loose = (time: number) => sample(time).flatMap(layer => layer.kind === 'traveller' ? [layer] : []);
+        const reading = loose(1.0);
+        expect(reading.filter(layer => (layer.alpha ?? 1) < 1).reduce((sum, layer) => sum + layer.particles.length / 8, 0))
+            .toBeGreaterThan(100);
+        const planet = sample(2.0).find(layer => layer.kind === 'planet')!;
+        const { cx, cy, R } = planet.geometry;
+        const haloAt = (time: number) => loose(time).filter(layer => Array.isArray(layer.ink)).reduce((sum, layer) => {
+            let around = 0;
+            for (let i = 0; i < layer.particles.length; i += 8) {
+                if (Math.hypot(layer.particles[i] - cx, layer.particles[i + 1] - cy) > R * 1.04) around++;
+            }
+            return sum + around;
+        }, 0);
+        expect(haloAt(2.0)).toBeGreaterThan(50);
+        expect(haloAt(openingClimbSeconds + 0.7)).toBe(0);
+    });
 });

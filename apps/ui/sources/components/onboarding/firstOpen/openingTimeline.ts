@@ -1,5 +1,5 @@
 import {
-    fieldDotLayer, glyphFrame, markGlyphLayer, markGlyphTone, planetGlyphLayer, travellerGlyphLayer,
+    fieldDotLayer, glyphFrame, glyphPlanetDigitFirstTile, markGlyphLayer, markGlyphTone, planetGlyphLayer, travellerGlyphLayer,
     type GlyphLayer, type GlyphPoint, type GlyphRect,
 } from '@happier-dev/brand/glyph-scene';
 import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
@@ -56,6 +56,8 @@ type Travel = Readonly<{
     spread: number;
     tone: number;
     live: boolean;
+    alpha: number;
+    grey: boolean;
 }>;
 
 /** Builds the start tables once. Every sample uses the same clock for the mark, travellers and planet. */
@@ -69,19 +71,25 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
     const mark = markGlyphLayer({ centre, size: 2 * radius / 1.05, ink: 'sunrise', retypeS: 1.2 });
     // Source cells come from the real brand sampler so the opening never traces a second mark.
     const raster = glyphFrame({ view: { w: width, h: height }, cell, dpr: 1, theme, layers: [mark] });
-    const cellTimeline = new Float32Array(raster.sprites.glyph.length * 4);
+    // One source per mark cell: its digit sprite (its wash and lattice dots are drawn with the cell).
+    const markCells: number[] = [];
+    raster.sprites.glyph.forEach((glyph, index) => {
+        if (glyph >= glyphPlanetDigitFirstTile && glyph < glyphPlanetDigitFirstTile + 10) markCells.push(index);
+    });
+    const cellTimeline = new Float32Array(markCells.length * 4);
     const occupied = new Set<number>();
     const columns = raster.grid.cols;
     const cellIndex = (x: number, y: number) => Math.floor(y / cell[1]) * columns + Math.floor(x / cell[0]);
-    for (let i = 0; i < raster.sprites.at.length; i += 2) {
-        occupied.add(cellIndex(raster.sprites.at[i], raster.sprites.at[i + 1]));
+    for (const sprite of markCells) {
+        occupied.add(cellIndex(raster.sprites.at[2 * sprite], raster.sprites.at[2 * sprite + 1]));
     }
     const sources: Array<Readonly<{ point: GlyphPoint; tone: number; departure: number }>> = [];
     const travels: Travel[] = [];
     const launch = cursor ?? (phone ? { x: width / 2, y: height + 12 } : undefined);
     // The traveller layer accepts the brand's packed start/end/emit/duration/arc/tone tuples.
-    for (let index = 0; index < raster.sprites.glyph.length; index++) {
-        const point = { x: raster.sprites.at[2 * index], y: raster.sprites.at[2 * index + 1] };
+    for (let index = 0; index < markCells.length; index++) {
+        const sprite = markCells[index];
+        const point = { x: raster.sprites.at[2 * sprite], y: raster.sprites.at[2 * sprite + 1] };
         const nx = (point.x - centre.x) / radius;
         const ny = (point.y - centre.y) / radius;
         const position = cellIndex(point.x, point.y);
@@ -106,6 +114,9 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
                 origin, destination: point, emit: Math.max(0.02, at - flight), arrival: at,
                 arc: fromLaunch ? 0.3 + 0.1 * variation(index, 17) : (variation(index, 17) - 0.5) * 0.35,
                 spread: fromLaunch ? (variation(index, 18) - 0.5) * 90 : 0, tone, live: false,
+                // The second copy is quieter and partly in grey page ink, as the lab's gather.
+                alpha: copy === 1 ? 0.55 + 0.3 * variation(index, 45) : fromLaunch ? 0.95 : 0.65 + 0.3 * variation(index, 19),
+                grey: copy === 1 && variation(index, 46) >= 0.6,
             });
         }
     }
@@ -124,11 +135,11 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
                     origin: { x: mix(centre.x, source.point.x, flip), y: source.point.y },
                     destination: { x: x / radius, y: y / radius }, emit, arrival: at,
                     arc: (variation(index, 17) - 0.5) * 0.5, spread: 0, tone: source.tone, live: true,
+                    alpha: 0.92 + 0.08 * variation(index, 19), grey: false,
                 });
             }
         }
     }
-    const particles = new Float32Array(travels.length * particleStride);
     const floaters = Array.from({ length: 260 }, (_, j) => {
         const index = 20000 + j;
         const join = turnStart + 0.65 * variation(index, 5);
@@ -147,10 +158,45 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
             targetX: Math.cos(direction) * reach, targetY: Math.sin(direction) * reach,
             bendX: (variation(index, 19) - 0.5) * 1.5, bendY: (variation(index, 20) - 0.5) * 1.5,
             tone: variation(index, 3), grey: variation(index, 2) >= 0.72,
+            alpha: j < 110 ? 0.55 + 0.3 * variation(index, 18) : j < 236 ? 0.32 + 0.3 * variation(index, 18) : 0.8,
         };
     });
-    const floatingColor = new Float32Array(floaters.length * particleStride);
-    const floatingGrey = new Float32Array(floaters.length * particleStride);
+    // The planet's halo: loose grey digits circling it once it has formed, lifted away by the climb.
+    const halo = Array.from({ length: 150 }, (_, j) => {
+        const index = 3000 + j;
+        const u = variation(index, 1);
+        return {
+            r: 1.08 + 1.55 * u ** 1.7, angle: variation(index, 2) * Math.PI * 2,
+            speed: (0.12 + 0.18 * variation(index, 3)) * (variation(index, 4) < 0.5 ? -1 : 1),
+            alpha: 0.34 - 0.24 * u, lift: 0.6 + 0.4 * variation(index, 5), tone: variation(index, 22),
+        };
+    });
+    // Every loose digit carries its own opacity, drawn in ten opacity steps per ink.
+    const alphaSteps = 10;
+    const buckets = Array.from({ length: 2 * alphaSteps }, () => ({ particles: new Float32Array(64 * particleStride), offset: 0 }));
+    const emit = (x: number, y: number, tone: number, grey: boolean, alpha: number) => {
+        const step = Math.round(Math.min(1, alpha) * alphaSteps);
+        if (step < 1) return;
+        const bucket = buckets[(grey ? alphaSteps : 0) + step - 1];
+        if (bucket.offset + particleStride > bucket.particles.length) {
+            // Grows during the first frames only; later frames reuse the same storage.
+            const grown = new Float32Array(bucket.particles.length * 2);
+            grown.set(bucket.particles);
+            bucket.particles = grown;
+        }
+        const out = bucket.particles;
+        let at = bucket.offset;
+        out[at++] = x;
+        out[at++] = y;
+        out[at++] = x;
+        out[at++] = y;
+        out[at++] = 0;
+        out[at++] = openingSceneSeconds;
+        out[at++] = 0;
+        out[at++] = tone;
+        bucket.offset = at;
+    };
+    const keepOut = (x: number, y: number) => 1 - progress(Math.max(Math.abs(x - centre.x), Math.abs(y - centre.y)) / radius, 1.02, 1.22);
     const impact = [{ ...end, at: contact }];
     return (seconds) => {
         const layers: GlyphLayer[] = [];
@@ -177,7 +223,7 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
                 intensity: 'full', digits: true, assemble: { startS: 1.55, durationS: 2.38 - 1.55 },
             }));
         }
-        let offset = 0;
+        for (const bucket of buckets) bucket.offset = 0;
         for (const travel of travels) {
             if (seconds < travel.emit || seconds >= travel.arrival) continue;
             const targetX = travel.live ? cx + travel.destination.x * R : travel.destination.x;
@@ -192,22 +238,25 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
             const snap = progress(u, 0.8, 1);
             const x = mix(atX, (Math.floor(atX / cell[0]) + 0.5) * cell[0], snap);
             const y = mix(atY, (Math.floor(atY / cell[1]) + 0.5) * cell[1], snap);
-            particles[offset++] = x;
-            particles[offset++] = y;
-            particles[offset++] = x;
-            particles[offset++] = y;
-            particles[offset++] = 0;
-            particles[offset++] = openingSceneSeconds;
-            particles[offset++] = 0;
-            particles[offset++] = travel.tone;
+            emit(x, y, travel.tone, travel.grey, travel.alpha * (1 - progress(u, 0.93, 1)));
         }
-        if (offset > 0) layers.push(travellerGlyphLayer({ particles: particles.subarray(0, offset), ink: 'sunrise' }));
-        let colorOffset = 0;
-        let greyOffset = 0;
+        const gathered = progress(seconds, turnEnd - 0.2, turnEnd + 0.3);
+        const climbed = seconds - openingClimbSeconds;
+        if (gathered > 0 && climbed < 0.7) {
+            for (const digit of halo) {
+                const angle = digit.angle + digit.speed * seconds;
+                const lift = climbed > 0 ? 1100 * digit.lift * climbed * climbed : 0;
+                const x = cx + Math.cos(angle) * digit.r * R;
+                const y = cy + Math.sin(angle) * digit.r * R * 0.92 - lift;
+                if (Math.hypot(x - cx, y - cy) < R * 1.04) continue;
+                emit(x, y, digit.tone, true, digit.alpha * gathered * (1 - progress(climbed, 0.05, 0.6)));
+            }
+        }
         for (const digit of floaters) {
             if (seconds < digit.born || seconds >= digit.end) continue;
             const looseTime = Math.min(seconds, digit.join);
             const angle = digit.angle + digit.speed * looseTime;
+            let alpha = digit.alpha * progress(seconds, digit.born, digit.born + 0.35);
             let x: number;
             let y: number;
             if (digit.kind === 'hover') {
@@ -216,33 +265,35 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
             } else if (digit.kind === 'drift') {
                 x = digit.x + digit.vx * looseTime + Math.sin(looseTime * 0.9 + digit.angle) * 10;
                 y = digit.y + digit.vy * looseTime + Math.cos(looseTime * 0.7 + digit.angle) * 8;
-                if (seconds < digit.join && Math.max(Math.abs(x - centre.x), Math.abs(y - centre.y)) < radius * 1.02) continue;
             } else {
                 if (seconds >= digit.settle) continue;
                 const k = sine(progress(seconds, digit.born, digit.settle));
                 x = mix(digit.x, centre.x + digit.bendX * radius * 0.55, k);
                 y = mix(digit.y, centre.y + digit.bendY * radius * 0.55, k);
+                alpha *= 1 - progress(k, 0.9, 1);
             }
-            if (seconds >= digit.join) {
-                const k = sine(progress(seconds, digit.join, digit.end));
-                x = mix(x, cx + digit.targetX * R, k) + Math.sin(Math.PI * k) * digit.bendX * 40;
-                y = mix(y, cy + digit.targetY * R, k);
+            if (digit.kind !== 'settle') {
+                if (seconds < digit.join) {
+                    // Loose digits stay clear of the mark's square while it reads.
+                    const clear = keepOut(x, y);
+                    alpha *= clear * 0.6 + 0.4 * (digit.kind === 'hover' ? 1 : clear);
+                } else {
+                    const u = progress(seconds, digit.join, digit.end);
+                    const k = sine(u);
+                    x = mix(x, cx + digit.targetX * R, k) + Math.sin(Math.PI * k) * digit.bendX * 40;
+                    y = mix(y, cy + digit.targetY * R, k);
+                    alpha = Math.max(alpha, 0.85) * (1 - progress(u, 0.93, 1));
+                }
             }
-            const output = digit.grey ? floatingGrey : floatingColor;
-            let offset = digit.grey ? greyOffset : colorOffset;
-            output[offset++] = x;
-            output[offset++] = y;
-            output[offset++] = x;
-            output[offset++] = y;
-            output[offset++] = 0;
-            output[offset++] = openingSceneSeconds;
-            output[offset++] = 0;
-            output[offset++] = digit.tone;
-            if (digit.grey) greyOffset = offset;
-            else colorOffset = offset;
+            emit(x, y, digit.tone, digit.grey, alpha);
         }
-        if (colorOffset > 0) layers.push(travellerGlyphLayer({ particles: floatingColor.subarray(0, colorOffset), ink: 'sunrise' }));
-        if (greyOffset > 0) layers.push(travellerGlyphLayer({ particles: floatingGrey.subarray(0, greyOffset), ink: greyFloatInk }));
+        buckets.forEach((bucket, n) => {
+            if (bucket.offset === 0) return;
+            layers.push(travellerGlyphLayer({
+                particles: bucket.particles.subarray(0, bucket.offset), ink: n >= alphaSteps ? greyFloatInk : 'sunrise',
+                alpha: ((n % alphaSteps) + 1) / alphaSteps,
+            }));
+        });
         return layers;
     };
 }

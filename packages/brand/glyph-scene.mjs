@@ -282,7 +282,38 @@ export function markGlyphTone({ centre, size }, x, y) {
     return clamp(0.08 + ((y - centre.y) / (size / 2) + 1) * 0.42 - (x - centre.x) / (size / 2) * 0.1);
 }
 
-function sampleMark(out, grid, layer, time, palette) {
+// A mark cell reads as the lab's mark: a wash of the cell's colour, its dot lattice and a planet-size digit in the
+// planet's glyph ink, so the silhouette stays solid between digits. The wash fills only cells wholly inside the
+// mark and each lattice dot is kept only inside it, so the rounded corners and the smile follow the outline at the
+// lattice's pitch rather than the cell grid. The turn narrows every cell about the mark's centre.
+const markBlockTile = 20;
+const markWash = 0.22;
+const markLatticeAlpha = 0.45;
+const markInk = [0, 0, 0], markDot = [0, 0, 0];
+function writeMarkCell(out, grid, layer, mx, my, flip, digit, colour, theme, palette) {
+    const { dpr } = out;
+    const { centre } = layer;
+    const radius = layer.size / 2;
+    const cellW = grid.cell[0] / dpr, cellH = grid.cell[1] / dpr;
+    const screenX = (x) => (centre.x + (x - centre.x) * flip) * dpr;
+    const inside = (x, y) => markSdfAt((x - centre.x) / radius, (y - centre.y) / radius);
+    if (inside(mx, my) > Math.hypot(cellW, cellH) / 2 / radius) writeSprite(out, screenX(mx), my * dpr, markBlockTile, colour, markWash * flip);
+    const peak = Math.max(colour[0], colour[1], colour[2]);
+    for (let c = 0; c < 3; c++) markDot[c] = theme === 'light' ? Math.round(clamp(peak - (peak - colour[c]) * 1.4, 0, 255)) : colour[c];
+    for (let dy = latticePitch / 2 - cellH / 2; dy < cellH / 2; dy += latticePitch) {
+        for (let dx = latticePitch / 2 - cellW / 2; dx < cellW / 2; dx += latticePitch) {
+            if (inside(mx + dx, my + dy) > 0) writeSprite(out, screenX(mx + dx), (my + dy) * dpr, glyphLatticeTile, markDot, markLatticeAlpha);
+        }
+    }
+    writeSprite(out, screenX(mx), my * dpr, glyphPlanetDigitFirstTile + digit, glyphInk(colour, theme, palette.background, markInk), 1);
+}
+
+/** Sprites one mark cell writes at most: its wash, its lattice dots and its digit. */
+function markCellSprites(grid, dpr) {
+    return 2 + Math.ceil(grid.cell[0] / dpr / latticePitch) * Math.ceil(grid.cell[1] / dpr / latticePitch);
+}
+
+function sampleMark(out, grid, layer, time, theme, palette) {
     const { centre, size, retypeS = 1.2, dissolve = 0, turn = 0, fill = 1, cellTimeline } = layer;
     const [cellW, cellH] = grid.cell;
     const radius = size / 2;
@@ -293,8 +324,8 @@ function sampleMark(out, grid, layer, time, palette) {
             if (time < cellTimeline[at + 2] || time >= cellTimeline[at + 3]) continue;
             const x = cellTimeline[at], y = cellTimeline[at + 1];
             const colour = gradient(palette.body, markGlyphTone(layer, x, y), out.ink);
-            writeSprite(out, (centre.x + (x - centre.x) * flip) * out.dpr, y * out.dpr,
-                digitOf(Math.floor(x * out.dpr / cellW), Math.floor(y * out.dpr / cellH), step), colour, 1);
+            writeMarkCell(out, grid, layer, x, y, flip,
+                digitOf(Math.floor(x * out.dpr / cellW), Math.floor(y * out.dpr / cellH), step), colour, theme, palette);
         }
         return;
     }
@@ -310,7 +341,7 @@ function sampleMark(out, grid, layer, time, palette) {
             const arrival = distance < 0.05 ? 0.5 * cellHash(i, j + 11) : 0.3 + 0.7 * cellHash(i, j + 11);
             if (fill < arrival) continue;
             const color = gradient(palette.body, markGlyphTone(layer, centre.x + fx * radius, y / out.dpr), out.ink);
-            writeSprite(out, x, y, digitOf(i, j, step), color, 1);
+            writeMarkCell(out, grid, layer, centre.x + fx * radius, y / out.dpr, flip, digitOf(i, j, step), color, theme, palette);
         }
     }
 }
@@ -320,7 +351,7 @@ function sampleTravellers(out, layer, time, palette) {
         sampleStepTravellers(out, layer, time, palette);
         return;
     }
-    const { particles, ink, small } = layer;
+    const { particles, ink, small, alpha = 1 } = layer;
     for (let i = 0; i < particles.length; i += 8) {
         const emit = particles[i + 4], duration = particles[i + 5];
         if (time < emit || time > emit + duration) continue;
@@ -330,7 +361,7 @@ function sampleTravellers(out, layer, time, palette) {
         const y = mix(particles[i + 1], particles[i + 3], travel) - Math.sin(Math.PI * p) * particles[i + 6];
         const tone = particles[i + 7];
         const color = ink === 'sunrise' ? gradient(palette.body, tone, out.ink) : ink;
-        writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, 0, Math.floor(time * 6)) + (small ? 10 : 0), color, (color[3] ?? 255) / 255);
+        writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, 0, Math.floor(time * 6)) + (small ? 10 : 0), color, alpha * (color[3] ?? 255) / 255);
     }
 }
 
@@ -444,7 +475,7 @@ export function createGlyphFrameSampler() {
             if (layer.kind === 'field') return sum;
             if (layer.kind === 'placed') return sum + layer.cells.length / 7;
             if (layer.kind === 'traveller') return sum + layer.particles.length / 8 * (layer.small && layer.stepMorphProgress !== undefined ? 3 : 1);
-            if (layer.kind === 'mark' && layer.cellTimeline) return sum + layer.cellTimeline.length / 4;
+            if (layer.kind === 'mark') return sum + (layer.cellTimeline ? layer.cellTimeline.length / 4 : cols * rows) * markCellSprites(grid, dpr);
             if (layer.kind === 'planet') return sum + cols * rows * ((layer.ring ? 3 : 2) + Math.ceil(cell[0] / dpr / latticePitch) * Math.ceil(cell[1] / dpr / latticePitch));
             return sum + cols * rows * (layer.kind === 'front' && layer.cover ? 2 : 1);
         }, 0);
@@ -463,7 +494,7 @@ export function createGlyphFrameSampler() {
                 }
             }
             if (layer.kind === 'planet') body = samplePlanet(out, grid, layer, time, theme, palette, previousBody);
-            if (layer.kind === 'mark') sampleMark(out, grid, layer, time, palette);
+            if (layer.kind === 'mark') sampleMark(out, grid, layer, time, theme, palette);
             if (layer.kind === 'traveller') sampleTravellers(out, layer, layer.presentationTimeS ?? time, palette);
             if (layer.kind === 'front') sampleFront(out, grid, layer, time, palette);
         }

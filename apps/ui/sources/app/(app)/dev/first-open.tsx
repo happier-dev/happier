@@ -28,9 +28,12 @@ export default function FirstOpenDevScreen() {
             width: previewWidth,
             height: previewHeight,
         } : undefined;
-        const sample = createOpeningTimeline({ width, height, phone, theme: appearance, windowRect });
-        return held ? sample(Math.min(openingSceneSeconds, Math.max(0, frameTime))) : sample;
-    }, [width, height, phone, appearance, desktop, held, frameTime]);
+        return createOpeningTimeline({ width, height, phone, theme: appearance, windowRect });
+    }, [width, height, phone, appearance, desktop]);
+    // A held frame is the transition already past its end, so every layer samples the same clock time.
+    const heldMotion = React.useMemo<GlyphMotion>(() => (held
+        ? { kind: 'transition', epoch: 0, durationS: Math.min(openingSceneSeconds, Math.max(0, frameTime)) }
+        : null), [held, frameTime]);
     const [ready, setReady] = React.useState(false);
     const [motion, setMotion] = React.useState<GlyphMotion>(null);
     const play = React.useCallback(() => {
@@ -38,7 +41,7 @@ export default function FirstOpenDevScreen() {
     }, []);
     return (
         <View style={[styles.page, { backgroundColor: theme.colors.surface.base }]}>
-            <GlyphSurface width={width} height={height} scene={scene} motion={held ? null : motion}
+            <GlyphSurface width={width} height={height} scene={scene} motion={held ? heldMotion : motion}
                 onReady={status => setReady(status === 'ready')} />
             {!held ? <Pressable disabled={!ready} accessibilityRole="button" onPress={play} style={styles.replay}>
                 <Text style={{ color: theme.colors.text.primary }}>Play opening</Text>

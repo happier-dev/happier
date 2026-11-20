@@ -30,6 +30,8 @@ export type MarkGlyphOptions = Readonly<{
 }>;
 export type TravellerGlyphOptions = Readonly<{
     particles: Float32Array; ink: 'sunrise' | GlyphInk; small?: boolean;
+    /** Opacity of every particle in the layer (default 1). */
+    alpha?: number;
     /** Presentation time from the same measured epoch when an in-flight layer is carried across a step. */
     presentationTimeS?: number;
     /** Step morph progress supplies the envelope around the particles' individual flight times. */

@@ -49,14 +49,20 @@ test('travellers land at the specified endpoint and fronts sample deterministica
 test('opening mark cells lock and depart on the same times their travellers are authored against', () => {
     const layer = markGlyphLayer({ centre: { x: 120, y: 120 }, size: 108, ink: 'sunrise',
         cellTimeline: new Float32Array([120, 126, 0.5, 1.25, 144, 148, 0.75, 1.5]) });
-    assert.deepEqual(Array.from(render([layer], 0.49).sprites.at), []);
-    assert.deepEqual(Array.from(render([layer], 0.5).sprites.at), [180, 189]);
-    assert.deepEqual(Array.from(render([layer], 0.75).sprites.at), [180, 189, 216, 222]);
-    assert.deepEqual(Array.from(render([layer], 1.25).sprites.at), [216, 222]);
-    assert.deepEqual(Array.from(render([layer], 1.5).sprites.at), []);
-    const turned = render([{ ...layer, turn: 1 }], 1.25);
-    assert.ok(turned.sprites.at[0] < 216 && turned.sprites.at[0] > 180);
-    assert.equal(turned.sprites.at[1], 222);
+    const isDigit = (glyph) => glyph >= glyphPlanetDigitFirstTile && glyph < glyphPlanetDigitFirstTile + 10;
+    const digits = (frame) => Array.from(frame.sprites.glyph).flatMap((glyph, n) => isDigit(glyph) ? [frame.sprites.at[2 * n], frame.sprites.at[2 * n + 1]] : []);
+    assert.deepEqual(digits(render([layer], 0.49)), []);
+    assert.deepEqual(digits(render([layer], 0.5)), [180, 189]);
+    assert.deepEqual(digits(render([layer], 0.75)), [180, 189, 216, 222]);
+    assert.deepEqual(digits(render([layer], 1.25)), [216, 222]);
+    assert.deepEqual(digits(render([layer], 1.5)), []);
+    const turned = digits(render([{ ...layer, turn: 1 }], 1.25));
+    assert.ok(turned[0] < 216 && turned[0] > 180);
+    assert.equal(turned[1], 222);
+    // Each locked cell reads as a filled cell: a wash and lattice dots surround its digit (the lab's silhouette).
+    const held = render([layer], 0.5);
+    const dots = Array.from(held.sprites.glyph).filter((glyph) => glyph === glyphLatticeTile).length;
+    assert.ok(dots >= 4, `lattice dots under the mark cell: ${dots}`);
 });
 
 test('the dot field keeps its stipple as its mask calms, and keeps copy clear', async () => {
