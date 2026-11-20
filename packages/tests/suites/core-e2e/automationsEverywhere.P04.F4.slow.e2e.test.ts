@@ -48,7 +48,6 @@ describe('AE.P04.F4 Action attachment authoring', () => {
       const trigger = AutomationActionTriggerSchema.parse({ kind: 'action',
         actionIds: ['machines.command.run'], ...definition });
       const added = await actor.executeAsPerson('workflow.trigger.add', {
-        name: 'Action policy roundtrip',
         target: { kind: 'inline', definition: { version: 1,
           defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
           blocks: [{ kind: 'step', id: 'check', document: { text: 'Check the deployment.', references: [], attachments: [] },
@@ -62,7 +61,7 @@ describe('AE.P04.F4 Action attachment authoring', () => {
       const saved = WorkflowTriggerWriteResultV1Schema.parse(added.result);
       expect(saved.set.triggers).toContainEqual(expect.objectContaining(trigger));
       const listed = await actor.executeAsPerson('workflow.trigger.list', {
-        automationId: saved.set.automationId, triggerId: saved.triggerId,
+        automationId: saved.set.automationId,
       });
       expect(listed.ok, JSON.stringify(listed)).toBe(true);
       if (!listed.ok) throw new Error(`UI attachment read refused (${listed.errorCode})`);
