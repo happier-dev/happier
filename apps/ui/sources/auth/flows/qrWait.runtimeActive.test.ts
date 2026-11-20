@@ -6,6 +6,7 @@ import { authQRWait, type HomeQrEnrollmentTarget } from './qrWait';
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { ENROLLMENT_POLL_IDLE_DELAY_MS } from '@/auth/enrollment/enrollmentPollingBackoff';
 
 const appState = vi.hoisted(() => ({ currentState: 'background' as string }));
 const endpointFetchMock = vi.hoisted(() => vi.fn());
@@ -108,10 +109,11 @@ describe('authQRWait runtime active gating', () => {
         expect(endpointFetchMock).not.toHaveBeenCalled();
     });
 
-    it('schedules no poll wakes while hidden and polls on the foreground event', async () => {
+    it('polls once per visible cadence and schedules no wakes or requests during a hidden minute', async () => {
         vi.useFakeTimers();
+        appState.currentState = 'active';
         const schedule = vi.spyOn(globalThis, 'setTimeout');
-        endpointFetchMock.mockResolvedValue(new Response(null, { status: 410 }));
+        endpointFetchMock.mockImplementation(async () => Response.json({ state: 'requested' }));
         const keypair = generateAuthKeyPair();
         const issuedAtMs = Date.now();
         const controller = new AbortController();
@@ -124,18 +126,28 @@ describe('authQRWait runtime active gating', () => {
                 bindingProof: 'proof',
                 direction: 'trusted_home_displays',
                 issuedAtMs,
-                expiresAtMs: issuedAtMs + 120_000,
+                expiresAtMs: issuedAtMs + 180_000,
             },
         });
         try {
-            await vi.advanceTimersByTimeAsync(60_000);
-            expect(endpointFetchMock).not.toHaveBeenCalled();
+            const minuteMs = 60_000;
+            await vi.advanceTimersByTimeAsync(minuteMs - 1);
+            const visiblePolls = Math.ceil(minuteMs / ENROLLMENT_POLL_IDLE_DELAY_MS);
+            expect(endpointFetchMock).toHaveBeenCalledTimes(visiblePolls);
+
+            appState.currentState = 'background';
+            visibilityEvents.dispatchEvent(new Event('change'));
+            await vi.advanceTimersByTimeAsync(0);
+            schedule.mockClear();
+            await vi.advanceTimersByTimeAsync(minuteMs);
+            expect(endpointFetchMock).toHaveBeenCalledTimes(visiblePolls);
             expect(schedule).not.toHaveBeenCalled();
 
+            endpointFetchMock.mockResolvedValue(new Response(null, { status: 410 }));
             appState.currentState = 'active';
             visibilityEvents.dispatchEvent(new Event('change'));
             await expect(outPromise).resolves.toEqual({ ok: false, reason: 'expired' });
-            expect(endpointFetchMock).toHaveBeenCalledTimes(1);
+            expect(endpointFetchMock).toHaveBeenCalledTimes(visiblePolls + 1);
         } finally {
             controller.abort();
         }

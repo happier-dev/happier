@@ -278,6 +278,7 @@ describe('useAuthEntryOptions', () => {
         await settle();
         expect(calls('/v1/features')).toHaveLength(1);
         expect(calls('/v1/auth/entry')).toHaveLength(1);
+        expect(calls('/v2/retention-policy')).toHaveLength(0);
         expect(hook.getCurrent().serverAvailability).toBe('loading');
         pending.resolve(Response.json(createRootLayoutFeaturesResponse({ capabilities: { auth: {
             methods: [{ id: 'github', actions: [{ id: 'provision', enabled: true, mode: 'keyed' }] }],
@@ -285,6 +286,11 @@ describe('useAuthEntryOptions', () => {
         await settle();
         expect(hook.getCurrent()).toMatchObject({ serverAvailability: 'ready', authEntryUnavailable: true, showAuthActions: true });
         expect(hook.getCurrent().authenticationActions).toEqual([expect.objectContaining({ execution: { kind: 'oauth', providerId: 'github', mode: 'keyed' } })]);
+        expect(calls('/v2/retention-policy')).toHaveLength(1);
+        const requestCount = network.mock.calls.length;
+        await hook.rerender();
+        await settle();
+        expect(network.mock.calls).toHaveLength(requestCount);
     });
 
     it('keeps a Home-denied auth entry blocked instead of substituting the feature catalog', async () => {
