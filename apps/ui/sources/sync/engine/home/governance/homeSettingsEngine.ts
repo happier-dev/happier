@@ -38,6 +38,10 @@ const loader = createScopedSnapshotLoader<Target>({
     },
 });
 
+export function retainHomeSettingsInvalidation(scope: ServerAccountScope) {
+    return loader.retain(targetFor(scope));
+}
+
 export function observeHomeSettings(scope: ServerAccountScope): () => void {
     return loader.observe(targetFor(scope));
 }

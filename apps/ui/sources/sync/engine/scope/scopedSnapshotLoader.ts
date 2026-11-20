@@ -30,6 +30,8 @@ export type ScopedLoadTarget = Readonly<{
 export type ScopedSnapshotLoader<TTarget extends ScopedLoadTarget> = Readonly<{
     /** Registers a live consumer and loads when the domain says it is needed. */
     observe: (target: TTarget) => () => void;
+    /** Retains invalidations for a surrounding lifetime without creating read demand. */
+    retain: (target: TTarget) => Readonly<{ isRetained: () => boolean; release: () => void }>;
     /** Explicit retry. Coalesces with an in-flight load for the same target. */
     refresh: (target: TTarget, signal?: AbortSignal) => Promise<void>;
     /** Invalidates now and awaits the newest load, including a required trailing reload. */
@@ -125,7 +127,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     onCredentialMutation?: (event: HomeCredentialMutationEvent, target: TTarget) => boolean;
 }>): ScopedSnapshotLoader<TTarget> {
     const observed = new Map<string, { target: TTarget; count: number }>();
-    const retainedTargets = new Map<string, { target: TTarget; unsubscribe: () => void }>();
+    const retainedTargets = new Map<string, { target: TTarget; unsubscribe: () => void; retainers: number }>();
     const inFlight = new Map<string, Promise<void>>();
     const lifetimes = new Map<string, { controller: AbortController; finiteReads: number }>();
     const maintenance = new Map<string, { result: ScopedSnapshotLoadMaintenance; reloadAfterMaintenance: boolean }>();
@@ -348,23 +350,30 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
         });
     }
 
-    function retireRetainedTarget(target: TTarget): void {
+    function hasReadDemand(target: TTarget): boolean {
+        return observed.has(target.key) || (lifetimes.get(target.key)?.finiteReads ?? 0) > 0;
+    }
+
+    function retireRetainedTarget(target: TTarget, preserveDemand = false): void {
         const retained = retainedTargets.get(target.key);
         if (!retained) return;
         retainedTargets.delete(target.key);
         retained.unsubscribe();
-        revalidateOnNextObserve.set(target.key, 'observer-gap');
-        params.invalidateTarget(target, 'observer-gap');
-        lifetimes.get(target.key)?.controller.abort();
-        reloadAfterInFlight.delete(target.key);
+        if (!preserveDemand || !hasReadDemand(target)) {
+            revalidateOnNextObserve.set(target.key, 'observer-gap');
+            params.invalidateTarget(target, 'observer-gap');
+            lifetimes.get(target.key)?.controller.abort();
+            reloadAfterInFlight.delete(target.key);
+        }
         releaseLifecycleSubscriptionsIfIdle();
     }
 
-    function retainInvalidation(target: TTarget): void {
-        if (!params.subscribeRetainedInvalidation || retainedTargets.has(target.key)) return;
-        const entry = { target, unsubscribe: () => {} };
+    function retainInvalidation(target: TTarget) {
+        const existing = retainedTargets.get(target.key);
+        if (existing) return existing;
+        const entry = { target, unsubscribe: (): void => {}, retainers: 0 };
         retainedTargets.set(target.key, entry);
-        const unsubscribe = params.subscribeRetainedInvalidation(target, {
+        const unsubscribe = params.subscribeRetainedInvalidation?.(target, {
             invalidate: (reason) => {
                 if (retainedTargets.get(target.key) !== entry) return;
                 // Observed catalogs receive actual changes through their Home
@@ -375,12 +384,15 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
                 // synchronous reader can consume the retained admission.
                 params.invalidateTarget(target, 'observer-gap');
                 revalidateOnNextObserve.set(target.key, 'observer-gap');
-                if (observed.has(target.key) || inFlight.has(target.key)) requestReload(target);
+                if (hasReadDemand(target)) requestReload(target);
             },
             retire: () => { retireRetainedTarget(target); },
         });
-        if (retainedTargets.get(target.key) === entry) entry.unsubscribe = unsubscribe;
-        else unsubscribe();
+        if (unsubscribe) {
+            if (retainedTargets.get(target.key) === entry) entry.unsubscribe = unsubscribe;
+            else unsubscribe();
+        }
+        return entry;
     }
 
     function requestReload(target: TTarget): void {
@@ -482,7 +494,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
         if (!params.prepareWake) params.invalidateServer(targets[0]!.serverId);
         for (const target of targets) {
             if (params.prepareWake) params.invalidateTarget(target, 'reload');
-            if (observed.has(target.key) || inFlight.has(target.key)) requestReload(target);
+            if (hasReadDemand(target)) requestReload(target);
             else revalidateOnNextObserve.set(target.key, 'observer-gap');
         }
     }
@@ -504,7 +516,7 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
                     retireRetainedTarget(target);
                     const reload = params.onCredentialMutation?.(event, target) === true;
                     if (reload) {
-                        if (observed.has(target.key) || inFlight.has(target.key)) requestReload(target);
+                        if (hasReadDemand(target)) requestReload(target);
                         else revalidateOnNextObserve.set(target.key, 'observer-gap');
                     }
                 }
@@ -521,8 +533,26 @@ export function createScopedSnapshotLoader<TTarget extends ScopedLoadTarget>(par
     }
 
     return {
+        retain(target) {
+            const entry = retainInvalidation(target);
+            entry.retainers += 1;
+            ensureLifecycleSubscriptions();
+            let released = false;
+            const isRetained = () => !released && retainedTargets.get(target.key) === entry;
+            return {
+                isRetained,
+                release() {
+                    if (!isRetained()) return;
+                    released = true;
+                    entry.retainers -= 1;
+                    if (entry.retainers === 0 && !params.subscribeRetainedInvalidation) {
+                        retireRetainedTarget(target, true);
+                    }
+                },
+            };
+        },
         observe(target) {
-            retainInvalidation(target);
+            if (params.subscribeRetainedInvalidation) retainInvalidation(target);
             const entry = observed.get(target.key);
             const returnedAfterObserverGap = !entry && (revalidateOnNextObserve.delete(target.key)
                 || inFlight.has(target.key) && !retainedTargets.has(target.key));

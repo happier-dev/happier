@@ -926,6 +926,47 @@ describe('createScopedSnapshotLoader', () => {
         releaseRemount();
     });
 
+    it('waits for new demand after a wake reaches a retained target with an abandoned read', async () => {
+        const target = { key: 'passive-wake', serverId: 'https://passive-wake.example' };
+        const firstResponse = createDeferred<void>();
+        let reads = 0;
+        let stale = false;
+        const loader = createScopedSnapshotLoader({
+            async load(_target, context) {
+                reads += 1;
+                if (reads === 1) await firstResponse.promise;
+                if (context.isCurrent()) stale = false;
+            },
+            shouldLoadOnObserve: () => stale || reads === 0,
+            invalidateServer: () => { stale = true; },
+            invalidateTarget: () => { stale = true; },
+        });
+        const retained = loader.retain(target);
+        const stop = loader.observe(target);
+        try {
+            await vi.waitFor(() => expect(reads).toBe(1));
+            stop();
+            publishHomeAccountChange(target.serverId);
+            firstResponse.resolve();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(reads).toBe(1);
+            expect(stale).toBe(true);
+
+            const stopAgain = loader.observe(target);
+            try {
+                await vi.waitFor(() => expect(stale).toBe(false));
+                expect(reads).toBe(2);
+            } finally {
+                stopAgain();
+            }
+        } finally {
+            stop();
+            firstResponse.resolve();
+            retained.release();
+            loader.resetForTests();
+        }
+    });
+
     it('does not let an in-flight answer restore currentness after the last observer leaves', async () => {
         let finishLoad: (() => void) | null = null;
         let loadFinished = false;
