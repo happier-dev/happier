@@ -137,8 +137,8 @@ export type SessionRuntimeControls = {
   }>) => Promise<unknown> | unknown;
   /** Exact active-turn input correlation projected by the incumbent Session runtime. */
   readActiveTurnInputId?: () => string | null;
-  /** Cancels the incumbent active turn; callers must prove exact currentness first. */
-  cancelActiveTurn?: () => Promise<void> | void;
+  /** Exact-current Stop withdraws foreground requests; default cancellation preserves questions. */
+  cancelActiveTurn?: (options?: Readonly<{ intent: 'stop' }>) => Promise<void> | void;
   handleUserMessage?: (
     request: Readonly<{
       text: string;
@@ -618,7 +618,7 @@ export function registerSessionControlHandlers(
     }
 
     try {
-      await cancelActiveTurn();
+      await cancelActiveTurn({ intent: 'stop' });
       return SessionInputCancelExactTurnResultV1Schema.parse({
         ok: true,
         status: 'cancelled',

@@ -8361,6 +8361,42 @@ describe('runHostSessionRuntime', () => {
     expect(effects).toEqual(['replay', 'follow']);
   });
 
+  it.each(['stop', 'yield'] as const)('withdraws a native Review question only for explicit exact-input %s', async intent => {
+    const harness = createHarness();
+    delete harness.deps.createProviderEnforcedPermissionHandlerFn;
+    let requestStore: import('@/agent/permissions/agentStateRequestStore').AgentStateRequestStore | undefined;
+    // The Session boundary retains the real permission owner's request store.
+    harness.session.bindAgentStateRequestStore = (store: NonNullable<typeof requestStore>) => { requestStore = store; };
+    const localId = 'workflow-input-v2:L_MaNpROD2ei1q7B4oYnhJBBPmsUT3Z2Q9959Qov4k0';
+    harness.runtime.readActiveTurnInputId = () => localId;
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const controls: SessionRuntimeControls = harness.session.setSessionRuntimeControls.mock.calls[0][0];
+      const store = requestStore;
+      if (!store) throw new Error('Permission owner did not bind its request store');
+      await store.publishRequestAndWait({ requestId: 'native-review-question', toolName: 'AskUserQuestion',
+        toolInput: { questions: [{ id: 'scope', question: 'Which files should I review?', selection: 'single',
+          options: [{ id: 'total', label: 'total.ts' }] }] }, createdAt: 1, turnId: 'review-turn',
+        owner: { kind: 'plugin', pluginId: 'happier.agent.opencode' } });
+      const siblingRequestId = 'execution-run:run_sibling:occurrence:question';
+      await store.publishRequestAndWait({ requestId: siblingRequestId, toolName: 'AskUserQuestion',
+        toolInput: { questions: [{ question: 'Independent Run scope?' }] }, createdAt: 1 });
+      if (intent === 'stop') {
+        const { registerSessionControlHandlers } = await import('@/rpc/handlers/sessionControls');
+        const handlers = new Map<string, (input: unknown) => unknown>();
+        registerSessionControlHandlers({ registerHandler: (name, handler) => { handlers.set(name, handler); } },
+          { sessionRuntimeControls: controls });
+        await expect(handlers.get(SESSION_RPC_METHODS.SESSION_INPUT_CANCEL_EXACT_TURN_V1)?.({
+          sessionId: harness.session.sessionId, localId,
+        })).resolves.toMatchObject({ ok: true, status: 'cancelled' });
+      } else {
+        await controls.cancelActiveTurn?.();
+      }
+      expect(store.readOutstandingRequest('native-review-question') !== null).toBe(intent === 'yield');
+      expect(store.readOutstandingRequest(siblingRequestId)).not.toBeNull();
+    };
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
   it('registers abort control RPCs on the active swapped session manager without authoring a cancellation transcript', async () => {
     const harness = createHarness();
     const initialSession = harness.session;
@@ -14012,6 +14048,7 @@ describe('runHostSessionRuntime', () => {
 
   it('invokes kill handler lifecycle without archiving the session', async () => {
     const harness = createHarness();
+    delete harness.deps.createPermissionModeQueueStateFn;
     harness.opts.startedBy = 'daemon';
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     harness.deps.runPermissionModePromptLoopFn = async () => {

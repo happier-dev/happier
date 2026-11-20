@@ -4134,7 +4134,14 @@ async function runHostedSessionRuntime(
       ...(typeof nativeRuntime.readTurnStartingInputId === 'function'
         ? { readTurnStartingInputId: nativeRuntime.readTurnStartingInputId.bind(nativeRuntime) }
         : {}),
-      cancelActiveTurn: nativeRuntime.cancelTurn.bind(nativeRuntime),
+      cancelActiveTurn: async (options) => {
+        if (options?.intent === 'stop') {
+          if (!abortRequestedCallback) throw new Error('Session turn cancellation is unavailable');
+          await abortRequestedCallback();
+          return;
+        }
+        await nativeRuntime.cancelTurn();
+      },
       ...(typeof nativeRuntime.handleUserMessage === 'function' ? { handleUserMessage: nativeRuntime.handleUserMessage.bind(nativeRuntime) } : {}),
     });
     await config.lifecycleHooks?.onRuntimeCreated?.({ session, runtime: nativeRuntime });
