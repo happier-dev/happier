@@ -123,8 +123,9 @@ it('keeps supported, native unsupported and unknown compact evidence distinct in
   expect(homes.requests.filter(request => request.path.startsWith('/v1/machines'))).toHaveLength(0);
 });
 
-it('exposes the pending native permission offer through the exact-Home status Action', async () => {
+it('exposes the pending native permission offer and published operands through the exact-Home status Action', async () => {
   const serverId = await homes.addHome({ name: 'Pending', serverUrl: 'https://pending-status.test', accountId: 'alice', currentAccount: true });
+  const argumentsFixture = { text: 'Check the fixture' };
   const nativeChoices = { requirementId: 'requirement-1', source: 'native-agent', choices: [
     { id: 'approve-one', label: 'Approve once', decision: 'approved' as const, scope: 'once' as const,
       response: { approved: true as const, decision: 'approved' as const } },
