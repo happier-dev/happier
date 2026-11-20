@@ -210,7 +210,7 @@ describe('Checkpointed poll supervisor', () => {
     expect(watchers).toEqual([]);
   });
 
-  it.each([false, true])('paces no-hint GitHub polls by their provider budget and still delivers a new comment at the next fire (all headers missing: %s)', async allHeadersMissing => {
+  it.each([false, true])('uses the GitHub fallback cadence without provider hints and delivers a new comment at the next poll (all headers missing: %s)', async allHeadersMissing => {
     vi.useFakeTimers();
     const startedAt = Date.parse('2026-08-10T12:00:00Z');
     vi.setSystemTime(startedAt);
@@ -228,12 +228,7 @@ describe('Checkpointed poll supervisor', () => {
           client: {
             requestWithoutFollowingRedirects: async () => { throw new Error('No manual redirects'); },
             request: async ({ url }) => {
-              if (new URL(url).pathname === '/rate_limit') {
-                budgetReads += 1;
-                return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify({ resources: {
-                  core: { remaining: 10, reset: startedAt / 1_000 + 600 },
-                } })) };
-              }
+              if (new URL(url).pathname === '/rate_limit') budgetReads += 1;
               const headers: Readonly<Record<string, string>> = allHeadersMissing ? {}
                 : { 'x-ratelimit-remaining': '10', 'x-ratelimit-reset': String(startedAt / 1_000 + 600) };
               return {
@@ -268,14 +263,13 @@ describe('Checkpointed poll supervisor', () => {
       await vi.advanceTimersByTimeAsync(1);
       expect(pollTimes).toEqual([0, 60_000]);
       expect(delivered).toEqual(['Fresh comment']);
-      // The changed poll read both the comment window and its issue identity:
-      // two next-cycle reads spread over 540 seconds / 10 remaining requests.
-      await vi.advanceTimersByTimeAsync(107_999);
+      // Ordinary rate-limit headers do not set a polling interval.
+      await vi.advanceTimersByTimeAsync(59_999);
       expect(pollTimes).toEqual([0, 60_000]);
       await vi.advanceTimersByTimeAsync(1);
-      expect(pollTimes).toEqual([0, 60_000, 168_000]);
+      expect(pollTimes).toEqual([0, 60_000, 120_000]);
       expect(delivered).toEqual(['Fresh comment']);
-      expect(budgetReads).toBe(allHeadersMissing ? 3 : 0);
+      expect(budgetReads).toBe(0);
     } finally {
       generation.abort(); await running; await supervisor.dispose(); vi.useRealTimers();
     }
