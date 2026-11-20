@@ -13,7 +13,7 @@ vi.mock('@/utils/platform/desktopHost', () => ({
 }));
 
 import { buildTerminalConnectDeepLink, parseTerminalConnectUrl } from '@/utils/path/terminalConnectUrl';
-import { installDesktopDeepLinks } from './installDesktopDeepLinks';
+import { installDesktopDeepLinks, prepareDesktopStartupRoute } from './installDesktopDeepLinks';
 
 const flush = async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); };
 
@@ -36,6 +36,22 @@ describe('desktop deep-link delivery', () => {
         expect(navigate.mock.calls.map(([href]) => href)).toEqual(['/terminal/connect#key=abcDEF_123-zzz']);
         dispose();
         expect(native.stop).toHaveBeenCalled();
+    });
+
+    it('seeds a cold terminal link before routing mounts and delivers subsequent links once', async () => {
+        native.invoke.mockResolvedValue(['happier://terminal?abcDEF_123-zzz']);
+        const seed = vi.fn();
+        const startup = prepareDesktopStartupRoute(seed);
+        await startup.ready;
+        expect(seed).toHaveBeenCalledExactlyOnceWith('/terminal/connect#key=abcDEF_123-zzz');
+        const navigate = vi.fn();
+        const detach = startup.attach(navigate);
+        expect(navigate).not.toHaveBeenCalled();
+        native.receive?.(['happier://terminal?key=next']);
+        expect(navigate).toHaveBeenCalledExactlyOnceWith('/terminal/connect#key=next');
+        expect(native.invoke).toHaveBeenCalledOnce();
+        detach();
+        startup.stop();
     });
 
     it('delivers successive running-app links with their server and pairing context in the hash', async () => {

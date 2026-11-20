@@ -2,6 +2,7 @@ import './sources/boot/configureZodLocale';
 import '@expo/metro-runtime';
 import { installAbortSignalThrowIfAborted } from './sources/boot/installAbortSignalThrowIfAborted';
 import { installWorkspaceBrowserHistory } from './sources/components/appShell/workspace/workspaceBrowserTransport';
+import { prepareTauriMainStartupRoute } from './sources/desktop/deepLinks/installDesktopDeepLinks';
 import { installWebReactPerformanceMeasureCleanup } from './sources/dev/webReactPerformanceMeasures';
 import { captureConnectedAccountOAuthCallbackUrl } from './sources/sync/ops/connectedAccounts/connectedAccountOAuthCallbackUrl';
 
@@ -16,6 +17,7 @@ captureConnectedAccountOAuthCallbackUrl();
 installWorkspaceBrowserHistory();
 
 declare const require: (id: string) => unknown;
+const desktopStartupRoute = prepareTauriMainStartupRoute();
 
 if (typeof window !== 'undefined') {
     if (typeof document !== 'undefined' && (globalThis as { __DEV__?: boolean }).__DEV__ === true) {
@@ -39,22 +41,6 @@ if (typeof window !== 'undefined') {
             const install = (mod as { installWebHmrOptOutForWebTab?: unknown }).installWebHmrOptOutForWebTab;
             if (typeof install === 'function') {
                 install({
-                    url: new URL(window.location.href),
-                    sessionStorage: window.sessionStorage,
-                    history: window.history,
-                });
-            }
-        }
-    } catch {
-        // ignore
-    }
-
-    try {
-        const mod = require('./sources/utils/path/terminalConnectWebBootstrap');
-        if (typeof mod === 'object' && mod !== null && 'bootstrapTerminalConnectWebHash' in mod) {
-            const bootstrap = (mod as { bootstrapTerminalConnectWebHash?: unknown }).bootstrapTerminalConnectWebHash;
-            if (typeof bootstrap === 'function') {
-                bootstrap({
                     url: new URL(window.location.href),
                     sessionStorage: window.sessionStorage,
                     history: window.history,
@@ -105,4 +91,21 @@ try {
 } catch {
     console.warn('[notifications] iOS background notification runtime unavailable');
 }
-require('expo-router/entry');
+function mountRouter() {
+    if (typeof window !== 'undefined') {
+        try {
+            const { bootstrapTerminalConnectWebHash } = require('./sources/utils/path/terminalConnectWebBootstrap') as typeof import('./sources/utils/path/terminalConnectWebBootstrap');
+            bootstrapTerminalConnectWebHash({
+                url: new URL(window.location.href),
+                sessionStorage: window.sessionStorage,
+                history: window.history,
+            });
+        } catch {
+            // The terminal route can read the original address if storage is unavailable.
+        }
+    }
+    require('expo-router/entry');
+}
+
+if (desktopStartupRoute) void desktopStartupRoute.then(mountRouter, mountRouter);
+else mountRouter();
