@@ -1003,6 +1003,8 @@ describe('Environment draft Machine Home', () => {
       const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
       const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
       expect(screen.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1);
+      expect(screen.findAllByType(Item).find(row => row.props.testID === 'project-deployments.draft.production')?.props.title)
+        .toBe('Protect this Environment');
       expect(authored).toBeUndefined();
       await act(async () => screen.findAllByType(ConnectedAccountPurposeTargetChooser)[0]!.props.onChange({ kind: 'account',
         account: { service: { pluginId: 'com.example.cloud', localId: 'cloud-account' }, accountId: 'cloud-account' } }));
@@ -1041,6 +1043,7 @@ describe('Environment draft Machine Home', () => {
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(authored, screen.getTextContent()).toBeDefined(); });
       expect(authored).toMatchObject({ mode: 'preview', definition: { from: 'repository', ref: 'main' }, controllerMachineId: 'runtime' });
+      expect(authored?.protection).toBe('nonProduction');
       expect(authored?.definition).not.toHaveProperty('compose');
       expect(authored).not.toHaveProperty('firstTargetLink');
       expect(authored).not.toHaveProperty('buildMachineId');

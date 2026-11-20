@@ -1073,8 +1073,8 @@ export const DeploymentEnvironmentDraft = React.memo(
           <ItemGroup>
             <Item
               testID="project-deployments.draft.production"
-              title={t('projects.deployments.production')}
-              subtitle={t('projects.deployments.productionHint')}
+              title={t(onPlatform ? 'newApp.deploy.protectEnvironment' : 'projects.deployments.production')}
+              subtitle={t(onPlatform ? 'newApp.deploy.protectEnvironmentHint' : 'projects.deployments.productionHint')}
               rightElement={
                 <Switch value={production} onValueChange={setProduction} />
               }
@@ -1109,7 +1109,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               </> : (
                 <ItemGroup>
                   <Item testID="project-deployments.draft.more" title={t('newApp.deploy.moreSettings')}
-                    subtitle={t('newApp.deploy.moreSettingsSummary')} onPress={() => setMoreOpen(true)} />
+                    subtitle={t(onPlatform ? 'newApp.deploy.morePlatformSettingsSummary' : 'newApp.deploy.moreSettingsSummary')} onPress={() => setMoreOpen(true)} />
                 </ItemGroup>
               )}
             </View>

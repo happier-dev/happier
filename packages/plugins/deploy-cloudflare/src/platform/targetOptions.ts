@@ -172,8 +172,6 @@ export const targetOptionResources = {
 
 const choiceSchema: PluginJsonSchema = { anyOf: [{ type: 'string' }, { type: 'object' }] };
 export const targetOptionInputTypes = {
-  'new-pages-environment': { title: 'Cloudflare Pages environment', semantic: 'cloudflare-new-pages-environment',
-    valueSchema: base.properties!.providerEnvironment! },
   'target-choice': { title: 'Cloudflare target choice', semantic: 'cloudflare-target-choice',
     valueSchema: choiceSchema, options: { resource: 'target-options' } },
   'workers-target-choice': { title: 'Cloudflare Workers choice', semantic: 'cloudflare-workers-choice',
@@ -181,30 +179,36 @@ export const targetOptionInputTypes = {
   'pages-target-choice': { title: 'Cloudflare Pages choice', semantic: 'cloudflare-pages-choice',
     valueSchema: choiceSchema, options: { resource: 'pages-target-options' } },
 } as const;
+const accountField = { path: 'providerIdentity.providerAccountId', title: 'Cloudflare Account', optionsDraftDependencies: [],
+  required: true, widget: 'select', inputType: { pluginId, localId: 'target-choice' } } as const;
+const environmentField = { path: 'providerEnvironment', title: 'Environment',
+  optionsDraftDependencies: ['product', 'resourceName', 'providerEnvironment.kind', 'providerEnvironment.scriptName'],
+  required: true, widget: 'select', inputType: { pluginId, localId: 'target-choice' } } as const;
+const projectField = { path: 'preparedNative.projectName', title: 'Pages project name', widget: 'select',
+  optionsDraftDependencies: ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName'],
+  inputType: { pluginId, localId: 'target-choice' } } as const;
+const workerTriggerField = { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select',
+  optionsDraftDependencies: ['providerIdentity.providerResourceId', 'providerEnvironment.scriptName'], inputType: { pluginId, localId: 'target-choice' },
+  requiredWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
+    { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] },
+  visibleWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
+    { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] } } as const;
 export const targetOptionInputHints = { fields: [
-  ...([['providerIdentity.providerAccountId', 'Cloudflare Account', []],
-    ['providerIdentity.providerResourceId', 'Project or Worker', ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName']],
-    ['providerEnvironment', 'Environment', ['product', 'resourceName', 'providerEnvironment.kind', 'providerEnvironment.scriptName']],
-  ] as const).map(([path, title, optionsDraftDependencies]) => ({
-    path, title, optionsDraftDependencies, required: true, widget: 'select' as const, inputType: { pluginId, localId: 'target-choice' },
-  })),
-  { path: 'preparedNative.projectName', title: 'Pages project name', widget: 'select',
-    optionsDraftDependencies: ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName'], inputType: { pluginId, localId: 'target-choice' },
-    requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.scriptName' } } },
-  { path: 'triggerUuid', title: 'Worker build trigger', widget: 'select',
-    optionsDraftDependencies: ['providerIdentity.providerResourceId', 'providerEnvironment.scriptName'], inputType: { pluginId, localId: 'target-choice' },
-    requiredWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
-      { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] },
-    visibleWhen: { op: 'and', all: [{ op: 'eq', path: 'providerEnvironment.kind', value: 'script' },
-      { op: 'not', predicate: { op: 'eq', path: 'sourceMethod', value: 'upload' } }] } },
+  accountField,
+  { path: 'providerIdentity.providerResourceId', title: 'Project or Worker', required: true, widget: 'select',
+    optionsDraftDependencies: ['product', 'providerEnvironment.kind', 'providerEnvironment.scriptName'],
+    inputType: { pluginId, localId: 'target-choice' } },
+  environmentField,
+  { ...projectField, requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'providerEnvironment.scriptName' } } },
+  workerTriggerField,
 ] } as const;
 export const targetProductSchema = product;
 
 export function targetProductInputHints(product: 'workers' | 'pages') {
-  return { fields: targetOptionInputHints.fields
-    // The product sheet selects native coordinates. Inspect resolves the exact comparison identity.
-    .filter(field => field.path !== 'providerIdentity.providerResourceId'
-      && (product === 'workers' ? field.path !== 'preparedNative.projectName' : field.path !== 'triggerUuid'))
-    .map(field => ({ ...field, ...(field.path === 'providerIdentity.providerAccountId' ? { path: 'providerAccountId' } : {}),
-      inputType: { pluginId, localId: `${product}-target-choice` } })) };
+  // The product sheet selects native coordinates. Inspect resolves the exact comparison identity.
+  const fields = [{ ...accountField, path: 'providerAccountId' }, ...(product === 'pages' ? [
+    { ...projectField, required: true, optionsDraftDependencies: [] },
+    { ...environmentField, optionsDraftDependencies: [projectField.path] },
+  ] : [environmentField, workerTriggerField])];
+  return { fields: fields.map(field => ({ ...field, inputType: { pluginId, localId: `${product}-target-choice` } })) };
 }

@@ -8,9 +8,11 @@ import * as entry from '../../../../../../packages/plugins/deploy-cloudflare/src
 import { patchHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import {
   applyPlatformFieldPatch,
   buildPlatformTargetDraft,
+  disclosePlatformFields,
   readDeploymentPlatformTargets,
   readPlatformInspectOutcome,
   readPlatformReviewNotice,
@@ -76,16 +78,17 @@ it('checks an existing Pages project from the sheet choices through the Pages in
       providerEnvironment: { kind: 'production' },
       'preparedNative.projectName': project.name,
     };
-    // Every field the sheet draws is one the person answers; none is left for a caller to normalize.
-    expect(platform.fields.map((field) => field.path).sort()).toEqual(
-      Object.keys(choices).sort(),
-    );
     let values: Record<string, unknown> = {};
-    for (const field of platform.fields) {
+    for (const path of ['providerAccountId', 'preparedNative.projectName', 'providerEnvironment']) {
+      const fields = disclosePlatformFields(resolveEffectiveActionInputFields({
+        inputHints: { fields: [...platform.fields] },
+      }, values), values);
+      expect(fields.at(-1)?.path).toBe(path);
+      expect(fields.filter(field => field.path === 'providerEnvironment')).toHaveLength(path === 'providerEnvironment' ? 1 : 0);
       values = applyPlatformFieldPatch(
         platform.fields,
         values,
-        patchHappierActionInputPath(values, field.path, choices[field.path]),
+        patchHappierActionInputPath(values, path, choices[path]),
       ).values;
     }
     const draft = buildPlatformTargetDraft({
