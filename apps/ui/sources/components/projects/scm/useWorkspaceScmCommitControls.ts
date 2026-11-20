@@ -11,6 +11,7 @@ import type { ScmPushRejectPolicy } from '@/scm/settings/preferences';
 import { useScmCommitMessageSuggestion } from '@/scm/operations/useScmCommitMessageSuggestion';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { isManagedWorkspaceRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import {
     storage,
     useSetting,
@@ -65,7 +66,8 @@ export function useWorkspaceScmCommitControls(scope: WorkspaceScopeBase) {
     }, [commitSelectionPatches, commitSelectionPaths]);
     const workspaceRefs = useWorkspaceRefs();
     const workspaceRef = findWorkspaceRefByScope(workspaceRefs, scope);
-    const commitMessageHost = React.useMemo(() => workspaceRef
+    // Detached message-generation Runs currently execute only on Machine checkouts.
+    const commitMessageHost = React.useMemo(() => workspaceRef && !isManagedWorkspaceRefV2(workspaceRef)
         ? { kind: 'workspace' as const, workspace: workspaceAddressFromRefV1(workspaceRef) }
         : null, [workspaceRef]);
     const suggestionContextKey = JSON.stringify([

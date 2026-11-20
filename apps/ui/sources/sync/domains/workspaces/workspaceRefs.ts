@@ -29,7 +29,7 @@ export function createWorkspaceRefScopeFinder(
 ): (scope: WorkspaceScopeBase) => WorkspaceRefV1 | null {
     const resolve = createWorkspaceRefResolverV1(workspaceRefs, workspaceRefResolutionContextV1());
     return (scope) => {
-        const result = resolve(scope);
+        const result = resolve(scope.workspace ?? scope);
         return result.kind === 'resolved' ? result.ref : null;
     };
 }
@@ -54,7 +54,7 @@ export function sameWorkspaceProject(left: WorkspaceRefV1, right: WorkspaceRefV1
 }
 
 export function resolveWorkspaceRefByScope(workspaceRefs: readonly WorkspaceRefV1[], scope: WorkspaceScopeBase) {
-    return resolveWorkspaceRefV1(workspaceRefs, scope, workspaceRefResolutionContextV1());
+    return resolveWorkspaceRefV1(workspaceRefs, scope.workspace ?? scope, workspaceRefResolutionContextV1());
 }
 
 /** Resolve accepted checkout authority; never manufacture a ref from a selected root. */

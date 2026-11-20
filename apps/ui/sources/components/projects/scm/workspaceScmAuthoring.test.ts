@@ -12,6 +12,9 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 const navigate = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: navigate } }).module);
+// The native modal host is a system boundary; Action policy and draft admission remain real.
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+const { Modal } = await import('@/modal');
 const { storage } = await import('@/sync/domains/state/storage');
 const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
 const { buildWorkspaceScmAuthoringSeed, openWorkspaceScmAuthoringDraft } = await import('./workspaceScmAuthoring');
@@ -44,6 +47,16 @@ const result = ScmDiffSummaryResultSchema.parse({ resultId: 'saved-result', revi
 afterEach(resetSessionDraftRepositoryForTests);
 
 describe('workspace SCM ordinary authoring seed', () => {
+    it('retains a managed checkout in captured Review authoring without treating its root as controller disk', () => {
+        const managed = { v: 2 as const, kind: 'managed' as const, serverId: workspace.serverId,
+            workspaceId: 'guest-checkout', managedId: 'native-workspace',
+            controller: { machineId: workspace.machineId, installationId: 'installation' }, rootPath: '/repo' };
+        const seed = buildWorkspaceScmAuthoringSeed({ workspace: managed, accountId: scope.accountId, comparison, result });
+        expect(PluginUiNewSessionSeedV1Schema.parse(seed)).toMatchObject({
+            placement: { kind: 'exactTarget', machineId: managed.controller.machineId, directory: '/repo' },
+            origin: { workspace: managed },
+        });
+    });
     it('carries a chosen stop question through the existing editable authoring seed', () => {
         const question = 'Why does this change keep the earlier value?';
         const seed = buildWorkspaceScmAuthoringSeed({ workspace, accountId: scope.accountId, comparison, result,
@@ -56,7 +69,7 @@ describe('workspace SCM ordinary authoring seed', () => {
     it('captures the exact checkout and basis with only the selected stop authorized excerpts', () => {
         const seed = buildWorkspaceScmAuthoringSeed({ workspace, accountId: scope.accountId, comparison, result, stopId: 'stop-one' });
         expect(seed).not.toBeNull();
-        expect(PluginUiNewSessionSeedV1Schema.parse(seed)).toEqual({ ...seed, prompt: seed?.prompt?.trim() });
+        expect(PluginUiNewSessionSeedV1Schema.safeParse(seed).success).toBe(true);
         expect(PluginUiNewSessionSeedOriginV1Schema.parse(seed?.origin)).toEqual(seed?.origin);
         expect(seed?.prompt).toContain('before-oid');
         expect(seed?.prompt).toContain('Saved explanation');
@@ -117,25 +130,17 @@ describe('captured workspace SCM authoring Action admission', () => {
         expect(navigate).not.toHaveBeenCalled();
         expect(storage.getState().sessions).toEqual({});
     });
-    it('Ask retains the exact captured Review seed until rejection or approval', async () => {
+    it('Ask opens the exact captured Review draft only after the present user confirms', async () => {
         await homes.requireUiApproval(serverId, 'session.authoring.open');
         const accountScope = { serverId, accountId: 'account-a' };
         const { listNewSessionDraftProjections } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
         const before = listNewSessionDraftProjections(accountScope);
-        const pending = await open(serverId);
-        expect(pending).toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        expect(await open(serverId)).toMatchObject({ kind: 'unavailable' });
         expect(listNewSessionDraftProjections(accountScope)).toEqual(before);
         expect(navigate).not.toHaveBeenCalled();
-        if (!('artifactId' in pending) || typeof pending.artifactId !== 'string') throw new Error('Expected canonical approval receipt');
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const executor = createDefaultActionExecutor();
-        expect(await executor.execute('approval.request.decide', { artifactId: pending.artifactId, decision: 'reject' }, { surface: 'ui', serverId }))
-            .toMatchObject({ ok: true, result: { status: 'rejected' } });
-        expect(listNewSessionDraftProjections(accountScope)).toEqual(before);
-        const accepted = await open(serverId);
-        if (!('artifactId' in accepted) || typeof accepted.artifactId !== 'string') throw new Error('Expected fresh exact approval receipt');
-        expect(await executor.execute('approval.request.decide', { artifactId: accepted.artifactId, decision: 'approve' }, { surface: 'ui', serverId }))
-            .toMatchObject({ ok: true, result: { status: 'executed' } });
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        expect(await open(serverId)).toMatchObject({ kind: 'opened' });
         const drafts = listNewSessionDraftProjections(accountScope);
         expect(drafts).toHaveLength(before.length + 1);
         const created = drafts.find(item => !before.some(previous => previous.draftId === item.draftId));

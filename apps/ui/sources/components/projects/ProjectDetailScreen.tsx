@@ -25,6 +25,7 @@ import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneSco
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import { useScopedPluginUiProjection } from '@/components/plugins/projection/useScopedPluginUiProjection';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { useDestinationPaneScopeId } from '@/components/appShell/workspace/DestinationInstanceHost';
@@ -147,6 +148,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
     }, [controlledActiveRootPath, persistedActiveRootPath, preferenceKeys, workspaceRef]);
 
     const requestedActiveRootPath = controlledActiveRootPath ?? localActiveRootPath ?? persistedActiveRootPath ?? workspaceRootPath;
+    const worktreeScope = React.useMemo(() => workspaceRef ? workspaceScopeFromProject(workspaceRef, workspaceRootPath) : null, [workspaceRef, workspaceRootPath]);
     const {
         requestedRootPath,
         resolvedRootPath: resolvedActiveRootPath,
@@ -154,8 +156,7 @@ export const ProjectDetailScreen = React.memo((props: Readonly<{
         didRecoverMissingWorktree,
         availableWorktrees,
     } = useResolvedRepoWorktreeSelection({
-        serverId: workspaceRef?.serverId ?? '',
-        machineId: workspaceRef?.machineId ?? '',
+        scope: worktreeScope,
         defaultRootPath: workspaceRootPath,
         requestedRootPath: requestedActiveRootPath,
         refreshOnMount: props.selection?.kind !== 'plugin',

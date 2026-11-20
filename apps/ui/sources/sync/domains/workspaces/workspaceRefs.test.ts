@@ -18,6 +18,22 @@ vi.mock('@/platform/randomUUID', () => ({
 }));
 
 describe('workspaceRefs', () => {
+    it('resolves managed scopes through the admitted address instead of a same-path controller checkout', () => {
+        const managed: WorkspaceRefV1 = { v: 2, kind: 'managed', id: 'guest', serverId: 'home', managedId: 'native',
+            controller: { machineId: 'machine', installationId: 'installed' }, rootPath: '/repo', createdAtMs: 1 };
+        const controller: WorkspaceRefV1 = { id: 'local', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1 };
+        const address = workspaceAddressFromRefV2(managed);
+        if (!('kind' in address)) throw new Error('Expected managed address');
+        const scope = { serverId: 'home', machineId: 'machine', rootPath: '/repo', workspace: address };
+        for (const find of [findWorkspaceRefByScope, (refs: readonly WorkspaceRefV1[], target: typeof scope) => createWorkspaceRefScopeFinder(refs)(target)]) {
+            expect(find([controller, managed], scope)).toBe(managed);
+            expect(find([controller], scope)).toBeNull();
+            expect(find([controller, managed], { ...scope, workspace: { ...address,
+                controller: { ...address.controller, installationId: 'replacement' } } })).toBeNull();
+            expect(find([controller, managed], { ...scope, workspace: { ...address, workspaceId: 'missing' } })).toBeNull();
+        }
+    });
+
     it('retains the accepted managed checkout when a controller checkout has the same root', () => {
         const managed: WorkspaceRefV1 = { v: 2, kind: 'managed', id: 'guest', serverId: 'home', managedId: 'native',
             controller: { machineId: 'machine', installationId: 'installed' }, rootPath: '/repo', createdAtMs: 1 };

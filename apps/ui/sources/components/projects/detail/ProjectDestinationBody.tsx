@@ -15,6 +15,7 @@ import { useWorkspaceRefResolutionById } from './useWorkspaceRefById';
 import { resolveProjectCockpitRouteFromPathname } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { useResolvedRepoWorktreeSelection } from '@/components/workspaces/scm/worktrees/useResolvedRepoWorktreeSelection';
+import { workspaceScopeFromProject } from '@/sync/domains/workspaces/workspaceScope';
 import { findVisibleRepoWorktreeByPath } from '@/components/workspaces/scm/worktrees/repoWorktreeIdentity';
 import { useProjectLastMobileSurface, useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
@@ -58,9 +59,9 @@ export const ProjectDestinationBody = React.memo(() => {
         persistedActiveRootPath,
         persistedWorktreeId,
     });
+    const worktreeScope = React.useMemo(() => workspaceRef ? workspaceScopeFromProject(workspaceRef, fallbackRootPath) : null, [workspaceRef, fallbackRootPath]);
     const { requestedRootPath, didRecoverMissingWorktree, resolvedRootPath: activeRootPath, resolvedWorktreeId: activeWorktreeId, availableWorktrees } = useResolvedRepoWorktreeSelection({
-        serverId: workspaceRef?.serverId ?? serverId ?? '',
-        machineId: workspaceRef?.machineId ?? '',
+        scope: worktreeScope,
         defaultRootPath: fallbackRootPath,
         requestedRootPath: selection.requestedRootPath,
         requestedWorktreeId: selection.requestedWorktreeId,

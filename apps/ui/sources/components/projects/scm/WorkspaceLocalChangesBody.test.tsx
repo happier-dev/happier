@@ -3,6 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, standardCleanup } from '@/dev/testkit';
+import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { t } from '@/text';
 import {
     createSessionFilesViewFixture,
@@ -18,6 +20,33 @@ let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>> | undefin
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 describe('WorkspaceLocalChangesBody', () => {
+    it('keeps manual managed commits usable without offering a controller-only message suggestion', async () => {
+        const currentFixture = await createSessionFilesViewFixture({ rootPath: '/repo', settings: { scmCommitMessageGeneratorEnabled: true } });
+        fixture = currentFixture;
+        const controller = { id: 'controller-checkout', ...currentFixture.scope, createdAtMs: 1 };
+        const managed = { v: 2 as const, kind: 'managed' as const, id: 'guest-checkout', serverId: controller.serverId,
+            managedId: 'native', controller: { machineId: controller.machineId, installationId: 'installed' },
+            rootPath: controller.rootPath, createdAtMs: 1 };
+        applyProjectAccountRowsFixture(currentFixture.storage, { workspaceRefs: [controller, managed] });
+        const guestScope = { ...currentFixture.scope, workspace: { v: 2 as const, kind: 'managed' as const,
+            workspaceId: managed.id, serverId: managed.serverId, managedId: managed.managedId,
+            controller: managed.controller, rootPath: managed.rootPath } };
+        const snapshot = fileViewSnapshot({ rootPath: '/repo', capabilities: { writeCommit: true }, entries: [{ path: 'a.ts',
+            previousPath: null, kind: 'modified', includeStatus: '', pendingStatus: 'M', hasIncludedDelta: false,
+            hasPendingDelta: true, stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false } }] });
+        currentFixture.storage.getState().updateWorkspaceScmSnapshot(currentFixture.scope, snapshot);
+        currentFixture.storage.getState().updateWorkspaceScmSnapshot(guestScope, snapshot);
+        const screen = await currentFixture.render(<>
+            <WorkspaceLocalChangesBody scope={currentFixture.scope} />
+            <WorkspaceLocalChangesBody scope={guestScope} />
+        </>);
+        const composers = screen.findAllByType(ScmCommitComposerCard);
+        expect(composers).toHaveLength(2);
+        const suggestion = { accessibilityLabel: t('files.commitMessageEditor.generate') };
+        expect(composers[0]!.findAllByProps(suggestion).length).toBeGreaterThan(0);
+        expect(composers[1]!.findAllByProps(suggestion)).toHaveLength(0);
+        expect(composers[1]!.findAllByProps({ testID: 'scm-commit-message' }).length).toBeGreaterThan(0);
+    });
     it.each([true, false])('keeps a retained checkout answer visible through a failed refresh and Retry (isRepo=%s)', async isRepo => {
         const rootPath = `/repo/retained-${isRepo ? 'repository' : 'nonrepo'}`;
         const refresh = createDeferred<unknown>();

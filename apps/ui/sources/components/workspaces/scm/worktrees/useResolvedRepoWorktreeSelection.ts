@@ -1,12 +1,12 @@
 import * as React from 'react';
 
 import { useWorkspaceScmSnapshotController } from '@/hooks/workspaces/scm/useWorkspaceScmSnapshotController';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 import { resolveRepoWorktreeSelection, type RepoWorktreeSelectionResolution } from './resolveRepoWorktreeSelection';
 
 export function useResolvedRepoWorktreeSelection(params: Readonly<{
-    serverId: string;
-    machineId: string;
+    scope: WorkspaceScopeBase | null;
     defaultRootPath: string;
     requestedRootPath: string | null | undefined;
     requestedWorktreeId?: string | null | undefined;
@@ -14,21 +14,11 @@ export function useResolvedRepoWorktreeSelection(params: Readonly<{
 }>): RepoWorktreeSelectionResolution & Readonly<{
     availableWorktrees: ReadonlyArray<Readonly<{ id?: string; path: string; isPrunable?: boolean }>> | null;
 }> {
-    const workspaceScope = React.useMemo(() => {
-        if (!params.serverId || !params.machineId || !params.defaultRootPath) {
-            return null;
-        }
-        return {
-            serverId: params.serverId,
-            machineId: params.machineId,
-            rootPath: params.defaultRootPath,
-        };
-    }, [params.defaultRootPath, params.machineId, params.serverId]);
     const requested = resolveRepoWorktreeSelection(params);
     // The default checkout is already resolved. Its presented surface supplies repository facts;
     // only a requested worktree needs discovery before that surface can settle its selection.
     const needsDiscovery = requested.requestedWorktreeId !== null || requested.requestedRootPath !== params.defaultRootPath;
-    const { snapshot } = useWorkspaceScmSnapshotController(workspaceScope, {
+    const { snapshot } = useWorkspaceScmSnapshotController(params.scope, {
         refreshOnMount: params.refreshOnMount !== false && needsDiscovery,
         detail: 'summary',
     });

@@ -25,7 +25,9 @@ function ContextFacts() {
 }
 
 function SelectionFacts(props: Readonly<{ serverId: string; rootPath: string; requestedRootPath?: string; requestedWorktreeId?: string }>) {
-    const selection = useResolvedRepoWorktreeSelection({ serverId: props.serverId, machineId: 'm1',
+    const scope = React.useMemo(() => ({ serverId: props.serverId, machineId: 'm1', rootPath: props.rootPath }),
+        [props.serverId, props.rootPath]);
+    const selection = useResolvedRepoWorktreeSelection({ scope,
         defaultRootPath: props.rootPath, requestedRootPath: props.requestedRootPath ?? props.rootPath,
         requestedWorktreeId: props.requestedWorktreeId, refreshOnMount: true });
     return React.createElement('WorktreeSelectionFacts', selection);
