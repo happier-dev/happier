@@ -50,6 +50,40 @@ describe('consented native accounting collector', () => {
             expect(observed).toHaveLength(baselineWakes + 1);
         } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
     });
+    it.each(['Stop', 'Delete history'] as const)('wakes mounted readers after %s durably disables the source', async action => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-stop-push-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
+        const notices: Promise<boolean | undefined>[] = [];
+        const collector = createNativeUsageCollector({ authority, storage, store,
+            budgetRegistry: new ExecutionBudgetRegistry(),
+            discoverSources: async () => [{ agent: { pluginId: 'fixture.agent', localId: 'agent' },
+                source: { kind: 'fixture' }, sourceKey: 'root', root: directory, supported: true }],
+            resolveRoot: async () => { throw new Error('No root edit'); },
+            readAccounting: async () => ({ ok: true, value: { outcome: 'unchanged' } }),
+            subscribeSource: async () => ({ dispose() {} }),
+            publisher: { publish: async () => { throw new Error('No observations'); } },
+            deleteHistory: async () => {
+                if (action === 'Stop') throw new Error('Stop must not delete history');
+                return { success: true, deletedEventCount: 0 };
+            },
+            onSourceSettled: () => { notices.push(store.load().then(({ sources }) => sources[0]?.consented)); },
+        });
+        try {
+            const [source] = await collector.discover();
+            await collector.setConsent(source.sourceId, true);
+            await collector.flushPending();
+            const enabledNotices = await Promise.all(notices);
+            expect(enabledNotices.at(-1)).toBe(true);
+            const disable = action === 'Stop' ? () => collector.stop(source.sourceId) : () => collector.deleteHistory(source.sourceId);
+            await disable();
+            expect((await collector.get(source.sourceId))[0].consent).toBe('disabled');
+            expect(await Promise.all(notices)).toEqual([...enabledNotices, false]);
+            await disable();
+            expect(await Promise.all(notices)).toEqual([...enabledNotices, false]);
+        } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
+    });
     it('reactivates a consented source when its watch boundary retires without a metadata change', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-retirement-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
@@ -265,10 +299,14 @@ describe('consented native accounting collector', () => {
                 // Let the real owner complete its asynchronous admission/abort steps,
                 // while the HTTP boundary remains unresolved.
                 await new Promise<void>(resolve => setImmediate(resolve));
-                try { expect(readSignal?.aborted).toBe(true); }
-                finally { releaseRead(); await consenting; await stopping; await collector.dispose(); }
+                try {
+                    expect(readSignal?.aborted).toBe(true);
+                    expect(settledViews).toEqual([]);
+                } finally { releaseRead(); await consenting; await stopping; await collector.dispose(); }
                 expect((await store.load()).sources[0]).toMatchObject({ consented: false, pending: [] });
-                expect(settledViews).toEqual([]);
+                expect(await Promise.all(settledViews)).toEqual([[expect.objectContaining({
+                    consent: 'disabled', status: 'found', pendingCount: 0, asOfMs: null,
+                })]]);
                 return;
             }
             await collector.setConsent(source.sourceId, true);

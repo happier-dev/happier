@@ -295,11 +295,13 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
     async function setConsent(sourceId: string, enabled: boolean, signal?: AbortSignal) {
         await initialize();
         return effects.inLock(async () => {
-            checkSignal(signal); requireSource(sourceId);
+            checkSignal(signal);
+            const wasConsented = requireSource(sourceId).consented;
             await retire(sourceId);
             checkSignal(signal);
             await commit(next => { next.find(source => source.sourceId === sourceId)!.consented = enabled; });
             if (enabled) await activate(sourceId);
+            else if (wasConsented) input.onSourceSettled?.();
             return view(requireSource(sourceId));
         });
     }
@@ -381,7 +383,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             await initialize();
             return effects.inLock(async () => {
                 checkSignal(signal);
-                requireSource(sourceId);
+                const previous = requireSource(sourceId);
                 await retire(sourceId);
                 checkSignal(signal);
                 // Explicit deletion retires selected local pending BEFORE the outward delete.
@@ -392,7 +394,9 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                     current.pending = current.pending.filter(row => (range?.startMs !== undefined && row.observedAt < range.startMs)
                         || (range?.endMs !== undefined && row.observedAt > range.endMs));
                 });
-                return await input.deleteHistory(requireSource(sourceId), range);
+                const current = requireSource(sourceId);
+                if (previous.consented || previous.pending.length !== current.pending.length) input.onSourceSettled?.();
+                return await input.deleteHistory(current, range);
             });
         },
         async flushPending() {
